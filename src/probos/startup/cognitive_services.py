@@ -229,6 +229,19 @@ async def init_cognitive_services(
         except Exception:
             logger.warning("AD-605: Enriched embedding migration failed (non-fatal)", exc_info=True)
 
+    # BF-207: Proactive hash integrity sweep — heal stale hashes from unclean shutdown.
+    # Must run AFTER all other migrations (BF-103, AD-570, AD-584, AD-605) which
+    # may legitimately change metadata that affects the content hash.
+    # ⚠️ MUST be the last migration. New migrations go ABOVE this block.
+    if episodic_memory and config.memory.verify_content_hash:
+        try:
+            from probos.cognitive.episodic import sweep_hash_integrity
+            healed = await sweep_hash_integrity(episodic_memory)
+            if healed > 0:
+                logger.info("BF-207: Healed %d hash mismatches from previous shutdown", healed)
+        except Exception:
+            logger.warning("BF-207: Hash integrity sweep failed (non-fatal)", exc_info=True)
+
     # Create FeedbackEngine (AD-219)
     from probos.cognitive.feedback import FeedbackEngine
 

@@ -1,3 +1,25 @@
+AD-672 PLANNED. Agent Concurrency Management — per-agent concurrency ceiling (configurable, role-tuned), AGENT_CAPACITY_APPROACHING signal for load-aware routing, priority arbitration when threads compete for same resource, queue management for excess intents. Phase 5 of Ambient Awareness roadmap. Depends on AD-669. Issue #353.
+
+AD-671 PLANNED. Dream-Working Memory Integration — pre-dream WM flush to episodic memory as session summaries, dream-informed consolidation priorities from WM usage patterns, post-dream WM priming from dream insights. Phase 4b of Ambient Awareness roadmap. Depends on AD-670. Issue #352.
+
+AD-670 PLANNED. Working Memory Metabolism — active maintenance operations for working memory: TRIAGE (score incoming events before buffer entry), DECAY (time-weighted salience reduction), AUDIT (consistency checking for contradictions), FORGET (active removal of low-value entries replacing passive FIFO eviction). Phase 4a of Ambient Awareness roadmap. Depends on AD-667. Issue #351.
+
+AD-669 PLANNED. Cross-Thread Conclusion Sharing — ConclusionLog in working memory for intra-agent coordination. Thread conclusions (decisions, observations, escalations, completions) visible to sibling threads. Redundancy detection before starting work. Conclusion decay with configurable TTL. Integrates AD-492 correlation IDs when available. Phase 3 of Ambient Awareness roadmap. Depends on AD-667. Issue #350.
+
+AD-668 PLANNED. Salience Filter — scoring function for working memory buffer promotion: salience = f(relevance, recency, novelty, urgency, social). Background event stream accumulation with threshold-based promotion into named buffers. Integrates AD-493 novelty gate when available. Connects to AD-633 predictive branching for idle-time processing. Phase 2b of Ambient Awareness roadmap. Depends on AD-667. Issue #349.
+
+AD-667 PLANNED. Named Working Memory Buffers — replace monolithic ring buffer rendering with named buffers (Duty, Social, Ship, Engagement). Per-buffer token budgets summing to sensorium ceiling. Selective buffer access from cognitive chain steps (ANALYZE gets duty+engagement, COMPOSE gets social+ship). Buffer abstraction with update triggers and capacity limits. Phase 2a of Ambient Awareness roadmap. Depends on AD-666. Issue #348.
+
+AD-666 PLANNED. Agent Sensorium Formalization — name and formalize the existing ~15 context injection methods in CognitiveAgent as "Agent Sensorium." Consolidate injection ordering in _build_prompt_text for redundancy, consistency, and token efficiency. Add sensorium health metric tracking injection token count per cycle with alerting on budget exceedance. Phase 1 completion of Ambient Awareness roadmap (~80% already exists). Issue #347.
+
+BF-241 CLOSED. NATS JetStream reconnect resilience — extracted `_recover_jetstream()` from `set_subject_prefix()`, added `_on_reconnected()` instance method, MockNATSBus parity. Completes NATS resilience stack (BF-229/230/231/232/241). 8 new tests.
+
+BF-240 OPEN. LLM Health Dwell-Time Criterion — configurable `min_consecutive_healthy` threshold (default 3) before diagnostic holds release. Prevents premature recovery on single healthy check amid instability. Issue #344.
+
+AD-665 PLANNED. Corroboration Source Validation — consumer-side independence validation for corroborating sources. Detects shared upstream origin via provenance metadata (AD-662 fields). Graph-based ancestry walk, configurable similarity threshold, discount for common-origin corroboration. Issue #343.
+
+AD-664 COMPLETE. EventLog Diagnostic Infrastructure — structured payload (data JSON column), correlation_id, parent_event_id tracing columns. Schema migration for existing DBs. query_structured() and get_event_chain() methods. _row_to_dict() DRY helper. Retrofitted dream/emergent, mesh, and QA events with structured payloads + correlation IDs. Engineering diagnostic query capability declared (capability + _handled_intents + LLM instructions); programmatic handler deferred to follow-up AD. 17 tests. Issue #337.
+
 AD-618e COMPLETE. Cognitive JIT Bridge — Bill step completions → T3 skill acquisition via SkillBridge. StepSkillMapping with 3-level priority resolution (exact > bill-scoped > global). 5 default mappings (cognitive_skill→duty_execution, tool→tool_operation, post_to_channel/send_dm→communication, sub_bill→coordination). Dual exercise path: catalog entry → SkillBridge, no entry → AgentSkillService direct with auto-acquire at FOLLOW. Log-and-degrade. 22 tests. Issue #204.
 
 AD-618d COMPLETE. HXI Bill Dashboard — definition registry on BillRuntime (register/list/get), FastAPI router (6 endpoints), React dashboard (catalog + instance timeline + role roster + step progression), WebSocket refetch-on-event, ViewSwitcher Bills tab. 15 backend + 3 frontend tests. Issue #204.

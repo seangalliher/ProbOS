@@ -436,6 +436,96 @@ def migrate_enriched_embedding(
     return migrated
 
 
+async def sweep_hash_integrity(
+    episodic_memory: "EpisodicMemory",
+    max_episodes: int = 200,
+) -> int:
+    """BF-207: Proactive hash integrity sweep on startup.
+
+    Scans the most recent episodes and auto-heals any content hash
+    mismatches left by an unclean shutdown. Runs AFTER all other
+    migrations (BF-103, AD-570, AD-584, AD-605) which may change
+    metadata that affects the hash.
+
+    max_episodes=200 covers approximately 10 minutes of busy session
+    activity. Crashed shutdowns typically only leave the last few
+    episodes stale, but the generous budget costs little (sub-second
+    for 200 episodes).
+
+    Note: ChromaDB's .get() and .update() are synchronous. This function
+    is async to fit the startup migration interface but blocks the event
+    loop briefly. For 200 episodes this is sub-second. If collection sizes
+    grow or the sweep expands, consider wrapping ChromaDB calls in
+    asyncio.to_thread().
+
+    Returns the number of episodes healed.
+    """
+    if not episodic_memory or not episodic_memory._collection:
+        return 0
+
+    t0 = time.time()
+    healed = 0
+
+    try:
+        result = episodic_memory._collection.get(
+            include=["metadatas", "documents"],
+        )
+        if not result or not result.get("ids"):
+            return 0
+
+        ids_list = result["ids"]
+        metadatas = result.get("metadatas", [])
+        documents = result.get("documents", [])
+
+        # Sort by timestamp descending, check most recent first
+        paired = list(zip(ids_list, metadatas, documents))
+        paired.sort(
+            key=lambda x: float(x[1].get("timestamp", 0)) if x[1] else 0,
+            reverse=True,
+        )
+
+        batch_ids: list[str] = []
+        batch_metas: list[dict] = []
+
+        for ep_id, meta, doc in paired[:max_episodes]:
+            if not meta:
+                continue
+            stored_hash = meta.get("content_hash", "")
+            if not stored_hash:
+                continue  # Legacy episode — no hash to verify
+
+            ep = EpisodicMemory._metadata_to_episode(ep_id, doc or "", meta)
+            recomputed = compute_episode_hash(ep)
+
+            if recomputed != stored_hash:
+                updated_meta = dict(meta)
+                updated_meta["content_hash"] = recomputed
+                updated_meta["_hash_v"] = _HASH_VERSION
+                batch_ids.append(ep_id)
+                batch_metas.append(updated_meta)
+
+        # Batch update — ChromaDB's .update() accepts arrays natively
+        if batch_ids:
+            episodic_memory._collection.update(
+                ids=batch_ids,
+                metadatas=batch_metas,
+            )
+            healed = len(batch_ids)
+
+        elapsed = time.time() - t0
+        if healed > 0:
+            logger.info(
+                "BF-207: Healed %d hash mismatches in startup sweep (%.1fs)",
+                healed, elapsed,
+            )
+        else:
+            logger.debug("BF-207: Hash integrity sweep clean — 0 mismatches (%.1fs)", elapsed)
+    except Exception:
+        logger.warning("BF-207: Hash integrity sweep failed (non-fatal)", exc_info=True)
+
+    return healed
+
+
 # ---------------------------------------------------------------------------
 # AD-541e: Episode content hashing — cryptographic tamper detection
 # ---------------------------------------------------------------------------

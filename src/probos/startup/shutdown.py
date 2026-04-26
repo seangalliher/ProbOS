@@ -92,6 +92,52 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         except (asyncio.CancelledError, Exception):
             pass
 
+    # ── Phase 1: Critical Persistence ──────────────────────────────────
+    # Dream consolidation + episodic memory close MUST complete before the
+    # __main__.py timeout expires. Moved ahead of service stops (BF-207).
+    # Budget: 2s dream timeout + ~500ms episodic close = ≤3s typical,
+    # with 7s remaining of the 10s timeout for Phase 2.
+    import time as _time
+    _phase1_start = _time.monotonic()
+
+    # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
+    # Must run BEFORE pools stop (dream_cycle may trigger Ward Room notifications)
+    # and BEFORE LLM client is closed (dream_cycle makes LLM calls).
+    if runtime.dream_scheduler and runtime.episodic_memory:
+        logger.info("Consolidating session memories...")
+        try:
+            report = await asyncio.wait_for(
+                runtime.dream_scheduler.engine.dream_cycle(),
+                timeout=2.0,
+            )
+            logger.info(
+                "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
+                report.episodes_replayed,
+                report.weights_strengthened,
+                report.weights_pruned,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Shutdown consolidation timed out (2s limit) — partial consolidation completed")
+        except (asyncio.CancelledError, Exception) as e:
+            logger.warning("Shutdown consolidation failed: %s", e or type(e).__name__)
+
+    # BF-207: Close episodic memory (ChromaDB) immediately after dream
+    # consolidation — this is the critical operation that caused hash mismatches
+    # when it was positioned after ~25 service stops.
+    if runtime.episodic_memory:
+        await runtime.episodic_memory.stop()
+
+    # AD-541f: Stop eviction audit log (companion to episodic memory)
+    _eviction_audit = getattr(runtime, "_eviction_audit", None)
+    if _eviction_audit is not None:
+        await _eviction_audit.stop()
+        runtime._eviction_audit = None
+
+    _phase1_elapsed = _time.monotonic() - _phase1_start
+    logger.info("BF-207: Phase 1 (Critical Persistence) completed in %.1fs", _phase1_elapsed)
+
+    # ── Phase 2: Service Cleanup ───────────────────────────────────────
+
     # Stop ACM (AD-427)
     if runtime.acm:
         await runtime.acm.stop()
@@ -269,27 +315,6 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime._federation_transport.stop()
         runtime._federation_transport = None
 
-    # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
-    # Must run BEFORE pools stop (dream_cycle may trigger Ward Room notifications)
-    # and BEFORE LLM client is closed (dream_cycle makes LLM calls).
-    if runtime.dream_scheduler and runtime.episodic_memory:
-        logger.info("Consolidating session memories...")
-        try:
-            report = await asyncio.wait_for(
-                runtime.dream_scheduler.engine.dream_cycle(),
-                timeout=2.0,  # BF-207: Reduced from 5s — must leave budget for cleanup within __main__'s 5s limit
-            )
-            logger.info(
-                "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
-                report.episodes_replayed,
-                report.weights_strengthened,
-                report.weights_pruned,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Shutdown consolidation timed out (2s limit) — partial consolidation completed")
-        except (asyncio.CancelledError, Exception) as e:
-            logger.warning("Shutdown consolidation failed: %s", e or type(e).__name__)
-
     # AD-573: Freeze all agent working memory before pools stop
     if hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
         try:
@@ -312,19 +337,6 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     for name, pool in runtime.pools.items():
         await pool.stop()
     runtime.pools.clear()
-
-    # BF-207: Close episodic memory (ChromaDB) early — nothing below writes episodes,
-    # and the 5s __main__.py shutdown timeout often expires before reaching the
-    # original position. Without client.close(), ChromaDB's internal state may not
-    # finalize, causing hash mismatches on restart.
-    if runtime.episodic_memory:
-        await runtime.episodic_memory.stop()
-
-    # AD-541f: Stop eviction audit log (companion to episodic memory)
-    _eviction_audit = getattr(runtime, "_eviction_audit", None)
-    if _eviction_audit is not None:
-        await _eviction_audit.stop()
-        runtime._eviction_audit = None
 
     # Persist knowledge store artifacts before stopping services
     if runtime._knowledge_store:

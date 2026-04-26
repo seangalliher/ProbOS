@@ -398,10 +398,10 @@ async def _boot_and_run(config_path: Path | None = None, fresh: bool = False, da
         console.print("\n[bold red]ProbOS shutting down...[/bold red]")
         console.print("  [dim]Stopping runtime...[/dim]", end="")
         try:
-            await asyncio.wait_for(runtime.stop(reason=getattr(shell, '_quit_reason', '')), timeout=5)
+            await asyncio.wait_for(runtime.stop(reason=getattr(shell, '_quit_reason', '')), timeout=10)
             console.print(" [green]done[/green]")
         except asyncio.TimeoutError:
-            console.print(" [yellow]timed out (5s)[/yellow]")
+            console.print(" [yellow]timed out (10s)[/yellow]")
         except Exception as e:
             console.print(f" [yellow]warn: {e}[/yellow]")
         finally:
@@ -524,10 +524,10 @@ async def _serve(
                 console.print(f" [yellow]warn: {e}[/yellow]")
         console.print("  [dim]Stopping runtime...[/dim]", end="")
         try:
-            await asyncio.wait_for(runtime.stop(), timeout=5)
+            await asyncio.wait_for(runtime.stop(), timeout=10)
             console.print(" [green]done[/green]")
         except asyncio.TimeoutError:
-            console.print(" [yellow]timed out (5s)[/yellow]")
+            console.print(" [yellow]timed out (10s)[/yellow]")
         except (KeyboardInterrupt, SystemExit):
             console.print(" [yellow]interrupted[/yellow]")
         except Exception as e:

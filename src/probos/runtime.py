@@ -1719,10 +1719,12 @@ class ProbOSRuntime:
             ttl_seconds=timeout or self.config.mesh.signal_ttl_seconds,
         )
 
-        await self.event_log.log(
+        broadcast_row_id = await self.event_log.log(
             category="mesh",
             event="intent_broadcast",
             detail=f"intent={intent} id={msg.id[:8]}",
+            correlation_id=msg.id,
+            data={"intent": intent, "msg_id": msg.id, "ttl_seconds": msg.ttl_seconds},
         )
 
         results = await self.intent_bus.broadcast(msg, timeout=timeout)
@@ -1751,6 +1753,14 @@ class ProbOSRuntime:
             category="mesh",
             event="intent_resolved",
             detail=f"intent={intent} id={msg.id[:8]} results={len(results)}",
+            correlation_id=msg.id,
+            data={
+                "intent": intent,
+                "msg_id": msg.id,
+                "result_count": len(results),
+                "agent_ids": [r.agent_id for r in results] if results else [],
+            },
+            parent_event_id=broadcast_row_id,
         )
 
         return results
@@ -1782,10 +1792,12 @@ class ProbOSRuntime:
             ttl_seconds=timeout or self.config.mesh.signal_ttl_seconds,
         )
 
-        await self.event_log.log(
+        consensus_broadcast_row_id = await self.event_log.log(
             category="mesh",
             event="intent_broadcast",
             detail=f"intent={intent} id={msg.id[:8]} consensus=true",
+            correlation_id=msg.id,
+            data={"intent": intent, "msg_id": msg.id, "consensus": True},
         )
 
         # Step 1: Broadcast and collect results
@@ -1924,6 +1936,16 @@ class ProbOSRuntime:
                 f"consensus={consensus.outcome.value} "
                 f"verifications={len(verification_results)}"
             ),
+            correlation_id=msg.id,
+            data={
+                "intent": intent,
+                "msg_id": msg.id,
+                "result_count": len(results),
+                "consensus_outcome": consensus.outcome.value,
+                "verification_count": len(verification_results),
+                "agent_ids": [r.agent_id for r in results] if results else [],
+            },
+            parent_event_id=consensus_broadcast_row_id,
         )
 
         return {

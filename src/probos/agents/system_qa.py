@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any, TYPE_CHECKING
 
 from probos.substrate.agent import BaseAgent
@@ -290,12 +291,14 @@ class SystemQAAgent(BaseAgent):
             )
 
         # Event log: started
+        qa_correlation_id = f"qa-{uuid.uuid4().hex[:12]}"
         if hasattr(self, '_runtime') and self._runtime:
             try:
                 await self._runtime.event_log.log(
                     category="qa",
                     event="smoke_test_started",
                     detail=f"{record.agent_type}: {len(cases)} tests",
+                    correlation_id=qa_correlation_id,
                 )
             except Exception:
                 logger.debug("Event log write failed", exc_info=True)
@@ -357,6 +360,7 @@ class SystemQAAgent(BaseAgent):
                     category="qa",
                     event=event,
                     detail=f"{record.agent_type}: {passed}/{total_tests}",
+                    correlation_id=qa_correlation_id,
                 )
             except Exception:
                 logger.debug("Event log write failed", exc_info=True)

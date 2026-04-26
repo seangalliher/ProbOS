@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -137,11 +138,12 @@ class DreamAdapter:
             return
         try:
             patterns = self._emergent_detector.analyze(dream_report=dream_report, duty_completions=[])
+            correlation_id = f"dream-{uuid.uuid4().hex[:12]}"
             for pattern in patterns:
                 # Fire-and-forget event logging (sync context, schedule coroutine)
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(self._event_log_emergent(pattern))
+                    loop.create_task(self._event_log_emergent(pattern, correlation_id=correlation_id))
                 except RuntimeError:
                     pass  # No running loop — skip logging
 
@@ -215,13 +217,20 @@ class DreamAdapter:
                     except RuntimeError:
                         pass
 
-    async def _event_log_emergent(self, pattern: Any) -> None:
-        """Log emergent pattern to event log (async)."""
+    async def _event_log_emergent(self, pattern: Any, correlation_id: str | None = None) -> None:
+        """Log emergent pattern to event log with structured payload (AD-664)."""
         if self._event_log:
             await self._event_log.log(
                 category="emergent",
                 event=pattern.pattern_type,
                 detail=pattern.description,
+                correlation_id=correlation_id,
+                data={
+                    "confidence": pattern.confidence,
+                    "severity": pattern.severity,
+                    "evidence": pattern.evidence,
+                    "pattern_type": pattern.pattern_type,
+                },
             )
 
     def on_gap_predictions(self, predictions: list[Any]) -> None:

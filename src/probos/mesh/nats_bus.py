@@ -147,80 +147,30 @@ class NATSBus:
         self._subject_prefix = sanitized
         logger.info("NATS subject prefix changed: %s → %s", old_prefix, sanitized)
 
-        # BF-232: Use recreate_stream which handles delete-then-create internally.
-        # Replaces BF-231's explicit _delete_stream + ensure_stream loop.
-        #
-        # BF-223 interaction: stream deletion cascades to consumer deletion on
-        # the NATS server, so BF-223's per-consumer delete_consumer() calls
-        # (lines 199-211) become no-ops. BF-223 is preserved as defense-in-
-        # depth for consumers on streams not tracked in _stream_configs.
-        if self.connected and self._stream_configs:
-            logger.info(
-                "set_subject_prefix: recreating %d streams for new prefix",
-                len(self._stream_configs),
-            )
-            for sc in self._stream_configs:
-                stream_name = sc["name"]
-                try:
-                    await self.recreate_stream(
-                        stream_name,
-                        sc["subjects"],
-                        max_msgs=sc.get("max_msgs", -1),
-                        max_age=sc.get("max_age", 0),
-                    )
-                except Exception as e:
-                    logger.error(
-                        "BF-231: Stream recreate on prefix change failed for %s: %s — "
-                        "JetStream publishes will fail until ProbOS is restarted.",
-                        stream_name, e,
-                    )
-        else:
-            logger.warning(
-                "set_subject_prefix: skipping stream recreate (connected=%s, configs=%d)",
-                self.connected, len(self._stream_configs),
-            )
+        if self.connected:
+            # BF-241: Reuse shared recovery for streams + JS consumers
+            await self._recover_jetstream(reason="prefix_change")
 
-        # Re-subscribe all tracked subscriptions with new prefix
-        if self.connected and self._active_subs:
-            self._resubscribing = True
-            try:
-                for entry in self._active_subs:
+            # Core NATS re-subscription (not handled by _recover_jetstream —
+            # nats-py auto-resubscribes core subs on reconnect but not on
+            # prefix change, so this is prefix-change-only logic)
+            core_entries = [e for e in self._active_subs if e["kind"] == "core"]
+            if core_entries:
+                for entry in core_entries:
                     old_sub = entry["sub"]
                     if old_sub is not None:
                         try:
                             await old_sub.unsubscribe()
                         except Exception as e:
                             logger.debug("Unsubscribe during prefix change: %s", e)
-
-                    # Re-create with new prefix (subscribe/js_subscribe use _full_subject)
-                    if entry["kind"] == "core":
-                        new_sub = await self.subscribe(
-                            entry["subject"], entry["callback"], **entry["kwargs"]
-                        )
-                    else:
-                        # BF-223: JetStream durable consumers have their filter_subject
-                        # baked into server-side config. Re-subscribing with a new prefix
-                        # fails because NATS rejects the filter mismatch. Must delete the
-                        # old consumer first so js_subscribe() creates a fresh one.
-                        durable_name = entry["kwargs"].get("durable")
-                        stream_name = entry["kwargs"].get("stream")
-                        if durable_name and stream_name:
-                            try:
-                                await self.delete_consumer(stream_name, durable_name)
-                                logger.debug(
-                                    "BF-223: Deleted stale consumer %s/%s before re-subscribe",
-                                    stream_name, durable_name,
-                                )
-                            except Exception as e:
-                                logger.debug(
-                                    "BF-223: Consumer delete before re-subscribe: %s", e
-                                )
-                        new_sub = await self.js_subscribe(
-                            entry["subject"], entry["callback"], **entry["kwargs"]
-                        )
+                    new_sub = await self.subscribe(
+                        entry["subject"], entry["callback"], **entry["kwargs"]
+                    )
                     entry["sub"] = new_sub
-            finally:
-                self._resubscribing = False
+        else:
+            logger.warning(
+                "set_subject_prefix: skipping recovery (not connected)"
+            )
 
         # Notify registered callbacks (notification only — NATSBus already re-subscribed)
         for cb in self._prefix_change_callbacks:
@@ -271,6 +221,124 @@ class NATSBus:
             return subject
         return f"{self._subject_prefix}.{subject}"
 
+    async def _recover_jetstream(self, *, reason: str = "reconnect") -> None:
+        """Recreate JetStream streams and re-subscribe consumers.
+
+        Called on NATS reconnection (BF-241) and subject prefix change (BF-232).
+        Streams are recreated via delete-then-create to handle stale server state.
+        Consumer subscriptions are re-established from _active_subs tracking.
+
+        Processing order: all JS streams first, then all JS consumers. Subscription
+        processing order changes from the prior interleaved order in
+        set_subject_prefix() to js-first, core-second. No test depends on the
+        prior order.
+
+        Tolerates mid-flight disconnects — each stream/consumer operation has its
+        own try/except, so partial recovery is acceptable. Concurrent js_publish()
+        calls during recovery will fail and use BF-230 fallback; no lock is added
+        to avoid serializing and starving publishers.
+
+        Stale entry["sub"] references from prior failed recoveries are handled
+        gracefully — the unsubscribe will fail (already-invalid handle) and
+        continue to the re-subscribe attempt.
+
+        Failures are logged at ERROR but do not propagate — partial JetStream
+        is better than none, and BF-230 fallback provides degraded delivery.
+        """
+        if not self._js:
+            logger.debug("BF-241: _recover_jetstream skipped (JetStream disabled)")
+            return
+
+        # --- Phase 1: Recreate streams ---
+        if self._stream_configs:
+            logger.info(
+                "BF-241: Recovering %d JetStream streams (reason=%s)",
+                len(self._stream_configs), reason,
+            )
+            for sc in self._stream_configs:
+                stream_name = sc["name"]
+                try:
+                    await self.recreate_stream(
+                        stream_name,
+                        sc["subjects"],
+                        max_msgs=sc.get("max_msgs", -1),
+                        max_age=sc.get("max_age", 0),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "BF-241: Stream recreate failed for %s (reason=%s): %s — "
+                        "JetStream publishes to this stream will use BF-230 fallback.",
+                        stream_name, reason, e,
+                    )
+
+        # --- Phase 2: Re-subscribe JetStream consumers ---
+        js_entries = [e for e in self._active_subs if e["kind"] == "js"]
+        if js_entries:
+            logger.info(
+                "BF-241: Re-subscribing %d JetStream consumers (reason=%s)",
+                len(js_entries), reason,
+            )
+            self._resubscribing = True
+            try:
+                for entry in js_entries:
+                    old_sub = entry["sub"]
+                    if old_sub is not None:
+                        try:
+                            await old_sub.unsubscribe()
+                        except Exception as e:
+                            logger.debug("BF-241: Unsubscribe stale consumer: %s", e)
+
+                    # BF-223: Delete stale durable consumer before re-subscribe
+                    durable_name = entry["kwargs"].get("durable")
+                    stream_name = entry["kwargs"].get("stream")
+                    if durable_name and stream_name:
+                        try:
+                            await self.delete_consumer(stream_name, durable_name)
+                            logger.debug(
+                                "BF-241: Deleted stale consumer %s/%s before re-subscribe",
+                                stream_name, durable_name,
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                "BF-241: Consumer delete before re-subscribe: %s", e
+                            )
+
+                    try:
+                        new_sub = await self.js_subscribe(
+                            entry["subject"], entry["callback"], **entry["kwargs"]
+                        )
+                        entry["sub"] = new_sub
+                    except Exception as e:
+                        logger.error(
+                            "BF-241: Consumer re-subscribe failed for %s (reason=%s): %s",
+                            entry["subject"], reason, e,
+                        )
+            finally:
+                self._resubscribing = False
+
+    async def _on_reconnected(self) -> None:
+        """BF-241: Reconnect callback — restore JetStream state.
+
+        Extracted from the nested closure in start() so it can be tested
+        directly. nats-py auto-resubscribes core NATS subscriptions on
+        reconnect, but JetStream streams and consumers must be explicitly
+        recreated.
+        """
+        self._connected = True
+        logger.info("NATS reconnected to %s", self._nc.connected_url)
+        if self._js:
+            try:
+                await self._recover_jetstream(reason="reconnect")
+            except asyncio.CancelledError:
+                raise  # propagate — shutdown in progress
+            except Exception as e:
+                logger.error(
+                    "BF-241: JetStream recovery on reconnect failed: %s — "
+                    "JetStream publishes will use BF-230 fallback until next "
+                    "reconnect or restart.",
+                    e,
+                )
+
     async def start(self) -> None:
         """Connect to NATS server."""
         if self._started:
@@ -281,10 +349,6 @@ class NATSBus:
         async def _disconnected_cb() -> None:
             self._connected = False
             logger.warning("NATS disconnected")
-
-        async def _reconnected_cb() -> None:
-            self._connected = True
-            logger.info("NATS reconnected to %s", self._nc.connected_url)
 
         async def _error_cb(e: Exception) -> None:
             logger.error("NATS error: %s", e)
@@ -300,7 +364,7 @@ class NATSBus:
                 max_reconnect_attempts=self._max_reconnect,
                 reconnect_time_wait=self._reconnect_wait,
                 disconnected_cb=_disconnected_cb,
-                reconnected_cb=_reconnected_cb,
+                reconnected_cb=self._on_reconnected,
                 error_cb=_error_cb,
                 closed_cb=_closed_cb,
             )
@@ -835,6 +899,10 @@ class MockNATSBus:
         self, callback: Callable[[str, str], Awaitable[None]]
     ) -> None:
         self._prefix_change_callbacks.append(callback)
+
+    async def _recover_jetstream(self, *, reason: str = "reconnect") -> None:
+        """No-op for mock bus — no server-side state to recover."""
+        pass
 
     async def remove_tracked_subscription(self, subject: str) -> bool:
         """Remove a tracked subscription by un-prefixed subject."""
