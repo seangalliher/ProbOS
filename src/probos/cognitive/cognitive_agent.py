@@ -137,8 +137,8 @@ class CognitiveAgent(BaseAgent):
         """
         now = time.monotonic()
         if (
-            self._qualification_standing is not None
-            and now - self._qualification_standing_ts < self._qualification_standing_ttl
+            getattr(self, '_qualification_standing', None) is not None
+            and now - getattr(self, '_qualification_standing_ts', 0) < getattr(self, '_qualification_standing_ttl', 300)
         ):
             return  # Cache still fresh
 
@@ -1216,7 +1216,7 @@ class CognitiveAgent(BaseAgent):
 
         # AD-595e: Inject qualification standing (after cache key, before LLM call)
         await self._refresh_qualification_standing()
-        if self._qualification_standing:
+        if getattr(self, '_qualification_standing', None):
             observation["qualification_standing"] = self._qualification_standing
 
         # --- AD-534: Procedural memory check (semantic match) ---
@@ -4977,6 +4977,11 @@ class CognitiveAgent(BaseAgent):
                     department=_dept,
                     trigger_type=intent.intent,
                     trigger_agent=params.get("from", ""),
+                    # AD-663: Provenance - the triggering observation is the root artifact
+                    source_origin_id=observation.get("correlation_id", "") or "",
+                    artifact_version=hashlib.sha256(
+                        str(query_text)[:500].encode("utf-8")
+                    ).hexdigest()[:16],
                 ),
                 correlation_id=observation.get("correlation_id", ""),
             )

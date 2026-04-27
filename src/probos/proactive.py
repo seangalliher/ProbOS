@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -217,7 +218,7 @@ class ProactiveCognitiveLoop:
         Called once per agent on first proactive think. Loads seed profile
         and extracts Big Five scores. Log-and-degrade on any failure.
         """
-        if not self._trait_adaptive_enabled:
+        if not getattr(self, '_trait_adaptive_enabled', True):
             return
         agent_id = agent.id
         if self._circuit_breaker.has_agent_traits(agent_id):
@@ -793,7 +794,7 @@ class ProactiveCognitiveLoop:
             return
 
         # AD-493: Semantic novelty gate — suppress rehashed observations
-        if self._novelty_gate:
+        if getattr(self, '_novelty_gate', None):
             try:
                 verdict = self._novelty_gate.check(agent.id, response_text)
                 if not verdict.is_novel:
@@ -985,6 +986,21 @@ class ProactiveCognitiveLoop:
                     default=0.0,
                 )
 
+                # AD-663: Provenance - identify observed WR content
+                _wr_origin = ""
+                _wr_version = ""
+                if _wr_activity:
+                    _first_post_id = _wr_activity[0].get("post_id", "") if _wr_activity else ""
+                    if _first_post_id:
+                        _wr_origin = f"wr-post:{_first_post_id}"
+                    _post_ids = sorted(
+                        a.get("post_id", "") for a in _wr_activity if a.get("post_id")
+                    )
+                    if _post_ids:
+                        _wr_version = hashlib.sha256(
+                            "|".join(_post_ids).encode("utf-8")
+                        ).hexdigest()[:16]
+
                 episode = Episode(
                     user_input=f"[Proactive thought] {callsign or agent.agent_type}: {thought_summary}",
                     timestamp=time.time(),
@@ -1006,6 +1022,9 @@ class ProactiveCognitiveLoop:
                         watch_section=derive_watch_section(),
                         event_log_window=float(len(rt.event_log.recent(seconds=60))) if hasattr(rt, 'event_log') and hasattr(rt.event_log, 'recent') else 0.0,
                         source_timestamp=_earliest_source_ts,  # AD-577
+                        # AD-663: Provenance
+                        source_origin_id=_wr_origin,
+                        artifact_version=_wr_version,
                     ),
                 )
                 from probos.cognitive.episodic import EpisodicMemory
@@ -2126,7 +2145,7 @@ class ProactiveCognitiveLoop:
                 rt.ward_room_router.record_agent_response(agent.id, _obs_tid)
 
         # AD-493: Record observation fingerprint after successful posting
-        if self._novelty_gate:
+        if getattr(self, '_novelty_gate', None):
             try:
                 self._novelty_gate.record(agent.id, text)
             except Exception:

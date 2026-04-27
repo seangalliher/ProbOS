@@ -10,6 +10,12 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-243 — getattr guards for __new__ test pattern (2026-04-27)
+
+**Context:** Build wave 3eab2c7 (AD-601/494/595e) added new `__init__` attributes (`_tcm`, `_trait_adaptive_enabled`, `_qualification_standing`, `_novelty_gate`) to EpisodicMemory, ProactiveCognitiveLoop, and CognitiveAgent. 108+ tests use `ClassName.__new__(ClassName)` to bypass expensive `__init__` and set only needed attributes. These tests crash with `AttributeError` on the new attributes.
+**Decision:** Fix at the source (access sites) with `getattr(self, '_attr', default)` guards rather than patching 50+ test files. The `__new__` pattern is a valid testing idiom for these large classes. Source-side guards are minimal, self-documenting, and protect against future `__new__` usage.
+**Consequences:** All `__new__`-based tests pass without modification. Future `__init__` attribute additions should follow the same `getattr` pattern at access sites if the attribute is accessed outside the constructor path.
+
 ### AD-601 — TCM Temporal Context Vectors (2026-04-26)
 
 **Context:** Temporal context was encoded as discrete watch_section labels (7 naval watches), producing binary match/mismatch scoring with no proximity gradient. Two episodes 5 minutes apart scored identically to two episodes 3 hours apart within the same watch.
@@ -278,6 +284,13 @@ This completes the identity restoration chain: BF-057 (callsign from birth cert)
 **Depends on:** AD-662 (AnchorFrame provenance fields), AD-663 (producer wiring)
 
 **Decision:** Create an AnomalyWindowManager service that detects system anomaly periods and manages their lifecycle. AD-662 added `anomaly_window_id` to AnchorFrame and social_verification.py applies the `anomaly_window_discount` (default 0.5) to pairs involving anomaly observations — but nothing currently detects anomaly windows or stamps episodes with window IDs. The field is consumer-ready infrastructure with no supplier. AnomalyWindowManager opens named windows (`aw-{uuid}`) based on system signals: NATS consumer lag (queue pressure), LLM error rate/latency spikes, trust cascade warnings (AD-558), and alert condition transitions (GREEN→YELLOW/RED). Episode stamping hooks into `EpisodicMemory.store()` to inject the active window ID into AnchorFrame at construction time — producers (AD-663) don't need per-site anomaly awareness. Retrospective tagging back-stamps recent episodes recorded before detection triggered. Note: `emergent_detector.py`'s `trust_anomaly_window` (600s rolling temporal window for anomaly count accumulation) is a different concept — it's a duration for counting anomaly occurrences, not a named period identifier.
+
+---
+
+### AD-663 — Provenance Producer Wiring (2026-04-26)
+**Context:** AD-662 added consumer-side provenance validation (`_share_artifact_ancestry`, anomaly window discount) but no producer populates the three AnchorFrame provenance fields. AD-665 adds graded scoring but is production no-op without populated fields. BF-226/227 demonstrated the failure mode: multiple agents observe the same WR post during queue pressure, observations pass spatiotemporal independence checks but share corrupted ancestry.
+**Decision:** Wire 4 highest-risk episode producers to populate `source_origin_id` and `artifact_version` at AnchorFrame construction. Dream consolidation reflections deferred — deterministic episode IDs already provide dedup, and provenance fields would encode the same content_hash as both origin and version, adding no independent signal. Provenance strategy is site-specific: WR uses post/thread IDs with type prefixes (`wr-post:`, `wr-thread:`), proactive uses observed WR post IDs from context, cognitive agent uses correlation_id. Version fingerprints use SHA-256 truncated to 16 hex chars. `anomaly_window_id` explicitly deferred — no automated anomaly detection infrastructure exists. Remaining producers (no-response, peer repetition, feedback, smoke test, DM) are low corroboration risk and retain empty provenance.
+**Consequences:** AD-662's consumer-side checks become active for new WR-derived episodes. AD-665's graded scoring will work for post-edit scenarios (same origin, different body hash → different artifact_version). Agents observing the same WR post during different duty cycles now trigger shared-ancestry detection. Legacy episodes retain empty provenance and are treated as independent (no behavioral change for existing data).
 
 ---
 

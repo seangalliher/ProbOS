@@ -963,7 +963,7 @@ class EpisodicMemory:
         # context only drifts on successful writes. Rejected episodes must not
         # shift the context sequence.
         _tcm_vector: list[float] | None = None
-        if self._tcm is not None:
+        if getattr(self, '_tcm', None) is not None:
             try:
                 _tcm_vector = self._tcm.update(
                     episode.user_input or "",
@@ -1944,7 +1944,7 @@ class EpisodicMemory:
         # AD-601: Batch-fetch metadata for TCM vector access (single ChromaDB round-trip).
         # Avoids N+1 queries inside the scoring loop.
         _meta_by_id: dict[str, dict] = {}
-        if self._tcm is not None:
+        if getattr(self, '_tcm', None) is not None:
             try:
                 _all_ids = list(ep_map.keys())
                 _bulk = self._collection.get(ids=_all_ids, include=["metadatas"])
@@ -2018,9 +2018,9 @@ class EpisodicMemory:
             _tcm_sim = 0.0
             _tcm_wt = 0.0
             _tcm_fallback_watch_wt = 0.05
-            if self._tcm is not None:
-                _tcm_wt = self._tcm_weight
-                _tcm_fallback_watch_wt = self._tcm_fallback_watch_weight
+            if getattr(self, '_tcm', None) is not None:
+                _tcm_wt = getattr(self, '_tcm_weight', 0.0)
+                _tcm_fallback_watch_wt = getattr(self, '_tcm_fallback_watch_weight', 0.05)
                 # Get stored TCM vector from pre-fetched metadata
                 _ep_meta = _meta_by_id.get(ep_id, {})
                 _tcm_raw = _ep_meta.get("tcm_vector_json", "")
