@@ -124,13 +124,13 @@ class TestComposeStandingOrdersParity:
     def test_proactive_compose_no_duplicate_action_vocab(self):
         """Proactive compose builder itself should NOT hardcode action vocab.
 
-        Standing orders (via compose_instructions) provide it. We mock
-        compose_instructions to return a bare string and verify the builder
+        Standing orders (via get_step_instructions) provide it. We mock
+        get_step_instructions to return a bare string and verify the builder
         doesn't add action tags on its own.
         """
         ctx = _base_context()
         with patch(
-            "probos.cognitive.sub_tasks.compose.compose_instructions",
+            "probos.cognitive.sub_tasks.compose.get_step_instructions",
             return_value="Mocked base instructions.",
         ):
             system_prompt, _ = _build_proactive_compose_prompt(
@@ -147,7 +147,7 @@ class TestComposeStandingOrdersParity:
     def test_compose_passes_agent_rank(self):
         ctx = _base_context(_agent_rank="Commander")
         with patch(
-            "probos.cognitive.sub_tasks.compose.compose_instructions",
+            "probos.cognitive.sub_tasks.compose.get_step_instructions",
             return_value="mocked instructions",
         ) as mock_ci:
             _build_ward_room_compose_prompt(ctx, [], "TestAgent", "science")
@@ -155,18 +155,20 @@ class TestComposeStandingOrdersParity:
             _, kwargs = mock_ci.call_args
             # agent_rank passed as keyword arg
             assert kwargs.get("agent_rank") == "Commander" or mock_ci.call_args[1].get("agent_rank") == "Commander"
+            assert kwargs.get("step_name") == "compose"
 
     def test_compose_passes_skill_profile(self):
         mock_profile = MagicMock()
         ctx = _base_context(_skill_profile=mock_profile)
         with patch(
-            "probos.cognitive.sub_tasks.compose.compose_instructions",
+            "probos.cognitive.sub_tasks.compose.get_step_instructions",
             return_value="mocked instructions",
         ) as mock_ci:
             _build_ward_room_compose_prompt(ctx, [], "TestAgent", "science")
             mock_ci.assert_called_once()
             _, kwargs = mock_ci.call_args
             assert kwargs.get("skill_profile") is mock_profile or mock_ci.call_args[1].get("skill_profile") is mock_profile
+            assert kwargs.get("step_name") == "compose"
 
 
 # ---------------------------------------------------------------------------
@@ -211,44 +213,47 @@ class TestComposeSocialBypass:
 # ---------------------------------------------------------------------------
 
 class TestAnalyzeEnrichment:
-    """BF-186: Analyze prompts use compose_instructions() not bare identity."""
+    """BF-186/AD-651: Analyze prompts use standing orders, not bare identity."""
 
     def test_analyze_thread_prompt_includes_standing_orders(self):
         ctx = _base_context()
         with patch(
-            "probos.cognitive.sub_tasks.analyze.compose_instructions",
+            "probos.cognitive.sub_tasks.analyze.get_step_instructions",
             return_value="You are TestAgent, science officer.\n\n## Ship Standing Orders\nTest orders",
         ) as mock_ci:
             system_prompt, _ = _build_thread_analysis_prompt(
                 ctx, [], "TestAgent", "science",
             )
             mock_ci.assert_called_once()
+            assert mock_ci.call_args.kwargs.get("step_name") == "analyze"
             assert "Ship Standing Orders" in system_prompt
             assert "ANALYZE" in system_prompt
 
     def test_analyze_situation_prompt_includes_standing_orders(self):
         ctx = _base_context()
         with patch(
-            "probos.cognitive.sub_tasks.analyze.compose_instructions",
+            "probos.cognitive.sub_tasks.analyze.get_step_instructions",
             return_value="You are TestAgent.\n\n## Ship Standing Orders\nTest",
         ) as mock_ci:
             system_prompt, _ = _build_situation_review_prompt(
                 ctx, [], "TestAgent", "science",
             )
             mock_ci.assert_called_once()
+            assert mock_ci.call_args.kwargs.get("step_name") == "analyze"
             assert "Ship Standing Orders" in system_prompt
             assert "ASSESS" in system_prompt
 
     def test_analyze_dm_prompt_includes_standing_orders(self):
         ctx = _base_context()
         with patch(
-            "probos.cognitive.sub_tasks.analyze.compose_instructions",
+            "probos.cognitive.sub_tasks.analyze.get_step_instructions",
             return_value="You are TestAgent.\n\n## Ship Standing Orders\nTest",
         ) as mock_ci:
             system_prompt, _ = _build_dm_comprehension_prompt(
                 ctx, [], "TestAgent", "science",
             )
             mock_ci.assert_called_once()
+            assert mock_ci.call_args.kwargs.get("step_name") == "analyze"
             assert "Ship Standing Orders" in system_prompt
             assert "UNDERSTAND" in system_prompt
 

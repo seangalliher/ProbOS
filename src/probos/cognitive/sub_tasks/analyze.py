@@ -14,7 +14,7 @@ import logging
 import time
 from typing import Any
 
-from probos.cognitive.standing_orders import compose_instructions
+from probos.cognitive.standing_orders import get_step_instructions
 from probos.cognitive.sub_task import SubTaskResult, SubTaskSpec, SubTaskType
 from probos.types import LLMRequest
 from probos.utils.json_extract import extract_json
@@ -55,9 +55,10 @@ def _build_thread_analysis_prompt(
 ) -> tuple[str, str]:
     """Build system + user prompts for Ward Room thread comprehension."""
     # BF-186: Full standing orders context for better SILENT/RESPOND decisions
-    system_prompt = compose_instructions(
+    system_prompt = get_step_instructions(
         agent_type=context.get("_agent_type", "agent"),
         hardcoded_instructions="",
+        step_name="analyze",
         callsign=callsign,
         agent_rank=context.get("_agent_rank"),
         skill_profile=context.get("_skill_profile"),
@@ -214,9 +215,10 @@ def _build_situation_review_prompt(
 ) -> tuple[str, str]:
     """Build system + user prompts for proactive situation assessment."""
     # BF-186: Full standing orders context
-    system_prompt = compose_instructions(
+    system_prompt = get_step_instructions(
         agent_type=context.get("_agent_type", "agent"),
         hardcoded_instructions="",
+        step_name="analyze",
         callsign=callsign,
         agent_rank=context.get("_agent_rank"),
         skill_profile=context.get("_skill_profile"),
@@ -415,9 +417,10 @@ def _build_dm_comprehension_prompt(
 ) -> tuple[str, str]:
     """Build system + user prompts for direct message understanding."""
     # BF-186: Full standing orders context
-    system_prompt = compose_instructions(
+    system_prompt = get_step_instructions(
         agent_type=context.get("_agent_type", "agent"),
         hardcoded_instructions="",
+        step_name="analyze",
         callsign=callsign,
         agent_rank=context.get("_agent_rank"),
         skill_profile=context.get("_skill_profile"),

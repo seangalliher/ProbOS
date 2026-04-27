@@ -211,6 +211,7 @@ def clear_cache() -> None:
     """
     _load_file.cache_clear()
     _build_personality_block.cache_clear()
+    # AD-651: StepInstructionRouter holds no cache — nothing to clear.
 
 
 # Module-level BilletRegistry reference, set at startup (AD-595c).
@@ -227,6 +228,55 @@ def set_billet_registry(registry: "BilletRegistry | None") -> None:
     """
     global _billet_registry
     _billet_registry = registry
+
+
+# Module-level StepInstructionRouter, set at startup (AD-651).
+_step_router: "StepInstructionRouter | None" = None
+
+
+def set_step_router(router: "StepInstructionRouter | None") -> None:
+    """Wire the StepInstructionRouter for per-step instruction slicing (AD-651).
+
+    Called from finalize.py at startup. Module-level state -- single-runtime
+    assumption. Tests must save/restore.
+    """
+    global _step_router
+    _step_router = router
+
+
+def get_step_instructions(
+    agent_type: str,
+    hardcoded_instructions: str,
+    step_name: str,
+    *,
+    orders_dir: Path | None = None,
+    department: str | None = None,
+    callsign: str | None = None,
+    agent_rank: str | None = None,
+    skill_profile: object | None = None,
+) -> str:
+    """Compose instructions filtered for a specific chain step.
+
+    Calls compose_instructions() to get the full text, then routes
+    through StepInstructionRouter if available and enabled.
+
+    Falls back to full compose_instructions() output when:
+    - No StepInstructionRouter is wired
+    - The router is disabled
+    - No category markers exist in the standing orders
+    """
+    full = compose_instructions(
+        agent_type=agent_type,
+        hardcoded_instructions=hardcoded_instructions,
+        orders_dir=orders_dir,
+        department=department,
+        callsign=callsign,
+        agent_rank=agent_rank,
+        skill_profile=skill_profile,
+    )
+    if _step_router is not None:
+        return _step_router.route(full, step_name)
+    return full
 
 
 def _resolve_billet_templates(text: str, registry: "BilletRegistry") -> str:

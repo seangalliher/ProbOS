@@ -16,7 +16,7 @@ import logging
 import time
 from typing import Any
 
-from probos.cognitive.standing_orders import compose_instructions
+from probos.cognitive.standing_orders import get_step_instructions
 from probos.cognitive.sub_task import SubTaskResult, SubTaskSpec, SubTaskType
 from probos.cognitive.sub_tasks import AD646B_DEDICATED_KEYS
 from probos.events import EventType
@@ -74,9 +74,10 @@ def _build_ward_room_compose_prompt(
     # Full system prompt with personality and standing orders (BF-186)
     agent_rank = context.get("_agent_rank")
     skill_profile = context.get("_skill_profile")
-    system_prompt = compose_instructions(
+    system_prompt = get_step_instructions(
         agent_type=context.get("_agent_type", "agent"),
         hardcoded_instructions="",
+        step_name="compose",
         callsign=callsign,
         agent_rank=agent_rank,
         skill_profile=skill_profile,
@@ -195,9 +196,10 @@ def _build_dm_compose_prompt(
     department: str,
 ) -> tuple[str, str]:
     """Build system + user prompts for direct message response composition."""
-    system_prompt = compose_instructions(
+    system_prompt = get_step_instructions(
         agent_type=context.get("_agent_type", "agent"),
         hardcoded_instructions="",
+        step_name="compose",
         callsign=callsign,
         agent_rank=context.get("_agent_rank"),
         skill_profile=context.get("_skill_profile"),
@@ -237,9 +239,10 @@ def _build_proactive_compose_prompt(
     department: str,
 ) -> tuple[str, str]:
     """Build system + user prompts for proactive observation composition."""
-    system_prompt = compose_instructions(
+    system_prompt = get_step_instructions(
         agent_type=context.get("_agent_type", "agent"),
         hardcoded_instructions="",
+        step_name="compose",
         callsign=callsign,
         agent_rank=context.get("_agent_rank"),
         skill_profile=context.get("_skill_profile"),

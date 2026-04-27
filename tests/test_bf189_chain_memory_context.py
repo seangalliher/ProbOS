@@ -157,7 +157,7 @@ class TestChainContextFormattedMemories:
 class TestThreadAnalysisMemory:
     """Part 2: _build_thread_analysis_prompt uses _formatted_memories."""
 
-    @patch("probos.cognitive.sub_tasks.analyze.compose_instructions", return_value="System prompt.")
+    @patch("probos.cognitive.sub_tasks.analyze.get_step_instructions", return_value="System prompt.")
     def test_thread_analysis_uses_formatted_memories(self, _mock_ci):
         """Prompt contains '## Your Episodic Memories' with formatted text."""
         ctx = _base_context(_formatted_memories=SAMPLE_FORMATTED_MEMORIES)
@@ -168,7 +168,7 @@ class TestThreadAnalysisMemory:
         # Must NOT contain Python list repr
         assert "[{" not in user_prompt
 
-    @patch("probos.cognitive.sub_tasks.analyze.compose_instructions", return_value="System prompt.")
+    @patch("probos.cognitive.sub_tasks.analyze.get_step_instructions", return_value="System prompt.")
     def test_thread_analysis_no_memories(self, _mock_ci):
         """No _formatted_memories → no memory section in prompt."""
         ctx = _base_context()  # No _formatted_memories key
@@ -185,7 +185,7 @@ class TestThreadAnalysisMemory:
 class TestDmComprehensionMemory:
     """Part 3: _build_dm_comprehension_prompt includes memories."""
 
-    @patch("probos.cognitive.sub_tasks.analyze.compose_instructions", return_value="System prompt.")
+    @patch("probos.cognitive.sub_tasks.analyze.get_step_instructions", return_value="System prompt.")
     def test_dm_comprehension_includes_memories(self, _mock_ci):
         """DM prompt contains memory section when _formatted_memories provided."""
         ctx = _base_context(_formatted_memories=SAMPLE_FORMATTED_MEMORIES)
@@ -193,7 +193,7 @@ class TestDmComprehensionMemory:
         assert "## Your Episodic Memories" in user_prompt
         assert "=== SHIP MEMORY ===" in user_prompt
 
-    @patch("probos.cognitive.sub_tasks.analyze.compose_instructions", return_value="System prompt.")
+    @patch("probos.cognitive.sub_tasks.analyze.get_step_instructions", return_value="System prompt.")
     def test_dm_comprehension_no_memories(self, _mock_ci):
         """No memories → prompt still valid, no empty header."""
         ctx = _base_context()
@@ -210,7 +210,7 @@ class TestDmComprehensionMemory:
 class TestSituationReviewMemory:
     """Part 4: _build_situation_review_prompt includes memories."""
 
-    @patch("probos.cognitive.sub_tasks.analyze.compose_instructions", return_value="System prompt.")
+    @patch("probos.cognitive.sub_tasks.analyze.get_step_instructions", return_value="System prompt.")
     def test_situation_review_includes_memories(self, _mock_ci):
         """Situation review prompt contains memory section."""
         ctx = _base_context(_formatted_memories=SAMPLE_FORMATTED_MEMORIES)
@@ -218,7 +218,7 @@ class TestSituationReviewMemory:
         assert "## Your Episodic Memories" in user_prompt
         assert "=== SHIP MEMORY ===" in user_prompt
 
-    @patch("probos.cognitive.sub_tasks.analyze.compose_instructions", return_value="System prompt.")
+    @patch("probos.cognitive.sub_tasks.analyze.get_step_instructions", return_value="System prompt.")
     def test_situation_review_no_memories(self, _mock_ci):
         """No memories → prompt still valid."""
         ctx = _base_context()

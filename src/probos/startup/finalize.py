@@ -144,6 +144,13 @@ async def finalize_startup(
         set_billet_registry(runtime.ontology.billet_registry)
         logger.info("AD-595c: Standing orders billet templating wired")
 
+    # AD-651: Wire StepInstructionRouter into standing orders
+    from probos.cognitive.standing_orders import set_step_router
+    from probos.cognitive.step_instruction_router import StepInstructionRouter
+    _step_router = StepInstructionRouter(config.step_instruction)
+    set_step_router(_step_router)
+    logger.info("AD-651: StepInstructionRouter wired into standing orders")
+
     # AD-595d: Wire QualificationStore into BilletRegistry
     billet_reg = runtime.ontology.billet_registry if runtime.ontology else None
     qual_store = getattr(runtime, '_qualification_store', None)
