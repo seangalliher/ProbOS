@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS journal (
     intent_id        TEXT NOT NULL DEFAULT '',
     dag_node_id      TEXT NOT NULL DEFAULT '',
     response_hash    TEXT NOT NULL DEFAULT '',
-    procedure_id     TEXT NOT NULL DEFAULT ''
+    procedure_id     TEXT NOT NULL DEFAULT '',
+    correlation_id   TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_journal_agent ON journal(agent_id);
@@ -48,6 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_journal_intent ON journal(intent);
 
 _SCHEMA_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_journal_intent_id ON journal(intent_id);
+CREATE INDEX IF NOT EXISTS idx_journal_correlation_id ON journal(correlation_id);
 """
 
 
@@ -79,6 +81,7 @@ class CognitiveJournal:
             ("dag_node_id", "TEXT NOT NULL DEFAULT ''"),
             ("response_hash", "TEXT NOT NULL DEFAULT ''"),
             ("procedure_id", "TEXT NOT NULL DEFAULT ''"),  # AD-534: procedure replay tracking
+            ("correlation_id", "TEXT NOT NULL DEFAULT ''"),  # AD-492: cognitive correlation ID
         ]:
             try:
                 await self._db.execute(f"ALTER TABLE journal ADD COLUMN {col} {typedef}")
@@ -165,6 +168,7 @@ class CognitiveJournal:
         dag_node_id: str = "",
         response_hash: str = "",
         procedure_id: str = "",  # AD-534: procedure ID if this was a replay
+        correlation_id: str = "",  # AD-492: cognitive cycle correlation ID
     ) -> None:
         """Append a journal entry. Fire-and-forget — never raises."""
         if not self._db:
@@ -176,8 +180,9 @@ class CognitiveJournal:
                     prompt_tokens, completion_tokens, total_tokens,
                     latency_ms, intent, success, cached, request_id,
                     prompt_hash, response_length,
-                    intent_id, dag_node_id, response_hash, procedure_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    intent_id, dag_node_id, response_hash, procedure_id,
+                    correlation_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry_id, timestamp, agent_id, agent_type, tier, model,
                     prompt_tokens, completion_tokens, total_tokens,
@@ -185,6 +190,7 @@ class CognitiveJournal:
                     1 if cached else 0, request_id,
                     prompt_hash, response_length,
                     intent_id, dag_node_id, response_hash, procedure_id,
+                    correlation_id,
                 ),
             )
             await self._db.commit()

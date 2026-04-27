@@ -46,7 +46,7 @@ from probos.config import (  # AD-537: observation config
 )
 from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — dream consolidation mutates trust
 from probos.mesh.routing import HebbianRouter, REL_INTENT
-from probos.types import DreamReport, Episode
+from probos.types import DreamReport, Episode, MemorySource
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +210,12 @@ class DreamingEngine:
         7. Procedure extraction from success clusters (AD-532)
         8. Gap prediction
         9. Emergence metrics (AD-557)
+        10. Notebook quality metrics (AD-555)
+        11. Spaced retrieval therapy (AD-541c)
+        12. Activation-based memory pruning (AD-567d / AD-462b / AD-593)
+        13. Behavioral metrics (AD-569)
+        14. Source attribution consolidation (AD-568d)
+        15. Reflection episode promotion (AD-599)
         """
         t_start = time.monotonic()
 
@@ -1186,6 +1192,27 @@ class DreamingEngine:
         except Exception:
             logger.debug("AD-568d: Dream step 14 (source attribution) failed")
 
+        # Step 15: Reflection Episode Promotion (AD-599)
+        reflections_created = 0
+        try:
+            if self.config.reflection_enabled and self.episodic_memory:
+                reflections_created = await self._step_15_reflection_promotion(
+                    episodes=episodes,
+                    clusters=clusters,
+                    convergence_reports=convergence_reports,
+                    emergence_capacity=emergence_capacity,
+                    coordination_balance=coordination_balance,
+                    notebook_consolidations=notebook_consolidations,
+                    behavioral_quality_score=behavioral_quality_score,
+                )
+                if reflections_created:
+                    logger.info(
+                        "AD-599 Step 15: Created %d reflection episodes",
+                        reflections_created,
+                    )
+        except Exception:
+            logger.debug("AD-599 Step 15: Reflection promotion failed", exc_info=True)
+
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
@@ -1247,6 +1274,8 @@ class DreamingEngine:
             # AD-568e: Faithfulness verification
             mean_faithfulness_score=_source_attr_result.get("mean_faithfulness_score"),
             unfaithful_episodes=_source_attr_result.get("unfaithful_episodes", 0),
+            # AD-599: Reflection episodes
+            reflections_created=reflections_created,
         )
 
         logger.info(
@@ -2188,6 +2217,155 @@ class DreamingEngine:
             result["faithfulness_episodes_assessed"] = len(_faithfulness_scores)
 
         return result
+
+    async def _step_15_reflection_promotion(
+        self,
+        *,
+        episodes: list,
+        clusters: list,
+        convergence_reports: list[dict],
+        emergence_capacity: float | None,
+        coordination_balance: float | None,
+        notebook_consolidations: int,
+        behavioral_quality_score: float | None,
+    ) -> int:
+        """AD-599: Promote dream consolidation insights into recallable episodes.
+
+        Scans this dream cycle's outputs for high-value analytical insights and
+        creates [Reflection] episodes in EpisodicMemory. These synthetic episodes
+        are semantically rich and naturally score well on pattern/trend queries
+        without custom retrieval logic.
+
+        Returns the number of reflection episodes created.
+
+        Rate limiting: max ``config.reflection_max_per_cycle`` per dream cycle.
+        Deduplication: content-hash check against existing episodes (write-once
+        guard in EpisodicMemory.store() handles collisions).
+        """
+        import hashlib
+
+        from probos.types import AnchorFrame
+
+        max_reflections = self.config.reflection_max_per_cycle
+        importance = self.config.reflection_min_importance
+        created = 0
+
+        # Collect candidate reflection texts from this cycle's outputs.
+        # Each candidate is (content_text, agent_ids_list).
+        candidates: list[tuple[str, list[str]]] = []
+
+        # Source 1: Convergence reports (Step 7g) — cross-agent analytical findings
+        for conv in convergence_reports:
+            agents = conv.get("agents", [])
+            topic = conv.get("topic", "unknown")
+            coherence = conv.get("coherence", 0.0)
+            depts = conv.get("departments", [])
+            text = (
+                f"[Reflection] Convergence detected across {len(agents)} agents "
+                f"in {len(depts)} departments on topic '{topic}' "
+                f"(coherence={coherence:.3f}). "
+                f"Agents: {', '.join(agents)}. "
+                f"Departments: {', '.join(depts)}."
+            )
+            independence = conv.get("independence", "")
+            if independence:
+                text += f" Independence: {independence}."
+            candidates.append((text, agents))
+
+        # Source 2: Emergence metrics snapshot (Step 9)
+        if emergence_capacity is not None:
+            parts = [
+                f"[Reflection] Dream cycle emergence snapshot: "
+                f"capacity={emergence_capacity:.3f}",
+            ]
+            if coordination_balance is not None:
+                parts.append(f"coordination_balance={coordination_balance:.3f}")
+            if behavioral_quality_score is not None:
+                parts.append(f"behavioral_quality={behavioral_quality_score:.3f}")
+            text = ", ".join(parts) + "."
+            candidates.append((text, []))
+
+        # Source 3: Notebook consolidation summary (Step 7g)
+        if notebook_consolidations > 0:
+            text = (
+                f"[Reflection] Dream consolidation merged {notebook_consolidations} "
+                f"redundant notebook clusters. Knowledge base compacted."
+            )
+            candidates.append((text, []))
+
+        # Source 4: Cluster-level patterns (Step 6) — only dominant clusters
+        for cluster in clusters:
+            if len(getattr(cluster, "episode_ids", [])) < 5:
+                continue  # Only reflect on substantial clusters
+            is_success = getattr(cluster, "is_success_dominant", False)
+            is_failure = getattr(cluster, "is_failure_dominant", False)
+            if not (is_success or is_failure):
+                continue
+            ep_count = len(cluster.episode_ids)
+            label = "success" if is_success else "failure"
+            cluster_id = getattr(cluster, "cluster_id", "unknown")
+            # Extract agent participation from cluster episodes
+            cluster_ep_ids = set(cluster.episode_ids)
+            cluster_agents: list[str] = []
+            for ep in episodes:
+                if ep.id in cluster_ep_ids:
+                    cluster_agents.extend(ep.agent_ids)
+            cluster_agents = sorted(set(cluster_agents))
+            text = (
+                f"[Reflection] Identified {label}-dominant pattern cluster "
+                f"(cluster_id={cluster_id}) "
+                f"with {ep_count} episodes. "
+                f"Agents involved: {', '.join(cluster_agents[:5])}."
+            )
+            anchor_summary = getattr(cluster, "anchor_summary", None)
+            if anchor_summary:
+                text += f" Anchor context: {str(anchor_summary)[:200]}."
+            candidates.append((text, cluster_agents[:5]))
+
+        # Apply rate limit — take the first N candidates (convergence > emergence > notebook > clusters)
+        candidates = candidates[:max_reflections]
+
+        now = time.time()
+
+        for content_text, involved_agents in candidates:
+            # Deterministic ID from content hash — prevents duplicates across cycles
+            content_hash = hashlib.sha256(content_text.encode()).hexdigest()[:16]
+            episode_id = f"reflection-{content_hash}"
+
+            # Build AnchorFrame with dream provenance
+            anchors = AnchorFrame(
+                trigger_type="dream_consolidation",
+            )
+
+            episode = Episode(
+                id=episode_id,
+                timestamp=now,
+                user_input=content_text,
+                dag_summary={
+                    "type": "reflection",
+                    "source": "dream_consolidation",
+                    "involved_agents": involved_agents,
+                },
+                outcomes=[],
+                reflection=content_text,
+                agent_ids=[],
+                duration_ms=0.0,
+                source=MemorySource.REFLECTION,
+                anchors=anchors,
+                importance=importance,
+            )
+
+            try:
+                await self.episodic_memory.store(episode)
+                created += 1
+            except Exception:
+                logger.debug(
+                    "AD-599: Failed to store reflection episode %s",
+                    episode_id[:12],
+                    exc_info=True,
+                )
+
+        return created
 
 
 class DreamScheduler:

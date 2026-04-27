@@ -160,6 +160,25 @@ async def init_cognitive_services(
             logger.warning("AD-567d: Activation tracker start failed (non-fatal)", exc_info=True)
             activation_tracker = None
 
+    # AD-601: Wire Temporal Context Model
+    if episodic_memory and config.memory.tcm_enabled:
+        try:
+            from probos.cognitive.temporal_context import TemporalContextModel, TCMConfig
+
+            _tcm_config = TCMConfig(
+                dimension=config.memory.tcm_dimension,
+                drift_rate=config.memory.tcm_drift_rate,
+                weight=config.memory.tcm_weight,
+                fallback_watch_weight=config.memory.tcm_fallback_watch_weight,
+            )
+            _tcm = TemporalContextModel(config=_tcm_config)
+            episodic_memory.set_tcm(_tcm)
+            logger.info("AD-601: TCM wired (d=%d, rho=%.3f, w=%.2f)",
+                         config.memory.tcm_dimension, config.memory.tcm_drift_rate,
+                         config.memory.tcm_weight)
+        except Exception:
+            logger.warning("AD-601: TCM wiring failed (non-fatal)", exc_info=True)
+
     # AD-541f: Start eviction audit log
     eviction_audit = getattr(episodic_memory, "_eviction_audit", None) if episodic_memory else None
     if eviction_audit:

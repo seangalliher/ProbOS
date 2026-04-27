@@ -62,6 +62,7 @@ class BillRuntime:
         self._emit_event_fn = emit_event_fn
         self._instances: dict[str, BillInstance] = {}
         self._definitions: dict[str, BillDefinition] = {}  # AD-618d: bill_slug → BillDefinition
+        self._qualification_config: Any = None  # AD-595e: late-bound
 
     def set_event_callback(
         self, fn: Callable[[EventType, dict[str, Any]], None],
@@ -72,6 +73,10 @@ class BillRuntime:
     def set_billet_registry(self, registry: Any) -> None:
         """Late-bind BilletRegistry."""
         self._billet_registry = registry
+
+    def set_qualification_config(self, config: Any) -> None:
+        """AD-595e: Late-bind qualification enforcement config."""
+        self._qualification_config = config
 
     # ------------------------------------------------------------------
     # Activation
@@ -202,7 +207,7 @@ class BillRuntime:
     # Step lifecycle
     # ------------------------------------------------------------------
 
-    def start_step(
+    async def start_step(
         self,
         instance_id: str,
         step_id: str,
@@ -215,6 +220,9 @@ class BillRuntime:
 
         Returns True if the step was successfully started, False if the
         step doesn't exist, is not PENDING, or the instance is terminal.
+
+        AD-595e: Checks qualification gate before activation if enforcement
+        is enabled. Shadow mode logs but does not block.
         """
         instance = self._instances.get(instance_id)
         if not instance or instance.is_terminal:
@@ -222,6 +230,13 @@ class BillRuntime:
 
         step_state = instance.step_states.get(step_id)
         if not step_state or step_state.status != StepStatus.PENDING:
+            return False
+
+        # AD-595e: Qualification gate
+        blocked = await self._check_step_qualification(
+            instance_id, step_id, agent_id, agent_type, agent_callsign,
+        )
+        if blocked:
             return False
 
         step_state.status = StepStatus.ACTIVE
@@ -240,6 +255,67 @@ class BillRuntime:
         })
 
         return True
+
+    async def _check_step_qualification(
+        self,
+        instance_id: str,
+        step_id: str,
+        agent_id: str,
+        agent_type: str,
+        agent_callsign: str,
+    ) -> bool:
+        """AD-595e: Qualification gate for bill step start.
+
+        Checks if the agent is qualified for their billet before allowing
+        them to start a step. Returns True if BLOCKED, False if allowed.
+
+        Graceful degradation: returns False (allow) if config missing,
+        enforcement disabled, or billet registry unavailable.
+        """
+        if not self._qualification_config:
+            return False
+        if not getattr(self._qualification_config, 'enforcement_enabled', False):
+            return False
+        if not self._billet_registry:
+            return False
+
+        try:
+            # Look up agent's billet assignment and check qualifications
+            standing = await self._billet_registry.get_qualification_standing(
+                agent_type, agent_id=agent_id,
+            )
+            if standing.get("qualified", True):
+                return False  # Qualified — allow
+
+            # Not qualified
+            log_only = getattr(self._qualification_config, 'enforcement_log_only', True)
+            payload = {
+                "gate": "bill_step",
+                "agent_id": agent_id,
+                "agent_type": agent_type,
+                "callsign": agent_callsign,
+                "instance_id": instance_id,
+                "step_id": step_id,
+                "missing": standing.get("missing", []),
+                "log_only": log_only,
+            }
+            self._emit(EventType.QUALIFICATION_GATE_BLOCKED, payload)
+
+            if log_only:
+                logger.info(
+                    "AD-595e: Qualification gate (shadow): %s missing %s for step %s",
+                    agent_type, standing.get("missing", []), step_id,
+                )
+                return False  # Shadow mode — log but allow
+            else:
+                logger.warning(
+                    "AD-595e: Qualification gate BLOCKED: %s missing %s for step %s",
+                    agent_type, standing.get("missing", []), step_id,
+                )
+                return True  # Blocked
+        except Exception:
+            logger.debug("AD-595e: Qualification gate error — allowing", exc_info=True)
+            return False  # Graceful degradation
 
     def complete_step(
         self,

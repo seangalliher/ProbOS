@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, ClassVar
 
@@ -104,6 +105,11 @@ class CognitiveAgent(BaseAgent):
         self._sub_task_executor = None
         self._pending_sub_task_chain = None
 
+        # AD-595e: Cached qualification standing (TTL-refreshed)
+        self._qualification_standing: dict | None = None
+        self._qualification_standing_ts: float = 0.0
+        self._qualification_standing_ttl: float = 300.0  # 5 min
+
         # Validate instructions exist
         if not self.instructions:
             raise ValueError(
@@ -122,6 +128,37 @@ class CognitiveAgent(BaseAgent):
     def set_sub_task_executor(self, executor) -> None:
         """AD-632a: Wire sub-task executor for Level 3 reasoning."""
         self._sub_task_executor = executor
+
+    async def _refresh_qualification_standing(self) -> None:
+        """AD-595e: Refresh cached qualification standing (TTL-based).
+
+        Looks up standing via runtime.ontology.billet_registry. Degrades
+        gracefully — sets None if unavailable.
+        """
+        now = time.monotonic()
+        if (
+            self._qualification_standing is not None
+            and now - self._qualification_standing_ts < self._qualification_standing_ttl
+        ):
+            return  # Cache still fresh
+
+        try:
+            rt = getattr(self, 'runtime', None)
+            if not rt:
+                return
+            ontology = getattr(rt, 'ontology', None)
+            if not ontology:
+                return
+            billet_reg = getattr(ontology, 'billet_registry', None)
+            if not billet_reg:
+                return
+
+            self._qualification_standing = await billet_reg.get_qualification_standing(
+                self.agent_type, agent_id=self.id,
+            )
+            self._qualification_standing_ts = now
+        except Exception:
+            logger.debug("AD-595e: Qualification standing refresh failed", exc_info=True)
 
     @property
     def working_memory(self):
@@ -1037,20 +1074,37 @@ class CognitiveAgent(BaseAgent):
             return False
 
     async def perceive(self, intent: Any) -> dict:
-        """Package the intent as an observation for the LLM."""
+        """Package the intent as an observation for the LLM.
+
+        AD-492: Generates a correlation_id at perception time to thread
+        through the entire cognitive cycle (decide → act → episode → post).
+        """
+        # AD-492: Generate correlation ID for this cognitive cycle
+        correlation_id = uuid.uuid4().hex[:12]
+
         if isinstance(intent, IntentMessage):
-            return {
+            observation = {
                 "intent": intent.intent,
                 "params": intent.params,
                 "context": intent.context,
                 "intent_id": intent.id,  # AD-432: Preserve for journal traceability
+                "correlation_id": correlation_id,  # AD-492
             }
-        # Dict fallback (for compatibility with BaseAgent contract)
-        return {
-            "intent": intent.get("intent", "unknown") if isinstance(intent, dict) else "unknown",
-            "params": intent.get("params", {}) if isinstance(intent, dict) else {},
-            "context": intent.get("context", "") if isinstance(intent, dict) else "",
-        }
+        else:
+            # Dict fallback (for compatibility with BaseAgent contract)
+            observation = {
+                "intent": intent.get("intent", "unknown") if isinstance(intent, dict) else "unknown",
+                "params": intent.get("params", {}) if isinstance(intent, dict) else {},
+                "context": intent.get("context", "") if isinstance(intent, dict) else "",
+                "correlation_id": correlation_id,  # AD-492
+            }
+
+        # AD-492: Store correlation_id on working memory for cross-reference
+        _wm = getattr(self, '_working_memory', None)
+        if _wm:
+            _wm.set_correlation_id(correlation_id)
+
+        return observation
 
     def _compose_dm_instructions(self, brief: bool = False) -> str:
         """Build DM instruction block with department-grouped roster (BF-051/052)."""
@@ -1150,6 +1204,7 @@ class CognitiveAgent(BaseAgent):
                             intent=observation.get("intent", ""),
                             intent_id=observation.get("intent_id", ""),
                             cached=True,
+                            correlation_id=observation.get("correlation_id", ""),
                         )
                     except Exception:
                         logger.debug("Journal recording failed", exc_info=True)
@@ -1158,6 +1213,11 @@ class CognitiveAgent(BaseAgent):
                 del cache[cache_key]
 
         _CACHE_MISSES[self.agent_type] = _CACHE_MISSES.get(self.agent_type, 0) + 1
+
+        # AD-595e: Inject qualification standing (after cache key, before LLM call)
+        await self._refresh_qualification_standing()
+        if self._qualification_standing:
+            observation["qualification_standing"] = self._qualification_standing
 
         # --- AD-534: Procedural memory check (semantic match) ---
         procedural_result = await self._check_procedural_memory(observation)
@@ -1176,6 +1236,7 @@ class CognitiveAgent(BaseAgent):
                         cached=True,
                         total_tokens=0,
                         procedure_id=procedural_result.get("procedure_id", ""),
+                        correlation_id=observation.get("correlation_id", ""),
                     )
                 except Exception:
                     logger.debug("Journal recording failed", exc_info=True)
@@ -1461,6 +1522,7 @@ class CognitiveAgent(BaseAgent):
                     response_length=len(response.content),
                     intent_id=observation.get("intent_id", ""),
                     response_hash=hashlib.md5(response.content[:500].encode()).hexdigest()[:12],
+                    correlation_id=observation.get("correlation_id", ""),
                 )
             except Exception:
                 logger.debug("Journal recording failed", exc_info=True)  # Non-critical — never block agent cognition
@@ -2288,6 +2350,7 @@ class CognitiveAgent(BaseAgent):
                             "score": _intro_faith.score,
                             "contradictions": _intro_faith.contradictions[:3],
                             "claims_detected": _intro_faith.claims_detected,
+                            "correlation_id": observation.get("correlation_id", ""),
                         })
                     except Exception:
                         pass
@@ -2364,6 +2427,7 @@ class CognitiveAgent(BaseAgent):
                             "used_procedure": True,
                             "compound_dispatched": True,
                             "steps_dispatched": compound_result.get("steps_dispatched", 0),
+                            "correlation_id": observation.get("correlation_id", ""),
                         })
                     except Exception:
                         pass
@@ -2549,6 +2613,7 @@ class CognitiveAgent(BaseAgent):
                     "intent_type": intent.intent,
                     "success": success,
                     "used_procedure": decision.get("cached", False),
+                    "correlation_id": observation.get("correlation_id", ""),
                 })
             except Exception:
                 pass  # Fire-and-forget, never block the intent pipeline
@@ -2573,6 +2638,7 @@ class CognitiveAgent(BaseAgent):
                         "rejection_reason": self._last_fallback_info.get("reason", ""),
                         "llm_response": _llm_output[:MAX_FALLBACK_RESPONSE_CHARS],
                         "timestamp": time.time(),
+                        "correlation_id": observation.get("correlation_id", ""),
                     })
                 except Exception:
                     pass  # Fire-and-forget
@@ -2581,6 +2647,11 @@ class CognitiveAgent(BaseAgent):
         # AD-654a: Agent self-posting for ward_room_notification
         if intent.intent == "ward_room_notification" and success and report.get("result"):
             await self._self_post_ward_room_response(intent, str(report["result"]))
+
+        # AD-492: Clear correlation_id — cycle complete
+        _wm = getattr(self, '_working_memory', None)
+        if _wm:
+            _wm.clear_correlation_id()
 
         return IntentResult(
             intent_id=intent.id,
@@ -4907,6 +4978,7 @@ class CognitiveAgent(BaseAgent):
                     trigger_type=intent.intent,
                     trigger_agent=params.get("from", ""),
                 ),
+                correlation_id=observation.get("correlation_id", ""),
             )
             from probos.cognitive.episodic import EpisodicMemory
             if EpisodicMemory.should_store(episode):

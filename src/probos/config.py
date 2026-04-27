@@ -365,6 +365,12 @@ class MemoryConfig(BaseModel):
     recall_convergence_bonus: float = 0.10  # AD-584c: bonus for multi-channel hits
     recall_temporal_match_weight: float = 0.25       # BF-147→BF-155: bonus for temporal cue match in score_recall()
     recall_temporal_mismatch_penalty: float = 0.15   # BF-155: penalty when query watch differs from episode watch
+    # AD-601: TCM Temporal Context Model
+    tcm_enabled: bool = True
+    tcm_dimension: int = 16
+    tcm_drift_rate: float = 0.95
+    tcm_weight: float = 0.15
+    tcm_fallback_watch_weight: float = 0.05
     recall_context_budget_chars: int = 4000  # ~4K char memory budget
     # AD-567c: Anchor confidence scoring
     anchor_dimension_weights: dict[str, float] = {
@@ -471,6 +477,10 @@ class DreamingConfig(BaseModel):
     # AD-593: Pruning acceleration — configurable parameters (previously hardcoded)
     prune_min_age_hours: int = 24  # Standard tier: only prune episodes older than this
     prune_max_fraction: float = 0.10  # Standard tier: max fraction of candidates per cycle
+    # AD-599: Reflection episode promotion
+    reflection_enabled: bool = True
+    reflection_max_per_cycle: int = 3        # Cap reflections per dream cycle to prevent flooding
+    reflection_min_importance: int = 8       # Importance score for reflection episodes (1-10 scale)
     # AD-593: Aggressive pruning tier — targets old, low-activation episodes
     aggressive_prune_enabled: bool = True
     aggressive_prune_min_age_hours: int = 168  # 7 days
@@ -753,6 +763,25 @@ class EmergentDetectorConfig(BaseModel):
     adaptive_min_history: int = 8      # Minimum history entries before adaptive detection activates
 
 
+class NoveltyGateConfig(BaseModel):
+    """AD-493: Semantic novelty gate — suppress rehashed observations."""
+    enabled: bool = True
+    # Cosine similarity threshold — observations above this vs any recent
+    # fingerprint are considered "not novel" and suppressed.
+    # MiniLM cosine: 0.85+ = near-paraphrase, 0.70-0.85 = same topic/different angle,
+    # 0.50-0.70 = related topic, <0.50 = different topic.
+    similarity_threshold: float = 0.82
+    # How many recent observation fingerprints to retain per agent.
+    max_fingerprints_per_agent: int = 50
+    # Decay: fingerprints older than this (hours) are evicted, making
+    # the topic "novel again." 0 = no decay (fingerprints persist until
+    # max_fingerprints_per_agent pushes them out).
+    decay_hours: float = 24.0
+    # Minimum text length to gate. Very short responses (acknowledgments,
+    # social replies) skip the novelty check.
+    min_text_length: int = 80
+
+
 class EarnedAgencyConfig(BaseModel):
     """Earned Agency — trust-tiered behavioral gating (AD-357)."""
     enabled: bool = False
@@ -856,6 +885,12 @@ class CircuitBreakerConfig(BaseModel):
     critical_decay_seconds: float = 3600.0  # 1h quiet -> critical decays to red
     critical_trip_window_seconds: float = 3600.0  # Window for counting trips toward critical
     critical_trip_count: int = 3           # Trips in window to reach critical
+
+
+class TraitAdaptiveConfig(BaseModel):
+    """Trait-adaptive circuit breaker configuration (AD-494)."""
+
+    enabled: bool = True
 
 
 class TrustDampeningConfig(BaseModel):
@@ -1022,6 +1057,10 @@ class QualificationConfig(BaseModel):
     significance_threshold: float = 0.15
     test_timeout_seconds: float = 60.0
 
+    # AD-595e: Qualification Gate Enforcement
+    enforcement_enabled: bool = False
+    enforcement_log_only: bool = True
+
     # AD-642: Communication Quality Benchmarks
     communication_benchmarks: CommunicationBenchmarksConfig = CommunicationBenchmarksConfig()
 
@@ -1081,6 +1120,7 @@ class SystemConfig(BaseModel):
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
     firewall: FirewallConfig = FirewallConfig()
     emergent_detector: EmergentDetectorConfig = EmergentDetectorConfig()
+    novelty_gate: NoveltyGateConfig = NoveltyGateConfig()
     earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()
     proactive_cognitive: ProactiveCognitiveConfig = ProactiveCognitiveConfig()
     persistent_tasks: PersistentTasksConfig = PersistentTasksConfig()
@@ -1088,6 +1128,7 @@ class SystemConfig(BaseModel):
     medical: MedicalConfig = MedicalConfig()
     counselor: CounselorConfig = CounselorConfig()
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
+    trait_adaptive: TraitAdaptiveConfig = TraitAdaptiveConfig()  # AD-494
     trust_dampening: TrustDampeningConfig = TrustDampeningConfig()
     emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()

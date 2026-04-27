@@ -18,6 +18,7 @@ from typing import Any
 
 from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.similarity import jaccard_similarity
+from probos.cognitive.temporal_context import serialize_tcm_vector, deserialize_tcm_vector
 from probos.types import AnchorFrame, Episode, RecallScore
 
 logger = logging.getLogger(__name__)
@@ -670,6 +671,9 @@ class EpisodicMemory:
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
         self._activation_tracker: Any = None  # AD-567d: ACT-R activation tracker
         self._participant_index: Any = None  # AD-570b: Participant index sidecar
+        self._tcm: Any = None  # AD-601: Temporal Context Model engine
+        self._tcm_weight: float = 0.0             # AD-601: set by set_tcm() when wired
+        self._tcm_fallback_watch_weight: float = 0.0   # AD-601: set by set_tcm() when wired
 
     def set_activation_tracker(self, tracker: Any) -> None:
         """AD-567d: Wire the activation tracker after construction."""
@@ -678,6 +682,16 @@ class EpisodicMemory:
     def set_participant_index(self, index: Any) -> None:
         """AD-570b: Wire the participant index after construction."""
         self._participant_index = index
+
+    def set_tcm(self, tcm: Any) -> None:
+        """AD-601: Wire the Temporal Context Model after construction.
+
+        Reads scoring weights from the TCM's public config property (single source of truth).
+        """
+        self._tcm = tcm
+        if tcm is not None:
+            self._tcm_weight = tcm.config.weight
+            self._tcm_fallback_watch_weight = tcm.config.fallback_watch_weight
 
     async def start(self) -> None:
         import chromadb
@@ -943,6 +957,26 @@ class EpisodicMemory:
                 episode.id[:12],
             )
             return  # Do not overwrite
+
+        # AD-601: Capture TCM context vector snapshot at encoding time.
+        # Placed AFTER all admission gates (rate limit, dedup, write-once) so
+        # context only drifts on successful writes. Rejected episodes must not
+        # shift the context sequence.
+        _tcm_vector: list[float] | None = None
+        if self._tcm is not None:
+            try:
+                _tcm_vector = self._tcm.update(
+                    episode.user_input or "",
+                    timestamp=episode.timestamp,
+                )
+            except Exception:
+                logger.debug("AD-601: TCM update failed", exc_info=True)
+
+        # AD-601: Inject TCM vector into metadata after admission gates
+        if _tcm_vector is not None:
+            metadata["tcm_vector_json"] = serialize_tcm_vector(_tcm_vector)
+        else:
+            metadata["tcm_vector_json"] = ""
 
         self._collection.add(
             ids=[episode.id],
@@ -1796,6 +1830,9 @@ class EpisodicMemory:
         query_has_temporal_intent: bool = False,   # BF-155: True when query_watch_section is non-empty
         importance: int = 5,               # AD-598: episode importance (1-10)
         importance_weight: float = 0.0,    # AD-598: weight in composite (0.0 = disabled)
+        tcm_similarity: float = 0.0,       # AD-601: TCM temporal context similarity (0.0–1.0)
+        tcm_weight: float = 0.0,           # AD-601: weight in composite (0.0 = disabled)
+        tcm_fallback_watch_weight: float = 0.05,  # AD-601: residual watch_section weight when TCM active
     ) -> RecallScore:
         """Compute composite salience score for a recalled episode (AD-567b/c, AD-584c).
 
@@ -1836,20 +1873,24 @@ class EpisodicMemory:
         if semantic_similarity > 0.0 and keyword_hits > 0:
             composite += max(0.0, convergence_bonus)
 
-        # BF-147: temporal match bonus — query temporal cue matches episode anchor
-        if temporal_match:
-            composite += max(0.0, temporal_match_weight)
-        # BF-155: temporal mismatch suppression — penalize episodes from wrong watch
-        # when query has explicit temporal intent. Only penalize when the episode
-        # HAS a watch_section that DIFFERS from the query — don't penalize episodes
-        # with no temporal context.
-        elif query_has_temporal_intent and not temporal_match:
-            _ep_watch = (
-                getattr(episode, "anchors", None)
-                and getattr(episode.anchors, "watch_section", "")
-            )
-            if _ep_watch:
-                composite -= min(temporal_mismatch_penalty, composite)  # clamp: don't go below 0
+        # AD-601: TCM temporal context gradient (replaces binary watch_section matching)
+        if tcm_weight > 0.0 and tcm_similarity > 0.0:
+            # TCM provides smooth temporal proximity — primary temporal signal
+            composite += tcm_weight * tcm_similarity
+            # Residual watch_section match — small discrete bonus on top of TCM
+            if temporal_match:
+                composite += max(0.0, tcm_fallback_watch_weight)
+        else:
+            # Fallback: no TCM vector available (legacy episodes) — use original BF-147/BF-155 logic
+            if temporal_match:
+                composite += max(0.0, temporal_match_weight)
+            elif query_has_temporal_intent and not temporal_match:
+                _ep_watch = (
+                    getattr(episode, "anchors", None)
+                    and getattr(episode.anchors, "watch_section", "")
+                )
+                if _ep_watch:
+                    composite -= min(temporal_mismatch_penalty, composite)
 
         return RecallScore(
             episode=episode,
@@ -1859,6 +1900,7 @@ class EpisodicMemory:
             hebbian_weight=hebbian_weight,
             recency_weight=recency_weight,
             anchor_confidence=anchor_confidence,
+            tcm_similarity=tcm_similarity,
             composite_score=composite,
         )
 
@@ -1899,6 +1941,20 @@ class EpisodicMemory:
         ep_map: dict[str, tuple[Episode, float]] = {
             ep.id: (ep, sim) for ep, sim in scored_eps
         }
+        # AD-601: Batch-fetch metadata for TCM vector access (single ChromaDB round-trip).
+        # Avoids N+1 queries inside the scoring loop.
+        _meta_by_id: dict[str, dict] = {}
+        if self._tcm is not None:
+            try:
+                _all_ids = list(ep_map.keys())
+                _bulk = self._collection.get(ids=_all_ids, include=["metadatas"])
+                if _bulk and _bulk["ids"] and _bulk["metadatas"]:
+                    _meta_by_id = {
+                        _bulk["ids"][i]: _bulk["metadatas"][i] or {}
+                        for i in range(len(_bulk["ids"]))
+                    }
+            except Exception:
+                logger.debug("AD-601: Batch metadata fetch failed", exc_info=True)
 
         # 2. Keyword retrieval — merge any new episodes
         keyword_map: dict[str, int] = {}
@@ -1958,6 +2014,21 @@ class EpisodicMemory:
                 and getattr(ep.anchors, "watch_section", "") == query_watch_section
             )
 
+            # AD-601: TCM temporal context similarity
+            _tcm_sim = 0.0
+            _tcm_wt = 0.0
+            _tcm_fallback_watch_wt = 0.05
+            if self._tcm is not None:
+                _tcm_wt = self._tcm_weight
+                _tcm_fallback_watch_wt = self._tcm_fallback_watch_weight
+                # Get stored TCM vector from pre-fetched metadata
+                _ep_meta = _meta_by_id.get(ep_id, {})
+                _tcm_raw = _ep_meta.get("tcm_vector_json", "")
+                if _tcm_raw:
+                    _stored_vec = deserialize_tcm_vector(_tcm_raw)
+                    if _stored_vec:
+                        _tcm_sim = self._tcm.compute_similarity(_stored_vec)
+
             rs = self.score_recall(
                 episode=ep,
                 semantic_similarity=sim,
@@ -1973,6 +2044,9 @@ class EpisodicMemory:
                 query_has_temporal_intent=bool(query_watch_section),       # BF-155
                 importance=ep.importance,       # AD-598
                 importance_weight=0.05,         # AD-598: modest tiebreaker
+                tcm_similarity=_tcm_sim,
+                tcm_weight=_tcm_wt,
+                tcm_fallback_watch_weight=_tcm_fallback_watch_wt,
             )
             results.append(rs)
 

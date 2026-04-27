@@ -63,12 +63,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import struct
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["TemporalContextModel", "TCMConfig"]
+__all__ = ["TemporalContextModel", "TCMConfig", "serialize_tcm_vector", "deserialize_tcm_vector"]
 
 
 @dataclass
@@ -76,7 +74,7 @@ class TCMConfig:
     """Configuration for the Temporal Context Model."""
     dimension: int = 16           # Context vector dimensionality
     drift_rate: float = 0.95      # rho — exponential decay (0.0–1.0)
-    tcm_weight: float = 0.15      # Weight of TCM similarity in score_recall composite
+    weight: float = 0.15          # Weight of TCM similarity in score_recall composite
     fallback_watch_weight: float = 0.05  # Residual weight for legacy watch_section match (was 0.10)
 
 
@@ -94,10 +92,21 @@ class TemporalContextModel:
         self._config = config or TCMConfig()
         self._dim = self._config.dimension
         self._rho = self._config.drift_rate
+        # SHA-256 produces 32 bytes. With 2 bytes per dimension, max dimension is 16.
+        if self._dim * 2 > 32:
+            raise ValueError(
+                f"TCM dimension {self._dim} exceeds SHA-256 capacity "
+                f"(max 16 for 32-byte digest with 2 bytes/dim)"
+            )
         # Initialize context vector to zeros — first update will set it to the
         # first episode's projection (since 0.95 * zeros + 0.05 * signal ≈ signal * 0.05).
         self._context: list[float] = [0.0] * self._dim
         self._initialized = False  # Track whether any episode has been encoded
+
+    @property
+    def config(self) -> TCMConfig:
+        """Public read-only access to TCM configuration."""
+        return self._config
 
     @property
     def dimension(self) -> int:
@@ -151,6 +160,13 @@ class TemporalContextModel:
         """Cosine similarity between current context and a stored context vector.
 
         Returns 0.0–1.0 (clamped). 1.0 = identical temporal context.
+
+        Design note: raw cosine ranges [-1, 1], but negative values (anti-correlated
+        context) are clamped to 0.0 intentionally. Anti-correlation during long drifts
+        means "maximally different temporal context," which should score as "unrelated"
+        (0.0), not as a negative signal. The TCM similarity is a proximity measure,
+        not a direction indicator. Do NOT change this to a linear [-1,1] → [0,1] map
+        without understanding the downstream score_recall() composite implications.
         """
         if not stored_vector or len(stored_vector) != self._dim:
             return 0.0
@@ -173,8 +189,8 @@ class TemporalContextModel:
         raw: list[float] = []
         for i in range(self._dim):
             # Use 2 bytes per dimension (16 dims * 2 bytes = 32 bytes = SHA-256 output)
-            idx = (i * 2) % len(digest)
-            val = (digest[idx] * 256 + digest[(idx + 1) % len(digest)]) / 65535.0
+            idx = i * 2
+            val = (digest[idx] * 256 + digest[idx + 1]) / 65535.0
             raw.append(val * 2.0 - 1.0)  # Map [0,1] to [-1,1]
 
         return _normalize(raw)
@@ -201,7 +217,7 @@ def _normalize(v: list[float]) -> list[float]:
     """Normalize a vector to unit length."""
     mag = math.sqrt(sum(x * x for x in v))
     if mag < 1e-12:
-        return v  # Zero vector — can't normalize
+        return list(v)  # Zero vector — return copy to prevent mutation of caller's input
     return [x / mag for x in v]
 
 
@@ -241,15 +257,17 @@ def deserialize_tcm_vector(raw: str) -> list[float] | None:
 
 4. **Compact serialization.** Context vectors stored as JSON arrays in ChromaDB metadata. At d=16 with 6 decimal places, each vector serializes to ~180 bytes — well within ChromaDB's metadata limits.
 
+5. **Warm-boot discontinuity (accepted).** After a process restart, the in-memory `_context` resets to zeros and the first post-restart episode triggers first-episode initialization. This means the first ~20 episodes have context vectors unrelated to the previous run, and recall similarities for pre-restart episodes will be artificially low until the context drifts to a new stable state (`0.95^20 ≈ 0.36`). Warm-boot persistence (saving/restoring the context vector across restarts) is a future AD. AD-601 accepts this per-process discontinuity.
+
 ---
 
 ## Section 2: Add TCM Config to MemoryConfig
 
 **File:** `src/probos/config.py` (EDIT)
 
-Add TCM configuration fields to the `MemoryConfig` class. Place after the `recall_temporal_mismatch_penalty` field (line 367).
+Add TCM configuration fields to the `MemoryConfig` class. Place after the `recall_temporal_mismatch_penalty` field.
 
-### Current code (lines 366-368):
+### Current code (find the `recall_temporal_mismatch_penalty` and `recall_context_budget_chars` fields):
 ```python
     recall_temporal_match_weight: float = 0.25       # BF-147→BF-155: bonus for temporal cue match in score_recall()
     recall_temporal_mismatch_penalty: float = 0.15   # BF-155: penalty when query watch differs from episode watch
@@ -265,7 +283,8 @@ Add TCM configuration fields to the `MemoryConfig` class. Place after the `recal
     tcm_dimension: int = 16                # Context vector dimensionality
     tcm_drift_rate: float = 0.95           # rho — higher = slower drift, longer temporal memory
     tcm_weight: float = 0.15              # Weight of TCM similarity in score_recall composite
-    tcm_fallback_watch_weight: float = 0.05  # Residual watch_section weight when TCM active (was 0.10 for match, 0.15 for mismatch)
+    tcm_fallback_watch_weight: float = 0.05  # Residual watch_section weight when TCM active (was 0.25 for match, 0.15 for mismatch)
+    # NOTE: tcm_weight and tcm_fallback_watch_weight must match TCMConfig defaults — wired in startup/cognitive_services.py
     recall_context_budget_chars: int = 4000  # ~4K char memory budget
 ```
 
@@ -282,26 +301,37 @@ Add TCM configuration fields to the `MemoryConfig` class. Place after the `recal
 
 ### Step 3a: Add TCM engine to EpisodicMemory
 
-Add a `_tcm` attribute to `EpisodicMemory.__init__`. Place after `self._participant_index` (line 582):
+Add a `_tcm` attribute to `EpisodicMemory.__init__`. Place after `self._participant_index = None  # AD-570b`:
 
 ```python
         self._tcm: Any = None  # AD-601: Temporal Context Model engine
 ```
 
-Add a setter method after `set_participant_index` (line 590):
+Add a setter method after `set_participant_index()`:
 
 ```python
     def set_tcm(self, tcm: Any) -> None:
-        """AD-601: Wire the Temporal Context Model after construction."""
+        """AD-601: Wire the Temporal Context Model after construction.
+
+        Reads scoring weights from the TCM's public config property (single source of truth).
+        """
         self._tcm = tcm
+        if tcm is not None:
+            self._tcm_weight = tcm.config.weight
+            self._tcm_fallback_watch_weight = tcm.config.fallback_watch_weight
 ```
 
 ### Step 3b: Update context vector on store
 
-In the `store()` method, after the importance scoring block (after line 844: `episode = Episode(...)`) and before `metadata = self._episode_to_metadata(episode)` (line 846), add TCM context vector capture:
+In the `store()` method, place the TCM update **after all admission gates** (rate limit, content dedup, importance scoring, write-once guard) and **before** `self._collection.add()`. This ensures the context vector only drifts when an episode is actually committed — rejected duplicates, rate-limited episodes, and write-once collisions do not corrupt the context sequence.
+
+Specifically, insert after the write-once guard (`if existing and existing["ids"]: ... return`) and before `self._collection.add(...)`:
 
 ```python
-        # AD-601: Capture TCM context vector snapshot at encoding time
+        # AD-601: Capture TCM context vector snapshot at encoding time.
+        # Placed AFTER all admission gates (rate limit, dedup, write-once) so
+        # context only drifts on successful writes. Rejected episodes must not
+        # shift the context sequence.
         _tcm_vector: list[float] | None = None
         if self._tcm is not None:
             try:
@@ -315,55 +345,41 @@ In the `store()` method, after the importance scoring block (after line 844: `ep
 
 ### Step 3c: Store TCM vector in metadata
 
-In `_episode_to_metadata()` (static method at line 1440), add the TCM vector serialization. Place after the `"importance"` field (line 1478):
+Update the `metadata = self._episode_to_metadata(episode)` call (which is currently BEFORE the write-once guard) to pass the TCM vector. Since we now compute `_tcm_vector` after the write-once guard, we need to **reorder**: move the `metadata` construction to after the TCM update, or inject the TCM vector into metadata after computation.
 
-**This requires passing the TCM vector into `_episode_to_metadata`.** Since it is a `@staticmethod`, the TCM vector cannot be read from `self`. Two options:
-
-**Option A (chosen): Store TCM vector via a transient Episode attribute.**
-
-The `Episode` dataclass is frozen, so we cannot set an attribute on it. Instead, pass the TCM vector separately. Change `_episode_to_metadata` from a `@staticmethod` to accept an optional `tcm_vector` parameter:
-
-In `_episode_to_metadata` signature, change:
-```python
-    @staticmethod
-    def _episode_to_metadata(ep: Episode) -> dict:
-```
-to:
-```python
-    @staticmethod
-    def _episode_to_metadata(ep: Episode, *, tcm_vector: list[float] | None = None) -> dict:
-```
-
-At the end of the metadata dict construction, before the `return metadata` (line 1493), add:
+**Approach:** Keep `metadata = self._episode_to_metadata(episode)` where it is (before write-once guard), then inject the TCM vector into metadata after the guard passes:
 
 ```python
-        # AD-601: TCM temporal context vector
-        if tcm_vector is not None:
-            from probos.cognitive.temporal_context import serialize_tcm_vector
-            metadata["tcm_vector_json"] = serialize_tcm_vector(tcm_vector)
+        # AD-601: Inject TCM vector into metadata after admission gates
+        if _tcm_vector is not None:
+            metadata["tcm_vector_json"] = serialize_tcm_vector(_tcm_vector)
         else:
             metadata["tcm_vector_json"] = ""
 ```
 
-### Step 3d: Update store() call to pass TCM vector
+Place this between the TCM update block and `self._collection.add(...)`.
 
-In `store()`, update the `metadata = self._episode_to_metadata(episode)` call (line 846) to:
+### Step 3d: Add import for serialization helpers
+
+**Add the import at the module top of `episodic.py`** alongside other `from probos.cognitive.*` imports:
 
 ```python
-        metadata = self._episode_to_metadata(episode, tcm_vector=_tcm_vector)
+from probos.cognitive.temporal_context import serialize_tcm_vector, deserialize_tcm_vector
 ```
 
-### Step 3e: Update all other callers of `_episode_to_metadata`
+No changes to `_episode_to_metadata` — its signature remains `(ep: Episode) -> dict` (unchanged from current codebase). The TCM vector is injected into metadata directly by `store()` after the admission gates pass (Step 3c above).
 
-Search for all callers of `_episode_to_metadata` in the codebase. The new `tcm_vector` parameter is keyword-only with a default of `None`, so existing callers that don't pass it will continue to work — they just won't store a TCM vector. This is correct: `_force_update()`, `seed()`, and migration code should preserve existing metadata rather than generating new TCM vectors.
+### Step 3e: Verify store() metadata call is unchanged
 
-**Builder verification:** Grep for `_episode_to_metadata(` across all files. Verify each caller either:
-1. Already passes no `tcm_vector` (correct — uses default `None`)
-2. Is `store()`, which now passes `_tcm_vector`
+In `store()`, the existing `metadata = self._episode_to_metadata(episode)` call remains unchanged — no new parameters. The TCM vector is injected into `metadata` directly after the admission gates (Step 3c above).
 
-### Step 3f: Deserialize TCM vector on recall
+### Step 3f: Verify all other callers of `_episode_to_metadata`
 
-In `_metadata_to_episode()` (line 1572), the TCM vector is stored in metadata, not in the Episode dataclass. No change needed to `_metadata_to_episode` itself — the vector is accessed directly from metadata in `score_recall()` (Section 4).
+**Builder verification:** Grep for `_episode_to_metadata(` across all files. Verify no caller passes a `tcm_vector` parameter — the signature is unchanged. All callers (including `_force_update()`, `seed()`, migration code, and test callers like `test_ad541e_content_hashing.py:122`) continue to work without modification.
+
+### Step 3g: Deserialize TCM vector on recall
+
+In `_metadata_to_episode()`, the TCM vector is stored in metadata, not in the Episode dataclass. No change needed to `_metadata_to_episode()` itself — the vector is accessed directly from metadata in `score_recall()` (Section 4).
 
 However, for the `recall_weighted()` method to access TCM vectors, each candidate's metadata must be preserved alongside the episode. Currently, `recall_for_agent_scored()` returns `list[tuple[Episode, float]]` — no metadata. Rather than changing that return type (which would break callers), the TCM similarity will be computed in `recall_weighted()` by reading the TCM vector from the episode's metadata at the point where the episode is fetched from ChromaDB.
 
@@ -377,7 +393,9 @@ However, for the `recall_weighted()` method to access TCM vectors, each candidat
 
 ### Step 4a: Add TCM similarity parameter to `score_recall()`
 
-In `score_recall()` (line 1694), add a new parameter after `importance_weight`:
+In `score_recall()`, add new parameters after `importance_weight`:
+
+**Note:** The only production caller of `score_recall()` is the scoring loop inside `recall_weighted()`, which uses keyword args exclusively. New keyword-only parameters with defaults are backward-compatible. Builder should grep for `score_recall(` to confirm no other callers exist.
 
 ```python
         tcm_similarity: float = 0.0,       # AD-601: TCM temporal context similarity (0.0–1.0)
@@ -387,9 +405,9 @@ In `score_recall()` (line 1694), add a new parameter after `importance_weight`:
 
 ### Step 4b: Add TCM contribution to composite score
 
-In the composite score computation (after the convergence bonus block, around line 1747), **replace** the existing BF-147/BF-155 temporal match/mismatch block with TCM-aware logic:
+In the composite score computation (after the convergence bonus block), **replace** the existing BF-147/BF-155 temporal match/mismatch block with TCM-aware logic:
 
-**Current code (lines 1749-1762):**
+**Current code (the `# BF-147: temporal match bonus` block through the `composite -= min(...)` line):**
 ```python
         # BF-147: temporal match bonus — query temporal cue matches episode anchor
         if temporal_match:
@@ -437,7 +455,7 @@ In the composite score computation (after the convergence bonus block, around li
 
 **File:** `src/probos/types.py` (EDIT)
 
-Add a `tcm_similarity` field to `RecallScore` (after `anchor_confidence`, line 401):
+Add a `tcm_similarity` field to `RecallScore` (after `anchor_confidence`):
 
 ```python
     tcm_similarity: float = 0.0        # AD-601: TCM temporal context similarity (0.0–1.0)
@@ -445,7 +463,7 @@ Add a `tcm_similarity` field to `RecallScore` (after `anchor_confidence`, line 4
 
 ### Step 4d: Pass TCM similarity in RecallScore construction
 
-In `score_recall()`, update the `return RecallScore(...)` (line 1764) to include:
+In `score_recall()`, update the `return RecallScore(...)` to include:
 
 ```python
             tcm_similarity=tcm_similarity,
@@ -461,9 +479,9 @@ In `score_recall()`, update the `return RecallScore(...)` (line 1764) to include
 
 In `recall_weighted()`, the `ep_map` currently stores `dict[str, tuple[Episode, float]]`. We need to also carry metadata for TCM vector access. Change the map and population logic.
 
-After line 1809 (`ep_map: dict[str, tuple[Episode, float]] = {`), change:
+After the `ep_map` dict comprehension (which builds `{ep.id: (ep, sim) for ep, sim in scored_eps}`), add:
 
-**Current code (lines 1809-1811):**
+**Current code:**
 ```python
         ep_map: dict[str, tuple[Episode, float]] = {
             ep.id: (ep, sim) for ep, sim in scored_eps
@@ -475,15 +493,25 @@ After line 1809 (`ep_map: dict[str, tuple[Episode, float]] = {`), change:
         ep_map: dict[str, tuple[Episode, float]] = {
             ep.id: (ep, sim) for ep, sim in scored_eps
         }
-        # AD-601: Parallel metadata map for TCM vector access.
-        # recall_for_agent_scored doesn't return metadata, so we fetch it lazily
-        # in the scoring loop below (only for episodes that need TCM scoring).
-        _meta_cache: dict[str, dict] = {}
+        # AD-601: Batch-fetch metadata for TCM vector access (single ChromaDB round-trip).
+        # Avoids N+1 queries inside the scoring loop.
+        _meta_by_id: dict[str, dict] = {}
+        if self._tcm is not None:
+            try:
+                _all_ids = list(ep_map.keys())
+                _bulk = self._collection.get(ids=_all_ids, include=["metadatas"])
+                if _bulk and _bulk["ids"] and _bulk["metadatas"]:
+                    _meta_by_id = {
+                        _bulk["ids"][i]: _bulk["metadatas"][i] or {}
+                        for i in range(len(_bulk["ids"]))
+                    }
+            except Exception:
+                logger.debug("AD-601: Batch metadata fetch failed", exc_info=True)
 ```
 
 ### Step 5b: Compute TCM similarity in the scoring loop
 
-In the scoring loop (line 1841: `for ep_id, (ep, sim) in ep_map.items():`), after the existing `kw_hits` computation (line 1864) and temporal_match computation (line 1865-1869), add TCM similarity:
+In the scoring loop (the `for ep_id, (ep, sim) in ep_map.items():` block), after the existing `kw_hits` computation and `temporal_match` computation, add TCM similarity:
 
 ```python
             # AD-601: TCM temporal context similarity
@@ -491,21 +519,12 @@ In the scoring loop (line 1841: `for ep_id, (ep, sim) in ep_map.items():`), afte
             _tcm_wt = 0.0
             _tcm_fallback_watch_wt = 0.05
             if self._tcm is not None:
-                # Read config
-                _tcm_wt = getattr(self, '_tcm_weight', 0.15)
-                _tcm_fallback_watch_wt = getattr(self, '_tcm_fallback_watch_weight', 0.05)
-                # Get stored TCM vector from metadata
-                if ep_id not in _meta_cache:
-                    try:
-                        _meta_result = self._collection.get(ids=[ep_id], include=["metadatas"])
-                        if _meta_result and _meta_result["ids"] and _meta_result["metadatas"]:
-                            _meta_cache[ep_id] = _meta_result["metadatas"][0]
-                    except Exception:
-                        pass
-                _ep_meta = _meta_cache.get(ep_id, {})
+                _tcm_wt = self._tcm_weight
+                _tcm_fallback_watch_wt = self._tcm_fallback_watch_weight
+                # Get stored TCM vector from pre-fetched metadata
+                _ep_meta = _meta_by_id.get(ep_id, {})
                 _tcm_raw = _ep_meta.get("tcm_vector_json", "")
                 if _tcm_raw:
-                    from probos.cognitive.temporal_context import deserialize_tcm_vector
                     _stored_vec = deserialize_tcm_vector(_tcm_raw)
                     if _stored_vec:
                         _tcm_sim = self._tcm.compute_similarity(_stored_vec)
@@ -513,7 +532,7 @@ In the scoring loop (line 1841: `for ep_id, (ep, sim) in ep_map.items():`), afte
 
 Then update the `self.score_recall(...)` call to pass TCM parameters:
 
-In the existing `score_recall()` call (lines 1871-1886), add after `importance_weight=0.05`:
+In the existing `score_recall()` call, add after `importance_weight=0.05`:
 
 ```python
                 tcm_similarity=_tcm_sim,
@@ -526,17 +545,8 @@ In the existing `score_recall()` call (lines 1871-1886), add after `importance_w
 Add config attributes to `__init__` (after `self._tcm`, from Step 3a):
 
 ```python
-        self._tcm_weight: float = 0.15            # AD-601: from TCMConfig/MemoryConfig
-        self._tcm_fallback_watch_weight: float = 0.05  # AD-601: residual watch_section weight
-```
-
-Add a configuration method after `set_tcm`:
-
-```python
-    def configure_tcm(self, weight: float, fallback_watch_weight: float) -> None:
-        """AD-601: Set TCM scoring weights from config."""
-        self._tcm_weight = weight
-        self._tcm_fallback_watch_weight = fallback_watch_weight
+        self._tcm_weight: float = 0.0             # AD-601: set by set_tcm() when wired
+        self._tcm_fallback_watch_weight: float = 0.0   # AD-601: set by set_tcm() when wired
 ```
 
 ---
@@ -545,32 +555,33 @@ Add a configuration method after `set_tcm`:
 
 **No new startup module changes required.** The TCM engine is wired into EpisodicMemory via `set_tcm()`, following the same late-binding pattern as `set_activation_tracker()` and `set_participant_index()`.
 
-**Builder must find the startup code that calls `set_activation_tracker()` and add TCM wiring after it.** 
+**Wiring location:** `src/probos/startup/cognitive_services.py`, after the `set_activation_tracker()` call (around line 157).
 
-Grep for `set_activation_tracker` to find the exact startup file and location. Add:
+**First, add the import at the module top of `cognitive_services.py`:**
+
+```python
+from probos.cognitive.temporal_context import TemporalContextModel, TCMConfig
+```
+
+**Then add the wiring block:**
 
 ```python
     # AD-601: Wire Temporal Context Model
-    if getattr(config, 'memory', None) and config.memory.tcm_enabled:
-        from probos.cognitive.temporal_context import TemporalContextModel, TCMConfig
+    if config.memory.tcm_enabled:
         _tcm_config = TCMConfig(
             dimension=config.memory.tcm_dimension,
             drift_rate=config.memory.tcm_drift_rate,
-            tcm_weight=config.memory.tcm_weight,
-            fallback_watch_weight=config.memory.tcm_fallback_watch_weight,
-        )
-        _tcm = TemporalContextModel(config=_tcm_config)
-        episodic_memory.set_tcm(_tcm)
-        episodic_memory.configure_tcm(
             weight=config.memory.tcm_weight,
             fallback_watch_weight=config.memory.tcm_fallback_watch_weight,
         )
+        _tcm = TemporalContextModel(config=_tcm_config)
+        episodic_memory.set_tcm(_tcm)  # Wires engine + reads scoring weights from config
         logger.info("AD-601: TCM wired (d=%d, rho=%.3f, w=%.2f)",
                      config.memory.tcm_dimension, config.memory.tcm_drift_rate,
                      config.memory.tcm_weight)
 ```
 
-**Builder verification:** Grep for `set_activation_tracker` and `set_participant_index` across `src/probos/startup/` to find the exact module. Add the TCM wiring in the same function, immediately after the activation tracker wiring.
+**Builder:** Verify `logger` exists at module level in `cognitive_services.py` (`grep -n '^logger' src/probos/startup/cognitive_services.py`). If absent, add `logger = logging.getLogger(__name__)` at the top of the module.
 
 ---
 
@@ -586,8 +597,8 @@ Grep for `set_activation_tracker` to find the exact startup file and location. A
 2. `test_tcm_first_update_sets_context` — First `update()` sets context directly (no zero-decay), returns normalized vector.
 3. `test_tcm_drift_rate_controls_decay` — Two updates with `rho=0.95`: second context is `0.95 * first_context + 0.05 * second_signal`, normalized. Verify intermediate value is between the two signals.
 4. `test_tcm_similarity_nearby_episodes` — Store episode A's context. Update with episode B immediately after. Compute similarity between current context and A's stored context. Should be high (> 0.8).
-5. `test_tcm_similarity_decays_over_many_episodes` — Store episode A's context. Update 20 times with different episodes. Similarity between current context and A's stored context should be low (< 0.5).
-6. `test_tcm_similarity_gradient` — Store context at episodes 0, 5, 10, 15, 20. Compute similarity of each to context at episode 20. Verify monotonically decreasing: sim(20,20) > sim(15,20) > sim(10,20) > sim(5,20) > sim(0,20).
+5. `test_tcm_similarity_decays_over_many_episodes` — Store episode A's context. Update 20 times with different episodes. Similarity between current context and A's stored context should be low (< 0.6). Note: with rho=0.95, the surviving fraction is ~0.36, but cosine similarity in 16-D hash space is not identical to the decay fraction. Use `< 0.6` for robustness against hash-projection RNG.
+6. `test_tcm_similarity_gradient` — Store context at episodes 0, 5, 10, 15, 20. Compute similarity of each to context at episode 20. Use deterministic content strings (e.g., `f"episode-{i}"`) for reproducibility. Verify endpoints decrease: `sim(20,20) > sim(0,20)` and `sim(15,20) > sim(0,20)`. Note: strict adjacent-pair monotonicity (e.g., `sim(10,20) > sim(5,20)`) may occasionally fail due to hash-projection alignment in 16-D space — only assert endpoint ordering.
 7. `test_tcm_set_context_vector` — `set_context_vector()` restores state. Subsequent `compute_similarity()` uses restored vector.
 8. `test_tcm_dimension_mismatch` — `set_context_vector()` with wrong dimension raises `ValueError`. `compute_similarity()` with wrong dimension returns 0.0.
 
@@ -601,9 +612,9 @@ Grep for `set_activation_tracker` to find the exact startup file and location. A
 
 12. `test_store_captures_tcm_vector` — Store an episode with TCM wired. Verify `tcm_vector_json` metadata is non-empty and deserializes to a list of correct dimension.
 13. `test_store_without_tcm_no_vector` — Store without TCM wired. Verify `tcm_vector_json` metadata is empty string.
-14. `test_score_recall_tcm_smooth_gradient` — Call `score_recall()` with `tcm_similarity=0.9, tcm_weight=0.15` vs `tcm_similarity=0.3, tcm_weight=0.15`. Verify the first produces a higher composite score. Verify the difference equals approximately `0.15 * (0.9 - 0.3) = 0.09`.
+14. `test_score_recall_tcm_smooth_gradient` — Call `score_recall()` with `tcm_similarity=0.9, tcm_weight=0.15` vs `tcm_similarity=0.3, tcm_weight=0.15`, passing **identical values for all other parameters** (same `semantic_similarity`, `recency`, `importance_weight`, `temporal_match=False`, `query_has_temporal_intent=False`). Verify the first produces a higher composite score. Verify the difference equals `pytest.approx(0.15 * (0.9 - 0.3), abs=1e-6)` — i.e., exactly `0.09`.
 15. `test_score_recall_tcm_fallback_for_legacy` — Call `score_recall()` with `tcm_similarity=0.0, tcm_weight=0.15` (no TCM vector). Verify it falls back to BF-147 binary `temporal_match` logic. A `temporal_match=True` episode should get the full `temporal_match_weight` bonus.
-16. `test_score_recall_tcm_no_mismatch_penalty` — When TCM is active (`tcm_similarity > 0`), verify no mismatch penalty is applied even when `query_has_temporal_intent=True` and `temporal_match=False`. The TCM gradient already demotes distant episodes.
+16. `test_score_recall_tcm_no_mismatch_penalty` — When TCM is active (`tcm_similarity > 0`), verify no mismatch penalty is applied even when `query_has_temporal_intent=True` and `temporal_match=False`. The TCM gradient already demotes distant episodes. Also assert the composite score is `>= baseline_score + tcm_weight * tcm_similarity` to verify the TCM branch doesn't silently zero out other contributions.
 
 **RecallScore dataclass (1 test):**
 
@@ -612,8 +623,8 @@ Grep for `set_activation_tracker` to find the exact startup file and location. A
 **Config (3 tests):**
 
 18. `test_memory_config_tcm_defaults` — `MemoryConfig()` has `tcm_enabled=True`, `tcm_dimension=16`, `tcm_drift_rate=0.95`, `tcm_weight=0.15`.
-19. `test_tcm_config_dataclass` — `TCMConfig()` defaults match `MemoryConfig` defaults.
-20. `test_tcm_disabled_skips_wiring` — When `tcm_enabled=False`, verify `set_tcm()` is not called (mock the startup wiring path).
+19. `test_tcm_config_dataclass` — `TCMConfig()` defaults: `dimension=16`, `drift_rate=0.95`, `weight=0.15`, `fallback_watch_weight=0.05`. Verify these match the corresponding `MemoryConfig` defaults (`tcm_dimension`, `tcm_drift_rate`, `tcm_weight`, `tcm_fallback_watch_weight`).
+20. `test_tcm_disabled_skips_wiring` — Construct `EpisodicMemory` without calling `set_tcm()` (simulating `tcm_enabled=False` in startup). Verify `episodic_memory._tcm is None`. Store an episode and verify the metadata has `tcm_vector_json == ""` (no TCM vector generated). This tests the gate's effect, not just the gate's existence.
 
 ---
 

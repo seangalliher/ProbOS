@@ -65,6 +65,61 @@ class AgentBreakerState:
     last_zone_transition: tuple[str, str] | None = None  # (old, new) or None if no change
 
 
+@dataclass(frozen=True)
+class TraitAdaptiveThresholds:
+    """Per-agent circuit breaker thresholds adapted from personality traits.
+
+    Each field is a multiplier applied to the corresponding base threshold
+    in CircuitBreakerConfig. Values > 1.0 make the threshold more lenient
+    (harder to trip), values < 1.0 make it more sensitive (easier to trip).
+
+    The multipliers are computed deterministically from Big Five scores.
+    Default multipliers (all 1.0) reproduce the original uniform behavior.
+    """
+    velocity_multiplier: float = 1.0       # Applied to velocity_threshold
+    similarity_multiplier: float = 1.0     # Applied to similarity_threshold
+    cooldown_multiplier: float = 1.0       # Applied to base_cooldown_seconds
+    amber_sensitivity_multiplier: float = 1.0  # Applied to amber ratios (inverted — lower = more sensitive)
+
+
+def compute_trait_thresholds(
+    openness: float = 0.5,
+    conscientiousness: float = 0.5,
+    extraversion: float = 0.5,
+    agreeableness: float = 0.5,  # noqa: ARG001
+    neuroticism: float = 0.5,
+) -> TraitAdaptiveThresholds:
+    """Compute per-agent circuit breaker multipliers from Big Five scores.
+
+    All trait values are 0.0-1.0. The function is pure (no side effects)
+    and deterministic (same inputs always produce same outputs).
+
+    Mapping rationale:
+    - Openness -> velocity_multiplier (high O = more exploration, higher tolerance)
+    - Neuroticism -> similarity_multiplier (high N = more rumination-prone, lower threshold)
+    - Conscientiousness -> cooldown_multiplier (high C = recovers faster, shorter cooldown)
+    - Extraversion -> amber_sensitivity_multiplier (high E = more communication, less amber)
+    - Agreeableness -> no direct mapping (affects social patterns, not cognitive loops)
+    """
+    # Clamp inputs to valid range (defensive)
+    o = max(0.0, min(1.0, openness))
+    c = max(0.0, min(1.0, conscientiousness))
+    e = max(0.0, min(1.0, extraversion))
+    n = max(0.0, min(1.0, neuroticism))
+
+    velocity_multiplier = 1.0 + (o - 0.5) * 0.8       # 0.6 at O=0.0, 1.4 at O=1.0
+    similarity_multiplier = 1.0 - (n - 0.5) * 0.4     # 1.2 at N=0.0, 0.8 at N=1.0
+    cooldown_multiplier = 1.0 - (c - 0.5) * 0.6       # 1.3 at C=0.0, 0.7 at C=1.0
+    amber_sensitivity_multiplier = 1.0 + (e - 0.5) * 0.8  # 0.6 at E=0.0, 1.4 at E=1.0
+
+    return TraitAdaptiveThresholds(
+        velocity_multiplier=round(velocity_multiplier, 4),
+        similarity_multiplier=round(similarity_multiplier, 4),
+        cooldown_multiplier=round(cooldown_multiplier, 4),
+        amber_sensitivity_multiplier=round(amber_sensitivity_multiplier, 4),
+    )
+
+
 class CognitiveCircuitBreaker:
     """Monitors cognitive event patterns and trips on rumination detection.
 
@@ -130,12 +185,72 @@ class CognitiveCircuitBreaker:
             self._critical_trip_count = critical_trip_count
         self._agents: dict[str, AgentBreakerState] = {}
         self._trip_reasons: dict[str, str] = {}  # AD-495: per-agent trip reason
+        self._trait_thresholds: dict[str, TraitAdaptiveThresholds] = {}  # AD-494
 
     def _get_state(self, agent_id: str) -> AgentBreakerState:
         """Get or create per-agent breaker state."""
         if agent_id not in self._agents:
             self._agents[agent_id] = AgentBreakerState()
         return self._agents[agent_id]
+
+    def set_agent_traits(
+        self,
+        agent_id: str,
+        openness: float = 0.5,
+        conscientiousness: float = 0.5,
+        extraversion: float = 0.5,
+        agreeableness: float = 0.5,
+        neuroticism: float = 0.5,
+    ) -> None:
+        """Register personality-based threshold multipliers for an agent.
+
+        Call this once at agent initialization (or when personality evolves).
+        If never called for an agent, default multipliers (all 1.0) apply —
+        preserving the original uniform behavior.
+        """
+        self._trait_thresholds[agent_id] = compute_trait_thresholds(
+            openness=openness,
+            conscientiousness=conscientiousness,
+            extraversion=extraversion,
+            agreeableness=agreeableness,
+            neuroticism=neuroticism,
+        )
+        logger.debug(
+            "AD-494: Set trait thresholds for %s: velocity=%.2f, similarity=%.2f, "
+            "cooldown=%.2f, amber=%.2f",
+            agent_id,
+            self._trait_thresholds[agent_id].velocity_multiplier,
+            self._trait_thresholds[agent_id].similarity_multiplier,
+            self._trait_thresholds[agent_id].cooldown_multiplier,
+            self._trait_thresholds[agent_id].amber_sensitivity_multiplier,
+        )
+
+    def has_agent_traits(self, agent_id: str) -> bool:
+        """Return True if personality-based trait thresholds are registered for this agent."""
+        return agent_id in self._trait_thresholds
+
+    def _effective_thresholds(self, agent_id: str) -> dict[str, float]:
+        """Return effective thresholds for an agent, applying trait multipliers.
+
+        If the agent has no registered traits, returns the base thresholds
+        unchanged (backward-compatible).
+        """
+        traits = self._trait_thresholds.get(agent_id)
+        if traits is None:
+            return {
+                "velocity_threshold": self._velocity_threshold,
+                "similarity_threshold": self._similarity_threshold,
+                "base_cooldown": self._base_cooldown,
+                "amber_similarity_ratio": self._amber_similarity_ratio,
+                "amber_velocity_ratio": self._amber_velocity_ratio,
+            }
+        return {
+            "velocity_threshold": max(2, round(self._velocity_threshold * traits.velocity_multiplier)),
+            "similarity_threshold": max(0.3, min(0.95, self._similarity_threshold * traits.similarity_multiplier)),
+            "base_cooldown": max(120.0, self._base_cooldown * traits.cooldown_multiplier),
+            "amber_similarity_ratio": max(0.1, min(0.8, self._amber_similarity_ratio * traits.amber_sensitivity_multiplier)),
+            "amber_velocity_ratio": max(0.3, min(0.95, self._amber_velocity_ratio * traits.amber_sensitivity_multiplier)),
+        }
 
     def record_event(
         self,
@@ -215,9 +330,14 @@ class CognitiveCircuitBreaker:
         # AD-576: Exclude infrastructure-correlated events from cognitive signal computation
         recent_cognitive = [e for e in recent if not e.infrastructure_degraded]
         velocity_count = len(recent_cognitive)
-        velocity_ratio = velocity_count / self._velocity_threshold if self._velocity_threshold > 0 else 0.0
+        # AD-494: Use trait-adapted thresholds
+        eff = self._effective_thresholds(agent_id)
+        eff_velocity = eff["velocity_threshold"]
+        eff_similarity = eff["similarity_threshold"]
 
-        if velocity_count >= self._velocity_threshold:
+        velocity_ratio = velocity_count / eff_velocity if eff_velocity > 0 else 0.0
+
+        if velocity_count >= eff_velocity:
             velocity_fired = True
             reason = f"velocity ({velocity_count} events in {self._velocity_window:.0f}s)"
 
@@ -232,7 +352,7 @@ class CognitiveCircuitBreaker:
                     for k in range(j + 1, len(fingerprints)):
                         total_pairs += 1
                         sim = jaccard_similarity(fingerprints[j], fingerprints[k])
-                        if sim >= self._similarity_threshold:
+                        if sim >= eff_similarity:
                             similar_pairs += 1
                 if total_pairs > 0:
                     similarity_ratio = similar_pairs / total_pairs
@@ -241,7 +361,7 @@ class CognitiveCircuitBreaker:
                         if velocity_fired:
                             reason += f" + rumination ({similar_pairs}/{total_pairs} pairs)"
                         else:
-                            reason = f"rumination ({similar_pairs}/{total_pairs} pairs above {self._similarity_threshold} threshold)"
+                            reason = f"rumination ({similar_pairs}/{total_pairs} pairs above {eff_similarity} threshold)"
 
         signals = {
             "velocity_count": velocity_count,
@@ -276,9 +396,11 @@ class CognitiveCircuitBreaker:
                 new_zone = CognitiveZone.RED
         else:
             # Not tripped — check for amber signals or decay
+            # AD-494: Use trait-adapted amber thresholds
+            eff = self._effective_thresholds(agent_id)
             amber_signals = (
-                signals.get("similarity_ratio", 0.0) > self._amber_similarity_ratio
-                or signals.get("velocity_ratio", 0.0) > self._amber_velocity_ratio
+                signals.get("similarity_ratio", 0.0) > eff["amber_similarity_ratio"]
+                or signals.get("velocity_ratio", 0.0) > eff["amber_velocity_ratio"]
             )
 
             if amber_signals and state.zone in (CognitiveZone.GREEN, CognitiveZone.AMBER):
@@ -362,8 +484,10 @@ class CognitiveCircuitBreaker:
         state.state = BreakerState.OPEN
 
         # Escalating cooldown: base × 2^(trip_count - 1), capped
+        # AD-494: Use trait-adapted base cooldown
+        eff = self._effective_thresholds(agent_id)
         cooldown = min(
-            self._base_cooldown * (2 ** (state.trip_count - 1)),
+            eff["base_cooldown"] * (2 ** (state.trip_count - 1)),
             self._max_cooldown,
         )
         state.cooldown_seconds = cooldown
@@ -377,6 +501,7 @@ class CognitiveCircuitBreaker:
     def get_status(self, agent_id: str) -> dict:
         """Return breaker status for an agent (for API/diagnostics)."""
         state = self._get_state(agent_id)
+        eff = self._effective_thresholds(agent_id)
         return {
             "agent_id": agent_id,
             "state": state.state.value,
@@ -391,6 +516,10 @@ class CognitiveCircuitBreaker:
             "zone_history": [(z, t) for z, t in state.zone_history[-5:]],
             "similarity_ratio": state.last_signals.get("similarity_ratio", 0.0),
             "velocity_ratio": state.last_signals.get("velocity_ratio", 0.0),
+            # AD-494: Trait adaptation info
+            "trait_adapted": agent_id in self._trait_thresholds,
+            "effective_velocity_threshold": eff["velocity_threshold"],
+            "effective_similarity_threshold": eff["similarity_threshold"],
         }
 
     def get_zone(self, agent_id: str) -> str:
@@ -439,8 +568,10 @@ class CognitiveCircuitBreaker:
         if agent_id in self._agents:
             del self._agents[agent_id]
         self._trip_reasons.pop(agent_id, None)
+        self._trait_thresholds.pop(agent_id, None)  # AD-494
 
     def reset_all(self) -> None:
         """Reset all breaker states."""
         self._agents.clear()
         self._trip_reasons.clear()
+        self._trait_thresholds.clear()  # AD-494

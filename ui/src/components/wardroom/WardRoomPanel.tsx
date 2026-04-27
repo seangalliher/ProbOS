@@ -156,6 +156,7 @@ export function WardRoomPanel() {
             <span onClick={closeThread} style={{
               cursor: 'pointer', color: '#8888a0', fontSize: 14, marginRight: 4,
             }}><ArrowLeft size={14} /></span>
+          )}
           <span style={{
             fontSize: 11, letterSpacing: 1.5, fontWeight: 700,
             color: '#f0b060', textTransform: 'uppercase' as const,

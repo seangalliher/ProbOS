@@ -1606,6 +1606,7 @@ class ProbOSRuntime:
                 callsign_registry=getattr(self, 'callsign_registry', None),
                 config=self.config,
                 runtime=self,
+                novelty_gate=getattr(self, '_novelty_gate', None),
             )
 
     # --- BF-071: Retention prune loops ---

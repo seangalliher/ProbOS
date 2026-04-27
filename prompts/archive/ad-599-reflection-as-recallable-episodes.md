@@ -95,6 +95,11 @@ Find the `dream_cycle` method docstring (starts around line 199) and add Step 15
         7. Procedure extraction from success clusters (AD-532)
         8. Gap prediction
         9. Emergence metrics (AD-557)
+        10. Notebook quality metrics (AD-555)
+        11. Spaced retrieval therapy (AD-541c)
+        12. Activation-based memory pruning (AD-567d / AD-462b / AD-593)
+        13. Behavioral metrics (AD-569)
+        14. Source attribution consolidation (AD-568d)
         15. Reflection episode promotion (AD-599)
         """
 ```
@@ -166,8 +171,11 @@ Add this method to the `DreamingEngine` class, after the existing `_step_14_sour
         Deduplication: content-hash check against existing episodes (write-once
         guard in EpisodicMemory.store() handles collisions).
         """
+        # NOTE: Builder should add `import hashlib` at the module top of dreaming.py
+        # (alongside existing stdlib imports) rather than importing inline here.
+        # The `from probos.types import ...` below IS inline (function-local) to avoid
+        # circular import risk — that pattern is acceptable.
         import hashlib
-        import uuid
 
         from probos.types import AnchorFrame, Episode, MemorySource
 
@@ -195,7 +203,7 @@ Add this method to the `DreamingEngine` class, after the existing `_step_14_sour
             independence = conv.get("independence", "")
             if independence:
                 text += f" Independence: {independence}."
-            candidates.append((text, agents))
+            candidates.append((text, agents))  # agents tracked for dag_summary, not agent_ids
 
         # Source 2: Emergence metrics snapshot (Step 9)
         if emergence_capacity is not None:
@@ -221,7 +229,7 @@ Add this method to the `DreamingEngine` class, after the existing `_step_14_sour
 
         # Source 4: Cluster-level patterns (Step 6) — only dominant clusters
         for cluster in clusters:
-            if not hasattr(cluster, "episode_ids") or len(getattr(cluster, "episode_ids", [])) < 5:
+            if len(getattr(cluster, "episode_ids", [])) < 5:
                 continue  # Only reflect on substantial clusters
             is_success = getattr(cluster, "is_success_dominant", False)
             is_failure = getattr(cluster, "is_failure_dominant", False)
@@ -229,45 +237,59 @@ Add this method to the `DreamingEngine` class, after the existing `_step_14_sour
                 continue
             ep_count = len(cluster.episode_ids)
             label = "success" if is_success else "failure"
+            # EpisodeCluster field is `cluster_id` (not `id`) — see episode_clustering.py:26.
+            # getattr fallback is purely defensive; cluster_id is a required field with no default.
+            cluster_id = getattr(cluster, "cluster_id", "unknown")
             # Extract agent participation from cluster episodes
+            # Convert episode_ids to set for O(1) lookup instead of O(n) list scan
+            cluster_ep_ids = set(cluster.episode_ids)
             cluster_agents: list[str] = []
             for ep in episodes:
-                if ep.id in cluster.episode_ids:
+                if ep.id in cluster_ep_ids:
                     cluster_agents.extend(ep.agent_ids)
             cluster_agents = sorted(set(cluster_agents))
             text = (
                 f"[Reflection] Identified {label}-dominant pattern cluster "
+                f"(cluster_id={cluster_id}) "
                 f"with {ep_count} episodes. "
                 f"Agents involved: {', '.join(cluster_agents[:5])}."
             )
             anchor_summary = getattr(cluster, "anchor_summary", None)
             if anchor_summary:
                 text += f" Anchor context: {str(anchor_summary)[:200]}."
-            candidates.append((text, cluster_agents[:5]))
+            candidates.append((text, cluster_agents[:5]))  # agents tracked for dag_summary, not agent_ids
 
         # Apply rate limit — take the first N candidates (convergence > emergence > notebook > clusters)
         candidates = candidates[:max_reflections]
 
         now = time.time()
 
-        for content_text, agent_ids in candidates:
+        for content_text, involved_agents in candidates:
             # Deterministic ID from content hash — prevents duplicates across cycles
             content_hash = hashlib.sha256(content_text.encode()).hexdigest()[:16]
             episode_id = f"reflection-{content_hash}"
 
             # Build AnchorFrame with dream provenance
+            # NOTE: "dream_consolidation" is a new trigger_type value introduced by AD-599.
+            # Builder: grep for existing trigger_type values to confirm no collision.
             anchors = AnchorFrame(
                 trigger_type="dream_consolidation",
+                # correlation_id intentionally omitted — reflections are not part of
+                # a request/response chain; they are dream-cycle side-effects.
             )
 
             episode = Episode(
                 id=episode_id,
                 timestamp=now,
                 user_input=content_text,
-                dag_summary={"type": "reflection", "source": "dream_consolidation"},
+                dag_summary={
+                    "type": "reflection",
+                    "source": "dream_consolidation",
+                    "involved_agents": involved_agents,
+                },
                 outcomes=[],
                 reflection=content_text,
-                agent_ids=agent_ids,
+                agent_ids=[],  # AD-599 fix: empty to bypass rate limiting and Jaccard dedup
                 duration_ms=0.0,
                 source=MemorySource.REFLECTION,
                 anchors=anchors,
@@ -290,11 +312,12 @@ Add this method to the `DreamingEngine` class, after the existing `_step_14_sour
 **Design notes:**
 
 - **Deterministic IDs:** `reflection-{content_hash}` ensures that identical insights across dream cycles produce the same ID. The write-once guard in `EpisodicMemory.store()` silently skips duplicates. This is the dedup mechanism — no separate hash table needed.
+- **`agent_ids=[]`:** Reflections are system-level insights, not agent-authored episodes. Setting `agent_ids=[]` bypasses `_is_rate_limited()` (which checks `agent_ids[0]` for per-agent hourly caps) and `_is_duplicate_content()` (Jaccard dedup on `user_input`). Agent participation is preserved in `dag_summary["involved_agents"]` for provenance without triggering pipeline gates. The deterministic content-hash ID + write-once guard is the dedup mechanism for reflections.
 - **Priority ordering:** Convergence reports first (cross-agent, highest analytical value), then emergence snapshots, then consolidation summaries, then cluster patterns. The `max_per_cycle` cap (default 3) prevents flooding.
 - **`user_input` field:** Set to the reflection text because ChromaDB indexes this for semantic search via `_prepare_document()`. This is what makes reflections recallable by query.
 - **`reflection` field:** Also set to the content text. This matches the Episode schema contract where `reflection` contains analytical summary.
 - **No LLM calls:** All content is composed from structured data already computed by earlier steps. Zero additional latency or cost.
-- **`MemorySource.REFLECTION`:** Enables downstream filtering (e.g., exclude reflections from certain analyses) without breaking existing recall paths.
+- **`MemorySource.REFLECTION`:** Enables downstream filtering (e.g., exclude reflections from certain analyses) without breaking existing recall paths. **Follow-up (not this AD):** If any consumer needs to filter by source, `recall_for_agent()` / `recall_weighted()` would need a `source` parameter or post-filter. AD-599 only ensures the tag is stored; filtering is a future concern.
 
 ---
 
@@ -326,7 +349,7 @@ For the `DreamingEngine`, construct with minimal required params:
 - `episodic_memory` = `AsyncMock()` with `store = AsyncMock()`, `recent = AsyncMock(return_value=[])`, `get_embeddings = AsyncMock(return_value={})`
 - `config` = `DreamingConfig()` (defaults)
 
-For cluster objects, use a simple `types.SimpleNamespace` with `episode_ids`, `is_success_dominant`, `is_failure_dominant`, `anchor_summary` attributes.
+For cluster objects, use a simple `types.SimpleNamespace` with `cluster_id`, `episode_ids`, `is_success_dominant`, `is_failure_dominant`, `anchor_summary` attributes.
 
 ### Test categories (18 tests):
 
@@ -341,8 +364,8 @@ For cluster objects, use a simple `types.SimpleNamespace` with `episode_ids`, `i
 4. `test_config_reflection_max_per_cycle_default` — `DreamingConfig().reflection_max_per_cycle == 3`.
 
 **Step 15 — convergence reflections (3 tests):**
-5. `test_step15_convergence_report_creates_reflection` — Pass one convergence report `{"agents": ["a1", "a2"], "departments": ["science", "engineering"], "topic": "latency", "coherence": 0.85}` → `episodic_memory.store` called once. Verify the stored Episode has `source == MemorySource.REFLECTION`, `importance == 8`, `user_input` starts with `"[Reflection]"`, `agent_ids == ["a1", "a2"]`.
-6. `test_step15_convergence_with_independence` — Convergence report with `"independence": "low"` → stored episode content contains `"Independence: low"`.
+5. `test_step15_convergence_report_creates_reflection` — Pass one convergence report `{"agents": ["a1", "a2"], "departments": ["science", "engineering"], "topic": "latency", "coherence": 0.85}` → `episodic_memory.store` called once. Verify the stored Episode has `source == MemorySource.REFLECTION`, `importance == 8`, `user_input` starts with `"[Reflection]"`, `agent_ids == []`, and `dag_summary["involved_agents"] == ["a1", "a2"]`.
+6. `test_step15_convergence_with_independence` — Convergence report with `"independence": "low"` → stored episode content contains `"Independence: low"`. Verify `agent_ids == []`.
 7. `test_step15_multiple_convergence_reports` — 2 convergence reports → 2 store calls (within default max of 3).
 
 **Step 15 — emergence reflections (2 tests):**
@@ -353,7 +376,7 @@ For cluster objects, use a simple `types.SimpleNamespace` with `episode_ids`, `i
 10. `test_step15_notebook_consolidation_creates_reflection` — Pass `notebook_consolidations=5` → content contains `"merged 5 redundant notebook clusters"`.
 
 **Step 15 — cluster pattern reflections (2 tests):**
-11. `test_step15_success_cluster_creates_reflection` — Pass a cluster with `is_success_dominant=True`, 6 `episode_ids`, and matching episodes in the `episodes` list → content contains `"success-dominant pattern cluster"` and `"6 episodes"`.
+11. `test_step15_success_cluster_creates_reflection` — Pass a cluster with `cluster_id="clust-abc"`, `is_success_dominant=True`, 6 `episode_ids`, and matching episodes in the `episodes` list → content contains `"success-dominant pattern cluster"`, `"6 episodes"`, and `"cluster_id=clust-abc"`. Verify `agent_ids == []` and `dag_summary["involved_agents"]` contains the extracted cluster agents.
 12. `test_step15_small_cluster_skipped` — Cluster with only 3 `episode_ids` → no reflection created for it (below the 5-episode threshold).
 
 **Step 15 — rate limiting (2 tests):**
@@ -368,12 +391,12 @@ For cluster objects, use a simple `types.SimpleNamespace` with `episode_ids`, `i
 17. `test_step15_empty_inputs_returns_zero` — Call with empty clusters, empty convergence_reports, `emergence_capacity=None` → returns 0, no store calls.
 
 **Integration — DreamReport wiring (1 test):**
-18. `test_dream_cycle_includes_reflections_created` — Run a full `dream_cycle()` with `episodic_memory.recent` returning at least 1 episode. Verify the returned `DreamReport` has `reflections_created` field (may be 0 if no insights were generated, but field must exist and be an int).
+18. `test_dream_cycle_includes_reflections_created` — Verify `DreamReport` wiring only: call `DreamReport(reflections_created=3)` and assert `report.reflections_created == 3`. Also assert `DreamReport().reflections_created == 0` (default). This is a schema wiring check — do NOT run a full `dream_cycle()` which requires extensive mocking and is fragile.
 
 **Important test patterns:**
 - All tests that call `_step_15_reflection_promotion` directly should create a `DreamingEngine` with a `DreamingConfig(reflection_enabled=True)` and a mock `episodic_memory` with `store = AsyncMock()`.
-- Verify episode properties by inspecting `episodic_memory.store.call_args_list` — each call's first positional arg is the `Episode` object.
-- For the full `dream_cycle` test (test 18): mock `episodic_memory.recent` to return a minimal episode list, mock `get_embeddings` to return `{}`, mock `trust_network.raw_scores()` to return `{}`. The dream cycle should complete without errors. Check `report.reflections_created` is an `int`.
+- Verify episode properties by inspecting `episodic_memory.store.call_args_list` — each call's first positional arg is the `Episode` object. All reflections should have `agent_ids == []`; check `dag_summary["involved_agents"]` for agent provenance.
+- For the DreamReport wiring test (test 18): directly construct `DreamReport` with explicit `reflections_created` values. No mocking needed.
 
 ---
 

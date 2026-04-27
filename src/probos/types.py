@@ -345,6 +345,7 @@ class MemorySource(str, Enum):
     SECONDHAND = "secondhand"    # Heard about it in Ward Room / DM from another agent
     SHIP_RECORDS = "ship_records"  # Read from Ship's Records (AD-434, future)
     BRIEFING = "briefing"        # Received during onboarding (AD-486, future)
+    REFLECTION = "reflection"    # AD-599: Synthesized from dream consolidation insights
 
 
 @dataclass(frozen=True)
@@ -399,6 +400,7 @@ class RecallScore:
     hebbian_weight: float = 0.5        # intent-agent Hebbian weight (0.0–1.0)
     recency_weight: float = 0.0        # exponential decay by age
     anchor_confidence: float = 0.0     # 0.0–1.0, Johnson-weighted anchor confidence (AD-567c)
+    tcm_similarity: float = 0.0        # AD-601: TCM temporal context similarity
     composite_score: float = 0.0       # weighted combination of all signals
 
 
@@ -423,6 +425,8 @@ class Episode:
     anchors: AnchorFrame | None = None
     # AD-598: Importance scoring at encoding — selective retention signal
     importance: int = 5  # 1-10 scale, 5 = neutral
+    # AD-492: Cognitive cycle correlation ID for cross-layer trace threading
+    correlation_id: str = ""
 
 
 # ------------------------------------------------------------------
@@ -527,6 +531,8 @@ class DreamReport:
     # AD-568e: Faithfulness verification
     mean_faithfulness_score: float | None = None
     unfaithful_episodes: int = 0
+    # AD-599: Reflection episodes promoted from dream insights
+    reflections_created: int = 0
 
 
 # ------------------------------------------------------------------

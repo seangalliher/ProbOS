@@ -105,6 +105,7 @@ async def perceive(self, intent: Any) -> dict:
 - `uuid.uuid4().hex[:12]` — 12 hex chars = 48 bits of entropy. Collision probability is negligible for per-agent per-cycle IDs. Short enough to include in logs without noise.
 - Stored on the observation dict so it flows naturally through `decide()` and `act()` without method signature changes.
 - Also stored on working memory so downstream code (ward room pipeline, episode storage) can access it without threading it through every function parameter.
+- `getattr(self, '_working_memory', None)` is defensive — `_working_memory` is always set in `CognitiveAgent.__init__()`, but the guard handles edge cases (stasis restoration, subclass that bypasses `__init__`). `if self._working_memory:` would also work but the `getattr` is safer.
 
 ---
 
@@ -181,7 +182,9 @@ Replace with:
         ))
 ```
 
-**Builder note:** Do NOT apply the same pattern to `record_observation()`, `record_conversation()`, `record_event()`, or `record_reasoning()`. Those methods are called from many contexts (proactive loop, DM handler, system events) where a correlation_id may not be set. Only `record_action()` is called from the cognitive lifecycle (line ~2393 of cognitive_agent.py) where the correlation_id is guaranteed active.
+**Builder note:** Do NOT apply the same pattern to `record_observation()`, `record_conversation()`, or `record_event()` — those methods are called from many contexts (proactive loop, DM handler, system events) where a correlation_id may not be set.
+
+`record_reasoning()` IS called from the lifecycle (line ~2419, composition brief recording) but is intentionally excluded — it records metacognitive planning data, not action outcomes. The composition brief's `metadata` dict already carries `composition_brief` context. Threading `correlation_id` into reasoning records is a future enhancement (AD-492b) — this AD focuses on the action/artifact pipeline.
 
 ### 2d. Serialization — include correlation_id in `to_dict()` / `from_dict()`
 
@@ -195,17 +198,19 @@ The `_correlation_id` is transient (per-cycle, not persisted across stasis). No 
 
 ### 3a. Add `correlation_id` column to schema
 
-In `_SCHEMA_BASE` (line ~20), add a new column after the `procedure_id` line:
+In `_SCHEMA_BASE` (line ~20), add a new column after the `procedure_id` line. **Important:** The existing `procedure_id` line (line 41) has NO trailing comma — it is currently the last column before `);`. You must add a trailing comma to the `procedure_id` line before adding the new column.
 
+Change:
 ```python
-    correlation_id   TEXT NOT NULL DEFAULT '',
+    procedure_id     TEXT NOT NULL DEFAULT ''
+);
 ```
 
-The full column list becomes (showing last 3 columns):
+To:
 ```python
-    response_hash    TEXT NOT NULL DEFAULT '',
     procedure_id     TEXT NOT NULL DEFAULT '',
     correlation_id   TEXT NOT NULL DEFAULT ''
+);
 ```
 
 ### 3b. Add migration for existing databases
@@ -218,10 +223,18 @@ In the `start()` method (line ~77), add to the migration list after the `procedu
 
 ### 3c. Add index for correlation_id queries
 
-In `_SCHEMA_INDEXES` (line ~49), add:
+In `_SCHEMA_INDEXES` (line ~49), add after the existing `idx_journal_intent_id` line:
 
 ```python
 CREATE INDEX IF NOT EXISTS idx_journal_correlation_id ON journal(correlation_id);
+```
+
+The full `_SCHEMA_INDEXES` becomes:
+```python
+_SCHEMA_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_journal_intent_id ON journal(intent_id);
+CREATE INDEX IF NOT EXISTS idx_journal_correlation_id ON journal(correlation_id);
+"""
 ```
 
 ### 3d. Add `correlation_id` parameter to `record()`
@@ -340,6 +353,8 @@ After the existing `importance` field (line ~425), add:
     correlation_id: str = ""
 ```
 
+**Builder note:** `Episode` is a `@dataclass(frozen=True)`. The `= ""` default is required for backward compatibility — existing `Episode()` constructions throughout the codebase don't pass `correlation_id`. The default ensures they continue to work unchanged.
+
 ### 5b. Wire correlation_id into `_store_action_episode()`
 
 **File:** `src/probos/cognitive/cognitive_agent.py` (EDIT)
@@ -375,22 +390,49 @@ The `WardRoomPostPipeline.process_and_post()` method does not currently have acc
 
 ### 6a. Log correlation_id in Ward Room post creation
 
-In `process_and_post()`, after Step 7 (the `create_post` call at line ~154), add a debug log that includes the correlation_id for traceability:
+In `process_and_post()`, the post creation logic has two paths:
+- **`if budget.spent:`** path (lines ~130-151) — action extractor already posted
+- **`else:`** path (lines ~152-160) — normal create_post via `self._ward_room.create_post()`
 
-After the `create_post` call block (after line ~160), add:
+Both paths represent a completed Ward Room post. Log correlation_id for **both paths** by placing the debug log **outside** the if/else, immediately after the else block closes and before the Step 8 comment.
 
+**Exact placement:** After the `else:` block's `create_post()` call (which closes at line ~160) and before the `# Step 8:` comment at line ~162. The new code is at the **same indentation level** as the `if budget.spent:` / `else:` blocks (i.e., inside the outer method body, not inside either branch).
+
+Add:
 ```python
-            # AD-492: Log correlation_id for trace threading
-            _wm = getattr(agent, '_working_memory', None) if agent else None
-            _corr_id = _wm.get_correlation_id() if _wm else None
-            if _corr_id:
-                logger.debug(
-                    "AD-492: Ward Room post in thread %s by %s (correlation_id=%s)",
-                    thread_id[:8], agent.agent_type, _corr_id,
-                )
+        # AD-492: Log correlation_id for trace threading
+        _wm = getattr(agent, '_working_memory', None) if agent else None
+        _corr_id = _wm.get_correlation_id() if _wm else None
+        if _corr_id:
+            logger.debug(
+                "AD-492: Ward Room post in thread %s by %s (correlation_id=%s)",
+                thread_id[:8], agent.agent_type, _corr_id,
+            )
 ```
 
-Place this INSIDE the `else` block (the non-budget-spent path), after the `create_post()` await, before Step 8.
+The result should read:
+```python
+            await self._ward_room.create_post(
+                thread_id=thread_id,
+                author_id=agent.id,
+                body=response_text,
+                parent_id=parent_id,
+                author_callsign=agent_callsign or agent.agent_type,
+            )
+
+        # AD-492: Log correlation_id for trace threading
+        _wm = getattr(agent, '_working_memory', None) if agent else None
+        _corr_id = _wm.get_correlation_id() if _wm else None
+        if _corr_id:
+            logger.debug(
+                "AD-492: Ward Room post in thread %s by %s (correlation_id=%s)",
+                thread_id[:8], agent.agent_type, _corr_id,
+            )
+
+        # Step 8: Record response (BF-198 anti-double-posting)
+```
+
+Note: `agent` and `thread_id` are both in scope at this indentation level (they are parameters/locals of `process_and_post()`). Verified.
 
 ---
 
@@ -430,37 +472,100 @@ In `_run_cognitive_lifecycle()`, the `SELF_MODEL_DRIFT` event is emitted at line
                         })
 ```
 
+### 7c. Add correlation_id to the SECOND TASK_EXECUTION_COMPLETE event (line ~2546)
+
+**CRITICAL:** There are TWO `TASK_EXECUTION_COMPLETE` emits in `_run_cognitive_lifecycle()`. Section 7a covers the compound-dispatch branch at line ~2359. This section covers the **primary** emit at line ~2546 — the general-path completion event that fires for ~90% of cognitive cycles.
+
+Current code at line ~2546:
+```python
+                _rt._emit_event(EventType.TASK_EXECUTION_COMPLETE, {
+                    "agent_id": self.id,
+                    "agent_type": getattr(self, 'agent_type', ''),
+                    "intent_type": intent.intent,
+                    "success": success,
+                    "used_procedure": decision.get("cached", False),
+                })
+```
+
+Add `correlation_id`:
+```python
+                _rt._emit_event(EventType.TASK_EXECUTION_COMPLETE, {
+                    "agent_id": self.id,
+                    "agent_type": getattr(self, 'agent_type', ''),
+                    "intent_type": intent.intent,
+                    "success": success,
+                    "used_procedure": decision.get("cached", False),
+                    "correlation_id": observation.get("correlation_id", ""),
+                })
+```
+
+### 7d. Add correlation_id to PROCEDURE_FALLBACK_LEARNING event (line ~2566)
+
+The `PROCEDURE_FALLBACK_LEARNING` event at line ~2566 fires inside the `if success and self._last_fallback_info is not None:` block. Add `correlation_id`:
+
+After the existing `"timestamp": time.time(),` line, add:
+```python
+                        "correlation_id": observation.get("correlation_id", ""),
+```
+
+### 7e. Event threading audit — complete inventory
+
+All four `_emit_event` calls inside `_run_cognitive_lifecycle()` are now covered:
+
+| Line | EventType | Section | Status |
+|------|-----------|---------|--------|
+| ~2285 | `SELF_MODEL_DRIFT` | 7b | Threaded |
+| ~2359 | `TASK_EXECUTION_COMPLETE` (compound dispatch) | 7a | Threaded |
+| ~2546 | `TASK_EXECUTION_COMPLETE` (general path) | 7c | Threaded |
+| ~2566 | `PROCEDURE_FALLBACK_LEARNING` | 7d | Threaded |
+
+**Builder acceptance check:** After implementation, run:
+```bash
+grep -n '_emit_event' src/probos/cognitive/cognitive_agent.py
+```
+Verify every `_emit_event` call inside `_run_cognitive_lifecycle` (between `async def _run_cognitive_lifecycle` and the next `async def` at the same indentation level) includes `correlation_id` in its payload. Report the list.
+
 ---
 
 ## Section 8: Clear Correlation ID After Cognitive Cycle
 
 **File:** `src/probos/cognitive/cognitive_agent.py` (EDIT)
 
-In `_run_cognitive_lifecycle()`, at the very end (after the episode storage call at line ~2436 and the post-execution block), add cleanup:
+In `_run_cognitive_lifecycle()`, the correlation_id must remain active through:
+- Episode storage (`_store_action_episode()` at line ~2436 — reads from `observation` dict)
+- Working memory recording (`_wm.record_action()` at line ~2393)
+- All event emits (lines ~2285, ~2359, ~2546, ~2566)
+- Ward room self-post (`_self_post_ward_room_response()` at line ~2583)
 
-Find the section after `await self._store_action_episode(intent, observation, report)` (line ~2436). After the existing success/report processing but before the final `return IntentResult(...)` at the bottom of `_run_cognitive_lifecycle()`, add:
+The clear must happen **after all of those** and **before the final return**.
+
+**Exact placement:** Add the cleanup block immediately before the `return IntentResult(...)` at line ~2585. The anchor is:
 
 ```python
+        # AD-654a: Agent self-posting for ward_room_notification
+        if intent.intent == "ward_room_notification" and success and report.get("result"):
+            await self._self_post_ward_room_response(intent, str(report["result"]))
+
         # AD-492: Clear correlation_id — cycle complete
         _wm = getattr(self, '_working_memory', None)
         if _wm:
             _wm.clear_correlation_id()
-```
 
-**Placement:** Add this just before the final `IntentResult` construction. The correlation_id must remain active during episode storage (Section 5b) and working memory recording (the existing `_wm.record_action()` at line ~2393) but cleared before the next cycle.
-
-Look for the existing block:
-```python
-        self.update_confidence(success)
-        ...
         return IntentResult(
             intent_id=intent.id,
             agent_id=self.id,
-            ...
+            success=success,
+            result=report.get("result"),
+            error=report.get("error"),
+            confidence=self.confidence,
         )
 ```
 
-Add the cleanup before `self.update_confidence(success)`.
+The new 4-line block goes between the `_self_post_ward_room_response` block (line ~2583) and the `return IntentResult(...)` at line ~2585.
+
+**No try/finally:** The clear is NOT wrapped in try/finally. If `_run_cognitive_lifecycle` raises before reaching the clear, `correlation_id` persists in working memory. This is acceptable because the next `perceive()` call (Section 1b) always overwrites `_correlation_id` via `set_correlation_id()` at cycle start. Test 17 documents this explicitly as accepted behavior.
+
+**Explicitly NOT before `self.update_confidence(success)` at line ~2540** — that placement would clear before the TASK_EXECUTION_COMPLETE emit (line ~2546) and PROCEDURE_FALLBACK_LEARNING emit (line ~2566), breaking the threading for those events.
 
 ---
 
@@ -475,7 +580,7 @@ Add the cleanup before `self.update_confidence(success)`.
 - Mock `_llm_client`, `_cognitive_journal`, `_runtime`, `_working_memory`
 - For `AgentWorkingMemory` tests, use the real class (no mocking needed — it's pure in-memory)
 
-### Test categories (20 tests):
+### Test categories (21 tests):
 
 **Correlation ID generation (3 tests):**
 1. `test_perceive_generates_correlation_id` — call `perceive()` with an `IntentMessage`, verify the returned observation dict has a `correlation_id` key that is a 12-char hex string.
@@ -489,10 +594,11 @@ Add the cleanup before `self.update_confidence(success)`.
 7. `test_perceive_sets_working_memory_correlation_id` — call `perceive()` on a `CognitiveAgent` with a working memory, verify the working memory's `get_correlation_id()` matches the observation's `correlation_id`.
 8. `test_record_action_includes_correlation_id` — set correlation_id on working memory, call `record_action()`, verify the entry's metadata contains `correlation_id`.
 
-**Journal threading (3 tests):**
+**Journal threading (4 tests):**
 9. `test_journal_record_accepts_correlation_id` — call `CognitiveJournal.record()` with `correlation_id="test123"`, query back, verify the row has `correlation_id="test123"`.
 10. `test_journal_record_default_correlation_id_empty` — call `record()` without `correlation_id`, verify the row has `correlation_id=""`.
 11. `test_journal_schema_has_correlation_id_column` — after `start()`, verify the column exists via `PRAGMA table_info(journal)`.
+11b. `test_journal_schema_has_correlation_id_index` — after `start()`, verify the index exists via `PRAGMA index_list(journal)`, asserting `idx_journal_correlation_id` is present. Prevents silent index regression in future schema refactors.
 
 **Episode threading (2 tests):**
 12. `test_episode_has_correlation_id_field` — create `Episode(correlation_id="abc")`, verify `episode.correlation_id == "abc"`.
@@ -502,7 +608,7 @@ Add the cleanup before `self.update_confidence(success)`.
 14. `test_lifecycle_threads_correlation_id_to_journal` — mock `_cognitive_journal.record`, run a minimal `handle_intent()` or `_run_cognitive_lifecycle()`, verify `record()` was called with `correlation_id` matching the value from `perceive()`.
 15. `test_lifecycle_threads_correlation_id_to_episode` — mock `episodic_memory.store`, run lifecycle, verify the stored `Episode` has matching `correlation_id`.
 16. `test_lifecycle_clears_correlation_id_after_completion` — run lifecycle, verify `working_memory.get_correlation_id()` is `None` after completion.
-17. `test_lifecycle_clears_correlation_id_on_exception` — make `decide()` raise, verify `working_memory.get_correlation_id()` is `None` after the exception. (If the clear is before the return and not in a finally block, this test documents the current behavior — it's OK if correlation_id persists on exception since the next `perceive()` overwrites it.)
+17. `test_lifecycle_clears_correlation_id_on_exception` — make `decide()` raise, verify `working_memory.get_correlation_id()` is NOT `None` (it persists because the clear is before the return, not in a finally block). This test **documents accepted behavior**: stale correlation_id is overwritten by the next `perceive()` call. No try/finally needed.
 
 **Ward Room pipeline (2 tests):**
 18. `test_pipeline_logs_correlation_id` — mock an agent with working memory that has a correlation_id set, call `process_and_post()`, verify debug log contains the correlation_id (use `caplog`).
@@ -530,7 +636,7 @@ After all tests pass:
 
 1. **PROGRESS.md** — Add entry:
    ```
-   | AD-492 | Cognitive Correlation IDs | Cross-layer trace threading: perceive→decide→act→episode→post→journal. 20 tests. | CLOSED |
+   | AD-492 | Cognitive Correlation IDs | Cross-layer trace threading: perceive→decide→act→episode→post→journal. 21 tests. | CLOSED |
    ```
 
 2. **docs/development/roadmap.md** — Update the AD-492 row status to Closed.

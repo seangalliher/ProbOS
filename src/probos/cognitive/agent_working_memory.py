@@ -103,6 +103,9 @@ class AgentWorkingMemory:
         # AD-589: Last telemetry snapshot for introspective faithfulness verification
         self._last_telemetry_snapshot: dict[str, Any] | None = None
 
+        # AD-492: Current cognitive cycle correlation ID
+        self._correlation_id: str | None = None
+
     # ── Write API (called by all cognitive pathways) ──────────────
 
     def record_action(
@@ -110,11 +113,15 @@ class AgentWorkingMemory:
         knowledge_source: str = "unknown",
     ) -> None:
         """Record an action the agent just took (any pathway)."""
+        _meta = dict(metadata) if metadata else {}
+        # AD-492: Attach correlation ID if active
+        if self._correlation_id and "correlation_id" not in _meta:
+            _meta["correlation_id"] = self._correlation_id
         self._recent_actions.append(WorkingMemoryEntry(
             content=summary,
             category="action",
             source_pathway=source,
-            metadata=metadata or {},
+            metadata=_meta,
             knowledge_source=knowledge_source,
         ))
 
@@ -204,6 +211,18 @@ class AgentWorkingMemory:
     def set_telemetry_snapshot(self, snapshot: dict[str, Any] | None) -> None:
         """AD-589: Cache telemetry snapshot for faithfulness cross-check."""
         self._last_telemetry_snapshot = snapshot
+
+    def set_correlation_id(self, correlation_id: str) -> None:
+        """AD-492: Set the current cognitive cycle's correlation ID."""
+        self._correlation_id = correlation_id
+
+    def get_correlation_id(self) -> str | None:
+        """AD-492: Get the current cognitive cycle's correlation ID."""
+        return self._correlation_id
+
+    def clear_correlation_id(self) -> None:
+        """AD-492: Clear correlation ID after cognitive cycle completes."""
+        self._correlation_id = None
 
     # ── Read API (called during context construction) ─────────────
 

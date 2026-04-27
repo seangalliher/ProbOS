@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from probos.cognitive.novelty_gate import NoveltyGate
     from probos.ward_room.service import WardRoomService
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class WardRoomPostPipeline:
         callsign_registry: Any | None,
         config: Any,
         runtime: Any | None = None,  # For skill_service access
+        novelty_gate: "NoveltyGate | None" = None,  # AD-493
     ) -> None:
         self._ward_room = ward_room
         self._router = ward_room_router
@@ -53,6 +55,7 @@ class WardRoomPostPipeline:
         self._callsign_registry = callsign_registry
         self._config = config
         self._runtime = runtime
+        self._novelty_gate = novelty_gate
 
     async def process_and_post(
         self,
@@ -116,6 +119,19 @@ class WardRoomPostPipeline:
                 )
                 return False
 
+        # Step 4b: Semantic novelty gate (AD-493)
+        if self._novelty_gate and agent:
+            try:
+                verdict = self._novelty_gate.check(agent.id, response_text)
+                if not verdict.is_novel:
+                    logger.info(
+                        "AD-493: Pipeline suppressed rehashed post from %s (sim=%.3f)",
+                        agent.agent_type, verdict.similarity,
+                    )
+                    return False
+            except Exception:
+                logger.debug("AD-493: Pipeline novelty check failed, allowing post", exc_info=True)
+
         # Step 5: Recreation commands (BF-123)
         if agent and self._router:
             response_text = await self._router.extract_recreation_commands(
@@ -158,6 +174,22 @@ class WardRoomPostPipeline:
                 parent_id=parent_id,
                 author_callsign=agent_callsign or agent.agent_type,
             )
+
+        # AD-492: Log correlation_id for trace threading
+        _wm = getattr(agent, '_working_memory', None) if agent else None
+        _corr_id = _wm.get_correlation_id() if _wm else None
+        if _corr_id:
+            logger.debug(
+                "AD-492: Ward Room post in thread %s by %s (correlation_id=%s)",
+                thread_id[:8], agent.agent_type, _corr_id,
+            )
+
+        # AD-493: Record observation fingerprint (covers both posting paths)
+        if self._novelty_gate and agent:
+            try:
+                self._novelty_gate.record(agent.id, response_text)
+            except Exception:
+                logger.debug("AD-493: Pipeline fingerprint recording failed", exc_info=True)
 
         # Step 8: Record response (BF-198 anti-double-posting)
         # UNCONDITIONAL — runs whether or not Step 7 posted. If the extractor

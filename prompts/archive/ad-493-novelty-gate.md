@@ -128,8 +128,17 @@ class NoveltyGate:
     Falls back to keyword-overlap embeddings when semantic embeddings
     are unavailable — same graceful degradation as EpisodicMemory.
 
+    When ChromaDB embeddings are unavailable, ``embed_text()`` falls back
+    to keyword embeddings. The similarity threshold (0.82) is calibrated
+    for MiniLM cosine; in keyword-fallback mode, behavior approximates
+    a stricter Jaccard. This is acceptable degradation — the gate
+    collapses to roughly the same behavior as BF-032 in fallback mode.
+
     Thread-safe for single-event-loop asyncio (no locks needed —
     all mutations happen in the same coroutine context).
+
+    Consider ``asyncio.to_thread(embed_text, text)`` if profiling shows
+    event loop stalls from ONNX inference under high agent counts.
 
     Parameters
     ----------
@@ -364,7 +373,16 @@ class NoveltyGate:
 Find the `__init__` method of `ProactiveCognitiveLoop` (line ~161). Add after the existing `_orientation_service` attribute (line ~191):
 
 ```python
-        self._novelty_gate: Any | None = None  # AD-493: Set via set_novelty_gate()
+        self._novelty_gate: "NoveltyGate | None" = None  # AD-493: Set via set_novelty_gate()
+```
+
+Add to the existing `TYPE_CHECKING` imports block at the top of the file (if one exists, otherwise add):
+
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from probos.cognitive.novelty_gate import NoveltyGate
 ```
 
 ### 3b: Add setter
@@ -372,7 +390,7 @@ Find the `__init__` method of `ProactiveCognitiveLoop` (line ~161). Add after th
 Add after the existing `set_orientation_service` method (line ~193):
 
 ```python
-    def set_novelty_gate(self, gate: Any) -> None:
+    def set_novelty_gate(self, gate: "NoveltyGate") -> None:
         """AD-493: Set novelty gate (public setter for LoD)."""
         self._novelty_gate = gate
 ```
@@ -457,8 +475,17 @@ Find `WardRoomPostPipeline.__init__` (line ~38). Add `novelty_gate` as an option
         callsign_registry: Any | None,
         config: Any,
         runtime: Any | None = None,
-        novelty_gate: Any | None = None,  # AD-493
+        novelty_gate: "NoveltyGate | None" = None,  # AD-493
     ) -> None:
+```
+
+Add to the existing `TYPE_CHECKING` imports block at the top of the file (if one exists, otherwise add):
+
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from probos.cognitive.novelty_gate import NoveltyGate
 ```
 
 Store it:
@@ -487,16 +514,18 @@ Find Step 4 (Similarity guard, BF-197) in `process_and_post` (line ~109-116). Ad
 
 ### 4c: Record fingerprint after successful posting
 
-Find Step 7 (Post to Ward Room, line ~133) — the `else` branch where `create_post` is called. After the successful `create_post` call (inside the `else` block, after `await self._ward_room.create_post(...)` completes), add:
+Find Step 7 (Post to Ward Room, line ~133) — the `if budget.spent:` / `else:` block where the Ward Room post is created. The fingerprint must cover **both** posting paths (action extractor already posted vs. `create_post`). Place the recording **after** the if/else block, at the same indentation level as `if budget.spent:`:
 
 ```python
-            # AD-493: Record observation fingerprint
-            if self._novelty_gate:
-                try:
-                    self._novelty_gate.record(agent.id, response_text)
-                except Exception:
-                    logger.debug("AD-493: Pipeline fingerprint recording failed", exc_info=True)
+        # AD-493: Record observation fingerprint (covers both posting paths)
+        if self._novelty_gate and agent:
+            try:
+                self._novelty_gate.record(agent.id, response_text)
+            except Exception:
+                logger.debug("AD-493: Pipeline fingerprint recording failed", exc_info=True)
 ```
+
+**Why outside the if/else:** If the fingerprint is only recorded on the `create_post` path, observations posted via the action extractor (BF-237 `budget.spent` path) bypass fingerprinting. An agent can repeat the same observation through the action extractor freely. Matching AD-492 Section 6a's pattern: instrumentation that covers both posting paths goes after the if/else.
 
 ---
 
@@ -512,20 +541,22 @@ Find the block where `proactive_loop.set_config(...)` is called (line ~78), and 
 
 ```python
         # --- AD-493: Novelty Gate ---
+        # Initialize unconditionally so runtime.py:1601 always has the attribute
+        # (getattr default is a safety net, but explicit > implicit).
+        runtime._novelty_gate = None
         if config.novelty_gate.enabled:
             from probos.cognitive.novelty_gate import NoveltyGate
             _novelty_gate = NoveltyGate.from_config(config.novelty_gate)
             proactive_loop.set_novelty_gate(_novelty_gate)
-            # Store on runtime for WardRoomPostPipeline access
             runtime._novelty_gate = _novelty_gate
             logger.info("AD-493: NoveltyGate enabled (threshold=%.2f, decay=%.1fh)",
                          config.novelty_gate.similarity_threshold,
                          config.novelty_gate.decay_hours)
-        else:
-            runtime._novelty_gate = None
 ```
 
-**Important:** This must be inside the `if config.proactive_cognitive.enabled:` block (line ~69), because the novelty gate is only useful when the proactive loop is running.
+**Order constraint:** `runtime._novelty_gate` is set here in `finalize.py` (Phase 8). `WardRoomPostPipeline` is constructed in `runtime.py:1601` AFTER `finalize()` returns. The `getattr(self, '_novelty_gate', None)` in `runtime.py:1601` reads the attribute set above. Verified by code reading: `finalize.py` returns before `runtime.py:1601` runs.
+
+**Important:** This must be inside the `if config.proactive_cognitive.enabled:` block (line ~69), because the novelty gate is only useful when the proactive loop is running. The unconditional `runtime._novelty_gate = None` goes BEFORE the `if config.novelty_gate.enabled:` check but still INSIDE the proactive-cognitive block. If `proactive_cognitive` is disabled entirely, the attribute is never set and the `getattr` default in `runtime.py:1601` handles it.
 
 ### 5b: Pass novelty_gate to WardRoomPostPipeline
 
@@ -586,7 +617,17 @@ def _make_vec(angle_degrees: float, dims: int = 10) -> list[float]:
 
 This gives us control over cosine similarity: `cos(0) = 1.0` (identical), `cos(10) ≈ 0.985` (very similar), `cos(30) ≈ 0.866` (similar), `cos(60) ≈ 0.5` (different), `cos(90) = 0` (orthogonal).
 
-### Test categories (20 tests):
+**Time-mocking pattern for decay tests:** Instead of sleeping, mutate the fingerprint timestamp directly:
+
+```python
+# Record, then age the fingerprint past decay_hours
+gate.record("agent-1", "long enough text " * 10)
+gate._fingerprints["agent-1"][0].timestamp -= (25 * 3600)  # 25h ago
+verdict = gate.check("agent-1", "long enough text " * 10)
+assert verdict.is_novel  # decayed away
+```
+
+### Test categories (21 tests):
 
 **Core novelty detection (6 tests):**
 1. `test_first_observation_always_novel` — No prior fingerprints → novel
@@ -616,11 +657,20 @@ This gives us control over cosine similarity: `cos(0) = 1.0` (identical), `cos(1
 
 **Record/check separation (2 tests):**
 17. `test_check_does_not_record` — Calling `check()` alone does not add a fingerprint
-18. `test_record_then_check_blocks` — `record()` followed by `check()` with same text → blocked
+18. `test_record_then_similar_check_blocks` — `record()` with text A, then `check()` with semantically similar (but not identical) text B using a near-angle embedding → blocked. Distinct from Test 2: Test 2 uses identical text/embedding, Test 18 uses similar-but-different text with embeddings above threshold.
 
 **Stats and management (2 tests):**
 19. `test_get_stats` — Returns correct counts after checks/blocks/bypasses
 20. `test_clear_agent` — `clear_agent()` removes fingerprints, same topic becomes novel again
+
+**Pipeline wiring (1 test):**
+21. `test_pipeline_records_fingerprint_after_post` — Mock `_ward_room.create_post`, mock `_novelty_gate.record`, run `process_and_post`, assert `record` was called with `(agent.id, response_text)`. Pins the Section 4c wiring.
+
+**Notes for builder:**
+- **Stats surfacing deferred to AD-493b.** `get_stats()` is implemented but not wired to any telemetry, health endpoint, or debug command. Accessible via `runtime._novelty_gate.get_stats()` for ad-hoc inspection.
+- **Threshold calibration:** 0.82 sits in the "same topic/different angle" range — this blocks an agent posting two different angles on the same topic. That's intentional (rehashed observations are the primary failure mode). Tune downward to 0.85 if false-positive rate is high (legitimate observations blocked). Initial value 0.82 errs toward suppression.
+- **Section 3c placement clarity:** Place the AD-493 check after the closing `return` of the BF-032 `if`-block, at the same indentation as the `if await self._is_similar_to_recent_posts(...)` test. Do not place inside the BF-032 block.
+- **Section 3d early-return audit:** If `_post_to_ward_room` has any early-return paths between the BF-198 block and end-of-method, those paths skip fingerprinting. This is intentional: only fingerprint successful posts. Builder should verify no early returns exist in that range that represent successful posts.
 
 ---
 
@@ -641,7 +691,7 @@ After all tests pass:
 
 1. **PROGRESS.md** — Add entry:
    ```
-   | AD-493 | Novelty Gate | Semantic observation dedup — per-agent embedding fingerprints with cosine similarity, time decay, ring buffer. Three-layer dedup stack (Jaccard → Semantic → LLM). 20 tests. | CLOSED |
+   | AD-493 | Novelty Gate | Semantic observation dedup — per-agent embedding fingerprints with cosine similarity, time decay, ring buffer. Three-layer dedup stack (Jaccard → Semantic → LLM). 21 tests. | CLOSED |
    ```
 
 2. **docs/development/roadmap.md** — Update the AD-493 row status to Closed.

@@ -28,7 +28,7 @@ AD-494 makes the circuit breaker personality-aware. Each agent gets individualiz
 
 **File:** `src/probos/cognitive/circuit_breaker.py` (EDIT — add new dataclass + function above `CognitiveCircuitBreaker`)
 
-Add after the `AgentBreakerState` dataclass (line 66) and before the `CognitiveCircuitBreaker` class (line 68):
+Add after the `AgentBreakerState` dataclass and before the `CognitiveCircuitBreaker` class:
 
 ```python
 @dataclass(frozen=True)
@@ -119,7 +119,7 @@ def compute_trait_thresholds(
     )
 ```
 
-**Builder note:** `agreeableness` is accepted as a parameter (for API completeness and future use) but is unused in the current formulas. Do not warn about unused parameters.
+**Builder note:** `agreeableness` is accepted as a parameter (for API completeness and future use) but is unused in the current formulas. If the linter flags it, use `_agreeableness` prefix or add `# noqa: ARG001`.
 
 ---
 
@@ -129,7 +129,7 @@ def compute_trait_thresholds(
 
 ### 2a: Add per-agent trait threshold storage
 
-Add a new dict to `__init__` (after `self._trip_reasons` on line 132):
+Add a new dict to `__init__` (after `self._trip_reasons`):
 
 ```python
         self._trait_thresholds: dict[str, TraitAdaptiveThresholds] = {}
@@ -137,7 +137,7 @@ Add a new dict to `__init__` (after `self._trip_reasons` on line 132):
 
 ### 2b: Add `set_agent_traits()` method
 
-Add this public method after `_get_state()` (after line 138):
+Add this public method after `_get_state()`:
 
 ```python
     def set_agent_traits(
@@ -173,9 +173,19 @@ Add this public method after `_get_state()` (after line 138):
         )
 ```
 
-### 2c: Add `_effective_thresholds()` helper
+### 2c: Add `has_agent_traits()` public query
 
-Add this private method after `set_agent_traits()`:
+Add this public method after `set_agent_traits()`:
+
+```python
+    def has_agent_traits(self, agent_id: str) -> bool:
+        """Return True if personality-based trait thresholds are registered for this agent."""
+        return agent_id in self._trait_thresholds
+```
+
+### 2d: Add `_effective_thresholds()` helper
+
+Add this private method after `has_agent_traits()`:
 
 ```python
     def _effective_thresholds(self, agent_id: str) -> dict[str, float]:
@@ -209,9 +219,11 @@ Add this private method after `set_agent_traits()`:
 - `amber_similarity_ratio` range 0.1-0.8 (prevents amber from being permanently on or permanently off)
 - `amber_velocity_ratio` range 0.3-0.95 (same rationale)
 
-### 2d: Modify `_compute_signals()` to use effective thresholds
+**Follow-up note:** If `_effective_thresholds()` becomes a hot path (profiling shows repeated calls per think cycle), cache the computed dict on `AgentBreakerState` and invalidate in `set_agent_traits()`. Not needed now — the computation is trivial arithmetic.
 
-Replace the current `_compute_signals()` method (lines 194-257). The change is to use `_effective_thresholds(agent_id)` instead of `self._velocity_threshold` and `self._similarity_threshold` directly.
+### 2e: Modify `_compute_signals()` to use effective thresholds
+
+Replace the current `_compute_signals()` method body. The change is to use `_effective_thresholds(agent_id)` instead of `self._velocity_threshold` and `self._similarity_threshold` directly.
 
 The method signature stays the same: `def _compute_signals(self, agent_id: str) -> dict:`
 
@@ -292,9 +304,9 @@ Replace the body with:
         return signals
 ```
 
-### 2e: Modify `_update_zone()` to use effective thresholds
+### 2f: Modify `_update_zone()` to use effective thresholds
 
-In the `_update_zone()` method, the amber signal detection (currently lines 279-283) uses `self._amber_similarity_ratio` and `self._amber_velocity_ratio`. Change these to use the effective thresholds.
+In the `_update_zone()` method, the amber signal detection uses `self._amber_similarity_ratio` and `self._amber_velocity_ratio`. Change these to use the effective thresholds.
 
 Replace these lines:
 
@@ -316,9 +328,9 @@ With:
             )
 ```
 
-### 2f: Modify `_trip()` to use effective cooldown
+### 2g: Modify `_trip()` to use effective cooldown
 
-In the `_trip()` method, the cooldown calculation (currently lines 364-367) uses `self._base_cooldown`. Change to use the effective base cooldown.
+In the `_trip()` method, the cooldown calculation uses `self._base_cooldown`. Change to use the effective base cooldown.
 
 Replace:
 
@@ -342,18 +354,18 @@ With:
         )
 ```
 
-### 2g: Add trait info to `get_status()`
+### 2h: Add trait info to `get_status()`
 
 In the `get_status()` method, add the trait thresholds to the returned dict for API/diagnostics visibility. Add these entries at the end of the returned dict (before the closing `}`):
 
 ```python
             # AD-494: Trait-adaptive thresholds
-            "trait_adapted": agent_id in self._trait_thresholds,
+            "trait_adapted": self.has_agent_traits(agent_id),
             "effective_velocity_threshold": self._effective_thresholds(agent_id)["velocity_threshold"],
             "effective_similarity_threshold": self._effective_thresholds(agent_id)["similarity_threshold"],
 ```
 
-### 2h: Modify `reset_agent()` to clear trait thresholds
+### 2i: Modify `reset_agent()` to clear trait thresholds
 
 In `reset_agent()`, add after the `self._trip_reasons.pop(agent_id, None)` line:
 
@@ -361,7 +373,7 @@ In `reset_agent()`, add after the `self._trip_reasons.pop(agent_id, None)` line:
         self._trait_thresholds.pop(agent_id, None)
 ```
 
-### 2i: Modify `reset_all()` to clear trait thresholds
+### 2j: Modify `reset_all()` to clear trait thresholds
 
 In `reset_all()`, add after `self._trip_reasons.clear()`:
 
@@ -379,7 +391,7 @@ The circuit breaker needs to receive personality data for each agent. The cleane
 
 ### 3a: Add trait registration method
 
-Add this method to `ProactiveCognitiveLoop` (after the `set_config` method, around line 206):
+Add this method to `ProactiveCognitiveLoop` (after the `set_config` method):
 
 ```python
     def _ensure_agent_traits_registered(self, agent: Any) -> None:
@@ -393,7 +405,7 @@ Add this method to `ProactiveCognitiveLoop` (after the `set_config` method, arou
         evolves (dream consolidation), the caller can re-register.
         """
         # Skip if already registered
-        if agent.id in self._circuit_breaker._trait_thresholds:
+        if self._circuit_breaker.has_agent_traits(agent.id):
             return
 
         try:
@@ -418,11 +430,11 @@ Add this method to `ProactiveCognitiveLoop` (after the `set_config` method, arou
             )
 ```
 
-**Builder note on `_trait_thresholds` access:** Yes, this accesses `self._circuit_breaker._trait_thresholds` directly to check membership. This is acceptable because `ProactiveCognitiveLoop` owns the circuit breaker instance (creates it in `__init__`). An alternative would be adding a `has_traits(agent_id)` method to the breaker, which the builder may prefer — either approach is fine. If a public method is added, use: `def has_agent_traits(self, agent_id: str) -> bool: return agent_id in self._trait_thresholds`.
+**Builder note:** The `has_agent_traits()` public method (Section 2c) is used here instead of reaching into `_trait_thresholds` directly. This keeps `ProactiveCognitiveLoop` decoupled from the circuit breaker's internal storage.
 
 ### 3b: Call trait registration in the think loop
 
-In the proactive think loop, add a call to `_ensure_agent_traits_registered()` just before the existing circuit breaker gate check. Find the line (around line 416):
+In the proactive think loop, add a call to `_ensure_agent_traits_registered()` just before the existing circuit breaker gate check. Find the comment:
 
 ```python
             # AD-488: Circuit breaker gate — skip agents in cognitive cooldown
@@ -442,65 +454,32 @@ Add immediately before it:
 
 **File:** `src/probos/config.py` (EDIT)
 
-Add a new config section for trait-adaptive tuning parameters. This allows operators to adjust the multiplier ranges without code changes.
-
-Add after `CircuitBreakerConfig` (after line 858):
+Add a new config section for trait-adaptive control. Place after `CircuitBreakerConfig` (find the `CircuitBreakerConfig` class, add after it):
 
 ```python
 class TraitAdaptiveConfig(BaseModel):
-    """AD-494: Trait-adaptive circuit breaker multiplier ranges.
-
-    These control how strongly personality traits influence circuit breaker
-    thresholds. Setting all influence factors to 0.0 disables trait adaptation
-    (all multipliers become 1.0).
-    """
+    """AD-494: Trait-adaptive circuit breaker — personality-aware thresholds."""
     enabled: bool = True
-    # Influence factors — how strongly each trait dimension affects its parameter.
-    # 0.0 = no influence, 1.0 = full influence per compute_trait_thresholds() formulas.
-    openness_influence: float = 1.0
-    neuroticism_influence: float = 1.0
-    conscientiousness_influence: float = 1.0
-    extraversion_influence: float = 1.0
 ```
 
-Add `trait_adaptive: TraitAdaptiveConfig = TraitAdaptiveConfig()` to the `SystemConfig` class, after the `circuit_breaker` field (after the line `circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()`).
+Add `trait_adaptive: TraitAdaptiveConfig = TraitAdaptiveConfig()` to the `SystemConfig` class, after the `circuit_breaker` field.
 
-**Builder note:** The influence factors are NOT used in the `compute_trait_thresholds()` function in this AD. They are config placeholders for future fine-tuning. The `enabled` flag IS used: in `_ensure_agent_traits_registered()` in proactive.py, check `self._config` for trait_adaptive.enabled before registering. If disabled or if config is not available, skip registration (default behavior = uniform thresholds). Update `_ensure_agent_traits_registered()` to check this:
+**File:** `src/probos/proactive.py` (EDIT)
 
-```python
-    def _ensure_agent_traits_registered(self, agent: Any) -> None:
-        """AD-494: Register personality traits for an agent's circuit breaker thresholds."""
-        # Check if trait adaptation is enabled via config
-        if self._runtime and hasattr(self._runtime, 'config'):
-            cfg = getattr(self._runtime.config, 'trait_adaptive', None)
-            if cfg and not cfg.enabled:
-                return
+Add `self._trait_adaptive_enabled: bool = True` to `ProactiveCognitiveLoop.__init__()`.
 
-        # Skip if already registered
-        if agent.id in self._circuit_breaker._trait_thresholds:
-            return
-        # ... rest of method unchanged
-```
-
-Wait — the `_runtime.config` path needs verification. Let me specify the correct path. The runtime's config is accessed as `self._runtime._config` (private). But the `set_config()` method already receives config data. Rather than reaching into runtime internals, pass the `TraitAdaptiveConfig` alongside the existing `cb_config`.
-
-**Revised approach:** Modify `set_config()` to accept the trait adaptive config:
-
-In `proactive.py`, change `set_config`:
+Modify `set_config()` signature to accept the trait config:
 
 ```python
     def set_config(self, config: ProactiveCognitiveConfig, cb_config: Any = None, trait_config: Any = None) -> None:
         """Store ProactiveCognitiveConfig for trust signal weights (AD-414)."""
         self._config = config
-        self._trait_adaptive_enabled = True  # Default: enabled
         if trait_config is not None:
             self._trait_adaptive_enabled = getattr(trait_config, 'enabled', True)
         if cb_config:
             from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
             self._circuit_breaker = CognitiveCircuitBreaker(config=cb_config)
 ```
-
-Also add `self._trait_adaptive_enabled: bool = True` to `__init__`.
 
 Then `_ensure_agent_traits_registered()` checks `self._trait_adaptive_enabled`:
 
@@ -512,7 +491,9 @@ Then `_ensure_agent_traits_registered()` checks `self._trait_adaptive_enabled`:
         # ... rest of method
 ```
 
-And in `startup/finalize.py`, update the `set_config` call (currently line 78):
+**File:** `src/probos/startup/finalize.py` (EDIT)
+
+Update the existing `set_config` call (find `proactive_loop.set_config(config.proactive_cognitive, cb_config=config.circuit_breaker)`) to add `trait_config`:
 
 ```python
         proactive_loop.set_config(
@@ -521,8 +502,6 @@ And in `startup/finalize.py`, update the `set_config` call (currently line 78):
             trait_config=config.trait_adaptive,
         )
 ```
-
-**Verified accessor:** `config.circuit_breaker` is already passed on line 78 of `startup/finalize.py`. Add `trait_config=config.trait_adaptive` to the same call.
 
 ---
 
@@ -583,21 +562,21 @@ Helper: `_record_diverse_events(breaker, agent_id, n)` — records `n` events ea
 19. `test_high_conscientiousness_agent_gets_shorter_cooldown` — after trip, agent with C=0.9 has shorter cooldown than default
 20. `test_high_extraversion_agent_less_amber_sensitive` — agent with E=0.9 stays green with amber-level signals that would turn a default agent amber
 21. `test_default_personality_matches_uniform_behavior` — agent with all 0.5 traits behaves identically to agent without traits registered
-22. `test_wesley_profile_more_tolerant` — using Wesley's actual seed values (O=0.9, C=0.7, E=0.4, A=0.5, N=0.2) verify velocity threshold is higher and similarity threshold is more lenient than base
+22. `test_wesley_profile_more_tolerant` — using Wesley's actual seed values (O=0.9, C=0.7, E=0.4, A=0.5, N=0.2), verify effective velocity threshold is *higher than* the base velocity threshold and effective similarity threshold is *higher than* the base similarity threshold. Use relative comparisons (`assert eff_velocity > base_velocity`), not absolute value assertions — the test must not break if YAML seed values change.
 
 **Reset and lifecycle (4 tests):**
 
-23. `test_reset_agent_clears_traits` — after `reset_agent()`, agent no longer has trait thresholds
-24. `test_reset_all_clears_all_traits` — `reset_all()` clears all trait registrations
+23. `test_reset_agent_clears_traits` — after `reset_agent()`, `has_agent_traits(agent_id)` returns False
+24. `test_reset_all_clears_all_traits` — `reset_all()` makes `has_agent_traits()` return False for all agents
 25. `test_get_status_shows_trait_adapted` — `get_status()` includes `trait_adapted: True` after registration and `trait_adapted: False` before
 26. `test_get_status_shows_effective_thresholds` — `get_status()` includes `effective_velocity_threshold` and `effective_similarity_threshold` reflecting personality adaptation
 
 **Config integration (2 tests):**
 
-27. `test_trait_adaptive_disabled_skips_registration` — when `_trait_adaptive_enabled` is False on `ProactiveCognitiveLoop`, `_ensure_agent_traits_registered()` does not register traits. Create a mock agent with `id` and `agent_type` attrs, call `_ensure_agent_traits_registered()`, verify breaker has no trait thresholds.
-28. `test_trait_adaptive_enabled_registers_traits` — when enabled (default), `_ensure_agent_traits_registered()` loads seed profile and registers traits. Mock or stub `load_seed_profile` to return Wesley's personality data. Verify circuit breaker has trait thresholds for the agent.
+27. `test_trait_adaptive_disabled_skips_registration` — when `_trait_adaptive_enabled` is False on `ProactiveCognitiveLoop`, `_ensure_agent_traits_registered()` does not register traits. Create a mock agent with `id` and `agent_type` attrs, call `_ensure_agent_traits_registered()`, verify `breaker.has_agent_traits(agent.id)` is False.
+28. `test_trait_adaptive_enabled_registers_traits` — when enabled (default), `_ensure_agent_traits_registered()` loads seed profile and registers traits. Mock or stub `load_seed_profile` to return Wesley's personality data. Verify `breaker.has_agent_traits(agent.id)` is True.
 
-**Builder note on test 27/28:** These tests require a `ProactiveCognitiveLoop` instance. Create one with `interval=999, cooldown=999` (values don't matter for these tests). For test 28, use `unittest.mock.patch("probos.proactive.load_seed_profile")` to mock the YAML loading, since the test environment may not have the crew_profiles directory.
+**Builder note on test 27/28:** These tests require a `ProactiveCognitiveLoop` instance. Create one with `interval=999, cooldown=999` (values don't matter for these tests). For test 28, use `unittest.mock.patch("probos.crew_profile.load_seed_profile")` to mock the YAML loading — the function is imported locally inside `_ensure_agent_traits_registered()`, so it must be patched in the module where it's defined (`probos.crew_profile`), not where it's imported from.
 
 ---
 
@@ -607,7 +586,7 @@ Helper: `_record_diverse_events(breaker, agent_id, n)` — records `n` events ea
 - **SOLID/O** — The circuit breaker is open for extension (new trait mappings) without modifying its core trip/zone logic. Only the threshold *source* changes (uniform → per-agent lookup), not the *algorithm*.
 - **SOLID/D** — Personality data is injected via `set_agent_traits()`, not fetched by the breaker itself. The breaker has no dependency on `CrewProfile`, `ProfileStore`, or YAML loading. Wiring is in `proactive.py`.
 - **Fail Fast** — `_ensure_agent_traits_registered()` is log-and-degrade. If profile loading fails, uniform thresholds apply. Personality input values are clamped to 0.0-1.0. Effective thresholds are clamped to safe bounds.
-- **Law of Demeter** — The circuit breaker does not reach into agent objects or profile stores. The proactive loop loads profiles and passes scalar values to `set_agent_traits()`.
+- **Law of Demeter** — The circuit breaker does not reach into agent objects or profile stores. The proactive loop loads profiles and passes scalar values to `set_agent_traits()`. Trait presence is checked via the public `has_agent_traits()` method, not by reaching into `_trait_thresholds`.
 - **DRY** — `_effective_thresholds()` is called in exactly four places (`_compute_signals`, `_update_zone`, `_trip`, `get_status`). The multiplier computation is in one place (`compute_trait_thresholds()`).
 
 ---

@@ -313,7 +313,7 @@ async def test_start_step_marks_active():
     bill = _make_bill()
     inst = await rt.activate(bill)
 
-    result = rt.start_step(inst.id, "step-1", "agent-forge", agent_callsign="Forge")
+    result = await rt.start_step(inst.id, "step-1", "agent-forge", agent_callsign="Forge")
 
     assert result is True
     ss = inst.step_states["step-1"]
@@ -330,8 +330,8 @@ async def test_start_step_returns_false_non_pending():
     bill = _make_bill()
     inst = await rt.activate(bill)
 
-    rt.start_step(inst.id, "step-1", "agent-forge")
-    result = rt.start_step(inst.id, "step-1", "agent-forge")
+    await rt.start_step(inst.id, "step-1", "agent-forge")
+    result = await rt.start_step(inst.id, "step-1", "agent-forge")
 
     assert result is False
 
@@ -345,7 +345,7 @@ async def test_start_step_returns_false_terminal_instance():
     inst = await rt.activate(bill)
 
     rt.cancel(inst.id)
-    result = rt.start_step(inst.id, "step-1", "agent-forge")
+    result = await rt.start_step(inst.id, "step-1", "agent-forge")
 
     assert result is False
 
@@ -358,7 +358,7 @@ async def test_complete_step_marks_completed():
     bill = _make_bill()
     inst = await rt.activate(bill)
 
-    rt.start_step(inst.id, "step-1", "agent-forge", action="cognitive_skill")
+    await rt.start_step(inst.id, "step-1", "agent-forge", action="cognitive_skill")
     result = rt.complete_step(inst.id, "step-1", result={"finding": "ok"})
 
     assert result is True
@@ -376,9 +376,9 @@ async def test_complete_all_steps_triggers_bill_completion():
     bill = _make_bill()
     inst = await rt.activate(bill)
 
-    rt.start_step(inst.id, "step-1", "agent-forge")
+    await rt.start_step(inst.id, "step-1", "agent-forge")
     rt.complete_step(inst.id, "step-1")
-    rt.start_step(inst.id, "step-2", "agent-atlas")
+    await rt.start_step(inst.id, "step-2", "agent-atlas")
     rt.complete_step(inst.id, "step-2")
 
     assert inst.status == InstanceStatus.COMPLETED
@@ -397,7 +397,7 @@ async def test_complete_step_emits_event_with_duration():
     bill = _make_bill()
     inst = await rt.activate(bill)
 
-    rt.start_step(inst.id, "step-1", "agent-forge", action="cognitive_skill")
+    await rt.start_step(inst.id, "step-1", "agent-forge", action="cognitive_skill")
     rt.complete_step(inst.id, "step-1")
 
     step_events = [e for e in events if e[0] == EventType.BILL_STEP_COMPLETED]
@@ -414,7 +414,7 @@ async def test_fail_step_marks_step_and_instance_failed():
     bill = _make_bill()
     inst = await rt.activate(bill)
 
-    rt.start_step(inst.id, "step-1", "agent-forge")
+    await rt.start_step(inst.id, "step-1", "agent-forge")
     result = rt.fail_step(inst.id, "step-1", error="LLM timeout")
 
     assert result is True
@@ -431,7 +431,7 @@ async def test_fail_step_emits_both_events():
     bill = _make_bill()
     inst = await rt.activate(bill)
 
-    rt.start_step(inst.id, "step-1", "agent-forge")
+    await rt.start_step(inst.id, "step-1", "agent-forge")
     rt.fail_step(inst.id, "step-1", error="timeout")
 
     step_failed = [e for e in events if e[0] == EventType.BILL_STEP_FAILED]
@@ -463,7 +463,7 @@ async def test_skip_and_complete_mixed_completes_bill():
     inst = await rt.activate(bill)
 
     rt.skip_step(inst.id, "step-1")
-    rt.start_step(inst.id, "step-2", "agent-atlas")
+    await rt.start_step(inst.id, "step-2", "agent-atlas")
     rt.complete_step(inst.id, "step-2")
 
     assert inst.status == InstanceStatus.COMPLETED

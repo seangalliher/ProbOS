@@ -75,7 +75,7 @@ async def finalize_startup(
             on_event=lambda evt: runtime._emit_event(evt.get("type", ""), evt.get("data", {})),
         )
         proactive_loop.set_runtime(runtime)
-        proactive_loop.set_config(config.proactive_cognitive, cb_config=config.circuit_breaker)
+        proactive_loop.set_config(config.proactive_cognitive, cb_config=config.circuit_breaker, trait_config=config.trait_adaptive)
         if config.proactive_cognitive.duty_schedule.enabled:
             proactive_loop.set_duty_schedule(config.proactive_cognitive.duty_schedule)
         # PATCH(AD-517): Wire knowledge store for cooldown persistence
@@ -85,8 +85,23 @@ async def finalize_startup(
         # AD-567g: Wire orientation service into proactive loop
         if hasattr(runtime, '_orientation_service') and runtime._orientation_service:
             proactive_loop.set_orientation_service(runtime._orientation_service)
+        # --- AD-493: Novelty Gate ---
+        runtime._novelty_gate = None
+        if config.novelty_gate.enabled:
+            from probos.cognitive.novelty_gate import NoveltyGate
+            _novelty_gate = NoveltyGate.from_config(config.novelty_gate)
+            proactive_loop.set_novelty_gate(_novelty_gate)
+            runtime._novelty_gate = _novelty_gate
+            logger.info("AD-493: NoveltyGate enabled (threshold=%.2f, decay=%.1fh)",
+                         config.novelty_gate.similarity_threshold,
+                         config.novelty_gate.decay_hours)
         await proactive_loop.start()
         logger.info("proactive-cognitive-loop started (interval=%ss)", config.proactive_cognitive.interval_seconds)
+
+        # AD-595e: Wire qualification enforcement into proactive loop
+        proactive_loop.set_qualification_config(config.qualification)
+        if runtime.ontology and runtime.ontology.billet_registry:
+            proactive_loop.set_billet_registry(runtime.ontology.billet_registry)
 
     # --- AD-558: Wire trust dampening dependencies ---
     if runtime.ontology:
@@ -127,6 +142,9 @@ async def finalize_startup(
                 runtime.ontology.billet_registry
             )
         logger.info("AD-618d: BillRuntime wired (events + billet registry)")
+
+        # AD-595e: Wire qualification enforcement config into BillRuntime
+        runtime._bill_runtime.set_qualification_config(config.qualification)
 
     # --- AD-618e: Wire BillJITBridge (Bill step → skill proficiency) ---
     if (

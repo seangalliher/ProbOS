@@ -143,6 +143,7 @@ class EventType(str, Enum):
     QUALIFICATION_TEST_COMPLETE = "qualification_test_complete"  # AD-566a
     QUALIFICATION_BASELINE_SET = "qualification_baseline_set"  # AD-566a
     QUALIFICATION_DRIFT_DETECTED = "qualification_drift_detected"  # AD-566c
+    QUALIFICATION_GATE_BLOCKED = "qualification_gate_blocked"  # AD-595e
     CASCADE_CONFABULATION_DETECTED = "cascade_confabulation_detected"  # AD-567f
     CONTENT_CONTAGION_FLAGGED = "content_contagion_flagged"  # AD-529
     CONTENT_QUARANTINE_RECOMMENDED = "content_quarantine_recommended"  # AD-529

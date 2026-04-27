@@ -113,6 +113,11 @@ class NATSBus:
         self._prefix_change_callbacks: list[Callable] = []
         self._resubscribing: bool = False
         self._stream_configs: list[dict[str, Any]] = []  # Track streams for prefix re-creation
+        # BF-242: JetStream liveness probe — consecutive failure tracking
+        self._js_consecutive_failures: int = 0
+        self._js_failure_threshold: int = 3  # Trigger recovery after N consecutive failures
+        self._js_suspended: bool = False  # True = JetStream disabled, publishes go straight to core NATS
+        self._js_recovery_task: asyncio.Task | None = None  # Single-flight guard for recovery
 
     @property
     def connected(self) -> bool:
@@ -316,6 +321,81 @@ class NATSBus:
             finally:
                 self._resubscribing = False
 
+    def _suspend_jetstream(self) -> None:
+        """BF-242: Temporarily disable JetStream — publishes bypass to core NATS.
+
+        Called when consecutive JetStream failures exceed threshold and
+        recovery fails. Eliminates the ~11s timeout penalty per publish.
+        JetStream is restored by _resume_jetstream() after successful recovery.
+        """
+        if not self._js_suspended:
+            self._js_suspended = True
+            logger.warning(
+                "BF-242: JetStream suspended after %d consecutive failures — "
+                "all publishes will use core NATS until recovery succeeds.",
+                self._js_consecutive_failures,
+            )
+
+    def _resume_jetstream(self) -> None:
+        """BF-242: Re-enable JetStream after successful recovery."""
+        if self._js_suspended:
+            self._js_suspended = False
+            self._js_consecutive_failures = 0
+            logger.info("BF-242: JetStream resumed — publishes restored to at-least-once delivery.")
+
+    def _on_recovery_task_done(self, task: asyncio.Task) -> None:
+        """BF-242: Surface exceptions from background recovery task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error("BF-242: Recovery task failed with unhandled exception: %s", exc)
+
+    async def _try_jetstream_recovery(self) -> None:
+        """BF-242: Attempt JetStream recovery after consecutive failures.
+
+        Sequence:
+        1. Suspend JetStream (no more timeout penalties for concurrent publishes)
+        2. Attempt _recover_jetstream (recreate streams + consumers)
+        3. Probe JetStream with a stream_info() call to verify it's responsive
+        4. If probe succeeds → resume JetStream
+        5. If probe fails → stay suspended until next reconnect
+
+        Note: This runs asynchronously. The publish that triggered recovery
+        has already fallen through to core NATS — suspension eliminates
+        timeout penalty for all concurrent and subsequent publishes
+        immediately, before recovery completes.
+
+        Probe uses stream_info(name) on the first configured stream.
+        If one stream responds, the JetStream subsystem is functional —
+        probing all streams adds latency for no diagnostic value.
+        """
+        self._suspend_jetstream()
+
+        try:
+            await self._recover_jetstream(reason="liveness")
+        except Exception as e:
+            logger.error(
+                "BF-242: JetStream recovery failed — staying suspended: %s", e
+            )
+            return
+
+        # Probe: verify JetStream is actually responsive after recovery
+        if self._stream_configs:
+            probe_stream = self._stream_configs[0]["name"]
+            try:
+                await self._js.stream_info(probe_stream)
+                logger.info("BF-242: JetStream probe succeeded (stream: %s)", probe_stream)
+                self._resume_jetstream()
+            except Exception as e:
+                logger.warning(
+                    "BF-242: JetStream probe failed after recovery — "
+                    "staying suspended until next reconnect: %s", e
+                )
+        else:
+            # No streams tracked — resume optimistically
+            self._resume_jetstream()
+
     async def _on_reconnected(self) -> None:
         """BF-241: Reconnect callback — restore JetStream state.
 
@@ -323,12 +403,17 @@ class NATSBus:
         directly. nats-py auto-resubscribes core NATS subscriptions on
         reconnect, but JetStream streams and consumers must be explicitly
         recreated.
+
+        BF-242: Also resumes JetStream if it was suspended due to liveness
+        failure, since a reconnect means the server may have restarted.
         """
         self._connected = True
         logger.info("NATS reconnected to %s", self._nc.connected_url)
         if self._js:
             try:
                 await self._recover_jetstream(reason="reconnect")
+                # BF-242: Reconnect implies server may have restarted — resume
+                self._resume_jetstream()
             except asyncio.CancelledError:
                 raise  # propagate — shutdown in progress
             except Exception as e:
@@ -510,13 +595,24 @@ class NATSBus:
         """Publish to a JetStream subject (durable, at-least-once).
 
         BF-230: Retry once on transient failure, then fall back to core NATS.
-        Three-tier resilience:
-          1. JetStream publish with configurable timeout
-          2. One retry after 0.5s backoff (transient load spikes)
-          3. Fallback to core NATS publish (at-most-once, but not lost)
+        BF-242: Track consecutive failures. After threshold, suspend JetStream
+        and trigger recovery. While suspended, publishes bypass directly to
+        core NATS (no timeout penalty).
         """
         if not self._js:
             await self.publish(subject, data, headers=headers)
+            return
+
+        # BF-242: When JetStream is suspended, go straight to core NATS
+        if self._js_suspended:
+            try:
+                await self.publish(subject, data, headers=headers)
+            except Exception as fallback_err:
+                logger.error(
+                    "BF-242: Suspended JetStream AND core NATS publish failed for %s — "
+                    "event dropped: %s",
+                    self._full_subject(subject), fallback_err,
+                )
             return
 
         full_subject = self._full_subject(subject)
@@ -528,6 +624,9 @@ class NATSBus:
                     full_subject, payload, headers=headers,
                     timeout=self._js_publish_timeout,
                 )
+                # BF-242: Success — reset failure counter
+                if self._js_consecutive_failures > 0:
+                    self._js_consecutive_failures = 0
                 return  # Success
             except Exception as e:
                 if attempt == 0:
@@ -537,11 +636,21 @@ class NATSBus:
                     )
                     await asyncio.sleep(0.5)
                 else:
+                    self._js_consecutive_failures += 1
                     logger.warning(
                         "JetStream publish to %s failed after retry, "
-                        "falling back to core NATS: %s",
-                        full_subject, e,
+                        "falling back to core NATS (consecutive failures: %d): %s",
+                        full_subject, self._js_consecutive_failures, e,
                     )
+                    # BF-242: Threshold exceeded — trigger recovery (single-flight)
+                    if self._js_consecutive_failures >= self._js_failure_threshold:
+                        if self._js_recovery_task is None or self._js_recovery_task.done():
+                            self._js_recovery_task = asyncio.create_task(
+                                self._try_jetstream_recovery()
+                            )
+                            self._js_recovery_task.add_done_callback(
+                                self._on_recovery_task_done
+                            )
 
         # Fallback: core NATS (at-most-once delivery, but event not lost)
         try:
@@ -780,6 +889,7 @@ class NATSBus:
             "url": self._nc.connected_url or self._url,
             "reconnects": getattr(self._nc, "reconnected_count", 0),
             "jetstream": self._js is not None,
+            "js_suspended": self._js_suspended,
             "subscriptions": len(self._subscriptions),
         }
 
@@ -854,6 +964,7 @@ class MockNATSBus:
         self._prefix_change_callbacks: list[Callable] = []
         self._resubscribing: bool = False
         self._stream_configs: list[dict[str, Any]] = []
+        self._js_suspended: bool = False  # BF-242 parity
 
     @property
     def connected(self) -> bool:
@@ -1117,6 +1228,7 @@ class MockNATSBus:
             "url": "mock://localhost",
             "reconnects": 0,
             "jetstream": True,
+            "js_suspended": self._js_suspended,
             "subscriptions": sum(len(cbs) for cbs in self._subs.values()),
         }
 

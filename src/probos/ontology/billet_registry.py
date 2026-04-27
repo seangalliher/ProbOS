@@ -265,6 +265,102 @@ class BilletRegistry:
         result = self.assign(billet_id, agent_type, callsign=callsign)
         return result, []
 
+    # ------------------------------------------------------------------
+    # AD-595e: Qualification Gate Enforcement helpers
+    # ------------------------------------------------------------------
+
+    async def get_qualification_standing(
+        self,
+        agent_type: str,
+        agent_id: str = "",
+    ) -> dict[str, Any]:
+        """AD-595e: Get qualification summary for an agent's billet.
+
+        Returns a dict with pass_rate, missing qualifications, and whether
+        the agent is qualified for their assigned billet. Used by
+        CognitiveAgent for context injection.
+
+        Graceful degradation: returns ``{"qualified": True, "standing": "unknown"}``
+        if no store, no assignment, or no post.
+        """
+        default = {"qualified": True, "standing": "unknown", "missing": [], "pass_rate": 1.0}
+
+        assignment = self._dept.get_assignment_for_agent(agent_type)
+        if not assignment:
+            return default
+
+        post = self._dept.get_post(assignment.post_id)
+        if not post or not post.required_qualifications:
+            return {**default, "standing": "no_requirements"}
+
+        if not self._qualification_store:
+            return default
+
+        if not agent_id and assignment.agent_id:
+            agent_id = assignment.agent_id
+        if not agent_id:
+            return default
+
+        # Check each required qualification
+        passed = 0
+        missing: list[str] = []
+        for test_name in post.required_qualifications:
+            result = await self._qualification_store.get_latest(agent_id, test_name)
+            if result is None:
+                # Untested — don't count as missing (cold-start tolerance)
+                passed += 1
+            elif result.passed:
+                passed += 1
+            else:
+                missing.append(test_name)
+
+        total = len(post.required_qualifications)
+        pass_rate = passed / total if total > 0 else 1.0
+
+        return {
+            "qualified": len(missing) == 0,
+            "standing": "qualified" if len(missing) == 0 else "deficient",
+            "missing": missing,
+            "pass_rate": pass_rate,
+            "billet_id": assignment.post_id,
+            "total_required": total,
+        }
+
+    async def check_role_qualifications(
+        self,
+        agent_type: str,
+        agent_id: str,
+        required_qualifications: list[str],
+        *,
+        allow_untested: bool = True,
+    ) -> tuple[bool, list[str]]:
+        """AD-595e: Check explicit qualification list (not billet-based).
+
+        Used by BillRuntime for step-level qualification checks where
+        the required qualifications come from the bill step definition,
+        not the agent's billet.
+
+        Returns
+        -------
+        (qualified, missing) : tuple[bool, list[str]]
+        """
+        if not required_qualifications:
+            return True, []
+
+        if not self._qualification_store:
+            return True, []
+
+        missing: list[str] = []
+        for test_name in required_qualifications:
+            result = await self._qualification_store.get_latest(agent_id, test_name)
+            if result is None:
+                if not allow_untested:
+                    missing.append(test_name)
+            elif not result.passed:
+                missing.append(test_name)
+
+        return len(missing) == 0, missing
+
     def assign(
         self,
         post_id: str,

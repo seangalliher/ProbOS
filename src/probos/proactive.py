@@ -36,6 +36,7 @@ from probos.types import AnchorFrame, IntentMessage, Priority
 from probos.utils import format_duration
 
 if TYPE_CHECKING:
+    from probos.cognitive.novelty_gate import NoveltyGate
     from probos.config import DutyScheduleConfig, ProactiveCognitiveConfig
     from probos.knowledge.store import KnowledgeStore
     from probos.runtime import ProbOSRuntime
@@ -189,21 +190,126 @@ class ProactiveCognitiveLoop:
         self._llm_status: str = "operational"  # AD-576: "operational" | "degraded" | "offline"
         self._llm_offline_since: float = 0.0   # AD-576: monotonic timestamp of first failure
         self._orientation_service: Any = None  # AD-567g: Late-bound
+        self._novelty_gate: "NoveltyGate | None" = None  # AD-493: Set via set_novelty_gate()
+        self._trait_adaptive_enabled: bool = True  # AD-494: trait-adaptive circuit breaker
+        self._qualification_config: Any = None  # AD-595e: late-bound
+        self._billet_registry: Any = None         # AD-595e: late-bound
 
     def set_orientation_service(self, svc: Any) -> None:
         """AD-567g / BF-113: Set orientation service (public setter for LoD)."""
         self._orientation_service = svc
 
+    def set_novelty_gate(self, gate: "NoveltyGate") -> None:
+        """AD-493: Set novelty gate (public setter for LoD)."""
+        self._novelty_gate = gate
+
+    def set_qualification_config(self, config: Any) -> None:
+        """AD-595e: Set qualification enforcement config."""
+        self._qualification_config = config
+
+    def set_billet_registry(self, registry: Any) -> None:
+        """AD-595e: Set billet registry for qualification checks."""
+        self._billet_registry = registry
+
+    def _ensure_agent_traits_registered(self, agent: Any) -> None:
+        """AD-494: Lazily register personality traits with circuit breaker.
+
+        Called once per agent on first proactive think. Loads seed profile
+        and extracts Big Five scores. Log-and-degrade on any failure.
+        """
+        if not self._trait_adaptive_enabled:
+            return
+        agent_id = agent.id
+        if self._circuit_breaker.has_agent_traits(agent_id):
+            return
+        try:
+            from probos.crew_profile import PersonalityTraits, load_seed_profile
+            profile = load_seed_profile(agent.agent_type)
+            if profile and "personality" in profile:
+                traits = PersonalityTraits.from_dict(profile["personality"])
+                self._circuit_breaker.set_agent_traits(
+                    agent_id,
+                    openness=traits.openness,
+                    conscientiousness=traits.conscientiousness,
+                    extraversion=traits.extraversion,
+                    agreeableness=traits.agreeableness,
+                    neuroticism=traits.neuroticism,
+                )
+                logger.debug(
+                    "AD-494: Registered trait thresholds for %s (%s)",
+                    getattr(agent, 'callsign', agent.agent_type),
+                    agent.agent_type,
+                )
+        except Exception:
+            logger.debug("AD-494: Failed to load traits for %s, using defaults", agent_id, exc_info=True)
+
+    async def _check_duty_qualification(self, agent: Any, duty: Any) -> bool:
+        """AD-595e: Qualification gate for proactive duty dispatch.
+
+        Returns True if agent is qualified (or gate is disabled/degraded),
+        False if blocked. Shadow mode logs but returns True.
+        """
+        if not self._qualification_config:
+            return True
+        if not getattr(self._qualification_config, 'enforcement_enabled', False):
+            return True
+        if not self._billet_registry:
+            return True
+
+        try:
+            standing = await self._billet_registry.get_qualification_standing(
+                agent.agent_type, agent_id=agent.id,
+            )
+            if standing.get("qualified", True):
+                return True
+
+            log_only = getattr(self._qualification_config, 'enforcement_log_only', True)
+            payload = {
+                "gate": "duty_dispatch",
+                "agent_id": agent.id,
+                "agent_type": agent.agent_type,
+                "callsign": getattr(agent, 'callsign', agent.agent_type),
+                "duty_id": getattr(duty, 'duty_id', ''),
+                "missing": standing.get("missing", []),
+                "log_only": log_only,
+            }
+            if self._on_event:
+                self._on_event({
+                    "type": EventType.QUALIFICATION_GATE_BLOCKED.value,
+                    "data": payload,
+                })
+
+            if log_only:
+                logger.info(
+                    "AD-595e: Duty gate (shadow): %s missing %s for duty %s",
+                    agent.agent_type, standing.get("missing", []),
+                    getattr(duty, 'duty_id', ''),
+                )
+                return True  # Shadow — allow
+            else:
+                logger.warning(
+                    "AD-595e: Duty gate BLOCKED: %s missing %s for duty %s",
+                    agent.agent_type, standing.get("missing", []),
+                    getattr(duty, 'duty_id', ''),
+                )
+                return False  # Blocked
+        except Exception:
+            logger.debug("AD-595e: Duty qualification gate error — allowing", exc_info=True)
+            return True
+
     def set_runtime(self, runtime: ProbOSRuntime) -> None:
         """Wire the runtime reference (provides registry, trust, WR, memory, etc.)."""
         self._runtime = runtime
 
-    def set_config(self, config: ProactiveCognitiveConfig, cb_config: Any = None) -> None:
+    def set_config(self, config: ProactiveCognitiveConfig, cb_config: Any = None, trait_config: Any = None) -> None:
         """Store ProactiveCognitiveConfig for trust signal weights (AD-414)."""
         self._config = config
         if cb_config:
             from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
             self._circuit_breaker = CognitiveCircuitBreaker(config=cb_config)
+        # AD-494: Store trait-adaptive enabled flag
+        if trait_config is not None:
+            self._trait_adaptive_enabled = getattr(trait_config, 'enabled', True)
 
     @property
     def circuit_breaker(self) -> CognitiveCircuitBreaker:
@@ -412,6 +518,9 @@ class ProactiveCognitiveLoop:
             if time.monotonic() - last < cooldown:
                 continue
 
+            # AD-494: Ensure agent personality traits are registered with circuit breaker
+            self._ensure_agent_traits_registered(agent)
+
             # AD-488: Circuit breaker gate — skip agents in cognitive cooldown
             if not self._circuit_breaker.should_allow_think(agent.id):
                 breaker_status = self._circuit_breaker.get_status(agent.id)
@@ -538,6 +647,10 @@ class ProactiveCognitiveLoop:
                 idle_cooldown = self.get_agent_cooldown(agent.id) * 3
                 if last > 0 and time.monotonic() - last < idle_cooldown:
                     return
+
+        # AD-595e: Qualification gate for duty dispatch
+        if duty and not await self._check_duty_qualification(agent, duty):
+            return
 
         # AD-502: Inject post count for temporal awareness
         try:
@@ -678,6 +791,21 @@ class ProactiveCognitiveLoop:
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
             return
+
+        # AD-493: Semantic novelty gate — suppress rehashed observations
+        if self._novelty_gate:
+            try:
+                verdict = self._novelty_gate.check(agent.id, response_text)
+                if not verdict.is_novel:
+                    logger.info(
+                        "AD-493: Suppressed rehashed observation from %s (sim=%.3f, matched='%s')",
+                        agent.agent_type, verdict.similarity, verdict.matched_preview[:60],
+                    )
+                    if duty and self._duty_tracker:
+                        self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+                    return
+            except Exception:
+                logger.debug("AD-493: Novelty gate check failed, allowing post", exc_info=True)
 
         # BF-172: Suppress raw JSON intent payloads leaking from LLM mode-confusion
         stripped = response_text.lstrip()
@@ -1996,6 +2124,13 @@ class ProactiveCognitiveLoop:
             _obs_tid = getattr(_obs_thread, 'id', '') or ''
             if _obs_tid:
                 rt.ward_room_router.record_agent_response(agent.id, _obs_tid)
+
+        # AD-493: Record observation fingerprint after successful posting
+        if self._novelty_gate:
+            try:
+                self._novelty_gate.record(agent.id, text)
+            except Exception:
+                logger.debug("AD-493: Fingerprint recording failed", exc_info=True)
 
     async def _extract_and_execute_actions(
         self, agent: Any, text: str,
