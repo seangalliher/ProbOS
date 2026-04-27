@@ -4,7 +4,7 @@
 **Priority:** Medium
 **Depends:** AD-662 (Corroboration Source Provenance — COMPLETE, consumer-side infrastructure)
 **Unlocks:** AD-665 (Corroboration Source Validation — consumer-side graded scoring, currently production no-op because provenance fields are empty)
-**Files:** `src/probos/ward_room/messages.py` (EDIT), `src/probos/ward_room/threads.py` (EDIT), `src/probos/proactive.py` (EDIT), `src/probos/cognitive/cognitive_agent.py` (EDIT), `src/probos/cognitive/dreaming.py` (EDIT), `tests/test_ad663_provenance_producers.py` (NEW)
+**Files:** `src/probos/ward_room/messages.py` (EDIT), `src/probos/ward_room/threads.py` (EDIT), `src/probos/proactive.py` (EDIT), `src/probos/cognitive/cognitive_agent.py` (EDIT), `tests/test_ad663_provenance_producers.py` (NEW)
 
 ## Problem
 
@@ -12,21 +12,21 @@ AD-662 added three provenance fields to `AnchorFrame` — `source_origin_id`, `a
 
 **Neither works yet.** All three fields default to empty string (`""`), and no producer populates them. Every episode stored today has empty provenance. The consumer-side checks (`_share_artifact_ancestry()` returns `False` when either origin is empty; `_in_anomaly_window()` returns `False` when `anomaly_window_id` is empty) are correct but inert.
 
-This AD wires the **producer side** — the 5 highest-corroboration-risk episode construction sites — to populate `source_origin_id` and `artifact_version` at AnchorFrame creation time.
+This AD wires the **producer side** — the 4 highest-corroboration-risk episode construction sites — to populate `source_origin_id` and `artifact_version` at AnchorFrame creation time.
 
 **Failure mode this prevents (BF-226/227):** During queue pressure, multiple agents observe the same Ward Room post independently (different duty cycles, different channels, >60s apart). Their observations pass all spatiotemporal independence checks but share corrupted ancestry — the corroboration is circular. With provenance populated, `_share_artifact_ancestry()` detects the shared `source_origin_id` and vetoes false independence.
 
 ### Scope
 
-**In scope (5 producers, 2 fields):**
+**In scope (4 producers, 2 fields):**
 - Ward Room reply episodes (`messages.py:320`)
 - Ward Room thread creation episodes (`threads.py:565`)
 - Proactive thought episodes (`proactive.py:988`)
 - Cognitive agent action episodes (`cognitive_agent.py:4954`)
-- Dream consolidation reflection episodes (`dreaming.py:2340`)
 
 **Explicitly out of scope:**
 - `anomaly_window_id` — No automated anomaly window detection infrastructure exists. The alert condition system (GREEN/YELLOW/RED) is manual and operational. Building an anomaly detector is a separate AD. All producers set `anomaly_window_id=""` (existing behavior). **Track as future AD.**
+- Dream consolidation reflection episodes (`dreaming.py:2340`) — Reflections already deduplicate via deterministic episode IDs (`reflection-{content_hash}`). Provenance fields would encode the same content_hash, adding no independent signal. Revisit when dream reflections gain richer provenance (e.g., contributing episode IDs).
 - Proactive no-response episodes (`proactive.py:753`) — Low corroboration risk; "[NO_RESPONSE]" episodes are rarely corroborated. Leave provenance empty.
 - Peer repetition episodes (`messages.py:358`, `threads.py:604`) — System-generated secondary episodes, not direct observations. Leave provenance empty.
 - Feedback episodes (`feedback.py:218, 379`) — Captain-originated, single-source. No shared-ancestry risk.
@@ -76,10 +76,11 @@ At the reply episode construction site (find the `AnchorFrame(` inside the `if s
                         trigger_agent=author_callsign or author_id,
                         department=self._resolve_author_department(author_id),
                         source_timestamp=post.created_at,  # AD-577
-                        # AD-663: Provenance — the WR post is the root artifact
+                        # AD-663: Provenance — the reply body is the observed content;
+                        # parent post identity is already captured via thread_id
                         source_origin_id=f"wr-post:{post.id}",
                         artifact_version=hashlib.sha256(
-                            (post.body or "").encode("utf-8")
+                            (body or "").encode("utf-8")
                         ).hexdigest()[:16],
                     ),
 ```
@@ -92,8 +93,8 @@ import hashlib
 **Builder:** Verify `hashlib` is not already imported. If it is, skip the import addition.
 
 **Rationale:**
-- `source_origin_id = f"wr-post:{post.id}"` — The WR post UUID is the root artifact. The `wr-post:` prefix prevents ID collisions across artifact types (a thread ID could theoretically equal a post ID).
-- `artifact_version` — SHA-256 of the post body, truncated to 16 hex chars. Two agents observing the same post get the same version. If the post is edited (`edit_post()`), later observers get a different version. 16 hex chars = 64 bits of collision resistance, sufficient for per-instance uniqueness.
+- `source_origin_id = f"wr-post:{post.id}"` — The parent WR post UUID is the root artifact. The `wr-post:` prefix prevents ID collisions across artifact types (a thread ID could theoretically equal a post ID).
+- `artifact_version` — SHA-256 of the reply `body` (the actual content this episode observes), truncated to 16 hex chars. Two agents observing the same reply content get the same version. The parent post's identity is already captured via `thread_id`. 16 hex chars = 64 bits of collision resistance, sufficient for per-instance uniqueness.
 
 ---
 
@@ -206,6 +207,8 @@ import hashlib
 
 **Note on `_wr_activity` variable:** The existing code computes `_wr_activity = context.get("ward_room_activity", [])` at line 982. Builder: verify this variable is still named `_wr_activity` and is accessible at the point where the provenance computation is inserted. If the variable name has drifted, adjust accordingly.
 
+**Builder:** Confirm `post_id` is the actual key used in `ward_room_activity` entries — grep for `context['ward_room_activity'].extend` or `ward_room_activity.append` in proactive.py (around lines 1395, 1436, 1480) to see the dict shape. If the key is `id` or `post.id` instead of `post_id`, adjust the `.get("post_id", "")` calls accordingly.
+
 ---
 
 ## Section 4: Cognitive Agent Action Episodes
@@ -235,7 +238,7 @@ At the action episode construction site (find the `AnchorFrame(` inside the `_st
                     source_origin_id=observation.get("correlation_id", "") or "",
                     artifact_version=hashlib.sha256(
                         str(query_text)[:500].encode("utf-8")
-                    ).hexdigest()[:16] if query_text else "",
+                    ).hexdigest()[:16],
                 ),
 ```
 
@@ -244,43 +247,22 @@ At the action episode construction site (find the `AnchorFrame(` inside the `_st
 import hashlib
 ```
 
-**Builder:** Verify `hashlib` is not already imported. This is a large file — search carefully.
+**Builder:** Verify `hashlib` is not already imported. Search in the `_store_action_episode` method (around line 4874), the AnchorFrame construction is near line 4976.
 
 **Rationale:**
 - `source_origin_id` — Uses the `correlation_id` from the observation, which traces back to the original event that triggered this action chain. When two agents process the same correlated event, their `source_origin_id` values match.
-- `artifact_version` — SHA-256 of the query text (first 500 chars, matching the existing truncation pattern for `result_text`). Two agents processing the same query text get the same version. Different interpretations of the same event get different versions.
+- `artifact_version` — SHA-256 of the query text (first 500 chars via `str()`, matching the existing `user_input` truncation pattern). Always computed — empty/missing query_text hashes to a deterministic empty-string hash, which is still valid and consistent. Two agents processing the same query text get the same version.
 - **If `correlation_id` is absent** (legacy or non-correlated actions), `source_origin_id` is empty — graceful degradation.
 
 ---
 
 ## Section 5: Dream Consolidation Reflection Episodes
 
-**File:** `src/probos/cognitive/dreaming.py` (EDIT)
+**File:** `src/probos/cognitive/dreaming.py` — **NO CHANGE**
 
-At the reflection episode construction site (find the `AnchorFrame(trigger_type="dream_consolidation")` inside the method that creates AD-599 reflection episodes):
+Dream reflection episodes already deduplicate via deterministic episode IDs (`reflection-{content_hash[:16]}`). Adding provenance fields would produce `source_origin_id=f"dream-cluster:{episode_id}"` and `artifact_version=content_hash` — both trivially derived from the same `content_hash` input. The two fields encode no independent information and add no signal beyond what the deterministic ID already provides.
 
-**Current AnchorFrame construction:**
-```python
-            anchors = AnchorFrame(
-                trigger_type="dream_consolidation",
-            )
-```
-
-**Add provenance fields:**
-```python
-            anchors = AnchorFrame(
-                trigger_type="dream_consolidation",
-                # AD-663: Provenance — the reflection is derived from consolidated episodes
-                source_origin_id=f"dream-cluster:{episode_id}",
-                artifact_version=content_hash,
-            )
-```
-
-**Rationale:**
-- `source_origin_id = f"dream-cluster:{episode_id}"` — The reflection's episode ID is deterministic (`reflection-{content_hash[:16]}`), making this a stable origin. Two reflection episodes from the same content share ancestry (correctly — they're the same insight).
-- `artifact_version = content_hash` — Reuses the `content_hash` variable already computed at the line above (`content_hash = hashlib.sha256(content_text.encode()).hexdigest()[:16]`). No new hash computation needed.
-
-**Builder:** Verify `content_hash` is in scope at the `AnchorFrame` construction point. It's computed a few lines above at the `episode_id = f"reflection-{content_hash}"` line.
+**Deferred:** If dream reflections gain richer provenance (e.g., contributing episode IDs from the cluster, or the cluster ID itself), revisit in a future AD where the origin encodes genuinely independent information from the version.
 
 ---
 
@@ -288,7 +270,7 @@ At the reflection episode construction site (find the `AnchorFrame(trigger_type=
 
 **File:** `tests/test_ad663_provenance_producers.py` (NEW)
 
-### Test categories (14 tests):
+### Test categories (13 tests):
 
 **Ward Room provenance (4 tests):**
 
@@ -306,6 +288,8 @@ At the reflection episode construction site (find the `AnchorFrame(trigger_type=
 
 6. **`test_proactive_same_activity_same_provenance`** — Two agents with identical `_wr_activity` lists (same post IDs in same order) produce identical `source_origin_id` and `artifact_version`. Shared ancestry is detected.
 
+6b. **`test_proactive_subset_activity_different_version`** — Agent A observes posts [X, Y, Z], agent B observes [X, Y]. Same first post → same `source_origin_id`. Different post ID sets → different `artifact_version`. This is the AD-665 graded-scoring scenario: same origin, different version → partial independence.
+
 7. **`test_proactive_empty_activity_no_provenance`** — Empty `_wr_activity` → `source_origin_id == ""` and `artifact_version == ""`. Graceful degradation.
 
 **Cognitive agent provenance (2 tests):**
@@ -314,36 +298,37 @@ At the reflection episode construction site (find the `AnchorFrame(trigger_type=
 
 9. **`test_action_episode_no_correlation_id`** — Observation without `correlation_id`. Assert `anchors.source_origin_id == ""`. Graceful degradation.
 
-**Dream consolidation provenance (2 tests):**
-
-10. **`test_dream_reflection_has_provenance`** — Reflection episode with known `episode_id` and `content_hash`. Assert `anchors.source_origin_id == f"dream-cluster:{episode_id}"` and `anchors.artifact_version == content_hash`.
-
-11. **`test_dream_same_content_same_provenance`** — Two reflection episodes from identical content. Assert identical provenance (same deterministic episode ID → same origin).
-
 **Consumer integration (3 tests):**
 
-12. **`test_shared_ancestry_detected_for_same_wr_post`** — Construct two episodes with the same `source_origin_id` (from same WR post). Call `_share_artifact_ancestry(ep_a.anchors, ep_b.anchors)`. Assert `True`. This is the end-to-end integration: producer populates → consumer detects.
+10. **`test_shared_ancestry_detected_for_same_wr_post`** — Construct two episodes with the same `source_origin_id` (from same WR post). Call `_share_artifact_ancestry(ep_a.anchors, ep_b.anchors)`. Assert `True`. This is the end-to-end integration: producer populates → consumer detects.
 
-13. **`test_no_shared_ancestry_for_different_posts`** — Two episodes with different `source_origin_id` values. Assert `_share_artifact_ancestry()` returns `False`.
+11. **`test_no_shared_ancestry_for_different_posts`** — Two episodes with different `source_origin_id` values. Assert `_share_artifact_ancestry()` returns `False`.
 
-14. **`test_provenance_prefix_prevents_cross_type_collision`** — Construct one episode with `source_origin_id="wr-post:abc-123"` and another with `source_origin_id="wr-thread:abc-123"` (same UUID, different artifact types). Assert `_share_artifact_ancestry()` returns `False`. Proves the type prefix works.
+12. **`test_provenance_prefix_prevents_cross_type_collision`** — Construct one episode with `source_origin_id="wr-post:abc-123"` and another with `source_origin_id="wr-thread:abc-123"` (same UUID, different artifact types). Assert `_share_artifact_ancestry()` returns `False`. Comment in test: "Without the type prefix, both origins would be 'abc-123' and share ancestry. The prefix ensures WR posts and threads with the same UUID are distinct artifacts." Also construct a control pair where both have `source_origin_id="wr-post:abc-123"` and assert `True` — proves the function works and the prefix is the differentiator, not a trivial pass.
 
 **Test implementation notes:**
 - Tests construct `AnchorFrame` directly with provenance fields — no need to mock WR infrastructure. The tests verify the provenance computation logic, not the WR plumbing.
-- Import `_share_artifact_ancestry` from `probos.cognitive.social_verification` for integration tests (12-14).
+- Import `_share_artifact_ancestry` from `probos.cognitive.social_verification` for integration tests (10-12).
 - Import `AnchorFrame` from `probos.types`.
 - Use `hashlib.sha256` to compute expected values. Do NOT hardcode hex strings — compute them in the test for clarity.
+- **Explicit version format checks:** For all tests that assert `artifact_version`, verify the format explicitly:
+  ```python
+  assert len(anchors.artifact_version) == 16
+  assert all(c in "0123456789abcdef" for c in anchors.artifact_version)
+  assert anchors.artifact_version == hashlib.sha256(expected_input.encode("utf-8")).hexdigest()[:16]
+  ```
+  Apply this three-line pattern in tests 1, 2, 5, 8, and 10.
 
 ---
 
 ## Engineering Principles Compliance
 
 - **SOLID/S** — No new classes. Each producer is responsible for its own provenance computation at the AnchorFrame construction site. No shared provenance service needed (DRY violation would be premature — each producer has different source data).
-- **SOLID/O** — Purely additive: new keyword arguments to existing `AnchorFrame()` constructor calls. No existing behavior changes.
+- **SOLID/O** — Purely additive: new keyword arguments to existing `AnchorFrame()` constructor calls. No existing behavior changes. Dream reflections explicitly excluded (no change needed).
 - **SOLID/D** — AnchorFrame is the contract. Producers populate it; consumers read it. No coupling between producers and consumers beyond the field names.
 - **Law of Demeter** — Each producer accesses only its own local variables (`post.id`, `post.body`, `thread.id`, `_wr_activity`, `observation`, `content_hash`). No reaching through objects to extract provenance data.
 - **Fail Fast** — Provenance computation uses simple hash operations that cannot fail in practice. The only failure mode is missing data (empty `post.body`, empty `_wr_activity`), which degrades to empty strings. No `try/except` needed around hash computations. The outer `try/except` on the episode store already catches catastrophic failures.
-- **DRY** — Each producer's provenance computation is 2-4 lines at the construction site. No utility function extracted — the logic is site-specific (WR post ID vs thread ID vs correlation ID vs dream cluster ID). Extracting a common function would add abstraction with no reuse benefit.
+- **DRY** — Each producer's provenance computation is 2-4 lines at the construction site. No utility function extracted — the logic is site-specific (WR post ID vs thread ID vs correlation ID). Extracting a common function would add abstraction with no reuse benefit.
 - **Defense in Depth** — Consumer-side validation (`_share_artifact_ancestry`) handles empty strings correctly. Producer-side provides the data; consumer-side validates it. If a producer fails to populate provenance, the consumer degrades gracefully (treats as independent — same as pre-AD-663 behavior).
 
 ---
@@ -354,19 +339,19 @@ After all tests pass:
 
 1. **PROGRESS.md** — Add entry:
    ```
-   AD-663 COMPLETE. Provenance Producer Wiring — populate source_origin_id and artifact_version on AnchorFrame at 5 episode producer sites (WR reply, WR thread, proactive thought, cognitive agent action, dream consolidation reflection). Enables AD-662 consumer-side ancestry detection and AD-665 graded scoring. WR posts use post/thread ID as origin, SHA-256 body hash as version. Proactive uses observed WR post IDs. Cognitive agent uses correlation_id. Dream uses deterministic reflection ID. anomaly_window_id deferred (no automated detector). 14 tests. Issue #XXX.
+   AD-663 COMPLETE. Provenance Producer Wiring — populate source_origin_id and artifact_version on AnchorFrame at 4 episode producer sites (WR reply, WR thread, proactive thought, cognitive agent action). Dream reflections deferred (deterministic IDs already provide dedup; provenance fields would encode same hash, no independent signal). Enables AD-662 consumer-side ancestry detection and AD-665 graded scoring. WR posts use post/thread ID as origin, SHA-256 body hash as version. Proactive uses observed WR post IDs. Cognitive agent uses correlation_id. anomaly_window_id deferred (no automated detector). 13 tests. Issue #XXX.
    ```
    Replace `#XXX` with the actual issue number created for this AD.
 
 2. **docs/development/roadmap.md** — Add AD-663 entry after the AD-662 entry (around line 7089):
    ```
-   **AD-663: Provenance Producer Wiring** *(Complete, OSS, Issue #XXX)* — Populate `source_origin_id` and `artifact_version` on AnchorFrame at 5 episode producer sites: Ward Room replies/threads, proactive thoughts, cognitive agent actions, dream consolidation reflections. Enables AD-662 consumer-side ancestry detection and AD-665 graded version scoring. WR posts use `wr-post:{id}` / `wr-thread:{id}` origin prefixes with SHA-256 body hash versioning. Proactive agents use observed WR post IDs. Cognitive agents use correlation_id from event tracing. Dream reflections use deterministic cluster IDs. `anomaly_window_id` deferred to future AD (no automated anomaly detection infrastructure). 14 tests. *Depends on: AD-662 (consumer infrastructure — COMPLETE). Unlocks: AD-665 (graded source validation).*
+   **AD-663: Provenance Producer Wiring** *(Complete, OSS, Issue #XXX)* — Populate `source_origin_id` and `artifact_version` on AnchorFrame at 4 episode producer sites: Ward Room replies/threads, proactive thoughts, cognitive agent actions. Dream consolidation reflections deferred (deterministic IDs already provide dedup). Enables AD-662 consumer-side ancestry detection and AD-665 graded version scoring. WR posts use `wr-post:{id}` / `wr-thread:{id}` origin prefixes with SHA-256 body hash versioning. Proactive agents use observed WR post IDs. Cognitive agents use correlation_id from event tracing. `anomaly_window_id` deferred to future AD (no automated anomaly detection infrastructure). 13 tests. *Depends on: AD-662 (consumer infrastructure — COMPLETE). Unlocks: AD-665 (graded source validation).*
    ```
 
 3. **DECISIONS.md** — Add entry:
    ```
    ### AD-663 — Provenance Producer Wiring (2026-04-26)
    **Context:** AD-662 added consumer-side provenance validation (`_share_artifact_ancestry`, anomaly window discount) but no producer populates the three AnchorFrame provenance fields. AD-665 adds graded scoring but is production no-op without populated fields. BF-226/227 demonstrated the failure mode: multiple agents observe the same WR post during queue pressure, observations pass spatiotemporal independence checks but share corrupted ancestry.
-   **Decision:** Wire 5 highest-risk episode producers to populate `source_origin_id` and `artifact_version` at AnchorFrame construction. Provenance strategy is site-specific: WR uses post/thread IDs with type prefixes (`wr-post:`, `wr-thread:`), proactive uses observed WR post IDs from context, cognitive agent uses correlation_id, dream reflections use deterministic cluster IDs. Version fingerprints use SHA-256 truncated to 16 hex chars. `anomaly_window_id` explicitly deferred — no automated anomaly detection infrastructure exists. Remaining producers (no-response, peer repetition, feedback, smoke test, DM) are low corroboration risk and retain empty provenance.
+   **Decision:** Wire 4 highest-risk episode producers to populate `source_origin_id` and `artifact_version` at AnchorFrame construction. Dream consolidation reflections deferred — deterministic episode IDs already provide dedup, and provenance fields would encode the same content_hash as both origin and version, adding no independent signal. Provenance strategy is site-specific: WR uses post/thread IDs with type prefixes (`wr-post:`, `wr-thread:`), proactive uses observed WR post IDs from context, cognitive agent uses correlation_id. Version fingerprints use SHA-256 truncated to 16 hex chars. `anomaly_window_id` explicitly deferred — no automated anomaly detection infrastructure exists. Remaining producers (no-response, peer repetition, feedback, smoke test, DM) are low corroboration risk and retain empty provenance.
    **Consequences:** AD-662's consumer-side checks become active for new WR-derived episodes. AD-665's graded scoring will work for post-edit scenarios (same origin, different body hash → different artifact_version). Agents observing the same WR post during different duty cycles now trigger shared-ancestry detection. Legacy episodes retain empty provenance and are treated as independent (no behavioral change for existing data).
    ```
