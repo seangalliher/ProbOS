@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -340,6 +341,12 @@ class MessageStore:
                         trigger_agent=author_callsign or author_id,
                         department=self._resolve_author_department(author_id),
                         source_timestamp=post.created_at,  # AD-577
+                        # AD-663: Provenance - the reply body is the observed content;
+                        # parent post identity is already captured via thread_id
+                        source_origin_id=f"wr-post:{post.id}",
+                        artifact_version=hashlib.sha256(
+                            (body or "").encode("utf-8")
+                        ).hexdigest()[:16],
                     ),
                 )
                 from probos.cognitive.episodic import EpisodicMemory

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -586,6 +587,11 @@ class ThreadManager:
                         trigger_agent=author_callsign or author_id,
                         department=self._resolve_author_department(author_id),
                         source_timestamp=thread.created_at,  # AD-577
+                        # AD-663: Provenance - the thread is the root artifact
+                        source_origin_id=f"wr-thread:{thread.id}",
+                        artifact_version=hashlib.sha256(
+                            (title or "").encode("utf-8")
+                        ).hexdigest()[:16],
                     ),
                 )
                 from probos.cognitive.episodic import EpisodicMemory
