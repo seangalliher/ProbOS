@@ -650,6 +650,9 @@ class SocialVerificationConfig(BaseModel):
     cascade_cooldown_seconds: float = 300.0  # Dedup window for cascade alerts
     # Provenance (AD-662)
     anomaly_window_discount: float = 0.5  # 0.0-1.0: weight discount for anomaly window pairs
+    # Provenance validation (AD-665)
+    provenance_version_independence_weight: float = 0.7  # 0.0=reject, 1.0=full independence
+    provenance_validation_enabled: bool = True  # Master toggle for AD-665 graded validation
     # Privacy
     expose_episode_content: bool = False  # MUST stay False — privacy boundary
 

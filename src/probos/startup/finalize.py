@@ -22,6 +22,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _sync_ontology_callsigns(runtime: Any) -> None:
+    """BF-244: Reconcile naming ceremony callsigns into ontology assignments."""
+    ontology = getattr(runtime, "ontology", None)
+    callsign_registry = getattr(runtime, "callsign_registry", None)
+    if not ontology or not callsign_registry:
+        return
+
+    for agent_type, callsign in callsign_registry.all_callsigns().items():
+        current = ontology.get_assignment_for_agent(agent_type)
+        if current and current.callsign != callsign:
+            ontology.update_assignment_callsign(agent_type, callsign)
+            logger.info(
+                "BF-244: Synced ontology callsign for %s: '%s' -> '%s'",
+                agent_type,
+                current.callsign,
+                callsign,
+            )
+
+
 async def finalize_startup(
     *,
     runtime: Any,  # ProbOSRuntime — passed as Any to avoid circular import
@@ -358,6 +377,8 @@ async def finalize_startup(
     # AD-567g: Wire orientation service into onboarding
     if hasattr(runtime, '_orientation_service') and runtime._orientation_service:
         runtime.onboarding.set_orientation_service(runtime._orientation_service)
+
+    _sync_ontology_callsigns(runtime)
 
     # AD-423c: Wire tool registry into onboarding service
     if runtime.tool_registry:

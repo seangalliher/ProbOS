@@ -152,6 +152,7 @@ class EventType(str, Enum):
     REGISTER_SHIFT_GRANTED = "register_shift_granted"    # AD-653
     REGISTER_SHIFT_DENIED = "register_shift_denied"      # AD-653
     CORROBORATION_VERIFIED = "corroboration_verified"  # AD-567f
+    CORROBORATION_PROVENANCE_VALIDATED = "corroboration_provenance_validated"  # AD-665
     WRONG_CONVERGENCE_DETECTED = "wrong_convergence_detected"  # AD-583
     WARD_ROOM_ECHO_DETECTED = "ward_room_echo_detected"  # AD-583g
     OBSERVABLE_STATE_MISMATCH = "observable_state_mismatch"  # AD-583f
@@ -731,6 +732,16 @@ class CorroborationVerifiedEvent(BaseEvent):
     corroborating_agents: list[str] = field(default_factory=list)
     corroboration_score: float = 0.0
     anchor_independence_score: float = 0.0
+
+
+@dataclass
+class CorroborationProvenanceValidatedEvent(BaseEvent):
+    """AD-665: Emitted when provenance validation detects shared ancestry."""
+    event_type: EventType = field(default=EventType.CORROBORATION_PROVENANCE_VALIDATED, init=False)
+    requesting_agent: str = ""
+    shared_ancestry_pairs: int = 0
+    discounted_pairs: int = 0
+    total_pairs_checked: int = 0
 
 
 @dataclass

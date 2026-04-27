@@ -6,6 +6,14 @@ For current decisions, see [DECISIONS.md](DECISIONS.md).
 
 ---
 
+### BF-244 — Ontology Callsign Sync After Naming Ceremony (2026-04-27)
+
+**Context:** Cold-start naming ceremony updates `CallsignRegistry` and `agent.callsign` but cannot update ontology assignments because the ontology isn't wired into the onboarding service yet (startup ordering: pools created in Phase 2, ontology wired in Phase 8). The `if self._ontology:` guard silently skips the update. Agents then receive conflicting identity signals — correct callsign from standing orders personality block (BF-083) but stale seed callsign from ontology context in `get_crew_context()`.
+**Decision:** Add a defensive callsign reconciliation loop in `finalize.py` immediately after wiring the ontology into onboarding. Loop iterates `CallsignRegistry.all_callsigns()`, compares each against the ontology assignment, and calls `update_assignment_callsign()` for any mismatches. This is the same pattern used for cognitive skill catalog backfill (finalize.py around line 370). Did not restructure startup ordering — the finalize backfill pattern is established and lower-risk.
+**Consequences:** Ontology identity context and peer callsigns in `get_crew_context()` now reflect self-named callsigns. Completes the identity sync chain: BF-049 (added the API) → BF-083 (personality block override) → BF-101 (runtime resolution fallback) → BF-235 (cache invalidation) → BF-244 (ontology backfill).
+
+---
+
 ## Era IV — Evolution (Phases 30+)
 
 ## Phase 32t: BuildBlueprint & ChunkSpec — Pattern Buffer (AD-330)

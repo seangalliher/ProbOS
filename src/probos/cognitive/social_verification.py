@@ -14,6 +14,7 @@ independent anchor corroboration, circular reporting (intelligence analysis).
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -29,7 +30,7 @@ class CorroborationResult:
     query: str  # Original claim/query text
     requesting_agent_id: str  # Who asked
     corroborating_agent_count: int  # How many OTHER agents have relevant episodes
-    independent_anchor_count: int  # How many have INDEPENDENT anchors
+    independent_anchor_count: int  # AD-665: graded weight >= 0.5 majority-independent threshold
     total_matching_episodes: int  # Total matching episodes across agents
     anchor_independence_score: float  # 0.0–1.0: ratio of independent vs dependent
     corroboration_score: float  # 0.0–1.0: composite score
@@ -51,6 +52,21 @@ class CascadeRiskResult:
     affected_agents: list[str]  # Agents propagating the claim
     affected_departments: list[str]  # Departments affected
     detail: str  # Human-readable explanation
+    # AD-665: provenance_validation report is not attached here - query
+    # CorroborationResult.anchor_summary for diagnostic detail.
+
+
+@dataclass(frozen=True)
+class ProvenanceValidationResult:
+    """AD-665: Structured report of provenance-based independence validation."""
+    total_pairs_checked: int
+    independent_pairs: int
+    shared_ancestry_pairs: int  # Same origin + same version
+    discounted_pairs: int  # Same origin, different version
+    ancestry_details: list[dict[str, Any]]  # Per-pair breakdown (ids + reason + weight only)
+
+
+_ALLOWED_DETAIL_KEYS = frozenset({"episode_a", "episode_b", "reason", "weight"})
 
 
 def _are_independently_anchored(anchors_a: Any, anchors_b: Any) -> bool:
@@ -100,9 +116,8 @@ def _share_artifact_ancestry(anchors_a: Any, anchors_b: Any) -> bool:
 
     Two observations sharing the same source_origin_id are NOT independent —
     they derive from the same root data, regardless of spatiotemporal separation.
-    Same source_origin_id AND same artifact_version is a stronger signal
-    (same artifact, same version). artifact_version alone is NOT sufficient
-    because version strings may collide across unrelated artifacts.
+    This function checks source_origin_id only (binary match). Version-aware
+    graded scoring is handled by compute_anchor_independence() (AD-665).
 
     AD-662 preserves existing behavior for None/missing anchors — episodes
     without anchors are not given the ancestry guard. A future AD may tighten this.
@@ -135,6 +150,7 @@ def _in_anomaly_window(anchors: Any) -> bool:
 def compute_anchor_independence(
     episodes: list[Any],
     anomaly_discount: float = 0.5,
+    version_independence_weight: float = 0.0,
 ) -> float:
     """Compute anchor independence score for a set of episodes.
 
@@ -146,9 +162,11 @@ def compute_anchor_independence(
       independent, regardless of spatiotemporal separation or time gap.
     - Pairs where either episode occurred during an anomaly window
       contribute ``anomaly_discount`` weight (default 0.5x) to the score.
+        AD-665: Same-origin-different-version pairs can retain partial
+        independence via ``version_independence_weight``.
     """
     if len(episodes) < 2:
-        return 0.0
+        return 1.0
 
     total_weight = 0.0
     independent_weight = 0.0
@@ -165,14 +183,79 @@ def compute_anchor_independence(
 
             total_weight += pair_weight
 
-            # AD-662: Shared ancestry is an absolute veto — overrides both
-            # spatiotemporal independence AND time separation
+            # AD-665: Graded provenance independence (replaces AD-662 binary veto)
             if _share_artifact_ancestry(a, b):
-                pass  # Not independent, regardless of other signals
+                version_a = getattr(a, "artifact_version", "") or ""
+                version_b = getattr(b, "artifact_version", "") or ""
+                if version_a and version_b and version_a != version_b:
+                    independent_weight += pair_weight * version_independence_weight
             elif _are_independently_anchored(a, b) or _time_separated(episodes[i], episodes[j]):
                 independent_weight += pair_weight
 
     return independent_weight / total_weight if total_weight > 0 else 0.0
+
+
+def _privacy_safe_episode_id(episode: Any) -> str:
+    """Return an opaque episode identifier for provenance diagnostics."""
+    episode_id = str(getattr(episode, "id", "") or "")
+    if not episode_id:
+        return ""
+    if len(episode_id) > 64 or any(char.isspace() for char in episode_id):
+        return hashlib.sha256(episode_id.encode("utf-8")).hexdigest()[:16]
+    return episode_id
+
+
+def build_provenance_report(
+    episodes: list[Any],
+    *,
+    version_independence_weight: float = 0.0,
+) -> ProvenanceValidationResult:
+    """Build a privacy-preserving provenance validation report (AD-665)."""
+    total_pairs_checked = 0
+    independent_pairs = 0
+    shared_ancestry_pairs = 0
+    discounted_pairs = 0
+    ancestry_details: list[dict[str, Any]] = []
+
+    # AD-665 TODO: At k > ~50, fold this into compute_anchor_independence()
+    # to avoid two O(N^2) passes. Track separately.
+    for i in range(len(episodes)):
+        for j in range(i + 1, len(episodes)):
+            total_pairs_checked += 1
+            a = getattr(episodes[i], "anchors", None)
+            b = getattr(episodes[j], "anchors", None)
+
+            if not _share_artifact_ancestry(a, b):
+                independent_pairs += 1
+                continue
+
+            version_a = getattr(a, "artifact_version", "") or ""
+            version_b = getattr(b, "artifact_version", "") or ""
+            if version_a and version_b and version_a != version_b:
+                discounted_pairs += 1
+                reason = "version_discounted"
+                weight = float(version_independence_weight)
+            else:
+                shared_ancestry_pairs += 1
+                reason = "shared_ancestry"
+                weight = 0.0
+
+            detail = {
+                "episode_a": _privacy_safe_episode_id(episodes[i]),
+                "episode_b": _privacy_safe_episode_id(episodes[j]),
+                "reason": reason,
+                "weight": weight,
+            }
+            assert set(detail.keys()) <= _ALLOWED_DETAIL_KEYS  # AD-665 privacy invariant
+            ancestry_details.append(detail)
+
+    return ProvenanceValidationResult(
+        total_pairs_checked=total_pairs_checked,
+        independent_pairs=independent_pairs,
+        shared_ancestry_pairs=shared_ancestry_pairs,
+        discounted_pairs=discounted_pairs,
+        ancestry_details=ancestry_details,
+    )
 
 
 class SocialVerificationService:
@@ -231,7 +314,25 @@ class SocialVerificationService:
                 confidence_values.append(conf)
 
         # 4. Compute anchor independence
-        independence = compute_anchor_independence(qualified, anomaly_discount=self._config.anomaly_window_discount)
+        provenance_enabled = getattr(self._config, "provenance_validation_enabled", True)
+        version_independence_weight = (
+            getattr(self._config, "provenance_version_independence_weight", 0.7)
+            if provenance_enabled
+            else 0.0
+        )
+        independence = compute_anchor_independence(
+            qualified,
+            anomaly_discount=self._config.anomaly_window_discount,
+            version_independence_weight=version_independence_weight,
+        )
+        provenance_result = (
+            build_provenance_report(
+                qualified,
+                version_independence_weight=version_independence_weight,
+            )
+            if provenance_enabled
+            else None
+        )
 
         # 5. Aggregate metadata (privacy: no content)
         agent_set: set[str] = set()
@@ -268,8 +369,14 @@ class SocialVerificationService:
                         continue
                     a = getattr(ep, "anchors", None)
                     b = getattr(other, "anchors", None)
-                    # AD-662: Shared ancestry vetoes independence
                     if _share_artifact_ancestry(a, b):
+                        version_a = getattr(a, "artifact_version", "") or ""
+                        version_b = getattr(b, "artifact_version", "") or ""
+                        # AD-665: same-origin-different-version pair counts as independent partner
+                        # only if graded weight clears 0.5 ("majority independent") threshold
+                        if version_a and version_b and version_a != version_b and version_independence_weight >= 0.5:
+                            independent_count += 1
+                            break
                         continue
                     if _are_independently_anchored(a, b) or _time_separated(ep, other):
                         independent_count += 1
@@ -282,7 +389,9 @@ class SocialVerificationService:
             sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
         )
         score = min(
-            0.5 * agent_ratio + 0.3 * independence + 0.2 * mean_confidence,
+            0.5 * agent_ratio
+            + 0.3 * (independence if len(qualified) >= 2 else 0.0)
+            + 0.2 * mean_confidence,
             1.0,
         )
 
@@ -315,7 +424,28 @@ class SocialVerificationService:
             "time_span_seconds": time_span,
             "unique_source_origins": len(origin_ids),  # AD-662
             "anomaly_window_episodes": anomaly_flagged,  # AD-662
+            "provenance_validation": dataclasses.asdict(provenance_result) if provenance_result else None,
         }
+
+        if (
+            self._emit_event
+            and provenance_result
+            and provenance_result.shared_ancestry_pairs + provenance_result.discounted_pairs > 0
+        ):
+            try:
+                from probos.events import EventType
+
+                self._emit_event(
+                    EventType.CORROBORATION_PROVENANCE_VALIDATED.value,
+                    {
+                        "requesting_agent": requesting_agent_id,
+                        "shared_ancestry_pairs": provenance_result.shared_ancestry_pairs,
+                        "discounted_pairs": provenance_result.discounted_pairs,
+                        "total_pairs_checked": provenance_result.total_pairs_checked,
+                    },
+                )
+            except Exception:
+                logger.debug("AD-665: provenance validation event emission failed", exc_info=True)
 
         result = CorroborationResult(
             query=claim,
@@ -418,7 +548,17 @@ class SocialVerificationService:
             logger.debug("AD-567f: cascade author lookup failed")
 
         # Compute anchor independence
-        independence = compute_anchor_independence(matched_episodes, anomaly_discount=self._config.anomaly_window_discount)
+        provenance_enabled = getattr(self._config, "provenance_validation_enabled", True)
+        version_independence_weight = (
+            getattr(self._config, "provenance_version_independence_weight", 0.7)
+            if provenance_enabled
+            else 0.0
+        )
+        independence = compute_anchor_independence(
+            matched_episodes,
+            anomaly_discount=self._config.anomaly_window_discount,
+            version_independence_weight=version_independence_weight,
+        )
         prop_count = len(affected_agents)
 
         # Classify risk level

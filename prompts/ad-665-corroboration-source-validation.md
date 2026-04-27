@@ -127,7 +127,7 @@ assert set(detail.keys()) <= _ALLOWED_DETAIL_KEYS  # AD-665 privacy invariant
 In `SocialVerificationService.check_corroboration()` (line 198), at the existing `compute_anchor_independence()` call (line 234):
 
 1. Pass `version_independence_weight=self._config.provenance_version_independence_weight if self._config.provenance_validation_enabled else 0.0` to `compute_anchor_independence()`. When disabled, 0.0 produces identical results to AD-662's binary veto (function default is also 0.0, so omitting works too — but explicit is clearer).
-2. If enabled, also call `build_provenance_report(episodes, version_independence_weight=self._config.provenance_version_independence_weight)` and attach the result to the anchor summary. If disabled, set `anchor_summary["provenance_validation"]` to `None` (key must always be present — consumers can rely on it existing in both modes).
+2. If enabled, also call `build_provenance_report(qualified, version_independence_weight=self._config.provenance_version_independence_weight)` and attach the result to the anchor summary. Use `qualified` (the post-confidence-gate filtered episodes, same list passed to `compute_anchor_independence()` on line 234), NOT the unfiltered `episodes` from the global recall — otherwise the report will count pairs that never contributed to the score. If disabled, set `anchor_summary["provenance_validation"]` to `None` (key must always be present — consumers can rely on it existing in both modes).
 
 **There is one score, one truth.** No `min()` of two scores. The graded weight is integrated directly into `compute_anchor_independence()`.
 
@@ -182,6 +182,21 @@ if self._emit_event and provenance_result.shared_ancestry_pairs + provenance_res
 
 The `independent_count` loop (line 262-276) also calls `_share_artifact_ancestry()` as a binary veto. Update it to match the new graded logic from Section 3 — if `provenance_validation_enabled`, a same-origin-different-version pair should count toward independence **only if the version_independence_weight >= 0.5** (i.e., the pair contributes at least half of full independence weight). This gives `independent_count` a clear boolean cutoff: the episode "has an independent partner" when the graded weight clears the 0.5 threshold. Add an inline comment: `# AD-665: 0.5 threshold = "majority independent" intuition; tunable via future config if needed`.
 
+**Replace the existing `_share_artifact_ancestry(a, b)` check (line ~272) with:**
+```python
+            if _share_artifact_ancestry(a, b):
+                version_a = getattr(a, "artifact_version", "") or ""
+                version_b = getattr(b, "artifact_version", "") or ""
+                # AD-665: same-origin-different-version pair counts as independent partner
+                # only if graded weight clears 0.5 ("majority independent") threshold
+                if version_a and version_b and version_a != version_b and version_independence_weight >= 0.5:
+                    independent_count += 1
+                    break
+                continue  # else: shared ancestry without version diff → not an independent partner
+```
+
+**When disabled** (`version_independence_weight=0.0`): the `>= 0.5` threshold check fails for any same-origin pair, preserving AD-662 binary-veto behavior. No separate disabled-mode code path needed — the math handles it.
+
 **Note:** `independent_anchor_count` in `CorroborationResult` is currently unused by any consumer (confirmed: only set at line 324, never read). The semantic change is safe, but the threshold is now explicit for future consumers. Add a field comment on `CorroborationResult.independent_anchor_count`: `# AD-665: counts episodes with graded weight >= 0.5 (majority-independent threshold)`.
 
 **Note:** This loop (line 262-276) is itself a redundant per-pair scan that mirrors `compute_anchor_independence()` logic. AD-665 does not refactor this redundancy; track separately as tech debt. Adding graded weights here keeps it consistent with Section 3 but does not fix the underlying duplication.
@@ -215,7 +230,8 @@ Add a new test class `TestProvenanceValidation` after the existing `TestSourcePr
 4. **`test_provenance_mixed_pairs`** — 3 episodes: A-B independent, B-C shared ancestry (same version), A-C discounted (same origin, different version, `version_independence_weight=0.7`). Expected: `pair_weight = 1.0` for all 3 (no anomaly), `independent_weight = 1.0 (A-B) + 0.0 (B-C) + 0.7 (A-C) = 1.7`, `total_weight = 3.0`, `score ≈ 0.567`. Assert `pytest.approx(0.567, abs=1e-3)`.
 5. **`test_provenance_empty_origin_treated_as_independent`** — Empty `source_origin_id` on either side → independent (defensive)
 
-**Builder pre-flight:** Before writing Test 5, read `social_verification.py:98-119` (`_share_artifact_ancestry`) and verify that empty `source_origin_id` (empty string on either/both sides) returns `False`. If it returns `True` when both are empty strings, that's an AD-662 bug — file a BF, implement the fix in this AD, and add a test for it.
+**Builder pre-flight check (not a test):** Before writing Test 5, read `social_verification.py:98-119` (`_share_artifact_ancestry`) and verify that empty `source_origin_id` (empty string on either/both sides) returns `False`. If it returns `True` when both are empty strings, that's an AD-662 bug — file a BF, implement the fix in this AD, and add a test for it (`test_empty_origin_strings_treated_as_independent_post_fix`). If pre-flight discovers the bug, the test count becomes 17. Update PROGRESS/DECISIONS accordingly.
+
 6. **`test_provenance_anomaly_window_orthogonal_to_version_weight`** — Two episodes, same origin, different version, both in anomaly window. Expected math: `pair_weight = 0.5` (anomaly discount), `independent_weight = 0.5 × 0.7 = 0.35`, `score = 0.35 / 0.5 = 0.7`. Assert `0.69 < score < 0.71`. Proves anomaly (denominator) and version weight (numerator) are orthogonal — no double-counting.
 7. **`test_provenance_disabled_config`** — `provenance_validation_enabled=False` → binary veto preserved (AD-662 behavior), no provenance report in anchor_summary
 8. **`test_provenance_wired_into_corroboration`** — Integration: shared ancestry episodes → assert `corroboration_score` reflects version-weighted independence (score assertion only, not report structure)
@@ -247,8 +263,8 @@ Use the existing `_make_episode()` and `_rich_anchors()` helpers. Create episode
 
 ### AD-665 — Corroboration Source Validation
 
-**Date:** 2026-04-26
+**Date:** 2026-04-27
 **Status:** Complete
-**Depends on:** AD-662 (provenance infrastructure — COMPLETE), AD-663 (producer wiring — FUTURE, AD-665 builds consumer-side assuming fields will be populated)
+**Depends on:** AD-662 (provenance infrastructure — COMPLETE), AD-663 (producer wiring — Ready, see AD-663 prompt)
 
 **Decision:** Replace binary shared-ancestry veto in `compute_anchor_independence()` with graded provenance weights. Same-origin-different-version pairs receive configurable `version_independence_weight` (default 0.7, no empirical basis — tunable per deployment). Single score, no dual-score `min()` combination — graded weight integrates directly into the existing independence formula. Anomaly discount (pair_weight denominator) and version independence weight (numerator credit) are orthogonal, no double-counting. `ProvenanceValidationResult` provides structured diagnostic report without exposing content (privacy invariant preserved). Transitive ancestry (A→B→C chains) explicitly deferred — requires `AnchorFrame` schema extension not yet designed. 16 new tests including privacy boundary verification. Triggered by Reed (Science) improvement proposals.

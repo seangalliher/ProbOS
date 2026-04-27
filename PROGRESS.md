@@ -1,3 +1,5 @@
+BF-244 CLOSED. Ontology callsign desync after naming ceremony. Startup ordering: onboarding runs with ontology=None, so update_assignment_callsign() silently skips. Fix: callsign reconciliation loop in finalize.py syncs CallsignRegistry → ontology assignments after ontology is wired. Fixed identity context, peer, and superior callsign display in get_crew_context(). 8 tests. Issue #357.
+
 AD-672 PLANNED. Agent Concurrency Management — per-agent concurrency ceiling (configurable, role-tuned), AGENT_CAPACITY_APPROACHING signal for load-aware routing, priority arbitration when threads compete for same resource, queue management for excess intents. Phase 5 of Ambient Awareness roadmap. Depends on AD-669. Issue #353.
 
 BF-243 CLOSED. __new__ test pattern AttributeError after AD-601/494/595e build wave. Tests using ClassName.__new__(ClassName) bypass __init__, crash on new attributes (_tcm, _trait_adaptive_enabled, _qualification_standing, _novelty_gate). Fix: getattr(self, '_attr', default) guards at access sites in episodic.py, proactive.py, cognitive_agent.py. Source-side fix — no test changes needed.
@@ -28,7 +30,7 @@ BF-041 CLOSED. HXI SVG icon system — replaced all Unicode text glyphs across 1
 
 BF-240 OPEN. LLM Health Dwell-Time Criterion — configurable `min_consecutive_healthy` threshold (default 3) before diagnostic holds release. Prevents premature recovery on single healthy check amid instability. Issue #344.
 
-AD-665 PLANNED. Corroboration Source Validation — consumer-side independence validation for corroborating sources. Detects shared upstream origin via provenance metadata (AD-662 fields). Graph-based ancestry walk, configurable similarity threshold, discount for common-origin corroboration. Issue #343.
+AD-665 COMPLETE. Corroboration Source Validation — graded provenance independence weights in compute_anchor_independence(), replacing AD-662 binary veto with version-aware scoring. Same-origin-different-version pairs get configurable independence weight (default 0.7). ProvenanceValidationResult report for diagnostics. Privacy-preserving ancestry_details (ids + reason only). Transitive ancestry deferred to future AD. 16 new tests. Issue #343.
 
 AD-664 COMPLETE. EventLog Diagnostic Infrastructure — structured payload (data JSON column), correlation_id, parent_event_id tracing columns. Schema migration for existing DBs. query_structured() and get_event_chain() methods. _row_to_dict() DRY helper. Retrofitted dream/emergent, mesh, and QA events with structured payloads + correlation IDs. Engineering diagnostic query capability declared (capability + _handled_intents + LLM instructions); programmatic handler deferred to follow-up AD. 17 tests. Issue #337.
 

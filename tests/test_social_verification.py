@@ -15,7 +15,9 @@ import pytest
 from probos.cognitive.social_verification import (
     CascadeRiskResult,
     CorroborationResult,
+    ProvenanceValidationResult,
     SocialVerificationService,
+    build_provenance_report,
     compute_anchor_independence,
     _are_independently_anchored,
     _share_artifact_ancestry,
@@ -737,3 +739,299 @@ class TestSourceProvenance:
         # score = 1.5 / 2.0 = 0.75
         score_with_anomaly = compute_anchor_independence([ep_normal_1, ep_normal_2, ep_anomaly])
         assert score_with_anomaly == 0.75
+
+
+# ===========================================================================
+# 7. Provenance Validation tests (AD-665) (16)
+# ===========================================================================
+
+class TestProvenanceValidation:
+    """Tests for AD-665: graded provenance source validation."""
+
+    def _provenance_episode(
+        self,
+        idx: int,
+        *,
+        origin: str = "",
+        version: str = "",
+        anomaly_window_id: str = "",
+        agent_id: str = "",
+    ) -> Episode:
+        anchors = dataclasses.replace(
+            _rich_anchors(idx),
+            source_origin_id=origin,
+            artifact_version=version,
+            anomaly_window_id=anomaly_window_id,
+        )
+        return _make_episode(
+            agent_ids=[agent_id or f"agent-{idx}"],
+            anchors=anchors,
+            timestamp=100.0 + idx * 10,
+            ep_id=f"ep-{idx}",
+        )
+
+    def test_provenance_all_independent(self) -> None:
+        """Different source origins retain full independence."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1"),
+            self._provenance_episode(2, origin="origin-b", version="v1"),
+            self._provenance_episode(3, origin="origin-c", version="v1"),
+        ]
+
+        score = compute_anchor_independence(episodes, version_independence_weight=0.7)
+        report = build_provenance_report(episodes, version_independence_weight=0.7)
+
+        assert score == 1.0
+        assert isinstance(report, ProvenanceValidationResult)
+        assert report.total_pairs_checked == 3
+        assert report.independent_pairs == 3
+        assert report.shared_ancestry_pairs == 0
+        assert report.discounted_pairs == 0
+
+    def test_provenance_shared_ancestry_same_version(self) -> None:
+        """Same origin and same version retain AD-662 full veto behavior."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1"),
+            self._provenance_episode(2, origin="origin-a", version="v1"),
+        ]
+
+        score = compute_anchor_independence(episodes, version_independence_weight=0.7)
+        report = build_provenance_report(episodes, version_independence_weight=0.7)
+
+        assert score == 0.0
+        assert report.shared_ancestry_pairs == 1
+        assert report.discounted_pairs == 0
+        assert report.ancestry_details[0]["reason"] == "shared_ancestry"
+        assert report.ancestry_details[0]["weight"] == 0.0
+
+    def test_provenance_shared_ancestry_different_version(self) -> None:
+        """Same origin and different version receive partial independence."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1"),
+            self._provenance_episode(2, origin="origin-a", version="v2"),
+        ]
+
+        score = compute_anchor_independence(episodes, version_independence_weight=0.7)
+        report = build_provenance_report(episodes, version_independence_weight=0.7)
+
+        assert score == pytest.approx(0.7)
+        assert report.shared_ancestry_pairs == 0
+        assert report.discounted_pairs == 1
+        assert report.ancestry_details[0]["reason"] == "version_discounted"
+        assert report.ancestry_details[0]["weight"] == pytest.approx(0.7)
+
+    def test_provenance_mixed_pairs(self) -> None:
+        """Mixed independent, shared, and version-discounted pairs score correctly."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1"),
+            self._provenance_episode(2, origin="origin-b", version="v1"),
+            self._provenance_episode(3, origin="origin-b", version="v1"),
+            self._provenance_episode(4, origin="origin-a", version="v2"),
+        ]
+
+        score = compute_anchor_independence(episodes, version_independence_weight=0.7)
+        report = build_provenance_report(episodes, version_independence_weight=0.7)
+
+        assert score == pytest.approx(4.7 / 6.0, abs=1e-3)
+        assert report.independent_pairs == 4
+        assert report.shared_ancestry_pairs == 1
+        assert report.discounted_pairs == 1
+
+    def test_provenance_empty_origin_treated_as_independent(self) -> None:
+        """Empty source origin does not trigger shared ancestry."""
+        episodes = [
+            self._provenance_episode(1, origin="", version="v1"),
+            self._provenance_episode(2, origin="origin-b", version="v1"),
+        ]
+
+        assert _share_artifact_ancestry(episodes[0].anchors, episodes[1].anchors) is False
+        score = compute_anchor_independence(episodes, version_independence_weight=0.7)
+        assert score == 1.0
+
+    def test_provenance_anomaly_window_orthogonal_to_version_weight(self) -> None:
+        """Anomaly discount affects pair weight while version weight affects credit."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1", anomaly_window_id="aw-1"),
+            self._provenance_episode(2, origin="origin-a", version="v2", anomaly_window_id="aw-1"),
+        ]
+
+        score = compute_anchor_independence(
+            episodes,
+            anomaly_discount=0.5,
+            version_independence_weight=0.7,
+        )
+
+        assert 0.69 < score < 0.71
+
+    @pytest.mark.asyncio
+    async def test_provenance_disabled_config(self) -> None:
+        """Disabled provenance validation preserves AD-662 binary veto and omits report."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1", agent_id="B"),
+            self._provenance_episode(2, origin="origin-a", version="v2", agent_id="C"),
+        ]
+        cfg = SocialVerificationConfig(provenance_validation_enabled=False)
+        svc = _make_service(episodes=episodes, config=cfg)
+
+        result = await svc.check_corroboration("A", "test claim")
+
+        assert result.anchor_independence_score == 0.0
+        assert result.anchor_summary["provenance_validation"] is None
+
+    @pytest.mark.asyncio
+    async def test_provenance_wired_into_corroboration(self) -> None:
+        """Corroboration score uses version-weighted anchor independence."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1", agent_id="B"),
+            self._provenance_episode(2, origin="origin-a", version="v2", agent_id="C"),
+        ]
+        cfg = SocialVerificationConfig(provenance_version_independence_weight=0.7)
+        svc = _make_service(episodes=episodes, config=cfg)
+
+        result = await svc.check_corroboration("A", "test claim")
+
+        assert result.anchor_independence_score == pytest.approx(0.7)
+        assert result.corroboration_score == pytest.approx(0.565)
+
+    @pytest.mark.asyncio
+    async def test_provenance_wired_into_cascade(self) -> None:
+        """Cascade risk uses the same graded provenance independence score."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1", agent_id="B"),
+            self._provenance_episode(2, origin="origin-a", version="v2", agent_id="A"),
+        ]
+        svc = _make_service(episodes=episodes)
+        peer_matches = [{"author_id": "B", "author_callsign": "Bravo", "timestamp": 100.0}]
+
+        result = await svc.check_cascade_risk(
+            "A", "Alpha", "post body", "ch-1", peer_matches=peer_matches,
+        )
+
+        assert result is not None
+        assert result.anchor_independence_score == pytest.approx(0.7)
+        assert result.risk_level == "none"
+
+    @pytest.mark.asyncio
+    async def test_provenance_event_emitted_on_shared_ancestry(self) -> None:
+        """Shared ancestry emits provenance validation event with counts."""
+        emit = MagicMock()
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1", agent_id="B"),
+            self._provenance_episode(2, origin="origin-a", version="v1", agent_id="C"),
+        ]
+        cfg = SocialVerificationConfig(corroboration_threshold=0.99)
+        svc = _make_service(episodes=episodes, config=cfg, emit=emit)
+
+        await svc.check_corroboration("A", "test claim")
+
+        emit.assert_called_once()
+        event_name, payload = emit.call_args.args
+        assert event_name == "corroboration_provenance_validated"
+        assert payload["requesting_agent"] == "A"
+        assert payload["shared_ancestry_pairs"] == 1
+        assert payload["discounted_pairs"] == 0
+        assert payload["total_pairs_checked"] == 1
+
+    @pytest.mark.asyncio
+    async def test_provenance_no_event_when_all_independent(self) -> None:
+        """All-independent provenance produces no provenance event."""
+        emit = MagicMock()
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1", agent_id="B"),
+            self._provenance_episode(2, origin="origin-b", version="v1", agent_id="C"),
+        ]
+        cfg = SocialVerificationConfig(corroboration_threshold=0.99)
+        svc = _make_service(episodes=episodes, config=cfg, emit=emit)
+
+        await svc.check_corroboration("A", "test claim")
+
+        emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_provenance_result_in_anchor_summary(self) -> None:
+        """Anchor summary always exposes provenance_validation key."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1", agent_id="B"),
+            self._provenance_episode(2, origin="origin-a", version="v2", agent_id="C"),
+        ]
+        enabled_svc = _make_service(episodes=episodes)
+        disabled_svc = _make_service(
+            episodes=episodes,
+            config=SocialVerificationConfig(provenance_validation_enabled=False),
+        )
+
+        enabled = await enabled_svc.check_corroboration("A", "test claim")
+        disabled = await disabled_svc.check_corroboration("A", "test claim")
+
+        report = enabled.anchor_summary["provenance_validation"]
+        assert set(report.keys()) == {
+            "total_pairs_checked",
+            "independent_pairs",
+            "shared_ancestry_pairs",
+            "discounted_pairs",
+            "ancestry_details",
+        }
+        assert disabled.anchor_summary["provenance_validation"] is None
+
+    def test_provenance_single_episode_returns_trivial(self) -> None:
+        """Zero or one episode is trivially independent and has an empty report."""
+        episode = self._provenance_episode(1, origin="origin-a", version="v1")
+
+        assert compute_anchor_independence([]) == 1.0
+        assert compute_anchor_independence([episode]) == 1.0
+        report = build_provenance_report([episode])
+        assert report.total_pairs_checked == 0
+        assert report.ancestry_details == []
+
+    def test_provenance_details_respect_privacy_boundary(self) -> None:
+        """Report details expose only opaque IDs, reason, and weight."""
+        episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1"),
+            self._provenance_episode(2, origin="origin-a", version="v1"),
+        ]
+
+        report = build_provenance_report(episodes, version_independence_weight=0.7)
+
+        assert report.ancestry_details
+        assert set(report.ancestry_details[0].keys()) == {
+            "episode_a",
+            "episode_b",
+            "reason",
+            "weight",
+        }
+        assert "participants" not in report.ancestry_details[0]
+        assert "source_origin_id" not in report.ancestry_details[0]
+
+    def test_provenance_disabled_reverts_to_ad662(self) -> None:
+        """Version weight 0.0 preserves AD-662 binary veto for same-origin pairs."""
+        cases = [("v1", "v1"), ("v1", "v2")]
+
+        for version_a, version_b in cases:
+            episodes = [
+                self._provenance_episode(1, origin="origin-a", version=version_a),
+                self._provenance_episode(2, origin="origin-a", version=version_b),
+            ]
+            score = compute_anchor_independence(episodes, version_independence_weight=0.0)
+
+            assert score == 0.0
+
+    def test_provenance_score_interaction(self) -> None:
+        """Graded same-origin-different-version score sits between veto and full independence."""
+        binary_episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1"),
+            self._provenance_episode(2, origin="origin-a", version="v2"),
+        ]
+        independent_episodes = [
+            self._provenance_episode(1, origin="origin-a", version="v1"),
+            self._provenance_episode(2, origin="origin-b", version="v2"),
+        ]
+
+        binary_score = compute_anchor_independence(binary_episodes, version_independence_weight=0.0)
+        graded_score = compute_anchor_independence(binary_episodes, version_independence_weight=0.7)
+        fully_independent_score = compute_anchor_independence(
+            independent_episodes,
+            version_independence_weight=0.7,
+        )
+
+        assert binary_score == 0.0
+        assert 0.0 < graded_score < fully_independent_score
