@@ -4,6 +4,11 @@
 **Scope:** New file + integration edits (~250 lines new, ~50 lines edits)
 **Depends on:** AD-573 (AgentWorkingMemory), AD-527 (EventType registry)
 
+**Acceptance Criteria:**
+- All 18 tests pass
+- No new lint errors
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`
+
 ## Summary
 
 Per-agent concurrency control for thought threads. Today, agents have no ceiling on concurrent `handle_intent` executions — the only throttle is the global LLM semaphore and the per-DAG `AttentionManager`. Under load (e.g., multiple Ward Room threads firing simultaneously), a single agent can spawn unbounded concurrent cognitive lifecycles, starving its own context window and competing for LLM slots.
@@ -53,10 +58,41 @@ release() called in finally block
 
 **File:** `src/probos/events.py`
 
-Add to the EventType enum, in the "Agent lifecycle" group (after `AGENT_STATE = "agent_state"` on line 77):
+#### 1a: EventType enum
+
+Add to the EventType enum, in the "Agent lifecycle" group.
+
+SEARCH:
+```python
+    AGENT_STATE = "agent_state"
+
+    # Assignments
+```
+
+REPLACE:
+```python
+    AGENT_STATE = "agent_state"
+    AGENT_CAPACITY_APPROACHING = "agent_capacity_approaching"  # AD-672: nearing thread ceiling
+
+    # Assignments
+```
+
+#### 1b: Typed event dataclass
+
+Add after existing event dataclasses in events.py:
 
 ```python
-    AGENT_CAPACITY_APPROACHING = "agent_capacity_approaching"  # AD-672: nearing thread ceiling
+@dataclass
+class AgentCapacityApproachingEvent(BaseEvent):
+    """AD-672: Agent nearing concurrency ceiling."""
+
+    event_type: EventType = field(
+        default=EventType.AGENT_CAPACITY_APPROACHING, init=False
+    )
+    agent_id: str = ""
+    active_count: int = 0
+    max_concurrent: int = 0
+    queue_depth: int = 0
 ```
 
 ### Section 2: ConcurrencyConfig
@@ -70,21 +106,37 @@ class ConcurrencyConfig(BaseModel):
     """AD-672: Per-agent concurrency management."""
 
     enabled: bool = True
-    default_max_concurrent: int = 4
-    queue_max_size: int = 10
+    default_max_concurrent: int = 4  # Note: decorative ceiling if LLM semaphore is lower than (agents × ceiling)
+    queue_max_size: int = 10  # When full, acquire() raises ValueError → caller log-and-degrades to [NO_RESPONSE]
     capacity_warning_ratio: float = 0.75
 
     # Role-tuned overrides — keys are pool group names (lowercase).
     # Agents in these groups get the specified ceiling instead of the default.
-    role_overrides: dict[str, int] = {
+    # Rationale: bridge agents handle high-stakes decisions sequentially;
+    # operations agents handle high-throughput routine tasks.
+    role_overrides: dict[str, int] = Field(default_factory=lambda: {
         "bridge": 3,
         "operations": 6,
         "engineering": 5,
         "science": 4,
         "medical": 3,
         "security": 3,
-    }
+    })
 ```
+
+**Important:** `Field` must be imported from pydantic. Check if the existing import line includes it:
+
+SEARCH:
+```python
+from pydantic import BaseModel, field_validator
+```
+
+REPLACE:
+```python
+from pydantic import BaseModel, Field, field_validator
+```
+
+If `Field` is already imported (e.g., from a prior AD), skip this step.
 
 Wire into `SystemConfig`:
 
@@ -177,6 +229,9 @@ class ConcurrencyManager:
         self._active: dict[str, ThreadEntry] = {}
         self._queue: list[QueuedIntent] = []
         self._lock = asyncio.Lock()
+        # Debounce: emit capacity warning at most once per 30s per agent
+        self._last_capacity_warning: float = 0.0
+        self._capacity_warning_cooldown: float = 30.0
 ```
 
 ##### Properties
@@ -249,7 +304,9 @@ class ConcurrencyManager:
                 resource_key=resource_key,
             )
             self._queue.append(queued)
-            # Sort descending by priority (highest first), then ascending by queued_at (FIFO within same priority)
+            # Sort descending by priority (highest first), then ascending by queued_at (FIFO within same priority).
+            # Using list.sort() rather than heapq because queue_max_size is small (default 10);
+            # the O(n log n) sort on <=10 items is negligible vs the heapq complexity cost.
             self._queue.sort(key=lambda q: (-q.priority, q.queued_at))
 
             logger.info(
@@ -281,24 +338,34 @@ class ConcurrencyManager:
 
             # Promote next queued intent if any
             if self._queue:
-                next_item = self._queue.pop(0)
-                promoted_entry = ThreadEntry(
-                    thread_id=next_item.thread_id,
-                    intent_type=next_item.intent_type,
-                    priority=next_item.priority,
-                    resource_key=next_item.resource_key,
-                )
-                self._active[next_item.thread_id] = promoted_entry
-                self._semaphore.acquire_nowait()
+                # Skip cancelled futures (caller timed out or disconnected)
+                while self._queue:
+                    next_item = self._queue.pop(0)
+                    if next_item.future.cancelled():
+                        logger.debug(
+                            "AD-672: Skipping cancelled queued intent '%s' for %s",
+                            next_item.intent_type, self._agent_id,
+                        )
+                        continue
+                    # Found a live future — promote it
+                    promoted_entry = ThreadEntry(
+                        thread_id=next_item.thread_id,
+                        intent_type=next_item.intent_type,
+                        priority=next_item.priority,
+                        resource_key=next_item.resource_key,
+                    )
+                    self._active[next_item.thread_id] = promoted_entry
+                    self._semaphore.acquire_nowait()
 
-                logger.info(
-                    "AD-672: Promoted queued intent '%s' (priority=%d) to active for %s",
-                    next_item.intent_type, next_item.priority, self._agent_id,
-                )
+                    logger.info(
+                        "AD-672: Promoted queued intent '%s' (priority=%d) to active for %s",
+                        next_item.intent_type, next_item.priority, self._agent_id,
+                    )
 
-                # Resolve the future so the awaiting caller proceeds
-                if not next_item.future.done():
-                    next_item.future.set_result(next_item.thread_id)
+                    # Resolve the future so the awaiting caller proceeds
+                    if not next_item.future.done():
+                        next_item.future.set_result(next_item.thread_id)
+                    break  # Only promote one
 ```
 
 ##### arbitrate()
@@ -343,6 +410,11 @@ class ConcurrencyManager:
     ):
         """Async context manager for clean acquire/release lifecycle.
 
+        Preferred API. Raw acquire()/release() are exposed for cases where
+        the caller needs the thread_id outside a `with` block (e.g., for
+        arbitration), but slot() should be used wherever possible to
+        guarantee release on exception.
+
         Usage:
             async with concurrency_manager.slot("ward_room_notification", 5):
                 await self._run_cognitive_lifecycle(intent)
@@ -358,9 +430,17 @@ class ConcurrencyManager:
 
 ```python
     def _emit_capacity_warning(self) -> None:
-        """Emit AGENT_CAPACITY_APPROACHING when nearing the ceiling."""
+        """Emit AGENT_CAPACITY_APPROACHING when nearing the ceiling.
+
+        Debounced: emits at most once per cooldown period (30s) to prevent
+        event flooding under sustained load.
+        """
         if self._emit_event_fn is None:
             return
+        now = time.monotonic()
+        if now - self._last_capacity_warning < self._capacity_warning_cooldown:
+            return  # Debounce — already warned recently
+        self._last_capacity_warning = now
         try:
             self._emit_event_fn(EventType.AGENT_CAPACITY_APPROACHING, {
                 "agent_id": self._agent_id,
@@ -368,6 +448,8 @@ class ConcurrencyManager:
                 "max_concurrent": self._max_concurrent,
                 "queue_depth": self.queue_depth,
             })
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.debug(
                 "AD-672: Failed to emit AGENT_CAPACITY_APPROACHING for %s",
@@ -694,3 +776,7 @@ After all tests pass:
 - Add HXI/dashboard visualization (future AD).
 - Modify any existing tests.
 - Add docstrings/comments to code you did not change.
+- Implement work-stealing across agents.
+- Modify the global LLM semaphore.
+- Expose queue contents to telemetry by default (snapshot() is diagnostic only).
+- Add `numpy`, `scipy`, or other heavy dependencies.

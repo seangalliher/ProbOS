@@ -1,8 +1,13 @@
 # AD-594: Crew Consultation Protocol
 
 **Status:** Ready for builder
-**Scope:** New file + integration edits (~300 lines new, ~60 lines edits)
+**Scope:** New file + integration edits (~320 lines new, ~60 lines edits)
 **Depends on:** AD-527 (EventType registry), AD-573 (AgentWorkingMemory)
+
+**Acceptance Criteria:**
+- All 24 tests pass
+- No new lint errors
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`
 
 ## Summary
 
@@ -64,13 +69,92 @@ ConsultationProtocol completes the request
 
 **File:** `src/probos/events.py`
 
-Add to the EventType enum. Place in a new "Consultation" group after the "Sub-task protocol" group (after `SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"` on line 196):
+#### 1a: EventType enum
 
+Add to the EventType enum. Place in a new "Consultation" group after the "Sub-task protocol" group.
+
+SEARCH for this anchor in events.py:
 ```python
+    SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"
+
+    # Billet management (AD-595a)
+```
+
+REPLACE with:
+```python
+    SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"
+
     # Consultation protocol (AD-594)
     CONSULTATION_REQUESTED = "consultation_requested"
     CONSULTATION_COMPLETED = "consultation_completed"
     CONSULTATION_TIMEOUT = "consultation_timeout"
+    CONSULTATION_FAILED = "consultation_failed"
+
+    # Billet management (AD-595a)
+```
+
+#### 1b: Typed event dataclasses
+
+Find the `SubTaskChainCompletedEvent` dataclass (around line 752) and add after it:
+
+```python
+@dataclass
+class ConsultationRequestedEvent(BaseEvent):
+    """AD-594: Consultation request submitted."""
+
+    event_type: EventType = field(
+        default=EventType.CONSULTATION_REQUESTED, init=False
+    )
+    request_id: str = ""
+    requester_id: str = ""
+    requester_callsign: str = ""
+    target_agent_id: str = ""
+    topic: str = ""
+    urgency: str = ""
+
+
+@dataclass
+class ConsultationCompletedEvent(BaseEvent):
+    """AD-594: Consultation completed successfully."""
+
+    event_type: EventType = field(
+        default=EventType.CONSULTATION_COMPLETED, init=False
+    )
+    request_id: str = ""
+    requester_id: str = ""
+    responder_id: str = ""
+    responder_callsign: str = ""
+    topic: str = ""
+    confidence: float = 0.0
+    duration_seconds: float = 0.0
+
+
+@dataclass
+class ConsultationTimeoutEvent(BaseEvent):
+    """AD-594: Consultation timed out."""
+
+    event_type: EventType = field(
+        default=EventType.CONSULTATION_TIMEOUT, init=False
+    )
+    request_id: str = ""
+    requester_id: str = ""
+    target_agent_id: str = ""
+    topic: str = ""
+    timeout_seconds: float = 0.0
+
+
+@dataclass
+class ConsultationFailedEvent(BaseEvent):
+    """AD-594: Consultation handler failed."""
+
+    event_type: EventType = field(
+        default=EventType.CONSULTATION_FAILED, init=False
+    )
+    request_id: str = ""
+    requester_id: str = ""
+    target_agent_id: str = ""
+    topic: str = ""
+    error: str = ""
 ```
 
 ### Section 2: ConsultationConfig
@@ -132,7 +216,14 @@ logger = logging.getLogger(__name__)
 
 ```python
 class ConsultationUrgency(str, Enum):
-    """Urgency level for consultation requests."""
+    """Urgency level for consultation requests.
+
+    Note: This is metadata emitted in event payloads (for trust scoring
+    and future priority-queue extensions), not currently used for queue
+    ordering. The protocol dispatches requests immediately — it does not
+    queue incoming requests. If future load requires queuing, urgency
+    will serve as the sort key.
+    """
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -246,14 +337,23 @@ class ConsultationProtocol:
         self._trust_network = trust_network
         self._emit_event_fn = emit_event_fn
 
-        # Config with defaults
-        self._timeout_seconds: float = getattr(config, 'timeout_seconds', 30.0)
-        self._max_per_hour: int = getattr(config, 'max_consultations_per_agent_per_hour', 20)
-        self._max_pending: int = getattr(config, 'max_pending_requests', 10)
-        self._max_candidates: int = getattr(config, 'expert_selection_max_candidates', 5)
-        self._w_capability: float = getattr(config, 'weight_capability_match', 0.5)
-        self._w_trust: float = getattr(config, 'weight_trust', 0.3)
-        self._w_billet: float = getattr(config, 'weight_billet_relevance', 0.2)
+        # Config — typed ConsultationConfig expected; fallback defaults for tests
+        if config is not None:
+            self._timeout_seconds: float = config.timeout_seconds
+            self._max_per_hour: int = config.max_consultations_per_agent_per_hour
+            self._max_pending: int = config.max_pending_requests
+            self._max_candidates: int = config.expert_selection_max_candidates
+            self._w_capability: float = config.weight_capability_match
+            self._w_trust: float = config.weight_trust
+            self._w_billet: float = config.weight_billet_relevance
+        else:
+            self._timeout_seconds = 30.0
+            self._max_per_hour = 20
+            self._max_pending = 10
+            self._max_candidates = 5
+            self._w_capability = 0.5
+            self._w_trust = 0.3
+            self._w_billet = 0.2
 
         # Rate tracking: agent_id -> list of request timestamps
         self._rate_tracker: dict[str, list[float]] = defaultdict(list)
@@ -388,13 +488,25 @@ class ConsultationProtocol:
                 "timeout_seconds": self._timeout_seconds,
             })
             return None
+        except asyncio.CancelledError:
+            self._pending.pop(request.request_id, None)
+            raise
         except Exception:
             self._pending.pop(request.request_id, None)
             logger.warning(
-                "AD-594: Consultation handler error for request %s",
-                request.request_id,
+                "AD-594: Consultation handler error for request %s "
+                "(requester=%s, target=%s, topic='%s')",
+                request.request_id, request.requester_id, target_id,
+                request.topic,
                 exc_info=True,
             )
+            self._emit(EventType.CONSULTATION_FAILED, {
+                "request_id": request.request_id,
+                "requester_id": request.requester_id,
+                "target_agent_id": target_id,
+                "topic": request.topic,
+                "error": "handler_exception",
+            })
             return None
 
         # Complete
@@ -559,12 +671,17 @@ class ConsultationProtocol:
         """Check if an agent is within the hourly consultation rate limit.
 
         Returns True if the agent can make another request.
+        Evicts timestamps older than the rolling window to prevent unbounded growth.
         """
         now = time.time()
         one_hour_ago = now - 3600.0
         # Prune old entries
         timestamps = self._rate_tracker[agent_id]
         self._rate_tracker[agent_id] = [t for t in timestamps if t > one_hour_ago]
+        # Evict empty entries to prevent unbounded dict growth
+        if not self._rate_tracker[agent_id]:
+            del self._rate_tracker[agent_id]
+            return True
         return len(self._rate_tracker[agent_id]) < self._max_per_hour
 ```
 
@@ -576,6 +693,8 @@ class ConsultationProtocol:
         if self._emit_event_fn:
             try:
                 self._emit_event_fn(event_type, data)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.debug(
                     "AD-594: Failed to emit %s", event_type, exc_info=True,
@@ -733,7 +852,12 @@ Actually, the setter in 4b should also register the handler. Replace 4b with:
 
 ```python
     def set_consultation_protocol(self, protocol: Any) -> None:
-        """AD-594: Wire consultation protocol and register as handler."""
+        """AD-594: Wire consultation protocol and register as handler.
+
+        Uses setter injection (not constructor) because CognitiveAgent is
+        constructed before ConsultationProtocol exists in the startup sequence.
+        The protocol is optional — agents function without it.
+        """
         self._consultation_protocol = protocol
         if protocol is not None:
             protocol.register_handler(self.id, self.handle_consultation_request)
@@ -1048,3 +1172,7 @@ After all tests pass:
 - Add docstrings/comments to code you did not change.
 - Create database tables or persistent storage for consultations (in-memory only for this AD).
 - Add episode storage wiring (deferred to future AD that integrates with EpisodicMemory).
+- Build a multi-round dialogue or conversation within consultations.
+- Allow consultation chains > 1 hop (agent A consults agent B who consults agent C).
+- Bypass trust scoring on consulted agents.
+- Add `numpy`, `scipy`, or other heavy dependencies.

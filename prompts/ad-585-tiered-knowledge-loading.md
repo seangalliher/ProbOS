@@ -50,25 +50,58 @@ CognitiveAgent.decide(observation)
 | File | Change |
 |------|--------|
 | `src/probos/cognitive/tiered_knowledge.py` | **NEW** — TieredKnowledgeLoader class |
-| `src/probos/events.py` | Add `KNOWLEDGE_TIER_LOADED` to EventType |
+| `src/probos/events.py` | Add `KNOWLEDGE_TIER_LOADED` to EventType + `KnowledgeTierLoadedEvent` dataclass |
 | `src/probos/config.py` | Add `KnowledgeLoadingConfig` with per-tier settings |
 | `src/probos/cognitive/cognitive_agent.py` | Wire TieredKnowledgeLoader into `_decide_via_llm()` |
+| `src/probos/startup/finalize.py` | Instantiate loader + call `set_knowledge_loader()` on all CognitiveAgents |
 | `tests/test_ad585_tiered_knowledge.py` | **NEW** — full test suite |
 
 ---
 
 ## Implementation
 
-### 1. Add EventType: KNOWLEDGE_TIER_LOADED
+### 1. Add EventType and event dataclass in `src/probos/events.py`
 
-**File:** `src/probos/events.py`
-
-Add to the `EventType` enum, in the existing Counselor/Cognitive Health
-section (after line ~129, in the `# Counselor / Cognitive Health` group):
+#### 1a. Add `KNOWLEDGE_TIER_LOADED` to EventType enum
 
 ```python
-    # Knowledge loading (AD-585)
-    KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"
+SEARCH:
+    TOOL_CONTEXT_CREATED = "tool_context_created"  # AD-423c: fired during onboarding
+
+    # Boot camp (AD-638)
+
+REPLACE:
+    TOOL_CONTEXT_CREATED = "tool_context_created"  # AD-423c: fired during onboarding
+    KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
+
+    # Boot camp (AD-638)
+```
+
+#### 1b. Add `KnowledgeTierLoadedEvent` dataclass
+
+Add after the existing `LlmHealthChangedEvent` class (around line 593, after `downtime_seconds`).
+Follow the `CounselorAssessmentEvent` pattern (line 542).
+
+```python
+SEARCH:
+@dataclass
+class NotebookSelfRepetitionEvent(BaseEvent):
+    """AD-552: Emitted when an agent writes about the same topic repeatedly."""
+
+REPLACE:
+@dataclass
+class KnowledgeTierLoadedEvent(BaseEvent):
+    """AD-585: Emitted after a successful tiered knowledge load."""
+    event_type: EventType = field(default=EventType.KNOWLEDGE_TIER_LOADED, init=False)
+    tier: str = ""           # "ambient", "contextual", "on_demand"
+    snippet_count: int = 0
+    intent_type: str = ""    # Contextual tier only
+    query: str = ""          # On-demand tier only
+
+
+@dataclass
+class NotebookSelfRepetitionEvent(BaseEvent):
+    """AD-552: Emitted when an agent writes about the same topic repeatedly."""
 ```
 
 **Run tests:** `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_events.py -v -x`
@@ -79,9 +112,14 @@ section (after line ~129, in the `# Counselor / Cognitive Health` group):
 
 **File:** `src/probos/config.py`
 
-Add a new Pydantic config model after `KnowledgeConfig` (approx line ~587):
+Add a new Pydantic config model between `KnowledgeConfig` and `RecordsConfig`:
 
 ```python
+SEARCH:
+class RecordsConfig(BaseModel):
+    """Ship's Records configuration (AD-434)."""
+
+REPLACE:
 class KnowledgeLoadingConfig(BaseModel):
     """AD-585: Tiered knowledge loading configuration."""
 
@@ -98,18 +136,39 @@ class KnowledgeLoadingConfig(BaseModel):
     on_demand_max_age_seconds: float = 0.0  # Always fresh
 
     # Intent-to-knowledge category mapping
-    # Keys are intent types, values are lists of KnowledgeStore subdirectory names
-    intent_knowledge_map: dict[str, list[str]] = {
+    # Keys are intent types (from IntentMessage.intent, populated in
+    # CognitiveAgent.perceive() at line 1087), values are lists of
+    # KnowledgeStore subdirectory names.
+    intent_knowledge_map: dict[str, list[str]] = Field(default_factory=lambda: {
         "security_alert": ["trust", "agents"],
         "proactive_think": ["episodes", "proactive"],
         "ward_room_notification": ["episodes", "agents"],
         "direct_message": ["episodes", "agents"],
-    }
+    })
+
+
+class RecordsConfig(BaseModel):
+    """Ship's Records configuration (AD-434)."""
 ```
 
-Add the field to `SystemConfig` (after `chain_tuning`, approx line ~1151):
+**Note:** The `Field` import is from `pydantic`. Verify it's imported — if not, update the import line:
 
 ```python
+SEARCH:
+from pydantic import BaseModel, field_validator
+
+REPLACE:
+from pydantic import BaseModel, Field, field_validator
+```
+
+Add the field to `SystemConfig` (find the `chain_tuning` field and add after it):
+
+```python
+SEARCH:
+    chain_tuning: ChainTuningConfig = ChainTuningConfig()
+
+REPLACE:
+    chain_tuning: ChainTuningConfig = ChainTuningConfig()
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
 ```
 
@@ -132,12 +191,13 @@ Three-tier knowledge loading wrapping KnowledgeStore:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, Callable, Protocol
 
 from probos.config import KnowledgeLoadingConfig
-from probos.events import EventType
+from probos.events import EventType, KnowledgeTierLoadedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -226,10 +286,13 @@ class TieredKnowledgeLoader:
                 count = len(routing)
                 snippets.append(f"Active routing pathways: {count}")
 
+        except asyncio.CancelledError:
+            raise  # Never swallow cancellation
         except Exception:
             logger.warning(
                 "AD-585: Ambient knowledge load failed; returning empty. "
-                "Agent will operate without ambient knowledge context."
+                "Agent will operate without ambient knowledge context.",
+                exc_info=True,
             )
             return []
 
@@ -279,11 +342,14 @@ class TieredKnowledgeLoader:
             for category in categories:
                 cat_snippets = await self._load_category(category, department)
                 snippets.extend(cat_snippets)
+        except asyncio.CancelledError:
+            raise  # Never swallow cancellation
         except Exception:
             logger.warning(
                 "AD-585: Contextual knowledge load failed for intent=%s department=%s; "
                 "returning empty. Agent will operate without contextual knowledge.",
                 intent_type, department,
+                exc_info=True,
             )
             return []
 
@@ -327,11 +393,14 @@ class TieredKnowledgeLoader:
                 query_lower = query.lower()
                 if any(word in text.lower() for word in query_lower.split()):
                     snippets.append(text[:200])
+        except asyncio.CancelledError:
+            raise  # Never swallow cancellation
         except Exception:
             logger.warning(
                 "AD-585: On-demand knowledge load failed for query=%s; "
                 "returning empty. Agent will operate without on-demand knowledge.",
                 query[:80],
+                exc_info=True,
             )
             return []
 
@@ -425,7 +494,11 @@ class TieredKnowledgeLoader:
 
     @staticmethod
     def _truncate_to_budget(snippets: list[str], budget_chars: int) -> list[str]:
-        """Truncate snippet list to fit within character budget."""
+        """Truncate snippet list to fit within character budget.
+
+        Note: per-category content may exceed the budget before this runs.
+        This is acceptable — truncation is the final gate, not per-category.
+        """
         result: list[str] = []
         total_chars = 0
         for snippet in snippets:
@@ -439,17 +512,22 @@ class TieredKnowledgeLoader:
         return result
 
     def _emit_tier_event(self, tier: str, snippet_count: int, **kwargs: Any) -> None:
-        """Emit KNOWLEDGE_TIER_LOADED event for observability."""
+        """Emit KNOWLEDGE_TIER_LOADED event via typed dataclass."""
         if self._emit_event_fn is None:
             return
         try:
-            self._emit_event_fn(EventType.KNOWLEDGE_TIER_LOADED, {
-                "tier": tier,
-                "snippet_count": snippet_count,
-                **kwargs,
-            })
+            event = KnowledgeTierLoadedEvent(
+                tier=tier,
+                snippet_count=snippet_count,
+                intent_type=kwargs.get("intent_type", ""),
+                query=kwargs.get("query", ""),
+            )
+            self._emit_event_fn(event.event_type.value, event.to_dict())
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            pass  # Non-critical observability — swallow
+            # Non-critical observability — log and degrade
+            logger.debug("AD-585: Tier event emission failed", exc_info=True)
 ```
 
 **Run tests:** `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad585_tiered_knowledge.py -v -x`
@@ -463,27 +541,49 @@ class TieredKnowledgeLoader:
 
 #### 4a. Import
 
-Add near the top of the file (after the existing imports, approx line ~16):
-
 ```python
+SEARCH:
+from probos.utils import format_duration
+
+REPLACE:
+from probos.utils import format_duration
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 ```
 
 #### 4b. Constructor — store loader reference
 
-In `CognitiveAgent.__init__()`, after the working memory initialization
-(after line ~101 where `self._working_memory` is set), add:
-
 ```python
+SEARCH:
+        # AD-573: Unified working memory — cognitive continuity across pathways
+        from probos.cognitive.agent_working_memory import AgentWorkingMemory
+        self._working_memory = AgentWorkingMemory()
+
+        # AD-632a: Sub-task protocol executor and pending chain
+
+REPLACE:
+        # AD-573: Unified working memory — cognitive continuity across pathways
+        from probos.cognitive.agent_working_memory import AgentWorkingMemory
+        self._working_memory = AgentWorkingMemory()
+
         # AD-585: Tiered knowledge loader — set via set_knowledge_loader()
         self._knowledge_loader: TieredKnowledgeLoader | None = None
+
+        # AD-632a: Sub-task protocol executor and pending chain
 ```
 
 #### 4c. Public setter
 
-Add a new public method after `set_strategy_advisor()` (approx line ~119):
-
 ```python
+SEARCH:
+    def set_strategy_advisor(self, advisor) -> None:
+        """Attach a StrategyAdvisor for cross-agent knowledge transfer (AD-384)."""
+        self._strategy_advisor = advisor
+
+REPLACE:
+    def set_strategy_advisor(self, advisor) -> None:
+        """Attach a StrategyAdvisor for cross-agent knowledge transfer (AD-384)."""
+        self._strategy_advisor = advisor
+
     def set_knowledge_loader(self, loader: TieredKnowledgeLoader) -> None:
         """Attach a TieredKnowledgeLoader for tiered knowledge injection (AD-585)."""
         self._knowledge_loader = loader
@@ -491,34 +591,53 @@ Add a new public method after `set_strategy_advisor()` (approx line ~119):
 
 #### 4d. Inject tiered knowledge into _decide_via_llm()
 
-In the `_decide_via_llm()` method (starts at line ~1300), after the augmentation skill
-loading block (approx line ~1312, after `observation["_augmentation_skill_instructions"]`
-is set) and BEFORE `user_message = await self._build_user_message(observation)` (line ~1314),
-add:
+The `observation["intent"]` key is confirmed valid — populated from `IntentMessage.intent`
+in `CognitiveAgent.perceive()` at line 1087. Values match `intent_knowledge_map` keys
+(security_alert, proactive_think, ward_room_notification, direct_message).
 
 ```python
-        # AD-585: Tiered knowledge loading
-        if self._knowledge_loader:
-            try:
-                _ambient = await self._knowledge_loader.load_ambient()
-                if _ambient:
-                    observation.setdefault("_knowledge_ambient", _ambient)
+SEARCH:
+    if "_augmentation_skill_instructions" not in observation:
+        _aug_instructions = self._load_augmentation_skills(observation.get("intent", ""))
+        if _aug_instructions:
+            observation["_augmentation_skill_instructions"] = _aug_instructions
 
-                _intent_type = observation.get("intent", "")
-                if _intent_type:
-                    _dept = observation.get("department", "")
-                    _contextual = await self._knowledge_loader.load_contextual(
-                        _intent_type, _dept,
-                    )
-                    if _contextual:
-                        observation.setdefault("_knowledge_contextual", _contextual)
-            except Exception:
-                logger.warning(
-                    "AD-585: Knowledge loading failed for %s; proceeding without. "
-                    "Agent will use base context only.",
-                    self.agent_type,
+    user_message = await self._build_user_message(observation)
+
+REPLACE:
+    if "_augmentation_skill_instructions" not in observation:
+        _aug_instructions = self._load_augmentation_skills(observation.get("intent", ""))
+        if _aug_instructions:
+            observation["_augmentation_skill_instructions"] = _aug_instructions
+
+    # AD-585: Tiered knowledge loading (ambient + contextual)
+    if self._knowledge_loader:
+        try:
+            _ambient = await self._knowledge_loader.load_ambient()
+            if _ambient:
+                observation.setdefault("_knowledge_ambient", _ambient)
+
+            _intent_type = observation.get("intent", "")
+            if _intent_type:
+                _dept = observation.get("department", "")
+                _contextual = await self._knowledge_loader.load_contextual(
+                    _intent_type, _dept,
                 )
+                if _contextual:
+                    observation.setdefault("_knowledge_contextual", _contextual)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "AD-585: Knowledge loading failed for %s; proceeding without. "
+                "Agent will use base context only.",
+                self.agent_type,
+            )
+
+    user_message = await self._build_user_message(observation)
 ```
+
+**Note:** Add `import asyncio` at the top of cognitive_agent.py if not already imported.
 
 **Note:** On-demand (Tier 3) is NOT auto-triggered in decide(). It is only
 available via `self._knowledge_loader.load_on_demand(query)` for sub-task
@@ -528,12 +647,57 @@ handlers or explicit agent logic to call during reasoning.
 
 ---
 
-### 5. Create Test Suite
+### 5. Wire loader instantiation in `src/probos/startup/finalize.py`
+
+The loader must be instantiated after `runtime._knowledge_store` exists and wired
+onto all CognitiveAgent instances. This follows the same pattern as
+`set_strategy_advisor()` wiring in `startup/agent_fleet.py:222-229`, but goes in
+finalize.py because `agent_fleet.py` doesn't have access to `knowledge_store` in
+its parameters.
+
+Add after the existing strategy advisor / tool registry wiring block.
+Find the trust network event callback wiring as an anchor:
+
+```python
+SEARCH:
+    runtime.trust_network.set_event_callback(
+        lambda event_type, data: runtime._emit_event(event_type, data)
+    )
+
+REPLACE:
+    runtime.trust_network.set_event_callback(
+        lambda event_type, data: runtime._emit_event(event_type, data)
+    )
+
+    # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents
+    if runtime._knowledge_store and config.knowledge_loading.enabled:
+        from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
+        from probos.cognitive.cognitive_agent import CognitiveAgent as _CA
+
+        _knowledge_loader = TieredKnowledgeLoader(
+            knowledge_source=runtime._knowledge_store,
+            config=config.knowledge_loading,
+            emit_event_fn=lambda event_type, data: runtime._emit_event(event_type, data),
+        )
+        _wired_count = 0
+        for pool in runtime.pools.values():
+            for agent in pool.healthy_agents:
+                if isinstance(agent, _CA) and hasattr(agent, "set_knowledge_loader"):
+                    agent.set_knowledge_loader(_knowledge_loader)
+                    _wired_count += 1
+        logger.info("AD-585: TieredKnowledgeLoader wired to %d CognitiveAgents", _wired_count)
+```
+
+**Run tests:** `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_finalize.py -v -x`
+
+---
+
+### 6. Create Test Suite
 
 **File:** `tests/test_ad585_tiered_knowledge.py` (NEW)
 
 ```python
-"""AD-585: Tiered Knowledge Loading — full test suite."""
+"""AD-585: Tiered Knowledge Loading — full test suite (31 tests)."""
 
 from __future__ import annotations
 
@@ -541,6 +705,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -550,7 +715,7 @@ from probos.cognitive.tiered_knowledge import (
     TieredKnowledgeLoader,
     _CacheEntry,
 )
-from probos.events import EventType
+from probos.events import EventType, KnowledgeTierLoadedEvent
 
 
 # ── Fakes ──────────────────────────────────────────────────────────
@@ -728,7 +893,7 @@ class TestAmbientLoading:
         loader = _make_loader(source, emit_fn=emit_fn)
         await loader.load_ambient()
         assert len(events) == 1
-        assert events[0]["type"] == EventType.KNOWLEDGE_TIER_LOADED
+        assert events[0]["type"] == EventType.KNOWLEDGE_TIER_LOADED.value
         assert events[0]["data"]["tier"] == "ambient"
 
 
@@ -894,9 +1059,8 @@ class TestTokenBudgetTruncation:
     def test_truncate_to_budget_exceeds_limit(self):
         snippets = ["a" * 100, "b" * 100, "c" * 100]
         result = TieredKnowledgeLoader._truncate_to_budget(snippets, 150)
-        # Should include first snippet fully, second partially or not at all
-        total = sum(len(s) for s in result)
-        assert total <= 150
+        # First snippet fits (100 chars), second gets truncated to remaining 50
+        assert result == ["a" * 100, "b" * 50]
 
     def test_truncate_to_budget_empty(self):
         result = TieredKnowledgeLoader._truncate_to_budget([], 1000)
@@ -919,6 +1083,54 @@ class TestTrustSummary:
     def test_summarize_trust_empty(self):
         summary = TieredKnowledgeLoader._summarize_trust({})
         assert "unavailable" in summary.lower()
+
+
+# ── Config override ───────────────────────────────────────────────
+
+class TestConfigOverride:
+
+    @pytest.mark.asyncio
+    async def test_custom_intent_knowledge_map(self):
+        """Verify overriding intent_knowledge_map changes which categories load."""
+        source = _FakeKnowledgeSource(
+            routing=[{"src": "a", "tgt": "b"}],
+        )
+        config = KnowledgeLoadingConfig(
+            intent_knowledge_map={"custom_intent": ["routing"]},
+        )
+        loader = _make_loader(source, config=config)
+        result = await loader.load_contextual("custom_intent")
+        assert len(result) >= 1
+        assert any("routing" in s.lower() for s in result)
+
+    @pytest.mark.asyncio
+    async def test_default_map_does_not_load_for_custom_intent(self):
+        """Default map returns empty for unmapped intents."""
+        loader = _make_loader()
+        result = await loader.load_contextual("custom_intent")
+        assert result == []
+
+
+# ── CognitiveAgent integration ────────────────────────────────────
+
+class TestCognitiveAgentIntegration:
+
+    def test_agent_without_loader_has_none(self):
+        """CognitiveAgent without set_knowledge_loader() has _knowledge_loader=None."""
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        agent = CognitiveAgent.__new__(CognitiveAgent)
+        # Manually init the attribute (since __new__ bypasses __init__)
+        agent._knowledge_loader = None
+        assert agent._knowledge_loader is None
+
+    def test_set_knowledge_loader_stores_reference(self):
+        """set_knowledge_loader() stores the loader on the agent."""
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        agent = CognitiveAgent.__new__(CognitiveAgent)
+        agent._knowledge_loader = None
+        loader = _make_loader()
+        agent.set_knowledge_loader(loader)
+        assert agent._knowledge_loader is loader
 ```
 
 **Run tests:** `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad585_tiered_knowledge.py -v -x`
@@ -927,11 +1139,11 @@ class TestTrustSummary:
 
 ## Tests Matrix
 
-| # | Test | Tier | Coverage |
-|---|------|------|----------|
-| 1 | `test_fresh_within_max_age` | Cache | Happy path |
-| 2 | `test_stale_after_max_age` | Cache | Edge: expired |
-| 3 | `test_zero_max_age_always_stale` | Cache | Edge: never-cache |
+| # | Test | Class | Coverage |
+|---|------|-------|----------|
+| 1 | `test_fresh_within_max_age` | CacheEntry | Happy path |
+| 2 | `test_stale_after_max_age` | CacheEntry | Edge: expired |
+| 3 | `test_zero_max_age_always_stale` | CacheEntry | Edge: never-cache |
 | 4 | `test_load_ambient_happy_path` | Ambient | Happy path |
 | 5 | `test_load_ambient_cached` | Ambient | Caching |
 | 6 | `test_load_ambient_disabled` | Ambient | Config disabled |
@@ -953,25 +1165,29 @@ class TestTrustSummary:
 | 22 | `test_invalidate_contextual_by_intent` | Invalidation | Targeted reset |
 | 23 | `test_invalidate_all` | Invalidation | Full reset |
 | 24 | `test_truncate_to_budget_within_limit` | Budget | Happy path |
-| 25 | `test_truncate_to_budget_exceeds_limit` | Budget | Truncation |
+| 25 | `test_truncate_to_budget_exceeds_limit` | Budget | Truncation (asserts exact structure) |
 | 26 | `test_truncate_to_budget_empty` | Budget | Edge: empty |
 | 27 | `test_summarize_trust_normal` | Helper | Happy path |
 | 28 | `test_summarize_trust_empty` | Helper | Edge: no data |
+| 29 | `test_custom_intent_knowledge_map` | Config | Override changes behavior |
+| 30 | `test_default_map_does_not_load_for_custom_intent` | Config | Default map behavior |
+| 31 | `test_agent_without_loader_has_none` | Integration | No-loader path safe |
+| 32 | `test_set_knowledge_loader_stores_reference` | Integration | Setter works |
 
-**Total: 28 tests.** All public methods tested with happy path + error/edge.
+**Total: 32 tests.** All public methods tested with happy path + error/edge.
 
 ---
 
 ## Targeted Test Commands
 
 ```bash
-# After Step 1 (EventType):
+# After Step 1 (EventType + event dataclass):
 d:/ProbOS/.venv/Scripts/pytest.exe tests/test_events.py -v -x
 
 # After Step 2 (Config):
 d:/ProbOS/.venv/Scripts/pytest.exe tests/test_config.py -v -x
 
-# After Steps 3-5 (Loader + wiring + tests):
+# After Steps 3-6 (Loader + wiring + tests):
 d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad585_tiered_knowledge.py -v -x
 
 # After Step 4 (CognitiveAgent wiring):
@@ -983,36 +1199,45 @@ d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q
 
 ---
 
-## Tracking
+## Tracker Updates
 
 After all tests pass:
 
-1. **PROGRESS.md** — Add row: `| AD-585 | Tiered Knowledge Loading | CLOSED |`
-2. **docs/development/roadmap.md** — Update AD-585 row status to COMPLETE
-3. **DECISIONS.md** — Add entry:
-   > **AD-585 Tiered Knowledge Loading:** Introduced TieredKnowledgeLoader wrapping
-   > KnowledgeStore with three tiers (Ambient/Contextual/On-Demand). Per-tier
-   > token budgets and cache strategies. Wired into CognitiveAgent.decide().
-   > On-Demand (Tier 3) is explicit-call only, not auto-triggered.
+1. **PROGRESS.md** — Add entry: `AD-585 CLOSED. Tiered Knowledge Loading — TieredKnowledgeLoader wrapping KnowledgeStore with three tiers (Ambient/Contextual/On-Demand). Per-tier token budgets, cache strategies, intent-to-knowledge mapping. Wired into CognitiveAgent.decide() via finalize.py. 32 tests. Issue #XXX.`
+2. **docs/development/roadmap.md** — Update AD-585 status to Complete
+3. **DECISIONS.md** — Add entry documenting the decision: three-tier model, KnowledgeSourceProtocol for dependency inversion, single shared loader instance across all CognitiveAgents, on-demand not auto-triggered.
 
 ---
 
-## Scope Boundaries
+## Acceptance Criteria
+
+- [ ] All 32 tests pass in `tests/test_ad585_tiered_knowledge.py`
+- [ ] Existing `tests/test_events.py` pass (new EventType + dataclass)
+- [ ] Existing `tests/test_config.py` pass (new KnowledgeLoadingConfig)
+- [ ] Existing `tests/test_cognitive_agent.py` pass (new attribute + setter)
+- [ ] Verify all changes comply with the Engineering Principles in `docs/development/contributing.md`
+
+---
+
+## Scope Boundaries — Do Not Build
 
 **DO:**
 - Three-tier knowledge loading class with caching
 - Intent-to-knowledge category mapping
 - Per-tier token budgets and max age configuration
-- KNOWLEDGE_TIER_LOADED event emission
+- KnowledgeTierLoadedEvent typed event emission
 - Wire into CognitiveAgent.decide() for Tiers 1 and 2
 - Expose Tier 3 as a callable method (not auto-triggered)
-- Full test suite (28 tests)
+- Instantiate and wire loader in finalize.py
+- Full test suite (32 tests)
 
 **DO NOT:**
-- Modify KnowledgeStore itself (read-only wrapper)
-- Change how knowledge is stored or persisted
-- Add API endpoints
-- Modify dream consolidation
-- Add semantic search (future — keyword match for Tier 3 is sufficient)
-- Wire Tier 3 into sub-task handlers (future AD)
-- Modify AgentWorkingMemory or standing_orders
+- Do not implement semantic similarity search in `load_on_demand()` — keyword match is sufficient for now
+- Do not modify KnowledgeStore itself (read-only wrapper via protocol)
+- Do not unify with `agent_working_memory.py` — these are separate concerns
+- Do not implement AD-600 (Transactive Memory) in this phase
+- Do not change how knowledge is stored or persisted
+- Do not add API endpoints for knowledge loading
+- Do not modify dream consolidation
+- Do not wire Tier 3 into sub-task handlers (future AD)
+- Do not modify AgentWorkingMemory or standing_orders

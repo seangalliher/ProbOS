@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 # ─── Trust Threshold Constants ─────────────────────────────────────
@@ -158,6 +158,16 @@ class CognitiveConfig(BaseModel):
     llm_model_standard: str = "claude-sonnet-4"
     llm_model_deep: str = "claude-sonnet-4"
 
+    # BF-240: Dwell-time criterion for LLM health recovery
+    llm_health_min_consecutive_healthy: int = 3  # Consecutive successes before tier transitions to operational
+
+    @field_validator("llm_health_min_consecutive_healthy")
+    @classmethod
+    def _validate_min_consecutive_healthy(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("llm_health_min_consecutive_healthy must be >= 1")
+        return v
+
     # Per-tier endpoint overrides (None = fall back to shared)
     llm_base_url_fast: str | None = None
     llm_api_key_fast: str | None = None
@@ -306,6 +316,56 @@ class ChainTuningConfig(BaseModel):
     low_trust_ceiling: float = 0.60   # Below this: skip evaluate/reflect
     high_trust_floor: float = 0.75    # At or above: full chain as-is
     # Mid band is implicitly [low_trust_ceiling, high_trust_floor)
+
+
+class StepInstructionConfig(BaseModel):
+    """AD-651: Step-specific standing order decomposition."""
+
+    enabled: bool = False  # Disabled by default — opt-in after validation
+
+    # Step-to-category mappings. Keys are chain step names (matching SubTaskType values),
+    # values are lists of category tags that the step should receive.
+    step_categories: dict[str, list[str]] = {
+        "query": [],  # Query is deterministic, no LLM — receives no instructions
+        "analyze": [
+            "observation_guidelines",
+            "situation_assessment",
+            "when_to_act_vs_observe",
+            "memory_anchoring",
+            "source_attribution",
+            "self_monitoring",
+        ],
+        "compose": [
+            "communication_style",
+            "personality_expression",
+            "audience_awareness",
+            "ward_room_actions",
+            "knowledge_capture",
+            "duty_reporting",
+        ],
+        "evaluate": [
+            "self_monitoring",
+            "scope_discipline",
+            "communication_style",
+        ],
+        "reflect": [
+            "self_monitoring",
+            "scope_discipline",
+            "knowledge_capture",
+        ],
+    }
+
+    # Categories that every LLM-calling step receives regardless of mapping.
+    # These are foundational and should never be excluded.
+    universal_categories: list[str] = [
+        "identity",
+        "chain_of_command",
+        "core_directives",
+        "encoding_safety",
+    ]
+
+    # If True, log token savings per step at DEBUG level.
+    log_token_savings: bool = True
 
 
 class LLMRateConfig(BaseModel):
@@ -1151,6 +1211,7 @@ class SystemConfig(BaseModel):
     boot_camp: BootCampConfig = BootCampConfig()  # AD-638
     tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
+    step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     nats: NatsConfig = NatsConfig()  # AD-637
     bill: BillConfig = BillConfig()  # AD-618b
 

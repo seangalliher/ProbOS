@@ -3433,11 +3433,23 @@ class ProactiveCognitiveLoop:
         if self._on_event:
             from probos.events import LlmHealthChangedEvent
             downtime = (time.monotonic() - self._llm_offline_since) if self._llm_offline_since else 0.0
+            # BF-240: Get max consecutive_successes across tiers from the LLM client
+            cs = 0
+            if hasattr(self, "_llm_client") and self._llm_client:
+                try:
+                    health = self._llm_client.get_health_status()
+                    cs = max(
+                        t.get("consecutive_successes", 0)
+                        for t in health.get("tiers", {}).values()
+                    ) if health.get("tiers") else 0
+                except Exception:
+                    pass  # Log-and-degrade: event still emits with cs=0
             try:
                 event = LlmHealthChangedEvent(
                     old_status=old_status,
                     new_status=new_status,
                     consecutive_failures=self._llm_failure_count,
+                    consecutive_successes=cs,  # BF-240
                     downtime_seconds=downtime if new_status == "operational" else 0.0,
                 )
                 self._on_event(event.to_dict())

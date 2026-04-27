@@ -5,6 +5,11 @@
 **Depends:** None (consolidation of existing infrastructure)
 **Unlocks:** AD-667 (Named Working Memory Buffers), AD-668-672 (Ambient Awareness wave)
 
+**Acceptance Criteria:**
+- All 12 tests pass
+- No new lint errors
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`
+
 **Files:**
 - `src/probos/cognitive/cognitive_agent.py` — sensorium registry, token tracking, health check
 - `src/probos/config.py` — `SensoriumConfig`
@@ -79,6 +84,10 @@ Place the `SensoriumLayer` enum at module level (near the other enum/constant de
 #   Proprioception: self-monitoring, identity, metrics, cognitive zone
 #   Interoception:  working memory, episodic recall, reasoning state
 #   Exteroception:  environment — WR activity, alerts, infrastructure, subordinates
+#
+# ClassVar note: This dict is shared across all subclasses by reference.
+# Subclasses that need additional entries should copy-and-extend in
+# __init_subclass__ rather than mutating the base dict.
 SENSORIUM_REGISTRY: ClassVar[dict[str, tuple[str, str]]] = {
     # --- Proprioception (self-awareness) ---
     "_build_temporal_context":       (SensoriumLayer.PROPRIOCEPTION, "Time, age, uptime, crew complement"),
@@ -107,31 +116,31 @@ No separate doc file. The registry itself IS the documentation. But add a module
 
 The `SensoriumLayer` enum definition shown in Section 1 already carries the inline comments. No additional file changes needed for this section — the registry dict comments serve as the formalized documentation.
 
-Additionally, add a brief docstring block to `_build_cognitive_state()` (around line 3520) that references the sensorium model:
+Additionally, update the docstring of `_build_cognitive_state` to reference the sensorium model.
 
-Find the existing docstring of `_build_cognitive_state`:
+SEARCH:
 ```python
-def _build_cognitive_state(self, context_parts: dict, observation: dict | None = None) -> dict[str, str]:
-    """AD-644 Phase 2 / AD-646: Populate innate faculty observation keys for chain prompts.
+    def _build_cognitive_state(self, context_parts: dict, observation: dict | None = None) -> dict[str, str]:
+        """AD-644 Phase 2 \ AD-646: Populate innate faculty observation keys for chain prompts.
 
-    Delegates to baseline (always runs) + extensions (context_parts-dependent).
-    Baseline provides agent-intrinsic self-knowledge; extensions override with
-    richer versions when proactive.py's context_parts is available.
-    """
+        Delegates to baseline (always runs) + extensions (context_parts-dependent).
+        Baseline provides agent-intrinsic self-knowledge; extensions override with
+        richer versions when proactive.py's context_parts is available.
+        """
 ```
 
-Replace with:
+REPLACE:
 ```python
-def _build_cognitive_state(self, context_parts: dict, observation: dict | None = None) -> dict[str, str]:
-    """AD-644 Phase 2 / AD-646: Populate innate faculty observation keys for chain prompts.
+    def _build_cognitive_state(self, context_parts: dict, observation: dict | None = None) -> dict[str, str]:
+        """AD-644 Phase 2 \ AD-646: Populate innate faculty observation keys for chain prompts.
 
-    Delegates to baseline (always runs) + extensions (context_parts-dependent).
-    Baseline provides agent-intrinsic self-knowledge; extensions override with
-    richer versions when proactive.py's context_parts is available.
+        Delegates to baseline (always runs) + extensions (context_parts-dependent).
+        Baseline provides agent-intrinsic self-knowledge; extensions override with
+        richer versions when proactive.py's context_parts is available.
 
-    AD-666: This is the interoception hub of the Agent Sensorium — the agent's
-    structured self-state snapshot. See SENSORIUM_REGISTRY for the full inventory.
-    """
+        AD-666: This is the interoception hub of the Agent Sensorium — the agent's
+        structured self-state snapshot. See SENSORIUM_REGISTRY for the full inventory.
+        """
 ```
 
 ## Section 3: Token Budget Tracking
@@ -157,13 +166,14 @@ def _track_sensorium_budget(self, cognitive_state: dict[str, str], situation: di
         if isinstance(val, str):
             total_chars += len(val)
 
-    # Check budget
+    # Check budget — typed config via SystemConfig.sensorium
     rt = getattr(self, '_runtime', None)
-    threshold = 6000  # default
-    if rt and hasattr(rt, 'config') and hasattr(rt.config, 'sensorium'):
-        if not rt.config.sensorium.enabled:
+    threshold = 6000  # default when no runtime
+    if rt and hasattr(rt, 'config'):
+        sensorium_cfg = rt.config.sensorium
+        if not sensorium_cfg.enabled:
             return total_chars
-        threshold = rt.config.sensorium.token_budget_warning
+        threshold = sensorium_cfg.token_budget_warning
 
     if total_chars > threshold:
         agent_id = getattr(self, 'id', 'unknown')
@@ -189,9 +199,9 @@ def _track_sensorium_budget(self, cognitive_state: dict[str, str], situation: di
     return total_chars
 ```
 
-**Call site:** Wire this method into the chain execution path. In `_execute_chain_with_intent_routing()`, around line 1963-1970, after both `_build_cognitive_state` and `_build_situation_awareness` complete, add the tracking call:
+**Call site:** Wire this method into the chain execution path. In `_execute_chain_with_intent_routing()`, after both `_build_cognitive_state` and `_build_situation_awareness` complete, add the tracking call.
 
-Find this block (around line 1961-1970):
+SEARCH:
 ```python
         # AD-646: Universal cognitive baseline — always runs
         _context_parts = _params.get("context_parts", {})
@@ -203,9 +213,11 @@ Find this block (around line 1961-1970):
         if _context_parts:
             _situation = self._build_situation_awareness(_context_parts)
             observation.update(_situation)
+
+        # BF-189: Pre-format memories
 ```
 
-Replace with:
+REPLACE:
 ```python
         # AD-646: Universal cognitive baseline — always runs
         _context_parts = _params.get("context_parts", {})
@@ -221,6 +233,8 @@ Replace with:
 
         # AD-666: Sensorium budget tracking — observability, never blocks
         self._track_sensorium_budget(_cognitive_state, _situation)
+
+        # BF-189: Pre-format memories
 ```
 
 **Important:** The `EventType` import must already be in scope. Check the existing imports at the top of `cognitive_agent.py`. There should already be `from probos.events import EventType` (used for `CONFABULATION_SUPPRESSED`, `SELF_MODEL_DRIFT`, etc.). Verify this import exists; if not, add it.
@@ -228,43 +242,82 @@ Replace with:
 ## Section 4: Sensorium Health Event
 
 **File:** `src/probos/events.py`
-**Location:** Add the new event type in the "Counselor / Cognitive Health" section, around line 159 (after the last event in that group).
 
-Find the end of the cognitive health events block. The last entry is around line 159:
+#### 4a: EventType enum
+
+Add the new event type in the "Counselor / Cognitive Health" section.
+
+SEARCH:
 ```python
     DM_CONVERGENCE_DETECTED = "dm_convergence_detected"  # AD-623: DM thread converged
+    TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
 ```
 
-After `DM_CONVERGENCE_DETECTED`, add:
+REPLACE:
 ```python
+    DM_CONVERGENCE_DETECTED = "dm_convergence_detected"  # AD-623: DM thread converged
     SENSORIUM_BUDGET_EXCEEDED = "sensorium_budget_exceeded"  # AD-666: sensorium injection over char threshold
+    TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
+```
+
+#### 4b: Typed event dataclass
+
+Add after the last `*Event` dataclass in events.py (near the existing `CounselorAssessmentEvent`):
+
+```python
+@dataclass
+class SensoriumBudgetExceededEvent(BaseEvent):
+    """AD-666: Sensorium injection exceeded char threshold."""
+
+    event_type: EventType = field(
+        default=EventType.SENSORIUM_BUDGET_EXCEEDED, init=False
+    )
+    agent_id: str = ""
+    callsign: str = ""
+    total_chars: int = 0
+    threshold: int = 0
+    cognitive_state_chars: int = 0
+    situation_chars: int = 0
 ```
 
 ## Section 5: Sensorium Config
 
 **File:** `src/probos/config.py`
-**Location:** Add `SensoriumConfig` class after the existing `WorkingMemoryConfig` (around line 681), since sensorium is conceptually adjacent to working memory.
 
-After the `WorkingMemoryConfig` class (ends around line 681), add:
-
+SEARCH:
 ```python
+    stale_threshold_hours: float = 24.0  # Entries older than this pruned on restore
+
+
+class OnboardingConfig(BaseModel):
+```
+
+REPLACE:
+```python
+    stale_threshold_hours: float = 24.0  # Entries older than this pruned on restore
+
+
 class SensoriumConfig(BaseModel):
     """AD-666: Agent Sensorium tracking configuration."""
 
     enabled: bool = True  # Track sensorium budget per cognitive cycle
     token_budget_warning: int = 6000  # Char threshold (~1500 tokens) for warning
+
+
+class OnboardingConfig(BaseModel):
 ```
 
-Then register it in `SystemConfig` (around line 1143, near `working_memory`):
-
-Find:
+Then wire into `SystemConfig`. SEARCH:
 ```python
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
+    source_tracing: SourceTracingConfig = SourceTracingConfig()
 ```
 
-After that line, add:
+REPLACE:
 ```python
+    working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
     sensorium: SensoriumConfig = SensoriumConfig()  # AD-666
+    source_tracing: SourceTracingConfig = SourceTracingConfig()
 ```
 
 ## Section 6: Injection Ordering Audit
@@ -272,16 +325,15 @@ After that line, add:
 This section does NOT change code. It documents the current injection ordering for the three prompt paths as inline comments in the `_build_user_message` docstring. This gives future ADs a reference for where new injections should be inserted.
 
 **File:** `src/probos/cognitive/cognitive_agent.py`
-**Location:** Update the docstring of `_build_user_message` (around line 3793).
 
-Find:
+SEARCH:
 ```python
     async def _build_user_message(self, observation: dict) -> str:
         """Build the user message from the observation dict.
         Override in subclasses for custom formatting."""
 ```
 
-Replace with:
+REPLACE:
 ```python
     async def _build_user_message(self, observation: dict) -> str:
         """Build the user message from the observation dict.

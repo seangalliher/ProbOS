@@ -586,9 +586,10 @@ class PeerRepetitionDetectedEvent(BaseEvent):
 class LlmHealthChangedEvent(BaseEvent):
     """AD-576: Emitted on LLM backend status transitions."""
     event_type: EventType = field(default=EventType.LLM_HEALTH_CHANGED, init=False)
-    old_status: str = ""       # "operational", "degraded", "offline"
-    new_status: str = ""       # "operational", "degraded", "offline"
+    old_status: str = ""       # "operational", "degraded", "offline", "recovering"
+    new_status: str = ""       # "operational", "degraded", "offline", "recovering"
     consecutive_failures: int = 0
+    consecutive_successes: int = 0  # BF-240: Dwell count at transition time
     downtime_seconds: float = 0.0  # Time since first failure (0 on recovery)
 
 

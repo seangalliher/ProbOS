@@ -131,6 +131,12 @@ class OpenAICompatibleClient(BaseLLMClient):
         self._last_success: dict[str, float] = {}  # tier -> monotonic timestamp
         self._last_failure: dict[str, float] = {}  # tier -> monotonic timestamp
 
+        # BF-240: Dwell-time recovery tracking
+        self._consecutive_successes: dict[str, int] = {t: 0 for t in ("fast", "standard", "deep")}
+        self._min_consecutive_healthy: int = getattr(
+            self._config, "llm_health_min_consecutive_healthy", 3
+        )
+
         # Ollama keep_alive to prevent model unloading during idle periods
         self._ollama_keep_alive: str = getattr(self._config, "ollama_keep_alive", "30m")
 
@@ -250,10 +256,12 @@ class OpenAICompatibleClient(BaseLLMClient):
                 checked_urls[url] = reachable
                 results[tier] = reachable
             self._tier_status[tier] = results[tier]
-            # BF-069: Reset failure counter on successful connectivity check
+            # BF-240: Dwell-time recovery for connectivity checks
             if results[tier]:
-                self._consecutive_failures[tier] = 0
+                self._consecutive_successes[tier] += 1
                 self._last_success[tier] = time.monotonic()
+                if self._consecutive_successes[tier] >= self._min_consecutive_healthy:
+                    self._consecutive_failures[tier] = 0
 
         return results
 
@@ -398,15 +406,28 @@ class OpenAICompatibleClient(BaseLLMClient):
                     if hasattr(self, '_cache_max_entries'):
                         while len(self._cache) > self._cache_max_entries:
                             self._cache.popitem(last=False)
-                    # BF-069: Reset failure counter on successful completion
+                    # BF-240: Dwell-time recovery — track consecutive successes
                     prev_failures = self._consecutive_failures[attempt_tier]
-                    self._consecutive_failures[attempt_tier] = 0
-                    self._consecutive_429s[attempt_tier] = 0  # AD-617: Reset 429 backoff
+                    self._consecutive_successes[attempt_tier] += 1
                     self._last_success[attempt_tier] = time.monotonic()
-                    if prev_failures > 0:
-                        logger.info(
-                            "LLM tier %s recovered after %d consecutive failures (model=%s)",
-                            attempt_tier, prev_failures, model,
+                    self._consecutive_429s[attempt_tier] = 0  # AD-617: Reset 429 backoff
+
+                    if self._consecutive_successes[attempt_tier] >= self._min_consecutive_healthy:
+                        self._consecutive_failures[attempt_tier] = 0
+                        if prev_failures > 0:
+                            logger.info(
+                                "LLM tier %s recovered after %d consecutive failures "
+                                "(dwell: %d consecutive healthy, threshold: %d, model=%s)",
+                                attempt_tier, prev_failures,
+                                self._consecutive_successes[attempt_tier],
+                                self._min_consecutive_healthy, model,
+                            )
+                    elif prev_failures > 0:
+                        logger.debug(
+                            "LLM tier %s healthy check %d/%d (model=%s)",
+                            attempt_tier,
+                            self._consecutive_successes[attempt_tier],
+                            self._min_consecutive_healthy, model,
                         )
                     if attempt_tier != tier:
                         logger.info(
@@ -417,6 +438,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 except httpx.ConnectError:
                     last_error = f"LLM endpoint unreachable at {tc['base_url']}"
                     self._consecutive_failures[attempt_tier] += 1
+                    self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                     self._last_failure[attempt_tier] = time.monotonic()
                     logger.warning(
                         "%s (tier=%s, model=%s, consecutive_failures=%d/%d)",
@@ -428,6 +450,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 except httpx.TimeoutException:
                     last_error = f"LLM request timed out after {tc['timeout']:.0f}s"
                     self._consecutive_failures[attempt_tier] += 1
+                    self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                     self._last_failure[attempt_tier] = time.monotonic()
                     logger.warning(
                         "%s (tier=%s, model=%s, consecutive_failures=%d/%d)",
@@ -462,6 +485,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                     else:
                         last_error = f"LLM endpoint returned HTTP {status_code}"
                         self._consecutive_failures[attempt_tier] += 1
+                        self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                         self._last_failure[attempt_tier] = time.monotonic()
                         logger.warning(
                             "%s (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
@@ -474,6 +498,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 except Exception as e:
                     last_error = f"{type(e).__name__}: {e}"
                     self._consecutive_failures[attempt_tier] += 1
+                    self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                     self._last_failure[attempt_tier] = time.monotonic()
                     logger.warning(
                         "LLM call failed (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
@@ -668,26 +693,39 @@ class OpenAICompatibleClient(BaseLLMClient):
         tiers: dict[str, dict[str, Any]] = {}
         for tier in ("fast", "standard", "deep"):
             failures = self._consecutive_failures.get(tier, 0)
+            successes = self._consecutive_successes.get(tier, 0)
             if failures == 0:
                 status = "operational"
             elif failures < self._UNREACHABLE_THRESHOLD:
-                status = "degraded"
-                logger.info(
-                    "LLM tier %s degraded: %d consecutive failures (threshold=%d)",
-                    tier, failures, self._UNREACHABLE_THRESHOLD,
-                )
+                if successes > 0:
+                    status = "recovering"  # BF-240: Has recent successes but hasn't met dwell threshold
+                else:
+                    status = "degraded"
+                    # Note: only log when not recovering — a tier that flips
+                    # degraded→recovering→degraded won't re-log. This is intentional:
+                    # the recovering→degraded transition means successes reset, so the
+                    # original degraded log from when failures first crossed threshold
+                    # is still the relevant diagnostic entry.
+                    logger.info(
+                        "LLM tier %s degraded: %d consecutive failures (threshold=%d)",
+                        tier, failures, self._UNREACHABLE_THRESHOLD,
+                    )
             else:
-                status = "unreachable"
-                logger.warning(
-                    "LLM tier %s unreachable: %d consecutive failures (threshold=%d), "
-                    "last_success=%.1fs ago, last_failure=%.1fs ago",
-                    tier, failures, self._UNREACHABLE_THRESHOLD,
-                    time.monotonic() - self._last_success.get(tier, 0) if self._last_success.get(tier) else -1,
-                    time.monotonic() - self._last_failure.get(tier, 0) if self._last_failure.get(tier) else -1,
-                )
+                if successes > 0:
+                    status = "recovering"  # BF-240: Unreachable but accumulating healthy checks
+                else:
+                    status = "unreachable"
+                    logger.warning(
+                        "LLM tier %s unreachable: %d consecutive failures (threshold=%d), "
+                        "last_success=%.1fs ago, last_failure=%.1fs ago",
+                        tier, failures, self._UNREACHABLE_THRESHOLD,
+                        time.monotonic() - self._last_success.get(tier, 0) if self._last_success.get(tier) else -1,
+                        time.monotonic() - self._last_failure.get(tier, 0) if self._last_failure.get(tier) else -1,
+                    )
             tiers[tier] = {
                 "status": status,
                 "consecutive_failures": failures,
+                "consecutive_successes": successes,  # BF-240
                 "last_success": self._last_success.get(tier),
                 "last_failure": self._last_failure.get(tier),
             }
@@ -695,8 +733,10 @@ class OpenAICompatibleClient(BaseLLMClient):
         statuses = [t["status"] for t in tiers.values()]
         if all(s == "operational" for s in statuses):
             overall = "operational"
-        elif all(s == "unreachable" for s in statuses):
+        elif all(s in ("unreachable", "offline") for s in statuses):
             overall = "offline"
+        elif any(s == "recovering" for s in statuses):
+            overall = "recovering"  # BF-240
         else:
             overall = "degraded"
 
