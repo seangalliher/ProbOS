@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, DragEvent } from 'react';
 import { useStore } from '../../store/useStore';
 import type { WorkItemView, BookableResourceView, WorkItemTemplateView } from '../../store/types';
+import { ChevronDown, ChevronRight, ChevronUp, Warning } from '../icons/Glyphs';
 
 // ── Column config ──────────────────────────────────────────────────
 type ColKey = 'backlog' | 'ready' | 'in_progress' | 'review' | 'done';
@@ -351,7 +352,7 @@ export default function WorkBoard() {
         <span style={{ fontSize: 12, fontWeight: 700, color: '#c8d0e0', letterSpacing: 1 }}>CREW WORK BOARD</span>
         <div style={{ flex: 1 }} />
         <button onClick={() => setShowFilters(!showFilters)} style={toolbarBtn}>
-          Filters {showFilters ? '▴' : '▾'}
+          Filters {showFilters ? <ChevronUp size={8} /> : <ChevronDown size={8} />}
         </button>
         <select value={swimLane} onChange={e => setSwimLane(e.target.value as SwimLane)} style={{ ...toolbarBtn, cursor: 'pointer' }}>
           <option value="none">No Swim Lanes</option>
@@ -370,7 +371,7 @@ export default function WorkBoard() {
       {/* WIP warning */}
       {wipWarning && (
         <div style={{ padding: '4px 16px', fontSize: 10, color: '#d0b050', background: 'rgba(208,176,80,0.08)' }}>
-          &#9888; {wipWarning}
+          <Warning size={10} /> {wipWarning}
         </div>
       )}
 
@@ -519,7 +520,7 @@ export default function WorkBoard() {
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
           <div onClick={() => setShowBlocked(!showBlocked)}
             style={{ padding: '5px 16px', fontSize: 10, fontWeight: 600, color: '#d07050', cursor: 'pointer', userSelect: 'none' }}>
-            <span style={{ fontSize: 8 }}>{showBlocked ? '▼' : '▶'}</span> Blocked/Failed ({blockedItems.length})
+            <span>{showBlocked ? <ChevronDown size={8} /> : <ChevronRight size={8} />}</span> Blocked/Failed ({blockedItems.length})
           </div>
           {showBlocked && (
             <div style={{ padding: '4px 16px 8px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
+import { ChevronDown, ChevronRight, Expand, Close } from './icons/Glyphs';
 import { TaskCard } from './bridge/BridgeCards';
 import { NotificationCard } from './bridge/BridgeNotifications';
 import { BridgeKanban } from './bridge/BridgeKanban';
@@ -33,7 +34,7 @@ function BridgeSection({
           borderBottom: '1px solid rgba(255,255,255,0.06)',
         }}
       >
-        <span style={{ fontSize: 8, color: '#666' }}>{open ? '\u25BC' : '\u25B6'}</span>
+        <span style={{ color: '#666' }}>{open ? <ChevronDown size={8} /> : <ChevronRight size={8} />}</span>
         <span style={{
           fontSize: 10, fontWeight: 700, letterSpacing: 1.5,
           textTransform: 'uppercase' as const, color,
@@ -49,7 +50,7 @@ function BridgeSection({
             }}
             title="Expand to full view"
           >
-            {'\u2197'}
+            <Expand size={10} />
           </span>
         )}
       </div>
@@ -158,7 +159,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
               lineHeight: 1,
             }}
           >
-            {'\u00D7'}
+            <Close size={14} />
           </button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStore } from '../store/useStore';
 import type { AgentTaskView, TaskStepView } from '../store/types';
+import { STEP_ICON_COMPONENTS } from '../components/glass/GlassDAGNodes';
 
 function makeStep(overrides: Partial<TaskStepView> = {}): TaskStepView {
   return {
@@ -64,17 +65,12 @@ describe('GlassDAGNodes store integration (AD-389)', () => {
     expect(useStore.getState().expandedGlassTask).toBe('t2');
   });
 
-  it('step status mapping produces correct icons', () => {
-    const icons: Record<string, string> = {
-      done: '\u25CF',
-      in_progress: '\u25D0',
-      pending: '\u25CB',
-      failed: '\u2715',
-    };
-    expect(icons['done']).toBe('\u25CF');
-    expect(icons['in_progress']).toBe('\u25D0');
-    expect(icons['pending']).toBe('\u25CB');
-    expect(icons['failed']).toBe('\u2715');
+  it('step status mapping produces correct icon components', () => {
+    expect(STEP_ICON_COMPONENTS['done']).toBeDefined();
+    expect(STEP_ICON_COMPONENTS['in_progress']).toBeDefined();
+    expect(STEP_ICON_COMPONENTS['pending']).toBeDefined();
+    expect(STEP_ICON_COMPONENTS['failed']).toBeDefined();
+    expect(Object.keys(STEP_ICON_COMPONENTS)).toHaveLength(4);
   });
 
   it('empty steps array means no DAG nodes to render', () => {

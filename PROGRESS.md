@@ -14,6 +14,8 @@ AD-666 PLANNED. Agent Sensorium Formalization — name and formalize the existin
 
 BF-241 CLOSED. NATS JetStream reconnect resilience — extracted `_recover_jetstream()` from `set_subject_prefix()`, added `_on_reconnected()` instance method, MockNATSBus parity. Completes NATS resilience stack (BF-229/230/231/232/241). 8 new tests.
 
+BF-041 CLOSED. HXI SVG icon system — replaced all Unicode text glyphs across 18 component files with 25 shared SVG glyph components in `Glyphs.tsx`. STEP_ICONS string maps → STEP_ICON_COMPONENTS React component maps. IntentSurface FeedbackStatus.confirmText refactored string→ReactNode. 68 new glyph tests. Zero remaining Unicode icon glyphs (grep-verified).
+
 BF-240 OPEN. LLM Health Dwell-Time Criterion — configurable `min_consecutive_healthy` threshold (default 3) before diagnostic holds release. Prevents premature recovery on single healthy check amid instability. Issue #344.
 
 AD-665 PLANNED. Corroboration Source Validation — consumer-side independence validation for corroborating sources. Detects shared upstream origin via provenance metadata (AD-662 fields). Graph-based ancestry walk, configurable similarity threshold, discount for common-origin corroboration. Issue #343.

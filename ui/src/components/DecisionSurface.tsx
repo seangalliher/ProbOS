@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { soundEngine } from '../audio/soundEngine';
+import { Sparkle, StatusPending, StatusDone } from './icons/Glyphs';
 import { getAvailableVoices, setPreferredVoiceName, getCurrentVoiceName, speakResponse } from '../audio/voice';
 
 export function DecisionSurface() {
@@ -218,8 +219,8 @@ export function DecisionSurface() {
                 onMouseLeave={(e) => { (e.target as HTMLElement).style.background = voice.name === getCurrentVoiceName() ? 'rgba(240, 176, 96, 0.08)' : 'transparent'; }}
               >
                 {voice.name.replace(/ - English.*$/, '')}
-                {voice.name.includes('Online (Natural)') && ' \u2726'}
-                {voice.name.includes('Online') && !voice.name.includes('Natural') && ' \u25CB'}
+                {voice.name.includes('Online (Natural)') && <>{' '}<Sparkle size={10} /></>}
+                {voice.name.includes('Online') && !voice.name.includes('Natural') && <>{' '}<StatusPending size={10} /></>}
               </div>
             ))}
           </div>
@@ -248,13 +249,13 @@ export function DecisionSurface() {
           lineHeight: 1.8, pointerEvents: 'auto', maxWidth: 300,
         }}>
           <div style={{ fontWeight: 600, marginBottom: 4, color: '#f0b060' }}>Visual Legend</div>
-          <div><span style={{ color: '#f0b060' }}>{'\u25CF'}</span> High trust &nbsp;
-               <span style={{ color: '#88a4c8' }}>{'\u25CF'}</span> Medium &nbsp;
-               <span style={{ color: '#7060a8' }}>{'\u25CF'}</span> Low</div>
+          <div><span style={{ color: '#f0b060' }}><StatusDone size={8} /></span> High trust &nbsp;
+               <span style={{ color: '#88a4c8' }}><StatusDone size={8} /></span> Medium &nbsp;
+               <span style={{ color: '#7060a8' }}><StatusDone size={8} /></span> Low</div>
           <div>Brighter = more confident</div>
           <div>Larger = domain agent &nbsp; Smaller = core agent</div>
-          <div><span style={{ color: '#c8a070' }}>{'\u25CB'}</span> Pulsing = heartbeat &nbsp;
-               <span style={{ color: '#e8c870' }}>{'\u2726'}</span> Flash = consensus</div>
+          <div><span style={{ color: '#c8a070' }}><StatusPending size={8} /></span> Pulsing = heartbeat &nbsp;
+               <span style={{ color: '#e8c870' }}><Sparkle size={8} /></span> Flash = consensus</div>
           <div style={{ color: '#8888a0', fontSize: 11, marginTop: 4 }}>Curves = learned Hebbian routing</div>
         </div>
       )}

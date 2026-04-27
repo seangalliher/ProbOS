@@ -10,6 +10,7 @@ import { soundEngine } from '../audio/soundEngine';
 import { BridgePanel } from './BridgePanel';
 import { ViewSwitcher } from './ViewSwitcher';
 import { deriveBridgeState } from './glass/ContextRibbon';
+import { Diamond, Check, XMark, StatusPending, DiamondOpen, Bullseye, ChevronDown, ChevronRight, Warning, Sparkle } from './icons/Glyphs';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -23,7 +24,7 @@ const glass = (opacity = 0.75) => ({
 });
 
 /* ── per-message feedback state ── */
-type FeedbackStatus = { disabled: boolean; confirmText: string };
+type FeedbackStatus = { disabled: boolean; confirmText: React.ReactNode };
 
 export function IntentSurface() {
   const [input, setInput] = useState('');
@@ -136,7 +137,7 @@ export function IntentSurface() {
   const dagProgress = activeDag && activeDag.length > 0
     ? (() => {
         const done = activeDag.filter((n) => n.status === 'completed').length;
-        return `\u25C8 ${done}/${activeDag.length} tasks`;
+        return <><Diamond size={10} /> {done}/{activeDag.length} tasks</>;
       })()
     : null;
 
@@ -237,7 +238,7 @@ export function IntentSurface() {
     }
 
     const command = kind === 'good' ? '/feedback good' : '/feedback bad';
-    const confirmLabel = kind === 'good' ? '\u2713 Learned' : '\u2713 Noted';
+    const confirmLabel = kind === 'good' ? <><Check size={10} /> Learned</> : <><Check size={10} /> Noted</>;
 
     // Trigger canvas pulse
     useStore.setState({ pendingFeedbackPulse: kind });
@@ -264,7 +265,7 @@ export function IntentSurface() {
       // Confirmation shown inline on button — NOT as a chat message
     } catch {
       // Show error inline on the button
-      setFeedbackMap((m) => ({ ...m, [msgId]: { disabled: true, confirmText: '\u2717 Failed' } }));
+      setFeedbackMap((m) => ({ ...m, [msgId]: { disabled: true, confirmText: <><XMark size={10} /> Failed</> } }));
     }
   }
 
@@ -577,7 +578,7 @@ export function IntentSurface() {
                                   textShadow: '0 0 8px rgba(102, 255, 136, 0.5)',
                                 }}
                               >
-                                {enriching[msg.id] ? '\u25CB Enriching...' : '\u25C7 Enrich Spec'}
+                                {enriching[msg.id] ? <><StatusPending size={10} /> Enriching...</> : <><DiamondOpen size={10} /> Enrich Spec</>}
                               </button>
                               <button
                                 onClick={() => {
@@ -602,7 +603,7 @@ export function IntentSurface() {
                         {enrichedSpec[msg.id] && (
                           <div style={{ marginTop: 12, width: '100%' }}>
                             <div style={{ fontSize: 12, color: '#ffcc66', marginBottom: 6, textShadow: '0 0 6px rgba(255, 204, 102, 0.4)' }}>
-                              {'\u25CE'} Enriched Agent Spec:
+                              <Bullseye size={12} /> Enriched Agent Spec:
                             </div>
                             <div style={{
                               padding: 12, borderRadius: 8,
@@ -647,7 +648,7 @@ export function IntentSurface() {
                                   fontFamily: "'Inter', sans-serif",
                                 }}
                               >
-                                {'\u25C7'} Edit
+                                <DiamondOpen size={10} /> Edit
                               </button>
                               <button
                                 onClick={() => {
@@ -706,7 +707,7 @@ export function IntentSurface() {
                             marginBottom: 8,
                           }}
                         >
-                          {buildCodeExpanded[msg.id] ? '\u25BC Hide Code' : '\u25B6 View Code'}
+                          {buildCodeExpanded[msg.id] ? <><ChevronDown size={10} /> Hide Code</> : <><ChevronRight size={10} /> View Code</>}
                         </button>
                         {buildCodeExpanded[msg.id] && (
                           <pre style={{
@@ -839,7 +840,7 @@ export function IntentSurface() {
                                 marginBottom: 8,
                               }}
                             >
-                              {buildCodeExpanded[`fail-${msg.id}`] ? '\u25BC Hide Error Output' : '\u25B6 View Error Output'}
+                              {buildCodeExpanded[`fail-${msg.id}`] ? <><ChevronDown size={10} /> Hide Error Output</> : <><ChevronRight size={10} /> View Error Output</>}
                             </button>
                             {buildCodeExpanded[`fail-${msg.id}`] && (
                               <pre style={{
@@ -967,7 +968,7 @@ export function IntentSurface() {
                               <strong style={{ color: '#cc8866' }}>Risks:</strong>
                               {msg.architectProposal.risks.map((r, i) => (
                                 <div key={i} style={{ marginLeft: 8, color: '#cc9977' }}>
-                                  {'\u26A0'} {r}
+                                  <Warning size={10} /> {r}
                                 </div>
                               ))}
                             </div>
@@ -998,7 +999,7 @@ export function IntentSurface() {
                             marginBottom: 8,
                           }}
                         >
-                          {designSpecExpanded[msg.id] ? '\u25BC Hide Full Spec' : '\u25B6 View Full Spec'}
+                          {designSpecExpanded[msg.id] ? <><ChevronDown size={10} /> Hide Full Spec</> : <><ChevronRight size={10} /> View Full Spec</>}
                         </button>
                         {designSpecExpanded[msg.id] && (
                           <pre style={{
@@ -1583,7 +1584,7 @@ export function IntentSurface() {
               opacity: pillReceded ? 0 : 1,
               transition: pillReceded ? 'opacity 0.3s ease-in' : 'opacity 0.3s ease-out 0.15s',
             }}>
-              <span style={{ fontSize: 14 }}>{'\u2726'}</span>
+              <span style={{ fontSize: 14 }}><Sparkle size={14} /></span>
               Ask ProbOS...
             </span>
 

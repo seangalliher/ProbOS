@@ -42,6 +42,8 @@ def _make_router():
     router._captain_delivery_done.set()
     router._WARD_ROOM_COOLDOWN_SECONDS = 30
     router._cap_notices_posted = set()
+    router._posted_in_round = {}
+    router._last_posted_in_round_eviction = time.time()
 
     # extract_endorsements returns text unchanged, no endorsements
     router.extract_endorsements = MagicMock(side_effect=lambda t: (t, []))

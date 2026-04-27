@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
+import { Warning } from './icons/Glyphs';
 
 const DEPT_COLORS: Record<string, string> = {
   engineering: '#b0a050',
@@ -138,7 +139,7 @@ export function AgentTooltip() {
               </span>
               {currentTask.requires_action && (
                 <span style={{ color: '#f0b060', fontSize: 10, fontWeight: 600 }}>
-                  {'\u26A0'} Needs attention
+                  <Warning size={10} /> Needs attention
                 </span>
               )}
             </div>

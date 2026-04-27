@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { timeAgo } from './timeAgo';
+import { ArrowUp, Comment } from '../icons/Glyphs';
 
 export function WardRoomThreadList() {
   const threads = useStore(s => s.wardRoomThreads);
@@ -63,8 +64,8 @@ export function WardRoomThreadList() {
               by {t.author_callsign || 'unknown'} · {timeAgo(t.last_activity)}
             </div>
             <div style={{ fontSize: 11, color: '#666680', marginTop: 4, display: 'flex', gap: 12 }}>
-              <span>▲ {t.net_score}</span>
-              <span>💬 {t.reply_count}</span>
+              <span><ArrowUp size={10} /> {t.net_score}</span>
+              <span><Comment size={10} /> {t.reply_count}</span>
             </div>
           </div>
         ))}

@@ -3,6 +3,7 @@ import { WardRoomChannelList } from './WardRoomChannelList';
 import { WardRoomThreadList } from './WardRoomThreadList';
 import { WardRoomThreadDetail } from './WardRoomThreadDetail';
 import { useEffect } from 'react';
+import { ArrowRight, ArrowLeft, Close } from '../icons/Glyphs';
 
 /** AD-485/BF-054/BF-080: DM Activity Log — chronological feed with navigation */
 function DmActivityLog() {
@@ -88,7 +89,7 @@ function DmActivityLog() {
             {/* BF-080: click entry to view full conversation */}
             <div style={{ marginTop: 4 }}>
               <span style={{ fontSize: 10, color: '#6a6a7a' }}>
-                View conversation →
+                View conversation <ArrowRight size={10} />
               </span>
             </div>
           </div>
@@ -154,8 +155,7 @@ export function WardRoomPanel() {
           {activeThread && (
             <span onClick={closeThread} style={{
               cursor: 'pointer', color: '#8888a0', fontSize: 14, marginRight: 4,
-            }}>←</span>
-          )}
+            }}><ArrowLeft size={14} /></span>
           <span style={{
             fontSize: 11, letterSpacing: 1.5, fontWeight: 700,
             color: '#f0b060', textTransform: 'uppercase' as const,
@@ -165,7 +165,7 @@ export function WardRoomPanel() {
         </div>
         <span onClick={onClose} style={{
           cursor: 'pointer', color: '#8888a0', fontSize: 16, lineHeight: 1,
-        }}>✕</span>
+        }}><Close size={16} /></span>
       </div>
 
       {/* View tabs (only when not in a thread or dm-detail) */}
@@ -197,7 +197,7 @@ export function WardRoomPanel() {
             <span
               onClick={() => setView('dms')}
               style={{ cursor: 'pointer', color: '#8888a0', fontSize: 14 }}
-            >←</span>
+            ><ArrowLeft size={14} /></span>
             <span style={{ fontSize: 11, color: '#c0bab0', fontWeight: 600 }}>
               {dmChannelInfo?.description || dmChannelInfo?.name || 'DM Conversation'}
             </span>

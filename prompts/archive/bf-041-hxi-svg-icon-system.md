@@ -2,7 +2,7 @@
 
 **Status:** Ready for builder
 **Priority:** Medium
-**Files:** `ui/src/components/icons/Glyphs.tsx`, `ui/src/components/icons/Glyphs.test.tsx`, plus 13 component files listed below
+**Files:** `ui/src/components/icons/Glyphs.tsx`, `ui/src/components/icons/Glyphs.test.tsx`, plus 18 component files listed below
 
 ## Problem
 
@@ -60,6 +60,7 @@ Define and export these named components:
 | `ArrowLeft` | `←` | Left arrow: `M10 4 L4 8 L10 12` with `M4 8 H13` (viewBox 0 0 16 16) |
 | `ArrowRight` | `→` | Right arrow: `M6 4 L12 8 L6 12` with `M3 8 H12` (viewBox 0 0 16 16) |
 | `ArrowUp` | `▲` | Upward arrow: `M4 10 L8 4 L12 10` with `M8 4 V13` (viewBox 0 0 16 16) |
+| `ArrowDown` | `▼` (downvote) | Downward arrow: `M4 6 L8 12 L12 6` with `M8 3 V12` (viewBox 0 0 16 16) — mirrors ArrowUp vertically |
 | `Close` | `✕`, `×`, `\u00D7` | X mark: `M4 4 L12 12 M12 4 L4 12` (viewBox 0 0 16 16) |
 | `Warning` | `⚠`, `\u26A0`, `&#9888;` | Triangle with exclamation: `M8 3 L14 13 H2 Z` (stroke) + `M8 7 V9 M8 11 V11.5` (viewBox 0 0 16 16) |
 | `StatusDone` | `●`, `\u25CF` (done step) | Filled circle: `<circle cx="8" cy="8" r="4" fill="currentColor" stroke="none" />` (viewBox 0 0 16 16) |
@@ -77,6 +78,7 @@ Define and export these named components:
 | `Lock` | `🔒`, `\u{1F512}` | Padlock closed: rect body + arc shackle (viewBox 0 0 16 16) — `M5 8 H11 V13 H5 Z` (body) + `M6 8 V6 A2 2 0 0 1 10 6 V8` (shackle) |
 | `Unlock` | `🔓`, `\u{1F513}` | Padlock open: same body + open shackle — `M5 8 H11 V13 H5 Z` + `M6 8 V6 A2 2 0 0 1 10 6` (shackle lifted) |
 | `Comment` | `💬` | Speech bubble: rounded rect with tail — `M3 3 H13 Q14 3 14 4 V10 Q14 11 13 11 H6 L3 14 V4 Q3 3 4 3 Z` (viewBox 0 0 16 16) |
+| `Pin` | `📌`, `\u{1F4CC}` | Pushpin: `<circle cx="8" cy="5" r="2.5" />` (head) + `M8 7.5 V14` (shaft) (viewBox 0 0 16 16) |
 
 **Important:** The `StatusDone` glyph uses `fill="currentColor"` and `stroke="none"` — it's the ONE exception to the stroke-only rule because it represents a "filled" completed state, which is semantically correct and matches the original `●`.
 
@@ -113,11 +115,11 @@ Current:
 </span>
 ```
 
-Replace the `STEP_ICONS` map with a component map:
+Replace the `STEP_ICONS` map with a component map (must be `export`ed — consumed by tests):
 ```tsx
 import { StatusDone, StatusInProgress, StatusPending, StatusFailed } from '../../icons/Glyphs';
 
-const STEP_ICON_COMPONENTS: Record<string, React.FC<{ size?: number }>> = {
+export const STEP_ICON_COMPONENTS: Record<string, React.FC<{ size?: number }>> = {
   pending: StatusPending,
   in_progress: StatusInProgress,
   done: StatusDone,
@@ -175,7 +177,7 @@ Replace with:
 })()}
 ```
 
-Import the same `StatusDone, StatusInProgress, StatusPending, StatusFailed` components and define the same `STEP_ICON_COMPONENTS` map. Remove the old `STEP_ICONS` string map.
+Import the same `StatusDone, StatusInProgress, StatusPending, StatusFailed` components and define the same `export const STEP_ICON_COMPONENTS` map (must be `export`ed — consumed by tests). Remove the old `STEP_ICONS` string map.
 
 ### 2f: `ui/src/components/glass/ContextRibbon.tsx`
 
@@ -244,7 +246,7 @@ No Unicode glyphs to replace beyond the `·` separator (line 40). No changes nee
 
 | Line | Current | Replacement |
 |------|---------|-------------|
-| 141 | `>×</button>` | `><Close size={14} /></button>` |
+| 141 | `×` (raw character on own line inside `<button>` spanning lines 137–142) | `<Close size={14} />` |
 
 ### 2n: `ui/src/components/IntentSurface.tsx`
 
@@ -252,7 +254,7 @@ No Unicode glyphs to replace beyond the `·` separator (line 40). No changes nee
 
 | Line | Current | Replacement |
 |------|---------|-------------|
-| 139 | `\u25C8 ${done}/${activeDag.length} tasks` | Use template literal: `` `${done}/${activeDag.length} tasks` `` with `<Diamond size={10} />` prepended before the text in JSX, not inside the string. Refactor `dagText` from string to JSX. |
+| 139 | `\u25C8 ${done}/${activeDag.length} tasks` | Use template literal: `` `${done}/${activeDag.length} tasks` `` with `<Diamond size={10} />` prepended before the text in JSX, not inside the string. Refactor `dagProgress` (line 136) from string to JSX — it's consumed at line 1433 as `{dagProgress || 'thinking'}`, which handles JSX correctly. |
 | 240 | `'\u2713 Learned'` / `'\u2713 Noted'` | Replace with JSX: `<><Check size={10} /> Learned</>` / `<><Check size={10} /> Noted</>` — this requires `confirmLabel` to be `ReactNode` not `string`. Refactor the `confirmLabel` variable type. |
 | 267 | `'\u2717 Failed'` | `<><XMark size={10} /> Failed</>` — same refactor, `confirmText` to `ReactNode`. |
 | 580 | `'\u25CB Enriching...'` / `'\u25C7 Enrich Spec'` | `<><StatusPending size={10} /> Enriching...</>` / `<><DiamondOpen size={10} /> Enrich Spec</>` |
@@ -264,7 +266,62 @@ No Unicode glyphs to replace beyond the `·` separator (line 40). No changes nee
 | 1001 | `'\u25BC Hide Full Spec'` / `'\u25B6 View Full Spec'` | `<><ChevronDown size={10} /> Hide Full Spec</>` / `<><ChevronRight size={10} /> View Full Spec</>` |
 | 1586 | `{'\u2726'}` | `<Sparkle size={14} />` |
 
-**Note on IntentSurface refactoring:** Some replacements change string values to JSX. Where a variable is typed as `string` but now holds JSX, update the type to `ReactNode` and ensure the rendering location supports JSX (it will — these are all rendered in JSX context already). The `feedbackMap` type uses `confirmText: string` — update `FeedbackStatus` to `confirmText: React.ReactNode`.
+**Note on IntentSurface refactoring:** Some replacements change string values to JSX. Where a variable is typed as `string` but now holds JSX, update the type to `ReactNode` and ensure the rendering location supports JSX (it will — these are all rendered in JSX context already). The `feedbackMap` type uses `confirmText: string` (line 26) — update `FeedbackStatus` to `confirmText: React.ReactNode`. Also: the DAG progress variable is named `dagProgress` (not `dagText`) — defined at line 136 as a string template literal, consumed at line 1433 as `{dagProgress || 'thinking'}`. Changing from string to JSX works because JSX is truthy.
+
+### 2o: `ui/src/components/wardroom/WardRoomEndorsement.tsx`
+
+**Import path:** `'../../icons/Glyphs'`
+
+| Line | Current | Replacement |
+|------|---------|-------------|
+| 29 | `>▲</span>` | `><ArrowUp size={10} /></span>` |
+| 31 | `>▼</span>` | `><ArrowDown size={10} /></span>` |
+
+### 2p: `ui/src/components/DecisionSurface.tsx`
+
+**Import path:** `'./icons/Glyphs'`
+
+Replace glyphs in the voice picker (lines 221–222) and legend overlay (lines 251–257):
+
+| Line | Current | Replacement |
+|------|---------|-------------|
+| 221 | `{voice.name.includes('Online (Natural)') && ' \u2726'}` | `{voice.name.includes('Online (Natural)') && <>{' '}<Sparkle size={10} /></>}` |
+| 222 | `{voice.name.includes('Online') && !voice.name.includes('Natural') && ' \u25CB'}` | `{voice.name.includes('Online') && !voice.name.includes('Natural') && <>{' '}<StatusPending size={10} /></>}` |
+| 251 | `<span style={{ color: '#f0b060' }}>{'\u25CF'}</span>` | `<span style={{ color: '#f0b060' }}><StatusDone size={8} /></span>` |
+| 252 | `<span style={{ color: '#88a4c8' }}>{'\u25CF'}</span>` | `<span style={{ color: '#88a4c8' }}><StatusDone size={8} /></span>` |
+| 253 | `<span style={{ color: '#7060a8' }}>{'\u25CF'}</span>` | `<span style={{ color: '#7060a8' }}><StatusDone size={8} /></span>` |
+| 256 | `<span style={{ color: '#c8a070' }}>{'\u25CB'}</span>` | `<span style={{ color: '#c8a070' }}><StatusPending size={8} /></span>` |
+| 257 | `<span style={{ color: '#e8c870' }}>{'\u2726'}</span>` | `<span style={{ color: '#e8c870' }}><Sparkle size={8} /></span>` |
+
+### 2q: `ui/src/components/glass/BriefingCard.tsx`
+
+**Import path:** `'../../icons/Glyphs'`
+
+| Line | Current | Replacement |
+|------|---------|-------------|
+| 62 | `<span style={{ color: '#50c878', marginRight: 8 }}>{'\u25CF'}</span>` | `<span style={{ color: '#50c878', marginRight: 8 }}><StatusDone size={8} /></span>` |
+| 68 | `<span style={{ color: '#5090d0', marginRight: 8 }}>{'\u25CF'}</span>` | `<span style={{ color: '#5090d0', marginRight: 8 }}><StatusDone size={8} /></span>` |
+| 73 | `<span style={{ color: '#666', marginRight: 8 }}>{'\u25CF'}</span>` | `<span style={{ color: '#666', marginRight: 8 }}><StatusDone size={8} /></span>` |
+
+### 2r: `ui/src/components/bridge/FullSystem.tsx`
+
+**Import path:** `'../../icons/Glyphs'`
+
+| Line | Current | Replacement |
+|------|---------|-------------|
+| 181 | `{'\u{1F512}'}` (locked thread indicator) | `<Lock size={11} />` — preserve outer `<span>` wrapper (color + fontSize thread into `currentColor`) |
+| 182 | `{'\u{1F4CC}'}` (pinned thread indicator) | `<Pin size={11} />` — preserve outer `<span>` wrapper |
+| 224 | `{t.locked ? '\u{1F513}' : '\u{1F512}'}` | `{t.locked ? <Unlock size={10} /> : <Lock size={10} />}` — preserve outer `<button>` styling |
+
+### 2s: `ui/src/components/WelcomeOverlay.tsx`
+
+**Import path:** `'./icons/Glyphs'`
+
+| Line | Current | Replacement |
+|------|---------|-------------|
+| 61 | `<span style={{ color: '#f0b060' }}>{'\u25CF'}</span>` | `<span style={{ color: '#f0b060' }}><StatusDone size={8} /></span>` |
+
+**Note:** Line 62 uses `\u2500` (box-drawing horizontal line `─`) as a visual indicator for routing curves. This is a typographic element, not an icon glyph — retain as text. Add to audit exceptions.
 
 ---
 
@@ -301,8 +358,8 @@ describe.each(glyphNames)('%s', (name) => {
     const Component = (Glyphs as any)[name];
     const { container } = render(<Component />);
     const svg = container.querySelector('svg');
-    // StatusDone uses fill, not stroke — skip stroke check for it
-    if (name !== 'StatusDone') {
+    const STROKE_EXEMPT = new Set(['StatusDone']);
+    if (!STROKE_EXEMPT.has(name)) {
       expect(svg?.getAttribute('stroke')).toBe('currentColor');
       expect(svg?.getAttribute('stroke-width')).toBe('1.5');
       expect(svg?.getAttribute('stroke-linecap')).toBe('round');
@@ -336,18 +393,51 @@ it('exports the expected number of glyph components', () => {
   const count = Object.keys(Glyphs).filter(
     k => typeof (Glyphs as any)[k] === 'function'
   ).length;
-  // 21 glyphs defined in BF-041
-  expect(count).toBeGreaterThanOrEqual(21);
+  // 25 glyphs defined in BF-041
+  expect(count).toBe(25);
 });
 ```
 
 ---
 
-## Section 4: Update Existing Test
+## Section 4: Update Existing Tests
 
-**File:** `ui/src/__tests__/ComponentRendering.test.tsx`
+### 4a: `ui/src/__tests__/ComponentRendering.test.tsx`
 
-This test imports components and renders them. Verify it still passes after the glyph swap. No changes should be needed unless the test asserts specific text content that was a Unicode glyph. If so, update the assertion to check for SVG presence instead of text content.
+Verified: this test contains no Unicode glyph assertions (no `\u25XX`, `\u27XX`, `\u{1FXXX}` patterns). It imports and renders components — should pass after the glyph swap with no changes needed. If it fails, the issue is a missing import or JSX rendering error in a modified component, not a glyph assertion.
+
+### 4b: `ui/src/__tests__/GlassDAGNodes.test.tsx`
+
+**This test WILL break.** Lines 67–77 assert Unicode string values from the old `STEP_ICONS` map:
+
+```tsx
+it('step status mapping produces correct icons', () => {
+  const icons: Record<string, string> = {
+    done: '\u25CF',
+    in_progress: '\u25D0',
+    pending: '\u25CB',
+    failed: '\u2715',
+  };
+  expect(icons['done']).toBe('\u25CF');
+  // ...
+});
+```
+
+Replace this test with one that imports and validates the new `STEP_ICON_COMPONENTS` map:
+
+```tsx
+import { STEP_ICON_COMPONENTS } from '../components/glass/GlassDAGNodes';
+
+it('step status mapping produces correct icon components', () => {
+  expect(STEP_ICON_COMPONENTS['done']).toBeDefined();
+  expect(STEP_ICON_COMPONENTS['in_progress']).toBeDefined();
+  expect(STEP_ICON_COMPONENTS['pending']).toBeDefined();
+  expect(STEP_ICON_COMPONENTS['failed']).toBeDefined();
+  expect(Object.keys(STEP_ICON_COMPONENTS)).toHaveLength(4);
+});
+```
+
+Also verify the import of `STEP_ICON_COMPONENTS` from `BridgeCards.tsx` if any test references it.
 
 ---
 
@@ -367,6 +457,29 @@ d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q
 
 Report test count.
 
+### Grep Acceptance Criterion
+
+After all changes, search `ui/src/components/**/*.tsx` for remaining Unicode glyphs. Zero hits required for non-excepted patterns.
+
+**Pass 1 — Escape-form codepoints** (matches `\uXXXX` and `\u{XXXXX}` in source):
+```bash
+cd d:/ProbOS/ui && grep -rn '\\u25B6\|\\u25BC\|\\u25B2\|\\u25CF\|\\u25CB\|\\u25D0\|\\u25C8\|\\u25C7\|\\u25CE\|\\u2715\|\\u2717\|\\u2713\|\\u2726\|\\u00D7\|\\u26A0\|\\u2197\|\\u{1F512}\|\\u{1F513}\|\\u{1F4CC}' src/components/ --include='*.tsx' || echo "CLEAN"
+```
+
+**Pass 2 — Raw Unicode characters** (matches literal glyphs in source):
+```bash
+grep -rn '[▶▸▾▴▼▲◀◁→←↑↓●○◆◇◈◐◎⬤✕✗✖×✓✦⚠↗]' src/components/ --include='*.tsx' || echo "CLEAN"
+grep -rn '🔒\|🔓\|📌\|💬' src/components/ --include='*.tsx' || echo "CLEAN"
+```
+
+**Note:** These commands require Git Bash (available in the VS Code terminal). If using PowerShell, use `Select-String` with `-Pattern` instead. If ripgrep is available, `rg` with `-g '*.tsx'` is faster.
+
+If any non-excepted hit is found, that's a missed replacement. Fix it before marking complete.
+
+### Screenshot Step (Optional)
+
+If running the UI locally, take a before/after screenshot of one component (e.g., BridgePanel expand/collapse chevrons) to visually confirm SVG rendering matches the prior Unicode appearance.
+
 ---
 
 ## Audit Checklist
@@ -377,13 +490,16 @@ After all replacements, the builder MUST verify NO Unicode glyphs remain by sear
 2. **Shapes:** `●`, `○`, `◆`, `◇`, `◈`, `◐`, `◎`, `⬤`, `\u25CF`, `\u25CB`, `\u25D0`, `\u25C8`, `\u25C7`, `\u25CE`
 3. **Marks:** `✕`, `✗`, `✖`, `×`, `✓`, `✦`, `\u2715`, `\u2717`, `\u2713`, `\u2726`, `\u00D7`
 4. **Symbols:** `⚠`, `\u26A0`, `&#9888;`, `\u2197`
-5. **Emoji:** `🔒`, `🔓`, `💬`, `\u{1F512}`, `\u{1F513}`
+5. **Emoji:** `🔒`, `🔓`, `💬`, `📌`, `\u{1F512}`, `\u{1F513}`, `\u{1F4CC}`
+
+**Note:** Audit patterns must match both the rendered character AND the `\uXXXX` / `\u{XXXXX}` escape form. Some source files use raw characters, others use escape sequences.
 
 **Exceptions allowed (NOT glyphs, kept as text):**
 - `·` / `\u00B7` — typographic middle-dot separator
 - `…` / `\u2026` — text ellipsis truncation
 - `' → '` — text arrow in BillDashboard role assignments (this is body text content, not a UI icon)
 - `•` in regex pattern `.replace(/[-•]\s/g, '')` in IntentSurface (text processing, not rendering)
+- `─` / `\u2500` — box-drawing horizontal line in WelcomeOverlay (typographic element, not icon)
 
 If any non-excepted glyph is found, replace it with the appropriate SVG component.
 
@@ -397,11 +513,11 @@ Update BF-041 status from `Open` to `**Closed**`.
 ### docs/development/roadmap.md
 Update BF-041 row with fix description:
 ```
-| BF-041 | **HXI SVG icon system cleanup.** Replaced all Unicode text glyphs (▶, ▼, ✕, ●, ⚠, ←, 💬, 🔒 etc.) across 13 HXI components with stroke-based SVG components from a shared `Glyphs.tsx` library. 21 named SVG glyph components (ChevronDown, ChevronRight, Close, Warning, StatusDone, StatusPending, StatusInProgress, StatusFailed, ArrowLeft, ArrowRight, ArrowUp, Lock, Unlock, Comment, Diamond, DiamondOpen, Bullseye, Check, XMark, Sparkle, PlayArrow, Expand, ChevronUp). All glyphs use `strokeWidth: 1.5`, `strokeLinecap: round`, `currentColor` per HXI Design Principle #3. Typographic separators (`·`, `…`) retained as text. | Medium | **Closed** |
+| BF-041 | **HXI SVG icon system cleanup.** Replaced all Unicode text glyphs (▶, ▼, ✕, ●, ⚠, ←, 💬, 🔒, 📌 etc.) across 18 HXI components with stroke-based SVG components from a shared `Glyphs.tsx` library. 25 named SVG glyph components (ChevronDown, ChevronRight, ChevronUp, Close, Warning, StatusDone, StatusPending, StatusInProgress, StatusFailed, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Lock, Unlock, Comment, Diamond, DiamondOpen, Bullseye, Check, XMark, Sparkle, PlayArrow, Expand, Pin). All glyphs use `strokeWidth: 1.5`, `strokeLinecap: round`, `currentColor` per HXI Design Principle #3. Typographic separators (`·`, `…`, `─`) retained as text. | Medium | **Closed** |
 ```
 
 ### DECISIONS.md
 Add entry:
 ```
-**BF-041: SVG glyph library replaces all Unicode text glyphs in HXI.** Created shared `ui/src/components/icons/Glyphs.tsx` with 21+ named SVG components. Every Unicode glyph (▶, ▼, ✕, ●, ⚠, ←, 🔒, 💬, ✦, etc.) across 13 HXI component files replaced with inline SVG using `strokeWidth: 1.5`, `strokeLinecap: round`, `currentColor`. Typographic separators (`·` middle-dot, `…` ellipsis, `→` text connector) retained as text — they are body content, not icon glyphs. The `StatusDone` circle uses `fill="currentColor"` as the one exception to stroke-only, since a filled circle semantically represents "completed." Cross-browser rendering is now consistent. Design language fully aligned with HXI Design Principle #3 from copilot-instructions.md.
+**BF-041: SVG glyph library replaces all Unicode text glyphs in HXI.** Created shared `ui/src/components/icons/Glyphs.tsx` with 25 named SVG components. Every Unicode glyph (▶, ▼, ✕, ●, ⚠, ←, 🔒, 📌, 💬, ✦, etc.) across 18 HXI component files replaced with inline SVG using `strokeWidth: 1.5`, `strokeLinecap: round`, `currentColor`. Typographic separators (`·` middle-dot, `…` ellipsis, `─` box-drawing, `→` text connector) retained as text — they are body content, not icon glyphs. The `StatusDone` circle uses `fill="currentColor"` as the one exception to stroke-only, since a filled circle semantically represents "completed." Cross-browser rendering is now consistent. Design language fully aligned with HXI Design Principle #3 from copilot-instructions.md.
 ```

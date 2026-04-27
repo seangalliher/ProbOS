@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import type { WorkItemView, BookingView, BookableResourceView, WorkItemTemplateView } from '../../store/types';
+import { ChevronDown, ChevronRight } from '../icons/Glyphs';
 
 const PRIORITY_COLORS: Record<number, string> = {
   1: '#d05050', 2: '#e08040', 3: '#d0b050', 4: '#5090d0', 5: '#888',
@@ -121,7 +122,7 @@ export function ProfileWorkTab({ agentId }: Props) {
         userSelect: 'none', marginTop: key === 'active' ? 0 : 8,
       }}
     >
-      <span style={{ fontSize: 8 }}>{sectionsOpen[key] ? '▼' : '▶'}</span>
+      <span>{sectionsOpen[key] ? <ChevronDown size={8} /> : <ChevronRight size={8} />}</span>
       {label} ({count})
     </div>
   );

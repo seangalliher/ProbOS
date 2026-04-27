@@ -1,6 +1,7 @@
 /* Full System — full-width system management panel for main viewer (AD-436) */
 
 import { useState, useEffect, useCallback } from 'react';
+import { Lock, Unlock, Pin } from '../icons/Glyphs';
 
 interface ServiceStatus {
   name: string;
@@ -178,8 +179,8 @@ function ThreadTable() {
               padding: '6px', display: 'flex', alignItems: 'center',
               borderBottom: '1px solid rgba(255,255,255,0.04)',
             }}>
-              {t.locked && <span style={{ color: '#f0b060', fontSize: 11 }}>{'\u{1F512}'}</span>}
-              {t.pinned && <span style={{ color: '#5090d0', fontSize: 11 }}>{'\u{1F4CC}'}</span>}
+              {t.locked && <span style={{ color: '#f0b060', fontSize: 11 }}><Lock size={11} /></span>}
+              {t.pinned && <span style={{ color: '#5090d0', fontSize: 11 }}><Pin size={11} /></span>}
             </div>
             <div key={`${t.id}-mode`} style={{
               padding: '6px', display: 'flex', alignItems: 'center',
@@ -221,7 +222,7 @@ function ThreadTable() {
                   cursor: 'pointer', fontSize: 10, padding: 0,
                 }}
               >
-                {t.locked ? '\u{1F513}' : '\u{1F512}'}
+                {t.locked ? <Unlock size={10} /> : <Lock size={10} />}
               </button>
             </div>
           </>

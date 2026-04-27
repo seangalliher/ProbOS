@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { TaskStepView } from '../../store/types';
 import { DEPT_COLORS } from '../bridge/BridgeCards';
+import { StatusDone, StatusInProgress, StatusPending, StatusFailed } from '../icons/Glyphs';
 
 interface GlassDAGNodesProps {
   steps: TaskStepView[];
@@ -10,11 +11,11 @@ interface GlassDAGNodesProps {
   requiresAction: boolean;
 }
 
-const STEP_ICONS: Record<string, string> = {
-  done: '\u25CF',
-  in_progress: '\u25D0',
-  pending: '\u25CB',
-  failed: '\u2715',
+export const STEP_ICON_COMPONENTS: Record<string, React.FC<{ size?: number }>> = {
+  done: StatusDone,
+  in_progress: StatusInProgress,
+  pending: StatusPending,
+  failed: StatusFailed,
 };
 
 const STEP_BORDER_COLORS: Record<string, string> = {
@@ -154,7 +155,10 @@ export function GlassDAGNodes({ steps, department, requiresAction }: GlassDAGNod
               transition: `opacity 0.2s ease-out ${i * 0.08}s, transform 0.2s ease-out ${i * 0.08}s`,
             }}
           >
-            {STEP_ICONS[step.status] || '\u25CB'}
+            {(() => {
+              const Icon = STEP_ICON_COMPONENTS[step.status] || StatusPending;
+              return <Icon size={14} />;
+            })()}
 
             {/* Hover tooltip */}
             {hoveredIdx === i && (

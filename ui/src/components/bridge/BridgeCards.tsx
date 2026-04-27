@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { AgentTaskView, TaskStepView } from '../../store/types';
+import { StatusDone, StatusInProgress, StatusPending, StatusFailed } from '../icons/Glyphs';
 
 export const DEPT_COLORS: Record<string, string> = {
   engineering: '#b0a050',
@@ -19,11 +20,11 @@ export const STATUS_COLORS: Record<string, string> = {
   failed: '#ff5555',
 };
 
-const STEP_ICONS: Record<string, string> = {
-  pending: '\u25CB',
-  in_progress: '\u25D0',
-  done: '\u25CF',
-  failed: '\u2715',
+export const STEP_ICON_COMPONENTS: Record<string, React.FC<{ size?: number }>> = {
+  pending: StatusPending,
+  in_progress: StatusInProgress,
+  done: StatusDone,
+  failed: StatusFailed,
 };
 
 export function formatElapsed(startedAt: number): string {
@@ -53,7 +54,10 @@ function StepList({ steps }: { steps: TaskStepView[] }) {
       {steps.map((step, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#aaa', marginBottom: 2 }}>
           <span style={{ color: STATUS_COLORS[step.status] || '#888' }}>
-            {STEP_ICONS[step.status] || '\u25CB'}
+            {(() => {
+              const Icon = STEP_ICON_COMPONENTS[step.status] || StatusPending;
+              return <Icon size={10} />;
+            })()}
           </span>
           <span style={{ flex: 1 }}>{step.label}</span>
           {step.status === 'done' && step.duration_ms > 0 && (

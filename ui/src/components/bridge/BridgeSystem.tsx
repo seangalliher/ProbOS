@@ -1,6 +1,7 @@
 /* Bridge System Panel — service status, shutdown, thread management (AD-436) */
 
 import { useState, useEffect, useCallback } from 'react';
+import { Lock, Unlock } from '../icons/Glyphs';
 
 interface ServiceStatus {
   name: string;
@@ -174,7 +175,7 @@ function ThreadManagement() {
               cursor: 'pointer', fontSize: 11, padding: '0 2px',
             }}
           >
-            {t.locked ? '\u{1F512}' : '\u{1F513}'}
+            {t.locked ? <Lock size={11} /> : <Unlock size={11} />}
           </button>
         </div>
       ))}

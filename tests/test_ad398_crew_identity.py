@@ -274,8 +274,8 @@ class TestNewAgentInstantiation:
         assert agent.agent_type == "engineering_officer"
         assert agent.tier == "domain"
         assert agent.instructions  # non-empty
-        assert len(agent.intent_descriptors) == 2
-        assert agent._handled_intents == {"engineering_analyze", "engineering_optimize"}
+        assert len(agent.intent_descriptors) == 3
+        assert agent._handled_intents == {"engineering_analyze", "engineering_optimize", "eventlog_diagnostic_query"}
 
 
 # ---------------------------------------------------------------------------

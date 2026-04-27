@@ -1,6 +1,7 @@
 /* Welcome overlay — first-visit onboarding (Fix 11) */
 
 import { useStore } from '../store/useStore';
+import { StatusDone } from './icons/Glyphs';
 
 export function WelcomeOverlay() {
   const showIntro = useStore((s) => s.showIntro);
@@ -58,7 +59,7 @@ export function WelcomeOverlay() {
           textAlign: 'left', fontSize: 13, lineHeight: 2, color: '#a0a0b8',
           padding: '0 8px',
         }}>
-          <div><span style={{ color: '#f0b060' }}>{'\u25CF'}</span> Each glowing node is an autonomous agent</div>
+          <div><span style={{ color: '#f0b060' }}><StatusDone size={8} /></span> Each glowing node is an autonomous agent</div>
           <div><span style={{ color: '#88a4c8' }}>{'\u2500'}</span> Curves show learned routing between intents and agents</div>
           <div>Brighter = higher confidence &nbsp;|&nbsp; Warmer = higher trust</div>
           <div>Ask it anything in the input box above</div>

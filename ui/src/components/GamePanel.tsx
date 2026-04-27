@@ -2,6 +2,7 @@
 
 import { useStore } from '../store/useStore';
 import { useRef, useCallback, useState, useEffect } from 'react';
+import { Close, PlayArrow } from './icons/Glyphs';
 import type { GameState } from '../store/types';
 
 const WIN_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
@@ -121,9 +122,9 @@ export function GamePanel() {
             Tic-Tac-Toe vs {game.opponent}
           </span>
           {!isFinished ? (
-            <button onClick={forfeit} title="Forfeit" style={closeBtnStyle}>✕</button>
+            <button onClick={forfeit} title="Forfeit" style={closeBtnStyle}><Close size={14} /></button>
           ) : (
-            <button onClick={closeGame} title="Close" style={closeBtnStyle}>✕</button>
+            <button onClick={closeGame} title="Close" style={closeBtnStyle}><Close size={14} /></button>
           )}
         </div>
 
@@ -139,7 +140,7 @@ export function GamePanel() {
             ? game.status === 'won'
               ? game.winner === 'Captain' ? 'You won!' : `${game.opponent} wins`
               : game.status === 'draw' ? 'Draw!' : 'Game forfeited'
-            : isMyTurn ? '▶ Your turn' : `Waiting for ${game.opponent}...`
+            : isMyTurn ? <><PlayArrow size={12} /> Your turn</> : `Waiting for ${game.opponent}...`
           }
         </div>
 

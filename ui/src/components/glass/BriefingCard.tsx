@@ -1,6 +1,7 @@
 /* BriefingCard — return-to-bridge summary after Captain absence (AD-390) */
 
 import type { BridgeState } from './ContextRibbon';
+import { StatusDone } from '../icons/Glyphs';
 
 const STATE_LABELS: Record<BridgeState, string> = {
   idle: 'Idle',
@@ -59,18 +60,18 @@ export function BriefingCard({ completedCount, newNotifCount, bridgeState, onDis
       }}>
         {completedCount > 0 && (
           <div>
-            <span style={{ color: '#50c878', marginRight: 8 }}>{'\u25CF'}</span>
+            <span style={{ color: '#50c878', marginRight: 8 }}><StatusDone size={8} /></span>
             {completedCount} task{completedCount !== 1 ? 's' : ''} completed
           </div>
         )}
         {newNotifCount > 0 && (
           <div>
-            <span style={{ color: '#5090d0', marginRight: 8 }}>{'\u25CF'}</span>
+            <span style={{ color: '#5090d0', marginRight: 8 }}><StatusDone size={8} /></span>
             {newNotifCount} new notification{newNotifCount !== 1 ? 's' : ''}
           </div>
         )}
         <div>
-          <span style={{ color: '#666', marginRight: 8 }}>{'\u25CF'}</span>
+          <span style={{ color: '#666', marginRight: 8 }}><StatusDone size={8} /></span>
           Bridge: {STATE_LABELS[bridgeState]}
         </div>
       </div>

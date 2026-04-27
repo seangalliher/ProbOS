@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ArrowUp, ArrowDown } from '../icons/Glyphs';
 
 export function EndorsementButtons({ targetId, targetType, netScore }: {
   targetId: string;
@@ -26,9 +27,9 @@ export function EndorsementButtons({ targetId, targetType, netScore }: {
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <span onClick={() => endorse('up')} style={{ cursor: 'pointer', color: '#50c878' }}>▲</span>
+      <span onClick={() => endorse('up')} style={{ cursor: 'pointer', color: '#50c878' }}><ArrowUp size={10} /></span>
       <span style={{ fontSize: 12, minWidth: 16, textAlign: 'center' as const }}>{score}</span>
-      <span onClick={() => endorse('down')} style={{ cursor: 'pointer', color: '#c84858' }}>▼</span>
+      <span onClick={() => endorse('down')} style={{ cursor: 'pointer', color: '#c84858' }}><ArrowDown size={10} /></span>
     </span>
   );
 }

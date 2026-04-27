@@ -1,6 +1,7 @@
 /* AD-611: 3D force-directed memory graph visualization. */
 
 import React, { useRef, useCallback, useMemo, useState, useEffect } from 'react';
+import { Close } from '../icons/Glyphs';
 import ForceGraph3D from 'react-force-graph-3d';
 import * as THREE from 'three';
 import type { MemoryGraphNode, MemoryGraphResponse } from './memoryGraphTypes';
@@ -138,7 +139,7 @@ const MemoryGraph3D: React.FC<MemoryGraph3DProps> = React.memo(({ data }) => {
               onClick={() => setSelectedNode(null)}
               style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 16 }}
             >
-              ×
+              <Close size={14} />
             </button>
           </div>
           <div style={{ marginBottom: 6 }}><b>Input:</b> {selectedNode.user_input}</div>
