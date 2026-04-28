@@ -4228,7 +4228,7 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 ### Knowledge Linting (AD-563)
 
-**AD-563: Knowledge Linting — Inconsistency Detection, Coverage Gaps & Cross-Reference Suggestions** *(planned, OSS, depends: AD-555, AD-554, AD-551)* — Extends the quality pipeline beyond noise reduction into active knowledge enrichment. While AD-550–555 focus on eliminating redundancy and scoring quality, AD-563 analyzes the knowledge *content* for structural and semantic issues.
+**AD-563: Knowledge Linting — Inconsistency Detection, Coverage Gaps & Cross-Reference Suggestions** *(Complete, OSS, Issue #34, depends: AD-555, AD-554, AD-551)* — Extends the quality pipeline beyond noise reduction into active knowledge enrichment. While AD-550–555 focus on eliminating redundancy and scoring quality, AD-563 analyzes the knowledge *content* for structural and semantic issues.
 
 **(1) Knowledge inconsistency detection:** Identify agents with contradicting conclusions on the same topic. Distinct from convergence/divergence (AD-554) — convergence measures similarity of observations, inconsistency detects factual disagreement within the knowledge base. Example: if Chapel writes "trust patterns are stabilizing" and Cortez writes "trust patterns are degrading" on the same topic in the same timeframe, that's a knowledge inconsistency requiring resolution.
 

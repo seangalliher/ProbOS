@@ -76,6 +76,14 @@ async def init_dreaming(
     confidence_tracker = None
     if config.confidence.enabled:
         confidence_tracker = ConfidenceTracker(config=config.confidence)
+    # AD-563: Knowledge Linter
+    from probos.knowledge.knowledge_linter import KnowledgeLinter
+    knowledge_linter = None
+    if config.lint.enabled and records_store:
+        knowledge_linter = KnowledgeLinter(
+            records_store=records_store,
+            config=config.lint,
+        )
     # AD-569: Behavioral Metrics Engine
     from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
     behavioral_metrics_engine = BehavioralMetricsEngine(config.behavioral_metrics)
@@ -136,6 +144,8 @@ async def init_dreaming(
         dream_scheduler.start()
         if confidence_tracker:
             dreaming_engine.set_confidence_tracker(confidence_tracker)
+        if knowledge_linter:
+            dreaming_engine.set_knowledge_linter(knowledge_linter)
 
     if confidence_tracker and records_store:
         records_store.set_confidence_tracker(confidence_tracker)

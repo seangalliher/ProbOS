@@ -513,6 +513,9 @@ class DreamReport:
     # AD-555: Notebook quality
     notebook_quality_score: float | None = None
     notebook_quality_agents: int = 0
+    # AD-563: Knowledge linting
+    lint_score: float | None = None
+    lint_issues_found: int = 0
     # AD-541c: Spaced Retrieval Therapy
     retrieval_practices: int = 0
     retrieval_accuracy: float | None = None

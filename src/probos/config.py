@@ -730,6 +730,20 @@ class ConfidenceConfig(BaseModel):
     suppress_threshold: float = 0.5
 
 
+class LintConfig(BaseModel):
+    """AD-563: Knowledge linting configuration."""
+
+    enabled: bool = True
+    min_coverage_per_department: int = 5
+    inconsistency_keywords: dict[str, str] = Field(default_factory=lambda: {
+        "increased": "decreased",
+        "improved": "degraded",
+        "rising": "falling",
+        "positive": "negative",
+        "success": "failure",
+    })
+
+
 class OrientationConfig(BaseModel):
     """AD-567g: Cognitive re-localization configuration."""
 
@@ -1310,6 +1324,7 @@ class SystemConfig(BaseModel):
     knowledge: KnowledgeConfig = KnowledgeConfig()
     records: RecordsConfig = RecordsConfig()
     confidence: ConfidenceConfig = ConfidenceConfig()  # AD-444
+    lint: LintConfig = LintConfig()  # AD-563
     onboarding: OnboardingConfig = OnboardingConfig()
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
     ward_room: WardRoomConfig = WardRoomConfig()

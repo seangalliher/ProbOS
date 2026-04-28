@@ -55,6 +55,7 @@ class DreamingEngine:
     """Performs a single dream cycle: replay, prune, trust consolidation, pre-warm."""
 
     _confidence_tracker: Any = None
+    _knowledge_linter: Any = None
 
     def __init__(
         self,
@@ -107,6 +108,7 @@ class DreamingEngine:
         self._counselor = counselor  # AD-568d
         self._dream_wm_bridge = dream_wm_bridge  # AD-671
         self._confidence_tracker: Any = None  # AD-444
+        self._knowledge_linter: Any = None  # AD-563
         self._agent_wm: Any = None  # AD-671: late-bound working memory
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
@@ -136,6 +138,10 @@ class DreamingEngine:
     def set_confidence_tracker(self, tracker: Any) -> None:
         """AD-444: Late-bind confidence tracker."""
         self._confidence_tracker = tracker
+
+    def set_knowledge_linter(self, linter: Any) -> None:
+        """AD-563: Late-bind knowledge linter."""
+        self._knowledge_linter = linter
 
     @property
     def last_clusters(self) -> list[Any]:
@@ -1072,6 +1078,29 @@ class DreamingEngine:
             except Exception:
                 logger.debug("AD-444 Step 10: confidence cross-ref failed", exc_info=True)
 
+        lint_score = None
+        lint_issues_found = 0
+        if self._knowledge_linter:
+            try:
+                lint_report = await self._knowledge_linter.lint_all()
+                lint_score = lint_report.lint_score
+                lint_issues_found = (
+                    len(lint_report.inconsistencies)
+                    + len(lint_report.coverage_gaps)
+                )
+                if lint_issues_found > 0:
+                    logger.info(
+                        "AD-563 Step 10: Lint completed — score=%.3f, issues=%d "
+                        "(inconsistencies=%d, gaps=%d, xrefs=%d)",
+                        lint_report.lint_score,
+                        lint_issues_found,
+                        len(lint_report.inconsistencies),
+                        len(lint_report.coverage_gaps),
+                        len(lint_report.cross_ref_suggestions),
+                    )
+            except Exception:
+                logger.debug("AD-563 Step 10: Lint failed", exc_info=True)
+
         # Step 11: Spaced Retrieval Therapy (AD-541c)
         retrieval_practices = 0
         retrieval_accuracy = None
@@ -1329,6 +1358,9 @@ class DreamingEngine:
             # AD-555: Notebook quality
             notebook_quality_score=notebook_quality_score,
             notebook_quality_agents=notebook_quality_agents,
+            # AD-563: Knowledge linting
+            lint_score=lint_score,
+            lint_issues_found=lint_issues_found,
             # AD-541c: Spaced Retrieval Therapy
             retrieval_practices=retrieval_practices,
             retrieval_accuracy=retrieval_accuracy,
