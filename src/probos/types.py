@@ -383,6 +383,9 @@ class AnchorFrame:
     source_origin_id: str = ""       # ID of the root data artifact that generated this observation
     artifact_version: str = ""       # Version/hash of the artifact observed (detects same-version dupes)
     anomaly_window_id: str = ""      # If observed during a known anomaly window, its ID
+    # AD-579b: Temporal validity for anchor-scoped facts
+    temporal_validity_start: float = 0.0  # epoch; 0.0 = anchor creation time
+    temporal_validity_end: float = 0.0    # epoch; 0.0 = no expiry
 
 
 @dataclass(frozen=True)
@@ -427,6 +430,9 @@ class Episode:
     importance: int = 5  # 1-10 scale, 5 = neutral
     # AD-492: Cognitive cycle correlation ID for cross-layer trace threading
     correlation_id: str = ""
+    # AD-579b: Temporal validity windows — when is this episode's content valid?
+    valid_from: float = 0.0    # epoch timestamp; 0.0 = episode.timestamp (creation time)
+    valid_until: float = 0.0   # epoch timestamp; 0.0 = no expiry (valid forever)
 
 
 # ------------------------------------------------------------------

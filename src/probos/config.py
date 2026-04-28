@@ -877,6 +877,13 @@ class PinnedKnowledgeConfig(BaseModel):
     default_ttl_seconds: float = 86400.0
 
 
+class TemporalValidityConfig(BaseModel):
+    """AD-579b: Temporal validity windows for episodic memory."""
+
+    enabled: bool = True
+    default_validity_hours: float = 0.0
+
+
 class SalienceConfig(BaseModel):
     """AD-668: Salience filter for working memory promotion."""
 
@@ -1399,6 +1406,7 @@ class SystemConfig(BaseModel):
     memory_budget: MemoryBudgetConfig = MemoryBudgetConfig()  # AD-573
     metabolism: MetabolismConfig = MetabolismConfig()  # AD-670
     pinned_knowledge: PinnedKnowledgeConfig = PinnedKnowledgeConfig()  # AD-579a
+    temporal_validity: TemporalValidityConfig = TemporalValidityConfig()  # AD-579b
     salience: SalienceConfig = SalienceConfig()  # AD-668
     sensorium: SensoriumConfig = SensoriumConfig()  # AD-666
     source_tracing: SourceTracingConfig = SourceTracingConfig()

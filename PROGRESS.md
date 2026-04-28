@@ -155,6 +155,8 @@ AD-573 Memory Budget Accounting CLOSED. Per-cycle MemoryBudgetManager tracks L0/
 
 AD-579a Pinned Knowledge Buffer CLOSED. AgentWorkingMemory now supports an optional ephemeral PinnedKnowledgeBuffer with PinnedFact entries, TTL expiry, duplicate refresh, priority/LRU eviction, budgeted rendering at priority 0, disabled no-op behavior, and public pin_knowledge/unpin_knowledge/pinned_knowledge APIs. Added PinnedKnowledgeConfig and KNOWLEDGE_PINNED/KNOWLEDGE_UNPINNED event enum values; no persistence, auto-pinning, cross-agent sharing, API endpoints, or event emission wiring. Tests: 12 focused passed; 43 adjacent working-memory regressions passed; full xdist gate: 9737 passed, 14 skipped, 132 worker-crash failures classified by exact-node serial triage (68 passed).
 
+AD-579b Temporal Validity Windows CLOSED. Episode now has valid_from/valid_until defaults; AnchorFrame has temporal_validity_start/temporal_validity_end defaults; EpisodicMemory metadata round-trips validity timestamps; recall_weighted(valid_at=...) filters expired and not-yet-valid episodes; recall_valid_at() wraps the filtered path. Added TemporalValidityConfig. No automatic inference, UI, retroactive propagation, anchor-recall changes, or dream consolidation changes. Tests: 10 focused passed; 30 adjacent anchor/weighted recall regressions passed; full xdist gate: 9679 passed, 14 skipped, 138 worker-crash failures classified by exact-node serial triage (74 passed).
+
 ---
 
 ## Development Eras

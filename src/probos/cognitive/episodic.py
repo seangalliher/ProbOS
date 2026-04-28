@@ -24,6 +24,15 @@ from probos.types import AnchorFrame, Episode, RecallScore
 logger = logging.getLogger(__name__)
 
 
+def _episode_validity_check(episode: Episode, at_time: float) -> bool:
+    """AD-579b: Check if an episode is temporally valid at a given time."""
+    if episode.valid_until > 0 and episode.valid_until < at_time:
+        return False
+    if episode.valid_from > 0 and episode.valid_from > at_time:
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # BF-103: Sovereign ID resolution helpers (DRY — one place for all callers)
 # ---------------------------------------------------------------------------
@@ -945,6 +954,9 @@ class EpisodicMemory:
                     source=episode.source,
                     anchors=episode.anchors,
                     importance=_importance,
+                    correlation_id=episode.correlation_id,
+                    valid_from=episode.valid_from,
+                    valid_until=episode.valid_until,
                 )
 
         metadata = self._episode_to_metadata(episode)
@@ -1745,6 +1757,8 @@ class EpisodicMemory:
             "user_input": ep.user_input or "",  # AD-605: preserve original for recall
             "_hash_v": 2,  # Hash normalization version (round(ts,6) + float coercion)
             "importance": int(ep.importance),  # AD-598: importance score (1-10)
+            "valid_from": float(ep.valid_from),
+            "valid_until": float(ep.valid_until),
         }
         # AD-570: Promote key anchor fields for ChromaDB where-clause filtering
         if ep.anchors:
@@ -1859,6 +1873,8 @@ class EpisodicMemory:
             source=metadata.get("source", "direct"),
             anchors=anchors,
             importance=int(metadata.get("importance", 5)),
+            valid_from=float(metadata.get("valid_from", 0.0)),
+            valid_until=float(metadata.get("valid_until", 0.0)),
         )
 
     # ---- AD-567b: Salience-weighted recall pipeline --------------------
@@ -2068,6 +2084,7 @@ class EpisodicMemory:
         query_watch_section: str = "",           # BF-147: temporal cue from query
         temporal_match_weight: float = 0.10,     # BF-147: bonus when temporal cue matches
         temporal_mismatch_penalty: float = 0.15,  # BF-155: penalty for temporal contradiction
+        valid_at: float = 0.0,  # AD-579b: when non-zero, exclude expired episodes
     ) -> list[RecallScore]:
         """Salience-weighted recall combining semantic + keyword + trust + Hebbian + recency + anchor (AD-567b/c).
 
@@ -2195,6 +2212,13 @@ class EpisodicMemory:
             )
             results.append(rs)
 
+        # AD-579b: Temporal validity filtering
+        if valid_at > 0:
+            results = [
+                rs for rs in results
+                if _episode_validity_check(rs.episode, valid_at)
+            ]
+
         # 3b. AD-567c: RPMS confidence gating — filter low-confidence episodes
         if anchor_confidence_gate > 0.0:
             results = [rs for rs in results if rs.anchor_confidence >= anchor_confidence_gate]
@@ -2243,6 +2267,21 @@ class EpisodicMemory:
                 logger.debug("AD-567d: Activation tracking failed", exc_info=True)
 
         return budgeted
+
+    async def recall_valid_at(
+        self,
+        timestamp: float,
+        agent_id: str,
+        query: str,
+        **kwargs: Any,
+    ) -> list[RecallScore]:
+        """AD-579b: Recall weighted memories valid at a specific timestamp."""
+        return await self.recall_weighted(
+            agent_id,
+            query,
+            valid_at=timestamp,
+            **kwargs,
+        )
 
     # ---- AD-570: Anchor-indexed recall ------------------------------------
 
