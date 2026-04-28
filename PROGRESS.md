@@ -161,6 +161,8 @@ AD-586 Task-Contextual Standing Orders CLOSED. Added TaskContext, TaskContextCon
 
 AD-602 Question-Adaptive Retrieval — CLOSED. Added deterministic QuestionClassifier and RetrievalStrategySelector mapping TEMPORAL/CAUSAL/SOCIAL/FACTUAL queries to tuned recall parameters, QuestionAdaptiveConfig with per-type overrides, and minimal CognitiveAgent recall integration applying strategy k/weight overrides without switching recall methods. No LLM classification, DEEP/ORACLE escalation, fusion, API, or HXI work. Tests: 12 focused passed; 56 adjacent cognitive-agent regressions passed; full xdist gate: 9776 passed, 14 skipped, 130 worker-crash failures classified by exact-node serial triage (92 unique passed).
 
+AD-610 Utility-Based Storage Gating — CLOSED. Added StorageGate and StorageDecision for write-time episode validation, StorageGateConfig, EPISODE_REJECTED event type, EpisodicMemory.set_storage_gate(), pre-BF-039 gate evaluation in store(), and startup wiring in cognitive_services. Gate uses in-memory recent-window Jaccard duplicate detection, deterministic utility scoring, lightweight contradiction logging, and high-importance utility bypass; no LLM dedup, retroactive dedup, cross-agent dedup, BF-039 changes, API, or HXI work. Tests: 14 focused passed; 34 episodic regressions passed; 3 constructor-bypass regressions passed after getattr compatibility fix; full xdist gate after fix: 9793 passed, 14 skipped, 129 reported failures classified by serial triage (1 xdist-only assertion passed serial, 89 unique worker-crash nodes passed serial).
+
 ---
 
 ## Development Eras

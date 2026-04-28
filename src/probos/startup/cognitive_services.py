@@ -161,6 +161,23 @@ async def init_cognitive_services(
             logger.warning("AD-567d: Activation tracker start failed (non-fatal)", exc_info=True)
             activation_tracker = None
 
+    # AD-610: Storage gate for episodic memory
+    if episodic_memory and config.storage_gate.enabled:
+        try:
+            from probos.cognitive.storage_gate import StorageGate as _StorageGate
+
+            storage_gate = _StorageGate(
+                config=config.storage_gate,
+                emit_event_fn=emit_event_fn,
+            )
+            episodic_memory.set_storage_gate(storage_gate)
+            logger.info("AD-610: StorageGate initialized and wired to EpisodicMemory")
+        except Exception as exc:
+            logger.warning(
+                "AD-610: StorageGate failed to start: %s; continuing without write-time storage gating",
+                exc,
+            )
+
     # AD-601: Wire Temporal Context Model
     if episodic_memory and config.memory.tcm_enabled:
         try:

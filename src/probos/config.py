@@ -875,6 +875,16 @@ class MetabolismConfig(BaseModel):
     triage_base_score: float = 0.3
 
 
+class StorageGateConfig(BaseModel):
+    """AD-610: Utility-based storage gating - write-time validation."""
+
+    enabled: bool = True
+    duplicate_threshold: float = 0.95
+    utility_floor: float = 0.2
+    recent_window: int = 50
+    contradiction_check_enabled: bool = True
+
+
 class PinnedKnowledgeConfig(BaseModel):
     """AD-579a: Pinned knowledge buffer configuration."""
 
@@ -1424,6 +1434,7 @@ class SystemConfig(BaseModel):
     temporal_validity: TemporalValidityConfig = TemporalValidityConfig()  # AD-579b
     task_context: TaskContextConfig = TaskContextConfig()  # AD-586
     question_adaptive: QuestionAdaptiveConfig = QuestionAdaptiveConfig()  # AD-602
+    storage_gate: StorageGateConfig = StorageGateConfig()  # AD-610
     salience: SalienceConfig = SalienceConfig()  # AD-668
     sensorium: SensoriumConfig = SensoriumConfig()  # AD-666
     source_tracing: SourceTracingConfig = SourceTracingConfig()

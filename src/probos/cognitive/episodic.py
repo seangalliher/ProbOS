@@ -679,6 +679,7 @@ class EpisodicMemory:
         self._collection: Any = None
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
         self._activation_tracker: Any = None  # AD-567d: ACT-R activation tracker
+        self._storage_gate: Any = None  # AD-610: utility-based storage gate
         self._participant_index: Any = None  # AD-570b: Participant index sidecar
         self._tcm: Any = None  # AD-601: Temporal Context Model engine
         self._tcm_weight: float = 0.0             # AD-601: set by set_tcm() when wired
@@ -687,6 +688,10 @@ class EpisodicMemory:
     def set_activation_tracker(self, tracker: Any) -> None:
         """AD-567d: Wire the activation tracker after construction."""
         self._activation_tracker = tracker
+
+    def set_storage_gate(self, gate: Any) -> None:
+        """AD-610: Wire the storage gate for write-time validation."""
+        self._storage_gate = gate
 
     def set_participant_index(self, index: Any) -> None:
         """AD-570b: Wire the participant index after construction."""
@@ -923,6 +928,32 @@ class EpisodicMemory:
         """Persist an episode. Evicts oldest if over max_episodes."""
         if not self._collection:
             return
+
+        # AD-610: Utility-based storage gating
+        _storage_gate = getattr(self, "_storage_gate", None)
+        if _storage_gate is not None:
+            try:
+                decision = _storage_gate.evaluate(episode)
+                if decision.action == "REJECT":
+                    logger.debug(
+                        "AD-610: Episode %s rejected by storage gate: %s; skipping persistence",
+                        episode.id,
+                        decision.reason,
+                    )
+                    return
+                if decision.action == "MERGE":
+                    logger.debug(
+                        "AD-610: Episode %s merge suggested with %s; merge path is deferred",
+                        episode.id,
+                        decision.duplicate_of,
+                    )
+                    return
+            except Exception:
+                logger.debug(
+                    "AD-610: Storage gate evaluation failed for %s; allowing episode to preserve memory continuity",
+                    episode.id,
+                    exc_info=True,
+                )
 
         # BF-039: Per-agent rate limit
         if self._is_rate_limited(episode):

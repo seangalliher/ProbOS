@@ -5289,9 +5289,9 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
-### Utility-Based Storage Gating (AD-610) *(planned, OSS)*
+### Utility-Based Storage Gating (AD-610) *(Complete, OSS)*
 
-**AD-610: Utility-Based Storage Gating — Write-Time Duplicate & Utility Validation** *(planned, OSS, depends: AD-538 Episode Lifecycle, AD-593 Pruning Acceleration, AD-605 Enhanced Embedding)* — Validate whether a new episode adds value before persisting, filtering at the input boundary rather than relying solely on post-hoc decay and pruning.
+**AD-610: Utility-Based Storage Gating — Write-Time Duplicate & Utility Validation** *(Complete, OSS, depends: AD-538 Episode Lifecycle, AD-593 Pruning Acceleration, AD-605 Enhanced Embedding)* — Validate whether a new episode adds value before persisting, filtering at the input boundary rather than relying solely on post-hoc decay and pruning.
 
 **Problem statement:** ProbOS stores all episodes and relies on Ebbinghaus decay (AD-538) and dream pruning (AD-593) to remove low-value entries after the fact. This means ChromaDB accumulates near-duplicate episodes (same topic, same anchor context, marginal new content), consuming storage and degrading retrieval precision. The existing content hash dedup (`compute_episode_hash`) catches exact duplicates but not near-duplicates or low-utility variants.
 
