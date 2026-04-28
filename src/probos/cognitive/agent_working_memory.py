@@ -20,9 +20,12 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.salience_filter import BackgroundStream, SalienceFilter
+
+if TYPE_CHECKING:
+    from probos.cognitive.memory_metabolism import MemoryMetabolism
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +195,9 @@ class AgentWorkingMemory:
         # AD-492: Current cognitive cycle correlation ID
         self._correlation_id: str | None = None
 
+        # AD-670: Optional metabolism engine for active lifecycle management
+        self._metabolism: MemoryMetabolism | None = None
+
         # AD-669: Cross-thread conclusion log
         self._conclusions: deque[ConclusionEntry] = deque(maxlen=max_conclusions)
 
@@ -250,6 +256,9 @@ class AgentWorkingMemory:
         )
         if not self._passes_salience_gate(entry):
             return
+        if self._metabolism and not self._metabolism.triage(entry, self._recent_actions):
+            logger.debug("AD-670 TRIAGE rejected action entry: %.60s...", summary)
+            return
         self._recent_actions.append(entry)
         self._named_buffers["duty"].append(entry)
 
@@ -266,6 +275,9 @@ class AgentWorkingMemory:
             knowledge_source=knowledge_source,
         )
         if not self._passes_salience_gate(entry):
+            return
+        if self._metabolism and not self._metabolism.triage(entry, self._recent_observations):
+            logger.debug("AD-670 TRIAGE rejected observation entry: %.60s...", summary)
             return
         self._recent_observations.append(entry)
         self._named_buffers["ship"].append(entry)
@@ -285,6 +297,9 @@ class AgentWorkingMemory:
         )
         if not self._passes_salience_gate(entry):
             return
+        if self._metabolism and not self._metabolism.triage(entry, self._recent_conversations):
+            logger.debug("AD-670 TRIAGE rejected conversation entry: %.60s...", summary)
+            return
         self._recent_conversations.append(entry)
         self._named_buffers["social"].append(entry)
 
@@ -303,6 +318,9 @@ class AgentWorkingMemory:
         )
         if not self._passes_salience_gate(entry):
             return
+        if self._metabolism and not self._metabolism.triage(entry, self._recent_events):
+            logger.debug("AD-670 TRIAGE rejected event entry: %.60s...", summary)
+            return
         self._recent_events.append(entry)
         self._named_buffers["ship"].append(entry)
 
@@ -319,6 +337,9 @@ class AgentWorkingMemory:
             knowledge_source=knowledge_source,
         )
         if not self._passes_salience_gate(entry):
+            return
+        if self._metabolism and not self._metabolism.triage(entry, self._recent_reasoning):
+            logger.debug("AD-670 TRIAGE rejected reasoning entry: %.60s...", summary)
             return
         self._recent_reasoning.append(entry)
         self._named_buffers["duty"].append(entry)
@@ -383,6 +404,26 @@ class AgentWorkingMemory:
     def clear_correlation_id(self) -> None:
         """AD-492: Clear correlation ID after cognitive cycle completes."""
         self._correlation_id = None
+
+    def set_metabolism(self, metabolism: MemoryMetabolism) -> None:
+        """AD-670: Attach a metabolism engine for active lifecycle management."""
+        self._metabolism = metabolism
+
+    def get_buffers(self) -> dict[str, deque[WorkingMemoryEntry]]:
+        """AD-670: Expose internal buffers for metabolism operations."""
+        return {
+            "actions": self._recent_actions,
+            "observations": self._recent_observations,
+            "conversations": self._recent_conversations,
+            "events": self._recent_events,
+            "reasoning": self._recent_reasoning,
+        }
+
+    def run_metabolism_cycle(self) -> None:
+        """AD-670: Run one metabolism cycle if metabolism is attached."""
+        if self._metabolism is None:
+            return
+        self._metabolism.run_cycle(self.get_buffers())
 
     def record_conclusion(
         self,

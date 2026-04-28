@@ -12,6 +12,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
+from probos.cognitive.dream_wm_bridge import DreamWorkingMemoryBridge
 from probos.cognitive.emergent_detector import EmergentDetector
 from probos.cognitive.emergence_metrics import EmergenceMetricsEngine
 from probos.cognitive.retrieval_practice import RetrievalPracticeEngine
@@ -73,6 +74,10 @@ async def init_dreaming(
     # AD-569: Behavioral Metrics Engine
     from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
     behavioral_metrics_engine = BehavioralMetricsEngine(config.behavioral_metrics)
+    # AD-671: Dream-Working Memory bridge
+    dream_wm_bridge = None
+    if config.dream_wm.enabled:
+        dream_wm_bridge = DreamWorkingMemoryBridge(config=config.dream_wm)
     # AD-541c: Spaced Retrieval Therapy
     retrieval_practice_engine = None
     retrieval_llm_client = None
@@ -115,6 +120,7 @@ async def init_dreaming(
             activation_tracker=activation_tracker,
             behavioral_metrics_engine=behavioral_metrics_engine,
             records_store=records_store,  # BF-106: constructor injection
+            dream_wm_bridge=dream_wm_bridge,
         )
         dream_scheduler = DreamScheduler(
             engine=dreaming_engine,

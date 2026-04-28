@@ -533,6 +533,9 @@ class DreamReport:
     unfaithful_episodes: int = 0
     # AD-599: Reflection episodes promoted from dream insights
     reflections_created: int = 0
+    # AD-671: Dream-Working Memory bridge
+    wm_entries_flushed: int = 0
+    wm_priming_entries: int = 0
 
 
 # ------------------------------------------------------------------

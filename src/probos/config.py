@@ -551,6 +551,15 @@ class DreamingConfig(BaseModel):
     episode_pressure_multiplier: float = 1.5  # Multiply prune fraction by this when above pressure threshold
 
 
+class DreamWMConfig(BaseModel):
+    """AD-671: Dream-Working Memory bridge configuration."""
+
+    enabled: bool = True
+    max_priming_entries: int = 3
+    flush_min_entries: int = 5
+    priming_category: str = "observation"
+
+
 class ScalingConfig(BaseModel):
     """Adaptive pool scaling configuration."""
 
@@ -773,6 +782,19 @@ class WorkingMemoryConfig(BaseModel):
     social_budget: int = 800
     ship_budget: int = 800
     engagement_budget: int = 800
+
+
+class MetabolismConfig(BaseModel):
+    """AD-670: Working memory metabolism — active lifecycle management."""
+
+    enabled: bool = True
+    decay_half_life_seconds: float = 3600.0
+    forget_threshold: float = 0.05
+    min_entries_per_buffer: int = 2
+    audit_enabled: bool = True
+    cycle_interval_seconds: float = 300.0
+    triage_fullness_threshold: float = 0.8
+    triage_base_score: float = 0.3
 
 
 class SalienceConfig(BaseModel):
@@ -1009,6 +1031,23 @@ class TraitAdaptiveConfig(BaseModel):
     enabled: bool = True
 
 
+class ConcurrencyConfig(BaseModel):
+    """AD-672: Per-agent concurrency management."""
+
+    enabled: bool = True
+    default_max_concurrent: int = 4
+    queue_max_size: int = 10
+    capacity_warning_ratio: float = 0.75
+    role_overrides: dict[str, int] = Field(default_factory=lambda: {
+        "bridge": 3,
+        "operations": 6,
+        "engineering": 5,
+        "science": 4,
+        "medical": 3,
+        "security": 3,
+    })
+
+
 class TrustDampeningConfig(BaseModel):
     """Trust cascade dampening configuration (AD-558)."""
 
@@ -1223,6 +1262,7 @@ class SystemConfig(BaseModel):
     cognitive: CognitiveConfig = CognitiveConfig()
     memory: MemoryConfig = MemoryConfig()
     dreaming: DreamingConfig = DreamingConfig()
+    dream_wm: DreamWMConfig = DreamWMConfig()  # AD-671
     scaling: ScalingConfig = ScalingConfig()
     federation: FederationConfig = FederationConfig()
     self_mod: SelfModConfig = SelfModConfig()
@@ -1245,6 +1285,7 @@ class SystemConfig(BaseModel):
     counselor: CounselorConfig = CounselorConfig()
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
     trait_adaptive: TraitAdaptiveConfig = TraitAdaptiveConfig()  # AD-494
+    concurrency: ConcurrencyConfig = ConcurrencyConfig()  # AD-672
     trust_dampening: TrustDampeningConfig = TrustDampeningConfig()
     emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
@@ -1257,6 +1298,7 @@ class SystemConfig(BaseModel):
     orientation: OrientationConfig = OrientationConfig()
     social_verification: SocialVerificationConfig = SocialVerificationConfig()
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
+    metabolism: MetabolismConfig = MetabolismConfig()  # AD-670
     salience: SalienceConfig = SalienceConfig()  # AD-668
     sensorium: SensoriumConfig = SensoriumConfig()  # AD-666
     source_tracing: SourceTracingConfig = SourceTracingConfig()

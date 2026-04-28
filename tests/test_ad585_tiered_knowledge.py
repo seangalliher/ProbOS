@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -116,7 +115,7 @@ class TestCacheEntry:
 
     def test_stale_after_max_age(self) -> None:
         entry = _CacheEntry(["a"], max_age=0.001)
-        time.sleep(0.01)
+        entry.created_at -= 0.01
         assert entry.is_fresh() is False
 
     def test_zero_max_age_always_stale(self) -> None:

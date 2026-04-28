@@ -74,6 +74,7 @@ class EventType(str, Enum):
 
     # Agent lifecycle
     AGENT_STATE = "agent_state"
+    AGENT_CAPACITY_APPROACHING = "agent_capacity_approaching"
 
     # Assignments
     ASSIGNMENT_CREATED = "assignment_created"
@@ -615,6 +616,16 @@ class SensoriumBudgetExceededEvent(BaseEvent):
     threshold: int = 0
     cognitive_state_chars: int = 0
     situation_chars: int = 0
+
+
+@dataclass
+class AgentCapacityApproachingEvent(BaseEvent):
+    """AD-672: Agent nearing concurrency ceiling."""
+    event_type: EventType = field(default=EventType.AGENT_CAPACITY_APPROACHING, init=False)
+    agent_id: str = ""
+    active_count: int = 0
+    max_concurrent: int = 0
+    queue_depth: int = 0
 
 
 @dataclass

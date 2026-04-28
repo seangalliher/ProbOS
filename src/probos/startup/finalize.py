@@ -510,6 +510,42 @@ async def finalize_startup(
         )
         runtime._sub_task_executor = None
 
+    # --- AD-672: Per-agent concurrency management ---
+    try:
+        from probos.cognitive.concurrency_manager import ConcurrencyManager
+
+        concurrency_config = getattr(config, "concurrency", None)
+        if concurrency_config and concurrency_config.enabled:
+            wired_concurrency = 0
+            for agent in runtime.registry.all():
+                if not is_crew_agent(agent, runtime.ontology):
+                    continue
+                if not hasattr(agent, "set_concurrency_manager"):
+                    continue
+                role = getattr(agent, "pool_group", "") or ""
+                max_concurrent = concurrency_config.role_overrides.get(
+                    role.lower(),
+                    concurrency_config.default_max_concurrent,
+                )
+                manager = ConcurrencyManager(
+                    agent_id=agent.id,
+                    max_concurrent=max_concurrent,
+                    queue_max_size=concurrency_config.queue_max_size,
+                    capacity_warning_ratio=concurrency_config.capacity_warning_ratio,
+                    emit_event_fn=runtime._emit_event,
+                )
+                agent.set_concurrency_manager(manager)
+                wired_concurrency += 1
+            logger.info(
+                "AD-672: ConcurrencyManager wired to %d crew agents",
+                wired_concurrency,
+            )
+    except Exception:
+        logger.warning(
+            "AD-672: ConcurrencyManager wiring failed; agents continue unmanaged",
+            exc_info=True,
+        )
+
     # --- AD-583f/583g: Observable State Verification + Source Tracing ---
     try:
         from probos.ward_room.thread_echo import ThreadEchoAnalyzer

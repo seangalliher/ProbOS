@@ -15,6 +15,7 @@ from enum import StrEnum
 from typing import Any, ClassVar
 
 from probos.events import EventType
+from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.substrate.agent import BaseAgent
 from probos.types import AnchorFrame, IntentMessage, IntentResult, LLMRequest, Priority, Skill
@@ -62,6 +63,23 @@ def derive_communication_context(
     if channel_name in ("general", "all-hands"):
         return "ship_wide"
     return "department_discussion"
+
+
+def _classify_concurrency_priority(intent: IntentMessage) -> int:
+    """AD-672: Map intent to concurrency priority on a 0-10 scale."""
+    is_captain = intent.params.get("is_captain", False)
+    was_mentioned = intent.params.get("was_mentioned", False)
+    is_dm = intent.params.get("is_dm_channel", False) or intent.intent == "direct_message"
+
+    if is_captain or was_mentioned:
+        return 10
+    if is_dm:
+        return 8
+    if intent.intent == "ward_room_notification":
+        return 5
+    if intent.intent == "proactive_think":
+        return 2
+    return 5
 
 
 class CognitiveAgent(BaseAgent):
@@ -141,6 +159,9 @@ class CognitiveAgent(BaseAgent):
         self._qualification_standing_ts: float = 0.0
         self._qualification_standing_ttl: float = 300.0  # 5 min
 
+        # AD-672: Per-agent concurrency management
+        self._concurrency_manager: ConcurrencyManager | None = None
+
         # Validate instructions exist
         if not self.instructions:
             raise ValueError(
@@ -163,6 +184,10 @@ class CognitiveAgent(BaseAgent):
     def set_sub_task_executor(self, executor) -> None:
         """AD-632a: Wire sub-task executor for Level 3 reasoning."""
         self._sub_task_executor = executor
+
+    def set_concurrency_manager(self, manager: ConcurrencyManager) -> None:
+        """AD-672: Wire per-agent concurrency manager."""
+        self._concurrency_manager = manager
 
     async def _refresh_qualification_standing(self) -> None:
         """AD-595e: Refresh cached qualification standing (TTL-based).
@@ -2851,6 +2876,34 @@ class CognitiveAgent(BaseAgent):
                     summary=f"Replying to Ward Room thread {_bf239_thread_id[:8]}",
                     state={"thread_id": _bf239_thread_id},
                 ))
+
+        concurrency_manager = getattr(self, "_concurrency_manager", None)
+        if concurrency_manager:
+            priority = _classify_concurrency_priority(intent)
+            try:
+                async with concurrency_manager.slot(intent.intent, priority):
+                    return await self._run_cognitive_lifecycle(
+                        intent, _cognitive_skill_instructions, _skill_entries,
+                    )
+            except ValueError:
+                logger.warning(
+                    "AD-672: Concurrency queue full for %s on intent '%s'; "
+                    "returning [NO_RESPONSE] to shed load",
+                    getattr(self, 'callsign', '') or self.agent_type,
+                    intent.intent,
+                )
+                return IntentResult(
+                    intent_id=intent.id,
+                    agent_id=self.id,
+                    success=True,
+                    result="[NO_RESPONSE]",
+                    confidence=self.confidence,
+                )
+            finally:
+                if _bf239_thread_id:
+                    _wm = getattr(self, '_working_memory', None)
+                    if _wm:
+                        _wm.remove_engagement(f"ward_room:{_bf239_thread_id}")
 
         try:
             return await self._run_cognitive_lifecycle(

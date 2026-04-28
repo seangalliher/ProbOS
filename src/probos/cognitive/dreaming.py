@@ -77,6 +77,7 @@ class DreamingEngine:
         activation_tracker: Any = None,  # AD-567d: activation-based memory lifecycle
         behavioral_metrics_engine: Any = None,  # AD-569: behavioral metrics engine
         counselor: Any = None,  # AD-568d: Counselor agent for source metric updates
+        dream_wm_bridge: Any = None,  # AD-671: working memory bridge
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -102,6 +103,8 @@ class DreamingEngine:
         self._activation_tracker = activation_tracker  # AD-567d
         self._behavioral_metrics_engine = behavioral_metrics_engine  # AD-569
         self._counselor = counselor  # AD-568d
+        self._dream_wm_bridge = dream_wm_bridge  # AD-671
+        self._agent_wm: Any = None  # AD-671: late-bound working memory
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
@@ -111,6 +114,10 @@ class DreamingEngine:
     def set_ward_room(self, ward_room: Any) -> None:
         """BF-106: Late-bind ward_room (available after Phase 7)."""
         self._ward_room = ward_room
+
+    def set_agent_wm(self, wm: Any) -> None:
+        """AD-671: Late-bind agent working memory for dream-WM bridge."""
+        self._agent_wm = wm
 
     def set_get_department(self, get_department: Any) -> None:
         """BF-106: Late-bind department lookup (available after Phase 7)."""
@@ -218,6 +225,26 @@ class DreamingEngine:
         15. Reflection episode promotion (AD-599)
         """
         t_start = time.monotonic()
+        wm_entries_flushed = 0
+        wm_priming_entries = 0
+        dream_wm_bridge = getattr(self, "_dream_wm_bridge", None)
+
+        # AD-671: Pre-dream WM flush — capture session state before consolidation
+        if dream_wm_bridge:
+            try:
+                flush_result = dream_wm_bridge.pre_dream_flush(
+                    wm=getattr(self, "_agent_wm", None),
+                    agent_id=self._agent_id,
+                )
+                if flush_result.get("flushed") and flush_result.get("episode"):
+                    await self.episodic_memory.store(flush_result["episode"])
+                    wm_entries_flushed = flush_result.get("entry_count", 0)
+                    logger.debug(
+                        "AD-671: Pre-dream WM flush stored %d entries as session summary",
+                        wm_entries_flushed,
+                    )
+            except Exception:
+                logger.debug("AD-671: Pre-dream WM flush failed (non-fatal)", exc_info=True)
 
         # Step 0: Flush any un-consolidated episodes (compose with micro-dream)
         micro_report = await self.micro_dream()
@@ -229,6 +256,8 @@ class DreamingEngine:
                 episodes_replayed=micro_report["episodes_replayed"],
                 weights_strengthened=micro_report["weights_strengthened"],
                 duration_ms=(time.monotonic() - t_start) * 1000,
+                wm_entries_flushed=wm_entries_flushed,
+                wm_priming_entries=wm_priming_entries,
             )
 
         # Step 2: Prune
@@ -1213,6 +1242,29 @@ class DreamingEngine:
         except Exception:
             logger.debug("AD-599 Step 15: Reflection promotion failed", exc_info=True)
 
+        # AD-671: Post-dream WM seed — prime next session with dream insights
+        agent_wm = getattr(self, "_agent_wm", None)
+        if dream_wm_bridge and agent_wm:
+            try:
+                cycle_id = f"{self._agent_id}_{int(time.time())}"
+                partial_report = DreamReport(
+                    procedures_extracted=procedures_extracted,
+                    procedures_evolved=procedures_evolved,
+                    gaps_classified=gaps_classified,
+                    emergence_capacity=emergence_capacity,
+                    notebook_consolidations=notebook_consolidations,
+                    reflections_created=reflections_created,
+                    activation_pruned=activation_pruned,
+                    contradictions_found=contradictions_found,
+                )
+                wm_priming_entries = dream_wm_bridge.post_dream_seed(
+                    wm=agent_wm,
+                    dream_report=partial_report,
+                    dream_cycle_id=cycle_id,
+                )
+            except Exception:
+                logger.debug("AD-671: Post-dream WM seed failed (non-fatal)", exc_info=True)
+
         duration_ms = (time.monotonic() - t_start) * 1000
 
         report = DreamReport(
@@ -1276,6 +1328,9 @@ class DreamingEngine:
             unfaithful_episodes=_source_attr_result.get("unfaithful_episodes", 0),
             # AD-599: Reflection episodes
             reflections_created=reflections_created,
+            # AD-671: Dream-WM bridge
+            wm_entries_flushed=wm_entries_flushed,
+            wm_priming_entries=wm_priming_entries,
         )
 
         logger.info(
@@ -1283,7 +1338,8 @@ class DreamingEngine:
             "clusters=%d procedures=%d evolved=%d negatives=%d fallback_evolved=%d "
             "observed=%d decayed=%d archived=%d dedup=%d gaps=%d classified=%d "
             "qual_paths=%d gap_reports=%d contradictions=%d "
-            "activation_pruned=%d activation_reinforced=%d",
+            "activation_pruned=%d activation_reinforced=%d "
+            "wm_flushed=%d wm_primed=%d",
             report.episodes_replayed,
             report.weights_strengthened,
             report.weights_pruned,
@@ -1304,6 +1360,8 @@ class DreamingEngine:
             report.contradictions_found,
             activation_pruned,
             activation_reinforced,
+            wm_entries_flushed,
+            wm_priming_entries,
         )
 
         return report
