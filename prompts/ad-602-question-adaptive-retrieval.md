@@ -97,13 +97,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class QuestionType(str, Enum):
+class QuestionType(StrEnum):
     """Classification of query intent for retrieval optimization."""
 
     TEMPORAL = "temporal"  # When-oriented: "what happened yesterday?"

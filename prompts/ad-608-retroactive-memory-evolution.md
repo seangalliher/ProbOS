@@ -44,7 +44,7 @@ EpisodicMemory.store(new_episode)
 |------|--------|
 | `src/probos/cognitive/retroactive_evolver.py` | **NEW** -- RetroactiveEvolver, EvolutionReport |
 | `src/probos/config.py` | Add RetroactiveConfig + wire into SystemConfig |
-| `src/probos/cognitive/episodic.py` | Add setter, add update_episode_metadata(), call evolver in store() |
+| `src/probos/cognitive/episodic.py` | Add setter, add update_episode_metadata(), add get_episode_metadata(), call evolver in store() |
 | `tests/test_ad608_retroactive_evolution.py` | **NEW** -- 12 tests |
 
 ---
@@ -408,23 +408,12 @@ class RetroactiveEvolver:
         if not mem:
             return False
 
-        # Read current relations via update_episode_metadata's public API
-        update_fn = getattr(mem, 'update_episode_metadata', None)
-        if not update_fn:
-            return False
-
         try:
             # Get current metadata to read existing relations
-            get_fn = getattr(mem, 'get_episode_metadata', None)
-            current_relations_json = "[]"
-            if get_fn:
-                meta = await get_fn(episode_id)
-                if meta is None:
-                    return False
-                current_relations_json = meta.get("relations_json", "[]")
-            else:
-                # Fallback: start with empty relations if no getter available
-                pass
+            meta = await mem.get_episode_metadata(episode_id)
+            if meta is None:
+                return False
+            current_relations_json = meta.get("relations_json", "[]")
         except Exception:
             return False
 
@@ -453,7 +442,7 @@ class RetroactiveEvolver:
         })
 
         try:
-            await update_fn(episode_id, {"relations_json": json.dumps(relations)})
+            await mem.update_episode_metadata(episode_id, {"relations_json": json.dumps(relations)})
         except Exception:
             logger.debug(
                 "AD-608: Failed to update relations for %s", episode_id, exc_info=True,
@@ -479,18 +468,11 @@ class RetroactiveEvolver:
         if source_anchors is None:
             return 0
 
-        update_fn = getattr(self._episodic_memory, 'update_episode_metadata', None)
-        if not update_fn:
-            return 0
-
         # Read current metadata to check which fields are missing
-        get_fn = getattr(self._episodic_memory, 'get_episode_metadata', None)
-        meta: dict[str, Any] = {}
-        if get_fn:
-            try:
-                meta = await get_fn(target_id) or {}
-            except Exception:
-                return 0
+        try:
+            meta = await self._episodic_memory.get_episode_metadata(target_id) or {}
+        except Exception:
+            return 0
 
         updates: dict[str, str] = {}
         propagated = 0
@@ -511,7 +493,7 @@ class RetroactiveEvolver:
 
         if updates and propagated > 0:
             try:
-                await update_fn(target_id, updates)
+                await self._episodic_memory.update_episode_metadata(target_id, updates)
             except Exception:
                 logger.debug(
                     "AD-608: Failed to propagate anchor fields to %s",
@@ -553,11 +535,42 @@ After the `set_storage_gate` method (or after `set_activation_tracker`), add:
         self._retroactive_evolver = evolver
 ```
 
-#### 3c: update_episode_metadata method
+#### 3c: update_episode_metadata and get_episode_metadata methods
 
-Add a new public method to EpisodicMemory. Place it after the `store()` method:
+Add two new public methods to EpisodicMemory. Place them after the `store()` method:
 
 ```python
+    async def get_episode_metadata(
+        self,
+        episode_id: str,
+    ) -> dict[str, Any] | None:
+        """AD-608: Retrieve metadata for a single episode.
+
+        Parameters
+        ----------
+        episode_id : str
+            The episode whose metadata to retrieve.
+
+        Returns
+        -------
+        dict[str, Any] or None
+            The episode's metadata dict, or None if not found.
+        """
+        if not self._collection:
+            return None
+
+        try:
+            result = self._collection.get(ids=[episode_id], include=["metadatas"])
+            if not result or not result.get("ids") or not result["ids"]:
+                return None
+            return result["metadatas"][0] if result.get("metadatas") else None
+        except Exception:
+            logger.debug(
+                "AD-608: Failed to get metadata for episode %s",
+                episode_id, exc_info=True,
+            )
+            return None
+
     async def update_episode_metadata(
         self,
         episode_id: str,
@@ -809,7 +822,8 @@ After all tests pass:
   if shared department/channel, "associative" otherwise. Propagates missing
   anchor fields (watch_section, department) from newer to older episodes.
   Max 10 relations per episode. Similarity threshold 0.7. Adds
-  update_episode_metadata() public method to EpisodicMemory.
+  update_episode_metadata() and get_episode_metadata() public methods
+  to EpisodicMemory.
   ```
 
 ---
@@ -820,7 +834,7 @@ After all tests pass:
 - Create `retroactive_evolver.py` with RetroactiveEvolver and EvolutionReport.
 - Add RetroactiveConfig to config.py and wire into SystemConfig.
 - Add `set_retroactive_evolver` setter to EpisodicMemory.
-- Add `update_episode_metadata()` public method to EpisodicMemory.
+- Add `update_episode_metadata()` and `get_episode_metadata()` public methods to EpisodicMemory.
 - Call evolver.evolve_on_store() in store() after persistence.
 - Wire evolver creation in startup/cognitive_services.py.
 - Write all 12 tests.

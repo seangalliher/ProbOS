@@ -64,7 +64,7 @@ class ReconsolidationConfig(BaseModel):
     """AD-574: Episodic decay reconsolidation scheduling."""
 
     enabled: bool = True
-    base_intervals_hours: list[float] = [1.0, 6.0, 24.0, 72.0, 168.0, 720.0]
+    base_intervals_hours: list[float] = Field(default_factory=lambda: [1.0, 6.0, 24.0, 72.0, 168.0, 720.0])
     importance_scale_factor: float = 0.1
     max_scheduled: int = 500
 ```
