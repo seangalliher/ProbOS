@@ -218,8 +218,10 @@ class TestNatsConfig:
         assert cfg.jetstream_domain is None
         assert cfg.subject_prefix == "probos.local"
 
-    def test_loads_from_yaml(self, tmp_path):
+    def test_loads_from_yaml(self, tmp_path, monkeypatch):
         """Test 14: load_config parses nats section from system.yaml."""
+        # BF-245: Clear the autouse env var so YAML-loaded enabled=true is respected
+        monkeypatch.delenv("PROBOS_NATS_ENABLED", raising=False)
         yaml_content = """
 nats:
   enabled: true

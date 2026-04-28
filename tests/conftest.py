@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+import os
 import pytest
 
 from unittest.mock import MagicMock, AsyncMock
@@ -7,6 +8,12 @@ from unittest.mock import MagicMock, AsyncMock
 from probos.substrate.registry import AgentRegistry
 from probos.substrate.spawner import AgentSpawner
 from probos.config import PoolConfig
+
+# BF-245: Disable real NATS in tests at import time, before any fixtures run.
+# Module-level (not autouse fixture) so session/module-scoped fixtures that
+# construct SystemConfig see the override. setdefault allows opt-in:
+#   PROBOS_NATS_ENABLED=true pytest tests/test_nats_integration.py
+os.environ.setdefault("PROBOS_NATS_ENABLED", "false")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -39,6 +46,17 @@ def pool_config():
         spawn_cooldown_ms=100,
         health_check_interval_seconds=1.0,
     )
+
+
+@pytest.fixture
+def real_nats(monkeypatch):
+    """Opt-in fixture: re-enable real NATS for a specific test.
+
+    Usage: add `real_nats` to a test's parameter list. The test will
+    use the real NATSBus instead of being blocked by BF-245's global
+    PROBOS_NATS_ENABLED=false default.
+    """
+    monkeypatch.setenv("PROBOS_NATS_ENABLED", "true")
 
 
 @pytest.fixture

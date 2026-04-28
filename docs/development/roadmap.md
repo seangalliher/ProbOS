@@ -7125,6 +7125,7 @@ Bugs found during development or testing. Squash as found when possible; queue h
 
 | BF | Summary | Severity | Status |
 |----|---------|----------|--------|
+| BF-245 | NATS/xdist stream isolation. pytest-xdist workers race on hardcoded JetStream stream names (`SYSTEM_EVENTS`, `WARDROOM`, `INTENT_DISPATCH`), causing `recreate_stream()` error 10058 crashes (~20-50 flaky failures per run). **Fix:** Module-level `os.environ.setdefault("PROBOS_NATS_ENABLED", "false")` in conftest.py. `NatsConfig.enabled` `field_validator` with `validate_default=True` honors override. `real_nats` fixture for opt-in. | Medium | **Closed** |
 | BF-001 | Self-mod proposal on knowledge questions | Medium | **Closed** (AD-348) |
 | BF-002 | Agent orbs escape pool group spheres | High | **Closed** (AD-349) |
 | BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | **Closed** (AD-350) |

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -1233,7 +1234,21 @@ class QualificationConfig(BaseModel):
 class NatsConfig(BaseModel):
     """NATS event bus configuration (AD-637)."""
 
-    enabled: bool = False
+    enabled: bool = Field(
+        default=False,
+        validate_default=True,
+        description="Enable NATS event bus. Overridden by PROBOS_NATS_ENABLED env var.",
+    )
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _env_override_enabled(cls, v: Any) -> Any:
+        """BF-245: Allow env var to force-disable NATS in test workers."""
+        env_val = os.environ.get("PROBOS_NATS_ENABLED")
+        if env_val is not None:
+            return env_val.lower() in ("true", "1", "yes")
+        return v
+
     url: str = "nats://localhost:4222"
     connect_timeout_seconds: float = 5.0
     max_reconnect_attempts: int = 60
