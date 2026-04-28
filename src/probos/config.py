@@ -718,6 +718,18 @@ class RecordsConfig(BaseModel):
     notebook_staleness_alert_rate: float = 0.7
 
 
+class ConfidenceConfig(BaseModel):
+    """AD-444: Knowledge confidence scoring configuration."""
+
+    enabled: bool = True
+    default_confidence: float = 0.5
+    confirm_delta: float = 0.15
+    contradict_delta: float = 0.25
+    auto_supersede_threshold: float = 0.1
+    auto_apply_threshold: float = 0.8
+    suppress_threshold: float = 0.5
+
+
 class OrientationConfig(BaseModel):
     """AD-567g: Cognitive re-localization configuration."""
 
@@ -1297,6 +1309,7 @@ class SystemConfig(BaseModel):
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     records: RecordsConfig = RecordsConfig()
+    confidence: ConfidenceConfig = ConfidenceConfig()  # AD-444
     onboarding: OnboardingConfig = OnboardingConfig()
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
     ward_room: WardRoomConfig = WardRoomConfig()

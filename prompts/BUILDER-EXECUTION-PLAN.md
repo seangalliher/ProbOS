@@ -11,9 +11,14 @@
 
 1. **Read each prompt fully before starting.** The prompts are self-contained specs. Do not improvise.
 2. **Comply with `.github/copilot-instructions.md`** — every AD's Acceptance Criteria explicitly requires this.
-3. **Run the full test suite after each AD:** `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q`
-   - If tests fail, fix and re-run before moving to the next AD.
-   - Report the test count after each AD completes.
+3. **Run the full test suite after each AD:** `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n auto`
+   - **Use `-n auto` (xdist), NOT `-n 0`.** Serial mode triggers worker-resource pressure timeouts that look like test failures but are environmental. Parallel runs in ~5 minutes and is the gate of record.
+   - **Drop `-x`.** With xdist, a single worker crash from resource pressure (typically 5-15 spurious "failures" per run from concurrent ProbOSRuntime boots) should NOT abort the whole gate. Let the suite finish, then triage.
+   - **Triage failures:**
+     - Re-run any failing test files individually in serial: `pytest <path/to/test_file.py> -q -n 0`. If it passes alone, it's an xdist worker-crash artifact — IGNORE.
+     - If a test fails in serial too, it is a real failure — fix and re-run.
+   - The gate passes when (a) all real failures are fixed, and (b) any remaining xdist-only failures pass on serial re-run.
+   - Report the test count after each AD completes (use the "passed" count from the parallel run).
 4. **Update PROGRESS.md and DECISIONS.md** after each AD. Append the new AD entry to `DECISIONS.md` and update the "highest AD" / test count lines in `PROGRESS.md`.
 5. **Commit per AD.** One commit per AD with message `AD-NNN: <title>`. This makes bisection easy if a later AD breaks something.
 6. **Do not stop between ADs.** Continue through all 20 unless a hard blocker appears (test failure that cannot be fixed in 2 attempts, missing API not specified in the prompt, or repository-state corruption).
@@ -84,8 +89,9 @@ For each AD in order:
    - Honor "Do Not Build" guards.
    - Match the dataclass / Pydantic / async / typing patterns from `.github/copilot-instructions.md`.
 5. Add tests as specified in the prompt's Test Plan.
-6. Run `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q`.
-   - On failure: diagnose, fix, re-run. Allow up to 2 fix attempts. If still failing, STOP and report.
+6. Run `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n auto`.
+   - Triage any failures: re-run failing files individually in serial (`-n 0`). Pass-in-serial = xdist worker-crash, ignore. Fail-in-serial = real failure, fix.
+   - Allow up to 2 fix attempts on real failures. If still failing, STOP and report.
 7. Append to `DECISIONS.md`: `AD-NNN: <title> — <one-line summary>`.
 8. Update `PROGRESS.md`: bump highest AD, update test count.
 9. `git add -A && git commit -m "AD-NNN: <title>"`.

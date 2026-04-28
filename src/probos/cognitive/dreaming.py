@@ -54,6 +54,8 @@ logger = logging.getLogger(__name__)
 class DreamingEngine:
     """Performs a single dream cycle: replay, prune, trust consolidation, pre-warm."""
 
+    _confidence_tracker: Any = None
+
     def __init__(
         self,
         router: HebbianRouter,
@@ -104,6 +106,7 @@ class DreamingEngine:
         self._behavioral_metrics_engine = behavioral_metrics_engine  # AD-569
         self._counselor = counselor  # AD-568d
         self._dream_wm_bridge = dream_wm_bridge  # AD-671
+        self._confidence_tracker: Any = None  # AD-444
         self._agent_wm: Any = None  # AD-671: late-bound working memory
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
@@ -129,6 +132,10 @@ class DreamingEngine:
             self._records_store = records_store
         self._fallback_learning_queue: list[dict[str, Any]] = []  # AD-534b: fallback evidence for dream-time processing
         self._observed_threads: set[str] = set()  # AD-537: already-observed thread IDs
+
+    def set_confidence_tracker(self, tracker: Any) -> None:
+        """AD-444: Late-bind confidence tracker."""
+        self._confidence_tracker = tracker
 
     @property
     def last_clusters(self) -> list[Any]:
@@ -1050,6 +1057,20 @@ class DreamingEngine:
                     )
             except Exception:
                 logger.debug("AD-555 Step 10: Quality metrics failed", exc_info=True)
+
+        confidence_suppressed = 0
+        if self._confidence_tracker is not None:
+            try:
+                for entry in self._confidence_tracker.get_all_entries().values():
+                    if self._confidence_tracker.auto_supersede_check(entry.entry_path):
+                        confidence_suppressed += 1
+                if confidence_suppressed > 0:
+                    logger.info(
+                        "AD-444 Step 10: %d entries below auto-supersede threshold",
+                        confidence_suppressed,
+                    )
+            except Exception:
+                logger.debug("AD-444 Step 10: confidence cross-ref failed", exc_info=True)
 
         # Step 11: Spaced Retrieval Therapy (AD-541c)
         retrieval_practices = 0

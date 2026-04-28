@@ -57,6 +57,7 @@ class RecordsStore:
         self._commit_lock = asyncio.Lock()
         self._pending_commits: list[str] = []
         self._commit_task: asyncio.Task | None = None
+        self._confidence_tracker: Any = None
 
     @property
     def repo_path(self) -> Path:
@@ -155,8 +156,27 @@ class RecordsStore:
             await self._git("add", path)
             await self._commit(f"[records] {message} — by {author}")
 
+        if self._confidence_tracker is not None:
+            self._confidence_tracker.initialize_entry(path)
+
         logger.info("Record written: %s by %s (%s)", path, author, classification)
         return path
+
+    def set_confidence_tracker(self, tracker: Any) -> None:
+        """AD-444: Late-bind confidence tracker."""
+        self._confidence_tracker = tracker
+
+    async def confirm_entry(self, entry_path: str) -> float | None:
+        """AD-444: Confirm an entry, increasing its confidence score."""
+        if self._confidence_tracker is not None:
+            return self._confidence_tracker.confirm(entry_path)
+        return None
+
+    async def contradict_entry(self, entry_path: str) -> float | None:
+        """AD-444: Contradict an entry, decreasing its confidence score."""
+        if self._confidence_tracker is not None:
+            return self._confidence_tracker.contradict(entry_path)
+        return None
 
     async def seed_manuals(self, source_dir: Path) -> int:
         """Seed manuals from source directory into ship-records/manuals/.

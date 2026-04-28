@@ -71,6 +71,11 @@ async def init_dreaming(
     if hasattr(config, 'records'):
         staleness_hours = getattr(config.records, 'notebook_staleness_hours', 72.0)
     notebook_quality_engine = NotebookQualityEngine(staleness_hours=staleness_hours)
+    # AD-444: Confidence Tracker
+    from probos.knowledge.confidence_tracker import ConfidenceTracker
+    confidence_tracker = None
+    if config.confidence.enabled:
+        confidence_tracker = ConfidenceTracker(config=config.confidence)
     # AD-569: Behavioral Metrics Engine
     from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
     behavioral_metrics_engine = BehavioralMetricsEngine(config.behavioral_metrics)
@@ -129,6 +134,11 @@ async def init_dreaming(
         )
         dream_scheduler._emit_event_fn = emit_event_fn  # AD-503
         dream_scheduler.start()
+        if confidence_tracker:
+            dreaming_engine.set_confidence_tracker(confidence_tracker)
+
+    if confidence_tracker and records_store:
+        records_store.set_confidence_tracker(confidence_tracker)
 
     # Create EmergentDetector (AD-237) — unconditional, pure observer
     _edc = config.emergent_detector  # BF-124
