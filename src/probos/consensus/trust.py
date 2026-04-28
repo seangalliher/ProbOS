@@ -138,6 +138,7 @@ class TrustNetwork:
         self._get_department: Callable[[str], str | None] | None = None
         self._emit_event: Callable[[str, Any], None] | None = None
         self._floor_hit_count: int = 0
+        self._tier_registry: Any = None
 
         # AD-558: Dampening config — use defaults if not provided
         if dampening_config is not None:
@@ -153,6 +154,10 @@ class TrustNetwork:
     def set_event_callback(self, fn: Callable[[str, Any], None]) -> None:
         """Inject event emission for trust updates. Called by runtime during startup."""
         self._emit_event = fn
+
+    def set_tier_registry(self, registry: Any) -> None:
+        """Inject agent tier registry for tier-aware filtering (AD-571)."""
+        self._tier_registry = registry
 
     async def start(self) -> None:
         """Initialize — load trust scores from SQLite if configured."""
@@ -217,6 +222,11 @@ class TrustNetwork:
         AD-558: Applies progressive dampening, hard floor, and cascade dampening.
         """
         cfg = self._dampening_config
+        if self._tier_registry:
+            from probos.substrate.agent_tier import AgentTier
+            if self._tier_registry.get_tier(agent_id) == AgentTier.CORE_INFRASTRUCTURE:
+                return self.get_score(agent_id)
+
         record = self.get_or_create(agent_id)
         old_score = record.score
         now = time.monotonic()
@@ -353,6 +363,8 @@ class TrustNetwork:
             # Check trip conditions
             if not self._cascade.tripped:
                 unique_agents = {a[1] for a in self._cascade.recent_anomalies}
+                if self._tier_registry:
+                    unique_agents = {a for a in unique_agents if self._tier_registry.is_crew(a)}
                 unique_depts = {a[2] for a in self._cascade.recent_anomalies if a[2] is not None}
                 agent_count_met = len(unique_agents) >= cfg.cascade_agent_threshold
                 # If no department lookup, skip department check
@@ -438,8 +450,14 @@ class TrustNetwork:
     def agent_count(self) -> int:
         return len(self._records)
 
-    def all_scores(self) -> dict[AgentID, float]:
+    def all_scores(self, crew_only: bool = False) -> dict[AgentID, float]:
         """Return all agent trust scores."""
+        if crew_only and self._tier_registry:
+            return {
+                aid: r.score
+                for aid, r in self._records.items()
+                if self._tier_registry.is_crew(aid)
+            }
         return {aid: r.score for aid, r in self._records.items()}
 
     def raw_scores(self) -> dict[AgentID, dict[str, float]]:

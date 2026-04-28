@@ -1378,6 +1378,18 @@ class NatsConfig(BaseModel):
     js_publish_timeout: float = 5.0
 
 
+class AgentTierConfig(BaseModel):
+    """Agent tier classification for trust separation (AD-571)."""
+
+    crew_types: list[str] = Field(default_factory=lambda: [
+        "architect", "builder", "code_reviewer", "counselor",
+        "diagnostician", "surgeon", "pharmacist", "pathologist",
+        "red_team", "system_qa", "scout",
+        "data_analyst", "systems_analyst", "research_specialist",
+    ])
+    core_types: list[str] = Field(default_factory=lambda: ["event_log", "vitals_monitor", "introspect"])
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -1446,6 +1458,7 @@ class SystemConfig(BaseModel):
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
+    agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571
     nats: NatsConfig = NatsConfig()  # AD-637
     bill: BillConfig = BillConfig()  # AD-618b
     consultation: ConsultationConfig = ConsultationConfig()  # AD-594

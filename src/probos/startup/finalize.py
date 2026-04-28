@@ -74,6 +74,46 @@ def _wire_task_context(*, runtime: Any, config: "SystemConfig") -> int:
     return wired_count
 
 
+def _populate_agent_tiers(*, runtime: Any, config: "SystemConfig") -> int:
+    """AD-571: Classify registered agents and wire tier-aware services."""
+    from probos.substrate.agent_tier import AgentTier, AgentTierRegistry
+
+    agent_registry = getattr(runtime, "registry", None)
+    if not agent_registry:
+        return 0
+
+    registry = AgentTierRegistry()
+    crew_types = set(config.agent_tiers.crew_types)
+    core_types = set(config.agent_tiers.core_types)
+
+    for agent in agent_registry.all():
+        agent_id = getattr(agent, "id", "")
+        agent_type = getattr(agent, "agent_type", "")
+        if not agent_id:
+            continue
+        if agent_type in core_types:
+            registry.register(agent_id, AgentTier.CORE_INFRASTRUCTURE)
+        elif agent_type in crew_types:
+            registry.register(agent_id, AgentTier.CREW)
+        else:
+            registry.register(agent_id, AgentTier.UTILITY)
+
+    trust = getattr(runtime, "trust_network", None)
+    if trust and hasattr(trust, "set_tier_registry"):
+        trust.set_tier_registry(registry)
+
+    emergence = getattr(runtime, "_emergence_metrics_engine", None)
+    if emergence and hasattr(emergence, "set_tier_registry"):
+        emergence.set_tier_registry(registry)
+
+    router = getattr(runtime, "hebbian_router", None)
+    if router and hasattr(router, "set_tier_registry"):
+        router.set_tier_registry(registry)
+
+    runtime._tier_registry = registry
+    return len(registry.all_registered())
+
+
 def _sync_ontology_callsigns(runtime: Any) -> None:
     """BF-244: Reconcile naming ceremony callsigns into ontology assignments."""
     ontology = getattr(runtime, "ontology", None)
@@ -191,6 +231,10 @@ async def finalize_startup(
     wired_task_context = _wire_task_context(runtime=runtime, config=config)
     if wired_task_context:
         logger.info("AD-586: TaskContext wired to %d CognitiveAgents", wired_task_context)
+
+    tier_count = _populate_agent_tiers(runtime=runtime, config=config)
+    if tier_count:
+        logger.info("AD-571: Agent tiers populated for %d agents", tier_count)
 
     # AD-594: Late-bind expert selection registries into ConsultationProtocol.
     consultation_protocol = getattr(runtime, "_consultation_protocol", None)

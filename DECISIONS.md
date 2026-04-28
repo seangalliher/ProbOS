@@ -87,6 +87,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Recall paths had tier budgets in configuration but no per-cycle accounting primitive. This adds the coordination infrastructure without changing recall behavior, _build_user_message(), or working-memory rendering in this AD.
 **Status:** Implemented
 
+### AD-571: Agent Tier Trust Separation
+
+**Date:** 2026-04-28
+**Decision:** Added AgentTierRegistry and AgentTierConfig to classify agents as CORE_INFRASTRUCTURE, UTILITY, or CREW. TrustNetwork can report crew-only scores, skips CORE trust recording without creating records or events, and counts only CREW agents for cascade thresholds. EmergenceMetricsEngine filters authors and PID pairs to CREW when the registry is wired. HebbianRouter preserves routing behavior while adding crew-only weight reporting. finalize_startup populates and wires the registry from registered agent types.
+**Rationale:** Trust and emergence metrics were diluted by infrastructure and utility agents that do not represent crew collaboration. Tier separation keeps trust learning, cascade detection, and emergence reporting focused on crew behavior while leaving routing mechanics unchanged.
+**Status:** Implemented
+
 ### AD-579a: Pinned Knowledge Buffer
 
 **Date:** 2026-04-28

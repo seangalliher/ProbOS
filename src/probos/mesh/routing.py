@@ -6,6 +6,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from probos.protocols import ConnectionFactory, DatabaseConnection
 from probos.types import AgentID
@@ -63,9 +64,14 @@ class HebbianRouter:
         self._compat_weights: dict[_WeightKey, float] = {}
         self._db: DatabaseConnection | None = None
         self._connection_factory = connection_factory
+        self._tier_registry: Any = None
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
             self._connection_factory = default_factory
+
+    def set_tier_registry(self, registry: Any) -> None:
+        """Inject agent tier registry for tier-aware reporting (AD-571)."""
+        self._tier_registry = registry
 
     async def start(self) -> None:
         """Initialize — load weights from SQLite if configured."""
@@ -228,8 +234,14 @@ class HebbianRouter:
     def weight_count(self) -> int:
         return len(self._weights)
 
-    def all_weights(self) -> dict[tuple[AgentID, AgentID], float]:
+    def all_weights(self, crew_only: bool = False) -> dict[tuple[AgentID, AgentID], float]:
         """Backward-compatible: return (source, target) → weight."""
+        if crew_only and self._tier_registry:
+            return {
+                (source, target): weight
+                for (source, target), weight in self._compat_weights.items()
+                if self._tier_registry.is_crew(source) or self._tier_registry.is_crew(target)
+            }
         return dict(self._compat_weights)
 
     def all_weights_typed(self) -> dict[_FullKey, float]:

@@ -238,7 +238,7 @@ Call `_populate_agent_tiers(runtime=runtime, config=config)` from `finalize_star
 12. `test_config_crew_types` — AgentTierConfig default crew_types includes 14 types, core_types includes 3
 13. `test_mixed_tier_trust_scores` — all_scores(crew_only=False) returns all, crew_only=True returns subset
 14. `test_all_agents_classified` — all registered agents appear in all_registered()
-15. `test_core_agents_excluded_from_trust` — CORE agents are excluded from TrustNetwork outcomes: `assert tn.outcomes_for(core_id) == []`
+15. `test_core_agents_excluded_from_trust` — CORE agents are excluded from TrustNetwork outcomes. After `record_outcome()` is called for a CORE agent's id, verify no record/events were created using the existing API: `assert tn.get_record(core_id) is None` and `assert tn.get_events_for_agent(core_id) == []`. (Note: `outcomes_for()` does not exist on TrustNetwork — use `get_record()` and `get_events_for_agent()` instead.)
 
 Use `_Fake*` stubs for TrustNetwork dependencies. No mocking of private attributes.
 

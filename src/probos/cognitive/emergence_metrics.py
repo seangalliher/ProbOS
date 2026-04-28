@@ -358,6 +358,11 @@ class EmergenceMetricsEngine:
         self._complementarity_history: list[tuple[float, float]] = []
         self._baseline_established: bool = False
         self._baseline_complementarity: float | None = None
+        self._tier_registry: Any = None
+
+    def set_tier_registry(self, registry: Any) -> None:
+        """Inject agent tier registry for crew-only emergence computation (AD-571)."""
+        self._tier_registry = registry
 
     @property
     def latest_snapshot(self) -> EmergenceSnapshot | None:
@@ -412,6 +417,8 @@ class EmergenceMetricsEngine:
                     })
 
             unique_authors = set(p["author_id"] for p in posts if p.get("author_id"))
+            if self._tier_registry:
+                unique_authors = {a for a in unique_authors if self._tier_registry.is_crew(a)}
             if len(unique_authors) < cfg.min_thread_contributors:
                 continue
             if len(posts) < cfg.min_thread_posts:
@@ -447,6 +454,8 @@ class EmergenceMetricsEngine:
                 aid = p.get("author_id", "")
                 body = p.get("body", "")
                 if not aid or not body:
+                    continue
+                if self._tier_registry and not self._tier_registry.is_crew(aid):
                     continue
                 pid = p.get("id", "")
                 cache_key = pid or body[:100]
