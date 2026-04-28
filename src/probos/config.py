@@ -831,6 +831,17 @@ class WorkingMemoryConfig(BaseModel):
     engagement_budget: int = 800
 
 
+class MemoryBudgetConfig(BaseModel):
+    """AD-573: Memory budget accounting across recall tiers."""
+
+    enabled: bool = True
+    total_budget_tokens: int = 4650
+    l0_budget: int = 150
+    l1_budget: int = 3000
+    l2_budget: int = 1000
+    l3_budget: int = 500
+
+
 class ConsultationConfig(BaseModel):
     """AD-594: Crew Consultation Protocol configuration."""
 
@@ -1376,6 +1387,7 @@ class SystemConfig(BaseModel):
     orientation: OrientationConfig = OrientationConfig()
     social_verification: SocialVerificationConfig = SocialVerificationConfig()
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
+    memory_budget: MemoryBudgetConfig = MemoryBudgetConfig()  # AD-573
     metabolism: MetabolismConfig = MetabolismConfig()  # AD-670
     salience: SalienceConfig = SalienceConfig()  # AD-668
     sensorium: SensoriumConfig = SensoriumConfig()  # AD-666

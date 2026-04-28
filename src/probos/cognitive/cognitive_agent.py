@@ -12,7 +12,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from probos.events import EventType
 from probos.cognitive.concurrency_manager import ConcurrencyManager
@@ -20,6 +20,10 @@ from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.substrate.agent import BaseAgent
 from probos.types import AnchorFrame, IntentMessage, IntentResult, LLMRequest, Priority, Skill
 from probos.utils import format_duration
+
+if TYPE_CHECKING:
+    from probos.cognitive.memory_budget import MemoryBudgetManager
+    from probos.config import MemoryBudgetConfig
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +168,9 @@ class CognitiveAgent(BaseAgent):
 
         # AD-594: Crew Consultation Protocol
         self._consultation_protocol: Any = None
+
+        # AD-573: Per-cycle memory budget configuration
+        self._memory_budget_config: MemoryBudgetConfig | None = kwargs.get("memory_budget_config")
 
         # Validate instructions exist
         if not self.instructions:
@@ -1282,6 +1289,13 @@ class CognitiveAgent(BaseAgent):
                 del cache[cache_key]
 
         _CACHE_MISSES[self.agent_type] = _CACHE_MISSES.get(self.agent_type, 0) + 1
+
+        # AD-573: Per-cycle memory budget tracking
+        _budget_mgr: MemoryBudgetManager | None = None
+        memory_budget_config = getattr(self, "_memory_budget_config", None)
+        if memory_budget_config and memory_budget_config.enabled:
+            from probos.cognitive.memory_budget import MemoryBudgetManager
+            _budget_mgr = MemoryBudgetManager(memory_budget_config)
 
         # AD-595e: Inject qualification standing (after cache key, before LLM call)
         await self._refresh_qualification_standing()

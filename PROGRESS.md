@@ -149,6 +149,12 @@ BF-203 CLOSED (Strip hallucinated bracket command tags from agent output. Issue 
 
 ---
 
+## Recent Builder Closures
+
+AD-573 Memory Budget Accounting CLOSED. Per-cycle MemoryBudgetManager tracks L0/L1/L2/L3 token budgets (150/3000/1000/500), supports allocate/release/remaining/total_remaining/reset with disabled pass-through and unknown-tier warnings, and compress_episodes() truncates RecallScore lists by composite_score within budget. CognitiveAgent accepts optional memory_budget_config via kwargs and creates a local per-cycle manager in decide() only; recall path wiring, _build_user_message(), recall_weighted(), and render_context() unchanged. Tests: 15 focused passed; 73 adjacent cognitive-agent regressions passed; 137 AttributeError regression band passed after constructor-bypass compatibility fix; full xdist gate after fix: 9683 passed, 14 skipped, 140 worker-crash failures classified by serial triage (30 exact nodeids passed, proactive long-delay nodes 2 passed with --timeout=180).
+
+---
+
 ## Development Eras
 
 | Era | Phases | Codename | Status |
