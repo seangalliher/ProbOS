@@ -153,6 +153,8 @@ BF-203 CLOSED (Strip hallucinated bracket command tags from agent output. Issue 
 
 AD-573 Memory Budget Accounting CLOSED. Per-cycle MemoryBudgetManager tracks L0/L1/L2/L3 token budgets (150/3000/1000/500), supports allocate/release/remaining/total_remaining/reset with disabled pass-through and unknown-tier warnings, and compress_episodes() truncates RecallScore lists by composite_score within budget. CognitiveAgent accepts optional memory_budget_config via kwargs and creates a local per-cycle manager in decide() only; recall path wiring, _build_user_message(), recall_weighted(), and render_context() unchanged. Tests: 15 focused passed; 73 adjacent cognitive-agent regressions passed; 137 AttributeError regression band passed after constructor-bypass compatibility fix; full xdist gate after fix: 9683 passed, 14 skipped, 140 worker-crash failures classified by serial triage (30 exact nodeids passed, proactive long-delay nodes 2 passed with --timeout=180).
 
+AD-579a Pinned Knowledge Buffer CLOSED. AgentWorkingMemory now supports an optional ephemeral PinnedKnowledgeBuffer with PinnedFact entries, TTL expiry, duplicate refresh, priority/LRU eviction, budgeted rendering at priority 0, disabled no-op behavior, and public pin_knowledge/unpin_knowledge/pinned_knowledge APIs. Added PinnedKnowledgeConfig and KNOWLEDGE_PINNED/KNOWLEDGE_UNPINNED event enum values; no persistence, auto-pinning, cross-agent sharing, API endpoints, or event emission wiring. Tests: 12 focused passed; 43 adjacent working-memory regressions passed; full xdist gate: 9737 passed, 14 skipped, 132 worker-crash failures classified by exact-node serial triage (68 passed).
+
 ---
 
 ## Development Eras

@@ -868,6 +868,15 @@ class MetabolismConfig(BaseModel):
     triage_base_score: float = 0.3
 
 
+class PinnedKnowledgeConfig(BaseModel):
+    """AD-579a: Pinned knowledge buffer configuration."""
+
+    enabled: bool = True
+    max_tokens: int = 150
+    max_pins: int = 10
+    default_ttl_seconds: float = 86400.0
+
+
 class SalienceConfig(BaseModel):
     """AD-668: Salience filter for working memory promotion."""
 
@@ -1389,6 +1398,7 @@ class SystemConfig(BaseModel):
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
     memory_budget: MemoryBudgetConfig = MemoryBudgetConfig()  # AD-573
     metabolism: MetabolismConfig = MetabolismConfig()  # AD-670
+    pinned_knowledge: PinnedKnowledgeConfig = PinnedKnowledgeConfig()  # AD-579a
     salience: SalienceConfig = SalienceConfig()  # AD-668
     sensorium: SensoriumConfig = SensoriumConfig()  # AD-666
     source_tracing: SourceTracingConfig = SourceTracingConfig()

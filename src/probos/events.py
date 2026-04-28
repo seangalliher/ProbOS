@@ -167,6 +167,9 @@ class EventType(str, Enum):
     KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased
+    # Pinned knowledge (AD-579a)
+    KNOWLEDGE_PINNED = "knowledge_pinned"  # AD-579a: pinned knowledge added
+    KNOWLEDGE_UNPINNED = "knowledge_unpinned"  # AD-579a: pinned knowledge removed
     FORCED_CONSOLIDATION_TRIGGERED = "forced_consolidation_triggered"  # AD-564
     QUALITY_CONCERN = "quality_concern"  # AD-565: low notebook quality diagnostic
 

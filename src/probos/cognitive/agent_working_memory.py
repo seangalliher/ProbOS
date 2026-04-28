@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import time
 import logging
+import uuid
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,7 @@ from probos.cognitive.salience_filter import BackgroundStream, SalienceFilter
 
 if TYPE_CHECKING:
     from probos.cognitive.memory_metabolism import MemoryMetabolism
+    from probos.config import PinnedKnowledgeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,132 @@ class WorkingMemoryEntry:
 
     def token_estimate(self) -> int:
         return len(self.content) // CHARS_PER_TOKEN
+
+
+@dataclass(frozen=True)
+class PinnedFact:
+    """A pinned knowledge fact always loaded into agent context."""
+
+    fact: str
+    source: str
+    pinned_at: float
+    ttl_seconds: float | None
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    priority: int = 5
+
+
+class PinnedKnowledgeBuffer:
+    """Small persistent buffer of critical operational facts (AD-579a)."""
+
+    def __init__(
+        self,
+        *,
+        max_tokens: int = 150,
+        max_pins: int = 10,
+        default_ttl_seconds: float = 86400.0,
+    ) -> None:
+        self._max_tokens = max_tokens
+        self._max_pins = max_pins
+        self._default_ttl_seconds = default_ttl_seconds
+        self._pins: list[PinnedFact] = []
+
+    def pin(
+        self,
+        fact: str,
+        source: str,
+        *,
+        ttl_seconds: float | None = None,
+        priority: int = 5,
+    ) -> PinnedFact:
+        """Add a pinned fact or refresh an existing matching fact."""
+        self._evict_expired()
+        effective_ttl = self._default_ttl_seconds if ttl_seconds is None else ttl_seconds
+        pinned_at = time.time()
+        for index, existing in enumerate(self._pins):
+            if existing.fact == fact:
+                updated = replace(
+                    existing,
+                    source=source,
+                    pinned_at=pinned_at,
+                    ttl_seconds=effective_ttl,
+                    priority=priority,
+                )
+                self._pins[index] = updated
+                return updated
+
+        if len(self._pins) >= self._max_pins:
+            self._evict_lowest_priority()
+
+        pinned = PinnedFact(
+            fact=fact,
+            source=source,
+            pinned_at=pinned_at,
+            ttl_seconds=effective_ttl,
+            priority=priority,
+        )
+        self._pins.append(pinned)
+        return pinned
+
+    def unpin(self, fact_id: str) -> bool:
+        """Remove a pinned fact by ID."""
+        self._evict_expired()
+        for index, pinned in enumerate(self._pins):
+            if pinned.id == fact_id:
+                del self._pins[index]
+                return True
+        return False
+
+    def render_pins(self, budget: int | None = None) -> str:
+        """Render all active pins within token budget."""
+        self._evict_expired()
+        effective_budget = self._max_tokens if budget is None else budget
+        if effective_budget <= 0 or not self._pins:
+            return ""
+
+        lines = ["[Pinned Knowledge]:"]
+        total_tokens = 0
+        for pinned in sorted(self._pins, key=lambda item: (item.priority, item.pinned_at)):
+            line = f"  - {pinned.fact} [{pinned.source}]"
+            token_estimate = len(pinned.fact) // CHARS_PER_TOKEN
+            if total_tokens + token_estimate > effective_budget:
+                continue
+            lines.append(line)
+            total_tokens += token_estimate
+
+        if len(lines) == 1:
+            return ""
+        return "\n".join(lines)
+
+    def _evict_expired(self) -> int:
+        """Remove pins past their TTL."""
+        now = time.time()
+        before = len(self._pins)
+        self._pins = [
+            pinned
+            for pinned in self._pins
+            if pinned.ttl_seconds is None or now <= pinned.pinned_at + pinned.ttl_seconds
+        ]
+        return before - len(self._pins)
+
+    def _evict_lowest_priority(self) -> None:
+        if not self._pins:
+            return
+        evict_index, _pinned = max(
+            enumerate(self._pins),
+            key=lambda item: (item[1].priority, -item[1].pinned_at),
+        )
+        del self._pins[evict_index]
+
+    @property
+    def pins(self) -> list[PinnedFact]:
+        """Read-only snapshot of current pins."""
+        self._evict_expired()
+        return list(self._pins)
+
+    def __len__(self) -> int:
+        """Number of active pins."""
+        self._evict_expired()
+        return len(self._pins)
 
 
 @dataclass
@@ -163,6 +291,7 @@ class AgentWorkingMemory:
         salience_filter: SalienceFilter | None = None,
         agent_context: dict[str, Any] | None = None,
         max_conclusions: int = 20,
+        pinned_config: PinnedKnowledgeConfig | None = None,
     ) -> None:
         self._token_budget = token_budget
         self._salience_filter = salience_filter
@@ -200,6 +329,16 @@ class AgentWorkingMemory:
 
         # AD-669: Cross-thread conclusion log
         self._conclusions: deque[ConclusionEntry] = deque(maxlen=max_conclusions)
+
+        # AD-579a: Optional pinned knowledge buffer
+        if pinned_config is not None and pinned_config.enabled:
+            self._pinned_knowledge: PinnedKnowledgeBuffer | None = PinnedKnowledgeBuffer(
+                max_tokens=pinned_config.max_tokens,
+                max_pins=pinned_config.max_pins,
+                default_ttl_seconds=pinned_config.default_ttl_seconds,
+            )
+        else:
+            self._pinned_knowledge = None
 
     def get_buffer(self, name: str) -> NamedBuffer | None:
         """AD-667: Get a named buffer by name."""
@@ -496,6 +635,37 @@ class AgentWorkingMemory:
         lines.append("--- End Sibling Conclusions ---")
         return "\n".join(lines)
 
+    def pin_knowledge(
+        self,
+        fact: str,
+        source: str,
+        *,
+        ttl_seconds: float | None = None,
+        priority: int = 5,
+    ) -> PinnedFact | None:
+        """AD-579a: Pin a knowledge fact."""
+        if self._pinned_knowledge is None:
+            return None
+        return self._pinned_knowledge.pin(
+            fact,
+            source,
+            ttl_seconds=ttl_seconds,
+            priority=priority,
+        )
+
+    def unpin_knowledge(self, fact_id: str) -> bool:
+        """AD-579a: Unpin a knowledge fact by ID."""
+        if self._pinned_knowledge is None:
+            return False
+        return self._pinned_knowledge.unpin(fact_id)
+
+    @property
+    def pinned_knowledge(self) -> list[PinnedFact]:
+        """AD-579a: Read-only snapshot of pinned facts."""
+        if self._pinned_knowledge is None:
+            return []
+        return self._pinned_knowledge.pins
+
     # ── Read API (called during context construction) ─────────────
 
     def render_context(self, *, budget: int | None = None) -> str:
@@ -507,6 +677,12 @@ class AgentWorkingMemory:
         """
         effective_budget = budget or self._token_budget
         sections: list[tuple[int, str]] = []  # (priority, text)
+
+        # Priority 0 (highest): Pinned knowledge — always include first
+        if self._pinned_knowledge is not None:
+            pin_text = self._pinned_knowledge.render_pins()
+            if pin_text:
+                sections.append((0, pin_text))
 
         # Priority 1 (highest): Active engagements — always include
         for eng in self._active_engagements.values():

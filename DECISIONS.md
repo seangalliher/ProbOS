@@ -87,6 +87,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Recall paths had tier budgets in configuration but no per-cycle accounting primitive. This adds the coordination infrastructure without changing recall behavior, _build_user_message(), or working-memory rendering in this AD.
 **Status:** Implemented
 
+### AD-579a: Pinned Knowledge Buffer
+
+**Date:** 2026-04-28
+**Decision:** Added PinnedKnowledgeBuffer to AgentWorkingMemory — small (150 token default) persistent facts buffer rendered at priority 0 in context. Ephemeral per session, no SQLite persistence. Three sources: agent, counselor, dream.
+**Rationale:** Agents needed a small operational fact buffer that survives cognitive cycles without forcing critical current-state assertions through episodic recall or standing orders.
+**Status:** Implemented
+
 ### AD-594: Crew Consultation Protocol
 
 **Date:** 2026-04-27
