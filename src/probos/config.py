@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 # ─── Trust Threshold Constants ─────────────────────────────────────
@@ -645,6 +645,31 @@ class KnowledgeConfig(BaseModel):
     restore_on_boot: bool = True    # Warm boot from existing repo
 
 
+class KnowledgeLoadingConfig(BaseModel):
+    """AD-585: Tiered knowledge loading configuration."""
+
+    enabled: bool = True
+
+    # Per-tier token budgets (approximate: 1 token is about 4 chars)
+    ambient_token_budget: int = 200
+    contextual_token_budget: int = 400
+    on_demand_token_budget: int = 600
+
+    # Per-tier max age in seconds (0 = always fresh)
+    ambient_max_age_seconds: float = 300.0
+    contextual_max_age_seconds: float = 60.0
+    on_demand_max_age_seconds: float = 0.0  # Always fresh
+
+    # Intent-to-knowledge category mapping.
+    # Keys are intent types; values are KnowledgeStore subdirectory names.
+    intent_knowledge_map: dict[str, list[str]] = Field(default_factory=lambda: {
+        "security_alert": ["trust", "agents"],
+        "proactive_think": ["episodes", "proactive"],
+        "ward_room_notification": ["episodes", "agents"],
+        "direct_message": ["episodes", "agents"],
+    })
+
+
 class RecordsConfig(BaseModel):
     """Ship's Records configuration (AD-434)."""
 
@@ -1211,6 +1236,7 @@ class SystemConfig(BaseModel):
     boot_camp: BootCampConfig = BootCampConfig()  # AD-638
     tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
+    knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     nats: NatsConfig = NatsConfig()  # AD-637
     bill: BillConfig = BillConfig()  # AD-618b

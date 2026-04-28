@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, ClassVar
 
 from probos.events import EventType
+from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.substrate.agent import BaseAgent
 from probos.types import AnchorFrame, IntentMessage, IntentResult, LLMRequest, Priority, Skill
 from probos.utils import format_duration
@@ -101,6 +103,9 @@ class CognitiveAgent(BaseAgent):
         from probos.cognitive.agent_working_memory import AgentWorkingMemory
         self._working_memory = AgentWorkingMemory()
 
+        # AD-585: Tiered knowledge loader, set via set_knowledge_loader().
+        self._knowledge_loader: TieredKnowledgeLoader | None = None
+
         # AD-632a: Sub-task protocol executor and pending chain
         self._sub_task_executor = None
         self._pending_sub_task_chain = None
@@ -119,6 +124,10 @@ class CognitiveAgent(BaseAgent):
     def set_strategy_advisor(self, advisor) -> None:
         """Attach a StrategyAdvisor for cross-agent knowledge transfer (AD-384)."""
         self._strategy_advisor = advisor
+
+    def set_knowledge_loader(self, loader: TieredKnowledgeLoader) -> None:
+        """Attach a TieredKnowledgeLoader for tiered knowledge injection (AD-585)."""
+        self._knowledge_loader = loader
 
     def set_orientation(self, rendered: str, context: Any = None) -> None:
         """AD-567g / BF-113: Set orientation text and context (public setter for LoD)."""
@@ -1310,6 +1319,33 @@ class CognitiveAgent(BaseAgent):
             _aug_instructions = self._load_augmentation_skills(observation.get("intent", ""))
             if _aug_instructions:
                 observation["_augmentation_skill_instructions"] = _aug_instructions
+
+        # AD-585: Tiered knowledge loading (ambient + contextual).
+        _knowledge_loader = getattr(self, "_knowledge_loader", None)
+        if _knowledge_loader:
+            try:
+                _ambient = await _knowledge_loader.load_ambient()
+                if _ambient:
+                    observation.setdefault("_knowledge_ambient", _ambient)
+
+                _intent_type = observation.get("intent", "")
+                if _intent_type:
+                    _department = observation.get("department", "")
+                    _contextual = await _knowledge_loader.load_contextual(
+                        _intent_type,
+                        _department,
+                    )
+                    if _contextual:
+                        observation.setdefault("_knowledge_contextual", _contextual)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "AD-585: Knowledge loading failed for agent_type=%s; proceeding without. "
+                    "Agent will use base context only.",
+                    self.agent_type,
+                    exc_info=True,
+                )
 
         user_message = await self._build_user_message(observation)
 

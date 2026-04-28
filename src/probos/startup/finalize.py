@@ -22,6 +22,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _wire_tiered_knowledge_loader(*, runtime: Any, config: "SystemConfig") -> int:
+    """AD-585: Wire one shared TieredKnowledgeLoader onto CognitiveAgents."""
+    knowledge_store = getattr(runtime, "_knowledge_store", None)
+    if not knowledge_store or not config.knowledge_loading.enabled:
+        return 0
+
+    from probos.cognitive.cognitive_agent import CognitiveAgent as _CA
+    from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
+
+    knowledge_loader = TieredKnowledgeLoader(
+        knowledge_source=knowledge_store,
+        config=config.knowledge_loading,
+        emit_event_fn=lambda event_type, data: runtime._emit_event(event_type, data),
+    )
+    wired_count = 0
+    registry = getattr(runtime, "registry", None)
+    for pool in runtime.pools.values():
+        for agent_ref in pool.healthy_agents:
+            agent = agent_ref
+            if not isinstance(agent_ref, _CA) and registry is not None:
+                agent = registry.get(agent_ref)
+            if isinstance(agent, _CA) and hasattr(agent, "set_knowledge_loader"):
+                agent.set_knowledge_loader(knowledge_loader)
+                wired_count += 1
+    return wired_count
+
+
 def _sync_ontology_callsigns(runtime: Any) -> None:
     """BF-244: Reconcile naming ceremony callsigns into ontology assignments."""
     ontology = getattr(runtime, "ontology", None)
@@ -130,6 +157,11 @@ async def finalize_startup(
     runtime.trust_network.set_event_callback(
         lambda event_type, data: runtime._emit_event(event_type, data)
     )
+
+    # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
+    wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
+    if wired_count:
+        logger.info("AD-585: TieredKnowledgeLoader wired to %d CognitiveAgents", wired_count)
 
     # --- AD-595a: Wire BilletRegistry event callback ---
     if runtime.ontology and runtime.ontology.billet_registry:
@@ -291,10 +323,13 @@ async def finalize_startup(
 
         _intent_bus = runtime.intent_bus
 
-        # AD-654b: Inject response recording callback (replaces handler.__self__ reach-through)
-        _wr_router = ward_room_router
-        _intent_bus.set_record_response(_wr_router.record_agent_response)
-        _intent_bus.set_emit_event(runtime.emit_event)  # BF-234: dedup telemetry
+        if _intent_bus is None:
+            logger.debug("Startup [finalize]: intent_bus not available, skipping AD-654b/c/d wiring")
+        else:
+            # AD-654b: Inject response recording callback (replaces handler.__self__ reach-through)
+            _wr_router = ward_room_router
+            _intent_bus.set_record_response(_wr_router.record_agent_response)
+            _intent_bus.set_emit_event(runtime.emit_event)  # BF-234: dedup telemetry
 
         # Create per-agent cognitive queues for crew agents.
         def _make_should_process(agent_ref: Any) -> Callable:
@@ -319,48 +354,49 @@ async def finalize_startup(
                 return (True, False)
             return _guard
 
-        _queue_count = 0
-        for agent in runtime.registry.all():
-            if not is_crew_agent(agent, runtime.ontology):
-                continue
+        if _intent_bus is not None:
+            _queue_count = 0
+            for agent in runtime.registry.all():
+                if not is_crew_agent(agent, runtime.ontology):
+                    continue
 
-            queue = AgentCognitiveQueue(
-                agent_id=agent.id,
-                handler=agent.handle_intent,
-                should_process=_make_should_process(agent),
+                queue = AgentCognitiveQueue(
+                    agent_id=agent.id,
+                    handler=agent.handle_intent,
+                    should_process=_make_should_process(agent),
+                    emit_event=runtime._emit_event,
+                )
+                _intent_bus.register_queue(agent.id, queue)
+                await queue.start()
+                _queue_count += 1
+
+            logger.info("Startup [finalize]: AD-654b cognitive queues created for %d agents", _queue_count)
+
+            # AD-654c: Create Dispatcher
+            from probos.activation.dispatcher import Dispatcher
+
+            dispatcher = Dispatcher(
+                registry=runtime.registry,
+                ontology=runtime.ontology,
+                get_queue=_intent_bus._get_agent_queue,
+                dispatch_async_fn=_intent_bus.dispatch_async,
                 emit_event=runtime._emit_event,
             )
-            _intent_bus.register_queue(agent.id, queue)
-            await queue.start()
-            _queue_count += 1
+            runtime.dispatcher = dispatcher
+            logger.info("Startup [finalize]: AD-654c Dispatcher created")
 
-        logger.info("Startup [finalize]: AD-654b cognitive queues created for %d agents", _queue_count)
+            # AD-654d: Wire dispatcher into internal emitters
+            if runtime.work_item_store:
+                runtime.work_item_store.attach_dispatcher(runtime.dispatcher)
+            if runtime.ward_room:
+                runtime.ward_room.attach_dispatcher(runtime.dispatcher, runtime.callsign_registry)
 
-        # AD-654c: Create Dispatcher
-        from probos.activation.dispatcher import Dispatcher
-
-        dispatcher = Dispatcher(
-            registry=runtime.registry,
-            ontology=runtime.ontology,
-            get_queue=_intent_bus._get_agent_queue,
-            dispatch_async_fn=_intent_bus.dispatch_async,
-            emit_event=runtime._emit_event,
-        )
-        runtime.dispatcher = dispatcher
-        logger.info("Startup [finalize]: AD-654c Dispatcher created")
-
-        # AD-654d: Wire dispatcher into internal emitters
-        if runtime.work_item_store:
-            runtime.work_item_store.attach_dispatcher(runtime.dispatcher)
-        if runtime.ward_room:
-            runtime.ward_room.attach_dispatcher(runtime.dispatcher, runtime.callsign_registry)
-
-        # BF-223: Create per-agent JetStream dispatch consumers AFTER ship
-        # commissioning has set the stable DID-based NATS prefix. During
-        # startup, IntentBus.subscribe() defers dispatch consumers to avoid
-        # the prefix race (consumers created with stale "probos.local" prefix
-        # would never match messages published with the DID prefix).
-        await runtime.intent_bus.create_dispatch_consumers()
+            # BF-223: Create per-agent JetStream dispatch consumers AFTER ship
+            # commissioning has set the stable DID-based NATS prefix. During
+            # startup, IntentBus.subscribe() defers dispatch consumers to avoid
+            # the prefix race (consumers created with stale "probos.local" prefix
+            # would never match messages published with the DID prefix).
+            await runtime.intent_bus.create_dispatch_consumers()
 
         # AD-625: Pre-cache communication proficiency profiles for gate modulation
         if hasattr(runtime, 'skill_service') and runtime.skill_service:

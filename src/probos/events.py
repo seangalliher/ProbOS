@@ -162,6 +162,7 @@ class EventType(str, Enum):
     TOOL_LOCKED = "tool_locked"  # AD-423b: LOTO lock acquired
     TOOL_UNLOCKED = "tool_unlocked"  # AD-423b: LOTO lock released
     TOOL_CONTEXT_CREATED = "tool_context_created"  # AD-423c: fired during onboarding
+    KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
 
     # Boot camp (AD-638)
     BOOT_CAMP_ACTIVATED = "boot_camp_activated"
@@ -591,6 +592,16 @@ class LlmHealthChangedEvent(BaseEvent):
     consecutive_failures: int = 0
     consecutive_successes: int = 0  # BF-240: Dwell count at transition time
     downtime_seconds: float = 0.0  # Time since first failure (0 on recovery)
+
+
+@dataclass
+class KnowledgeTierLoadedEvent(BaseEvent):
+    """AD-585: Emitted after a successful tiered knowledge load."""
+    event_type: EventType = field(default=EventType.KNOWLEDGE_TIER_LOADED, init=False)
+    tier: str = ""           # "ambient", "contextual", "on_demand"
+    snippet_count: int = 0
+    intent_type: str = ""    # Contextual tier only
+    query: str = ""          # On-demand tier only
 
 
 @dataclass
