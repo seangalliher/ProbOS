@@ -855,6 +855,13 @@ class ConsultationConfig(BaseModel):
     weight_billet_relevance: float = 0.2
 
 
+class QuestionAdaptiveConfig(BaseModel):
+    """AD-602: Question-adaptive retrieval strategy configuration."""
+
+    enabled: bool = True
+    strategy_overrides: dict[str, dict] = Field(default_factory=dict)
+
+
 class MetabolismConfig(BaseModel):
     """AD-670: Working memory metabolism — active lifecycle management."""
 
@@ -1416,6 +1423,7 @@ class SystemConfig(BaseModel):
     pinned_knowledge: PinnedKnowledgeConfig = PinnedKnowledgeConfig()  # AD-579a
     temporal_validity: TemporalValidityConfig = TemporalValidityConfig()  # AD-579b
     task_context: TaskContextConfig = TaskContextConfig()  # AD-586
+    question_adaptive: QuestionAdaptiveConfig = QuestionAdaptiveConfig()  # AD-602
     salience: SalienceConfig = SalienceConfig()  # AD-668
     sensorium: SensoriumConfig = SensoriumConfig()  # AD-666
     source_tracing: SourceTracingConfig = SourceTracingConfig()

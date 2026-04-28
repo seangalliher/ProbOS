@@ -23,6 +23,7 @@ from probos.utils import format_duration
 
 if TYPE_CHECKING:
     from probos.cognitive.memory_budget import MemoryBudgetManager
+    from probos.cognitive.question_classifier import QuestionClassifier, RetrievalStrategySelector
     from probos.config import MemoryBudgetConfig
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,8 @@ class CognitiveAgent(BaseAgent):
     instructions: str | None = None
     agent_type: str = "cognitive"
     _task_context: Any = None
+    _question_classifier: QuestionClassifier | None = None
+    _retrieval_strategy_selector: RetrievalStrategySelector | None = None
 
     # AD-666: Agent Sensorium Registry — formal inventory of context injections.
     SENSORIUM_REGISTRY: ClassVar[dict[str, tuple[SensoriumLayer, str]]] = {
@@ -169,6 +172,10 @@ class CognitiveAgent(BaseAgent):
 
         # AD-594: Crew Consultation Protocol
         self._consultation_protocol: Any = None
+
+        # AD-602: Question-adaptive retrieval
+        self._question_classifier: QuestionClassifier | None = None
+        self._retrieval_strategy_selector: RetrievalStrategySelector | None = None
 
         # AD-573: Per-cycle memory budget configuration
         self._memory_budget_config: MemoryBudgetConfig | None = kwargs.get("memory_budget_config")
@@ -4737,6 +4744,24 @@ class CognitiveAgent(BaseAgent):
         if not _is_crew(self, getattr(self._runtime, 'ontology', None)):
             return observation
 
+        # AD-602: Lazy-init question classifier
+        if self._question_classifier is None:
+            try:
+                from probos.cognitive.question_classifier import (
+                    QuestionClassifier,
+                    RetrievalStrategySelector,
+                )
+
+                _qa_config = self._runtime.config.question_adaptive
+                if not _qa_config.enabled:
+                    self._question_classifier = QuestionClassifier()
+                    self._retrieval_strategy_selector = None
+                else:
+                    self._question_classifier = QuestionClassifier()
+                    self._retrieval_strategy_selector = RetrievalStrategySelector(config=_qa_config)
+            except Exception:
+                logger.debug("AD-602: Question classifier unavailable", exc_info=True)
+
         try:
             # Build a semantic query from the intent content
             params = observation.get("params", {})
@@ -4753,6 +4778,21 @@ class CognitiveAgent(BaseAgent):
 
             if not query:
                 return observation
+
+            # AD-602: Classify query and select strategy
+            _ad602_strategy = None
+            if self._question_classifier and self._retrieval_strategy_selector:
+                try:
+                    _question_type = self._question_classifier.classify(query)
+                    _ad602_strategy = self._retrieval_strategy_selector.select_strategy(_question_type)
+                    logger.debug(
+                        "AD-602: Query classified as %s - strategy: method=%s, k=%d",
+                        _question_type.value,
+                        _ad602_strategy.recall_method,
+                        _ad602_strategy.k,
+                    )
+                except Exception:
+                    logger.debug("AD-602: Classification failed, using default recall", exc_info=True)
 
             _mem_id = getattr(self, 'sovereign_id', None) or self.id  # AD-441
 
@@ -4848,14 +4888,24 @@ class CognitiveAgent(BaseAgent):
                     )
 
                 if hasattr(em, 'recall_weighted') and _tier_params.get("use_salience_weights", True):
+                    _ad602_k = _tier_params.get("k", 5)
+                    _ad602_weights = getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None
+                    if _ad602_strategy is not None:
+                        if _ad602_strategy.recall_method == "weighted":
+                            _ad602_k = _ad602_strategy.k
+                        if _ad602_strategy.weights_override is not None:
+                            observation["_ad602_weights_override"] = _ad602_strategy.weights_override
+                            _base_weights = dict(_ad602_weights or {})
+                            _base_weights.update(_ad602_strategy.weights_override)
+                            _ad602_weights = _base_weights
                     scored_results = await em.recall_weighted(
                         _mem_id, query,
                         trust_network=trust_net,
                         hebbian_router=heb_router,
                         intent_type=intent.intent,
-                        k=_tier_params.get("k", 5),
+                        k=_ad602_k,
                         context_budget=_tier_params.get("context_budget", 4000),
-                        weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
+                        weights=_ad602_weights,
                         anchor_confidence_gate=_tier_params.get("anchor_confidence_gate", 0.3),
                         composite_score_floor=_tier_params.get("composite_score_floor", 0.0),
                         max_recall_episodes=_tier_params.get("max_recall_episodes", 0),

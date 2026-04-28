@@ -159,6 +159,8 @@ AD-579b Temporal Validity Windows CLOSED. Episode now has valid_from/valid_until
 
 AD-586 Task-Contextual Standing Orders CLOSED. Added TaskContext, TaskContextConfig, default config/task_orders markdown files (build/analyze/communicate/diagnose plus zero-byte general), Tier 5.5 compose_instructions injection, CognitiveAgent task classification wiring, and startup wiring via _wire_task_context(). Intent mapping is hardcoded for build/analyze/communicate/diagnose/review/general; no LLM classification, per-agent customization, dream evolution, _load_file cache changes, or proactive path-specific rewiring. Tests: 12 focused passed; 90 adjacent standing-orders/cognitive-agent regressions passed; full xdist gate: 9742 passed, 14 skipped, 142 worker-crash failures classified by exact-node serial triage (83 passed).
 
+AD-602 Question-Adaptive Retrieval — CLOSED. Added deterministic QuestionClassifier and RetrievalStrategySelector mapping TEMPORAL/CAUSAL/SOCIAL/FACTUAL queries to tuned recall parameters, QuestionAdaptiveConfig with per-type overrides, and minimal CognitiveAgent recall integration applying strategy k/weight overrides without switching recall methods. No LLM classification, DEEP/ORACLE escalation, fusion, API, or HXI work. Tests: 12 focused passed; 56 adjacent cognitive-agent regressions passed; full xdist gate: 9776 passed, 14 skipped, 130 worker-crash failures classified by exact-node serial triage (92 unique passed).
+
 ---
 
 ## Development Eras

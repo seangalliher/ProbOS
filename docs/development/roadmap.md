@@ -5159,9 +5159,9 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
-### Question-Adaptive Retrieval Routing (AD-602) *(planned, OSS)*
+### Question-Adaptive Retrieval Routing (AD-602) *(Complete, OSS)*
 
-**AD-602: Question-Adaptive Retrieval Routing** *(planned, OSS, depends: AD-568a RetrievalStrategy, AD-570c parse_anchor_query, AD-584b Query Reformulation)* — Route recall queries through different retrieval strategies based on question type (what/when/who/where/why/how). Currently `classify_retrieval_strategy()` uses only `intent_type` (e.g., "direct_message", "diagnostic_request") — it has no awareness of the question's temporal, spatial, or relational content. A "when did X happen?" and "what is X?" query both go through the same retrieval path, despite needing fundamentally different scoring emphasis.
+**AD-602: Question-Adaptive Retrieval Routing** *(Complete, OSS, depends: AD-568a RetrievalStrategy, AD-570c parse_anchor_query, AD-584b Query Reformulation)* — Route recall queries through different retrieval strategies based on question type (what/when/who/where/why/how). Currently `classify_retrieval_strategy()` uses only `intent_type` (e.g., "direct_message", "diagnostic_request") — it has no awareness of the question's temporal, spatial, or relational content. A "when did X happen?" and "what is X?" query both go through the same retrieval path, despite needing fundamentally different scoring emphasis.
 
 **Problem statement:** A temporal query ("What happened during first watch?") should emphasize `watch_section` filtering and temporal scoring, but `classify_retrieval_strategy()` classifies it based on intent_type (usually "direct_message" → SHALLOW). The temporal signal extracted by `parse_anchor_query()` influences `recall_by_anchor()` and `temporal_match_weight`, but doesn't adjust the retrieval strategy (budget, k, weights). Similarly, social queries ("What did Lynx say about trust?") should emphasize participant filtering and social context, while factual queries ("What is the pool health threshold?") should emphasize keyword matching. Different question types need different weight profiles for optimal recall.
 
