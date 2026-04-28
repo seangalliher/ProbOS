@@ -3,7 +3,7 @@
 **Status:** Ready for builder
 **Issue:** #21
 **Dependencies:** AD-558 (trust cascade dampening), AD-557 (emergence metrics)
-**Estimated tests:** 14
+**Estimated tests:** 15
 
 ---
 
@@ -41,14 +41,16 @@ Add `AgentTierConfig(BaseModel)`:
 ```python
 class AgentTierConfig(BaseModel):
     """Agent tier classification for trust separation (AD-571)."""
-    crew_types: list[str] = [
+    crew_types: list[str] = Field(default_factory=lambda: [
         "architect", "builder", "code_reviewer", "counselor",
         "diagnostician", "surgeon", "pharmacist", "pathologist",
         "red_team", "system_qa", "scout",
         "data_analyst", "systems_analyst", "research_specialist",
-    ]
-    core_types: list[str] = ["event_log", "vitals_monitor", "introspect"]
+    ])
+    core_types: list[str] = Field(default_factory=lambda: ["event_log", "vitals_monitor", "introspect"])
 ```
+
+**Builder:** Add `from pydantic import Field` to the imports in `config.py` if not already present.
 
 Add to `SystemConfig`:
 ```python
@@ -202,6 +204,8 @@ def _populate_agent_tiers(*, runtime: Any, config: "SystemConfig") -> int:
     return len(registry.all_registered())
 ```
 
+**Builder:** Replace `hasattr()` checks with explicit `Protocol` typing or direct attribute access on known types. Initialize tier fields in `__init__()` properly. The `hasattr(trust, "set_tier_registry")` pattern is acceptable here because this is wiring code that handles optional integration points across modules that may not be present.
+
 Call `_populate_agent_tiers(runtime=runtime, config=config)` from `finalize_startup()` — add it after the existing wiring calls (after `_wire_tiered_knowledge_loader` is a good location). Log the count.
 
 ---
@@ -210,7 +214,7 @@ Call `_populate_agent_tiers(runtime=runtime, config=config)` from `finalize_star
 
 **File:** `tests/test_ad571_tier_separation.py`
 
-14 tests:
+15 tests:
 
 1. `test_register_and_get_tier` — register agent, verify get_tier returns correct tier
 2. `test_default_tier_utility` — unregistered agent returns UTILITY
@@ -226,6 +230,7 @@ Call `_populate_agent_tiers(runtime=runtime, config=config)` from `finalize_star
 12. `test_config_crew_types` — AgentTierConfig default crew_types includes 14 types, core_types includes 3
 13. `test_mixed_tier_trust_scores` — all_scores(crew_only=False) returns all, crew_only=True returns subset
 14. `test_all_agents_classified` — all registered agents appear in all_registered()
+15. `test_core_agents_excluded_from_trust` — CORE agents are excluded from TrustNetwork outcomes: `assert tn.outcomes_for(core_id) == []`
 
 Use `_Fake*` stubs for TrustNetwork dependencies. No mocking of private attributes.
 
@@ -247,3 +252,7 @@ Use `_Fake*` stubs for TrustNetwork dependencies. No mocking of private attribut
 - `PROGRESS.md`: Add AD-571 as CLOSED
 - `DECISIONS.md`: Add entry — "AD-571: Three-tier agent classification (CORE_INFRASTRUCTURE/UTILITY/CREW) for trust metric separation. TrustNetwork skips recording for core infrastructure, cascade counts crew only, emergence analyzes crew only."
 - `docs/development/roadmap.md`: Update AD-571 row status
+
+## Acceptance Criteria
+
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

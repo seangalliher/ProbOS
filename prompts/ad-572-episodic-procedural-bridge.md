@@ -88,6 +88,8 @@ A cluster is novel if NO existing procedure has an `origin_cluster_id` matching 
 - If any procedure has overlap ratio >= `(1.0 - config.novelty_threshold)`, the cluster is NOT novel.
 - If no procedure exceeds the overlap threshold, the cluster IS novel.
 
+**Builder:** `novelty_threshold=0.7` means accept the bridge when <=30% of cluster episodes are already linked to procedures. The check should be: `if overlap_ratio < (1.0 - novelty_threshold):` -- i.e., high threshold = stricter novelty requirement.
+
 **`_merge_cross_cycle(cluster: EpisodeCluster, existing_procedure: Procedure) -> Procedure`**
 
 Update the existing procedure's provenance with new episode IDs:
@@ -147,11 +149,11 @@ if self._episodic_procedural_bridge and clusters:
                     try:
                         await self._procedure_store.save(proc)
                     except Exception as e:
-                        logger.debug("Step 7h: Failed to save bridged procedure: %s", e)
+                        logger.warning("Step 7h: Failed to save bridged procedure for cluster %s: %s", proc.origin_cluster_id, e)
             procedures.extend(bridged)
             logger.debug("Step 7h: Bridged %d cross-cycle procedures", bridged_procedures)
     except Exception as e:
-        logger.debug("Step 7h episodic-procedural bridge failed: %s", e)
+        logger.warning("Step 7h episodic-procedural bridge failed: %s", e)
 ```
 
 ### 4. Add to DreamReport
@@ -233,3 +235,7 @@ Use `_Fake*` stubs for ProcedureStore and EpisodicMemory. Create test EpisodeClu
 - `PROGRESS.md`: Add AD-572 as CLOSED
 - `DECISIONS.md`: Add entry — "AD-572: EpisodicProceduralBridge as Dream Step 7h. Scans dream clusters against existing procedures for novel cross-cycle patterns. Novelty detected via episode provenance overlap (default 0.3 threshold). Minimum 5 episodes per cluster. New procedures get evolution_type='BRIDGED'."
 - `docs/development/roadmap.md`: Update AD-572 row status
+
+## Acceptance Criteria
+
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

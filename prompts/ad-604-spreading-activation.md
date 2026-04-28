@@ -121,10 +121,12 @@ class _AnchorExtraction:
 class SpreadingActivationEngine:
     """Multi-hop retrieval engine using anchor-based spreading activation.
 
+    **Builder:** Config is always provided via Pydantic defaults. Do NOT add in-class fallback defaults.
+
     Parameters
     ----------
-    config : SpreadingActivationConfig-like or None
-        Configuration. If None, uses hardcoded defaults.
+    config : SpreadingActivationConfig
+        Configuration (always provided — Pydantic provides defaults).
     episodic_memory : EpisodicMemory or None
         The episodic memory instance for recall calls.
     """
@@ -140,6 +142,7 @@ class SpreadingActivationEngine:
             self._hop_decay: float = config.hop_decay_factor
             self._min_anchor_fields: int = config.min_anchor_fields
         else:
+            # Only for unit tests that construct without config
             self._max_hops = 2
             self._k_per_hop = 5
             self._hop_decay = 0.6
@@ -206,7 +209,7 @@ class SpreadingActivationEngine:
             return []
 
         for rs in first_hop:
-            ep_id = rs.episode.id if hasattr(rs, 'episode') else ""
+            ep_id = rs.episode.id
             if ep_id:
                 seen[ep_id] = rs
 
@@ -231,13 +234,13 @@ class SpreadingActivationEngine:
                 except Exception:
                     logger.debug(
                         "AD-604: Second hop recall failed for episode %s",
-                        getattr(rs, 'episode', None) and rs.episode.id,
+                        rs.episode.id,
                         exc_info=True,
                     )
                     continue
 
                 for sh_rs in second_hop:
-                    ep_id = sh_rs.episode.id if hasattr(sh_rs, 'episode') else ""
+                    ep_id = sh_rs.episode.id
                     if not ep_id:
                         continue
 
@@ -273,18 +276,18 @@ class SpreadingActivationEngine:
         _AnchorExtraction
             Extracted fields with a count of non-empty ones.
         """
-        episode = recall_score.episode if hasattr(recall_score, 'episode') else None
+        episode = recall_score.episode
         if not episode:
             return _AnchorExtraction()
 
-        anchors = getattr(episode, 'anchors', None)
+        anchors = episode.anchors
         if not anchors:
             return _AnchorExtraction()
 
-        dept = getattr(anchors, 'duty_department', "") or ""
-        channel = getattr(anchors, 'channel', "") or ""
-        trigger_type = getattr(anchors, 'trigger_type', "") or ""
-        trigger_agent = getattr(anchors, 'trigger_agent', "") or ""
+        dept = anchors.duty_department or ""
+        channel = anchors.channel or ""
+        trigger_type = anchors.trigger_type or ""
+        trigger_agent = anchors.trigger_agent or ""
 
         field_count = sum(1 for f in [dept, channel, trigger_type, trigger_agent] if f)
 
@@ -299,9 +302,10 @@ class SpreadingActivationEngine:
     def _apply_hop_decay(self, recall_score: Any) -> Any:
         """Apply hop decay factor to a second-hop RecallScore.
 
+        **Builder:** RecallScore is frozen (`@dataclass(frozen=True)`). Use `dataclasses.replace(rs, composite_score=new_score)` to create modified copies. The `except` fallback must NOT mutate the input — construct a new object instead.
+
         Creates a new RecallScore with the composite_score multiplied
-        by hop_decay_factor. Since RecallScore is a dataclass, we use
-        dataclasses.replace() if available, otherwise reconstruct.
+        by hop_decay_factor.
 
         Parameters
         ----------
@@ -314,15 +318,10 @@ class SpreadingActivationEngine:
             New RecallScore with decayed composite_score.
         """
         from dataclasses import replace
-        try:
-            return replace(
-                recall_score,
-                composite_score=recall_score.composite_score * self._hop_decay,
-            )
-        except Exception:
-            # Fallback: return as-is with modified score
-            recall_score.composite_score *= self._hop_decay
-            return recall_score
+        return replace(
+            recall_score,
+            composite_score=recall_score.composite_score * self._hop_decay,
+        )
 ```
 
 ### Section 3: CognitiveAgent Integration
@@ -335,7 +334,7 @@ In `__init__`, after the `self._retrieval_strategy_selector` line (added by AD-6
 
 ```python
         # AD-604: Spreading activation engine
-        self._spreading_activation: Any = None
+        self._spreading_activation: SpreadingActivationEngine | None = None
 ```
 
 #### 3b: Lazy initialization
@@ -347,18 +346,13 @@ In `_recall_relevant_memories()`, after the AD-602 lazy-init block for QuestionC
         if self._spreading_activation is None:
             try:
                 from probos.cognitive.spreading_activation import SpreadingActivationEngine
-                _sa_config = None
-                if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'spreading_activation'):
-                    _sa_config = self._runtime.config.spreading_activation
-                    if not _sa_config.enabled:
-                        self._spreading_activation = False  # sentinel: disabled
-                if self._spreading_activation is None:
+                _sa_config = self._runtime.config.spreading_activation
+                if _sa_config.enabled:
                     self._spreading_activation = SpreadingActivationEngine(
                         config=_sa_config,
                         episodic_memory=self._runtime.episodic_memory,
                     )
             except Exception:
-                self._spreading_activation = False
                 logger.debug("AD-604: Spreading activation unavailable", exc_info=True)
 ```
 
@@ -371,8 +365,7 @@ After the AD-602 classification block (where `_question_type` is set), add:
             if (
                 _question_type is not None
                 and _question_type.value == "causal"
-                and self._spreading_activation
-                and self._spreading_activation is not False
+                and self._spreading_activation is not None
             ):
                 try:
                     from probos.cognitive.question_classifier import QuestionType as _QT

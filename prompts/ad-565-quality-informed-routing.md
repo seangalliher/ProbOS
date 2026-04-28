@@ -131,6 +131,8 @@ Constructor: `__init__(self, config: QualityRouterConfig, emit_event_fn: Any = N
 After quality snapshot is computed in Step 10, update the QualityRouter with
 per-agent scores:
 
+**Verify:** Confirm the `NotebookQualitySnapshot` class (or `EmergenceSnapshot` if used) has a `per_agent` field and document the expected keys (`callsign`, `quality_score` or similar). Check `src/probos/knowledge/notebook_quality.py` for the actual schema before implementing.
+
 ```python
 # AD-565: Update quality router with per-agent scores
 if self._quality_router and quality_snapshot:
@@ -233,3 +235,7 @@ class _FakeAgentQuality:
 - `DECISIONS.md`: Add entry: "AD-565: Quality-informed routing weights. Linear mapping quality 0-1 to weight 0.5-1.5. QUALITY_CONCERN event below 0.3. Counselor diagnostic API. No direct HebbianRouter mutation — callers opt in to multiplier."
 - `docs/development/roadmap.md`: Update AD-565 row status to Complete.
 - GitHub: Close issue #10.
+
+## Acceptance Criteria
+
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

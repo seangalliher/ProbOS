@@ -166,6 +166,7 @@ valid_until=float(meta.get("valid_until", 0.0)),
 7. Existing code that constructs `Episode` without validity fields continues to work (defaults).
 8. `TemporalValidityConfig` added to config with Pydantic validation.
 9. Metadata round-trip: store episode with validity -> recall -> fields preserved.
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`
 
 ## Test Plan
 

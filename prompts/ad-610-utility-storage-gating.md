@@ -8,6 +8,7 @@
 - All 14 tests pass
 - No new lint errors
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`
+- StorageGate adds negligible latency to the store() hot path (no LLM calls, no external I/O).
 
 ## Summary
 
@@ -136,31 +137,26 @@ class StorageGate:
 
     Parameters
     ----------
-    config : StorageGateConfig-like or None
-        Configuration. If None, uses hardcoded defaults.
+    config : StorageGateConfig-like
+        Configuration. Required — always provided via Pydantic defaults.
     emit_event_fn : callable or None
         Callback ``(EventType, dict) -> None`` for event emission.
+
+    **Builder:** Config is always provided via Pydantic defaults. Do NOT add in-class fallback defaults.
     """
 
     def __init__(
         self,
-        config: Any = None,
+        config: Any,
         emit_event_fn: Any = None,
     ) -> None:
         self._emit_event_fn = emit_event_fn
 
-        if config is not None:
-            self._enabled: bool = config.enabled
-            self._duplicate_threshold: float = config.duplicate_threshold
-            self._utility_floor: float = config.utility_floor
-            self._recent_window: int = config.recent_window
-            self._contradiction_check_enabled: bool = config.contradiction_check_enabled
-        else:
-            self._enabled = True
-            self._duplicate_threshold = 0.95
-            self._utility_floor = 0.2
-            self._recent_window = 50
-            self._contradiction_check_enabled = True
+        self._enabled: bool = config.enabled
+        self._duplicate_threshold: float = config.duplicate_threshold
+        self._utility_floor: float = config.utility_floor
+        self._recent_window: int = config.recent_window
+        self._contradiction_check_enabled: bool = config.contradiction_check_enabled
 
         # Ring buffer of recent episode fingerprints for dedup
         # Each entry: {"id": str, "content": str, "outcomes_summary": str, "timestamp": float}
@@ -222,6 +218,9 @@ class StorageGate:
         utility = self._check_utility(episode, content)
 
         # High importance bypasses utility floor
+        # **Note:** Episodes with importance >= 8 bypass the gate. This is
+        # intentional — high-importance episodes (security alerts, system
+        # errors) should always be stored.
         if utility < self._utility_floor and episode.importance < 8:
             self._emit_rejection(episode, "below_utility_floor")
             return StorageDecision(

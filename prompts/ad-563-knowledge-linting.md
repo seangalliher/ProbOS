@@ -255,3 +255,7 @@ returns canned entry dicts with frontmatter and content.  No LLM calls.
 - `DECISIONS.md`: Add entry: "AD-563: Keyword-based knowledge linting during Dream Step 10. Detects inconsistencies (contradicting terms on same topic), coverage gaps (sparse departments), and cross-reference suggestions. No LLM — pure text matching."
 - `docs/development/roadmap.md`: Update AD-563 row status to Complete.
 - GitHub: Close issue #34.
+
+## Acceptance Criteria
+
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

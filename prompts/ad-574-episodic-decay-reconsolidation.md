@@ -129,30 +129,26 @@ class ReconsolidationScheduler:
 
     Parameters
     ----------
-    config : ReconsolidationConfig-like or None
-        Configuration. If None, uses hardcoded defaults.
+    config : ReconsolidationConfig-like
+        Configuration. Required — always provided via Pydantic defaults.
     episodic_memory : EpisodicMemory-like or None
         Optional reference to episodic memory (unused in this build,
         reserved for future reconsolidation-triggered recall).
+
+    **Builder:** Config is always injected. Do NOT add in-class fallback defaults when config is None.
     """
 
     def __init__(
         self,
-        config: Any = None,
+        config: Any,
         episodic_memory: Any = None,
     ) -> None:
         self._episodic_memory = episodic_memory
 
-        if config is not None:
-            self._enabled: bool = config.enabled
-            self._base_intervals_hours: list[float] = list(config.base_intervals_hours)
-            self._importance_scale_factor: float = config.importance_scale_factor
-            self._max_scheduled: int = config.max_scheduled
-        else:
-            self._enabled = True
-            self._base_intervals_hours = [1.0, 6.0, 24.0, 72.0, 168.0, 720.0]
-            self._importance_scale_factor = 0.1
-            self._max_scheduled = 500
+        self._enabled: bool = config.enabled
+        self._base_intervals_hours: list[float] = list(config.base_intervals_hours)
+        self._importance_scale_factor: float = config.importance_scale_factor
+        self._max_scheduled: int = config.max_scheduled
 
         # In-memory schedule: episode_id -> ReconsolidationEntry
         self._schedule: dict[str, ReconsolidationEntry] = {}
@@ -367,6 +363,8 @@ In `async def store()`, after the episode is successfully persisted (after the `
 
 **Builder:** Find the exact location by searching for `await self._evict()` in the `store()` method. Insert the reconsolidation block immediately before the `_evict()` call.
 
+**Verify:** `Episode.importance` field exists on the Episode dataclass (added by AD-598).
+
 ### Section 4: DreamingEngine Integration
 
 **File:** `src/probos/cognitive/dreaming.py`
@@ -512,6 +510,9 @@ class _FakeReconsolidationConfig:
 @pytest.fixture
 def scheduler():
     return ReconsolidationScheduler(config=_FakeReconsolidationConfig())
+```
+
+**Builder:** Config is always provided via Pydantic defaults. Do NOT add in-class fallback defaults.
 ```
 
 ---

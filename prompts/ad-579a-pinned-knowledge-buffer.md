@@ -19,10 +19,13 @@ File: `src/probos/cognitive/agent_working_memory.py`
 Add a new frozen dataclass near the top of the file, after the existing `WorkingMemoryEntry` dataclass:
 
 ```python
+import uuid
+from dataclasses import dataclass, field
+
 @dataclass(frozen=True)
 class PinnedFact:
     """A pinned knowledge fact always loaded into agent context."""
-    id: str  # uuid hex
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
     fact: str  # human-readable assertion
     source: str  # "agent", "counselor", "dream"
     pinned_at: float  # time.time() epoch
@@ -52,11 +55,12 @@ class PinnedKnowledgeBuffer:
     def unpin(self, fact_id: str) -> bool:
         """Remove a pinned fact by ID. Returns True if found and removed."""
 
-    def render_pins(self, budget: int) -> str:
+    def render_pins(self, budget: int | None = None) -> str:
         """Render all active (non-expired) pins within token budget.
         Format: '[Pinned Knowledge]:\\n  - {fact} [{source}]'
         Ordered by priority (ascending), then pinned_at (ascending).
         Calls _evict_expired() first.
+        Uses self._max_tokens as the default budget when no budget parameter is provided.
         """
 
     def _evict_expired(self) -> int:
@@ -113,7 +117,7 @@ Modify `render_context()` (currently at line 501). Insert a new Priority 0 secti
 ```python
 # Priority 0 (highest): Pinned knowledge — always include first
 if self._pinned_knowledge is not None:
-    pin_text = self._pinned_knowledge.render_pins(budget=self._pinned_knowledge._max_tokens)
+    pin_text = self._pinned_knowledge.render_pins()
     if pin_text:
         sections.append((0, pin_text))
 ```
@@ -158,6 +162,7 @@ def pinned_knowledge(self) -> list[PinnedFact]:
 6. `PinnedKnowledgeConfig` with Pydantic validation and sensible defaults.
 7. `KNOWLEDGE_PINNED` and `KNOWLEDGE_UNPINNED` events added to `EventType`.
 8. When config is disabled or not provided, all pinned knowledge code is inert (no-op).
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`
 
 ## Test Plan
 

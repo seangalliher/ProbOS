@@ -237,3 +237,7 @@ class _FakeSnapshot:
 - `DECISIONS.md`: Add entry: "AD-564: Quality-triggered forced consolidation. Three trigger conditions (low quality, high stale rate, high repetition). Cooldown + daily limit. Event emission. Wired into Dream Step 10."
 - `docs/development/roadmap.md`: Update AD-564 row status to Complete.
 - GitHub: Close issue #10.
+
+## Acceptance Criteria
+
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

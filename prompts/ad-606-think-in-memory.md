@@ -101,28 +101,33 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Valid thought types
-THOUGHT_TYPES: frozenset[str] = frozenset({
-    "conclusion",
-    "hypothesis",
-    "observation_synthesis",
-    "pattern_recognition",
-})
+class ThoughtType(StrEnum):
+    """Valid thought types for stored thoughts."""
+
+    HYPOTHESIS = "hypothesis"
+    CONCLUSION = "conclusion"
+    OBSERVATION = "observation_synthesis"
+    INFERENCE = "pattern_recognition"
+    PLAN = "plan"
 
 
 class ThoughtStore:
     """Stores evolved thoughts as episodic memory entries.
 
+    **Builder:** Config is always provided via Pydantic defaults. Do NOT add in-class fallback defaults.
+
     Parameters
     ----------
     episodic_memory : EpisodicMemory or None
         The episodic memory instance for storing thought episodes.
-    config : ThoughtStoreConfig-like or None
-        Configuration. If None, uses hardcoded defaults.
+    config : ThoughtStoreConfig
+        Configuration (always provided — Pydantic provides defaults).
     """
 
     def __init__(
@@ -136,6 +141,7 @@ class ThoughtStore:
             self._min_importance: int = config.min_importance
             self._max_per_cycle: int = config.max_thoughts_per_cycle
         else:
+            # Only for unit tests that construct without config
             self._min_importance = 5
             self._max_per_cycle = 3
 
@@ -197,12 +203,14 @@ class ThoughtStore:
             return None
 
         # Validate thought type
-        if thought_type not in THOUGHT_TYPES:
+        try:
+            ThoughtType(thought_type)
+        except ValueError:
             logger.warning(
                 "AD-606: Unknown thought type '%s' from %s — defaulting to 'conclusion'",
                 thought_type, agent_id,
             )
-            thought_type = "conclusion"
+            thought_type = ThoughtType.CONCLUSION.value
 
         # Importance threshold
         if importance < self._min_importance:
@@ -324,7 +332,7 @@ In `__init__`, after the `self._spreading_activation` line (added by AD-604), ad
 
 ```python
         # AD-606: Think-in-Memory thought store
-        self._thought_store: Any = None
+        self._thought_store: ThoughtStore | None = None
 ```
 
 #### 3b: Thought storage after decide
@@ -338,36 +346,29 @@ After `decide()` produces an action, check working memory for conclusions and st
         if self._thought_store is None and self._runtime:
             try:
                 from probos.cognitive.thought_store import ThoughtStore
-                _ts_config = None
-                if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'thought_store'):
-                    _ts_config = self._runtime.config.thought_store
-                    if not _ts_config.enabled:
-                        self._thought_store = False  # sentinel: disabled
-                if self._thought_store is None:
-                    em = getattr(self._runtime, 'episodic_memory', None)
+                _ts_config = self._runtime.config.thought_store
+                if _ts_config.enabled:
+                    em = self._runtime.episodic_memory
                     self._thought_store = ThoughtStore(
                         episodic_memory=em,
                         config=_ts_config,
                     )
             except Exception:
-                self._thought_store = False
                 logger.debug("AD-606: ThoughtStore unavailable", exc_info=True)
 
-        if self._thought_store and self._thought_store is not False:
+        if self._thought_store is not None:
             try:
-                wm = getattr(self, '_working_memory', None)
-                if wm:
-                    conclusions = wm.get_conclusions(limit=3)
-                    correlation_id = getattr(self, '_current_correlation_id', "") or ""
-                    self._thought_store.reset_cycle(correlation_id)
-                    for conc in conclusions:
-                        await self._thought_store.store_thought(
-                            agent_id=self.id,
-                            thought=conc.summary,
-                            thought_type=self._map_conclusion_to_thought_type(conc),
-                            importance=6,  # Default moderate importance
-                            correlation_id=correlation_id,
-                        )
+                conclusions = self._working_memory.get_conclusions(limit=3)
+                correlation_id = self._current_correlation_id or ""
+                self._thought_store.reset_cycle(correlation_id)
+                for conc in conclusions:
+                    await self._thought_store.store_thought(
+                        agent_id=self.id,
+                        thought=conc.summary,
+                        thought_type=self._map_conclusion_to_thought_type(conc),
+                        importance=6,  # Default moderate importance
+                        correlation_id=correlation_id,
+                    )
             except Exception:
                 logger.debug("AD-606: Thought storage failed (non-critical)", exc_info=True)
 ```
@@ -393,7 +394,7 @@ Add a private helper method:
         return mapping.get(ct_value, "conclusion")
 ```
 
-**Builder:** The `get_conclusions` method on AgentWorkingMemory returns `list[ConclusionEntry]`. Verify the method name by searching `agent_working_memory.py` for `get_conclusions` or `recent_conclusions`. Use whatever method name exists. If no such method exists, use `_conclusions` directly (the deque attribute).
+**Builder:** Initialize `self._thought_store: ThoughtStore | None = None` and `self._working_memory` and `self._current_correlation_id` in `__init__()`. Do NOT use `getattr(self, ...)` for instance attributes — it indicates the attribute was never properly initialized. The `get_conclusions` method on AgentWorkingMemory returns `list[ConclusionEntry]`. Verify the method name by searching `agent_working_memory.py` for `get_conclusions` or `recent_conclusions`. Use whatever method name exists. If no such method exists, use `_conclusions` directly (the deque attribute).
 
 ---
 
@@ -422,7 +423,7 @@ Add a private helper method:
 import pytest
 import time
 
-from probos.cognitive.thought_store import ThoughtStore, THOUGHT_TYPES
+from probos.cognitive.thought_store import ThoughtStore, ThoughtType
 from probos.types import MemorySource
 
 

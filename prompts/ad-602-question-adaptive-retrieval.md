@@ -68,8 +68,10 @@ class QuestionAdaptiveConfig(BaseModel):
     """AD-602: Question-adaptive retrieval strategy configuration."""
 
     enabled: bool = True
-    strategy_overrides: dict[str, dict] = {}  # per-type weight overrides, e.g. {"TEMPORAL": {"recency_weight": 0.35}}
+    strategy_overrides: dict[str, dict] = Field(default_factory=dict)  # per-type weight overrides, e.g. {"TEMPORAL": {"recency_weight": 0.35}}
 ```
+
+**Builder:** Ensure `Field` is imported from `pydantic` (it should already be imported in `config.py`). Do NOT use a bare `{}` default for mutable types in Pydantic models.
 
 Wire into `SystemConfig` (after the last config field):
 
@@ -224,7 +226,7 @@ class RetrievalStrategySelector:
     def __init__(self, config: Any = None) -> None:
         self._overrides: dict[str, dict] = {}
         if config is not None:
-            self._overrides = getattr(config, "strategy_overrides", {})
+            self._overrides = config.strategy_overrides
 
     def select_strategy(self, question_type: QuestionType) -> RetrievalStrategy:
         """Select the optimal retrieval strategy for a question type.
@@ -280,8 +282,8 @@ In `__init__`, after the `self._consultation_protocol` line (added by AD-594), a
 
 ```python
         # AD-602: Question-adaptive retrieval
-        self._question_classifier: Any = None
-        self._retrieval_strategy_selector: Any = None
+        self._question_classifier: QuestionClassifier | None = None
+        self._retrieval_strategy_selector: RetrievalStrategySelector | None = None
 ```
 
 #### 3b: Lazy initialization in _recall_relevant_memories
@@ -296,16 +298,14 @@ At the start of `_recall_relevant_memories()`, after the existing guard checks a
                     QuestionClassifier,
                     RetrievalStrategySelector,
                 )
-                _qa_config = None
-                if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'question_adaptive'):
-                    _qa_config = self._runtime.config.question_adaptive
-                    if not _qa_config.enabled:
-                        self._question_classifier = False  # sentinel: disabled
-                if self._question_classifier is None:
+                _qa_config = self._runtime.config.question_adaptive
+                if not _qa_config.enabled:
+                    self._question_classifier = QuestionClassifier()  # init but won't be used
+                    self._retrieval_strategy_selector = None
+                else:
                     self._question_classifier = QuestionClassifier()
                     self._retrieval_strategy_selector = RetrievalStrategySelector(config=_qa_config)
             except Exception:
-                self._question_classifier = False  # sentinel: unavailable
                 logger.debug("AD-602: Question classifier unavailable", exc_info=True)
 ```
 
@@ -317,7 +317,7 @@ Inside the `try:` block of `_recall_relevant_memories()`, after the query string
             # AD-602: Classify query and select strategy
             _question_type = None
             _strategy = None
-            if self._question_classifier and self._question_classifier is not False:
+            if self._question_classifier and self._retrieval_strategy_selector:
                 try:
                     _question_type = self._question_classifier.classify(query)
                     _strategy = self._retrieval_strategy_selector.select_strategy(_question_type)

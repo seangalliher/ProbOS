@@ -176,6 +176,7 @@ Store as a local variable, not an instance attribute — it is per-cycle.
 8. `compress_episodes()` truncates by composite_score within token budget.
 9. `MemoryBudgetConfig` with Pydantic validation and sensible defaults.
 10. `CognitiveAgent` accepts optional config and creates per-cycle manager in `decide()`.
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`
 
 ## Test Plan
 

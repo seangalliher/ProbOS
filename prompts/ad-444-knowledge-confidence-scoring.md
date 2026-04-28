@@ -138,13 +138,13 @@ def set_confidence_tracker(self, tracker: Any) -> None:
 
 async def confirm_entry(self, entry_path: str) -> float | None:
     """AD-444: Confirm an entry, increasing its confidence score."""
-    if hasattr(self, "_confidence_tracker") and self._confidence_tracker:
+    if self._confidence_tracker is not None:
         return self._confidence_tracker.confirm(entry_path)
     return None
 
 async def contradict_entry(self, entry_path: str) -> float | None:
     """AD-444: Contradict an entry, decreasing its confidence score."""
-    if hasattr(self, "_confidence_tracker") and self._confidence_tracker:
+    if self._confidence_tracker is not None:
         return self._confidence_tracker.contradict(entry_path)
     return None
 ```
@@ -154,7 +154,7 @@ for the new entry:
 
 ```python
 # AD-444: Initialize confidence tracking for new entries
-if hasattr(self, "_confidence_tracker") and self._confidence_tracker:
+if self._confidence_tracker is not None:
     self._confidence_tracker.initialize_entry(path)
 ```
 
@@ -166,7 +166,7 @@ add a cross-reference of confidence scores.  This is read-only — no mutations.
 ```python
 # AD-444: Cross-reference confidence scores during quality assessment
 confidence_suppressed = 0
-if hasattr(self, "_confidence_tracker") and self._confidence_tracker:
+if self._confidence_tracker is not None:
     try:
         for entry in self._confidence_tracker.get_all_entries().values():
             if self._confidence_tracker.auto_supersede_check(entry.entry_path):
@@ -189,6 +189,8 @@ def set_confidence_tracker(self, tracker: Any) -> None:
     """AD-444: Late-bind confidence tracker."""
     self._confidence_tracker = tracker
 ```
+
+**Builder:** Initialize `self._confidence_tracker: Any = None` in `__init__()` of both `RecordsStore` and `DreamingEngine`. Check with `if self._confidence_tracker is not None:` -- do NOT use `hasattr()`.
 
 ### 6. Startup wiring — `src/probos/startup/dreaming.py`
 
@@ -249,3 +251,7 @@ All tests use `_Fake*` stubs.  No LLM calls.  No filesystem access.
 - `DECISIONS.md`: Add entry: "AD-444: In-memory confidence tracking for Ship's Records entries. Three-tier presentation (auto_apply/with_caveat/suppress). Wired into Dream Step 10 quality cross-reference."
 - `docs/development/roadmap.md`: Update AD-444 row status to Complete.
 - GitHub: Close issue #43.
+
+## Acceptance Criteria
+
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

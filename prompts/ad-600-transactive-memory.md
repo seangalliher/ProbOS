@@ -129,23 +129,19 @@ class ExpertMatch:
 class ExpertiseDirectory:
     """In-memory directory of agent expertise, built from dream clustering.
 
+    **Builder:** Config is always provided via Pydantic defaults. Do NOT add in-class fallback defaults.
+
     Parameters
     ----------
-    config : ExpertiseConfig-like or None
-        Configuration. If None, uses hardcoded defaults.
+    config : ExpertiseConfig
+        Configuration (always provided — Pydantic provides defaults).
     """
 
-    def __init__(self, config: Any = None) -> None:
-        if config is not None:
-            self._max_topics: int = config.max_topics_per_agent
-            self._min_confidence: float = config.min_confidence
-            self._decay_rate: float = config.decay_rate
-            self._top_k: int = getattr(config, "top_k_experts", 3)
-        else:
-            self._max_topics = 50
-            self._min_confidence = 0.1
-            self._decay_rate = 0.95
-            self._top_k = 3
+    def __init__(self, config: Any) -> None:
+        self._max_topics: int = config.max_topics_per_agent
+        self._min_confidence: float = config.min_confidence
+        self._decay_rate: float = config.decay_rate
+        self._top_k: int = config.top_k_experts
 
         # {agent_id: ExpertiseProfile}
         self._profiles: dict[str, ExpertiseProfile] = {}
@@ -295,13 +291,13 @@ class ExpertiseDirectory:
         topics_added = 0
         for cluster in clusters:
             # Extract topics from intent_types
-            intent_types = getattr(cluster, "intent_types", [])
+            intent_types = cluster.intent_types
             if not intent_types:
                 continue
 
             # Confidence = success_rate * normalized episode count
-            success_rate = getattr(cluster, "success_rate", 0.5)
-            episode_count = getattr(cluster, "episode_count", 1)
+            success_rate = cluster.success_rate
+            episode_count = cluster.episode_count
             # Normalize: more episodes = higher confidence, capped at 1.0
             count_factor = min(episode_count / 10.0, 1.0)
             confidence = success_rate * 0.7 + count_factor * 0.3
@@ -315,7 +311,7 @@ class ExpertiseDirectory:
             topics_added += len(intent_types)
 
             # Also extract from anchor_summary if available
-            anchor_summary = getattr(cluster, "anchor_summary", {})
+            anchor_summary = cluster.anchor_summary
             if anchor_summary:
                 departments = anchor_summary.get("departments", [])
                 if departments and isinstance(departments, list):
@@ -434,7 +430,7 @@ In the `query()` method, before the episodic tier query, add expertise routing l
                             len(_target_agent_ids), query_text[:50],
                         )
                 except Exception:
-                    logger.debug("AD-600: Expertise routing failed, falling back to full scan", exc_info=True)
+                    logger.warning("AD-600: Expertise routing failed, falling back to full scan", exc_info=True)
 ```
 
 **Builder:** If the episodic query already uses `agent_id` as a filter, keep it — the expertise routing is additive. If `_target_agent_ids` is populated AND the caller did not specify `agent_id`, use the first target as the agent scope. If the caller did specify `agent_id`, skip expertise routing (the caller already knows which shard to query). The intent is to narrow the search space, not override explicit requests.
@@ -589,8 +585,20 @@ class _FakeCluster:
 
 
 @pytest.fixture
-def directory():
-    return ExpertiseDirectory()
+def _fake_config():
+    """Minimal config stub matching ExpertiseConfig fields."""
+    @dataclass
+    class _Cfg:
+        max_topics_per_agent: int = 50
+        min_confidence: float = 0.1
+        decay_rate: float = 0.95
+        top_k_experts: int = 3
+    return _Cfg()
+
+
+@pytest.fixture
+def directory(_fake_config):
+    return ExpertiseDirectory(config=_fake_config)
 ```
 
 ---

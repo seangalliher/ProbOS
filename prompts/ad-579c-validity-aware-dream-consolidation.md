@@ -27,7 +27,7 @@ valid_from: float = 0.0    # min(valid_from or timestamp) across member episodes
 valid_until: float = 0.0   # max(valid_until) across members; 0.0 = open-ended
 ```
 
-### Add _compute_cluster_validity() Helper
+### Add compute_cluster_validity() Helper
 
 File: `src/probos/cognitive/episode_clustering.py`
 
@@ -142,6 +142,7 @@ After modifying `cluster_episodes()` to compute validity, verify the return type
 5. Dream Step 7 evolution marks superseded episode sources with `valid_until = now`.
 6. Open-ended validity (any member has `valid_until == 0`) propagates correctly.
 7. All changes are backward compatible — clusters without validity data default to `0.0`.
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`
 
 ## Test Plan
 

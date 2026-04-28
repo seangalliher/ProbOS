@@ -233,3 +233,7 @@ Use `_Fake*` stubs for ChromaDB collection. Use `tmp_path` for any file paths.
 - `PROGRESS.md`: Add AD-673 as CLOSED
 - `DECISIONS.md`: Add entry — "AD-673: AnomalyWindowManager populates AnchorFrame.anomaly_window_id. Triggered by trust cascade and LLM health events. Single concurrent window model. Episodes stamped during store() via frozen-dataclass rebuild. Retrospective tagging deferred (stub only)."
 - `docs/development/roadmap.md`: Update AD-673 row status
+
+## Acceptance Criteria
+
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

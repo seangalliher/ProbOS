@@ -26,7 +26,7 @@ EpisodicMemory.store(new_episode)
             +-- _find_neighbors(episode, k=5)
             |       |
             |       v
-            |   EpisodicMemory.recall_weighted() or collection.query()
+            |   EpisodicMemory.recall_weighted()
             |
             +-- for each neighbor above similarity_threshold:
             |       +-- _propagate_metadata(source, target, "relates_to")
@@ -36,9 +36,9 @@ EpisodicMemory.store(new_episode)
         EvolutionReport(episodes_updated, relations_added, anchor_fields_propagated)
 ```
 
----
+**Performance:** `evolve_on_store` runs asynchronously after persistence. It performs one `recall_weighted()` call (k=5) and up to 2xk metadata updates. No LLM calls. Expected overhead: <10ms per store at default settings.
 
-## File Changes
+---
 
 | File | Change |
 |------|--------|
@@ -121,33 +121,30 @@ class RetroactiveEvolver:
 
     Parameters
     ----------
-    config : RetroactiveConfig-like or None
-        Configuration. If None, uses hardcoded defaults.
+    config : RetroactiveConfig-like
+        Configuration. Required — always provided via Pydantic defaults.
     episodic_memory : EpisodicMemory-like or None
         Reference to episodic memory for neighbor lookup and metadata updates.
+
+    **Builder:** Config is always provided via Pydantic defaults. Do NOT add in-class fallback defaults.
+    All ChromaDB access MUST go through EpisodicMemory's public API
+    (``update_episode_metadata``, ``recall_weighted``). Do NOT access ``_collection``
+    directly — this violates Law of Demeter and Cloud-Ready Storage principles.
     """
 
     def __init__(
         self,
-        config: Any = None,
+        config: Any,
         episodic_memory: Any = None,
     ) -> None:
         self._episodic_memory = episodic_memory
 
-        if config is not None:
-            self._enabled: bool = config.enabled
-            self._neighbor_k: int = config.neighbor_k
-            self._similarity_threshold: float = config.similarity_threshold
-            self._max_relations: int = config.max_relations_per_episode
-            self._propagate_watch_section: bool = config.propagate_watch_section
-            self._propagate_department: bool = config.propagate_department
-        else:
-            self._enabled = True
-            self._neighbor_k = 5
-            self._similarity_threshold = 0.7
-            self._max_relations = 10
-            self._propagate_watch_section = True
-            self._propagate_department = True
+        self._enabled: bool = config.enabled
+        self._neighbor_k: int = config.neighbor_k
+        self._similarity_threshold: float = config.similarity_threshold
+        self._max_relations: int = config.max_relations_per_episode
+        self._propagate_watch_section: bool = config.propagate_watch_section
+        self._propagate_department: bool = config.propagate_department
 
     def set_episodic_memory(self, memory: Any) -> None:
         """Late-bind episodic memory reference."""
@@ -181,16 +178,14 @@ class RetroactiveEvolver:
         neighbors = await self._find_neighbors(new_episode)
 
         for neighbor in neighbors:
-            neighbor_episode = neighbor.episode if hasattr(neighbor, 'episode') else neighbor
-            neighbor_id = neighbor_episode.id if hasattr(neighbor_episode, 'id') else str(neighbor_episode)
+            neighbor_episode = neighbor.episode
+            neighbor_id = neighbor_episode.id
 
             # Skip self-relation
             if neighbor_id == new_episode.id:
                 continue
 
-            similarity = neighbor.composite_score if hasattr(neighbor, 'composite_score') else 0.0
-            if hasattr(neighbor, 'semantic_similarity'):
-                similarity = max(similarity, neighbor.semantic_similarity)
+            similarity = max(neighbor.composite_score, neighbor.semantic_similarity)
 
             if similarity < self._similarity_threshold:
                 continue
@@ -259,50 +254,16 @@ class RetroactiveEvolver:
         if not query.strip():
             return []
 
-        # Use the collection's query method directly for lightweight lookup
-        collection = getattr(self._episodic_memory, '_collection', None)
-        if collection is None:
-            return []
-
         try:
-            results = collection.query(
-                query_texts=[query],
-                n_results=k + 1,  # +1 to account for self-match
-                include=["metadatas", "documents", "distances"],
+            results = await self._episodic_memory.recall_weighted(
+                query=query,
+                k=k,
             )
         except Exception:
-            logger.debug("AD-608: Neighbor query failed", exc_info=True)
+            logger.debug("AD-608: Neighbor recall failed", exc_info=True)
             return []
 
-        if not results or not results.get("ids") or not results["ids"][0]:
-            return []
-
-        # Convert to lightweight neighbor objects
-        neighbors: list[Any] = []
-        ids = results["ids"][0]
-        distances = results.get("distances", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        documents = results.get("documents", [[]])[0]
-
-        for i, ep_id in enumerate(ids):
-            if ep_id == episode.id:
-                continue  # Skip self
-
-            # ChromaDB returns L2 distance; convert to similarity
-            distance = distances[i] if i < len(distances) else 1.0
-            similarity = max(0.0, 1.0 - distance)
-
-            _NeighborResult = type('_NeighborResult', (), {
-                'episode': type('_Episode', (), {
-                    'id': ep_id,
-                    'anchors': None,
-                })(),
-                'composite_score': similarity,
-                'semantic_similarity': similarity,
-            })
-            neighbors.append(_NeighborResult())
-
-        return neighbors
+        return results
 
     def _classify_relation(
         self,
@@ -389,23 +350,28 @@ class RetroactiveEvolver:
         if not mem:
             return False
 
-        collection = getattr(mem, '_collection', None)
-        if collection is None:
+        # Read current relations via update_episode_metadata's public API
+        update_fn = getattr(mem, 'update_episode_metadata', None)
+        if not update_fn:
             return False
 
         try:
-            result = collection.get(ids=[episode_id], include=["metadatas"])
+            # Get current metadata to read existing relations
+            get_fn = getattr(mem, 'get_episode_metadata', None)
+            current_relations_json = "[]"
+            if get_fn:
+                meta = await get_fn(episode_id)
+                if meta is None:
+                    return False
+                current_relations_json = meta.get("relations_json", "[]")
+            else:
+                # Fallback: start with empty relations if no getter available
+                pass
         except Exception:
             return False
 
-        if not result or not result.get("ids"):
-            return False
-
-        meta = result["metadatas"][0] if result.get("metadatas") else {}
-        relations_json = meta.get("relations_json", "[]")
-
         try:
-            relations = json.loads(relations_json)
+            relations = json.loads(current_relations_json)
         except (json.JSONDecodeError, TypeError):
             relations = []
 
@@ -428,15 +394,8 @@ class RetroactiveEvolver:
             "timestamp": time.time(),
         })
 
-        meta["relations_json"] = json.dumps(relations)
-
         try:
-            # Use update_episode_metadata if available, otherwise upsert
-            update_fn = getattr(mem, 'update_episode_metadata', None)
-            if update_fn:
-                await update_fn(episode_id, {"relations_json": meta["relations_json"]})
-            else:
-                collection.update(ids=[episode_id], metadatas=[meta])
+            await update_fn(episode_id, {"relations_json": json.dumps(relations)})
         except Exception:
             logger.debug(
                 "AD-608: Failed to update relations for %s", episode_id, exc_info=True,
@@ -462,19 +421,19 @@ class RetroactiveEvolver:
         if source_anchors is None:
             return 0
 
-        collection = getattr(self._episodic_memory, '_collection', None)
-        if collection is None:
+        update_fn = getattr(self._episodic_memory, 'update_episode_metadata', None)
+        if not update_fn:
             return 0
 
-        try:
-            result = collection.get(ids=[target_id], include=["metadatas"])
-        except Exception:
-            return 0
+        # Read current metadata to check which fields are missing
+        get_fn = getattr(self._episodic_memory, 'get_episode_metadata', None)
+        meta: dict[str, Any] = {}
+        if get_fn:
+            try:
+                meta = await get_fn(target_id) or {}
+            except Exception:
+                return 0
 
-        if not result or not result.get("ids"):
-            return 0
-
-        meta = result["metadatas"][0] if result.get("metadatas") else {}
         updates: dict[str, str] = {}
         propagated = 0
 
@@ -493,13 +452,8 @@ class RetroactiveEvolver:
                 propagated += 1
 
         if updates and propagated > 0:
-            meta.update(updates)
             try:
-                update_fn = getattr(self._episodic_memory, 'update_episode_metadata', None)
-                if update_fn:
-                    await update_fn(target_id, updates)
-                else:
-                    collection.update(ids=[target_id], metadatas=[meta])
+                await update_fn(target_id, updates)
             except Exception:
                 logger.debug(
                     "AD-608: Failed to propagate anchor fields to %s",
@@ -688,51 +642,25 @@ class _FakeRetroactiveConfig:
         self.propagate_department = propagate_department
 
 
-class _FakeCollection:
-    """Stub ChromaDB collection for metadata tests."""
-
-    def __init__(self):
-        self._store: dict[str, dict] = {}  # id -> metadata
-
-    def get(self, ids, include=None):
-        found_ids = [i for i in ids if i in self._store]
-        if not found_ids:
-            return {"ids": [], "metadatas": [], "documents": []}
-        return {
-            "ids": found_ids,
-            "metadatas": [self._store[i] for i in found_ids],
-            "documents": ["" for _ in found_ids],
-        }
-
-    def update(self, ids, metadatas):
-        for i, eid in enumerate(ids):
-            self._store[eid] = metadatas[i]
-
-    def query(self, query_texts, n_results, include=None):
-        # Return all stored episodes as neighbors with low distance
-        all_ids = list(self._store.keys())[:n_results]
-        return {
-            "ids": [all_ids],
-            "distances": [[0.2 for _ in all_ids]],  # low distance = high similarity
-            "metadatas": [[self._store.get(i, {}) for i in all_ids]],
-            "documents": [["" for _ in all_ids]],
-        }
-
-
 class _FakeEpisodicMemory:
     """Stub episodic memory for evolver tests."""
 
     def __init__(self):
-        self._collection = _FakeCollection()
+        self._metadata_store: dict[str, dict] = {}  # id -> metadata
+        self._recall_results: list = []  # pre-loaded recall results
+
+    async def recall_weighted(self, query: str, k: int = 5, **kwargs):
+        """Return pre-loaded recall results."""
+        return self._recall_results[:k]
 
     async def update_episode_metadata(self, episode_id, metadata_updates):
-        result = self._collection.get(ids=[episode_id])
-        if result["ids"]:
-            meta = result["metadatas"][0]
-            meta.update(metadata_updates)
-            self._collection.update(ids=[episode_id], metadatas=[meta])
-            return True
-        return False
+        if episode_id not in self._metadata_store:
+            return False
+        self._metadata_store[episode_id].update(metadata_updates)
+        return True
+
+    async def get_episode_metadata(self, episode_id):
+        return self._metadata_store.get(episode_id)
 
 
 @pytest.fixture

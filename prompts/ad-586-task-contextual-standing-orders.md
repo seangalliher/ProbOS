@@ -107,6 +107,8 @@ Add a module-level reference for the TaskContext instance (same pattern as `_dir
 _task_context: Any = None
 ```
 
+**Architectural note:** This follows the existing `_directive_store` / `_skill_catalog` module-level setter pattern in `standing_orders.py`. If refactoring to runtime injection, do so in a separate AD that also migrates the existing globals.
+
 Add setter:
 ```python
 def set_task_context(ctx: Any) -> None:
@@ -156,7 +158,7 @@ Locate the call to `compose_instructions()`. Before that call, classify the task
 ```python
 # AD-586: Classify current task for contextual standing orders
 _task_type = None
-if hasattr(self, "_task_context") and self._task_context:
+if self._task_context is not None:
     intent_name = observation.get("intent", "")
     _task_type = self._task_context.classify_task(intent_name)
 ```
@@ -170,7 +172,7 @@ def set_task_context(self, ctx: Any) -> None:
     self._task_context = ctx
 ```
 
-Initialize `self._task_context: Any = None` in `__init__()`.
+**Builder:** Initialize `self._task_context: Any = None` in `CognitiveAgent.__init__()` (in the `**kwargs` extraction section). Check with `if self._task_context is not None:` -- do NOT use `hasattr()`.
 
 ### 5. Create Default Task Order Files
 
@@ -276,3 +278,7 @@ Use `tmp_path` for task order directories. No mocking of file system.
 - `PROGRESS.md`: Add AD-586 as CLOSED
 - `DECISIONS.md`: Add entry — "AD-586: Task-contextual standing orders. Tier 5.5 inserted between Agent Orders and Active Directives. Six task types (build/analyze/communicate/diagnose/review/general) classified from intent name via hardcoded dict. Markdown files in config/task_orders/."
 - `docs/development/roadmap.md`: Update AD-586 row status
+
+## Acceptance Criteria
+
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

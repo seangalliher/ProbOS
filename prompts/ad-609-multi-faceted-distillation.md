@@ -135,10 +135,12 @@ class ComparativeInsight:
 class FailureDistiller:
     """Extracts structured failure patterns and comparative insights.
 
+    **Builder:** Config is always provided via Pydantic defaults. Do NOT add in-class fallback defaults.
+
     Parameters
     ----------
-    config : DistillationConfig-like or None
-        Configuration. If None, uses hardcoded defaults.
+    config : DistillationConfig
+        Configuration (always provided — Pydantic provides defaults).
     procedure_store : ProcedureStore or None
         For persisting failure-derived procedures.
     """
@@ -152,6 +154,7 @@ class FailureDistiller:
             self._min_cluster_size: int = config.min_failure_cluster_size
             self._comparative_enabled: bool = config.comparative_enabled
         else:
+            # Only for unit tests that construct without config
             self._min_cluster_size = 3
             self._comparative_enabled = True
 
@@ -181,13 +184,13 @@ class FailureDistiller:
 
         results: list[Any] = []
         for cluster in clusters:
-            if not getattr(cluster, 'is_failure_dominant', False):
+            if not cluster.is_failure_dominant:
                 continue
-            if getattr(cluster, 'episode_count', 0) < self._min_cluster_size:
+            if cluster.episode_count < self._min_cluster_size:
                 continue
 
             signals = self._extract_failure_signals(cluster)
-            intent_types = getattr(cluster, 'intent_types', [])
+            intent_types = cluster.intent_types
             if not intent_types:
                 continue
 
@@ -208,8 +211,8 @@ class FailureDistiller:
                     f"Common trigger type(s): {', '.join(signals['trigger_types'])}."
                 )
             description_parts.append(
-                f"Failure rate: {(1 - getattr(cluster, 'success_rate', 0.5)):.0%} "
-                f"across {getattr(cluster, 'episode_count', 0)} episodes."
+                f"Failure rate: {(1 - cluster.success_rate):.0%} "
+                f"across {cluster.episode_count} episodes."
             )
 
             procedure = Procedure(
@@ -217,8 +220,8 @@ class FailureDistiller:
                 name=f"Failure: {intent_types[0]}" if intent_types else "Failure pattern",
                 description=" ".join(description_parts),
                 intent_types=list(intent_types),
-                origin_cluster_id=getattr(cluster, 'cluster_id', ''),
-                origin_agent_ids=list(getattr(cluster, 'participating_agents', [])),
+                origin_cluster_id=cluster.cluster_id,
+                origin_agent_ids=list(cluster.participating_agents),
                 extraction_date=time.time(),
                 is_negative=True,
                 steps=[ProcedureStep(
@@ -230,7 +233,7 @@ class FailureDistiller:
 
             logger.debug(
                 "AD-609: Extracted failure pattern from cluster %s — %s",
-                getattr(cluster, 'cluster_id', '')[:8],
+                cluster.cluster_id[:8],
                 procedure.name,
             )
 
@@ -268,12 +271,12 @@ class FailureDistiller:
         # Group by intent type
         success_by_intent: dict[str, list[Any]] = {}
         for cluster in success_clusters:
-            for intent in getattr(cluster, 'intent_types', []):
+            for intent in cluster.intent_types:
                 success_by_intent.setdefault(intent, []).append(cluster)
 
         failure_by_intent: dict[str, list[Any]] = {}
         for cluster in failure_clusters:
-            for intent in getattr(cluster, 'intent_types', []):
+            for intent in cluster.intent_types:
                 failure_by_intent.setdefault(intent, []).append(cluster)
 
         # Find overlapping intents
@@ -321,8 +324,8 @@ class FailureDistiller:
                 differentiators.append("No clear structural differentiator found")
 
             # Success pattern summary
-            s_ep_count = sum(getattr(c, 'episode_count', 0) for c in s_clusters)
-            f_ep_count = sum(getattr(c, 'episode_count', 0) for c in f_clusters)
+            s_ep_count = sum(c.episode_count for c in s_clusters)
+            f_ep_count = sum(c.episode_count for c in f_clusters)
 
             insight = ComparativeInsight(
                 intent_type=intent,
@@ -331,6 +334,11 @@ class FailureDistiller:
                 differentiating_factor="; ".join(differentiators),
                 confidence=min(s_ep_count, f_ep_count) / max(s_ep_count + f_ep_count, 1),
             )
+
+            # **Note:** The confidence formula `min(s, f) / max(s + f, 1)` saturates at 0.5
+            # by construction. This is intentional — a perfectly balanced success/failure split
+            # represents maximum uncertainty, not maximum confidence.
+
             insights.append(insight)
 
             logger.debug(
@@ -353,13 +361,13 @@ class FailureDistiller:
         dict
             Extracted signals: departments, agent_count, trigger_types.
         """
-        anchor_summary = getattr(cluster, 'anchor_summary', {}) or {}
+        anchor_summary = cluster.anchor_summary or {}
         return {
             "departments": anchor_summary.get("departments", []),
             "trigger_types": anchor_summary.get("trigger_types", []),
-            "agent_count": len(getattr(cluster, 'participating_agents', [])),
-            "episode_count": getattr(cluster, 'episode_count', 0),
-            "success_rate": getattr(cluster, 'success_rate', 0.0),
+            "agent_count": len(cluster.participating_agents),
+            "episode_count": cluster.episode_count,
+            "success_rate": cluster.success_rate,
         }
 
     def _aggregate_signals(self, clusters: list[Any]) -> dict[str, Any]:
@@ -379,10 +387,10 @@ class FailureDistiller:
         total_agents = 0
         total_variance = 0.0
         for cluster in clusters:
-            summary = getattr(cluster, 'anchor_summary', {}) or {}
+            summary = cluster.anchor_summary or {}
             all_departments.extend(summary.get("departments", []))
-            total_agents += len(getattr(cluster, 'participating_agents', []))
-            total_variance += getattr(cluster, 'variance', 0.0)
+            total_agents += len(cluster.participating_agents)
+            total_variance += cluster.variance
 
         n = max(len(clusters), 1)
         return {
