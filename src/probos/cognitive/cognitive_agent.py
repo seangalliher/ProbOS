@@ -11,6 +11,7 @@ import re
 import time
 import uuid
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Any, ClassVar
 
 from probos.events import EventType
@@ -37,6 +38,14 @@ _CHAIN_ELIGIBLE_INTENTS: frozenset[str] = frozenset({
     "ward_room_notification",
     "proactive_think",
 })
+
+
+class SensoriumLayer(StrEnum):
+    """AD-666: Three-layer classification for agent context injections."""
+
+    PROPRIOCEPTION = "proprioception"
+    INTEROCEPTION = "interoception"
+    EXTEROCEPTION = "exteroception"
 
 
 def derive_communication_context(
@@ -73,6 +82,23 @@ class CognitiveAgent(BaseAgent):
     # Subclasses MUST set these (or pass via __init__)
     instructions: str | None = None
     agent_type: str = "cognitive"
+
+    # AD-666: Agent Sensorium Registry — formal inventory of context injections.
+    SENSORIUM_REGISTRY: ClassVar[dict[str, tuple[SensoriumLayer, str]]] = {
+        "_build_temporal_context": (SensoriumLayer.PROPRIOCEPTION, "Time, age, uptime, crew complement"),
+        "_get_comm_proficiency_guidance": (SensoriumLayer.PROPRIOCEPTION, "Communication tier guidance"),
+        "_detect_self_in_content": (SensoriumLayer.PROPRIOCEPTION, "Cross-context self-recognition"),
+        "_build_dm_self_monitoring": (SensoriumLayer.PROPRIOCEPTION, "DM repetition self-detection"),
+        "_confabulation_guard": (SensoriumLayer.PROPRIOCEPTION, "Authority-calibrated confab guard"),
+        "_build_crew_complement": (SensoriumLayer.PROPRIOCEPTION, "Anti-confabulation crew roster"),
+        "_build_cognitive_baseline": (SensoriumLayer.INTEROCEPTION, "Universal injection: temporal, WM, metrics, ontology"),
+        "_build_cognitive_extensions": (SensoriumLayer.INTEROCEPTION, "Proactive-conditional: self-mon, telemetry, overrides"),
+        "_build_cognitive_state": (SensoriumLayer.INTEROCEPTION, "Meta-method: merges baseline + extensions"),
+        "_format_memory_section": (SensoriumLayer.INTEROCEPTION, "Episodic memories with anchor context"),
+        "_build_situation_awareness": (SensoriumLayer.EXTEROCEPTION, "WR activity, alerts, events, infra, subordinates"),
+        "_build_active_game_context": (SensoriumLayer.EXTEROCEPTION, "Active game board state"),
+        "_build_user_message": (SensoriumLayer.EXTEROCEPTION, "Primary prompt assembly (DM/WR paths)"),
+    }
 
     def __init__(self, **kwargs: Any) -> None:
         # Extract instructions from kwargs if provided (overrides class attr)
@@ -2001,9 +2027,13 @@ class CognitiveAgent(BaseAgent):
 
         # AD-644 Phase 3: Situation awareness — environmental perception
         # Only runs when context_parts available (proactive path)
+        _situation: dict[str, str] = {}
         if _context_parts:
             _situation = self._build_situation_awareness(_context_parts)
             observation.update(_situation)
+
+        # AD-666: Sensorium budget tracking — observability, never blocks
+        self._track_sensorium_budget(_cognitive_state, _situation)
 
         # BF-189: Pre-format memories
         raw_memories = observation.get("recent_memories", [])
@@ -2328,6 +2358,13 @@ class CognitiveAgent(BaseAgent):
             observation["cognitive_skill_instructions"] = cognitive_skill_instructions
             observation["cognitive_skill_name"] = skill_entries[0].name
 
+        # AD-669: Inject sibling thread conclusions into observation
+        _wm = getattr(self, '_working_memory', None)
+        if _wm:
+            _sibling_text = _wm.render_conclusions(exclude_thread=intent.id)
+            if _sibling_text:
+                observation["_sibling_conclusions"] = _sibling_text
+
         decision = await self.decide(observation)
         decision["intent"] = intent.intent  # AD-398: propagate intent name to act()
         # BF-177: propagate duty info so domain agents can distinguish duty-triggered thinks
@@ -2496,6 +2533,22 @@ class CognitiveAgent(BaseAgent):
                     )
         except Exception:
             logger.debug("AD-573: Working memory action record failed", exc_info=True)
+
+        # AD-669: Record conclusion for cross-thread sharing
+        try:
+            _wm = getattr(self, '_working_memory', None)
+            if _wm:
+                _conclusion_summary = self._extract_conclusion_summary(decision, result)
+                if _conclusion_summary:
+                    _conclusion_type = self._classify_conclusion(intent, decision)
+                    _wm.record_conclusion(
+                        thread_id=intent.id,
+                        conclusion_type=_conclusion_type,
+                        summary=_conclusion_summary,
+                        relevance_tags=self._extract_relevance_tags(intent),
+                    )
+        except Exception:
+            logger.debug("AD-669: Conclusion recording failed", exc_info=True)
 
         # AD-645 Phase 3: Store composition brief as metacognitive memory
         try:
@@ -3135,6 +3188,52 @@ class CognitiveAgent(BaseAgent):
             return f"Proactive observation: '{output[:150]}'"
         return f"Handled {intent_type}: '{output[:100]}'"
 
+    @staticmethod
+    def _extract_conclusion_summary(decision: dict, result: dict) -> str:
+        """AD-669: Extract a one-line conclusion from chain execution results."""
+        llm_output = decision.get("llm_output", "")
+        if not llm_output or "[NO_RESPONSE]" in llm_output:
+            return ""
+
+        brief = decision.get("_composition_brief")
+        if isinstance(brief, dict):
+            situation = brief.get("situation", "")
+            if situation:
+                return situation[:200]
+
+        first_line = llm_output.split("\n")[0].strip()
+        if len(first_line) > 200:
+            return first_line[:197] + "..."
+        return first_line
+
+    @staticmethod
+    def _classify_conclusion(intent, decision: dict) -> "ConclusionType":
+        """AD-669: Classify conclusion type from intent and decision context."""
+        from probos.cognitive.agent_working_memory import ConclusionType
+
+        llm_output = (decision.get("llm_output") or "").lower()
+        if "escalat" in llm_output or "captain" in llm_output or decision.get("compound"):
+            return ConclusionType.ESCALATION
+        if intent.intent == "proactive_think":
+            return ConclusionType.OBSERVATION
+        if decision.get("duty"):
+            return ConclusionType.COMPLETION
+        return ConclusionType.DECISION
+
+    @staticmethod
+    def _extract_relevance_tags(intent) -> list[str]:
+        """AD-669: Extract relevance tags from the intent for conclusion indexing."""
+        tags: list[str] = []
+        if intent.intent:
+            tags.append(intent.intent)
+        channel = intent.params.get("channel_name", "")
+        if channel:
+            tags.append(f"channel:{channel}")
+        topic = intent.params.get("topic", "")
+        if topic:
+            tags.append(f"topic:{topic}")
+        return tags[:5]
+
     async def _build_dm_self_monitoring(self, thread_id: str) -> str | None:
         """AD-623: Lightweight self-monitoring for DM/WR response path.
 
@@ -3559,6 +3658,9 @@ class CognitiveAgent(BaseAgent):
         Delegates to baseline (always runs) + extensions (context_parts-dependent).
         Baseline provides agent-intrinsic self-knowledge; extensions override with
         richer versions when proactive.py's context_parts is available.
+
+        AD-666: This is the interoception hub of the Agent Sensorium — the agent's
+        structured self-state snapshot. See SENSORIUM_REGISTRY for the full inventory.
         """
         state = self._build_cognitive_baseline(observation or {})
         if context_parts:
@@ -3570,6 +3672,58 @@ class CognitiveAgent(BaseAgent):
                 else:
                     state[key] = val
         return state
+
+    def _track_sensorium_budget(
+        self,
+        cognitive_state: dict[str, str],
+        situation: dict[str, str],
+    ) -> int:
+        """AD-666: Measure sensorium injection size and emit a warning event over budget."""
+        cognitive_chars = sum(
+            len(value) for value in cognitive_state.values() if isinstance(value, str)
+        )
+        situation_chars = sum(
+            len(value) for value in situation.values() if isinstance(value, str)
+        )
+        total_chars = cognitive_chars + situation_chars
+
+        runtime = getattr(self, "_runtime", None)
+        threshold = 6000
+        sensorium_config = getattr(getattr(runtime, "config", None), "sensorium", None)
+        if sensorium_config is not None:
+            if not getattr(sensorium_config, "enabled", True):
+                return total_chars
+            configured_threshold = getattr(sensorium_config, "token_budget_warning", threshold)
+            if isinstance(configured_threshold, int):
+                threshold = configured_threshold
+
+        if total_chars > threshold:
+            agent_id = getattr(self, "id", "unknown")
+            callsign = self._resolve_callsign() or agent_id
+            logger.warning(
+                "AD-666: Sensorium budget exceeded for %s: %d chars (threshold: %d). "
+                "Cognitive state: %d chars, situation: %d chars. "
+                "Context may be crowding out instruction space.",
+                callsign,
+                total_chars,
+                threshold,
+                cognitive_chars,
+                situation_chars,
+            )
+            if runtime and hasattr(runtime, "_emit_event"):
+                runtime._emit_event(
+                    EventType.SENSORIUM_BUDGET_EXCEEDED,
+                    {
+                        "agent_id": agent_id,
+                        "callsign": callsign,
+                        "total_chars": total_chars,
+                        "threshold": threshold,
+                        "cognitive_state_chars": cognitive_chars,
+                        "situation_chars": situation_chars,
+                    },
+                )
+
+        return total_chars
 
     def _build_situation_awareness(self, context_parts: dict) -> dict[str, str]:
         """AD-644 Phase 3: Extract situation awareness data for chain prompts.
@@ -3828,7 +3982,17 @@ class CognitiveAgent(BaseAgent):
 
     async def _build_user_message(self, observation: dict) -> str:
         """Build the user message from the observation dict.
-        Override in subclasses for custom formatting."""
+        Override in subclasses for custom formatting.
+
+        AD-666 Injection Ordering Audit:
+        Chain path: cognitive state, situation awareness, sensorium budget tracking,
+        then chain ANALYZE prompt rendering. DM path: temporal awareness, cognitive
+        zone, telemetry, working memory, episodic memories, Oracle context, source
+        attribution, session history, active game context, then Captain message.
+        WR path: channel/thread header, temporal awareness, cognitive zone, DM
+        self-monitoring, telemetry, working memory, episodic memories,
+        self-recognition, thread context, then author message.
+        """
         intent_name = observation.get("intent", "unknown")
         params = observation.get("params", {})
 

@@ -9,6 +9,7 @@ import pytest
 from probos.cognitive.agent_working_memory import (
     ActiveEngagement,
     AgentWorkingMemory,
+    NamedBuffer,
     WorkingMemoryEntry,
 )
 
@@ -277,3 +278,146 @@ class TestSerialization:
         restored = AgentWorkingMemory.from_dict(data)
         ctx = restored.render_context()
         assert "Restored from stasis" in ctx
+
+
+class TestNamedBuffers:
+    """AD-667: Named working memory buffer tests."""
+
+    def test_named_buffer_append_and_len(self):
+        buffer = NamedBuffer(name="duty", token_budget=100)
+        entry = WorkingMemoryEntry("Action", "action", "dm")
+
+        buffer.append(entry)
+
+        assert len(buffer) == 1
+        assert buffer.entries == [entry]
+
+    def test_named_buffer_render_within_budget(self):
+        buffer = NamedBuffer(name="duty", token_budget=100)
+        buffer.append(WorkingMemoryEntry("Action one", "action", "dm"))
+
+        rendered = buffer.render()
+
+        assert "[Duty]:" in rendered
+        assert "Action one" in rendered
+
+    def test_named_buffer_render_evicts_oldest(self):
+        buffer = NamedBuffer(name="duty", token_budget=10)
+        buffer.append(WorkingMemoryEntry("old " + "x" * 36, "action", "dm"))
+        buffer.append(WorkingMemoryEntry("new " + "y" * 36, "action", "dm"))
+
+        rendered = buffer.render()
+
+        assert "new" in rendered
+        assert "old" not in rendered
+
+    def test_named_buffer_render_empty(self):
+        buffer = NamedBuffer(name="duty", token_budget=100)
+
+        assert buffer.render() == ""
+
+    def test_record_action_routes_to_duty(self):
+        wm = AgentWorkingMemory()
+        wm.record_action("Did something", source="dm")
+
+        duty = wm.get_buffer("duty")
+        assert duty is not None
+        assert duty.entries[0].content == "Did something"
+
+    def test_record_observation_routes_to_ship(self):
+        wm = AgentWorkingMemory()
+        wm.record_observation("Noticed something", source="proactive")
+
+        ship = wm.get_buffer("ship")
+        assert ship is not None
+        assert ship.entries[0].content == "Noticed something"
+
+    def test_record_conversation_routes_to_social(self):
+        wm = AgentWorkingMemory()
+        wm.record_conversation("Talked about X", partner="Captain", source="dm")
+
+        social = wm.get_buffer("social")
+        assert social is not None
+        assert social.entries[0].content == "Talked about X"
+
+    def test_record_event_routes_to_ship(self):
+        wm = AgentWorkingMemory()
+        wm.record_event("System rebooted")
+
+        ship = wm.get_buffer("ship")
+        assert ship is not None
+        assert ship.entries[0].content == "System rebooted"
+
+    def test_record_reasoning_routes_to_duty(self):
+        wm = AgentWorkingMemory()
+        wm.record_reasoning("Reasoned about X", source="chain")
+
+        duty = wm.get_buffer("duty")
+        assert duty is not None
+        assert duty.entries[0].content == "Reasoned about X"
+
+    def test_render_buffers_single(self):
+        wm = AgentWorkingMemory()
+        wm.record_action("Duty item", source="dm")
+        wm.record_conversation("Social item", partner="Captain", source="dm")
+
+        rendered = wm.render_buffers(["duty"])
+
+        assert "Duty item" in rendered
+        assert "Social item" not in rendered
+
+    def test_render_buffers_multiple(self):
+        wm = AgentWorkingMemory()
+        wm.record_action("Duty item", source="dm")
+        wm.record_conversation("Social item", partner="Captain", source="dm")
+        wm.record_event("Ship item")
+        wm.add_engagement(ActiveEngagement("game", "g-1", "Engagement item", {}))
+
+        rendered = wm.render_buffers(["duty", "engagement"])
+
+        assert "Duty item" in rendered
+        assert "Engagement item" in rendered
+        assert "Social item" not in rendered
+        assert "Ship item" not in rendered
+
+    def test_render_buffers_unknown_name_warns(self, caplog):
+        wm = AgentWorkingMemory()
+        wm.record_action("Duty item", source="dm")
+
+        with caplog.at_level("WARNING"):
+            rendered = wm.render_buffers(["duty", "nonexistent"])
+
+        assert "Duty item" in rendered
+        assert "Unknown working memory buffer" in caplog.text
+
+    def test_to_dict_includes_named_buffers(self):
+        wm = AgentWorkingMemory()
+        wm.record_action("Duty item", source="dm")
+
+        data = wm.to_dict()
+
+        assert "named_buffers" in data
+        assert data["named_buffers"]["duty"]["name"] == "duty"
+        assert data["named_buffers"]["duty"]["entries"][0]["content"] == "Duty item"
+
+    def test_from_dict_restores_named_buffers(self):
+        wm = AgentWorkingMemory()
+        wm.record_action("Duty item", source="dm")
+        data = wm.to_dict()
+
+        restored = AgentWorkingMemory.from_dict(data)
+        duty = restored.get_buffer("duty")
+
+        assert duty is not None
+        assert duty.entries[0].content == "Duty item"
+
+    def test_from_dict_legacy_no_named_buffers(self):
+        wm = AgentWorkingMemory()
+        wm.record_action("Legacy action", source="dm")
+        data = wm.to_dict()
+        data.pop("named_buffers")
+
+        restored = AgentWorkingMemory.from_dict(data)
+
+        assert "Legacy action" in restored.render_context()
+        assert all(len(restored.get_buffer(name) or []) == 0 for name in restored.buffer_names)

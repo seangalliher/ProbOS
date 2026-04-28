@@ -19,7 +19,10 @@ import time
 import logging
 from collections import deque
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
+
+from probos.cognitive.salience_filter import BackgroundStream, SalienceFilter
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +67,72 @@ class ActiveEngagement:
         return "\n".join(lines)
 
 
+class ConclusionType(StrEnum):
+    """AD-669: Types of conclusions a cognitive thread can reach."""
+
+    DECISION = "decision"
+    OBSERVATION = "observation"
+    ESCALATION = "escalation"
+    COMPLETION = "completion"
+
+
+@dataclass
+class ConclusionEntry:
+    """AD-669: A conclusion reached by a cognitive thread."""
+
+    thread_id: str
+    conclusion_type: ConclusionType
+    summary: str
+    timestamp: float = field(default_factory=time.time)
+    relevance_tags: list[str] = field(default_factory=list)
+    correlation_id: str | None = None
+
+
+@dataclass
+class NamedBuffer:
+    """A named semantic group of working memory entries with its own token budget."""
+
+    name: str
+    token_budget: int
+    _entries: deque[WorkingMemoryEntry] = field(default_factory=lambda: deque(maxlen=20))
+
+    def append(self, entry: WorkingMemoryEntry) -> None:
+        """Add an entry to this buffer."""
+        self._entries.append(entry)
+
+    def render(self, *, budget: int | None = None) -> str:
+        """Render this buffer's newest entries within its token budget."""
+        if not self._entries:
+            return ""
+
+        effective_budget = self.token_budget if budget is None else budget
+        selected: list[WorkingMemoryEntry] = []
+        total_tokens = 0
+        for entry in reversed(self._entries):
+            entry_tokens = entry.token_estimate()
+            if total_tokens + entry_tokens > effective_budget:
+                break
+            selected.append(entry)
+            total_tokens += entry_tokens
+
+        if not selected:
+            return ""
+
+        lines = [f"[{self.name.title()}]:"]
+        for entry in selected:
+            age = AgentWorkingMemory._format_age(entry.age_seconds())
+            lines.append(f"  - ({age} ago) {entry.content}")
+        return "\n".join(lines)
+
+    @property
+    def entries(self) -> list[WorkingMemoryEntry]:
+        """Read-only snapshot of current entries."""
+        return list(self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+
 class AgentWorkingMemory:
     """Unified working memory for a single agent instance.
 
@@ -84,8 +153,18 @@ class AgentWorkingMemory:
         max_recent_conversations: int = 5,
         max_events: int = 10,
         max_recent_reasoning: int = 5,
+        duty_budget: int = 600,
+        social_budget: int = 800,
+        ship_budget: int = 800,
+        engagement_budget: int = 800,
+        salience_filter: SalienceFilter | None = None,
+        agent_context: dict[str, Any] | None = None,
+        max_conclusions: int = 20,
     ) -> None:
         self._token_budget = token_budget
+        self._salience_filter = salience_filter
+        self._agent_context = dict(agent_context) if agent_context else {}
+        self._background_stream = BackgroundStream() if salience_filter is not None else None
 
         # Ring buffers for recent activity
         self._recent_actions: deque[WorkingMemoryEntry] = deque(maxlen=max_recent_actions)
@@ -93,6 +172,13 @@ class AgentWorkingMemory:
         self._recent_conversations: deque[WorkingMemoryEntry] = deque(maxlen=max_recent_conversations)
         self._recent_events: deque[WorkingMemoryEntry] = deque(maxlen=max_events)
         self._recent_reasoning: deque[WorkingMemoryEntry] = deque(maxlen=max_recent_reasoning)
+
+        self._named_buffers: dict[str, NamedBuffer] = {
+            "duty": NamedBuffer(name="duty", token_budget=duty_budget),
+            "social": NamedBuffer(name="social", token_budget=social_budget),
+            "ship": NamedBuffer(name="ship", token_budget=ship_budget),
+            "engagement": NamedBuffer(name="engagement", token_budget=engagement_budget),
+        }
 
         # Active engagements (games, tasks, collaborations)
         self._active_engagements: dict[str, ActiveEngagement] = {}
@@ -106,6 +192,44 @@ class AgentWorkingMemory:
         # AD-492: Current cognitive cycle correlation ID
         self._correlation_id: str | None = None
 
+        # AD-669: Cross-thread conclusion log
+        self._conclusions: deque[ConclusionEntry] = deque(maxlen=max_conclusions)
+
+    def get_buffer(self, name: str) -> NamedBuffer | None:
+        """AD-667: Get a named buffer by name."""
+        return self._named_buffers.get(name)
+
+    @property
+    def buffer_names(self) -> list[str]:
+        """AD-667: List available buffer names."""
+        return list(self._named_buffers.keys())
+
+    def set_agent_context(self, context: dict[str, Any]) -> None:
+        """AD-668: Update the agent context used for salience scoring."""
+        self._agent_context = dict(context)
+
+    def get_background_stream(self) -> BackgroundStream | None:
+        """AD-668: Return the background stream when salience filtering is configured."""
+        return self._background_stream
+
+    def _passes_salience_gate(self, entry: WorkingMemoryEntry) -> bool:
+        """AD-668: Return True when an entry should enter main working memory."""
+        if self._salience_filter is None:
+            return True
+        scored = self._salience_filter.score(entry, self._agent_context)
+        if not scored.promoted:
+            if self._background_stream is not None:
+                self._background_stream.add(scored)
+            logger.debug(
+                "AD-668: Entry demoted to background stream "
+                "(score=%.3f, threshold=%.3f, category=%s)",
+                scored.total,
+                self._salience_filter._threshold,
+                entry.category,
+            )
+            return False
+        return True
+
     # ── Write API (called by all cognitive pathways) ──────────────
 
     def record_action(
@@ -117,26 +241,34 @@ class AgentWorkingMemory:
         # AD-492: Attach correlation ID if active
         if self._correlation_id and "correlation_id" not in _meta:
             _meta["correlation_id"] = self._correlation_id
-        self._recent_actions.append(WorkingMemoryEntry(
+        entry = WorkingMemoryEntry(
             content=summary,
             category="action",
             source_pathway=source,
             metadata=_meta,
             knowledge_source=knowledge_source,
-        ))
+        )
+        if not self._passes_salience_gate(entry):
+            return
+        self._recent_actions.append(entry)
+        self._named_buffers["duty"].append(entry)
 
     def record_observation(
         self, summary: str, *, source: str, metadata: dict[str, Any] | None = None,
         knowledge_source: str = "unknown",
     ) -> None:
         """Record an observation from a proactive think or duty cycle."""
-        self._recent_observations.append(WorkingMemoryEntry(
+        entry = WorkingMemoryEntry(
             content=summary,
             category="observation",
             source_pathway=source,
             metadata=metadata or {},
             knowledge_source=knowledge_source,
-        ))
+        )
+        if not self._passes_salience_gate(entry):
+            return
+        self._recent_observations.append(entry)
+        self._named_buffers["ship"].append(entry)
 
     def record_conversation(
         self, summary: str, *, partner: str, source: str,
@@ -144,13 +276,17 @@ class AgentWorkingMemory:
         knowledge_source: str = "unknown",
     ) -> None:
         """Record a DM or Ward Room conversation exchange."""
-        self._recent_conversations.append(WorkingMemoryEntry(
+        entry = WorkingMemoryEntry(
             content=summary,
             category="conversation",
             source_pathway=source,
             metadata={"partner": partner, **(metadata or {})},
             knowledge_source=knowledge_source,
-        ))
+        )
+        if not self._passes_salience_gate(entry):
+            return
+        self._recent_conversations.append(entry)
+        self._named_buffers["social"].append(entry)
 
     def record_event(
         self, summary: str, *, source: str = "system",
@@ -158,30 +294,47 @@ class AgentWorkingMemory:
         knowledge_source: str = "unknown",
     ) -> None:
         """Record a system event the agent should be aware of."""
-        self._recent_events.append(WorkingMemoryEntry(
+        entry = WorkingMemoryEntry(
             content=summary,
             category="event",
             source_pathway=source,
             metadata=metadata or {},
             knowledge_source=knowledge_source,
-        ))
+        )
+        if not self._passes_salience_gate(entry):
+            return
+        self._recent_events.append(entry)
+        self._named_buffers["ship"].append(entry)
 
     def record_reasoning(
         self, summary: str, *, source: str, metadata: dict[str, Any] | None = None,
         knowledge_source: str = "unknown",
     ) -> None:
         """AD-645: Record a composition brief or reasoning artifact from the cognitive chain."""
-        self._recent_reasoning.append(WorkingMemoryEntry(
+        entry = WorkingMemoryEntry(
             content=summary,
             category="reasoning",
             source_pathway=source,
             metadata=metadata or {},
             knowledge_source=knowledge_source,
-        ))
+        )
+        if not self._passes_salience_gate(entry):
+            return
+        self._recent_reasoning.append(entry)
+        self._named_buffers["duty"].append(entry)
 
     def add_engagement(self, engagement: ActiveEngagement) -> None:
         """Register an active engagement (game, task, etc.)."""
         self._active_engagements[engagement.engagement_id] = engagement
+        self._named_buffers["engagement"].append(WorkingMemoryEntry(
+            content=engagement.summary,
+            category="engagement",
+            source_pathway="system",
+            metadata={
+                "engagement_id": engagement.engagement_id,
+                "engagement_type": engagement.engagement_type,
+            },
+        ))
 
     def remove_engagement(self, engagement_id: str) -> None:
         """Remove a completed/cancelled engagement."""
@@ -203,6 +356,13 @@ class AgentWorkingMemory:
     def update_cognitive_state(self, **kwargs: Any) -> None:
         """Update cognitive state fields (zone, cooldown, alert condition)."""
         self._cognitive_state.update(kwargs)
+        if kwargs:
+            summary_parts = [f"{key}={value}" for key, value in kwargs.items()]
+            self._named_buffers["ship"].append(WorkingMemoryEntry(
+                content=f"Cognitive state: {', '.join(summary_parts)}",
+                category="cognitive_state",
+                source_pathway="system",
+            ))
 
     def get_cognitive_zone(self) -> str | None:
         """AD-588: Return cognitive zone if set via AD-573 sync."""
@@ -223,6 +383,77 @@ class AgentWorkingMemory:
     def clear_correlation_id(self) -> None:
         """AD-492: Clear correlation ID after cognitive cycle completes."""
         self._correlation_id = None
+
+    def record_conclusion(
+        self,
+        thread_id: str,
+        conclusion_type: ConclusionType,
+        summary: str,
+        *,
+        relevance_tags: list[str] | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        """AD-669: Record a conclusion reached by a cognitive thread."""
+        if not summary or not summary.strip():
+            return
+        self._conclusions.append(ConclusionEntry(
+            thread_id=thread_id,
+            conclusion_type=conclusion_type,
+            summary=summary.strip()[:200],
+            relevance_tags=relevance_tags or [],
+            correlation_id=correlation_id or self._correlation_id,
+        ))
+
+    def get_active_conclusions(
+        self,
+        *,
+        exclude_thread: str | None = None,
+        max_age_seconds: float = 1800.0,
+    ) -> list[ConclusionEntry]:
+        """AD-669: Get conclusions from sibling threads, excluding the caller's own."""
+        now = time.time()
+        return [
+            conclusion for conclusion in self._conclusions
+            if (now - conclusion.timestamp) < max_age_seconds
+            and (exclude_thread is None or conclusion.thread_id != exclude_thread)
+        ]
+
+    def render_conclusions(
+        self,
+        *,
+        exclude_thread: str | None = None,
+        max_age_seconds: float = 1800.0,
+        budget: int = 500,
+    ) -> str:
+        """AD-669: Render sibling conclusions for LLM context injection."""
+        conclusions = self.get_active_conclusions(
+            exclude_thread=exclude_thread,
+            max_age_seconds=max_age_seconds,
+        )
+        if not conclusions:
+            return ""
+
+        lines = ["--- Sibling Thread Conclusions ---"]
+        total_chars = len(lines[0])
+        budget_chars = budget * CHARS_PER_TOKEN
+
+        for conclusion in conclusions:
+            age = self._format_age(time.time() - conclusion.timestamp)
+            tags = f" [{', '.join(conclusion.relevance_tags)}]" if conclusion.relevance_tags else ""
+            line = (
+                f"  - [{conclusion.conclusion_type.value}] ({age} ago) "
+                f"{conclusion.summary}{tags}"
+            )
+            if total_chars + len(line) > budget_chars:
+                break
+            lines.append(line)
+            total_chars += len(line)
+
+        if len(lines) == 1:
+            return ""
+
+        lines.append("--- End Sibling Conclusions ---")
+        return "\n".join(lines)
 
     # ── Read API (called during context construction) ─────────────
 
@@ -275,7 +506,12 @@ class AgentWorkingMemory:
                 obs_lines.append(f"  - ({age} ago) {entry.content}{_src_tag}")
             sections.append((5, "\n".join(obs_lines)))
 
-        # Priority 6: Cognitive state — zone, cooldown
+        # Priority 6: Sibling thread conclusions (AD-669)
+        conclusion_text = self.render_conclusions()
+        if conclusion_text:
+            sections.append((6, conclusion_text))
+
+        # Priority 7: Cognitive state — zone, cooldown
         if self._cognitive_state:
             state_parts = []
             if "zone" in self._cognitive_state:
@@ -283,14 +519,14 @@ class AgentWorkingMemory:
             if "cooldown_reason" in self._cognitive_state:
                 state_parts.append(f"Cooldown: {self._cognitive_state['cooldown_reason']}")
             if state_parts:
-                sections.append((6, "Cognitive state: " + " | ".join(state_parts)))
+                sections.append((7, "Cognitive state: " + " | ".join(state_parts)))
 
-        # Priority 7 (lowest): Recent events
+        # Priority 8 (lowest): Recent events
         if self._recent_events:
             event_lines = ["Recent events:"]
             for entry in list(self._recent_events)[-5:]:
                 event_lines.append(f"  - {entry.content}")
-            sections.append((7, "\n".join(event_lines)))
+            sections.append((8, "\n".join(event_lines)))
 
         if not sections:
             return ""
@@ -311,6 +547,41 @@ class AgentWorkingMemory:
             return ""
 
         return "--- Working Memory ---\n" + "\n\n".join(result_parts) + "\n--- End Working Memory ---"
+
+    def render_buffers(
+        self,
+        names: list[str],
+        *,
+        budget: int | None = None,
+    ) -> str:
+        """AD-667: Render specific named buffers within a total token budget."""
+        requested: list[NamedBuffer] = []
+        for name in names:
+            buffer = self._named_buffers.get(name)
+            if buffer is None:
+                logger.warning("AD-667: Unknown working memory buffer '%s'; skipping", name)
+                continue
+            requested.append(buffer)
+
+        if not requested:
+            return ""
+
+        total_configured_budget = sum(buffer.token_budget for buffer in requested)
+        if total_configured_budget <= 0:
+            return ""
+        effective_budget = budget if budget is not None else total_configured_budget
+
+        rendered: list[str] = []
+        for buffer in requested:
+            allocated = int(effective_budget * (buffer.token_budget / total_configured_budget))
+            buffer_text = buffer.render(budget=max(1, allocated))
+            if buffer_text:
+                rendered.append(buffer_text)
+
+        if not rendered:
+            return ""
+
+        return "--- Working Memory ---\n" + "\n\n".join(rendered) + "\n--- End Working Memory ---"
 
     def has_engagement(self, engagement_type: str | None = None) -> bool:
         """Check if agent has any (or specific type of) active engagement."""
@@ -393,6 +664,31 @@ class AgentWorkingMemory:
                 for eid, eng in self._active_engagements.items()
             },
             "cognitive_state": dict(self._cognitive_state),
+            "conclusions": [
+                {
+                    "thread_id": conclusion.thread_id,
+                    "conclusion_type": conclusion.conclusion_type.value,
+                    "summary": conclusion.summary,
+                    "timestamp": conclusion.timestamp,
+                    "relevance_tags": conclusion.relevance_tags,
+                    "correlation_id": conclusion.correlation_id,
+                }
+                for conclusion in self._conclusions
+            ],
+            "background_stream_count": len(self._background_stream) if self._background_stream else 0,
+            "named_buffers": {
+                name: {
+                    "name": buffer.name,
+                    "token_budget": buffer.token_budget,
+                    "entries": [
+                        {"content": entry.content, "category": entry.category,
+                         "source_pathway": entry.source_pathway, "timestamp": entry.timestamp,
+                         "metadata": entry.metadata, "knowledge_source": entry.knowledge_source}
+                        for entry in buffer.entries
+                    ],
+                }
+                for name, buffer in self._named_buffers.items()
+            },
         }
 
     @classmethod
@@ -430,6 +726,23 @@ class AgentWorkingMemory:
         _restore_entries(data.get("recent_events", []), wm._recent_events)
         _restore_entries(data.get("recent_reasoning", []), wm._recent_reasoning)
 
+        for raw_conclusion in data.get("conclusions", []):
+            age = now - raw_conclusion.get("timestamp", 0)
+            if age < stale_threshold_seconds:
+                try:
+                    wm._conclusions.append(ConclusionEntry(
+                        thread_id=raw_conclusion.get("thread_id", ""),
+                        conclusion_type=ConclusionType(
+                            raw_conclusion.get("conclusion_type", "completion"),
+                        ),
+                        summary=raw_conclusion.get("summary", ""),
+                        timestamp=raw_conclusion.get("timestamp", now),
+                        relevance_tags=raw_conclusion.get("relevance_tags", []),
+                        correlation_id=raw_conclusion.get("correlation_id"),
+                    ))
+                except (ValueError, KeyError):
+                    pass
+
         for eid, eng_data in data.get("active_engagements", {}).items():
             wm._active_engagements[eid] = ActiveEngagement(
                 engagement_type=eng_data.get("engagement_type", "unknown"),
@@ -442,10 +755,28 @@ class AgentWorkingMemory:
 
         wm._cognitive_state = data.get("cognitive_state", {})
 
+        for buffer_name, buffer_data in data.get("named_buffers", {}).items():
+            buffer = wm._named_buffers.get(buffer_name)
+            if buffer is None:
+                continue
+            buffer.token_budget = buffer_data.get("token_budget", buffer.token_budget)
+            for raw in buffer_data.get("entries", []):
+                age = now - raw.get("timestamp", 0)
+                if age < stale_threshold_seconds:
+                    buffer.append(WorkingMemoryEntry(
+                        content=raw["content"],
+                        category=raw.get("category", "unknown"),
+                        source_pathway=raw.get("source_pathway", "restored"),
+                        timestamp=raw.get("timestamp", now),
+                        metadata=raw.get("metadata", {}),
+                        knowledge_source=raw.get("knowledge_source", "unknown"),
+                    ))
+
         # Add stasis awareness marker
-        wm.record_event(
-            "Restored from stasis — working memory reloaded",
-            source="system",
-        )
+        wm._recent_events.append(WorkingMemoryEntry(
+            content="Restored from stasis — working memory reloaded",
+            category="event",
+            source_pathway="system",
+        ))
 
         return wm

@@ -158,6 +158,7 @@ class EventType(str, Enum):
     OBSERVABLE_STATE_MISMATCH = "observable_state_mismatch"  # AD-583f
     SELF_MODEL_DRIFT = "self_model_drift"  # AD-589: introspective confabulation detected
     DM_CONVERGENCE_DETECTED = "dm_convergence_detected"  # AD-623: DM thread converged
+    SENSORIUM_BUDGET_EXCEEDED = "sensorium_budget_exceeded"  # AD-666: sensorium injection over char threshold
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
     TOOL_LOCKED = "tool_locked"  # AD-423b: LOTO lock acquired
     TOOL_UNLOCKED = "tool_unlocked"  # AD-423b: LOTO lock released
@@ -602,6 +603,18 @@ class KnowledgeTierLoadedEvent(BaseEvent):
     snippet_count: int = 0
     intent_type: str = ""    # Contextual tier only
     query: str = ""          # On-demand tier only
+
+
+@dataclass
+class SensoriumBudgetExceededEvent(BaseEvent):
+    """AD-666: Sensorium injection exceeded char threshold."""
+    event_type: EventType = field(default=EventType.SENSORIUM_BUDGET_EXCEEDED, init=False)
+    agent_id: str = ""
+    callsign: str = ""
+    total_chars: int = 0
+    threshold: int = 0
+    cognitive_state_chars: int = 0
+    situation_chars: int = 0
 
 
 @dataclass

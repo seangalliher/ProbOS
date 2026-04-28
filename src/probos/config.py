@@ -767,6 +767,34 @@ class WorkingMemoryConfig(BaseModel):
     max_events: int = 10
     proactive_budget: int = 1500  # Lower budget for proactive (supplemental)
     stale_threshold_hours: float = 24.0  # Entries older than this pruned on restore
+    conclusion_ttl_seconds: float = 1800.0
+    max_conclusions: int = 20
+    duty_budget: int = 600
+    social_budget: int = 800
+    ship_budget: int = 800
+    engagement_budget: int = 800
+
+
+class SalienceConfig(BaseModel):
+    """AD-668: Salience filter for working memory promotion."""
+
+    enabled: bool = True
+    weights: dict[str, float] = {
+        "relevance": 0.30,
+        "recency": 0.25,
+        "novelty": 0.15,
+        "urgency": 0.20,
+        "social": 0.10,
+    }
+    threshold: float = 0.3
+    background_max_entries: int = 50
+
+
+class SensoriumConfig(BaseModel):
+    """AD-666: Agent Sensorium tracking configuration."""
+
+    enabled: bool = True
+    token_budget_warning: int = 6000
 
 
 class OnboardingConfig(BaseModel):
@@ -1229,6 +1257,8 @@ class SystemConfig(BaseModel):
     orientation: OrientationConfig = OrientationConfig()
     social_verification: SocialVerificationConfig = SocialVerificationConfig()
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
+    salience: SalienceConfig = SalienceConfig()  # AD-668
+    sensorium: SensoriumConfig = SensoriumConfig()  # AD-666
     source_tracing: SourceTracingConfig = SourceTracingConfig()
     observable_state: ObservableStateConfig = ObservableStateConfig()
     llm_rate: LLMRateConfig = LLMRateConfig()  # AD-617

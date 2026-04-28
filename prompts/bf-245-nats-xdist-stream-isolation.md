@@ -31,7 +31,9 @@ Guard NATS initialization to be safe under pytest-xdist by skipping real NATS co
 
 ### Section 1: Disable real NATS in test configuration
 
-The simplest and most robust fix: configure `nats.enabled = False` in the test environment so `init_nats()` returns `None`. Tests that specifically test NATS behavior already use `MockNATSBus` directly.
+The simplest and most robust fix: set `PROBOS_NATS_ENABLED=false` at conftest import time so `init_nats()` returns `None` for all workers. This must be module-level (`os.environ.setdefault`), NOT an autouse fixture, because session/module-scoped fixtures may construct `SystemConfig` before a per-test autouse fixture runs. Using `setdefault` allows developers to opt-in to real NATS with `PROBOS_NATS_ENABLED=true pytest`.
+
+Tests that specifically test NATS behavior use `MockNATSBus` directly and don't go through `init_nats()`.
 
 **File: `tests/conftest.py`**
 
@@ -61,25 +63,32 @@ from probos.substrate.registry import AgentRegistry
 from probos.substrate.spawner import AgentSpawner
 from probos.config import PoolConfig
 
-
-@pytest.fixture(autouse=True)
-def _disable_nats_in_tests(monkeypatch):
-    """Prevent real NATS connections during tests.
-
-    Integration tests that call ProbOSRuntime.start() would otherwise
-    trigger init_nats() which creates JetStream streams. Under pytest-xdist,
-    multiple workers racing to create/delete the same streams causes
-    'stream name already in use' errors (BF-245).
-
-    Tests that specifically test NATS behavior use MockNATSBus directly
-    and don't go through init_nats().
-    """
-    monkeypatch.setenv("PROBOS_NATS_ENABLED", "false")
+# BF-245: Disable real NATS in tests at import time, before any fixtures run.
+# Module-level (not autouse fixture) so session/module-scoped fixtures that
+# construct SystemConfig see the override. setdefault allows opt-in:
+#   PROBOS_NATS_ENABLED=true pytest tests/test_nats_integration.py
+os.environ.setdefault("PROBOS_NATS_ENABLED", "false")
 ```
+
+Add a `real_nats` fixture for tests that need to opt-in to real NATS connections:
+
+```python
+@pytest.fixture
+def real_nats(monkeypatch):
+    """Opt-in fixture: re-enable real NATS for a specific test.
+
+    Usage: add `real_nats` to a test's parameter list. The test will
+    use the real NATSBus instead of being blocked by BF-245's global
+    PROBOS_NATS_ENABLED=false default.
+    """
+    monkeypatch.setenv("PROBOS_NATS_ENABLED", "true")
+```
+
+Place this fixture after the existing `pool_config` fixture (around line 41).
 
 ### Section 2: Honor environment override in NatsConfig
 
-The `NatsConfig` default for `enabled` must respect the environment variable so the autouse fixture takes effect without requiring every test to mock config.
+The `NatsConfig` default for `enabled` must respect the environment variable so the conftest-level env var takes effect without requiring every test to mock config. Note: the live docstring says "AD-637" — preserve that, do not change to "AD-637a".
 
 **File: `src/probos/config.py`**
 
@@ -96,10 +105,11 @@ class NatsConfig(BaseModel):
 REPLACE:
 ```python
 class NatsConfig(BaseModel):
-    """NATS event bus configuration (AD-637a)."""
+    """NATS event bus configuration (AD-637)."""
 
     enabled: bool = Field(
         default=False,
+        validate_default=True,
         description="Enable NATS event bus. Overridden by PROBOS_NATS_ENABLED env var.",
     )
 
@@ -112,6 +122,8 @@ class NatsConfig(BaseModel):
             return env_val.lower() in ("true", "1", "yes")
         return v
 ```
+
+**Why `validate_default=True`:** Without it, Pydantic's `field_validator(mode="before")` skips the default value entirely. `NatsConfig()` with no arguments would bypass the env var override — the very path exercised by `SystemConfig()` during normal test startup.
 
 Add `os` to the imports at the top of `config.py`:
 
@@ -158,21 +170,18 @@ REPLACE:
         monkeypatch.delenv("PROBOS_NATS_ENABLED", raising=False)
 ```
 
-### Section 4: Verify MockNATSBus parity
+### Section 4: Verified — MockNATSBus parity
 
-Verify that `MockNATSBus.recreate_stream()` exists and behaves correctly (it should — BF-232 added parity). No code changes expected; this is a verification step.
-
-**File: `src/probos/mesh/nats_bus.py`**
-
-Read the `MockNATSBus` class and confirm it has `recreate_stream()`. If missing, add it following the existing `ensure_stream()` pattern in `MockNATSBus`.
+**No code changes needed.** `MockNATSBus.recreate_stream()` exists at `src/probos/mesh/nats_bus.py` line 1210 and follows the same interface as the real `NATSBus.recreate_stream()`. Confirmed during prompt review.
 
 ## What This Does NOT Change
 
-- **Production NATS behavior**: `init_nats()` logic is unchanged. The env var override only fires when `PROBOS_NATS_ENABLED` is explicitly set.
+- **Production NATS behavior**: `init_nats()` logic is unchanged. The env var override only fires when `PROBOS_NATS_ENABLED` is explicitly set. Note: `system.yaml` has `nats.enabled: true` for production — this is NOT affected because the env var is only set in `tests/conftest.py`.
 - **MockNATSBus**: No changes to the mock. Tests that use `MockNATSBus` directly continue to work as-is.
 - **NATS-specific test files**: `test_ad637a_nats_foundation.py`, `test_ad637c_wardroom_nats.py`, etc. use `MockNATSBus` directly and don't go through `init_nats()`. One test (`test_loads_from_yaml`) asserts `config.nats.enabled is True` after YAML load — Section 3 fixes this by clearing the env var in that test.
 - **`-n auto` configuration**: xdist parallelism stays enabled. This fix makes parallelism safe rather than disabling it.
 - **Stream name hardcoding**: Stream names remain hardcoded. Per-worker stream name suffixing is unnecessary complexity when the simpler fix (disable real NATS in tests) achieves the goal.
+- **`init_nats()` logging**: When disabled, logs at `info` level ("Startup [nats]: disabled") — not warning.
 
 ## Do Not Build
 
@@ -183,24 +192,37 @@ Read the `MockNATSBus` class and confirm it has `recreate_stream()`. If missing,
 
 ## Acceptance Criteria
 
-- [ ] `pytest tests/ -n auto` completes with 0 NATS-related failures (xdist worker crashes eliminated)
+- [ ] `pytest tests/ -n auto` completes with 0 NATS-related failures (baseline: 20-50 flaky failures per run from xdist worker crashes — all should be eliminated)
 - [ ] `pytest tests/test_runtime.py -v` passes (integration tests work without real NATS)
 - [ ] `pytest tests/test_ad637a_nats_foundation.py -v` passes (NATS-specific tests unaffected)
 - [ ] `pytest tests/test_new_crew_auto_welcome.py -v` passes (finalize tests unaffected)
 - [ ] `test_ad637a_nats_foundation.py::TestNatsConfig::test_loads_from_yaml` passes (env var cleared for YAML test)
 - [ ] No production behavior change when `PROBOS_NATS_ENABLED` is not set
-- [ ] 6 new tests
+- [ ] `NatsConfig()` with no arguments respects `PROBOS_NATS_ENABLED` env var (validate_default=True)
+- [ ] 8 new tests
 
 Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## Tests
+
+All tests go in **`tests/test_bf245_nats_xdist_isolation.py`**.
+
+Module-level imports for the test file:
+```python
+"""BF-245: NATS/xdist stream isolation tests."""
+
+import os
+
+import pytest
+
+from probos.config import NatsConfig
+```
 
 ### Test 1: Environment override disables NATS
 ```python
 def test_nats_config_env_override_disables(monkeypatch):
     """BF-245: PROBOS_NATS_ENABLED=false overrides config enabled=True."""
     monkeypatch.setenv("PROBOS_NATS_ENABLED", "false")
-    from probos.config import NatsConfig
     cfg = NatsConfig(enabled=True)
     assert cfg.enabled is False
 ```
@@ -210,7 +232,6 @@ def test_nats_config_env_override_disables(monkeypatch):
 def test_nats_config_env_override_enables(monkeypatch):
     """BF-245: PROBOS_NATS_ENABLED=true overrides config enabled=False."""
     monkeypatch.setenv("PROBOS_NATS_ENABLED", "true")
-    from probos.config import NatsConfig
     cfg = NatsConfig(enabled=False)
     assert cfg.enabled is True
 ```
@@ -220,12 +241,20 @@ def test_nats_config_env_override_enables(monkeypatch):
 def test_nats_config_no_env_preserves_default(monkeypatch):
     """BF-245: Without env var, config value is used as-is."""
     monkeypatch.delenv("PROBOS_NATS_ENABLED", raising=False)
-    from probos.config import NatsConfig
     cfg = NatsConfig(enabled=True)
     assert cfg.enabled is True
 ```
 
-### Test 4: init_nats returns None when disabled
+### Test 4: No-arg NatsConfig respects env var (validate_default)
+```python
+def test_nats_config_no_arg_respects_env(monkeypatch):
+    """BF-245: NatsConfig() with no args still checks PROBOS_NATS_ENABLED."""
+    monkeypatch.setenv("PROBOS_NATS_ENABLED", "true")
+    cfg = NatsConfig()
+    assert cfg.enabled is True
+```
+
+### Test 5: init_nats returns None when disabled
 ```python
 @pytest.mark.asyncio
 async def test_init_nats_returns_none_when_disabled(monkeypatch):
@@ -238,28 +267,38 @@ async def test_init_nats_returns_none_when_disabled(monkeypatch):
     assert result is None
 ```
 
-### Test 5: Autouse fixture sets environment variable
+### Test 6: Autouse env var is set at conftest import time
 ```python
-def test_autouse_fixture_disables_nats():
-    """BF-245: The autouse fixture sets PROBOS_NATS_ENABLED=false."""
-    import os
+def test_conftest_sets_nats_disabled():
+    """BF-245: conftest.py sets PROBOS_NATS_ENABLED=false at import time."""
     assert os.environ.get("PROBOS_NATS_ENABLED") == "false"
 ```
 
-### Test 6: Runtime startup works without NATS
+### Test 7: Runtime startup works without NATS (no recreate_stream calls)
 ```python
 @pytest.mark.asyncio
-async def test_runtime_starts_without_nats(tmp_path):
-    """BF-245: ProbOSRuntime.start() succeeds with NATS disabled."""
+async def test_runtime_starts_without_nats(tmp_path, monkeypatch):
+    """BF-245: ProbOSRuntime.start() succeeds with NATS disabled, no stream creation."""
+    from unittest.mock import patch
     from probos.runtime import ProbOSRuntime
-    rt = ProbOSRuntime(data_dir=tmp_path / "data")
-    await rt.start()
-    assert rt._started
-    assert rt.nats_bus is None
-    await rt.stop()
+    with patch("probos.startup.nats.NATSBus") as mock_bus_cls:
+        rt = ProbOSRuntime(data_dir=tmp_path / "data")
+        await rt.start()
+        assert rt._started
+        assert rt.nats_bus is None
+        # Verify no real NATS connections were attempted
+        mock_bus_cls.assert_not_called()
+        await rt.stop()
 ```
 
-**Test file:** `tests/test_bf245_nats_xdist_isolation.py`
+### Test 8: real_nats fixture re-enables NATS
+```python
+def test_real_nats_fixture_enables(real_nats):
+    """BF-245: real_nats fixture sets PROBOS_NATS_ENABLED=true."""
+    assert os.environ.get("PROBOS_NATS_ENABLED") == "true"
+```
+
+**Test file:** `tests/test_bf245_nats_xdist_isolation.py` (8 tests)
 
 **Run command:**
 ```bash
@@ -276,20 +315,20 @@ pytest tests/ -n auto -x -q
 ### PROGRESS.md
 Add at top:
 ```
-BF-245 CLOSED. NATS/xdist stream isolation — autouse fixture sets PROBOS_NATS_ENABLED=false to prevent real NATS connections during tests. NatsConfig.enabled field_validator honors env override. Eliminates xdist worker crashes from JetStream stream name collisions. 6 tests.
+BF-245 CLOSED. NATS/xdist stream isolation — module-level `os.environ.setdefault("PROBOS_NATS_ENABLED", "false")` in conftest.py prevents real NATS connections during tests. NatsConfig.enabled field_validator with validate_default=True honors env override. Eliminates xdist worker crashes (20-50 per run) from JetStream stream name collisions. 8 tests.
 ```
 
 ### DECISIONS.md
 Add entry:
 ```
 ### BF-245: NATS Test Isolation Strategy (2026-04-27)
-**Decision:** Disable real NATS in tests via autouse fixture + env var override rather than per-worker stream name suffixing or xdist serialization.
-**Rationale:** The problem is test-only — production code should not carry per-worker complexity. Tests that verify NATS behavior use MockNATSBus directly. Integration tests (ProbOSRuntime.start()) don't need real NATS to validate their concerns.
+**Decision:** Disable real NATS in tests via module-level env var override in conftest.py rather than per-worker stream name suffixing or xdist serialization.
+**Rationale:** The problem is test-only — production code should not carry per-worker complexity. Tests that verify NATS behavior use MockNATSBus directly. Integration tests (ProbOSRuntime.start()) don't need real NATS to validate their concerns. See also: AD-637 (NATS foundation), BF-232 (recreate_stream pattern).
 **Alternatives rejected:** (1) Per-worker stream name suffixes — pollutes production code. (2) Disable xdist — loses parallelism benefit (BF-043). (3) Cross-process locking — fragile IPC for a test concern. (4) Per-worker NATS server — heavyweight, flaky.
 ```
 
 ### docs/development/roadmap.md
 Add to Bug Tracker table:
 ```
-| BF-245 | NATS/xdist stream isolation. pytest-xdist workers race on hardcoded JetStream stream names (`SYSTEM_EVENTS`, `WARDROOM`, `INTENT_DISPATCH`), causing `recreate_stream()` error 10058 crashes. **Fix:** Autouse fixture disables real NATS in tests via `PROBOS_NATS_ENABLED=false` env var. `NatsConfig.enabled` `field_validator` honors override. | Medium | **Closed** |
+| BF-245 | NATS/xdist stream isolation. pytest-xdist workers race on hardcoded JetStream stream names (`SYSTEM_EVENTS`, `WARDROOM`, `INTENT_DISPATCH`), causing `recreate_stream()` error 10058 crashes (~20-50 flaky failures per run). **Fix:** Module-level `os.environ.setdefault("PROBOS_NATS_ENABLED", "false")` in conftest.py. `NatsConfig.enabled` `field_validator` with `validate_default=True` honors override. `real_nats` fixture for opt-in. | Medium | **Closed** |
 ```
