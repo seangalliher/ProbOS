@@ -133,20 +133,13 @@ class SpreadingActivationEngine:
 
     def __init__(
         self,
-        config: Any = None,
+        config: Any,
         episodic_memory: Any = None,
     ) -> None:
-        if config is not None:
-            self._max_hops: int = config.max_hops
-            self._k_per_hop: int = config.k_per_hop
-            self._hop_decay: float = config.hop_decay_factor
-            self._min_anchor_fields: int = config.min_anchor_fields
-        else:
-            # Only for unit tests that construct without config
-            self._max_hops = 2
-            self._k_per_hop = 5
-            self._hop_decay = 0.6
-            self._min_anchor_fields = 2
+        self._max_hops: int = config.max_hops
+        self._k_per_hop: int = config.k_per_hop
+        self._hop_decay: float = config.hop_decay_factor
+        self._min_anchor_fields: int = config.min_anchor_fields
 
         self._episodic_memory = episodic_memory
 

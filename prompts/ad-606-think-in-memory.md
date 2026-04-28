@@ -133,17 +133,13 @@ class ThoughtStore:
     def __init__(
         self,
         episodic_memory: Any = None,
-        config: Any = None,
+        *,
+        config: Any,
     ) -> None:
         self._episodic_memory = episodic_memory
 
-        if config is not None:
-            self._min_importance: int = config.min_importance
-            self._max_per_cycle: int = config.max_thoughts_per_cycle
-        else:
-            # Only for unit tests that construct without config
-            self._min_importance = 5
-            self._max_per_cycle = 3
+        self._min_importance: int = config.min_importance
+        self._max_per_cycle: int = config.max_thoughts_per_cycle
 
         # Track thoughts stored in current cognitive cycle
         self._cycle_count: int = 0

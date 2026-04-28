@@ -29,6 +29,7 @@ class AnomalyWindowManager:
         self,
         config: "AnomalyWindowConfig",
         emit_event_fn: Callable[[str, dict], None] | None = None,
+        add_event_listener_fn: Callable | None = None,
     ) -> None:
 ```
 
@@ -40,6 +41,7 @@ State:
 - `_affected_count: int = 0` — episodes stamped during this window
 - `_config: AnomalyWindowConfig`
 - `_emit_event_fn: Callable | None`
+- `_add_event_listener_fn: Callable | None`
 
 Methods:
 
@@ -118,17 +120,16 @@ In the `store()` method, after the importance scoring step (around line ~928, af
 
 ```python
 # AD-673: Stamp episode with active anomaly window ID
-if self._anomaly_window_manager and hasattr(self._anomaly_window_manager, "get_active_window"):
+if self._anomaly_window_manager is not None:
     active_window = self._anomaly_window_manager.get_active_window()
     if active_window and episode.anchors is not None:
-        # AnchorFrame is frozen — rebuild with window ID
-        anchor_dict = dataclasses.asdict(episode.anchors)
-        anchor_dict["anomaly_window_id"] = active_window
-        episode = dataclasses.replace(episode, anchors=AnchorFrame(**anchor_dict))
+        # AnchorFrame is frozen — use dataclasses.replace to set the field
+        new_anchors = dataclasses.replace(episode.anchors, anomaly_window_id=active_window)
+        episode = dataclasses.replace(episode, anchors=new_anchors)
         self._anomaly_window_manager.record_episode_stamped()
 ```
 
-**Note:** `Episode` is a dataclass (not frozen), so `dataclasses.replace()` works. `AnchorFrame` IS frozen, so we must rebuild it.
+**Note:** `Episode` is a dataclass (not frozen), so `dataclasses.replace()` works. `AnchorFrame` IS frozen, so we use `dataclasses.replace()` which handles frozen dataclasses correctly (unlike direct attribute assignment).
 
 ### 5. Signal Event Subscriptions
 
@@ -142,35 +143,41 @@ def _wire_anomaly_window(*, runtime: Any, config: "SystemConfig") -> bool:
         return False
 
     from probos.cognitive.anomaly_window import AnomalyWindowManager
+    from probos.events import EventType
 
     emit_fn = getattr(runtime, "_emit_event", None)
+    add_listener = getattr(runtime, "_add_event_listener_fn", None)
     manager = AnomalyWindowManager(
         config=config.anomaly_window,
         emit_event_fn=emit_fn,
+        add_event_listener_fn=add_listener,
     )
 
     # Wire into EpisodicMemory
     episodic = getattr(runtime, "_episodic_memory", None)
-    if episodic and hasattr(episodic, "set_anomaly_window_manager"):
+    if episodic is not None:
         episodic.set_anomaly_window_manager(manager)
 
-    # Subscribe to signal events
-    subscribe = getattr(runtime, "subscribe", None)
-    if subscribe:
-        def on_trust_cascade(data: Any) -> None:
-            manager.open_window("trust_cascade", str(data))
+    # Register event listeners via the standard callback pattern
+    if add_listener is not None:
+        async def on_signal_event(event: Any) -> None:
+            event_type = getattr(event, "event_type", None)
+            data = getattr(event, "data", {})
+            if event_type == EventType.TRUST_CASCADE_WARNING:
+                manager.open_window("trust_cascade", str(data))
+            elif event_type == EventType.LLM_HEALTH_CHANGED:
+                status = data.get("status", "") if isinstance(data, dict) else ""
+                if status in ("degraded", "offline"):
+                    manager.open_window("llm_degraded", f"LLM status: {status}")
+                elif status == "healthy" and manager.is_active():
+                    active = manager.get_active_window()
+                    if active:
+                        manager.close_window(active)
 
-        def on_llm_health(data: Any) -> None:
-            status = data.get("status", "") if isinstance(data, dict) else ""
-            if status in ("degraded", "offline"):
-                manager.open_window("llm_degraded", f"LLM status: {status}")
-            elif status == "healthy" and manager.is_active():
-                active = manager.get_active_window()
-                if active:
-                    manager.close_window(active)
-
-        subscribe("trust_cascade_warning", on_trust_cascade)
-        subscribe("llm_health_changed", on_llm_health)
+        add_listener(
+            on_signal_event,
+            event_types=[EventType.TRUST_CASCADE_WARNING, EventType.LLM_HEALTH_CHANGED],
+        )
 
     runtime._anomaly_window_manager = manager
     return True
@@ -231,7 +238,7 @@ Use `_Fake*` stubs for ChromaDB collection. Use `tmp_path` for any file paths.
 ## Tracking
 
 - `PROGRESS.md`: Add AD-673 as CLOSED
-- `DECISIONS.md`: Add entry — "AD-673: AnomalyWindowManager populates AnchorFrame.anomaly_window_id. Triggered by trust cascade and LLM health events. Single concurrent window model. Episodes stamped during store() via frozen-dataclass rebuild. Retrospective tagging deferred (stub only)."
+- `DECISIONS.md`: Add entry — "AD-673: AnomalyWindowManager populates AnchorFrame.anomaly_window_id. Triggered by trust cascade and LLM health events via _add_event_listener_fn pattern. Single concurrent window model. Episodes stamped during store() via dataclasses.replace on frozen AnchorFrame. Retrospective tagging deferred (stub only)."
 - `docs/development/roadmap.md`: Update AD-673 row status
 
 ## Acceptance Criteria

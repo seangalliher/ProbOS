@@ -147,16 +147,11 @@ class FailureDistiller:
 
     def __init__(
         self,
-        config: Any = None,
+        config: Any,
         procedure_store: Any = None,
     ) -> None:
-        if config is not None:
-            self._min_cluster_size: int = config.min_failure_cluster_size
-            self._comparative_enabled: bool = config.comparative_enabled
-        else:
-            # Only for unit tests that construct without config
-            self._min_cluster_size = 3
-            self._comparative_enabled = True
+        self._min_cluster_size: int = config.min_failure_cluster_size
+        self._comparative_enabled: bool = config.comparative_enabled
 
         self._procedure_store = procedure_store
 

@@ -188,18 +188,26 @@ def _populate_agent_tiers(*, runtime: Any, config: "SystemConfig") -> int:
             registry.register(agent_id, AgentTier.UTILITY)
 
     # Wire into trust/emergence/hebbian
+    # TODO(AD-571): Replace with public property once ProbOSRuntime exposes trust_network.
+    # Temporary bridge — accessing private attrs is a known LoD violation.
     trust = getattr(runtime, "_trust_network", None)
     if trust and hasattr(trust, "set_tier_registry"):
         trust.set_tier_registry(registry)
 
+    # TODO(AD-571): Replace with public property once ProbOSRuntime exposes emergence_metrics_engine.
+    # Temporary bridge — accessing private attrs is a known LoD violation.
     emergence = getattr(runtime, "_emergence_metrics_engine", None)
     if emergence and hasattr(emergence, "set_tier_registry"):
         emergence.set_tier_registry(registry)
 
+    # TODO(AD-571): Replace with public property once ProbOSRuntime exposes router.
+    # Temporary bridge — accessing private attrs is a known LoD violation.
     router = getattr(runtime, "_router", None)
     if router and hasattr(router, "set_tier_registry"):
         router.set_tier_registry(registry)
 
+    # TODO(AD-571): Replace with runtime.set_tier_registry(registry) once public setter exists.
+    # Temporary bridge — setting private attrs is a known LoD violation.
     runtime._tier_registry = registry
     return len(registry.all_registered())
 ```

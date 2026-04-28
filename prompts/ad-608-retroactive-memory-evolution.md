@@ -136,8 +136,10 @@ class RetroactiveEvolver:
         self,
         config: Any,
         episodic_memory: Any = None,
+        agent_id: str = "",
     ) -> None:
         self._episodic_memory = episodic_memory
+        self._agent_id: str = agent_id
 
         self._enabled: bool = config.enabled
         self._neighbor_k: int = config.neighbor_k
@@ -256,6 +258,7 @@ class RetroactiveEvolver:
 
         try:
             results = await self._episodic_memory.recall_weighted(
+                self._agent_id,
                 query=query,
                 k=k,
             )
@@ -267,22 +270,56 @@ class RetroactiveEvolver:
 
     def _classify_relation(
         self,
-        source: Any,
-        target: Any,
+        source_episode: Any,
+        target_episode: Any,
     ) -> str:
         """Classify the relationship between two episodes.
 
-        Simple heuristic classification based on temporal ordering
-        and content overlap. Returns one of the standard relation types.
+        Classification heuristic based on temporal proximity and anchor overlap:
+        - "causal" if within 60s and shared trigger (same anchor trigger field)
+        - "contextual" if shared department or channel
+        - "associative" otherwise
+
+        Parameters
+        ----------
+        source_episode : Episode
+            The newly stored episode.
+        target_episode : Episode
+            An existing neighbor episode.
+
+        Returns
+        -------
+        str
+            One of "causal", "contextual", or "associative".
         """
-        source_ts = getattr(source, 'timestamp', 0.0) or 0.0
-        target_ts = getattr(target, 'timestamp', 0.0) or 0.0
+        source_ts = getattr(source_episode, 'timestamp', 0.0) or 0.0
+        target_ts = getattr(target_episode, 'timestamp', 0.0) or 0.0
+        time_delta = abs(source_ts - target_ts)
 
-        # If the new episode follows the target chronologically
-        if source_ts > target_ts:
-            return "follows"
+        # Check anchor overlap for causal classification
+        source_anchors = getattr(source_episode, 'anchors', None)
+        target_anchors = getattr(target_episode, 'anchors', None)
 
-        return "relates_to"
+        if time_delta <= 60.0 and source_anchors and target_anchors:
+            # Shared trigger → causal
+            source_trigger = getattr(source_anchors, 'trigger', None) or ""
+            target_trigger = getattr(target_anchors, 'trigger', None) or ""
+            if source_trigger and source_trigger == target_trigger:
+                return "causal"
+
+        # Shared department or channel → contextual
+        if source_anchors and target_anchors:
+            source_dept = getattr(source_anchors, 'department', None) or ""
+            target_dept = getattr(target_anchors, 'department', None) or ""
+            if source_dept and source_dept == target_dept:
+                return "contextual"
+
+            source_channel = getattr(source_anchors, 'channel', None) or ""
+            target_channel = getattr(target_anchors, 'channel', None) or ""
+            if source_channel and source_channel == target_channel:
+                return "contextual"
+
+        return "associative"
 
     async def _propagate_metadata(
         self,
@@ -308,29 +345,50 @@ class RetroactiveEvolver:
 
     async def _propagate_metadata_reverse(
         self,
-        target_id: str,
+        episode_id: str,
         source_id: str,
-        relation: str,
+        relation_type: str,
     ) -> bool:
-        """Add a reverse relational tag from target back to source.
+        """Add a reverse relational back-reference from target back to source.
 
-        Creates the reverse direction of the relationship.
+        Looks up the episode, adds a back-reference in its ``relations_json``
+        metadata pointing back to the source episode with the reversed
+        relation type.
+
+        Parameters
+        ----------
+        episode_id : str
+            The episode to receive the back-reference.
+        source_id : str
+            The episode that triggered the relation (the newly stored episode).
+        relation_type : str
+            The forward relation type (will be reversed).
+
+        Returns
+        -------
+        bool
+            True if the back-reference was added.
         """
         if not self._episodic_memory:
             return False
 
         # Reverse relation mapping
         reverse_map = {
+            "causal": "caused_by",
+            "caused_by": "causal",
             "follows": "followed_by",
-            "caused_by": "causes",
+            "followed_by": "follows",
             "answers": "answered_by",
-            "contradicts": "contradicts",  # symmetric
-            "relates_to": "relates_to",    # symmetric
+            "answered_by": "answers",
+            "contradicts": "contradicts",      # symmetric
+            "contextual": "contextual",        # symmetric
+            "associative": "associative",      # symmetric
+            "relates_to": "relates_to",        # symmetric
         }
-        reverse_relation = reverse_map.get(relation, "relates_to")
+        reverse_relation = reverse_map.get(relation_type, "relates_to")
 
         return await self._add_relation(
-            episode_id=target_id,
+            episode_id=episode_id,
             related_id=source_id,
             relation=reverse_relation,
         )
@@ -526,13 +584,21 @@ Add a new public method to EpisodicMemory. Place it after the `store()` method:
             return False
 
         try:
+            # ChromaDB read-modify-write: get existing metadata
             result = self._collection.get(ids=[episode_id], include=["metadatas"])
             if not result or not result.get("ids"):
+                logger.warning(
+                    "AD-608: Episode %s not found — cannot update metadata",
+                    episode_id,
+                )
                 return False
 
-            meta = result["metadatas"][0] if result.get("metadatas") else {}
-            meta.update(metadata_updates)
-            self._collection.update(ids=[episode_id], metadatas=[meta])
+            # Merge updates into existing metadata dict
+            existing_meta = result["metadatas"][0] if result.get("metadatas") else {}
+            merged = {**existing_meta, **metadata_updates}
+
+            # Write merged metadata back to ChromaDB
+            self._collection.update(ids=[episode_id], metadatas=[merged])
             return True
         except Exception:
             logger.debug(
@@ -576,6 +642,7 @@ After the StorageGate wiring (or after episodic memory initialization), create a
             retroactive_evolver = _RetroactiveEvolver(
                 config=config.retroactive,
                 episodic_memory=episodic_memory,
+                agent_id=agent_id,  # Required by recall_weighted() API
             )
             episodic_memory.set_retroactive_evolver(retroactive_evolver)
             logger.info("AD-608: RetroactiveEvolver initialized and wired to EpisodicMemory")
@@ -649,7 +716,7 @@ class _FakeEpisodicMemory:
         self._metadata_store: dict[str, dict] = {}  # id -> metadata
         self._recall_results: list = []  # pre-loaded recall results
 
-    async def recall_weighted(self, query: str, k: int = 5, **kwargs):
+    async def recall_weighted(self, agent_id: str, query: str, k: int = 5, **kwargs):
         """Return pre-loaded recall results."""
         return self._recall_results[:k]
 
@@ -673,6 +740,7 @@ def evolver(fake_memory):
     return RetroactiveEvolver(
         config=_FakeRetroactiveConfig(),
         episodic_memory=fake_memory,
+        agent_id="test-agent",
     )
 
 
@@ -735,8 +803,10 @@ After all tests pass:
   ```
   AD-608: Retroactive Memory Evolution. Store-time metadata propagation via
   RetroactiveEvolver. After each store, finds k=5 semantic neighbors (ChromaDB
-  query), adds bidirectional relational links (relates_to, follows, contradicts,
-  answers, caused_by) stored as relations_json metadata. Propagates missing
+  query), adds bidirectional relational links (causal, contextual, associative,
+  follows, contradicts, answers, caused_by) stored as relations_json metadata.
+  Relation classification: "causal" if within 60s and shared trigger, "contextual"
+  if shared department/channel, "associative" otherwise. Propagates missing
   anchor fields (watch_section, department) from newer to older episodes.
   Max 10 relations per episode. Similarity threshold 0.7. Adds
   update_episode_metadata() public method to EpisodicMemory.

@@ -25,11 +25,11 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class PinnedFact:
     """A pinned knowledge fact always loaded into agent context."""
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
     fact: str  # human-readable assertion
     source: str  # "agent", "counselor", "dream"
     pinned_at: float  # time.time() epoch
     ttl_seconds: float | None  # None = no expiry
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
     priority: int = 5  # 1 (highest) to 10 (lowest), for eviction ordering
 ```
 
