@@ -71,6 +71,14 @@ async def init_dreaming(
     if hasattr(config, 'records'):
         staleness_hours = getattr(config.records, 'notebook_staleness_hours', 72.0)
     notebook_quality_engine = NotebookQualityEngine(staleness_hours=staleness_hours)
+    # AD-564: Quality-triggered consolidation
+    from probos.knowledge.quality_trigger import QualityConsolidationTrigger
+    quality_trigger = None
+    if config.quality_trigger.enabled:
+        quality_trigger = QualityConsolidationTrigger(
+            config=config.quality_trigger,
+            emit_event_fn=emit_event_fn,
+        )
     # AD-444: Confidence Tracker
     from probos.knowledge.confidence_tracker import ConfidenceTracker
     confidence_tracker = None
@@ -146,6 +154,8 @@ async def init_dreaming(
             dreaming_engine.set_confidence_tracker(confidence_tracker)
         if knowledge_linter:
             dreaming_engine.set_knowledge_linter(knowledge_linter)
+        if quality_trigger:
+            dreaming_engine.set_quality_trigger(quality_trigger)
 
     if confidence_tracker and records_store:
         records_store.set_confidence_tracker(confidence_tracker)

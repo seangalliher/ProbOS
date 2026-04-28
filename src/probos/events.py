@@ -167,6 +167,7 @@ class EventType(str, Enum):
     KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased
+    FORCED_CONSOLIDATION_TRIGGERED = "forced_consolidation_triggered"  # AD-564
 
     # Boot camp (AD-638)
     BOOT_CAMP_ACTIVATED = "boot_camp_activated"

@@ -56,6 +56,7 @@ class DreamingEngine:
 
     _confidence_tracker: Any = None
     _knowledge_linter: Any = None
+    _quality_trigger: Any = None
 
     def __init__(
         self,
@@ -109,6 +110,7 @@ class DreamingEngine:
         self._dream_wm_bridge = dream_wm_bridge  # AD-671
         self._confidence_tracker: Any = None  # AD-444
         self._knowledge_linter: Any = None  # AD-563
+        self._quality_trigger: Any = None  # AD-564
         self._agent_wm: Any = None  # AD-671: late-bound working memory
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
@@ -142,6 +144,10 @@ class DreamingEngine:
     def set_knowledge_linter(self, linter: Any) -> None:
         """AD-563: Late-bind knowledge linter."""
         self._knowledge_linter = linter
+
+    def set_quality_trigger(self, trigger: Any) -> None:
+        """AD-564: Late-bind quality consolidation trigger."""
+        self._quality_trigger = trigger
 
     @property
     def last_clusters(self) -> list[Any]:
@@ -1043,6 +1049,7 @@ class DreamingEngine:
         # Step 10: Notebook Quality Metrics (AD-555)
         notebook_quality_score = None
         notebook_quality_agents = 0
+        quality_snapshot = None
         if self._notebook_quality_engine:
             try:
                 _records = self._records_store
@@ -1100,6 +1107,15 @@ class DreamingEngine:
                     )
             except Exception:
                 logger.debug("AD-563 Step 10: Lint failed", exc_info=True)
+
+        forced_consolidation_count = 0
+        if self._quality_trigger and quality_snapshot:
+            try:
+                if self._quality_trigger.check_and_trigger(quality_snapshot):
+                    forced_consolidation_count += 1
+                    logger.info("AD-564 Step 10: Forced consolidation triggered")
+            except Exception:
+                logger.debug("AD-564 Step 10: trigger check failed", exc_info=True)
 
         # Step 11: Spaced Retrieval Therapy (AD-541c)
         retrieval_practices = 0
@@ -1361,6 +1377,8 @@ class DreamingEngine:
             # AD-563: Knowledge linting
             lint_score=lint_score,
             lint_issues_found=lint_issues_found,
+            # AD-564: Forced consolidation
+            forced_consolidations=forced_consolidation_count,
             # AD-541c: Spaced Retrieval Therapy
             retrieval_practices=retrieval_practices,
             retrieval_accuracy=retrieval_accuracy,

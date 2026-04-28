@@ -66,6 +66,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Ship's Records quality checks previously measured freshness and structural quality but did not detect contradictory notebook content, sparse departmental coverage, or missing same-topic links. A deterministic linter adds this maintenance signal without adding semantic inference or auto-fix behavior.
 **Status:** Implemented
 
+### AD-564: Quality-Triggered Forced Consolidation
+
+**Date:** 2026-04-28
+**Decision:** Quality-triggered forced consolidation. Three trigger conditions (low quality, high stale rate, high repetition). Cooldown + daily limit. Event emission. Wired into Dream Step 10.
+**Rationale:** Notebook quality could degrade between scheduled dream cycles without a maintenance signal. The trigger separates observation from intervention by reusing AD-555 quality snapshots and applying deterministic thresholds before requesting ship-wide consolidation.
+**Status:** Implemented
+
 ### AD-594: Crew Consultation Protocol
 
 **Date:** 2026-04-27

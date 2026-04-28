@@ -516,6 +516,8 @@ class DreamReport:
     # AD-563: Knowledge linting
     lint_score: float | None = None
     lint_issues_found: int = 0
+    # AD-564: Forced consolidation
+    forced_consolidations: int = 0
     # AD-541c: Spaced Retrieval Therapy
     retrieval_practices: int = 0
     retrieval_accuracy: float | None = None

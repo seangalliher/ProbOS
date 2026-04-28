@@ -744,6 +744,17 @@ class LintConfig(BaseModel):
     })
 
 
+class QualityTriggerConfig(BaseModel):
+    """AD-564: Quality-triggered forced consolidation configuration."""
+
+    enabled: bool = True
+    min_quality_threshold: float = 0.4
+    max_stale_rate: float = 0.3
+    max_repetition_rate: float = 0.2
+    cooldown_seconds: float = 1800.0
+    max_forced_per_day: int = 5
+
+
 class OrientationConfig(BaseModel):
     """AD-567g: Cognitive re-localization configuration."""
 
@@ -1325,6 +1336,7 @@ class SystemConfig(BaseModel):
     records: RecordsConfig = RecordsConfig()
     confidence: ConfidenceConfig = ConfidenceConfig()  # AD-444
     lint: LintConfig = LintConfig()  # AD-563
+    quality_trigger: QualityTriggerConfig = QualityTriggerConfig()  # AD-564
     onboarding: OnboardingConfig = OnboardingConfig()
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
     ward_room: WardRoomConfig = WardRoomConfig()

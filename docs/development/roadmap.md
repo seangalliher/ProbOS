@@ -4244,7 +4244,7 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 ### Quality-Triggered Forced Consolidation (AD-564)
 
-**AD-564: Quality-Triggered Forced Consolidation — Automated Notebook Maintenance** *(planned, OSS, depends: AD-555, AD-551)* — Automated consolidation triggered by quality metric thresholds. While AD-551 consolidates during dream cycles based on similarity, AD-564 adds threshold-based triggers from AD-555 quality data.
+**AD-564: Quality-Triggered Forced Consolidation — Automated Notebook Maintenance** *(Complete, OSS, Issue #10, depends: AD-555, AD-551)* — Automated consolidation triggered by quality metric thresholds. While AD-551 consolidates during dream cycles based on similarity, AD-564 adds threshold-based triggers from AD-555 quality data.
 
 **(1) Entries-per-topic ceiling:** When an agent's entries for a single topic exceed a configurable maximum (default: 5), trigger forced consolidation during the next dream cycle. AD-555 provides `entries_per_topic_max` per agent; AD-564 acts on it.
 
