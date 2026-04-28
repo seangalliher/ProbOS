@@ -1,0 +1,1 @@
+Focus on code quality and correctness. Follow SOLID principles. Every change must have tests. Run targeted tests after each step. Do not expand scope beyond what is specified.

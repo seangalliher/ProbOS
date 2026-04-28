@@ -104,6 +104,7 @@ class CognitiveAgent(BaseAgent):
     # Subclasses MUST set these (or pass via __init__)
     instructions: str | None = None
     agent_type: str = "cognitive"
+    _task_context: Any = None
 
     # AD-666: Agent Sensorium Registry — formal inventory of context injections.
     SENSORIUM_REGISTRY: ClassVar[dict[str, tuple[SensoriumLayer, str]]] = {
@@ -172,6 +173,9 @@ class CognitiveAgent(BaseAgent):
         # AD-573: Per-cycle memory budget configuration
         self._memory_budget_config: MemoryBudgetConfig | None = kwargs.get("memory_budget_config")
 
+        # AD-586: Task-contextual standing orders
+        self._task_context: Any = None
+
         # Validate instructions exist
         if not self.instructions:
             raise ValueError(
@@ -185,6 +189,10 @@ class CognitiveAgent(BaseAgent):
     def set_knowledge_loader(self, loader: TieredKnowledgeLoader) -> None:
         """Attach a TieredKnowledgeLoader for tiered knowledge injection (AD-585)."""
         self._knowledge_loader = loader
+
+    def set_task_context(self, ctx: Any) -> None:
+        """AD-586: Wire task context for contextual standing orders."""
+        self._task_context = ctx
 
     def set_orientation(self, rendered: str, context: Any = None) -> None:
         """AD-567g / BF-113: Set orientation text and context (public setter for LoD)."""
@@ -1444,6 +1452,12 @@ class CognitiveAgent(BaseAgent):
         # AD-407b: conversational system prompt for ward room notifications
         is_conversation = observation.get("intent") in ("direct_message", "ward_room_notification", "proactive_think")
 
+        # AD-586: Classify current task for contextual standing orders
+        _task_type = None
+        if self._task_context is not None:
+            intent_name = observation.get("intent", "")
+            _task_type = self._task_context.classify_task(intent_name)
+
         if is_conversation:
             # For 1:1 and ward room, use personality + standing orders only.
             # Exclude domain-specific task instructions (report formats, output blocks)
@@ -1454,6 +1468,7 @@ class CognitiveAgent(BaseAgent):
                 callsign=self._resolve_callsign(),
                 agent_rank=getattr(self, "rank", None),  # AD-596b
                 skill_profile=getattr(self, '_skill_profile', None),  # AD-625
+                task_type=_task_type,
             )
             if observation.get("intent") == "ward_room_notification":
                 composed += (
@@ -1578,6 +1593,7 @@ class CognitiveAgent(BaseAgent):
                 callsign=self._resolve_callsign(),
                 agent_rank=getattr(self, "rank", None),  # AD-596b
                 skill_profile=getattr(self, '_skill_profile', None),  # AD-625
+                task_type=_task_type,
             )
 
         # AD-596b: Append cognitive skill instructions when activated

@@ -1,0 +1,1 @@
+Express personality naturally. Match the register to the channel (formal on bridge, casual in social). Listen before responding. Build on others' contributions rather than repeating.

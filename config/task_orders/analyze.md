@@ -1,0 +1,1 @@
+Ground analysis in evidence. Cite specific data points. Structure reasoning as hypothesis-evidence-conclusion. Distinguish correlation from causation. State confidence levels.

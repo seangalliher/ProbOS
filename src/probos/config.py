@@ -884,6 +884,14 @@ class TemporalValidityConfig(BaseModel):
     default_validity_hours: float = 0.0
 
 
+class TaskContextConfig(BaseModel):
+    """Task-contextual standing orders configuration (AD-586)."""
+
+    enabled: bool = True
+    orders_dir: str = "config/task_orders"
+    max_tokens: int = 500
+
+
 class SalienceConfig(BaseModel):
     """AD-668: Salience filter for working memory promotion."""
 
@@ -1407,6 +1415,7 @@ class SystemConfig(BaseModel):
     metabolism: MetabolismConfig = MetabolismConfig()  # AD-670
     pinned_knowledge: PinnedKnowledgeConfig = PinnedKnowledgeConfig()  # AD-579a
     temporal_validity: TemporalValidityConfig = TemporalValidityConfig()  # AD-579b
+    task_context: TaskContextConfig = TaskContextConfig()  # AD-586
     salience: SalienceConfig = SalienceConfig()  # AD-668
     sensorium: SensoriumConfig = SensoriumConfig()  # AD-666
     source_tracing: SourceTracingConfig = SourceTracingConfig()

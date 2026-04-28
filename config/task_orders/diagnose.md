@@ -1,0 +1,1 @@
+Use systematic isolation. Start with the most likely cause. Gather evidence before concluding. Check recent changes first. Document the diagnostic path for others.

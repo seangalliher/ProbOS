@@ -28,6 +28,9 @@ _directive_store: Any = None
 # Cognitive skill catalog reference, set by runtime at startup (AD-596b)
 _skill_catalog: Any = None
 
+# Task context reference, set by runtime at startup (AD-586)
+_task_context: Any = None
+
 # Default location for standing orders
 _DEFAULT_ORDERS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "config" / "standing_orders"
 
@@ -87,6 +90,12 @@ def set_skill_catalog(catalog: Any) -> None:
     """Wire the CognitiveSkillCatalog for tier 7 composition (AD-596b)."""
     global _skill_catalog
     _skill_catalog = catalog
+
+
+def set_task_context(ctx: Any) -> None:
+    """Wire the TaskContext for tier 5.5 composition (AD-586)."""
+    global _task_context
+    _task_context = ctx
 
 
 @lru_cache(maxsize=32)
@@ -342,6 +351,8 @@ def compose_instructions(
     callsign: str | None = None,
     agent_rank: str | None = None,
     skill_profile: object | None = None,  # AD-625: SkillProfile for proficiency display
+    task_type: str | None = None,
+    task_context: Any | None = None,
 ) -> str:
     """Compose an agent's complete instructions from all tiers.
 
@@ -392,6 +403,16 @@ def compose_instructions(
     agent_text = _load_file(d / f"{agent_type}.md")
     if agent_text:
         parts.append(f"## Personal Standing Orders\n\n{agent_text}")
+
+    # Tier 5.5: Task-contextual standing orders (AD-586)
+    task_ctx = task_context or _task_context
+    if task_type and task_ctx and hasattr(task_ctx, "render_task_context"):
+        try:
+            task_section = task_ctx.render_task_context(task_type)
+            if task_section:
+                parts.append(task_section)
+        except Exception:
+            logger.debug("AD-586: Failed to render task context for %s", task_type)
 
     # 6. Active runtime directives (AD-386)
     if _directive_store is not None:

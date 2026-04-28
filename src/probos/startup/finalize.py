@@ -49,6 +49,31 @@ def _wire_tiered_knowledge_loader(*, runtime: Any, config: "SystemConfig") -> in
     return wired_count
 
 
+def _wire_task_context(*, runtime: Any, config: "SystemConfig") -> int:
+    """AD-586: Wire TaskContext for contextual standing orders."""
+    if not config.task_context.enabled:
+        return 0
+
+    from probos.cognitive.cognitive_agent import CognitiveAgent as _CA
+    from probos.cognitive.standing_orders import set_task_context
+    from probos.cognitive.task_context import TaskContext
+
+    ctx = TaskContext(config=config.task_context)
+    set_task_context(ctx)
+
+    wired_count = 0
+    registry = getattr(runtime, "registry", None)
+    for pool in runtime.pools.values():
+        for agent_ref in pool.healthy_agents:
+            agent = agent_ref
+            if not isinstance(agent_ref, _CA) and registry is not None:
+                agent = registry.get(agent_ref)
+            if isinstance(agent, _CA) and hasattr(agent, "set_task_context"):
+                agent.set_task_context(ctx)
+                wired_count += 1
+    return wired_count
+
+
 def _sync_ontology_callsigns(runtime: Any) -> None:
     """BF-244: Reconcile naming ceremony callsigns into ontology assignments."""
     ontology = getattr(runtime, "ontology", None)
@@ -162,6 +187,10 @@ async def finalize_startup(
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:
         logger.info("AD-585: TieredKnowledgeLoader wired to %d CognitiveAgents", wired_count)
+
+    wired_task_context = _wire_task_context(runtime=runtime, config=config)
+    if wired_task_context:
+        logger.info("AD-586: TaskContext wired to %d CognitiveAgents", wired_task_context)
 
     # AD-594: Late-bind expert selection registries into ConsultationProtocol.
     consultation_protocol = getattr(runtime, "_consultation_protocol", None)

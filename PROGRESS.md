@@ -157,6 +157,8 @@ AD-579a Pinned Knowledge Buffer CLOSED. AgentWorkingMemory now supports an optio
 
 AD-579b Temporal Validity Windows CLOSED. Episode now has valid_from/valid_until defaults; AnchorFrame has temporal_validity_start/temporal_validity_end defaults; EpisodicMemory metadata round-trips validity timestamps; recall_weighted(valid_at=...) filters expired and not-yet-valid episodes; recall_valid_at() wraps the filtered path. Added TemporalValidityConfig. No automatic inference, UI, retroactive propagation, anchor-recall changes, or dream consolidation changes. Tests: 10 focused passed; 30 adjacent anchor/weighted recall regressions passed; full xdist gate: 9679 passed, 14 skipped, 138 worker-crash failures classified by exact-node serial triage (74 passed).
 
+AD-586 Task-Contextual Standing Orders CLOSED. Added TaskContext, TaskContextConfig, default config/task_orders markdown files (build/analyze/communicate/diagnose plus zero-byte general), Tier 5.5 compose_instructions injection, CognitiveAgent task classification wiring, and startup wiring via _wire_task_context(). Intent mapping is hardcoded for build/analyze/communicate/diagnose/review/general; no LLM classification, per-agent customization, dream evolution, _load_file cache changes, or proactive path-specific rewiring. Tests: 12 focused passed; 90 adjacent standing-orders/cognitive-agent regressions passed; full xdist gate: 9742 passed, 14 skipped, 142 worker-crash failures classified by exact-node serial triage (83 passed).
+
 ---
 
 ## Development Eras

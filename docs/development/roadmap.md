@@ -4740,13 +4740,13 @@ AD-584a+b are interdependent and shipped as a single build prompt. AD-584c and A
 
 ---
 
-### Task-Contextual Standing Orders (AD-586) *(planned, OSS)*
+### Task-Contextual Standing Orders (AD-586) *(complete, OSS)*
 
-**AD-586: Task-Contextual Standing Orders** *(planned, OSS, depends: AD-339 Standing Orders, AD-531–539 Cognitive JIT, AD-543–549 Native SWE Harness)* — Adds a task-context activation dimension to the Standing Orders hierarchy. Currently Standing Orders are hierarchical (Federation → Ship → Department → Agent) but have no task-context dimension. HVE-core uses `applyTo` patterns to auto-activate context-specific instructions. Absorbed from microsoft/hve-core prompt engineering library analysis (2026-04-10).
+**AD-586: Task-Contextual Standing Orders** *(complete, OSS, depends: AD-339 Standing Orders, AD-531–539 Cognitive JIT, AD-543–549 Native SWE Harness)* — Adds a task-context activation dimension to the Standing Orders hierarchy. `TaskContext` maps intent names to six task types (`build`, `analyze`, `communicate`, `diagnose`, `review`, `general`) and renders markdown from `config/task_orders/`. `compose_instructions()` now supports Tier 5.5 task context between Personal Standing Orders and Active Directives, with CognitiveAgent and startup wiring. Absorbed from microsoft/hve-core prompt engineering library analysis (2026-04-10).
 
 **Pattern:** "When working on [task type], these additional orders activate." Complements the existing 4-tier hierarchy with a 5th orthogonal dimension. Example: agent performing a security review gets OWASP Agentic Top 10 awareness loaded regardless of department.
 
-**Integration points:** `compose_instructions()` in `standing_orders.py` (new `task_context` parameter), `config/standing_orders/tasks/` (new directory for task-contextual order files), Qualification Programs (task-context orders gated by qualifications), Native SWE Harness (task type detection feeds context activation). Purely additive — no changes to existing hierarchy.
+**Integration points:** `compose_instructions()` in `standing_orders.py` (`task_type` and `task_context` parameters), `config/task_orders/` task-order files, `CognitiveAgent.set_task_context()`, and `_wire_task_context()` in startup finalization. Purely additive — no changes to existing hierarchy.
 
 **Research:** `memory/hve-core-research.md` (pattern #5). Issue #143.
 

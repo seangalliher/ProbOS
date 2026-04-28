@@ -101,6 +101,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Temporal facts need validity metadata so recall can exclude expired or not-yet-valid episodes without inferring dates from content or changing anchor recall in this AD.
 **Status:** Implemented
 
+### AD-586: Task-Contextual Standing Orders
+
+**Date:** 2026-04-28
+**Decision:** Task-contextual standing orders. Tier 5.5 inserted between Agent Orders and Active Directives. Six task types (build/analyze/communicate/diagnose/review/general) classified from intent name via hardcoded dict. Markdown files in config/task_orders/.
+**Rationale:** Standing orders needed an explicit task dimension so build, analysis, communication, diagnosis, and review guidance can activate only when a caller passes a task type.
+**Status:** Implemented
+
 ### AD-594: Crew Consultation Protocol
 
 **Date:** 2026-04-27
