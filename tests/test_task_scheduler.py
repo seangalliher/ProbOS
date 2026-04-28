@@ -167,8 +167,12 @@ async def test_scheduled_task_executes_via_runtime():
     await rt.start()
     try:
         t = rt.task_scheduler.schedule("read_file /tmp/test.txt", delay_seconds=0)
-        await asyncio.sleep(3.0)
-        task = rt.task_scheduler._tasks[t.id]
+        # Under xdist, the runtime competes for CPU — allow up to 10s.
+        for _ in range(20):
+            await asyncio.sleep(0.5)
+            task = rt.task_scheduler._tasks[t.id]
+            if task.status in ("completed", "failed"):
+                break
         assert task.status in ("completed", "failed")
     finally:
         await rt.stop()

@@ -14,6 +14,7 @@ from probos.config import PoolConfig
 # construct SystemConfig see the override. setdefault allows opt-in:
 #   PROBOS_NATS_ENABLED=true pytest tests/test_nats_integration.py
 os.environ.setdefault("PROBOS_NATS_ENABLED", "false")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 
 def pytest_collection_modifyitems(config, items):

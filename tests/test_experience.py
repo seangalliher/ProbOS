@@ -283,17 +283,17 @@ class TestShellModelAndTier:
 
     @pytest.fixture
     async def oai_runtime(self, tmp_path):
-        """Runtime with an OpenAICompatibleClient (endpoint is unreachable, but
-        that's fine — we only test shell commands, not actual LLM calls)."""
+        """Runtime with an OpenAICompatibleClient — NOT fully started.
+        These tests only exercise /models and /tier shell commands, which
+        inspect runtime.llm_client — no agent fleet or startup needed."""
         client = OpenAICompatibleClient(
             base_url="http://127.0.0.1:19999/v1",  # unlikely to be running
             models={"fast": "gpt-4o-mini", "standard": "claude-sonnet-4-6", "deep": "claude-opus-4-0-20250115"},
             default_tier="standard",
+            timeout=0.5,
         )
         rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=client)
-        await rt.start()
         yield rt
-        await rt.stop()
 
     @pytest.fixture
     async def oai_shell(self, oai_runtime, console):
