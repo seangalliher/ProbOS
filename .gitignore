@@ -56,3 +56,6 @@ Desktop.ini
 
 # MkDocs build output
 site/
+
+meta.inf
+
