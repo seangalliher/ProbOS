@@ -1299,6 +1299,151 @@ class EpisodicMemory:
 
         return episodes
 
+    async def recall_by_anchor_scored(
+        self,
+        *,
+        agent_id: str = "",
+        department: str = "",
+        channel: str = "",
+        trigger_type: str = "",
+        trigger_agent: str = "",
+        watch_section: str = "",
+        participants: list[str] | None = None,
+        time_range: tuple[float, float] | None = None,
+        semantic_query: str = "",
+        limit: int = 50,
+        trust_network: Any = None,
+        hebbian_router: Any = None,
+        intent_type: str = "",
+        weights: dict[str, float] | None = None,
+        convergence_bonus: float = 0.10,
+        query_watch_section: str = "",
+        temporal_match_weight: float = 0.10,
+        temporal_mismatch_penalty: float = 0.15,
+        anchor_bonus: float = 0.08,
+    ) -> list[RecallScore]:
+        """AD-603: Anchor recall with full composite scoring."""
+        raw_episodes = await self.recall_by_anchor(
+            department=department,
+            channel=channel,
+            trigger_type=trigger_type,
+            trigger_agent=trigger_agent,
+            watch_section=watch_section,
+            agent_id=agent_id,
+            participants=participants,
+            time_range=time_range,
+            semantic_query=semantic_query,
+            limit=limit,
+        )
+
+        if not raw_episodes:
+            return []
+
+        ep_similarities: dict[str, float] = {}
+        collection = getattr(self, "_collection", None)
+        if semantic_query and collection:
+            try:
+                count = collection.count()
+                if count > 0:
+                    from probos.knowledge.embeddings import reformulate_query
+
+                    query_variants = (
+                        reformulate_query(semantic_query)
+                        if getattr(self, "_query_reformulation_enabled", True)
+                        else [semantic_query]
+                    )
+                    n_results = min(limit * 3, count)
+                    result = collection.query(
+                        query_texts=query_variants,
+                        n_results=n_results,
+                        include=["distances"],
+                    )
+                    if result and result.get("ids"):
+                        distances = result.get("distances") or []
+                        for query_index, ids_for_query in enumerate(result["ids"]):
+                            for result_index, doc_id in enumerate(ids_for_query):
+                                distance = (
+                                    distances[query_index][result_index]
+                                    if distances and query_index < len(distances)
+                                    and result_index < len(distances[query_index])
+                                    else 0.0
+                                )
+                                similarity = 1.0 - distance
+                                if doc_id not in ep_similarities or similarity > ep_similarities[doc_id]:
+                                    ep_similarities[doc_id] = similarity
+            except Exception:
+                logger.debug("AD-603: Semantic similarity lookup for anchor episodes failed", exc_info=True)
+
+        keyword_map: dict[str, int] = {}
+        if semantic_query:
+            try:
+                kw_results = await self.keyword_search(semantic_query, k=limit * 3)
+                for ep_id, _rank in kw_results:
+                    keyword_map[ep_id] = keyword_map.get(ep_id, 0) + 1
+            except Exception:
+                logger.debug("AD-603: Keyword search for anchor episodes failed", exc_info=True)
+
+        now = time.time()
+        results: list[RecallScore] = []
+        for ep in raw_episodes:
+            semantic_similarity = ep_similarities.get(ep.id, 0.0)
+
+            trust_weight = 0.5
+            if trust_network is not None and agent_id:
+                try:
+                    trust_weight = trust_network.get_score(agent_id)
+                except Exception:
+                    trust_weight = 0.5
+
+            hebbian_weight = 0.5
+            if hebbian_router is not None and intent_type:
+                try:
+                    hebbian_weight = hebbian_router.get_weight(intent_type, agent_id, rel_type="intent")
+                except Exception:
+                    hebbian_weight = 0.5
+
+            age_hours = (now - ep.timestamp) / 3600.0 if ep.timestamp > 0 else 168.0 * 4
+            recency_weight = math.exp(-age_hours / 168.0)
+            keyword_hits = keyword_map.get(ep.id, 0)
+            temporal_match = bool(
+                query_watch_section
+                and getattr(ep, "anchors", None)
+                and getattr(ep.anchors, "watch_section", "") == query_watch_section
+            )
+
+            recall_score = self.score_recall(
+                episode=ep,
+                semantic_similarity=semantic_similarity,
+                keyword_hits=keyword_hits,
+                trust_weight=trust_weight,
+                hebbian_weight=hebbian_weight,
+                recency_weight=recency_weight,
+                weights=weights,
+                convergence_bonus=convergence_bonus,
+                temporal_match=temporal_match,
+                temporal_match_weight=temporal_match_weight,
+                temporal_mismatch_penalty=temporal_mismatch_penalty,
+                query_has_temporal_intent=bool(query_watch_section),
+                importance=ep.importance,
+                importance_weight=0.05,
+            )
+            results.append(
+                RecallScore(
+                    episode=recall_score.episode,
+                    semantic_similarity=recall_score.semantic_similarity,
+                    keyword_hits=recall_score.keyword_hits,
+                    trust_weight=recall_score.trust_weight,
+                    hebbian_weight=recall_score.hebbian_weight,
+                    recency_weight=recall_score.recency_weight,
+                    anchor_confidence=recall_score.anchor_confidence,
+                    tcm_similarity=recall_score.tcm_similarity,
+                    composite_score=recall_score.composite_score + max(0.0, anchor_bonus),
+                )
+            )
+
+        results.sort(key=lambda result: result.composite_score, reverse=True)
+        return results
+
     async def recall_for_agent(self, agent_id: str, query: str, k: int = 5) -> list[Episode]:
         """Recall episodes scoped to a specific agent. Sovereign memory — only this agent's experiences (AD-397)."""
         if not self._collection:

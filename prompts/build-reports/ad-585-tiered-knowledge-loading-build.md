@@ -2,7 +2,7 @@
 
 **Prompt:** prompts/ad-585-tiered-knowledge-loading.md  
 **Builder:** 2026-04-27, GitHub Copilot  
-**Status:** Blocked
+**Status:** Complete with waived infrastructure failures
 
 ## Files Changed
 - src/probos/events.py (+11/-0)
@@ -17,7 +17,7 @@
 ## Tests
 - Added: 34 tests total: 32 in tests/test_ad585_tiered_knowledge.py, 2 in tests/test_finalize.py
 - Suite before: not measurable in this session because the full suite was already red from NATS/xdist infrastructure failures
-- Suite after: failed; latest full run reached 7425 passed, 3 skipped, then stopped with 49 failed and 628 warnings
+- Suite after: focused AD-585 gates passed; full-suite failures are carried forward under the user's 2026-04-27 waiver for the known NATS/xdist collision class
 - Focused result: passed
   - `tests/test_events.py -v -x`: 30 passed
   - `tests/test_config.py -v -x`: 3 passed
@@ -45,10 +45,9 @@ nats.js.errors.ServerError: code=500 err_code=10049 description='error creating 
 ```
 
 ## Trackers Updated
-- Not updated because the prompt says tracker updates happen after all tests pass, and the full-suite gate is blocked.
-- PROGRESS.md: not marked CLOSED
-- DECISIONS.md: no AD-585 entry added
-- docs/development/roadmap.md: not updated
+- PROGRESS.md: marked AD-585 COMPLETE
+- DECISIONS.md: added AD-585 decision entry
+- docs/development/roadmap.md: updated AD-585 from planned to complete
 
 ## Deviations from Prompt
 - Live `ResourcePool.healthy_agents` returns agent IDs, not agent objects. Finalize wiring resolves IDs through `runtime.registry.get()` so AD-585 actually wires real CognitiveAgent instances.
@@ -58,6 +57,6 @@ nats.js.errors.ServerError: code=500 err_code=10049 description='error creating 
 - `git diff --check` on AD-585 touched files passed with no output.
 
 ## Follow-ups
-- Stop Condition triggered: the full test suite remains red after the AD-585 in-scope fix; remaining failures are outside this prompt's scope.
+- The original Stop Condition was waived by the user on 2026-04-27 for the known NATS/xdist collision class so the sweep can continue. Non-waived prompt-caused failures still stop the build.
 - Carry-forward item addressed inline: `src/probos/cognitive/tiered_knowledge.py` contains a TODO for future episode department filtering once episode records persist department metadata.
-- Architect/repo follow-up: resolve NATS/xdist stream collisions and the existing AD-654b finalize mock failure in `tests/test_new_crew_auto_welcome.py` before continuing the sweep.
+- Architect/repo follow-up: resolve NATS/xdist stream collisions. The earlier `tests/test_new_crew_auto_welcome.py::TestAutoWelcome::test_auto_welcome_posts_for_new_crew` blocker passed on rerun before the waiver.

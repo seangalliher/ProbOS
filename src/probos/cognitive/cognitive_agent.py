@@ -4573,31 +4573,59 @@ class CognitiveAgent(BaseAgent):
                 if not episodes and hasattr(em, 'recent_for_agent'):
                     episodes = await em.recent_for_agent(_mem_id, k=_tier_params.get("k", 3))
 
-                # AD-570c: Merge anchor recall with semantic recall
+                # AD-603: Merge anchor recall with semantic recall (score-aware)
                 if _anchor_episodes:
-                    _seen_ids = {getattr(ep, 'id', id(ep)) for ep in _anchor_episodes}
-                    for ep in episodes:
-                        if getattr(ep, 'id', id(ep)) in _seen_ids:
-                            continue
-                        # BF-155: Exclude semantic episodes whose watch_section contradicts
-                        # the query's temporal intent. Without this filter, wrong-watch
-                        # episodes contaminate the anchor-filtered recall set.
-                        if (
-                            _query_watch_section
-                            and getattr(ep, "anchors", None)
-                            and getattr(ep.anchors, "watch_section", "")
-                            and ep.anchors.watch_section != _query_watch_section
-                        ):
-                            logger.debug(
-                                "BF-155: Excluding episode %s (watch=%s) — query watch=%s",
-                                getattr(ep, 'id', '?')[:8],
-                                ep.anchors.watch_section,
-                                _query_watch_section,
-                            )
-                            continue
-                        _anchor_episodes.append(ep)
-                        _seen_ids.add(getattr(ep, 'id', id(ep)))
-                    episodes = _anchor_episodes
+                    from probos.types import RecallScore as _RecallScore
+
+                    _is_scored = bool(_anchor_episodes and isinstance(_anchor_episodes[0], _RecallScore))
+                    if _is_scored:
+                        _seen_ids: set[str] = {rs.episode.id for rs in _anchor_episodes}
+                        _merged: list[_RecallScore] = list(_anchor_episodes)
+                        for rs in scored_results:
+                            if rs.episode.id in _seen_ids:
+                                continue
+                            if (
+                                _query_watch_section
+                                and getattr(rs.episode, "anchors", None)
+                                and getattr(rs.episode.anchors, "watch_section", "")
+                                and rs.episode.anchors.watch_section != _query_watch_section
+                            ):
+                                logger.debug(
+                                    "BF-155: Excluding episode %s (watch=%s) — query watch=%s",
+                                    rs.episode.id[:8],
+                                    rs.episode.anchors.watch_section,
+                                    _query_watch_section,
+                                )
+                                continue
+                            _merged.append(rs)
+                            _seen_ids.add(rs.episode.id)
+                        _merged.sort(key=lambda recall_score: recall_score.composite_score, reverse=True)
+                        scored_results = _merged
+                        episodes = [rs.episode for rs in scored_results]
+                    else:
+                        _seen_ids = {getattr(ep, 'id', id(ep)) for ep in _anchor_episodes}
+                        for ep in episodes:
+                            if getattr(ep, 'id', id(ep)) in _seen_ids:
+                                continue
+                            # BF-155: Exclude semantic episodes whose watch_section contradicts
+                            # the query's temporal intent. Without this filter, wrong-watch
+                            # episodes contaminate the anchor-filtered recall set.
+                            if (
+                                _query_watch_section
+                                and getattr(ep, "anchors", None)
+                                and getattr(ep.anchors, "watch_section", "")
+                                and ep.anchors.watch_section != _query_watch_section
+                            ):
+                                logger.debug(
+                                    "BF-155: Excluding episode %s (watch=%s) — query watch=%s",
+                                    getattr(ep, 'id', '?')[:8],
+                                    ep.anchors.watch_section,
+                                    _query_watch_section,
+                                )
+                                continue
+                            _anchor_episodes.append(ep)
+                            _seen_ids.add(getattr(ep, 'id', id(ep)))
+                        episodes = _anchor_episodes
 
                 # AD-620: Oracle Service — clearance-based access
                 # Agents with ORACLE tier (via rank or billet clearance) get Oracle on any strategy.
@@ -4785,6 +4813,42 @@ class CognitiveAgent(BaseAgent):
         em = self._runtime.episodic_memory
         if not hasattr(em, 'recall_by_anchor'):
             return None, anchor.watch_section or ""
+
+        trust_net = getattr(self._runtime, 'trust_network', None)
+        heb_router = getattr(self._runtime, 'hebbian_router', None)
+        mem_cfg = None
+        if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'memory'):
+            mem_cfg = self._runtime.config.memory
+
+        if hasattr(em, 'recall_by_anchor_scored'):
+            try:
+                scored_results = await em.recall_by_anchor_scored(
+                    department=anchor.department,
+                    trigger_agent=anchor.trigger_agent,
+                    participants=anchor.participants if anchor.participants else None,
+                    time_range=anchor.time_range,
+                    watch_section=anchor.watch_section,
+                    semantic_query=anchor.semantic_query,
+                    agent_id=agent_mem_id,
+                    limit=10,
+                    trust_network=trust_net,
+                    hebbian_router=heb_router,
+                    intent_type="",
+                    weights=getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None,
+                    query_watch_section=anchor.watch_section or "",
+                    temporal_match_weight=getattr(mem_cfg, 'recall_temporal_match_weight', 0.25) if mem_cfg else 0.25,
+                    temporal_mismatch_penalty=getattr(mem_cfg, 'recall_temporal_mismatch_penalty', 0.15) if mem_cfg else 0.15,
+                )
+            except Exception:
+                logger.debug("AD-603: recall_by_anchor_scored failed, falling back to unscored", exc_info=True)
+                scored_results = None
+
+            if scored_results:
+                logger.debug(
+                    "AD-603: Scored anchor recall returned %d results (dept=%s, agent=%s, watch=%s)",
+                    len(scored_results), anchor.department, anchor.trigger_agent, anchor.watch_section,
+                )
+                return scored_results, anchor.watch_section or ""
 
         try:
             results = await em.recall_by_anchor(

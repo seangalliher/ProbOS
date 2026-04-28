@@ -4724,9 +4724,9 @@ AD-584a+b are interdependent and shipped as a single build prompt. AD-584c and A
 
 ---
 
-### Tiered Knowledge Loading (AD-585) *(planned, OSS)*
+### Tiered Knowledge Loading (AD-585) *(complete, OSS)*
 
-**AD-585: Tiered Knowledge Loading** *(planned, OSS, depends: AD-531–539 Cognitive JIT, AD-357 Earned Agency, AD-339 Standing Orders)* — Three-tier knowledge loading model that surfaces different knowledge depths based on agent expertise level. Currently all agents receive the same knowledge loading regardless of Dreyfus level. Absorbed from microsoft/hve-core prompt engineering library analysis (2026-04-10).
+**AD-585: Tiered Knowledge Loading** *(complete, OSS, depends: AD-531–539 Cognitive JIT, AD-357 Earned Agency, AD-339 Standing Orders)* — Three-tier knowledge loading model that surfaces different knowledge depths based on agent expertise level. Implemented as a shared `TieredKnowledgeLoader` wired into CognitiveAgent decision prompts at startup, with ambient/contextual/on-demand APIs, cache invalidation, token budgets, trust summaries, typed `KNOWLEDGE_TIER_LOADED` telemetry, and focused tests. Absorbed from microsoft/hve-core prompt engineering library analysis (2026-04-10).
 
 - **Ambient** — Always in context (Standing Orders, department protocols). Current behavior, no change needed.
 - **Contextual** — Auto-loaded based on current task type (e.g., security review auto-loads security standards from Ship's Records). New tier.
@@ -5177,17 +5177,17 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
-### Anchor Recall Composite Scoring (AD-603) *(planned, OSS)*
+### Anchor Recall Composite Scoring (AD-603) *(complete, OSS)*
 
-**AD-603: Anchor Recall Composite Scoring** *(planned, OSS, depends: AD-570 Anchor-Indexed Recall, AD-567b Salience-Weighted Recall, AD-584c Scoring Rebalance)* — Apply `score_recall()` composite scoring to `recall_by_anchor()` results. Currently `recall_by_anchor()` returns raw `list[Episode]` objects — they bypass the entire composite scoring pipeline (semantic similarity, keyword hits, trust weight, hebbian weight, recency, convergence bonus, temporal match). This means anchor-recalled episodes enter the merge step at `cognitive_agent.py:2794` with no quality score, while semantic results from `recall_weighted()` have full composite scores. The merge is comparing scored vs unscored results.
+**AD-603: Anchor Recall Composite Scoring** *(complete, OSS, depends: AD-570 Anchor-Indexed Recall, AD-567b Salience-Weighted Recall, AD-584c Scoring Rebalance)* — Applies `score_recall()` composite scoring to anchor-retrieved episodes via new `recall_by_anchor_scored()` while preserving `recall_by_anchor()` as raw `list[Episode]` enumeration for existing callers. Anchor results now carry semantic similarity, keyword hits, trust weight, Hebbian weight, recency, anchor confidence, temporal match, importance, and a modest structural anchor bonus before entering the CognitiveAgent merge step.
 
 **Problem statement:** The merge step (AD-570c) at `cognitive_agent.py:2794-2801` puts anchor episodes first and appends unique semantic episodes. But anchor episodes have no composite score — they're assumed to be relevant because they matched the anchor filter. This is often true, but when anchor recall returns many episodes (up to limit=10), some may be low-quality (old, low trust, low semantic relevance). Without scoring, they can't be ranked against each other or against semantic results. The merge produces an unranked list where position (anchor-first) substitutes for quality.
 
-**Design:**
-- `recall_by_anchor()` returns `list[RecallScore]` instead of `list[Episode]` (or new method `recall_by_anchor_scored()`).
-- Each anchor-recalled episode gets scored via `score_recall()` with the same weights and parameters used by `recall_weighted()`.
-- Merge step at `cognitive_agent.py:2794` becomes a scored merge: combine both `RecallScore` lists, deduplicate by episode ID, sort by `composite_score` descending, apply budget enforcement.
-- Anchor-recalled episodes get an additional `anchor_retrieval_bonus` (configurable, default 0.05) in their composite score — reward for matching the structured filter.
+**Delivered:**
+- `recall_by_anchor_scored()` returns `list[RecallScore]` without changing `recall_by_anchor()`.
+- Each anchor-recalled episode gets scored via `score_recall()` with the same weight inputs used by `recall_weighted()`.
+- CognitiveAgent merge combines scored anchor and semantic `RecallScore` lists, deduplicates by episode ID, sorts by `composite_score`, and preserves BF-155 temporal mismatch filtering.
+- Anchor-recalled episodes get an additional `anchor_bonus` (default 0.08) for matching a structured filter.
 
 **Connects to:** AD-567b (salience-weighted recall — scoring formula), AD-584c (scoring rebalance — weight configuration), AD-570c (anchor recall merge — direct consumer of scored anchor results), BF-155 (merge contamination — AD-603 is the deep fix for the merge quality problem).
 
