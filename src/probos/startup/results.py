@@ -125,6 +125,7 @@ class DreamingResult:
     notebook_quality_engine: Any = None  # AD-555
     retrieval_practice_engine: Any = None  # AD-541c
     behavioral_metrics_engine: Any = None  # AD-569
+    quality_router: Any = None  # AD-565
 
 
 @dataclass

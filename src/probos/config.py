@@ -755,6 +755,15 @@ class QualityTriggerConfig(BaseModel):
     max_forced_per_day: int = 5
 
 
+class QualityRouterConfig(BaseModel):
+    """AD-565: Quality-informed routing configuration."""
+
+    enabled: bool = True
+    min_weight: float = 0.5
+    max_weight: float = 1.5
+    concern_threshold: float = 0.3
+
+
 class OrientationConfig(BaseModel):
     """AD-567g: Cognitive re-localization configuration."""
 
@@ -1337,6 +1346,7 @@ class SystemConfig(BaseModel):
     confidence: ConfidenceConfig = ConfidenceConfig()  # AD-444
     lint: LintConfig = LintConfig()  # AD-563
     quality_trigger: QualityTriggerConfig = QualityTriggerConfig()  # AD-564
+    quality_router: QualityRouterConfig = QualityRouterConfig()  # AD-565
     onboarding: OnboardingConfig = OnboardingConfig()
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
     ward_room: WardRoomConfig = WardRoomConfig()

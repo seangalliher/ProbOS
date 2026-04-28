@@ -79,6 +79,14 @@ async def init_dreaming(
             config=config.quality_trigger,
             emit_event_fn=emit_event_fn,
         )
+    # AD-565: Quality-informed routing
+    from probos.knowledge.quality_router import QualityRouter
+    quality_router = None
+    if config.quality_router.enabled:
+        quality_router = QualityRouter(
+            config=config.quality_router,
+            emit_event_fn=emit_event_fn,
+        )
     # AD-444: Confidence Tracker
     from probos.knowledge.confidence_tracker import ConfidenceTracker
     confidence_tracker = None
@@ -156,6 +164,8 @@ async def init_dreaming(
             dreaming_engine.set_knowledge_linter(knowledge_linter)
         if quality_trigger:
             dreaming_engine.set_quality_trigger(quality_trigger)
+        if quality_router:
+            dreaming_engine.set_quality_router(quality_router)
 
     if confidence_tracker and records_store:
         records_store.set_confidence_tracker(confidence_tracker)
@@ -324,5 +334,6 @@ async def init_dreaming(
         notebook_quality_engine=notebook_quality_engine,
         retrieval_practice_engine=retrieval_practice_engine,
         behavioral_metrics_engine=behavioral_metrics_engine,
+        quality_router=quality_router,
     )
     return result, cold_start

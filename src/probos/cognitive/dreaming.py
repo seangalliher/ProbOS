@@ -57,6 +57,7 @@ class DreamingEngine:
     _confidence_tracker: Any = None
     _knowledge_linter: Any = None
     _quality_trigger: Any = None
+    _quality_router: Any = None
 
     def __init__(
         self,
@@ -111,6 +112,7 @@ class DreamingEngine:
         self._confidence_tracker: Any = None  # AD-444
         self._knowledge_linter: Any = None  # AD-563
         self._quality_trigger: Any = None  # AD-564
+        self._quality_router: Any = None  # AD-565
         self._agent_wm: Any = None  # AD-671: late-bound working memory
         self._last_procedures: list[Any] = []  # AD-532: most recent extracted procedures
         self._extracted_cluster_ids: set[str] = set()  # AD-532: already-processed clusters
@@ -148,6 +150,10 @@ class DreamingEngine:
     def set_quality_trigger(self, trigger: Any) -> None:
         """AD-564: Late-bind quality consolidation trigger."""
         self._quality_trigger = trigger
+
+    def set_quality_router(self, router: Any) -> None:
+        """AD-565: Late-bind quality router."""
+        self._quality_router = router
 
     @property
     def last_clusters(self) -> list[Any]:
@@ -1116,6 +1122,24 @@ class DreamingEngine:
                     logger.info("AD-564 Step 10: Forced consolidation triggered")
             except Exception:
                 logger.debug("AD-564 Step 10: trigger check failed", exc_info=True)
+
+        if self._quality_router and quality_snapshot:
+            try:
+                for agent_quality in quality_snapshot.per_agent:
+                    agent_id = agent_quality.callsign
+                    if agent_id:
+                        self._quality_router.update_quality(
+                            agent_id,
+                            agent_quality.quality_score,
+                        )
+                weights = self._quality_router.get_all_weights()
+                if weights:
+                    logger.info(
+                        "AD-565 Step 10: Quality routing updated for %d agents",
+                        len(weights),
+                    )
+            except Exception:
+                logger.debug("AD-565 Step 10: quality router update failed", exc_info=True)
 
         # Step 11: Spaced Retrieval Therapy (AD-541c)
         retrieval_practices = 0

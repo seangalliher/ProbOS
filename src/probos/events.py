@@ -168,6 +168,7 @@ class EventType(str, Enum):
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased
     FORCED_CONSOLIDATION_TRIGGERED = "forced_consolidation_triggered"  # AD-564
+    QUALITY_CONCERN = "quality_concern"  # AD-565: low notebook quality diagnostic
 
     # Boot camp (AD-638)
     BOOT_CAMP_ACTIVATED = "boot_camp_activated"
