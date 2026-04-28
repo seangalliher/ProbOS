@@ -1275,6 +1275,7 @@ class ProbOSRuntime:
         self._social_verification = cog.social_verification  # AD-567f
         self._orientation_service = cog.orientation_service  # AD-567g
         self._oracle_service = cog.oracle_service  # AD-462e
+        self._consultation_protocol = cog.consultation_protocol  # AD-594
 
         # AD-588: Introspective Telemetry Service
         try:

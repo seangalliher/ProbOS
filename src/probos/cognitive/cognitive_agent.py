@@ -162,6 +162,9 @@ class CognitiveAgent(BaseAgent):
         # AD-672: Per-agent concurrency management
         self._concurrency_manager: ConcurrencyManager | None = None
 
+        # AD-594: Crew Consultation Protocol
+        self._consultation_protocol: Any = None
+
         # Validate instructions exist
         if not self.instructions:
             raise ValueError(
@@ -184,6 +187,12 @@ class CognitiveAgent(BaseAgent):
     def set_sub_task_executor(self, executor) -> None:
         """AD-632a: Wire sub-task executor for Level 3 reasoning."""
         self._sub_task_executor = executor
+
+    def set_consultation_protocol(self, protocol: Any) -> None:
+        """AD-594: Wire consultation protocol and register as handler."""
+        self._consultation_protocol = protocol
+        if protocol is not None:
+            protocol.register_handler(self.id, self.handle_consultation_request)
 
     def set_concurrency_manager(self, manager: ConcurrencyManager) -> None:
         """AD-672: Wire per-agent concurrency manager."""
@@ -3330,6 +3339,85 @@ class CognitiveAgent(BaseAgent):
             logger.debug("AD-623: DM self-monitoring failed", exc_info=True)
 
         return None
+
+    async def handle_consultation_request(self, request: Any) -> Any:
+        """AD-594: Handle an incoming expert consultation request."""
+        from probos.cognitive.consultation import ConsultationResponse
+
+        callsign = getattr(self, "callsign", None) or self.agent_type
+        logger.info(
+            "AD-594: %s handling consultation on '%s' from %s",
+            callsign,
+            request.topic,
+            request.requester_callsign or request.requester_id,
+        )
+
+        system_prompt = (
+            f"You are {callsign}, responding to an expert consultation.\n"
+            f"Topic: {request.topic}\n"
+            f"Question: {request.question}\n"
+        )
+        if request.required_expertise:
+            system_prompt += f"Required expertise: {request.required_expertise}\n"
+        if request.context:
+            system_prompt += f"Additional context: {request.context}\n"
+
+        system_prompt += (
+            "\nProvide a concise, expert answer. Include your reasoning summary. "
+            "Rate your confidence (0.0-1.0) in your answer. "
+            "If you are not confident, say so honestly."
+        )
+
+        user_message = request.question or request.topic
+        answer = ""
+        confidence = 0.5
+        reasoning = ""
+
+        runtime = getattr(self, "_runtime", None)
+        llm = getattr(self, "_llm_client", None) or (
+            getattr(runtime, "llm_client", None) if runtime else None
+        )
+        if llm:
+            try:
+                from probos.types import LLMRequest
+                llm_request = LLMRequest(
+                    system_prompt=system_prompt,
+                    user_message=user_message,
+                    tier="fast",
+                )
+                llm_response = await llm.complete(llm_request)
+                answer = (
+                    llm_response.content
+                    if hasattr(llm_response, "content")
+                    else str(llm_response)
+                )
+                confidence = 0.6
+                reasoning = f"Consulted on {request.topic}"
+            except Exception:
+                logger.warning(
+                    "AD-594: LLM call failed for consultation by %s; providing fallback",
+                    callsign,
+                    exc_info=True,
+                )
+                answer = f"I did not complete a full analysis of '{request.topic}' at this time."
+                confidence = 0.2
+                reasoning = "LLM call failed; low-confidence fallback response"
+        else:
+            answer = (
+                f"Acknowledged consultation on '{request.topic}'; "
+                "no LLM client is available for detailed analysis."
+            )
+            confidence = 0.1
+            reasoning = "No LLM client available"
+
+        return ConsultationResponse(
+            request_id=request.request_id,
+            responder_id=self.id,
+            responder_callsign=callsign,
+            answer=answer,
+            confidence=confidence,
+            reasoning_summary=reasoning,
+        )
 
     def _build_temporal_context(self) -> str:
         """AD-502: Build temporal awareness header for agent prompts."""

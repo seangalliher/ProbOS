@@ -785,6 +785,19 @@ class WorkingMemoryConfig(BaseModel):
     engagement_budget: int = 800
 
 
+class ConsultationConfig(BaseModel):
+    """AD-594: Crew Consultation Protocol configuration."""
+
+    enabled: bool = True
+    timeout_seconds: float = 30.0
+    max_consultations_per_agent_per_hour: int = 20
+    max_pending_requests: int = 10
+    expert_selection_max_candidates: int = 5
+    weight_capability_match: float = 0.5
+    weight_trust: float = 0.3
+    weight_billet_relevance: float = 0.2
+
+
 class MetabolismConfig(BaseModel):
     """AD-670: Working memory metabolism — active lifecycle management."""
 
@@ -1327,6 +1340,7 @@ class SystemConfig(BaseModel):
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     nats: NatsConfig = NatsConfig()  # AD-637
     bill: BillConfig = BillConfig()  # AD-618b
+    consultation: ConsultationConfig = ConsultationConfig()  # AD-594
 
 
 def load_config(path: str | Path) -> SystemConfig:

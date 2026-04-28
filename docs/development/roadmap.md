@@ -4795,9 +4795,9 @@ AD-584a+b are interdependent and shipped as a single build prompt. AD-584c and A
 
 ---
 
-### Crew Consultation Protocol (AD-594) *(planned, OSS + Commercial)*
+### Crew Consultation Protocol (AD-594) *(Complete, OSS + Commercial)*
 
-**AD-594: Crew Consultation Protocol — Multi-Agent Advisory Planning & Parallel Execution** *(planned, OSS + Commercial)* — ProbOS has no general-purpose pattern for structured multi-agent collaboration on complex tasks. The Architect→Builder pipeline is hardcoded in routers, not reusable. IntentBus provides messaging primitives but no structured delegation envelope. Compound step replay (AD-534c) is zero-token sequential playback, not live collaboration. Agents cannot consult other agents mid-decision and receive a response before continuing.
+**AD-594: Crew Consultation Protocol — Multi-Agent Advisory Planning & Parallel Execution** *(Complete, OSS + Commercial)* — ProbOS has no general-purpose pattern for structured multi-agent collaboration on complex tasks. The Architect→Builder pipeline is hardcoded in routers, not reusable. IntentBus provides messaging primitives but no structured delegation envelope. Compound step replay (AD-534c) is zero-token sequential playback, not live collaboration. Agents cannot consult other agents mid-decision and receive a response before continuing.
 
 **The pattern:** An executor agent consults advisor agents iteratively to build a plan, then multiple executors work the plan in parallel. Managed workspace for artifact exchange. Managed I/O for captain-provided inputs and deliverable outputs. Models the **Military Staff Planning Process (MDMP)** natively in ProbOS's naval architecture.
 

@@ -163,6 +163,14 @@ async def finalize_startup(
     if wired_count:
         logger.info("AD-585: TieredKnowledgeLoader wired to %d CognitiveAgents", wired_count)
 
+    # AD-594: Late-bind expert selection registries into ConsultationProtocol.
+    consultation_protocol = getattr(runtime, "_consultation_protocol", None)
+    if consultation_protocol:
+        consultation_protocol.set_capability_registry(runtime.capability_registry)
+        if runtime.ontology and runtime.ontology.billet_registry:
+            consultation_protocol.set_billet_registry(runtime.ontology.billet_registry)
+        consultation_protocol.set_trust_network(runtime.trust_network)
+
     # --- AD-595a: Wire BilletRegistry event callback ---
     if runtime.ontology and runtime.ontology.billet_registry:
         runtime.ontology.billet_registry.set_event_callback(
@@ -509,6 +517,20 @@ async def finalize_startup(
             exc_info=True,
         )
         runtime._sub_task_executor = None
+
+    # --- AD-594: Crew consultation handler wiring ---
+    if consultation_protocol:
+        wired_consultation = 0
+        for _agent in runtime.registry.all():
+            if not is_crew_agent(_agent, runtime.ontology):
+                continue
+            if hasattr(_agent, "set_consultation_protocol"):
+                _agent.set_consultation_protocol(consultation_protocol)
+                wired_consultation += 1
+        logger.info(
+            "AD-594: ConsultationProtocol wired to %d crew agents",
+            wired_consultation,
+        )
 
     # --- AD-672: Per-agent concurrency management ---
     try:

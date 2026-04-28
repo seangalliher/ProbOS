@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from probos.cognitive.emergence_metrics import EmergenceMetricsEngine
     from probos.cognitive.feedback import FeedbackEngine
     from probos.cognitive.journal import CognitiveJournal
+    from probos.cognitive.consultation import ConsultationProtocol
     from probos.cognitive.self_mod import SelfModificationPipeline
     from probos.cognitive.strategy_advisor import StrategyAdvisor
     from probos.cognitive.task_scheduler import TaskScheduler
@@ -108,6 +109,7 @@ class CognitiveServicesResult:
     social_verification: Any = None  # AD-567f
     orientation_service: Any = None  # AD-567g
     oracle_service: Any = None  # AD-462e
+    consultation_protocol: "ConsultationProtocol | None" = None  # AD-594
 
 
 @dataclass

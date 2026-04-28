@@ -17,6 +17,7 @@ from probos.substrate.identity import generate_pool_ids
 from probos.utils import format_duration
 
 if TYPE_CHECKING:
+    from probos.cognitive.consultation import ConsultationProtocol
     from probos.cognitive.llm_client import BaseLLMClient
     from probos.cognitive.workflow_cache import WorkflowCache
     from probos.cognitive.working_memory import WorkingMemoryManager
@@ -417,6 +418,24 @@ async def init_cognitive_services(
     except Exception as e:
         logger.warning("OracleService failed to start: %s — continuing without", e)
 
+    # AD-594: Crew Consultation Protocol
+    consultation_protocol: "ConsultationProtocol | None" = None
+    if config.consultation.enabled:
+        try:
+            from probos.cognitive.consultation import ConsultationProtocol as _ConsultationProtocol
+
+            consultation_protocol = _ConsultationProtocol(
+                emit_event_fn=emit_event_fn,
+                config=config.consultation,
+            )
+            logger.info("AD-594: ConsultationProtocol initialized")
+        except Exception as e:
+            logger.warning(
+                "AD-594: ConsultationProtocol failed to start: %s; continuing without",
+                e,
+            )
+            consultation_protocol = None
+
     logger.info("Startup [cognitive_services]: complete")
     return CognitiveServicesResult(
         self_mod_pipeline=self_mod_pipeline,
@@ -439,4 +458,5 @@ async def init_cognitive_services(
         social_verification=social_verification,  # AD-567f
         orientation_service=orientation_service,  # AD-567g
         oracle_service=oracle_service,  # AD-462e
+        consultation_protocol=consultation_protocol,  # AD-594
     )

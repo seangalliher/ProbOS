@@ -199,6 +199,12 @@ class EventType(str, Enum):
     SUB_TASK_COMPLETED = "sub_task_completed"
     SUB_TASK_CHAIN_COMPLETED = "sub_task_chain_completed"
 
+    # Consultation protocol (AD-594)
+    CONSULTATION_REQUESTED = "consultation_requested"
+    CONSULTATION_COMPLETED = "consultation_completed"
+    CONSULTATION_TIMEOUT = "consultation_timeout"
+    CONSULTATION_FAILED = "consultation_failed"
+
     # Billet management (AD-595a)
     BILLET_ASSIGNED = "billet_assigned"
     BILLET_VACATED = "billet_vacated"    # Reserved for AD-595b's vacate() — added now to keep enum changes atomic with BILLET_ASSIGNED
@@ -795,3 +801,62 @@ class SubTaskChainCompletedEvent(BaseEvent):
     success: bool = True
     fallback_used: bool = False
     source: str = ""          # What triggered the chain
+
+
+@dataclass
+class ConsultationRequestedEvent(BaseEvent):
+    """AD-594: Consultation request submitted."""
+
+    event_type: EventType = field(
+        default=EventType.CONSULTATION_REQUESTED, init=False
+    )
+    request_id: str = ""
+    requester_id: str = ""
+    requester_callsign: str = ""
+    target_agent_id: str = ""
+    topic: str = ""
+    urgency: str = ""
+
+
+@dataclass
+class ConsultationCompletedEvent(BaseEvent):
+    """AD-594: Consultation completed successfully."""
+
+    event_type: EventType = field(
+        default=EventType.CONSULTATION_COMPLETED, init=False
+    )
+    request_id: str = ""
+    requester_id: str = ""
+    responder_id: str = ""
+    responder_callsign: str = ""
+    topic: str = ""
+    confidence: float = 0.0
+    duration_seconds: float = 0.0
+
+
+@dataclass
+class ConsultationTimeoutEvent(BaseEvent):
+    """AD-594: Consultation timed out."""
+
+    event_type: EventType = field(
+        default=EventType.CONSULTATION_TIMEOUT, init=False
+    )
+    request_id: str = ""
+    requester_id: str = ""
+    target_agent_id: str = ""
+    topic: str = ""
+    timeout_seconds: float = 0.0
+
+
+@dataclass
+class ConsultationFailedEvent(BaseEvent):
+    """AD-594: Consultation handler failed."""
+
+    event_type: EventType = field(
+        default=EventType.CONSULTATION_FAILED, init=False
+    )
+    request_id: str = ""
+    requester_id: str = ""
+    target_agent_id: str = ""
+    topic: str = ""
+    error: str = ""
