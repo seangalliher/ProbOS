@@ -875,6 +875,15 @@ class MetabolismConfig(BaseModel):
     triage_base_score: float = 0.3
 
 
+class ReconsolidationConfig(BaseModel):
+    """AD-574: Episodic decay reconsolidation scheduling."""
+
+    enabled: bool = True
+    base_intervals_hours: list[float] = Field(default_factory=lambda: [1.0, 6.0, 24.0, 72.0, 168.0, 720.0])
+    importance_scale_factor: float = 0.1
+    max_scheduled: int = 500
+
+
 class StorageGateConfig(BaseModel):
     """AD-610: Utility-based storage gating - write-time validation."""
 
@@ -1471,6 +1480,7 @@ class SystemConfig(BaseModel):
     nats: NatsConfig = NatsConfig()  # AD-637
     bill: BillConfig = BillConfig()  # AD-618b
     consultation: ConsultationConfig = ConsultationConfig()  # AD-594
+    reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
 
 
 def load_config(path: str | Path) -> SystemConfig:

@@ -84,6 +84,7 @@ class DreamingEngine:
         counselor: Any = None,  # AD-568d: Counselor agent for source metric updates
         dream_wm_bridge: Any = None,  # AD-671: working memory bridge
         episodic_procedural_bridge: Any = None,  # AD-572: cross-cycle procedural bridge
+        reconsolidation_scheduler: Any = None,  # AD-574: spaced review scheduling
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -111,6 +112,7 @@ class DreamingEngine:
         self._counselor = counselor  # AD-568d
         self._dream_wm_bridge = dream_wm_bridge  # AD-671
         self._episodic_procedural_bridge = episodic_procedural_bridge  # AD-572
+        self._reconsolidation_scheduler = reconsolidation_scheduler  # AD-574
         self._confidence_tracker: Any = None  # AD-444
         self._knowledge_linter: Any = None  # AD-563
         self._quality_trigger: Any = None  # AD-564
@@ -1193,6 +1195,23 @@ class DreamingEngine:
                     )
             except Exception:
                 logger.debug("AD-541c Step 11: Retrieval practice failed", exc_info=True)
+
+        # Step 11b: Reconsolidation Reviews (AD-574)
+        reconsolidation_scheduler = getattr(self, "_reconsolidation_scheduler", None)
+        if reconsolidation_scheduler:
+            try:
+                due_ids = reconsolidation_scheduler.get_due_reviews(
+                    now=time.time(), limit=10,
+                )
+                for ep_id in due_ids:
+                    reconsolidation_scheduler.mark_reviewed(ep_id, retained=True)
+                if due_ids:
+                    logger.info(
+                        "AD-574 Step 11b: Reviewed %d reconsolidation-due episodes",
+                        len(due_ids),
+                    )
+            except Exception:
+                logger.debug("AD-574 Step 11b: Reconsolidation review failed", exc_info=True)
 
         # Step 12: Activation-Based Memory Pruning (AD-567d / AD-462b / AD-593)
         activation_pruned = 0

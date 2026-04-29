@@ -679,6 +679,7 @@ class EpisodicMemory:
         self._collection: Any = None
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
         self._activation_tracker: Any = None  # AD-567d: ACT-R activation tracker
+        self._reconsolidation_scheduler: Any = None  # AD-574: spaced review scheduling
         self._storage_gate: Any = None  # AD-610: utility-based storage gate
         self._participant_index: Any = None  # AD-570b: Participant index sidecar
         self._tcm: Any = None  # AD-601: Temporal Context Model engine
@@ -688,6 +689,10 @@ class EpisodicMemory:
     def set_activation_tracker(self, tracker: Any) -> None:
         """AD-567d: Wire the activation tracker after construction."""
         self._activation_tracker = tracker
+
+    def set_reconsolidation_scheduler(self, scheduler: Any) -> None:
+        """AD-574: Wire the reconsolidation scheduler after construction."""
+        self._reconsolidation_scheduler = scheduler
 
     def set_storage_gate(self, gate: Any) -> None:
         """AD-610: Wire the storage gate for write-time validation."""
@@ -1048,6 +1053,17 @@ class EpisodicMemory:
                 )
             except Exception:
                 logger.debug("AD-570b: Participant index insert failed for %s", episode.id[:8], exc_info=True)
+
+        reconsolidation_scheduler = getattr(self, "_reconsolidation_scheduler", None)
+        if reconsolidation_scheduler is not None and episode.importance >= 7:
+            try:
+                reconsolidation_scheduler.schedule_review(episode.id, episode.importance)
+            except Exception:
+                logger.debug(
+                    "AD-574: Failed to schedule reconsolidation for episode %s",
+                    episode.id,
+                    exc_info=True,
+                )
 
         # Evict oldest beyond budget
         await self._evict()

@@ -4585,6 +4585,10 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 **Deferred:** AD-573b (relational working memory — per-relationship state), AD-573c (agent-writable scratchpad — `[NOTE]` action tag), AD-573d (dream-to-working-memory pipeline), AD-573e (CognitiveJournal as WM source), AD-573f (commitment tracker).
 
+### Episodic Decay & Reconsolidation Scheduling (AD-574)
+
+**AD-574: Episodic Decay & Reconsolidation Scheduling** *(complete, OSS, depends: AD-567d, AD-598, AD-541c)* — Added `ReconsolidationScheduler` with in-memory Ebbinghaus-inspired review schedules for high-importance episodes. `EpisodicMemory.store()` auto-schedules episodes with `importance >= 7`, intervals scale by importance, and Dream Step 11b processes due reviews as retained for this build. No schedule persistence, LLM review assessment, or cross-agent coordination.
+
 ### DM Reply Agent Notification (AD-574)
 
 **AD-574: DM Reply Agent Notification** *(complete, OSS)* — Fixed two independent gaps that caused Captain DM replies to be silently lost. (1) `WardRoomRouter.find_targets()` had no `dm` channel type case — added `elif channel.channel_type == "dm"` matching `agent.id[:8]` against channel name, no Earned Agency gating (DMs are 1:1 targeted). (2) `get_unread_dms()` only found threads where agent had zero posts — rewrote query to use LEFT JOIN subquery with `COALESCE(lp.last_author, t.author_id) != agent_id` so thread is "unread" if the last author is someone other than the agent. 2 files modified, 9 tests.

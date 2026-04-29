@@ -101,6 +101,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Procedure extraction only considered the latest dream-cycle clusters, so patterns accumulating gradually across cycles could be missed. The bridge lets dream consolidation convert stable cross-cycle episodic evidence into procedural memory without adding LLM synthesis or changing the original Step 7 extraction path.
 **Status:** Implemented
 
+### AD-574: Episodic Decay & Reconsolidation Scheduling
+
+**Date:** 2026-04-28
+**Decision:** Added Ebbinghaus-inspired spaced review scheduling for high-importance episodes. ReconsolidationScheduler tracks an in-memory schedule with importance-scaled intervals [1h, 6h, 24h, 72h, 168h, 720h], EpisodicMemory auto-schedules episodes with importance >= 7 at store() time, and Dream Step 11b processes due reviews as retained in this build.
+**Rationale:** Activation decay tracked access frequency but did not schedule deliberate review for important memories at risk of being lost. Reconsolidation scheduling adds a lightweight review cadence without adding persistence, LLM-based review quality assessment, or cross-agent coordination.
+**Status:** Implemented
+
 ### AD-579a: Pinned Knowledge Buffer
 
 **Date:** 2026-04-28

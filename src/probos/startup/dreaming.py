@@ -16,6 +16,7 @@ from probos.cognitive.dream_wm_bridge import DreamWorkingMemoryBridge
 from probos.cognitive.emergent_detector import EmergentDetector
 from probos.cognitive.emergence_metrics import EmergenceMetricsEngine
 from probos.cognitive.episodic_procedural_bridge import EpisodicProceduralBridge
+from probos.cognitive.reconsolidation import ReconsolidationScheduler
 from probos.cognitive.retrieval_practice import RetrievalPracticeEngine
 from probos.cognitive.task_scheduler import TaskScheduler
 from probos.events import EventType
@@ -135,6 +136,14 @@ async def init_dreaming(
         except Exception:
             logger.debug("AD-541c: Retrieval practice DB init failed", exc_info=True)
         retrieval_llm_client = llm_client  # Reuse the same LLM client (fast tier routed by LLMRequest)
+    # AD-574: Reconsolidation scheduler
+    reconsolidation_scheduler = None
+    if config.reconsolidation.enabled:
+        reconsolidation_scheduler = ReconsolidationScheduler(
+            config=config.reconsolidation,
+            episodic_memory=episodic_memory,
+        )
+        logger.info("AD-574: ReconsolidationScheduler initialized")
     if episodic_memory:
         dream_cfg = config.dreaming
         dreaming_engine = DreamingEngine(
@@ -160,7 +169,10 @@ async def init_dreaming(
             records_store=records_store,  # BF-106: constructor injection
             dream_wm_bridge=dream_wm_bridge,
             episodic_procedural_bridge=procedural_bridge,
+            reconsolidation_scheduler=reconsolidation_scheduler,
         )
+        if reconsolidation_scheduler and hasattr(episodic_memory, "set_reconsolidation_scheduler"):
+            episodic_memory.set_reconsolidation_scheduler(reconsolidation_scheduler)
         dream_scheduler = DreamScheduler(
             engine=dreaming_engine,
             idle_threshold_seconds=dream_cfg.idle_threshold_seconds,
