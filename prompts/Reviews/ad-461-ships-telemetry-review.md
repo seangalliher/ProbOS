@@ -1,6 +1,8 @@
 # Review: AD-461 — Ship's Telemetry
 
 **Verdict:** ✅ Approved
+**Re-review (2026-04-29 second pass): ✅ Approved.** Revisions clean.
+
 **Headline:** Clean new service addition with proper config integration.
 
 ## Required
@@ -23,3 +25,13 @@ None.
 - `runtime.emit_event` is a public method at [runtime.py:771](src/probos/runtime.py#L771).
 - `Depends(get_runtime)` pattern at [routers/system.py:20](src/probos/routers/system.py#L20) matches.
 - `startup/cognitive_services.py:452` exists; oracle-service insertion section identified.
+
+---
+
+## Second-Pass Re-review (2026-04-29)
+
+**Verdict:** ✅ Approved.
+
+Revisions did not introduce new issues. `BEHAVIORAL_METRICS_UPDATED` still at [events.py:134](src/probos/events.py#L134); `runtime.emit_event` at [runtime.py:771](src/probos/runtime.py#L771); pattern intact.
+
+Minor: the `hasattr(runtime, 'emit_event')` guard in Section 4 is dead code now that AD-680 has landed (commit `73945d0`). Trim during build or accept as harmless. Not a blocker.

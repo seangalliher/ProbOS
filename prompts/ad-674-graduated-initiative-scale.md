@@ -169,11 +169,20 @@ Then after `_agency_val = agency_from_rank(Rank.from_trust(_trust_val)).value`
 (line 3626), add:
 
 ```python
+                _initiative_thresholds = (
+                    _rt.config.earned_agency.initiative_trust_thresholds
+                    if getattr(_rt, 'config', None) is not None
+                    else None
+                )
                 _initiative_val = resolve_initiative_level(
-                    Rank.from_trust(float(_trust_val) if isinstance(_trust_val, str) else _trust_val),
+                    Rank.from_trust(_trust_val),
                     _rt.trust_network.get_score(self.id),
+                    thresholds=_initiative_thresholds,
                 ).value
 ```
+
+**NOTE:** `_trust_val` is still a raw float at this point — `format_trust()`
+is called after this block (line 3627). No cast needed.
 
 And append to the `_agent_metrics` string (line 3628-3629):
 

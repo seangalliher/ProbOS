@@ -142,49 +142,65 @@ REPLACE:
         _broadcast_start = time.monotonic()  # AD-470: timing
 ```
 
-**Step 3:** Add metrics recording to `send()`. Find `send()` (line 309).
+**Step 3:** Add metrics recording to `send()`. Wrap the method body
+after the ValueError check in a `try/finally` that records timing.
 
 SEARCH:
 ```python
-    async def send(self, intent: IntentMessage) -> IntentResult | None:
-        """Deliver an intent to a specific agent (targeted dispatch, AD-397).
+        if not intent.target_agent_id:
+            raise ValueError("send() requires target_agent_id")
+
+        # NATS path when connected
+        if self._nats_bus and self._nats_bus.connected:
+            return await self._nats_send(intent)
+
+        # Direct-call fallback when NATS disconnected
+        handler = self._subscribers.get(intent.target_agent_id)
+        if handler is None:
+            return None
+        try:
+            result = await asyncio.wait_for(handler(intent), timeout=intent.ttl_seconds)
+            return result
+        except asyncio.TimeoutError:
+            return IntentResult(
+                intent_id=intent.id,
+                agent_id=intent.target_agent_id,
+                success=False,
+                error="Agent did not respond in time.",
+                confidence=0.0,
+            )
 ```
 
 REPLACE:
 ```python
-    async def send(self, intent: IntentMessage) -> IntentResult | None:
-        """Deliver an intent to a specific agent (targeted dispatch, AD-397).
-```
+        if not intent.target_agent_id:
+            raise ValueError("send() requires target_agent_id")
 
-After the ValueError check (line 319) and before the NATS path check, add timing start:
-
-```python
-        _send_start = time.monotonic()  # AD-470: timing
-```
-
-Then before each `return` in `send()` (lines 323, 328, 331, and the
-TimeoutError return), you need to record metrics. The cleanest approach:
-wrap the return value and record before returning. Add a helper at the
-end of the method body:
-
-After the existing `except asyncio.TimeoutError` block (around line 339),
-replace the method's returns with a pattern that records metrics:
-
-The simplest approach: add a `try/finally` around the method body after
-the `_send_start` line:
-
-```python
         _send_start = time.monotonic()  # AD-470: timing
         try:
-            # ... existing NATS path and direct-call fallback (unchanged) ...
+            # NATS path when connected
+            if self._nats_bus and self._nats_bus.connected:
+                return await self._nats_send(intent)
+
+            # Direct-call fallback when NATS disconnected
+            handler = self._subscribers.get(intent.target_agent_id)
+            if handler is None:
+                return None
+            try:
+                result = await asyncio.wait_for(handler(intent), timeout=intent.ttl_seconds)
+                return result
+            except asyncio.TimeoutError:
+                return IntentResult(
+                    intent_id=intent.id,
+                    agent_id=intent.target_agent_id,
+                    success=False,
+                    error="Agent did not respond in time.",
+                    confidence=0.0,
+                )
         finally:
             _elapsed_ms = (time.monotonic() - _send_start) * 1000
             self._metrics.record_send(intent.intent, _elapsed_ms)
 ```
-
-Builder: wrap the existing code (from the NATS path check through the
-TimeoutError handler) in a `try/finally` block. The finally records
-metrics regardless of which path was taken or whether None was returned.
 
 ### Section 3: Add subscriber introspection
 

@@ -223,7 +223,7 @@ section and add before the Oracle Service block:
         try:
             from probos.substrate.telemetry import TelemetryService
             telemetry_service = TelemetryService(
-                emit_fn=runtime.emit_event if hasattr(runtime, 'emit_event') else None,
+                emit_fn=runtime.emit_event,
                 report_interval_seconds=config.telemetry.report_interval_seconds,
                 max_samples_per_bucket=config.telemetry.max_samples_per_bucket,
             )

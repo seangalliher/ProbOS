@@ -273,7 +273,7 @@ grep -n "InitiativeEngine\|initiative_engine" src/probos/startup/finalize.py
     # AD-445: Decision Queue
     from probos.governance.decision_queue import DecisionQueue
     decision_queue = DecisionQueue(
-        emit_fn=runtime.emit_event if hasattr(runtime, 'emit_event') else None,
+        emit_fn=runtime.emit_event,
     )
     runtime._decision_queue = decision_queue
     logger.info("AD-445: DecisionQueue initialized")

@@ -1,6 +1,8 @@
 # Review: AD-470 — IntentBus Enhancements
 
 **Verdict:** ⚠️ Conditional
+**Re-review (2026-04-29 second pass): ⚠️ Conditional.** Two of three Required items fixed; `send()` timing still under-specified.
+
 **Headline:** Missing `defaultdict` import; timing-instrumentation insertion needs precise placement.
 
 ## Required
@@ -27,3 +29,22 @@
 - `_subscribers` and `_intent_index` at [mesh/intent.py:33-34](src/probos/mesh/intent.py#L33).
 - `record_broadcast()` at [mesh/intent.py:565](src/probos/mesh/intent.py#L565); `subscriber_count` property at [intent.py:306](src/probos/mesh/intent.py#L306).
 - `runtime.intent_bus` is public (no leading underscore) at [runtime.py:299](src/probos/runtime.py#L299).
+
+---
+
+## Second-Pass Re-review (2026-04-29)
+
+**Verdict:** ⚠️ Conditional.
+
+| Prior Required | Status | Evidence |
+|---|---|---|
+| Missing `from collections import defaultdict` | ✅ Fixed | Section 1 explicitly adds the import. |
+| `broadcast()` timing insertion point | ✅ Fixed | SEARCH block targets exact line content matching [mesh/intent.py:389](src/probos/mesh/intent.py#L389). |
+| `send()` timing — spell out SEARCH/REPLACE | ⚠️ Partial | Section 2 Step 3 describes the try/finally wrap in prose but provides no concrete SEARCH/REPLACE block. Builder must infer the boundary lines. |
+
+### New / unresolved findings
+
+1. **`send()` timing needs a concrete SEARCH/REPLACE pair.** The current text says "wrap the existing code (from the NATS path check through the TimeoutError handler)" — ambiguous. Provide the same form as Section 2's `broadcast()` block.
+2. **`type_durations_ms` defaultdict reassignment** (Nit from first pass) still present. `self.type_durations_ms[intent_type] = durations[-200:]` replaces the defaultdict-backed list with a plain list; subsequent appends still work but defaultdict semantics are lost on that key. Use `deque(maxlen=200)` or document the trade-off.
+
+Fix the `send()` SEARCH/REPLACE and ship.

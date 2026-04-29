@@ -1,6 +1,8 @@
 # Review: AD-438 — Ontology-Based Task Routing
 
 **Verdict:** ⚠️ Conditional
+**Re-review (2026-04-29 second pass): ✅ Approved.** Required event-type addition is now in the prompt.
+
 **Headline:** Missing `EventType.TASK_ROUTED` in the enum.
 
 ## Required (must fix before building)
@@ -23,3 +25,15 @@
 - `Dispatcher` exists at [src/probos/activation/dispatcher.py:40](src/probos/activation/dispatcher.py#L40).
 - `Depends(get_runtime)` pattern in [src/probos/routers/system.py](src/probos/routers/system.py) matches.
 - No conflicts with existing routing code.
+
+---
+
+## Second-Pass Re-review (2026-04-29)
+
+**Verdict:** ✅ Approved.
+
+| Prior Required | Status | Evidence |
+|---|---|---|
+| `EventType.TASK_ROUTED` missing | ✅ Fixed | Section 2 SEARCH/REPLACE inserts after `KNOWLEDGE_TIER_LOADED` at [events.py:170](src/probos/events.py#L170). |
+
+No new findings. Ship it.

@@ -224,7 +224,7 @@ Add near the DecisionQueue wiring (added by AD-445):
     # AD-446: Compensation & Recovery
     from probos.governance.compensation import CompensationHandler
     compensation_handler = CompensationHandler(
-        emit_fn=runtime.emit_event if hasattr(runtime, 'emit_event') else None,
+        emit_fn=runtime.emit_event,
     )
     runtime._compensation_handler = compensation_handler
     logger.info("AD-446: CompensationHandler initialized")

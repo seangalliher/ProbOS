@@ -244,7 +244,7 @@ Add after ToolRegistry is available:
     tool_executor = ToolExecutor(registry=runtime.tool_registry)
     # Wire audit hook
     audit_hook = make_audit_hook(
-        emit_fn=runtime.emit_event if hasattr(runtime, 'emit_event') else None,
+        emit_fn=runtime.emit_event,
     )
     tool_executor.add_post_hook(audit_hook)
     runtime._tool_executor = tool_executor

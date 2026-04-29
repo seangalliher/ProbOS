@@ -1,6 +1,8 @@
 # Review: AD-679 — Selective Disclosure Routing
 
 **Verdict:** ✅ Approved
+**Re-review (2026-04-29 second pass): ✅ Approved.** Revisions clean. Event-collision note added.
+
 **Headline:** All dependencies verified; ready for builder.
 
 ## Required
@@ -27,3 +29,15 @@ None.
 - `DisclosureLevel(IntEnum)` ordering for comparison ops — correct.
 - 8 tests covering ordering, defaults, permit/deny, overrides, filtering — adequate.
 - Type annotations complete; logging context adequate.
+
+---
+
+## Second-Pass Re-review (2026-04-29)
+
+**Verdict:** ✅ Approved.
+
+Revisions added a proactive event-collision note for `DISCLOSURE_FILTERED` ("if AD-677 or AD-438 ships first, update SEARCH block"). Good defensive guidance.
+
+`DisclosureDecision.reason` strings now use consistent technical phrasing: `f"Clearance {clearance.name} >= {content_level.name}"` / `< {content_level.name}"`. ✅
+
+Minor unresolved Recommended items (department defaults hardcoded; Captain-override path not explicit) remain low-priority. Not blockers.

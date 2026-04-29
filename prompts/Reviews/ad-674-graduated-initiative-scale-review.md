@@ -1,6 +1,8 @@
 # Review: AD-674 — Graduated Initiative Scale
 
 **Verdict:** ⚠️ Conditional
+**Re-review (2026-04-29 second pass): ❌ Not Ready.** The most important Required item — wiring config thresholds to the call site — was not addressed. Function call still passes no thresholds; config is dead code.
+
 **Headline:** Threshold config wired into runtime is missing; minor scope clarifications needed.
 
 ## Required
@@ -29,3 +31,36 @@
 - `EarnedAgencyConfig` at [config.py:1099](src/probos/config.py#L1099).
 - Integration point in cognitive_agent.py at [lines 3622-3629](src/probos/cognitive/cognitive_agent.py#L3622).
 - `InitiativeLevel` does NOT yet exist (zero matches in codebase).
+
+---
+
+## Second-Pass Re-review (2026-04-29)
+
+**Verdict:** ❌ Not Ready.
+
+| Prior Required | Status | Evidence |
+|---|---|---|
+| Pin `InitiativeLevel` insertion via SEARCH text not line number | ✅ Fixed | Section 1 references the existing `AgencyLevel` enum structure rather than a fixed line. |
+| Verify `Rank.from_trust(float)` accepts a float | ✅ Fixed | Confirmed already used at [cognitive_agent.py:3625-3626](src/probos/cognitive/cognitive_agent.py#L3625). |
+| **Wire `initiative_trust_thresholds` config to `resolve_initiative_level()` call site** | ❌ **Not addressed** | `resolve_initiative_level()` signature accepts `thresholds: dict[str, float] \| None = None` but Section 4 calls it with no thresholds argument: `resolve_initiative_level(Rank.from_trust(...), _rt.trust_network.get_score(self.id))`. The new `EarnedAgencyConfig.initiative_trust_thresholds` field is dead code. Operators cannot tune thresholds at runtime. |
+| Avoid import collisions in cognitive_agent.py | ✅ Fixed | Verified `Rank` already imported at [earned_agency.py:8](src/probos/earned_agency.py#L8). |
+
+### Required for next pass
+
+At the cognitive_agent.py call site (around line 3625), extract the config and pass it explicitly:
+
+```python
+_runtime_ref = getattr(self, '_runtime', None)
+_thresholds = (
+    _runtime_ref.config.earned_agency.initiative_trust_thresholds
+    if _runtime_ref is not None and getattr(_runtime_ref, 'config', None) is not None
+    else None
+)
+_initiative_val = resolve_initiative_level(
+    Rank.from_trust(_trust_val),
+    _trust_val,
+    thresholds=_thresholds,
+).value
+```
+
+Without this, the config addition in Section 3 is a no-op.
