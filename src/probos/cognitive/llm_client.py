@@ -9,6 +9,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -137,6 +138,10 @@ class OpenAICompatibleClient(BaseLLMClient):
             self._config, "llm_health_min_consecutive_healthy", 3
         )
 
+        # BF-246: Periodic health probe for recovery from extended outages
+        self._health_probe_task: asyncio.Task | None = None
+        self._health_probe_emit: Callable[[str, dict], None] | None = None
+
         # Ollama keep_alive to prevent model unloading during idle periods
         self._ollama_keep_alive: str = getattr(self._config, "ollama_keep_alive", "30m")
 
@@ -264,6 +269,72 @@ class OpenAICompatibleClient(BaseLLMClient):
                     self._consecutive_failures[tier] = 0
 
         return results
+
+    async def start_health_probe(
+        self,
+        interval_seconds: float = 30.0,
+        emit_fn: Callable[[str, dict], None] | None = None,
+    ) -> None:
+        """BF-246: Periodic connectivity probe for recovery from extended outages."""
+        self._health_probe_emit = emit_fn
+        self._health_probe_task = asyncio.create_task(
+            self._health_probe_loop(interval_seconds),
+            name="llm-health-probe",
+        )
+
+    async def _health_probe_loop(self, interval: float) -> None:
+        """Background loop: probe unreachable/degraded tiers."""
+        try:
+            while True:
+                await asyncio.sleep(interval)
+
+                health = self.get_health_status()
+                unhealthy_tiers = [
+                    tier for tier, info in health["tiers"].items()
+                    if info["status"] != "operational"
+                ]
+                if not unhealthy_tiers:
+                    continue
+
+                old_overall = health["overall"]
+                await self.check_connectivity()
+                new_health = self.get_health_status()
+                new_overall = new_health["overall"]
+
+                if old_overall != new_overall:
+                    logger.info(
+                        "BF-246: LLM health probe detected transition: %s -> %s (probed tiers: %s)",
+                        old_overall,
+                        new_overall,
+                        unhealthy_tiers,
+                    )
+                    if self._health_probe_emit is not None:
+                        try:
+                            self._health_probe_emit(
+                                "llm_health_changed",
+                                {
+                                    "old_status": old_overall,
+                                    "new_status": new_overall,
+                                    "source": "bf246_probe",
+                                },
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "BF-246: LLM health probe event emission failed; "
+                                "transition was logged and probe will continue: %s",
+                                exc,
+                            )
+        except asyncio.CancelledError:
+            raise
+
+    async def stop_health_probe(self) -> None:
+        """BF-246: Cancel the background health probe."""
+        if self._health_probe_task and not self._health_probe_task.done():
+            self._health_probe_task.cancel()
+            try:
+                await self._health_probe_task
+            except asyncio.CancelledError:
+                pass
 
     async def _check_endpoint(self, tier: str) -> bool:
         """Check if a tier's endpoint is reachable.
@@ -743,7 +814,8 @@ class OpenAICompatibleClient(BaseLLMClient):
         return {"tiers": tiers, "overall": overall}
 
     async def close(self) -> None:
-        """Close all httpx clients."""
+        """Close all httpx clients and cancel background tasks."""
+        await self.stop_health_probe()
         for client in self._clients.values():
             await client.aclose()
 

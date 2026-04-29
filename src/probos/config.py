@@ -1470,6 +1470,7 @@ class SystemConfig(BaseModel):
     mesh: MeshConfig = MeshConfig()
     consensus: ConsensusConfig = ConsensusConfig()
     cognitive: CognitiveConfig = CognitiveConfig()
+    health_probe_interval_seconds: float = 30.0  # BF-246: Periodic LLM connectivity probe
     memory: MemoryConfig = MemoryConfig()
     dreaming: DreamingConfig = DreamingConfig()
     dream_wm: DreamWMConfig = DreamWMConfig()  # AD-671
@@ -1542,6 +1543,15 @@ class SystemConfig(BaseModel):
     retroactive: RetroactiveConfig = RetroactiveConfig()  # AD-608
     distillation: DistillationConfig = DistillationConfig()  # AD-609
     reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
+
+    @field_validator("health_probe_interval_seconds")
+    @classmethod
+    def _validate_probe_interval(cls, v: float) -> float:
+        if v < 5.0:
+            raise ValueError(
+                "health_probe_interval_seconds must be >= 5.0 to avoid hammering a recovering proxy"
+            )
+        return v
 
 
 def load_config(path: str | Path) -> SystemConfig:

@@ -218,6 +218,17 @@ async def finalize_startup(
     if _wire_anomaly_window(runtime=runtime, config=config):
         logger.info("AD-673: AnomalyWindowManager wired during finalization")
 
+    # BF-246: Start periodic LLM health probe for recovery from extended outages
+    llm_client = getattr(runtime, "llm_client", None)
+    if llm_client and hasattr(llm_client, "start_health_probe"):
+        probe_interval = getattr(config, "health_probe_interval_seconds", 30.0)
+        emit_fn = getattr(runtime, "emit_event", None)
+        await llm_client.start_health_probe(
+            interval_seconds=probe_interval,
+            emit_fn=emit_fn,
+        )
+        logger.info("BF-246: LLM health probe started (interval=%.0fs)", probe_interval)
+
     # --- Proactive Cognitive Loop (Phase 28b) ---
     if config.proactive_cognitive.enabled and runtime.ward_room:
         from probos.conn import ConnManager
