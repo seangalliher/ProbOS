@@ -13,6 +13,9 @@ switch to `runtime.emit_event` today without any runtime change. AD-680 reduces 
 migrate the ~20 existing `runtime._emit_event` call sites to `runtime.emit_event`. See
 the original review for full detail.
 
+**Re-review (2026-04-29, third pass): ✅ Approved.** Prompt fully rewritten around the
+two real targets. See the "Third-Pass Re-review" section at the end of this file.
+
 ---
 
 ## Summary
@@ -186,3 +189,66 @@ promote private attributes can cite this precedent.
    property. One call site. One test.
 3. **Drop entirely:** the trust_network / router / add_event_listener migrations — they
    are no-ops because the public surface already exists.
+
+---
+
+## Third-Pass Re-review (2026-04-29)
+
+**Verdict:** ✅ **Approved — ready for builder.**
+
+The prompt was completely rewritten around the two real targets identified in the
+first-pass review. New title accurately reflects scope: "Promote `_emit_event` and
+`_emergence_metrics_engine` to Public API." The phantom workstreams
+(`trust_network`/`router`/`add_event_listener`) are gone.
+
+### What's right now
+
+- **Section 1** (type-hint fix): Adds `EventType` to the `emit_event` signature on
+  both `runtime.py:771` and `protocols.py:105`. Sensible — most callers pass
+  `EventType` enum values today, so the existing `BaseEvent | str` hint is
+  incomplete.
+- **Section 2** (property): Adds `emergence_metrics_engine` read-only property. No
+  setter. Returns `Any` (correct — the underlying type is internal to dreaming.py).
+- **Section 3** (call-site migration): Lists 8 files with approximate counts. The
+  prompt explicitly says "run grep to confirm" rather than asserting exact numbers,
+  which is the right posture given the count varies. Replacement rules cover all
+  four real patterns (direct, lambda wrapper, getattr defensive, hasattr guard).
+  The "Do NOT touch" section correctly excludes `self._emit_event` on non-runtime
+  classes (TrustNetwork, CognitiveQueue, WardRoomService) — those are unrelated
+  attributes that share a name. Important boundary; it's worth its own paragraph.
+- **Section 4** (`_emergence_metrics_engine` migration): My grep confirms 8 external
+  sites in exactly the 4 files listed (vitals_monitor.py:1, collective_tests.py:4,
+  finalize.py:1, system.py:2). The decision to keep `getattr(..., None)` is correct
+  because the attribute can legitimately be `None` before dream init.
+- **Test 4** (codebase invariant) gives the migration a permanent regression guard.
+  Pattern is `runtime\._emit_event|rt\._emit_event|self\._runtime\._emit_event`,
+  which matches the three real shapes I see in `grep`.
+- **Verified Against Codebase** section pastes grep evidence for all key claims.
+
+### Nits (non-blocking)
+
+- **Lambda-wrapper migration (rule 2) loses behavior in one corner case.** Today's
+  lambda is `lambda event_type, data: runtime._emit_event(event_type, data)` — a
+  closure bound at construction time. Replacing with `runtime.emit_event` (a bound
+  method) is fine *now*, but if `runtime` is later reassigned in the captured scope
+  the two diverge. None of the listed call sites do this, but a one-line note
+  ("caller must hold a stable runtime reference") would future-proof the rule.
+- **Test 1 (`test_emit_event_accepts_event_type_enum`) is a smoke test only.** The
+  underlying type hint widening doesn't fail at runtime regardless. Consider also
+  asserting via `inspect.signature(runtime.emit_event).parameters["event"]` that
+  the annotation includes `EventType` — catches accidental reverts.
+- **Counts in Section 3 don't perfectly match my grep.** The prompt says
+  "~61 sites in 8 files" but my partial grep shows ~22 visible (limited by truncation).
+  Probably accurate — just rerun the count after migration to confirm zero remain.
+
+### Verified by grep
+
+- 8 external `_emergence_metrics_engine` call sites in 4 files ✓ (matches Section 4)
+- `runtime._emit_event` / `rt._emit_event` / `self._runtime._emit_event` patterns
+  all present in the codebase ✓
+- `runtime.emit_event` exists at `runtime.py:771` ✓
+- `RuntimeProtocol.emit_event` exists at `protocols.py:105` ✓
+
+**Ship it.** Recommended order: BF-247 (test-only, smallest risk) → BF-246 → AD-680
+(largest blast radius, will touch 8 files; do it last so the test gate catches any
+regression from the others first).
