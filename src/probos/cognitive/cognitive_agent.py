@@ -3938,7 +3938,7 @@ class CognitiveAgent(BaseAgent):
         total_chars = cognitive_chars + situation_chars
 
         runtime = getattr(self, "_runtime", None)
-        threshold = 6000
+        threshold = 10000
         sensorium_config = getattr(getattr(runtime, "config", None), "sensorium", None)
         if sensorium_config is not None:
             if not getattr(sensorium_config, "enabled", True):

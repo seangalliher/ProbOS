@@ -992,7 +992,7 @@ class SensoriumConfig(BaseModel):
     """AD-666: Agent Sensorium tracking configuration."""
 
     enabled: bool = True
-    token_budget_warning: int = 6000
+    token_budget_warning: int = 10000
 
 
 class OnboardingConfig(BaseModel):

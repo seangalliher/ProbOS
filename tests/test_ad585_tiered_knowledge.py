@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -17,7 +17,7 @@ class _FakeEpisode:
     id: str = "ep-1"
     timestamp: float = 0.0
     user_input: str = ""
-    dag_summary: str = "Analyzed security patterns"
+    dag_summary: dict = field(default_factory=lambda: {"summary": "Analyzed security patterns"})
     outcomes: list | None = None
     reflection: str = "Security observation: anomalous trust patterns"
     agent_ids: list | None = None

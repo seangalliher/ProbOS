@@ -156,11 +156,14 @@ class TieredKnowledgeLoader:
             episodes = await self._source.load_episodes(limit=20)
             query_lower = query.lower()
             for episode in episodes:
-                text = (
-                    getattr(episode, "reflection", "")
-                    or getattr(episode, "dag_summary", "")
-                    or ""
-                )
+                # BF-247: dag_summary is dict[str, Any], not str — use reflection for text search
+                text = getattr(episode, "reflection", "") or ""
+                if not text:
+                    dag = getattr(episode, "dag_summary", None) or {}
+                    if isinstance(dag, str):
+                        text = dag
+                    elif isinstance(dag, dict):
+                        text = dag.get("summary", "") or ""
                 if not text:
                     continue
                 if any(word in text.lower() for word in query_lower.split()):
@@ -208,12 +211,20 @@ class TieredKnowledgeLoader:
         if category == "episodes":
             episodes = await self._source.load_episodes(limit=10)
             for episode in episodes:
-                summary = getattr(episode, "dag_summary", "") or ""
+                dag = getattr(episode, "dag_summary", None) or {}
+                if isinstance(dag, str):
+                    summary_text = dag
+                elif isinstance(dag, dict):
+                    summary_text = dag.get("summary", "") or str(dag.get("faithfulness_score", ""))
+                    if not summary_text:
+                        summary_text = getattr(episode, "reflection", "") or ""
+                else:
+                    summary_text = ""
                 if department and hasattr(episode, "agent_ids"):
                     # TODO(AD-585): Apply department filtering once episodes persist department metadata.
                     pass
-                if summary:
-                    snippets.append(summary[:150])
+                if summary_text:
+                    snippets.append(summary_text[:150])
 
         elif category == "agents":
             agents = await self._source.load_agents()
