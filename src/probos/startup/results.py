@@ -110,6 +110,7 @@ class CognitiveServicesResult:
     orientation_service: Any = None  # AD-567g
     oracle_service: Any = None  # AD-462e
     consultation_protocol: "ConsultationProtocol | None" = None  # AD-594
+    expertise_directory: Any = None  # AD-600
 
 
 @dataclass

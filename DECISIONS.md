@@ -143,6 +143,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Agents previously had Ward Room broadcasts and DMs but no structured ask-an-expert primitive that returns a typed response before the requester continues. This protocol creates the reusable collaboration primitive that unlocks AD-600 Transactive Memory without changing Ward Room routing or adding persistence in this AD.
 **Status:** Implemented
 
+### AD-600: Transactive Memory
+
+**Date:** 2026-04-28
+**Decision:** Added an in-memory ExpertiseDirectory that maps agents to topics with confidence scores, built from dream-cycle clustering. OracleService uses expertise routing to select top-k agent shards instead of an O(N) full scan when the caller does not provide an explicit agent scope. Profiles decay each dream cycle. No persistence is added; profiles are rebuilt on boot.
+**Rationale:** Cross-agent recall should know who is likely to know what instead of querying every shard for every topic. The expertise directory turns dream-cluster evidence into a lightweight routing primitive and unlocks AD-604 spreading-activation second-hop routing.
+**Status:** Implemented
+
 ### AD-602: Question-Adaptive Retrieval
 
 **Date:** 2026-04-28

@@ -855,6 +855,16 @@ class ConsultationConfig(BaseModel):
     weight_billet_relevance: float = 0.2
 
 
+class ExpertiseConfig(BaseModel):
+    """AD-600: Transactive Memory expertise directory configuration."""
+
+    enabled: bool = True
+    max_topics_per_agent: int = 50
+    min_confidence: float = 0.1
+    decay_rate: float = 0.95
+    top_k_experts: int = 3
+
+
 class QuestionAdaptiveConfig(BaseModel):
     """AD-602: Question-adaptive retrieval strategy configuration."""
 
@@ -1480,6 +1490,7 @@ class SystemConfig(BaseModel):
     nats: NatsConfig = NatsConfig()  # AD-637
     bill: BillConfig = BillConfig()  # AD-618b
     consultation: ConsultationConfig = ConsultationConfig()  # AD-594
+    expertise: ExpertiseConfig = ExpertiseConfig()  # AD-600
     reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
 
 

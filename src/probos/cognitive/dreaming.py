@@ -85,6 +85,7 @@ class DreamingEngine:
         dream_wm_bridge: Any = None,  # AD-671: working memory bridge
         episodic_procedural_bridge: Any = None,  # AD-572: cross-cycle procedural bridge
         reconsolidation_scheduler: Any = None,  # AD-574: spaced review scheduling
+        expertise_directory: Any = None,  # AD-600: transactive memory
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -113,6 +114,7 @@ class DreamingEngine:
         self._dream_wm_bridge = dream_wm_bridge  # AD-671
         self._episodic_procedural_bridge = episodic_procedural_bridge  # AD-572
         self._reconsolidation_scheduler = reconsolidation_scheduler  # AD-574
+        self._expertise_directory = expertise_directory  # AD-600
         self._confidence_tracker: Any = None  # AD-444
         self._knowledge_linter: Any = None  # AD-563
         self._quality_trigger: Any = None  # AD-564
@@ -375,6 +377,28 @@ class DreamingEngine:
                 logger.debug("Episode clustering skipped: no embeddings available")
         except Exception as e:
             logger.debug("Episode clustering failed (non-critical): %s", e)
+
+        # Step 6b: Update expertise directory (AD-600)
+        expertise_directory = getattr(self, "_expertise_directory", None)
+        if expertise_directory:
+            try:
+                expertise_directory.decay_profiles()
+                if clusters:
+                    department = ""
+                    if self._get_department and self._agent_id:
+                        department = self._get_department(self._agent_id) or ""
+                    topics_added = expertise_directory.build_from_clusters(
+                        agent_id=self._agent_id,
+                        clusters=clusters,
+                        department=department,
+                    )
+                    logger.debug(
+                        "Step 6b: Updated expertise profile with %d topics from %d clusters",
+                        topics_added,
+                        len(clusters),
+                    )
+            except Exception:
+                logger.debug("Step 6b expertise update failed (non-critical)", exc_info=True)
 
         # Step 7: Procedure extraction from success clusters (AD-532)
         procedures_extracted = 0

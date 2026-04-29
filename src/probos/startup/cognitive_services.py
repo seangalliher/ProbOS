@@ -420,6 +420,18 @@ async def init_cognitive_services(
         except Exception as e:
             logger.warning("SocialVerificationService failed to start: %s — continuing without", e)
 
+    # AD-600: Transactive Memory expertise directory
+    expertise_directory = None
+    if config.expertise.enabled:
+        try:
+            from probos.cognitive.expertise_directory import ExpertiseDirectory as _ExpertiseDirectory
+
+            expertise_directory = _ExpertiseDirectory(config=config.expertise)
+            logger.info("AD-600: ExpertiseDirectory initialized")
+        except Exception as e:
+            logger.warning("AD-600: ExpertiseDirectory failed to start: %s; continuing without", e)
+            expertise_directory = None
+
     # AD-462e: Oracle Service — cross-tier unified memory query
     oracle_service = None
     try:
@@ -430,6 +442,7 @@ async def init_cognitive_services(
             knowledge_store=knowledge_store,
             trust_network=trust_network,
             hebbian_router=hebbian_router,
+            expertise_directory=expertise_directory,
         )
         logger.info("AD-462e: OracleService initialized")
     except Exception as e:
@@ -476,4 +489,5 @@ async def init_cognitive_services(
         orientation_service=orientation_service,  # AD-567g
         oracle_service=oracle_service,  # AD-462e
         consultation_protocol=consultation_protocol,  # AD-594
+        expertise_directory=expertise_directory,  # AD-600
     )

@@ -56,12 +56,14 @@ class OracleService:
         knowledge_store: Any = None,
         trust_network: Any = None,
         hebbian_router: Any = None,
-    ):
+        expertise_directory: Any = None,
+    ) -> None:
         self._episodic_memory = episodic_memory
         self._records_store = records_store
         self._knowledge_store = knowledge_store
         self._trust_network = trust_network
         self._hebbian_router = hebbian_router
+        self._expertise_directory = expertise_directory
 
     async def query(
         self,
@@ -93,9 +95,27 @@ class OracleService:
         # Tier 1: Episodic Memory
         if self._episodic_memory and "episodic" in active_tiers:
             try:
+                target_agent_ids: list[str] | None = None
+                if self._expertise_directory and query_text and not agent_id:
+                    try:
+                        expert_matches = self._expertise_directory.query_experts(
+                            query_text, top_k=k_per_tier
+                        )
+                        if expert_matches:
+                            target_agent_ids = [match.agent_id for match in expert_matches]
+                            logger.debug(
+                                "AD-600: Expertise routing selected %d shards for query '%s'",
+                                len(target_agent_ids),
+                                query_text[:50],
+                            )
+                    except Exception:
+                        logger.warning(
+                            "AD-600: Expertise routing failed for episodic tier; falling back to full scan",
+                            exc_info=True,
+                        )
                 tier_results = await self._query_episodic(
                     query_text, agent_id=agent_id, intent_type=intent_type,
-                    k=k_per_tier,
+                    k=k_per_tier, target_agent_ids=target_agent_ids,
                 )
                 all_results.extend(tier_results)
             except Exception:
@@ -171,34 +191,44 @@ class OracleService:
     # -- Private tier query methods --
 
     async def _query_episodic(
-        self, query_text: str, *, agent_id: str, intent_type: str, k: int,
+        self,
+        query_text: str,
+        *,
+        agent_id: str,
+        intent_type: str,
+        k: int,
+        target_agent_ids: list[str] | None = None,
     ) -> list[OracleResult]:
         em = self._episodic_memory
         results: list[OracleResult] = []
 
-        if agent_id and hasattr(em, "recall_weighted"):
-            scored = await em.recall_weighted(
-                agent_id, query_text,
-                trust_network=self._trust_network,
-                hebbian_router=self._hebbian_router,
-                intent_type=intent_type,
-                k=k,
-                context_budget=999999,
-            )
-            for rs in scored:
-                ep = rs.episode
-                results.append(OracleResult(
-                    source_tier="episodic",
-                    content=ep.user_input or "",
-                    score=rs.composite_score,
-                    metadata={
-                        "episode_id": getattr(ep, "id", ""),
-                        "timestamp": getattr(ep, "timestamp", 0),
-                        "agent_ids": getattr(ep, "agent_ids", []),
-                        "source": getattr(ep, "source", ""),
-                    },
-                    provenance="[episodic memory]",
-                ))
+        agent_scopes = [agent_id] if agent_id else (target_agent_ids or [])
+        if agent_scopes and hasattr(em, "recall_weighted"):
+            for scoped_agent_id in agent_scopes:
+                scored = await em.recall_weighted(
+                    scoped_agent_id, query_text,
+                    trust_network=self._trust_network,
+                    hebbian_router=self._hebbian_router,
+                    intent_type=intent_type,
+                    k=k,
+                    context_budget=999999,
+                )
+                for rs in scored:
+                    ep = rs.episode
+                    results.append(OracleResult(
+                        source_tier="episodic",
+                        content=ep.user_input or "",
+                        score=rs.composite_score,
+                        metadata={
+                            "episode_id": getattr(ep, "id", ""),
+                            "timestamp": getattr(ep, "timestamp", 0),
+                            "agent_ids": getattr(ep, "agent_ids", []),
+                            "source": getattr(ep, "source", ""),
+                            "agent_scope": scoped_agent_id,
+                        },
+                        provenance="[episodic memory]",
+                    ))
+            results.sort(key=lambda result: result.score, reverse=True)
         elif hasattr(em, "recall"):
             episodes = await em.recall(query_text, k=k)
             for ep in episodes:

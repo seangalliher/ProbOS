@@ -57,6 +57,7 @@ async def init_dreaming(
     runtime: Any = None,  # AD-532e: for reactive event subscription
     activation_tracker: Any = None,  # AD-567d: activation-based lifecycle
     records_store: Any = None,  # BF-106: Ship's Records for notebook consolidation
+    expertise_directory: Any = None,  # AD-600: transactive memory
 ) -> tuple[DreamingResult, bool]:
     """Start dreaming/detection subsystems and detect cold start.
 
@@ -170,6 +171,7 @@ async def init_dreaming(
             dream_wm_bridge=dream_wm_bridge,
             episodic_procedural_bridge=procedural_bridge,
             reconsolidation_scheduler=reconsolidation_scheduler,
+            expertise_directory=expertise_directory,
         )
         if reconsolidation_scheduler and hasattr(episodic_memory, "set_reconsolidation_scheduler"):
             episodic_memory.set_reconsolidation_scheduler(reconsolidation_scheduler)

@@ -5130,9 +5130,9 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
-### Transactive Memory Systems (AD-600) *(planned, OSS)*
+### Transactive Memory Systems (AD-600) *(Complete, OSS)*
 
-**AD-600: Transactive Memory — "Who Knows What" Directory** *(planned, OSS, depends: AD-462c OracleService, AD-570 Anchor-Indexed Recall, AD-531 Episode Clustering)* — Build a queryable expertise directory from episode clustering and recall patterns so the system knows which agent is the best source for a given topic. Enables intelligent routing of cross-agent queries — instead of broadcasting to all shards (OracleService current behavior), route to the agent(s) most likely to have relevant episodic knowledge. Based on Wegner (1987) Transactive Memory Systems theory: groups develop shared awareness of "who knows what," enabling efficient knowledge retrieval without every member storing everything.
+**AD-600: Transactive Memory — "Who Knows What" Directory** *(Complete, OSS, depends: AD-462c OracleService, AD-570 Anchor-Indexed Recall, AD-531 Episode Clustering)* — Added a queryable in-memory expertise directory from episode clustering evidence so the system knows which agent is the best source for a given topic. OracleService routes unscoped episodic queries to top-k expert shards when available, while explicit agent-scoped queries remain unchanged. Based on Wegner (1987) Transactive Memory Systems theory: groups develop shared awareness of "who knows what," enabling efficient knowledge retrieval without every member storing everything.
 
 **Problem statement:** OracleService (AD-462c) queries all 3 knowledge tiers across all agent shards. For a crew of 55 agents, every cross-agent query scans all 55 shards — O(N) per query. Most shards return nothing relevant. The system has no model of which agents are knowledgeable about which topics. SocialMemoryService broadcasts "does anyone remember?" to the Ward Room — equally inefficient. Neither pathway leverages the structural fact that agents specialize by department and role.
 

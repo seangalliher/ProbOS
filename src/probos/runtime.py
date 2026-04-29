@@ -1276,6 +1276,7 @@ class ProbOSRuntime:
         self._orientation_service = cog.orientation_service  # AD-567g
         self._oracle_service = cog.oracle_service  # AD-462e
         self._consultation_protocol = cog.consultation_protocol  # AD-594
+        self._expertise_directory = cog.expertise_directory  # AD-600
 
         # AD-588: Introspective Telemetry Service
         try:
@@ -1441,6 +1442,7 @@ class ProbOSRuntime:
             runtime=self,  # AD-532e: for reactive event subscription
             activation_tracker=self._activation_tracker,  # AD-567d
             records_store=self._records_store,  # BF-106: available from Phase 4
+            expertise_directory=self._expertise_directory,  # AD-600
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector
