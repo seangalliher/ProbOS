@@ -164,6 +164,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Single-hop semantic recall misses associative chains where one remembered episode points to another related event. Anchor-mediated spreading activation gives causal and narrative queries a bounded two-hop path while preserving existing recall APIs and source-governance behavior.
 **Status:** Implemented
 
+### AD-606: Think-in-Memory
+
+**Date:** 2026-04-28
+**Decision:** ThoughtStore persists important working-memory conclusions as thought episodes with source=REFLECTION and channel="thought". Importance threshold and per-cycle cap prevent noise. Evidence linking records provenance. Thought episodes resolve slot IDs to sovereign agent IDs before storage. Thoughts participate in standard recall naturally. No LLM dependency; the store persists raw conclusion text.
+**Rationale:** Agent conclusions were available only as transient working-memory summaries, forcing future cycles to re-reason from raw episodes. Persisting bounded, typed conclusions as reflection episodes gives recall access to pre-reasoned thoughts without adding new database tables or model calls.
+**Status:** Implemented
+
 ### AD-610: Utility-Based Storage Gating
 
 **Date:** 2026-04-28

@@ -882,6 +882,14 @@ class SpreadingActivationConfig(BaseModel):
     min_anchor_fields: int = 2
 
 
+class ThoughtStoreConfig(BaseModel):
+    """AD-606: Think-in-Memory thought storage configuration."""
+
+    enabled: bool = True
+    min_importance: int = 5
+    max_thoughts_per_cycle: int = 3
+
+
 class MetabolismConfig(BaseModel):
     """AD-670: Working memory metabolism — active lifecycle management."""
 
@@ -957,7 +965,7 @@ class SensoriumConfig(BaseModel):
     """AD-666: Agent Sensorium tracking configuration."""
 
     enabled: bool = True
-    token_budget_warning: int = 6000
+    token_budget_warning: int = 10000
 
 
 class OnboardingConfig(BaseModel):
@@ -1502,6 +1510,7 @@ class SystemConfig(BaseModel):
     consultation: ConsultationConfig = ConsultationConfig()  # AD-594
     expertise: ExpertiseConfig = ExpertiseConfig()  # AD-600
     spreading_activation: SpreadingActivationConfig = SpreadingActivationConfig()  # AD-604
+    thought_store: ThoughtStoreConfig = ThoughtStoreConfig()  # AD-606
     reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
 
 

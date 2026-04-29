@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from probos.cognitive.memory_budget import MemoryBudgetManager
     from probos.cognitive.question_classifier import QuestionClassifier, RetrievalStrategySelector
     from probos.cognitive.spreading_activation import SpreadingActivationEngine
+    from probos.cognitive.thought_store import ThoughtStore
     from probos.config import MemoryBudgetConfig
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,8 @@ class CognitiveAgent(BaseAgent):
         self._question_classifier: QuestionClassifier | None = None
         self._retrieval_strategy_selector: RetrievalStrategySelector | None = None
         self._spreading_activation: SpreadingActivationEngine | None = None  # AD-604
+        self._thought_store: ThoughtStore | None = None  # AD-606
+        self._current_correlation_id: str = ""
 
         # AD-573: Per-cycle memory budget configuration
         self._memory_budget_config: MemoryBudgetConfig | None = kwargs.get("memory_budget_config")
@@ -1174,6 +1177,7 @@ class CognitiveAgent(BaseAgent):
         """
         # AD-492: Generate correlation ID for this cognitive cycle
         correlation_id = uuid.uuid4().hex[:12]
+        self._current_correlation_id = correlation_id
 
         if isinstance(intent, IntentMessage):
             observation = {
@@ -2619,6 +2623,16 @@ class CognitiveAgent(BaseAgent):
                         conclusion_type=_conclusion_type,
                         summary=_conclusion_summary,
                         relevance_tags=self._extract_relevance_tags(intent),
+                        correlation_id=observation.get("correlation_id", ""),
+                    )
+                    _cycle_conclusions = [
+                        conclusion for conclusion in _wm.get_active_conclusions()
+                        if conclusion.thread_id == intent.id
+                        and conclusion.correlation_id == observation.get("correlation_id", "")
+                    ]
+                    await self._store_important_conclusions_as_thoughts(
+                        _cycle_conclusions,
+                        correlation_id=observation.get("correlation_id", ""),
                     )
         except Exception:
             logger.debug("AD-669: Conclusion recording failed", exc_info=True)
@@ -2814,6 +2828,7 @@ class CognitiveAgent(BaseAgent):
         _wm = getattr(self, '_working_memory', None)
         if _wm:
             _wm.clear_correlation_id()
+        self._current_correlation_id = ""
 
         return IntentResult(
             intent_id=intent.id,
@@ -3320,6 +3335,61 @@ class CognitiveAgent(BaseAgent):
         if decision.get("duty"):
             return ConclusionType.COMPLETION
         return ConclusionType.DECISION
+
+    @staticmethod
+    def _map_conclusion_to_thought_type(conclusion: Any) -> str:
+        """AD-606: Map a ConclusionEntry type to a thought type string."""
+        conclusion_type = conclusion.conclusion_type
+        conclusion_value = conclusion_type.value if hasattr(conclusion_type, "value") else str(conclusion_type)
+        mapping = {
+            "decision": "conclusion",
+            "observation": "observation_synthesis",
+            "escalation": "conclusion",
+            "completion": "conclusion",
+        }
+        return mapping.get(conclusion_value, "conclusion")
+
+    async def _store_important_conclusions_as_thoughts(
+        self,
+        conclusions: list[Any],
+        *,
+        correlation_id: str = "",
+    ) -> None:
+        """AD-606: Persist important working-memory conclusions as thought episodes."""
+        if self._thought_store is None:
+            if not self._runtime:
+                return
+            try:
+                _ts_config = self._runtime.config.thought_store
+                if not _ts_config.enabled:
+                    return
+                from probos.cognitive.thought_store import ThoughtStore
+
+                self._thought_store = ThoughtStore(
+                    episodic_memory=self._runtime.episodic_memory,
+                    config=_ts_config,
+                    identity_registry=getattr(self._runtime, "identity_registry", None),
+                )
+            except Exception:
+                logger.debug("AD-606: ThoughtStore unavailable", exc_info=True)
+                return
+
+        if not conclusions:
+            return
+
+        try:
+            active_correlation_id = correlation_id or self._current_correlation_id
+            self._thought_store.reset_cycle(active_correlation_id)
+            for conclusion in conclusions[:3]:
+                await self._thought_store.store_thought(
+                    agent_id=self.id,
+                    thought=conclusion.summary,
+                    thought_type=self._map_conclusion_to_thought_type(conclusion),
+                    importance=6,
+                    correlation_id=active_correlation_id,
+                )
+        except Exception:
+            logger.debug("AD-606: Thought storage failed; continuing without thought memory", exc_info=True)
 
     @staticmethod
     def _extract_relevance_tags(intent) -> list[str]:

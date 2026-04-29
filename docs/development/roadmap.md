@@ -5235,9 +5235,9 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
-### Think-in-Memory — Evolved Thought Storage (AD-606) *(planned, OSS)*
+### Think-in-Memory — Evolved Thought Storage (AD-606) *(Complete, OSS)*
 
-**AD-606: Think-in-Memory — Evolved Thought Storage** *(planned, OSS, depends: AD-551 Notebook Consolidation, AD-567d Dream Consolidation, AD-532 Procedure Extraction)* — Store pre-reasoned conclusions ("evolved thoughts") as first-class episodic entries, not just raw interaction history. Currently dream consolidation extracts patterns and stores them in notebooks (Tier 2 Records), but these don't flow back into the episodic recall pipeline. An agent re-encountering a similar situation must re-reason from raw episodes rather than retrieving a pre-computed conclusion.
+**AD-606: Think-in-Memory — Evolved Thought Storage** *(Complete, OSS, depends: AD-669 Working Memory Conclusions, AD-567a AnchorFrame)* — Store pre-reasoned conclusions ("evolved thoughts") as first-class episodic entries, not just raw interaction history. Currently dream consolidation extracts patterns and stores them in notebooks (Tier 2 Records), but these don't flow back into the episodic recall pipeline. An agent re-encountering a similar situation must re-reason from raw episodes rather than retrieving a pre-computed conclusion.
 
 **Problem statement:** Every cognitive cycle pays full re-reasoning cost even when the agent has previously resolved the same type of question. Raw episodes contain the full interaction context (question, DAG steps, outcomes, reflection) but not the distilled conclusion. The agent must reconstruct the conclusion from raw data each time. Evolved thoughts — pre-reasoned conclusions stored as high-priority episodic entries — would enable direct retrieval of conclusions without re-reasoning.
 
