@@ -32,6 +32,12 @@ AD-594 Crew Consultation Protocol — CLOSED. Added ConsultationProtocol request
 
 AD-600 Transactive Memory — CLOSED. Added in-memory ExpertiseDirectory with agent topic profiles, confidence decay, dream-cycle cluster profile updates, ExpertiseConfig, OracleService expertise routing across top-k agent shards, and startup/runtime wiring into cognitive services and dreaming. 14 new tests; focused AD-600 gate passed. Oracle regression suite passed 29 tests. Full xdist gate reported 9865 passing/14 skipped; 115 worker-crash nodeids passed serial triage.
 
+BF-249 CLOSED. Update AD-666 sensorium tests for 10K threshold after BF-247 raised SensoriumConfig.token_budget_warning from 6000 to 10000. Follow-up to 8be47d5. 2 assertions updated; 14 Sensorium tests passed.
+
+BF-250 OPEN. TestPerAgentCooldown.test_per_agent_cooldown_used_in_cycle hangs under pytest-timeout on Windows. Quarantined. Root cause TBD — likely interaction between _run_cycle's MagicMock-driven async flow and pytest-timeout's Windows event-loop cancellation. Investigate after the BF-247/BF-246/AD-680 sweep lands.
+
+BF-251 OPEN. TestProactiveExceptionConfidence.test_exception_does_not_crash_loop hangs under pytest-timeout on Windows. Quarantined. Root cause TBD — likely interaction between _run_cycle's MagicMock-driven async exception path and pytest-timeout's Windows event-loop cancellation. Investigate after the BF-247/BF-246/AD-680 sweep lands.
+
 BF-245 CLOSED. NATS/xdist stream isolation - module-level `os.environ.setdefault("PROBOS_NATS_ENABLED", "false")` in conftest.py prevents real NATS connections during tests. NatsConfig.enabled field_validator with validate_default=True honors env override. Eliminates xdist worker crashes from JetStream stream name collisions. 8 tests; full xdist run had no NATS/JetStream collision signatures, with remaining worker crashes classified outside BF-245.
 
 AD-603 COMPLETE. Anchor Recall Composite Scoring — added recall_by_anchor_scored() wrapper that applies score_recall() to anchor-retrieved episodes with trust, Hebbian, recency, keyword, temporal, importance, and structural anchor bonus signals. CognitiveAgent merge now combines scored anchor and semantic results by composite_score, preserving BF-155 watch filtering and legacy unscored fallback. 18 new tests; 53 focused/regression tests passed. Full-suite xdist timing failure classified as waived infrastructure after serial rerun passed.

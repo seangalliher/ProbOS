@@ -133,7 +133,7 @@ class TestSensoriumConfig:
 
         config = SensoriumConfig()
         assert config.enabled is True
-        assert config.token_budget_warning == 6000
+        assert config.token_budget_warning == 10000
 
     def test_system_config_has_sensorium(self) -> None:
         from probos.config import SystemConfig
@@ -141,4 +141,4 @@ class TestSensoriumConfig:
         system_config = SystemConfig()
         assert hasattr(system_config, "sensorium")
         assert system_config.sensorium.enabled is True
-        assert system_config.sensorium.token_budget_warning == 6000
+        assert system_config.sensorium.token_budget_warning == 10000
