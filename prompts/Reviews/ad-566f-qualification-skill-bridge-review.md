@@ -26,3 +26,23 @@
 - `get_profile()` at [skill_framework.py:611](src/probos/skill_framework.py#L611).
 - `ProficiencyLevel` at [skill_framework.py:38](src/probos/skill_framework.py#L38).
 - `runtime._qualification_store` at [runtime.py:1310](src/probos/runtime.py#L1310); `runtime.skill_service` at [runtime.py:1551](src/probos/runtime.py#L1551).
+
+---
+
+## Re-review (2026-04-29, second pass)
+
+**Verdict:** ✅ Approved.
+
+| Prior Required | Status | Evidence |
+|---|---|---|
+| Class name `AgentSkillService` not `SkillService` | ✅ Fixed | "Verified Against Codebase" section now correctly cites `AgentSkillService` at [skill_framework.py:435](src/probos/skill_framework.py#L435). Bridge accepts `skill_service: Any` (receives an `AgentSkillService` from `runtime.skill_service`) — correct. |
+| Import `ProficiencyLevel` | ✅ Fixed | Late-bound `from probos.skill_framework import ProficiencyLevel` inside `process_qualification()`. |
+| Wiring location specificity | ✅ Fixed | Verified `_qualification_store` set at [runtime.py:1310](src/probos/runtime.py#L1310) and `skill_service` at [runtime.py:1551](src/probos/runtime.py#L1551); insertion safe immediately after 1551. |
+
+### Recommended (non-blocking)
+
+- Annotate `skill_service: AgentSkillService` (not `Any`) on the bridge constructor for IDE/static-analyzer benefit. Forward-import via `TYPE_CHECKING` if needed to avoid circular imports.
+- Test 6 still needs an explicit `SkillProfile` mock fixture so the builder doesn't have to invent the shape mid-test. Provide a fixture stub.
+- `DEFAULT_SCORE_THRESHOLDS` remains hardcoded — fine for MVP; mark as a follow-up to expose via config when domain-specific tuning is needed.
+
+Ready for builder.
