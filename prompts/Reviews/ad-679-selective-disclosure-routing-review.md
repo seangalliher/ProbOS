@@ -1,0 +1,29 @@
+# Review: AD-679 — Selective Disclosure Routing
+
+**Verdict:** ✅ Approved
+**Headline:** All dependencies verified; ready for builder.
+
+## Required
+
+None.
+
+## Recommended
+
+1. **Department clearance defaults.** `DEFAULT_CLEARANCES` hardcodes `bridge`, `security`, `engineering`. Cross-check against the actual department enum/strings used elsewhere. If departments are dynamic, move to `config.yaml`.
+2. **Captain override semantics.** `set_agent_clearance()` allows individual override. Be explicit about whether/where an `is_captain` check exists.
+3. **Audit-log verbosity.** `DisclosureDecision.reason` strings ("Clearance X >= Y") — pick technical or user-friendly phrasing and stick with it.
+
+## Nits
+
+- Add a `count_permitted()` method if downstream consumers (HXI) want a quick stats view without reconstructing the list.
+- `get_clearance_map()` returns `dict[str, str]` of level names — confirm HXI accepts the format.
+
+## Verified
+
+- `IntentBus.broadcast()` at [mesh/intent.py:369](src/probos/mesh/intent.py#L369); `_intent_index` at [mesh/intent.py:35](src/probos/mesh/intent.py#L35). DisclosureRouter is a separate filter layer (not integrated into IntentBus) — correct design.
+- `Depends(get_runtime)` pattern at [routers/system.py:21](src/probos/routers/system.py#L21).
+- `get_runtime` import at [routers/system.py:13](src/probos/routers/system.py#L13).
+- `KNOWLEDGE_TIER_LOADED` at [events.py:169](src/probos/events.py#L169) — `DISCLOSURE_FILTERED` insertion confirmed (potential collision with AD-677's CONTEXT_PROVENANCE_INJECTED if AD-679 builds first; SEARCH block must check actual state at build time).
+- `DisclosureLevel(IntEnum)` ordering for comparison ops — correct.
+- 8 tests covering ordering, defaults, permit/deny, overrides, filtering — adequate.
+- Type annotations complete; logging context adequate.
