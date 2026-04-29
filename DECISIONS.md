@@ -157,6 +157,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Recall queries previously used the same weighted parameters regardless of whether the user asked when, why, who, or what. Deterministic question typing lets recall emphasize temporal, causal, social, or factual signals without adding model calls or refactoring recall flow in this AD.
 **Status:** Implemented
 
+### AD-604: Spreading Activation / Multi-Hop Retrieval
+
+**Date:** 2026-04-28
+**Decision:** First-hop semantic recall now seeds second-hop anchor-based queries using extracted metadata (department, channel, trigger_type, trigger_agent). Hop decay (0.6x) and deduplication prevent score inflation. CognitiveAgent uses the spreading activation path for CAUSAL question types from AD-602. No graph database is added; the engine uses existing EpisodicMemory recall methods.
+**Rationale:** Single-hop semantic recall misses associative chains where one remembered episode points to another related event. Anchor-mediated spreading activation gives causal and narrative queries a bounded two-hop path while preserving existing recall APIs and source-governance behavior.
+**Status:** Implemented
+
 ### AD-610: Utility-Based Storage Gating
 
 **Date:** 2026-04-28

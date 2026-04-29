@@ -24,6 +24,7 @@ from probos.utils import format_duration
 if TYPE_CHECKING:
     from probos.cognitive.memory_budget import MemoryBudgetManager
     from probos.cognitive.question_classifier import QuestionClassifier, RetrievalStrategySelector
+    from probos.cognitive.spreading_activation import SpreadingActivationEngine
     from probos.config import MemoryBudgetConfig
 
 logger = logging.getLogger(__name__)
@@ -176,6 +177,7 @@ class CognitiveAgent(BaseAgent):
         # AD-602: Question-adaptive retrieval
         self._question_classifier: QuestionClassifier | None = None
         self._retrieval_strategy_selector: RetrievalStrategySelector | None = None
+        self._spreading_activation: SpreadingActivationEngine | None = None  # AD-604
 
         # AD-573: Per-cycle memory budget configuration
         self._memory_budget_config: MemoryBudgetConfig | None = kwargs.get("memory_budget_config")
@@ -4762,6 +4764,20 @@ class CognitiveAgent(BaseAgent):
             except Exception:
                 logger.debug("AD-602: Question classifier unavailable", exc_info=True)
 
+        # AD-604: Lazy-init spreading activation engine
+        if getattr(self, "_spreading_activation", None) is None:
+            try:
+                _sa_config = self._runtime.config.spreading_activation
+                if _sa_config.enabled:
+                    from probos.cognitive.spreading_activation import SpreadingActivationEngine
+
+                    self._spreading_activation = SpreadingActivationEngine(
+                        config=_sa_config,
+                        episodic_memory=self._runtime.episodic_memory,
+                    )
+            except Exception:
+                logger.debug("AD-604: Spreading activation unavailable", exc_info=True)
+
         try:
             # Build a semantic query from the intent content
             params = observation.get("params", {})
@@ -4781,6 +4797,7 @@ class CognitiveAgent(BaseAgent):
 
             # AD-602: Classify query and select strategy
             _ad602_strategy = None
+            _question_type = None
             if self._question_classifier and self._retrieval_strategy_selector:
                 try:
                     _question_type = self._question_classifier.classify(query)
@@ -4811,6 +4828,28 @@ class CognitiveAgent(BaseAgent):
             mem_cfg = None
             if hasattr(self._runtime, 'config') and hasattr(self._runtime.config, 'memory'):
                 mem_cfg = self._runtime.config.memory
+
+            _ad604_results: list[Any] = []
+            if (
+                _question_type is not None
+                and getattr(_question_type, "value", "") == "causal"
+                and getattr(self, "_spreading_activation", None) is not None
+            ):
+                try:
+                    _ad604_results = await self._spreading_activation.multi_hop_recall(
+                        query,
+                        _mem_id,
+                        trust_network=trust_net,
+                        hebbian_router=heb_router,
+                    )
+                    if _ad604_results:
+                        observation["_ad604_spreading_activation"] = True
+                        logger.debug(
+                            "AD-604: Used spreading activation for CAUSAL query with %d results",
+                            len(_ad604_results),
+                        )
+                except Exception:
+                    logger.debug("AD-604: Spreading activation failed; falling back to standard recall", exc_info=True)
 
             # AD-620: Resolve recall tier from rank + billet clearance
             from probos.earned_agency import effective_recall_tier, resolve_billet_clearance, resolve_active_grants, RecallTier
@@ -4862,7 +4901,7 @@ class CognitiveAgent(BaseAgent):
             )
 
             scored_results = []
-            if _retrieval_strategy == RetrievalStrategy.NONE:
+            if _retrieval_strategy == RetrievalStrategy.NONE and not _ad604_results:
                 # Skip episodic recall entirely — agent uses parametric + personality
                 logger.debug("AD-568a: Skipping episodic recall for intent '%s' (strategy=NONE)", _intent_type)
                 episodes = []
@@ -4887,7 +4926,9 @@ class CognitiveAgent(BaseAgent):
                         0.0, _tier_params.get("recall_quality_floor", 0.0) - 0.10
                     )
 
-                if hasattr(em, 'recall_weighted') and _tier_params.get("use_salience_weights", True):
+                if _ad604_results:
+                    scored_results = _ad604_results
+                elif hasattr(em, 'recall_weighted') and _tier_params.get("use_salience_weights", True):
                     _ad602_k = _tier_params.get("k", 5)
                     _ad602_weights = getattr(mem_cfg, 'recall_weights', None) if mem_cfg else None
                     if _ad602_strategy is not None:

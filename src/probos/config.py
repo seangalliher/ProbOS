@@ -872,6 +872,16 @@ class QuestionAdaptiveConfig(BaseModel):
     strategy_overrides: dict[str, dict] = Field(default_factory=dict)
 
 
+class SpreadingActivationConfig(BaseModel):
+    """AD-604: Spreading activation / multi-hop retrieval configuration."""
+
+    enabled: bool = True
+    max_hops: int = 2
+    k_per_hop: int = 5
+    hop_decay_factor: float = 0.6
+    min_anchor_fields: int = 2
+
+
 class MetabolismConfig(BaseModel):
     """AD-670: Working memory metabolism — active lifecycle management."""
 
@@ -1491,6 +1501,7 @@ class SystemConfig(BaseModel):
     bill: BillConfig = BillConfig()  # AD-618b
     consultation: ConsultationConfig = ConsultationConfig()  # AD-594
     expertise: ExpertiseConfig = ExpertiseConfig()  # AD-600
+    spreading_activation: SpreadingActivationConfig = SpreadingActivationConfig()  # AD-604
     reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
 
 
