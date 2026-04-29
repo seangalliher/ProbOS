@@ -22,10 +22,11 @@ Counselor issued this session?" or "which agents received guidance directives?"
 
 Add at module level (after the existing imports, before the class definition).
 
-**IMPORTANT:** counselor.py does NOT currently import `Enum`. Add this import
-near the top of the file (after line 16 `from dataclasses import dataclass, field`):
+**IMPORTANT:** counselor.py does NOT currently import `Enum` or `time`. Add
+these imports near the top of the file (after line 16 `from dataclasses import dataclass, field`):
 
 ```python
+import time
 from enum import Enum
 ```
 

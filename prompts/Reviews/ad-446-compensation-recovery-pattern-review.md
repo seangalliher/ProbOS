@@ -22,3 +22,17 @@
 - `RecoveryStrategy` enum defines RETRY / ESCALATE / ROLLBACK / ABANDON.
 - Wiring pattern matches existing runtime service conventions.
 - AD-445 prerequisite (DecisionQueue) confirmed as planned in the same wave.
+
+---
+
+## Second-Pass Re-review (2026-04-29)
+
+**Verdict:** ⚠️ Conditional.
+
+| Prior Item | Status |
+|---|---|
+| Add `EventType.COMPENSATION_TRIGGERED` | ❌ Still missing — grep confirms absent in [events.py](src/probos/events.py). Section 2 still requires the addition. |
+| Document AD-445 dependency | ✅ Fixed — prompt explicitly references AD-445 wiring + governance/ fallback creation. |
+| Governance dir fallback | ✅ Documented |
+
+Get AD-445's `EventType.DECISION_QUEUE_PAUSED` and AD-446's `COMPENSATION_TRIGGERED` added in the same enum-edit pass to avoid two roundtrips. Otherwise ready.

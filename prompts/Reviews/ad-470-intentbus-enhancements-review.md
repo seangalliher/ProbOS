@@ -48,3 +48,16 @@
 2. **`type_durations_ms` defaultdict reassignment** (Nit from first pass) still present. `self.type_durations_ms[intent_type] = durations[-200:]` replaces the defaultdict-backed list with a plain list; subsequent appends still work but defaultdict semantics are lost on that key. Use `deque(maxlen=200)` or document the trade-off.
 
 Fix the `send()` SEARCH/REPLACE and ship.
+
+---
+
+## Third-Pass Re-review (2026-04-29)
+
+**Verdict:** ⚠️ Conditional (one Recommended remaining).
+
+| Prior Item | Status |
+|---|---|
+| `send()` timing concrete SEARCH/REPLACE | ✅ Fixed — Section 2 Step 3 now provides a complete try/finally wrapper. |
+| `defaultdict` reassignment nit | ⚠️ Still present — `self.type_durations_ms[intent_type] = durations[-200:]` replaces the defaultdict-backed list with a plain list. Recommend `deque(maxlen=200)` OR a comment justifying the trade-off (list slicing cheaper than deque ops at this cap). Not a blocker.
+
+Ready for builder; the defaultdict shape is a stylistic choice the builder can decide.

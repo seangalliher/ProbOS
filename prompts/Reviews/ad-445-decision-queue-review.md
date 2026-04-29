@@ -38,3 +38,15 @@
 | Drop `hasattr(runtime, 'emit_event')` defensive guard (Recommended) | ⚠️ Not addressed | Section 3 still has `emit_fn=runtime.emit_event if hasattr(runtime, 'emit_event') else None`. Since AD-680 has now landed (commit `73945d0`), the guard is dead code. |
 
 Note: AD-680 is now ON MAIN. Strip the `hasattr` guard before building, or it ships as a permanent always-true branch. Otherwise ready.
+
+---
+
+## Third-Pass Re-review (2026-04-29)
+
+**Verdict:** ✅ Approved.
+
+| Prior Item | Status |
+|---|---|
+| `hasattr(runtime, 'emit_event')` guard | ✅ Removed — Section 3 wires `emit_fn=runtime.emit_event` directly. |
+
+Ready for builder.

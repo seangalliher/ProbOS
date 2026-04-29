@@ -254,7 +254,7 @@ where both `self.skill_service` and `self._qualification_store` are available:
 ## What This Does NOT Change
 
 - `QualificationStore` unchanged — still stores test results independently
-- `SkillFramework` / `SkillService` unchanged — bridge calls its public API
+- `SkillFramework` / `AgentSkillService` unchanged — bridge calls its public API
 - Qualification test execution unchanged
 - Proficiency decay unchanged
 - Does NOT add automatic qualification test triggering
@@ -285,8 +285,8 @@ grep -n "class QualificationStore" src/probos/cognitive/qualification.py
   136: class QualificationStore — SQLite persistence for qualification results
 
 # SkillFramework
-grep -n "class SkillService\|def update_proficiency\|def get_profile" src/probos/skill_framework.py
-  → SkillService in skill_framework.py
+grep -n "class AgentSkillService\|def update_proficiency\|def get_profile" src/probos/skill_framework.py
+  435: class AgentSkillService — runtime skill service
   542: update_proficiency(agent_id, skill_id, new_level, source, notes)
   611: get_profile(agent_id) → SkillProfile
 

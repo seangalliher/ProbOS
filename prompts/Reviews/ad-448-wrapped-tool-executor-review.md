@@ -25,3 +25,17 @@
 - `ToolResult` is a frozen dataclass at [src/probos/tools/protocol.py:74-80](src/probos/tools/protocol.py#L74) with `output`, `error`, `duration_ms`, `metadata`.
 - `ToolPermission` enum at [src/probos/tools/protocol.py:28-38](src/probos/tools/protocol.py#L28) with `READ` default.
 - No conflicts with existing tool invocation patterns.
+
+---
+
+## Second-Pass Re-review (2026-04-29)
+
+**Verdict:** ⚠️ Conditional.
+
+| Prior Item | Status |
+|---|---|
+| Add `EventType.TOOL_INVOKED` | ❌ Still missing — grep confirms absent in [events.py](src/probos/events.py). Section 2 still requires the addition. |
+| ToolRegistry delegation — no recursion risk | ✅ Re-verified |
+| Pre-hook fail-open documented | ✅ |
+
+Batch the `TOOL_INVOKED` enum addition with AD-445/446 enum edits in a single events.py pass.

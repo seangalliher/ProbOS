@@ -64,3 +64,15 @@ _initiative_val = resolve_initiative_level(
 ```
 
 Without this, the config addition in Section 3 is a no-op.
+
+---
+
+## Third-Pass Re-review (2026-04-29)
+
+**Verdict:** ✅ Approved.
+
+| Prior Required | Status |
+|---|---|
+| Wire `initiative_trust_thresholds` config to call site | ✅ Fixed — Section 4 now extracts `_rt.config.earned_agency.initiative_trust_thresholds` (with null-check) and passes it as `thresholds=_initiative_thresholds` to `resolve_initiative_level()`. |
+
+Config is no longer dead code. Operators can tune thresholds at runtime. Ready for builder — unblocks AD-675 once this lands.

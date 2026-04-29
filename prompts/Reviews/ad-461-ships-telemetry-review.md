@@ -35,3 +35,15 @@ None.
 Revisions did not introduce new issues. `BEHAVIORAL_METRICS_UPDATED` still at [events.py:134](src/probos/events.py#L134); `runtime.emit_event` at [runtime.py:771](src/probos/runtime.py#L771); pattern intact.
 
 Minor: the `hasattr(runtime, 'emit_event')` guard in Section 4 is dead code now that AD-680 has landed (commit `73945d0`). Trim during build or accept as harmless. Not a blocker.
+
+---
+
+## Third-Pass Re-review (2026-04-29)
+
+**Verdict:** ✅ Approved.
+
+Revised prompt drops the `hasattr` guard — Section 4 now wires `emit_fn=runtime.emit_event` directly. No regressions introduced. `EventType.TELEMETRY_REPORT` insertion at [events.py:134](src/probos/events.py#L134) (after `BEHAVIORAL_METRICS_UPDATED`) remains correct.
+
+Note: pre-existing `hasattr(runtime, 'emit_event')` patterns in 13 sites (`cognitive_agent.py`, `proactive.py`, `dreaming.py`) are dead code post-AD-680. Out of scope for AD-461; file a follow-up cleanup AD if desired.
+
+Ready for builder.
