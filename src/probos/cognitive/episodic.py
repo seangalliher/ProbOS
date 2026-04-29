@@ -1068,6 +1068,34 @@ class EpisodicMemory:
         # Evict oldest beyond budget
         await self._evict()
 
+    async def update_episode_validity(self, episode_id: str, valid_until: float) -> bool:
+        """AD-579c: Update valid_until metadata for an existing episode."""
+        if not self._collection:
+            return False
+
+        try:
+            result = self._collection.get(ids=[episode_id], include=["metadatas"])
+        except Exception:
+            logger.debug("AD-579c: Failed to load episode %s for validity update", episode_id[:8], exc_info=True)
+            return False
+
+        if not result or not result.get("ids"):
+            return False
+
+        metadatas = result.get("metadatas") or []
+        if not metadatas or metadatas[0] is None:
+            return False
+
+        metadata = dict(metadatas[0])
+        metadata["valid_until"] = float(valid_until)
+
+        try:
+            self._collection.update(ids=[episode_id], metadatas=[metadata])
+        except Exception:
+            logger.debug("AD-579c: Failed to update validity for episode %s", episode_id[:8], exc_info=True)
+            return False
+        return True
+
     def _force_update(self, episode: Episode) -> None:
         """Bypass write-once for migration only. Do not call from normal code paths."""
         if not self._collection:

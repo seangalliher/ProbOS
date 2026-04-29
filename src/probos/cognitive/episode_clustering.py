@@ -32,9 +32,12 @@ class EpisodeCluster:
     is_success_dominant: bool  # success_rate > 0.80
     is_failure_dominant: bool  # (1 - success_rate) > 0.50
     participating_agents: list[str]  # unique agent IDs across all episodes
-    intent_types: list[str]  # unique intent types across all episodes
-    first_occurrence: float  # earliest episode timestamp
-    last_occurrence: float  # latest episode timestamp
+    # AD-579c: Temporal validity span of the cluster
+    valid_from: float = 0.0  # min(valid_from or timestamp) across member episodes
+    valid_until: float = 0.0  # max(valid_until) across members; 0.0 = open-ended
+    intent_types: list[str] = field(default_factory=list)  # unique intent types across all episodes
+    first_occurrence: float = 0.0  # earliest episode timestamp
+    last_occurrence: float = 0.0  # latest episode timestamp
     # AD-567d: Anchor provenance summary aggregated from source episodes
     anchor_summary: dict[str, Any] = field(default_factory=dict)
 
@@ -49,6 +52,8 @@ class EpisodeCluster:
             "is_success_dominant": self.is_success_dominant,
             "is_failure_dominant": self.is_failure_dominant,
             "participating_agents": self.participating_agents,
+            "valid_from": self.valid_from,
+            "valid_until": self.valid_until,
             "intent_types": self.intent_types,
             "first_occurrence": self.first_occurrence,
             "last_occurrence": self.last_occurrence,
@@ -56,6 +61,31 @@ class EpisodeCluster:
         if self.anchor_summary:
             d["anchor_summary"] = self.anchor_summary
         return d
+
+
+def compute_cluster_validity(episodes: list[Any]) -> tuple[float, float]:
+    """Compute the temporal validity span for a cluster of episodes."""
+    if not episodes:
+        return 0.0, 0.0
+
+    starts: list[float] = []
+    valid_until_values: list[float] = []
+    has_open_ended = False
+
+    for episode in episodes:
+        valid_from = float(getattr(episode, "valid_from", 0.0) or 0.0)
+        timestamp = float(getattr(episode, "timestamp", 0.0) or 0.0)
+        starts.append(valid_from if valid_from > 0.0 else timestamp)
+
+        valid_until = float(getattr(episode, "valid_until", 0.0) or 0.0)
+        if valid_until == 0.0:
+            has_open_ended = True
+        else:
+            valid_until_values.append(valid_until)
+
+    valid_from = min(starts) if starts else 0.0
+    valid_until = 0.0 if has_open_ended else max(valid_until_values, default=0.0)
+    return valid_from, valid_until
 
 
 def cluster_episodes(
@@ -155,6 +185,7 @@ def cluster_episodes(
         agents: set[str] = set()
         intents: set[str] = set()
         timestamps: list[float] = []
+        valid_from, valid_until = compute_cluster_validity(member_episodes)
 
         for ep in member_episodes:
             for outcome in getattr(ep, "outcomes", []):
@@ -182,6 +213,8 @@ def cluster_episodes(
             is_success_dominant=success_rate > 0.80,
             is_failure_dominant=(1.0 - success_rate) > 0.50,
             participating_agents=sorted(agents),
+            valid_from=valid_from,
+            valid_until=valid_until,
             intent_types=sorted(intents),
             first_occurrence=min(timestamps) if timestamps else 0.0,
             last_occurrence=max(timestamps) if timestamps else 0.0,

@@ -1598,6 +1598,8 @@ class DreamingEngine:
                 except Exception as e:
                     logger.debug("Failed to deactivate parent procedure: %s", e)
 
+            await self._expire_superseded_episode_sources(fresh_episodes)
+
             procedures.append(result.procedure)
             evolved_count += 1
             logger.info(
@@ -1608,6 +1610,23 @@ class DreamingEngine:
             )
 
         return evolved_count
+
+    async def _expire_superseded_episode_sources(self, episodes: list[Any]) -> None:
+        """AD-579c: Mark source episodes superseded by procedure evolution as expired."""
+        if not episodes or not self.episodic_memory:
+            return
+        if not hasattr(self.episodic_memory, "update_episode_validity"):
+            return
+
+        now = time.time()
+        for episode in episodes:
+            episode_id = getattr(episode, "id", "")
+            if not episode_id:
+                continue
+            try:
+                await self.episodic_memory.update_episode_validity(episode_id, valid_until=now)
+            except Exception:
+                logger.debug("AD-579c: Failed to expire episode %s", episode_id[:8], exc_info=True)
 
     async def _attempt_procedure_evolution(
         self,
@@ -1697,6 +1716,8 @@ class DreamingEngine:
                 )
             except Exception as e:
                 logger.debug("Failed to deactivate parent procedure: %s", e)
+
+        await self._expire_superseded_episode_sources(fresh_episodes)
 
         logger.info(
             "Procedure evolved (%s): '%s' -> '%s'",

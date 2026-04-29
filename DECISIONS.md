@@ -122,6 +122,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Temporal facts need validity metadata so recall can exclude expired or not-yet-valid episodes without inferring dates from content or changing anchor recall in this AD.
 **Status:** Implemented
 
+### AD-579c: Validity-Aware Dream Consolidation
+
+**Date:** 2026-04-28
+**Decision:** Dream consolidation now computes temporal validity for episode clusters and marks superseded episodes as expired via valid_until. EpisodeCluster gains valid_from/valid_until fields. update_episode_validity() added to EpisodicMemory.
+**Rationale:** Consolidated procedural memory needs temporal provenance from the source episodes, and procedure evolution should expire the superseded episode evidence that drove replacement so stale knowledge does not remain indefinitely valid in recall metadata.
+**Status:** Implemented
+
 ### AD-586: Task-Contextual Standing Orders
 
 **Date:** 2026-04-28
