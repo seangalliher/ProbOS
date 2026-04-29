@@ -51,7 +51,7 @@ def _make_runtime(agent: CognitiveAgent | None = None) -> SimpleNamespace:
                 healthy_agents=[current_agent.id for current_agent in agents],
             ),
         },
-        _emit_event=lambda event_type, data: events.append((event_type, data)),
+        emit_event=lambda event_type, data: events.append((event_type, data)),
         events=events,
     )
 

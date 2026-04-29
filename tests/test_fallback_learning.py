@@ -229,7 +229,7 @@ class TestMetricSemanticsFix:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         intent = _make_intent()
@@ -254,7 +254,7 @@ class TestMetricSemanticsFix:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         # Make act() return failure
@@ -282,7 +282,7 @@ class TestMetricSemanticsFix:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         # Mock decide to return non-cached decision
@@ -501,7 +501,7 @@ class TestServiceRecovery:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         call_count = [0]
@@ -536,7 +536,7 @@ class TestServiceRecovery:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         call_count = [0]
@@ -570,7 +570,7 @@ class TestServiceRecovery:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         async def _always_fail(decision):
@@ -599,7 +599,7 @@ class TestServiceRecovery:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         async def _fail_act(decision):
@@ -628,7 +628,7 @@ class TestServiceRecovery:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         call_count = [0]
@@ -661,7 +661,7 @@ class TestServiceRecovery:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         agent.decide = AsyncMock(return_value={"action": "execute", "llm_output": "test"})
@@ -746,7 +746,7 @@ class TestFallbackEventEmission:
         runtime = MagicMock()
         runtime.procedure_store = None  # No store → skip procedural memory
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         # Simulate: near-miss was captured, LLM succeeded
@@ -765,7 +765,7 @@ class TestFallbackEventEmission:
                 await agent.handle_intent(intent)
 
         # Check that PROCEDURE_FALLBACK_LEARNING was emitted
-        calls = runtime._emit_event.call_args_list
+        calls = runtime.emit_event.call_args_list
         fallback_calls = [c for c in calls if c[0][0] == EventType.PROCEDURE_FALLBACK_LEARNING]
         assert len(fallback_calls) == 1
 
@@ -778,7 +778,7 @@ class TestFallbackEventEmission:
         runtime = MagicMock()
         runtime.procedure_store = None
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         agent._last_fallback_info = {
@@ -799,7 +799,7 @@ class TestFallbackEventEmission:
             with patch.object(agent, '_store_action_episode', new_callable=AsyncMock):
                 await agent.handle_intent(intent)
 
-        calls = runtime._emit_event.call_args_list
+        calls = runtime.emit_event.call_args_list
         fallback_calls = [c for c in calls if c[0][0] == EventType.PROCEDURE_FALLBACK_LEARNING]
         assert len(fallback_calls) == 0
 
@@ -812,7 +812,7 @@ class TestFallbackEventEmission:
         runtime = MagicMock()
         runtime.procedure_store = None
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         agent.decide = AsyncMock(return_value={"action": "execute", "llm_output": "test"})
@@ -822,7 +822,7 @@ class TestFallbackEventEmission:
             with patch.object(agent, '_store_action_episode', new_callable=AsyncMock):
                 await agent.handle_intent(intent)
 
-        calls = runtime._emit_event.call_args_list
+        calls = runtime.emit_event.call_args_list
         fallback_calls = [c for c in calls if c[0][0] == EventType.PROCEDURE_FALLBACK_LEARNING]
         assert len(fallback_calls) == 0
 
@@ -841,7 +841,7 @@ class TestFallbackEventEmission:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         call_count = [0]
@@ -860,7 +860,7 @@ class TestFallbackEventEmission:
             with patch.object(agent, '_store_action_episode', new_callable=AsyncMock):
                 result = await agent.handle_intent(intent)
 
-        calls = runtime._emit_event.call_args_list
+        calls = runtime.emit_event.call_args_list
         fallback_calls = [c for c in calls if c[0][0] == EventType.PROCEDURE_FALLBACK_LEARNING]
         assert len(fallback_calls) == 1
         data = fallback_calls[0][0][1]
@@ -893,7 +893,7 @@ class TestFallbackEventEmission:
         runtime = MagicMock()
         runtime.procedure_store = None
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock(side_effect=Exception("event broken"))
+        runtime.emit_event = MagicMock(side_effect=Exception("event broken"))
         agent._runtime = runtime
 
         agent._last_fallback_info = {"type": "score_threshold", "procedure_id": "p1", "score": 0.3, "reason": "low"}
@@ -913,7 +913,7 @@ class TestFallbackEventEmission:
         runtime = MagicMock()
         runtime.procedure_store = None
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         agent._last_fallback_info = {"type": "score_threshold", "procedure_id": "p1", "score": 0.3, "reason": "low"}
@@ -1578,7 +1578,7 @@ class TestEndToEnd:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         call_count = [0]
@@ -1600,7 +1600,7 @@ class TestEndToEnd:
 
         assert result.success is True
         # Verify fallback learning event was emitted
-        calls = runtime._emit_event.call_args_list
+        calls = runtime.emit_event.call_args_list
         fallback_calls = [c for c in calls if c[0][0] == EventType.PROCEDURE_FALLBACK_LEARNING]
         assert len(fallback_calls) == 1
         assert fallback_calls[0][0][1]["fallback_type"] == "execution_failure"
@@ -1619,7 +1619,7 @@ class TestEndToEnd:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         # Mock LLM call path
@@ -1635,7 +1635,7 @@ class TestEndToEnd:
                 result = await agent.handle_intent(intent)
 
         assert result.success is True
-        calls = runtime._emit_event.call_args_list
+        calls = runtime.emit_event.call_args_list
         fallback_calls = [c for c in calls if c[0][0] == EventType.PROCEDURE_FALLBACK_LEARNING]
         assert len(fallback_calls) == 1
         assert fallback_calls[0][0][1]["fallback_type"] == "quality_gate"
@@ -1653,7 +1653,7 @@ class TestEndToEnd:
         runtime = MagicMock()
         runtime.procedure_store = store
         runtime.cognitive_journal = None
-        runtime._emit_event = MagicMock()
+        runtime.emit_event = MagicMock()
         agent._runtime = runtime
 
         agent._llm_client.complete = AsyncMock(return_value=MagicMock(
@@ -1668,7 +1668,7 @@ class TestEndToEnd:
                 result = await agent.handle_intent(intent)
 
         assert result.success is True
-        calls = runtime._emit_event.call_args_list
+        calls = runtime.emit_event.call_args_list
         fallback_calls = [c for c in calls if c[0][0] == EventType.PROCEDURE_FALLBACK_LEARNING]
         assert len(fallback_calls) == 1
         assert fallback_calls[0][0][1]["fallback_type"] == "score_threshold"

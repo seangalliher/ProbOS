@@ -1201,13 +1201,13 @@ async def _emit_transporter_events(
     Called after the transporter pipeline completes. Emits assembly
     and validation results so the UI can display the full chunk lifecycle.
     """
-    rt._emit_event(EventType.TRANSPORTER_ASSEMBLED, {
+    rt.emit_event(EventType.TRANSPORTER_ASSEMBLED, {
         "build_id": build_id,
         "file_count": len(assembled_blocks),
         "summary": assembly_summary(blueprint),
     })
 
-    rt._emit_event(EventType.TRANSPORTER_VALIDATED, {
+    rt.emit_event(EventType.TRANSPORTER_VALIDATED, {
         "build_id": build_id,
         "valid": validation_result.valid,
         "errors": validation_result.errors,

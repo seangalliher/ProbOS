@@ -97,7 +97,7 @@ class CoordinationBreakevenProbe:
     async def run(self, agent_id: str, runtime: Any) -> TestResult:
         t0 = time.time()
 
-        engine = getattr(runtime, "_emergence_metrics_engine", None)
+        engine = getattr(runtime, "emergence_metrics_engine", None)
         if engine is None:
             return _skip_result(self.name, "no_emergence_engine")
 
@@ -281,7 +281,7 @@ class CollectiveIntelligenceProbe:
         turn_taking_equality = 1.0 - gini
 
         # --- Social sensitivity proxy (ToM effectiveness) ---
-        engine = getattr(runtime, "_emergence_metrics_engine", None)
+        engine = getattr(runtime, "emergence_metrics_engine", None)
         snapshot = getattr(engine, "latest_snapshot", None) if engine else None
         tom_effectiveness = snapshot.tom_effectiveness if snapshot else None
 
@@ -382,7 +382,7 @@ class ConvergenceRateProbe:
     async def run(self, agent_id: str, runtime: Any) -> TestResult:
         t0 = time.time()
 
-        engine = getattr(runtime, "_emergence_metrics_engine", None)
+        engine = getattr(runtime, "emergence_metrics_engine", None)
         if engine is None:
             return _skip_result(self.name, "no_emergence_engine")
 
@@ -439,7 +439,7 @@ class EmergenceCapacityProbe:
     async def run(self, agent_id: str, runtime: Any) -> TestResult:
         t0 = time.time()
 
-        engine = getattr(runtime, "_emergence_metrics_engine", None)
+        engine = getattr(runtime, "emergence_metrics_engine", None)
         if engine is None:
             return _skip_result(self.name, "no_emergence_engine")
 

@@ -7145,6 +7145,8 @@ Empirical observation across two ProbOS instances revealed a **cold-start develo
 
 **AD-679: Selective Disclosure Routing** *(Planned, OSS, Issue #367)* — Formal disclosure classification on messages: **public** (ship channel, shared surfaces) → **department** (dept channels, chief-and-below) → **private** (DMs) → **captain-only** (Captain DM, audit log). Routing layer enforces classification — private-tagged messages cannot reach public channels even if agent attempts it. Classification set explicitly or inferred from AD-677 sensitivity field. Default: "department" for duty content, "public" for social. Defense in depth vs relying on agent judgment for channel selection. *Depends on: AD-677 (sensitivity field drives inference). Related: AD-407 (Ward Room channels — enforcement point), AD-339 (standing orders — policy source for classification rules).*
 
+**AD-680: Runtime Public API Promotion** *(Complete, OSS)* — Promoted runtime event emission and emergence metrics access to public surfaces: `runtime.emit_event()` now advertises `EventType` support, `runtime.emergence_metrics_engine` exposes the existing read-only engine reference, and external modules were migrated off `runtime._emit_event` / `runtime._emergence_metrics_engine`. Establishes the one-shot private→public migration precedent: no deprecation warning when private access was never a supported extension point. 4 new tests; focused AD-680 regression gate passed serially.
+
 ## Bug Tracker
 
 *"Captain, we've detected an anomaly in Deck 7."*

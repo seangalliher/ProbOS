@@ -116,7 +116,7 @@ class VitalsMonitorAgent(HeartbeatAgent):
         )
 
         # AD-557: Cached emergence metrics (read-only from last dream cycle)
-        emergence_engine = getattr(rt, "_emergence_metrics_engine", None)
+        emergence_engine = getattr(rt, "emergence_metrics_engine", None)
         if emergence_engine:
             snap = emergence_engine.latest_snapshot
             if snap:

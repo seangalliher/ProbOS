@@ -81,13 +81,13 @@ async def _run_design(
 ) -> None:
     """Background design pipeline with WebSocket progress events."""
     try:
-        rt._emit_event(EventType.DESIGN_STARTED, {
+        rt.emit_event(EventType.DESIGN_STARTED, {
             "design_id": design_id,
             "feature": req.feature,
             "message": f"Architect analyzing: {req.feature}...",
         })
 
-        rt._emit_event(EventType.DESIGN_PROGRESS, {
+        rt.emit_event(EventType.DESIGN_PROGRESS, {
             "design_id": design_id,
             "step": "surveying",
             "step_label": "\u2609 Surveying codebase...",
@@ -96,7 +96,7 @@ async def _run_design(
             "message": "\u2609 Surveying codebase and roadmap...",
         })
 
-        rt._emit_event(EventType.DESIGN_PROGRESS, {
+        rt.emit_event(EventType.DESIGN_PROGRESS, {
             "design_id": design_id,
             "step": "designing",
             "step_label": "\u2b21 Designing specification...",
@@ -129,14 +129,14 @@ async def _run_design(
                 errors = [r.error for r in results if r and r.error]
                 if errors:
                     error_msg = "; ".join(errors)
-            rt._emit_event(EventType.DESIGN_FAILURE, {
+            rt.emit_event(EventType.DESIGN_FAILURE, {
                 "design_id": design_id,
                 "message": f"Design failed: {error_msg}",
                 "error": error_msg,
             })
             return
 
-        rt._emit_event(EventType.DESIGN_PROGRESS, {
+        rt.emit_event(EventType.DESIGN_PROGRESS, {
             "design_id": design_id,
             "step": "review",
             "step_label": "\u25ce Ready for review",
@@ -163,7 +163,7 @@ async def _run_design(
             "build_spec": proposal.get("build_spec", {}),
         }
 
-        rt._emit_event(EventType.DESIGN_GENERATED, {
+        rt.emit_event(EventType.DESIGN_GENERATED, {
             "design_id": design_id,
             "title": proposal.get("title", req.feature),
             "summary": proposal.get("summary", ""),
@@ -179,7 +179,7 @@ async def _run_design(
 
     except Exception as e:
         logger.warning("Design pipeline failed: %s", e, exc_info=True)
-        rt._emit_event(EventType.DESIGN_FAILURE, {
+        rt.emit_event(EventType.DESIGN_FAILURE, {
             "design_id": design_id,
             "message": f"Design failed: {e}",
             "error": str(e),

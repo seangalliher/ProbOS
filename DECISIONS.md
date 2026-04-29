@@ -52,6 +52,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** ProbOS agents currently choose where to post based on their own judgment, with no enforcement layer. Sensitive operational data (trust scores, circuit breaker trips, anomaly assessments) sometimes appears in ship-wide channels when it should be department-scoped or private. The selective disclosure principle from Chen et al. 2026 (PII routing to private channels vs shared surfaces) maps directly to ProbOS's virtual channel topology. Enforcement at the infrastructure level rather than relying on agent judgment is defense in depth.
 **Status:** Planned
 
+### AD-680: Runtime Public API Promotion
+
+**Date:** 2026-04-29
+**Decision:** Promote runtime event emission and emergence metrics access to explicit public runtime surfaces. `ProbOSRuntime.emit_event()` and `EventEmitterProtocol.emit_event()` accept `EventType` values, `ProbOSRuntime.emergence_metrics_engine` exposes the existing engine reference as read-only, and external modules use those public APIs instead of reaching into `_emit_event` or `_emergence_metrics_engine`.
+**Rationale:** External runtime private access violated Demeter and made service extraction brittle. The migration is intentionally one-shot with no deprecation warning: private runtime attributes were never supported extension points, and maintaining compatibility shims would preserve the coupling this AD removes. Future private-to-public promotions should follow the same precedent when the old surface is internal-only and all in-repo callers can be migrated atomically.
+**Status:** Implemented
+
 ### AD-444: Knowledge Confidence Scoring
 
 **Date:** 2026-04-28

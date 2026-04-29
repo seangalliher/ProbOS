@@ -161,7 +161,7 @@ def _make_mock_runtime(intent_bus=None, registry=None, procedure_store=None):
     rt = MagicMock()
     rt.intent_bus = intent_bus or AsyncMock()
     rt.registry = registry or MagicMock()
-    rt._emit_event = MagicMock()
+    rt.emit_event = MagicMock()
     rt.procedure_store = procedure_store
     return rt
 
@@ -843,8 +843,8 @@ class TestHandleIntentCompound:
         intent = _make_intent(intent_type="security_review")
 
         await agent.handle_intent(intent)
-        rt._emit_event.assert_called_once()
-        call_args = rt._emit_event.call_args
+        rt.emit_event.assert_called_once()
+        call_args = rt.emit_event.call_args
         event_data = call_args[0][1]
         assert event_data["compound_dispatched"] is True
         assert event_data["used_procedure"] is True
@@ -888,7 +888,7 @@ class TestHandleIntentCompound:
         # _last_fallback_info is consumed by the event emission, so check the event
         # Find the PROCEDURE_FALLBACK_LEARNING event call
         fallback_calls = [
-            c for c in rt._emit_event.call_args_list
+            c for c in rt.emit_event.call_args_list
             if len(c[0]) >= 2 and "compound_agent_unavailable" in str(c[0][1].get("fallback_type", ""))
         ]
         assert len(fallback_calls) == 1
@@ -1111,7 +1111,7 @@ class TestCompoundReplayEndToEnd:
         await agent.handle_intent(intent)
         # _last_fallback_info consumed by event emission — verify via emitted event
         fallback_calls = [
-            c for c in rt._emit_event.call_args_list
+            c for c in rt.emit_event.call_args_list
             if len(c[0]) >= 2 and isinstance(c[0][1], dict) and c[0][1].get("fallback_type") == "compound_agent_unavailable"
         ]
         assert len(fallback_calls) == 1

@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterable, Sequence, TYPE_CHECKING, Protocol, r
 from probos.types import IntentMessage, Priority  # AD-654b: concrete types for queue protocol
 
 if TYPE_CHECKING:
-    from probos.events import BaseEvent
+    from probos.events import BaseEvent, EventType
 
 
 # ── EventEmitterMixin (BF-092) ─────────────────────────────────────
@@ -102,7 +102,7 @@ class HebbianRouterProtocol(Protocol):
 class EventEmitterProtocol(Protocol):
     """What modules need to emit HXI events."""
 
-    def emit_event(self, event: BaseEvent | str, data: dict[str, Any] | None = None) -> None: ...
+    def emit_event(self, event: BaseEvent | str | EventType, data: dict[str, Any] | None = None) -> None: ...
     def add_event_listener(
         self,
         fn: Callable[..., Any],

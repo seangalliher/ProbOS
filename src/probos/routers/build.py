@@ -92,7 +92,7 @@ async def resolve_build(
         from probos.cognitive.builder import _git_checkout_main
         await _git_checkout_main(work_dir)
         del _pending_failures[req.build_id]
-        runtime._emit_event(EventType.BUILD_RESOLVED, {
+        runtime.emit_event(EventType.BUILD_RESOLVED, {
             "build_id": req.build_id,
             "resolution": "abort",
             "message": "Build aborted. Returned to main branch.",
@@ -114,7 +114,7 @@ async def resolve_build(
         ok, sha = await _git_add_and_commit(all_files, commit_msg, work_dir)
         del _pending_failures[req.build_id]
         if ok:
-            runtime._emit_event(EventType.BUILD_RESOLVED, {
+            runtime.emit_event(EventType.BUILD_RESOLVED, {
                 "build_id": req.build_id,
                 "resolution": "commit_override",
                 "message": f"Committed with test gate override. Commit: {sha}",
@@ -128,7 +128,7 @@ async def resolve_build(
         del _pending_failures[req.build_id]
         new_build_id = req.build_id
 
-        runtime._emit_event(EventType.BUILD_PROGRESS, {
+        runtime.emit_event(EventType.BUILD_PROGRESS, {
             "build_id": new_build_id,
             "step": "retrying",
             "step_label": "\u25c8 Retrying build...",
@@ -238,7 +238,7 @@ def _emit_queue_snapshot(rt: Any) -> None:
     if not rt.build_queue:
         return
     items = rt.build_queue.get_all()
-    rt._emit_event(EventType.BUILD_QUEUE_UPDATE, {
+    rt.emit_event(EventType.BUILD_QUEUE_UPDATE, {
         "items": [
             {
                 "id": b.id,
@@ -264,13 +264,13 @@ async def _run_build(
 ) -> None:
     """Background build pipeline with WebSocket progress events."""
     try:
-        rt._emit_event(EventType.BUILD_STARTED, {
+        rt.emit_event(EventType.BUILD_STARTED, {
             "build_id": build_id,
             "title": req.title,
             "message": f"Starting build: {req.title}...",
         })
 
-        rt._emit_event(EventType.BUILD_PROGRESS, {
+        rt.emit_event(EventType.BUILD_PROGRESS, {
             "build_id": build_id,
             "step": "preparing",
             "step_label": "\u25c8 Preparing build context...",
@@ -279,7 +279,7 @@ async def _run_build(
             "message": "\u25c8 Reading reference files...",
         })
 
-        rt._emit_event(EventType.BUILD_PROGRESS, {
+        rt.emit_event(EventType.BUILD_PROGRESS, {
             "build_id": build_id,
             "step": "generating",
             "step_label": "\u2b21 Generating code...",
@@ -320,14 +320,14 @@ async def _run_build(
                 errors = [r.error for r in results if r and r.error]
                 if errors:
                     error_msg = "; ".join(errors)
-            rt._emit_event(EventType.BUILD_FAILURE, {
+            rt.emit_event(EventType.BUILD_FAILURE, {
                 "build_id": build_id,
                 "message": f"Build failed: {error_msg}",
                 "error": error_msg,
             })
             return
 
-        rt._emit_event(EventType.BUILD_PROGRESS, {
+        rt.emit_event(EventType.BUILD_PROGRESS, {
             "build_id": build_id,
             "step": "review",
             "step_label": "\u25ce Ready for review",
@@ -350,7 +350,7 @@ async def _run_build(
         llm_output = result_data.get("llm_output", "")
         builder_source = result_data.get("builder_source", "native")
 
-        rt._emit_event(EventType.BUILD_GENERATED, {
+        rt.emit_event(EventType.BUILD_GENERATED, {
             "build_id": build_id,
             "title": req.title,
             "description": req.description,
@@ -364,7 +364,7 @@ async def _run_build(
 
     except Exception as e:
         logger.warning("Build pipeline failed: %s", e, exc_info=True)
-        rt._emit_event(EventType.BUILD_FAILURE, {
+        rt.emit_event(EventType.BUILD_FAILURE, {
             "build_id": build_id,
             "message": f"Build failed: {e}",
             "error": str(e),
@@ -382,7 +382,7 @@ async def _execute_build(
     from probos.cognitive.builder import execute_approved_build
 
     try:
-        rt._emit_event(EventType.BUILD_PROGRESS, {
+        rt.emit_event(EventType.BUILD_PROGRESS, {
             "build_id": build_id,
             "step": "writing",
             "step_label": "\u25c8 Writing files...",
@@ -401,7 +401,7 @@ async def _execute_build(
         )
 
         if result.success:
-            rt._emit_event(EventType.BUILD_SUCCESS, {
+            rt.emit_event(EventType.BUILD_SUCCESS, {
                 "build_id": build_id,
                 "branch": result.branch_name,
                 "commit": result.commit_hash,
@@ -431,14 +431,14 @@ async def _execute_build(
                 "timestamp": time.time(),
             }
 
-            rt._emit_event(EventType.BUILD_FAILURE, {
+            rt.emit_event(EventType.BUILD_FAILURE, {
                 "build_id": build_id,
                 "message": f"Build failed: {report.failure_summary}",
                 "report": report.to_dict(),
             })
     except Exception as e:
         logger.warning("Build execution failed: %s", e, exc_info=True)
-        rt._emit_event(EventType.BUILD_FAILURE, {
+        rt.emit_event(EventType.BUILD_FAILURE, {
             "build_id": build_id,
             "message": f"Build execution failed: {e}",
             "error": str(e),

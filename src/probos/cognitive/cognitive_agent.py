@@ -1957,9 +1957,9 @@ class CognitiveAgent(BaseAgent):
                 )
                 # Emit confabulation suppressed event
                 _rt = getattr(self, '_runtime', None)
-                if _rt and hasattr(_rt, '_emit_event') and _rt._emit_event:
+                if _rt and hasattr(_rt, 'emit_event'):
                     from probos.events import EventType
-                    _rt._emit_event(EventType.CONFABULATION_SUPPRESSED, {
+                    _rt.emit_event(EventType.CONFABULATION_SUPPRESSED, {
                         "agent_id": self.id,
                         "agent_type": self.agent_type,
                         "callsign": getattr(self, 'callsign', self.agent_type),
@@ -2492,9 +2492,9 @@ class CognitiveAgent(BaseAgent):
                 )
                 # AD-589: Emit SELF_MODEL_DRIFT event
                 _rt = getattr(self, '_runtime', None)
-                if _rt and hasattr(_rt, '_emit_event'):
+                if _rt and hasattr(_rt, 'emit_event'):
                     try:
-                        _rt._emit_event(EventType.SELF_MODEL_DRIFT, {
+                        _rt.emit_event(EventType.SELF_MODEL_DRIFT, {
                             "agent_id": self.id,
                             "callsign": self.callsign or self.agent_type,
                             "score": _intro_faith.score,
@@ -2567,9 +2567,9 @@ class CognitiveAgent(BaseAgent):
 
                 # Emit task execution event (AD-532e)
                 _rt = getattr(self, '_runtime', None)
-                if _rt and hasattr(_rt, '_emit_event'):
+                if _rt and hasattr(_rt, 'emit_event'):
                     try:
-                        _rt._emit_event(EventType.TASK_EXECUTION_COMPLETE, {
+                        _rt.emit_event(EventType.TASK_EXECUTION_COMPLETE, {
                             "agent_id": self.id,
                             "agent_type": getattr(self, 'agent_type', ''),
                             "intent_type": intent.intent,
@@ -2781,9 +2781,9 @@ class CognitiveAgent(BaseAgent):
 
         # AD-532e: Reactive trigger — emit task completion for procedure evolution monitoring
         _rt = getattr(self, '_runtime', None)
-        if _rt and hasattr(_rt, '_emit_event'):
+        if _rt and hasattr(_rt, 'emit_event'):
             try:
-                _rt._emit_event(EventType.TASK_EXECUTION_COMPLETE, {
+                _rt.emit_event(EventType.TASK_EXECUTION_COMPLETE, {
                     "agent_id": self.id,
                     "agent_type": getattr(self, 'agent_type', ''),
                     "intent_type": intent.intent,
@@ -2796,7 +2796,7 @@ class CognitiveAgent(BaseAgent):
 
         # AD-534b: Emit fallback learning event for dream-time processing
         if success and self._last_fallback_info is not None:
-            if _rt and hasattr(_rt, '_emit_event'):
+            if _rt and hasattr(_rt, 'emit_event'):
                 try:
                     from probos.config import MAX_FALLBACK_RESPONSE_CHARS
                     _llm_output = ""
@@ -2804,7 +2804,7 @@ class CognitiveAgent(BaseAgent):
                         _llm_output = llm_decision.get("llm_output", "")
                     else:
                         _llm_output = decision.get("llm_output", "")
-                    _rt._emit_event(EventType.PROCEDURE_FALLBACK_LEARNING, {
+                    _rt.emit_event(EventType.PROCEDURE_FALLBACK_LEARNING, {
                         "agent_id": self.id,
                         "intent_type": intent.intent,
                         "fallback_type": self._last_fallback_info["type"],
@@ -3960,8 +3960,8 @@ class CognitiveAgent(BaseAgent):
                 cognitive_chars,
                 situation_chars,
             )
-            if runtime and hasattr(runtime, "_emit_event"):
-                runtime._emit_event(
+            if runtime and hasattr(runtime, "emit_event"):
+                runtime.emit_event(
                     EventType.SENSORIUM_BUDGET_EXCEEDED,
                     {
                         "agent_id": agent_id,

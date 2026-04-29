@@ -137,7 +137,7 @@ class BillJITBridge:
     async def on_step_completed(self, event: dict[str, Any]) -> None:
         """Handle a BILL_STEP_COMPLETED event envelope.
 
-        Receives the full event envelope from runtime._emit_event_local or
+        Receives the full event envelope from runtime event emission or
         NATS callback — both deliver the same shape:
         ``{"type": "bill_step_completed", "data": {...}, "timestamp": ...}``
 

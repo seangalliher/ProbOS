@@ -20,7 +20,7 @@ def _mock_runtime():
     rt.build_dispatcher = MagicMock()
     rt.build_dispatcher.approve_and_merge = AsyncMock(return_value=(True, "abc1234def"))
     rt.build_dispatcher.reject_build = AsyncMock(return_value=True)
-    rt._emit_event = MagicMock()
+    rt.emit_event = MagicMock()
     return rt
 
 
@@ -57,7 +57,7 @@ class TestRuntimeWiring:
         # Call the callback
         asyncio.run(rt._on_build_complete(build))
 
-        # Can't easily check _emit_event without full init,
+        # Can't easily check emit_event without full init,
         # but we verify it doesn't crash
 
 
@@ -142,7 +142,7 @@ class TestDispatchAPI:
             "title": "Snapshot Test",
             "description": "test",
         })
-        rt._emit_event.assert_called()
-        call_args = rt._emit_event.call_args
+        rt.emit_event.assert_called()
+        call_args = rt.emit_event.call_args
         assert call_args[0][0] == "build_queue_update"
         assert "items" in call_args[0][1]

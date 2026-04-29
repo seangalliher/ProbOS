@@ -23,7 +23,7 @@ def _make_runtime_with_sensorium_config(
     runtime = MagicMock()
     runtime.config.sensorium.enabled = enabled
     runtime.config.sensorium.token_budget_warning = threshold
-    runtime._emit_event = MagicMock()
+    runtime.emit_event = MagicMock()
     return runtime
 
 
@@ -70,7 +70,7 @@ class TestTrackSensoriumBudget:
         result = agent._track_sensorium_budget(cognitive, {})
 
         assert result == 150
-        runtime._emit_event.assert_not_called()
+        runtime.emit_event.assert_not_called()
 
     def test_over_budget_emits_event(self) -> None:
         runtime = _make_runtime_with_sensorium_config(threshold=100)
@@ -81,8 +81,8 @@ class TestTrackSensoriumBudget:
         result = agent._track_sensorium_budget(cognitive, situation)
 
         assert result == 160
-        runtime._emit_event.assert_called_once()
-        event_type, payload = runtime._emit_event.call_args[0]
+        runtime.emit_event.assert_called_once()
+        event_type, payload = runtime.emit_event.call_args[0]
         assert event_type == EventType.SENSORIUM_BUDGET_EXCEEDED
         assert payload["total_chars"] == 160
         assert payload["threshold"] == 100
@@ -95,7 +95,7 @@ class TestTrackSensoriumBudget:
         result = agent._track_sensorium_budget({"_big": "x" * 1000}, {})
 
         assert result == 1000
-        runtime._emit_event.assert_not_called()
+        runtime.emit_event.assert_not_called()
 
     def test_no_runtime_uses_default_threshold(self) -> None:
         agent = _make_agent(runtime=None)

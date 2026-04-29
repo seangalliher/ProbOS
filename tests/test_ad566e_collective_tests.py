@@ -142,6 +142,7 @@ def _build_runtime(
     # Emergence engine
     engine = MockEmergenceEngine(snapshot)
     runtime._emergence_metrics_engine = engine
+    runtime.emergence_metrics_engine = engine
 
     # Ward room
     runtime.ward_room = ward_room or MockWardRoom()

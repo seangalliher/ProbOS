@@ -768,7 +768,7 @@ class ProbOSRuntime:
             except Exception:
                 logger.debug("Event listener failed for %s", type_str, exc_info=True)
 
-    def emit_event(self, event: BaseEvent | str, data: dict[str, Any] | None = None) -> None:
+    def emit_event(self, event: BaseEvent | str | EventType, data: dict[str, Any] | None = None) -> None:
         """Public typed event emission (AD-527).  Delegates to _emit_event."""
         if isinstance(event, BaseEvent):
             self._emit_event(event)
@@ -937,6 +937,11 @@ class ProbOSRuntime:
         if self.ontology is None:
             return None
         return self.ontology.billet_registry
+
+    @property
+    def emergence_metrics_engine(self) -> Any:
+        """Public accessor for emergence metrics engine (AD-680). Read-only."""
+        return self._emergence_metrics_engine
 
     def build_state_snapshot(self) -> dict[str, Any]:
         """Build a full state snapshot for HXI clients (AD-254)."""

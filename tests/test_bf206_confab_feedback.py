@@ -29,7 +29,7 @@ from probos.events import EventType
 @pytest.fixture
 def mock_runtime():
     rt = MagicMock()
-    rt._emit_event = MagicMock()
+    rt.emit_event = MagicMock()
     return rt
 
 
@@ -270,8 +270,8 @@ class TestEventEmission:
         observation = {"intent": "ward_room", "_trust_score": 0.3, "_chain_trust_band": "low"}
         await agent._execute_sub_task_chain(chain, observation)
 
-        agent._runtime._emit_event.assert_called_once()
-        call_args = agent._runtime._emit_event.call_args
+        agent._runtime.emit_event.assert_called_once()
+        call_args = agent._runtime.emit_event.call_args
         assert call_args[0][0] == EventType.CONFABULATION_SUPPRESSED
         data = call_args[0][1]
         assert data["agent_id"] == "agent-1"
@@ -293,7 +293,7 @@ class TestEventEmission:
 
         await agent._execute_sub_task_chain(chain, {"intent": "ward_room_notification"})
 
-        data = agent._runtime._emit_event.call_args[0][1]
+        data = agent._runtime.emit_event.call_args[0][1]
         assert data["intent"] == "ward_room_notification"
 
     @pytest.mark.asyncio
@@ -309,7 +309,7 @@ class TestEventEmission:
 
         await agent._execute_sub_task_chain(chain, {})
 
-        agent._runtime._emit_event.assert_not_called()
+        agent._runtime.emit_event.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_event_when_evaluate_skipped(self, agent):
@@ -324,7 +324,7 @@ class TestEventEmission:
 
         await agent._execute_sub_task_chain(chain, {})
 
-        agent._runtime._emit_event.assert_not_called()
+        agent._runtime.emit_event.assert_not_called()
 
 
 # ===========================================================================
@@ -515,7 +515,7 @@ class TestIntegration:
 
         assert decision["llm_output"] == "[NO_RESPONSE]"
         assert decision["_suppressed"] is True
-        agent._runtime._emit_event.assert_called_once()
+        agent._runtime.emit_event.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_mid_trust_confab_suppress_with_reflect(self, agent):

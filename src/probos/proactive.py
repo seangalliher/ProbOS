@@ -2318,7 +2318,7 @@ class ProactiveCognitiveLoop:
                                             "AD-552: Self-repetition detected for %s on %s (revision=%d, hours_active=%.1f, novelty=%.2f)",
                                             callsign, topic_slug, _rev, _hours_active, _novelty,
                                         )
-                                        if hasattr(self._runtime, '_emit_event'):
+                                        if hasattr(self._runtime, 'emit_event'):
                                             from probos.events import NotebookSelfRepetitionEvent
                                             evt = NotebookSelfRepetitionEvent(
                                                 agent_id=agent.id,
@@ -2330,7 +2330,7 @@ class ProactiveCognitiveLoop:
                                                 suppressed=_suppressed,
                                             )
                                             try:
-                                                await self._runtime._emit_event(evt)
+                                                self._runtime.emit_event(evt)
                                             except Exception:
                                                 logger.debug("AD-552: Event emission failed", exc_info=True)
                                         # AD-555: Record repetition alert for quality metrics
@@ -2420,7 +2420,7 @@ class ProactiveCognitiveLoop:
                             conv_result["report_path"] = report_path or ""
 
                             # 2. Emit typed event
-                            if hasattr(self._runtime, '_emit_event'):
+                            if hasattr(self._runtime, 'emit_event'):
                                 from probos.events import ConvergenceDetectedEvent
                                 evt = ConvergenceDetectedEvent(
                                     agents=conv_result["convergence_agents"],
@@ -2431,7 +2431,7 @@ class ProactiveCognitiveLoop:
                                     report_path=conv_result.get("report_path", ""),
                                 )
                                 try:
-                                    await self._runtime._emit_event(evt)
+                                    self._runtime.emit_event(evt)
                                 except Exception:
                                     logger.debug("AD-554: Convergence event emission failed", exc_info=True)
 
@@ -2441,7 +2441,7 @@ class ProactiveCognitiveLoop:
                             # AD-583: Wrong convergence escalation
                             if not conv_result.get("convergence_is_independent", True):
                                 # Emit WrongConvergenceDetectedEvent
-                                if hasattr(self._runtime, '_emit_event'):
+                                if hasattr(self._runtime, 'emit_event'):
                                     from probos.events import WrongConvergenceDetectedEvent
                                     wc_evt = WrongConvergenceDetectedEvent(
                                         agents=conv_result["convergence_agents"],
@@ -2452,7 +2452,7 @@ class ProactiveCognitiveLoop:
                                         source="realtime",
                                     )
                                     try:
-                                        await self._runtime._emit_event(wc_evt)
+                                        self._runtime.emit_event(wc_evt)
                                     except Exception:
                                         logger.debug("AD-583: Wrong convergence event emission failed", exc_info=True)
                                 # Bridge Alert (ALERT severity)
@@ -2480,7 +2480,7 @@ class ProactiveCognitiveLoop:
 
                         if conv_result.get("divergence_detected"):
                             # 1. Emit typed event
-                            if hasattr(self._runtime, '_emit_event'):
+                            if hasattr(self._runtime, 'emit_event'):
                                 from probos.events import DivergenceDetectedEvent
                                 evt = DivergenceDetectedEvent(
                                     agents=conv_result["divergence_agents"],
@@ -2489,7 +2489,7 @@ class ProactiveCognitiveLoop:
                                     similarity=conv_result.get("divergence_similarity", 0.0),
                                 )
                                 try:
-                                    await self._runtime._emit_event(evt)
+                                    self._runtime.emit_event(evt)
                                 except Exception:
                                     logger.debug("AD-554: Divergence event emission failed", exc_info=True)
 
@@ -3371,7 +3371,7 @@ class ProactiveCognitiveLoop:
                         source=agent.id, target=target_full_id,
                         success=True, rel_type=REL_SOCIAL,
                     )
-                    rt._emit_event(EventType.HEBBIAN_UPDATE, {
+                    rt.emit_event(EventType.HEBBIAN_UPDATE, {
                         "source": agent.id, "target": target_full_id,
                         "weight": format_trust(rt.hebbian_router.get_weight(agent.id, target_full_id)),
                         "rel_type": "social",

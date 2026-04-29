@@ -89,7 +89,7 @@ def _wire_tiered_knowledge_loader(*, runtime: Any, config: "SystemConfig") -> in
     knowledge_loader = TieredKnowledgeLoader(
         knowledge_source=knowledge_store,
         config=config.knowledge_loading,
-        emit_event_fn=lambda event_type, data: runtime._emit_event(event_type, data),
+        emit_event_fn=runtime.emit_event,
     )
     wired_count = 0
     registry = getattr(runtime, "registry", None)
@@ -157,7 +157,7 @@ def _populate_agent_tiers(*, runtime: Any, config: "SystemConfig") -> int:
     if trust and hasattr(trust, "set_tier_registry"):
         trust.set_tier_registry(registry)
 
-    emergence = getattr(runtime, "_emergence_metrics_engine", None)
+    emergence = getattr(runtime, "emergence_metrics_engine", None)
     if emergence and hasattr(emergence, "set_tier_registry"):
         emergence.set_tier_registry(registry)
 
@@ -252,7 +252,7 @@ async def finalize_startup(
         proactive_loop = ProactiveCognitiveLoop(
             interval=config.proactive_cognitive.interval_seconds,
             cooldown=config.proactive_cognitive.cooldown_seconds,
-            on_event=lambda evt: runtime._emit_event(evt.get("type", ""), evt.get("data", {})),
+            on_event=lambda evt: runtime.emit_event(evt.get("type", ""), evt.get("data", {})),
         )
         proactive_loop.set_runtime(runtime)
         proactive_loop.set_config(config.proactive_cognitive, cb_config=config.circuit_breaker, trait_config=config.trait_adaptive)
@@ -288,9 +288,7 @@ async def finalize_startup(
         runtime.trust_network.set_department_lookup(
             lambda agent_id: runtime.ontology.get_agent_department(agent_id)
         )
-    runtime.trust_network.set_event_callback(
-        lambda event_type, data: runtime._emit_event(event_type, data)
-    )
+    runtime.trust_network.set_event_callback(runtime.emit_event)
 
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
@@ -315,9 +313,7 @@ async def finalize_startup(
 
     # --- AD-595a: Wire BilletRegistry event callback ---
     if runtime.ontology and runtime.ontology.billet_registry:
-        runtime.ontology.billet_registry.set_event_callback(
-            lambda event_type, data: runtime._emit_event(event_type, data)
-        )
+        runtime.ontology.billet_registry.set_event_callback(runtime.emit_event)
         logger.info("AD-595a: BilletRegistry wired")
 
     # AD-595c: Wire BilletRegistry into standing orders for template resolution
@@ -342,9 +338,7 @@ async def finalize_startup(
 
     # --- AD-618d: Wire BillRuntime event callback + billet registry ---
     if getattr(runtime, '_bill_runtime', None):
-        runtime._bill_runtime.set_event_callback(
-            lambda event_type, data: runtime._emit_event(event_type, data)
-        )
+        runtime._bill_runtime.set_event_callback(runtime.emit_event)
         if runtime.ontology and runtime.ontology.billet_registry:
             runtime._bill_runtime.set_billet_registry(
                 runtime.ontology.billet_registry
@@ -405,7 +399,7 @@ async def finalize_startup(
 
         _content_firewall = ContentFirewall(
             trust_network=runtime.trust_network,
-            emit_event_fn=runtime._emit_event,
+            emit_event_fn=runtime.emit_event,
             config=config.firewall,
         )
         if runtime.ward_room._messages:
@@ -429,7 +423,7 @@ async def finalize_startup(
             ontology=runtime.ontology,
             callsign_registry=runtime.callsign_registry,
             episodic_memory=runtime.episodic_memory,
-            event_emitter=runtime._emit_event,
+            event_emitter=runtime.emit_event,
             event_log=runtime.event_log,
             config=config,
             notify_fn=runtime.notify,
@@ -514,7 +508,7 @@ async def finalize_startup(
                     agent_id=agent.id,
                     handler=agent.handle_intent,
                     should_process=_make_should_process(agent),
-                    emit_event=runtime._emit_event,
+                    emit_event=runtime.emit_event,
                 )
                 _intent_bus.register_queue(agent.id, queue)
                 await queue.start()
@@ -530,7 +524,7 @@ async def finalize_startup(
                 ontology=runtime.ontology,
                 get_queue=_intent_bus._get_agent_queue,
                 dispatch_async_fn=_intent_bus.dispatch_async,
-                emit_event=runtime._emit_event,
+                emit_event=runtime.emit_event,
             )
             runtime.dispatcher = dispatcher
             logger.info("Startup [finalize]: AD-654c Dispatcher created")
@@ -598,7 +592,7 @@ async def finalize_startup(
     runtime.recreation_service = RecreationService(
         ward_room=runtime.ward_room,
         records_store=runtime._records_store,
-        emit_event_fn=runtime._emit_event,
+        emit_event_fn=runtime.emit_event,
         dispatcher=runtime.dispatcher,                # AD-654d
         callsign_registry=runtime.callsign_registry,  # AD-654d
     )
@@ -613,7 +607,7 @@ async def finalize_startup(
         sub_task_config = config.sub_task
         executor = SubTaskExecutor(
             config=sub_task_config,
-            emit_event_fn=runtime._emit_event,
+            emit_event_fn=runtime.emit_event,
         )
         query_handler = QueryHandler(runtime)
         executor.register_handler(SubTaskType.QUERY, query_handler)
@@ -696,7 +690,7 @@ async def finalize_startup(
                     max_concurrent=max_concurrent,
                     queue_max_size=concurrency_config.queue_max_size,
                     capacity_warning_ratio=concurrency_config.capacity_warning_ratio,
-                    emit_event_fn=runtime._emit_event,
+                    emit_event_fn=runtime.emit_event,
                 )
                 agent.set_concurrency_manager(manager)
                 wired_concurrency += 1
@@ -805,7 +799,7 @@ async def finalize_startup(
             decomposer=runtime.decomposer,
             feedback_engine=runtime.feedback_engine,
             llm_client=runtime.llm_client,
-            event_emitter=runtime._emit_event,
+            event_emitter=runtime.emit_event,
             config=config,
             semantic_layer=runtime._semantic_layer,
             collect_intent_descriptors_fn=runtime._collect_intent_descriptors,
@@ -825,7 +819,7 @@ async def finalize_startup(
         knowledge_store=runtime._knowledge_store,
         hebbian_router=runtime.hebbian_router,
         trust_network=runtime.trust_network,
-        event_emitter=runtime._emit_event,
+        event_emitter=runtime.emit_event,
         self_mod_pipeline=runtime.self_mod_pipeline,
         bridge_alerts=runtime.bridge_alerts,
         ward_room=runtime.ward_room,
@@ -867,7 +861,7 @@ async def finalize_startup(
                 registry=runtime.registry,
                 crew_profiles=getattr(runtime, 'acm', None),
                 episodic_memory=runtime.episodic_memory,
-                emit_event_fn=runtime._emit_event,
+                emit_event_fn=runtime.emit_event,
                 add_event_listener_fn=runtime.add_event_listener,
                 ward_room_router=ward_room_router if runtime.ward_room else None,  # AD-505: fixed wiring
                 ward_room=runtime.ward_room,  # AD-505: for DM channel creation
