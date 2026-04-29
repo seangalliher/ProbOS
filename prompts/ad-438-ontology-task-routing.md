@@ -217,13 +217,13 @@ Add TaskRouter initialization near the Dispatcher wiring:
 
 **File:** `src/probos/routers/system.py`
 
-Add a `GET /api/task-router` endpoint following the existing health endpoint pattern:
+Add a `GET /api/task-router` endpoint following the existing `Depends(get_runtime)`
+pattern used by all other endpoints in `system.py`:
 
 ```python
 @router.get("/api/task-router")
-async def get_task_router(request: Request) -> dict:
+async def get_task_router(runtime: Any = Depends(get_runtime)) -> dict:
     """Return task routing configuration (AD-438)."""
-    runtime = request.app.state.runtime
     task_router = getattr(runtime, "_task_router", None)
     if not task_router:
         return {"status": "disabled", "mappings": {}}

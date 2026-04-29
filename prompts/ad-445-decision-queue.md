@@ -285,9 +285,8 @@ grep -n "InitiativeEngine\|initiative_engine" src/probos/startup/finalize.py
 
 ```python
 @router.get("/api/decision-queue")
-async def get_decision_queue(request: Request) -> dict:
+async def get_decision_queue(runtime: Any = Depends(get_runtime)) -> dict:
     """Return decision queue status (AD-445)."""
-    runtime = request.app.state.runtime
     queue = getattr(runtime, "_decision_queue", None)
     if not queue:
         return {"status": "disabled"}
@@ -298,22 +297,22 @@ async def get_decision_queue(request: Request) -> dict:
 
 
 @router.post("/api/decision-queue/pause")
-async def pause_decision_queue(request: Request) -> dict:
+async def pause_decision_queue(
+    body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict:
     """Pause the decision queue (AD-445)."""
-    runtime = request.app.state.runtime
     queue = getattr(runtime, "_decision_queue", None)
     if not queue:
         return {"status": "disabled"}
-    body = await request.json()
     reason = body.get("reason", "")
     queue.pause(reason)
     return {"status": "paused", "reason": reason}
 
 
 @router.post("/api/decision-queue/resume")
-async def resume_decision_queue(request: Request) -> dict:
+async def resume_decision_queue(runtime: Any = Depends(get_runtime)) -> dict:
     """Resume the decision queue (AD-445)."""
-    runtime = request.app.state.runtime
     queue = getattr(runtime, "_decision_queue", None)
     if not queue:
         return {"status": "disabled"}

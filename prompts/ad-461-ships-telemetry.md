@@ -242,13 +242,14 @@ LLM calls, trust updates, etc.
 **File:** `src/probos/routers/system.py`
 
 Add a `GET /api/telemetry` endpoint that returns the current telemetry report.
-Follow the health endpoint pattern (lines 21-35):
+
+Follow the existing `Depends(get_runtime)` pattern used by all other
+endpoints in `system.py` (e.g., `health()`, `status()`):
 
 ```python
 @router.get("/api/telemetry")
-async def get_telemetry(request: Request) -> dict:
+async def get_telemetry(runtime: Any = Depends(get_runtime)) -> dict:
     """Return current telemetry report (AD-461)."""
-    runtime = request.app.state.runtime
     telemetry = getattr(runtime, "_telemetry_service", None)
     if not telemetry:
         return {"status": "disabled", "operations": {}}

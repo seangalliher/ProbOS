@@ -188,9 +188,8 @@ Add a method to the `IntentBus` class:
 
 ```python
 @router.get("/api/intent-metrics")
-async def get_intent_metrics(request: Request) -> dict:
+async def get_intent_metrics(runtime: Any = Depends(get_runtime)) -> dict:
     """Return IntentBus metrics (AD-470)."""
-    runtime = request.app.state.runtime
     intent_bus = getattr(runtime, "_intent_bus", None)
     if not intent_bus:
         return {"status": "disabled"}

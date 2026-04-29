@@ -210,9 +210,8 @@ the SEARCH block to include those lines too.
 
 ```python
 @router.get("/api/disclosure-clearances")
-async def get_disclosure_clearances(request: Request) -> dict:
+async def get_disclosure_clearances(runtime: Any = Depends(get_runtime)) -> dict:
     """Return disclosure clearance configuration (AD-679)."""
-    runtime = request.app.state.runtime
     disclosure_router = getattr(runtime, "_disclosure_router", None)
     if not disclosure_router:
         return {"status": "disabled"}

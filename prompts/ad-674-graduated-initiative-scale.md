@@ -62,6 +62,8 @@ permission) maps into the 5 levels without replacing the gates.
 def resolve_initiative_level(
     rank: "Rank",
     trust_score: float,
+    *,
+    thresholds: dict[str, float] | None = None,
 ) -> InitiativeLevel:
     """Resolve graduated initiative level from rank and trust (AD-674).
 
@@ -77,9 +79,21 @@ def resolve_initiative_level(
     The three existing gates remain authoritative for specific permissions.
     This function provides a unified scalar for initiative decisions.
 
+    Args:
+        rank: Agent's current rank
+        trust_score: Agent's current trust score (0.0-1.0)
+        thresholds: Optional override thresholds from config. Keys:
+            "responsive" (default 0.3), "contributory" (default 0.5),
+            "proactive" (default 0.7).
+
     Note: Rank is already imported at module level (line 8) from
     probos.crew_profile — do NOT re-import from probos.config.
     """
+    t = thresholds or {}
+    t_responsive = t.get("responsive", 0.3)
+    t_contributory = t.get("contributory", 0.5)
+    t_proactive = t.get("proactive", 0.7)
+
     rank_ordinal = {
         Rank.ENSIGN: 0,
         Rank.LIEUTENANT: 1,
@@ -91,17 +105,17 @@ def resolve_initiative_level(
         return InitiativeLevel.STRATEGIC
 
     if rank_ordinal >= 2:
-        if trust_score >= 0.7:
+        if trust_score >= t_proactive:
             return InitiativeLevel.PROACTIVE
         return InitiativeLevel.CONTRIBUTORY
 
     if rank_ordinal >= 1:
-        if trust_score >= 0.5:
+        if trust_score >= t_contributory:
             return InitiativeLevel.CONTRIBUTORY
         return InitiativeLevel.RESPONSIVE
 
     # Ensign
-    if trust_score >= 0.3:
+    if trust_score >= t_responsive:
         return InitiativeLevel.RESPONSIVE
     return InitiativeLevel.DIRECTED
 ```
@@ -138,26 +152,42 @@ class EarnedAgencyConfig(BaseModel):
 
 **File:** `src/probos/cognitive/cognitive_agent.py`
 
-Make initiative level available for agents to reference in their decisions.
-Find where `agency_level` is injected into agent context. Grep for:
-```
-grep -n "agency_level" src/probos/cognitive/cognitive_agent.py
+The `agency_from_rank()` call is at line 3622-3626 in the `_agent_metrics`
+injection block. Add the graduated initiative level alongside it:
+
+SEARCH:
+```python
+                from probos.earned_agency import agency_from_rank
 ```
 
-At the same injection point, add the graduated initiative level:
+REPLACE:
+```python
+                from probos.earned_agency import agency_from_rank, resolve_initiative_level
+```
+
+Then after `_agency_val = agency_from_rank(Rank.from_trust(_trust_val)).value`
+(line 3626), add:
 
 ```python
-        # AD-674: Graduated initiative level
-        from probos.earned_agency import resolve_initiative_level, InitiativeLevel
-        _initiative = resolve_initiative_level(
-            getattr(self, '_rank', Rank.ENSIGN),
-            self._trust_score if hasattr(self, '_trust_score') else 0.5,
-        )
-        # Include in decision context
+                _initiative_val = resolve_initiative_level(
+                    Rank.from_trust(float(_trust_val) if isinstance(_trust_val, str) else _trust_val),
+                    _rt.trust_network.get_score(self.id),
+                ).value
 ```
 
-The exact integration point depends on how `agency_level` is currently
-injected. Builder must grep and follow the existing pattern.
+And append to the `_agent_metrics` string (line 3628-3629):
+
+SEARCH:
+```python
+            state["_agent_metrics"] = (
+                f"Your trust: {_trust_val} | "
+```
+
+REPLACE:
+```python
+            state["_agent_metrics"] = (
+                f"Your trust: {_trust_val} | Initiative: {_initiative_val} | "
+```
 
 ## Tests
 
