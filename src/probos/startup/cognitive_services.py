@@ -178,6 +178,23 @@ async def init_cognitive_services(
                 exc,
             )
 
+    # AD-608: Retroactive evolver for episodic memory
+    if episodic_memory and config.retroactive.enabled:
+        try:
+            from probos.cognitive.retroactive_evolver import RetroactiveEvolver as _RetroactiveEvolver
+
+            retroactive_evolver = _RetroactiveEvolver(
+                config=config.retroactive,
+                episodic_memory=episodic_memory,
+            )
+            episodic_memory.set_retroactive_evolver(retroactive_evolver)
+            logger.info("AD-608: RetroactiveEvolver initialized and wired to EpisodicMemory")
+        except Exception as exc:
+            logger.warning(
+                "AD-608: RetroactiveEvolver failed to start: %s; continuing without store-time evolution",
+                exc,
+            )
+
     # AD-601: Wire Temporal Context Model
     if episodic_memory and config.memory.tcm_enabled:
         try:

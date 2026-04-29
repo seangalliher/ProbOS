@@ -922,6 +922,17 @@ class StorageGateConfig(BaseModel):
     contradiction_check_enabled: bool = True
 
 
+class RetroactiveConfig(BaseModel):
+    """AD-608: Retroactive memory evolution - store-time metadata propagation."""
+
+    enabled: bool = True
+    neighbor_k: int = 5
+    similarity_threshold: float = 0.7
+    max_relations_per_episode: int = 10
+    propagate_watch_section: bool = True
+    propagate_department: bool = True
+
+
 class PinnedKnowledgeConfig(BaseModel):
     """AD-579a: Pinned knowledge buffer configuration."""
 
@@ -1511,6 +1522,7 @@ class SystemConfig(BaseModel):
     expertise: ExpertiseConfig = ExpertiseConfig()  # AD-600
     spreading_activation: SpreadingActivationConfig = SpreadingActivationConfig()  # AD-604
     thought_store: ThoughtStoreConfig = ThoughtStoreConfig()  # AD-606
+    retroactive: RetroactiveConfig = RetroactiveConfig()  # AD-608
     reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
 
 

@@ -171,6 +171,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Agent conclusions were available only as transient working-memory summaries, forcing future cycles to re-reason from raw episodes. Persisting bounded, typed conclusions as reflection episodes gives recall access to pre-reasoned thoughts without adding new database tables or model calls.
 **Status:** Implemented
 
+### AD-608: Retroactive Memory Evolution
+
+**Date:** 2026-04-29
+**Decision:** Store-time metadata propagation via RetroactiveEvolver. After each store, it finds semantic neighbors through EpisodicMemory.recall_weighted(), adds bidirectional relational links (causal, contextual, associative, follows, contradicts, answers, caused_by) stored as relations_json metadata, and propagates missing anchor fields (watch_section, department) from newer to older episodes. Relation classification is causal if within 60s and shared trigger, contextual if shared department or channel, and associative otherwise. Max 10 relations per episode. Similarity threshold 0.7. Adds update_episode_metadata() and get_episode_metadata() public methods to EpisodicMemory.
+**Rationale:** Episodes were effectively write-once after storage, leaving older memories without later-established context or explicit inter-episode relationships. A bounded no-LLM evolver lets storage create a denser recall graph while preserving existing ChromaDB-backed metadata APIs.
+**Status:** Implemented
+
 ### AD-610: Utility-Based Storage Gating
 
 **Date:** 2026-04-28

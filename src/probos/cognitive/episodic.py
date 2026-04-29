@@ -681,6 +681,7 @@ class EpisodicMemory:
         self._activation_tracker: Any = None  # AD-567d: ACT-R activation tracker
         self._reconsolidation_scheduler: Any = None  # AD-574: spaced review scheduling
         self._storage_gate: Any = None  # AD-610: utility-based storage gate
+        self._retroactive_evolver: Any = None  # AD-608: store-time metadata evolution
         self._participant_index: Any = None  # AD-570b: Participant index sidecar
         self._tcm: Any = None  # AD-601: Temporal Context Model engine
         self._tcm_weight: float = 0.0             # AD-601: set by set_tcm() when wired
@@ -697,6 +698,10 @@ class EpisodicMemory:
     def set_storage_gate(self, gate: Any) -> None:
         """AD-610: Wire the storage gate for write-time validation."""
         self._storage_gate = gate
+
+    def set_retroactive_evolver(self, evolver: Any) -> None:
+        """AD-608: Wire the retroactive evolver for store-time evolution."""
+        self._retroactive_evolver = evolver
 
     def set_participant_index(self, index: Any) -> None:
         """AD-570b: Wire the participant index after construction."""
@@ -1065,8 +1070,71 @@ class EpisodicMemory:
                     exc_info=True,
                 )
 
+        retroactive_evolver = getattr(self, "_retroactive_evolver", None)
+        if retroactive_evolver is not None:
+            try:
+                await retroactive_evolver.evolve_on_store(episode)
+            except Exception:
+                logger.debug(
+                    "AD-608: Retroactive evolution failed for episode %s",
+                    episode.id,
+                    exc_info=True,
+                )
+
         # Evict oldest beyond budget
         await self._evict()
+
+    async def get_episode_metadata(
+        self,
+        episode_id: str,
+    ) -> dict[str, Any] | None:
+        """AD-608: Retrieve metadata for a single episode."""
+        if not self._collection:
+            return None
+
+        try:
+            result = self._collection.get(ids=[episode_id], include=["metadatas"])
+            if not result or not result.get("ids"):
+                return None
+            return result["metadatas"][0] if result.get("metadatas") else None
+        except Exception:
+            logger.debug(
+                "AD-608: Failed to get metadata for episode %s",
+                episode_id,
+                exc_info=True,
+            )
+            return None
+
+    async def update_episode_metadata(
+        self,
+        episode_id: str,
+        metadata_updates: dict[str, Any],
+    ) -> bool:
+        """AD-608: Update metadata fields on an existing episode."""
+        if not self._collection:
+            return False
+
+        try:
+            result = self._collection.get(ids=[episode_id], include=["metadatas"])
+            if not result or not result.get("ids"):
+                logger.warning(
+                    "AD-608: Episode %s not found; cannot update metadata and relation propagation will skip it",
+                    episode_id,
+                )
+                return False
+
+            existing_meta = result["metadatas"][0] if result.get("metadatas") else {}
+            merged = {**existing_meta, **metadata_updates}
+
+            self._collection.update(ids=[episode_id], metadatas=[merged])
+            return True
+        except Exception:
+            logger.debug(
+                "AD-608: Failed to update metadata for episode %s",
+                episode_id,
+                exc_info=True,
+            )
+            return False
 
     async def update_episode_validity(self, episode_id: str, valid_until: float) -> bool:
         """AD-579c: Update valid_until metadata for an existing episode."""

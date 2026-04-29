@@ -5267,9 +5267,9 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
-### Retroactive Memory Evolution (AD-608) *(planned, OSS)*
+### Retroactive Memory Evolution (AD-608) *(Complete, OSS)*
 
-**AD-608: Retroactive Memory Evolution — Store-Time Metadata Propagation** *(planned, OSS, depends: AD-605 Enhanced Embedding, AD-567a Anchor System, AD-570 Anchor-Indexed Recall)* — When a new episode is stored, retroactively update metadata on highly-related existing episodes. Old memories are currently static until dream consolidation (which runs on a schedule, not at storage time).
+**AD-608: Retroactive Memory Evolution — Store-Time Metadata Propagation** *(Complete, OSS, depends: AD-605 Enhanced Embedding, AD-567a Anchor System, AD-570 Anchor-Indexed Recall)* — When a new episode is stored, retroactively update metadata on highly-related existing episodes. Old memories are currently static until dream consolidation (which runs on a schedule, not at storage time).
 
 **Problem statement:** Episodes are write-once. Anchor metadata established at storage time is never updated even when new information arrives that provides additional context. An episode stored with `watch_section=""` (unknown temporal context) never gains temporal context even when subsequent episodes clearly establish the watch section. Relational links between episodes (cause → effect, question → answer, topic continuation) are never explicitly recorded.
 
