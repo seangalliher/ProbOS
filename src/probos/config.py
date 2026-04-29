@@ -798,6 +798,14 @@ class SocialVerificationConfig(BaseModel):
     expose_episode_content: bool = False  # MUST stay False — privacy boundary
 
 
+class AnomalyWindowConfig(BaseModel):
+    """Anomaly window detection configuration (AD-673)."""
+
+    enabled: bool = True
+    max_window_duration_seconds: float = 1800.0
+    lookback_seconds: float = 60.0
+
+
 class SourceTracingConfig(BaseModel):
     """AD-583g: Ward Room echo detection and source tracing."""
 
@@ -984,7 +992,7 @@ class SensoriumConfig(BaseModel):
     """AD-666: Agent Sensorium tracking configuration."""
 
     enabled: bool = True
-    token_budget_warning: int = 10000
+    token_budget_warning: int = 6000
 
 
 class OnboardingConfig(BaseModel):
@@ -1503,6 +1511,7 @@ class SystemConfig(BaseModel):
     qualification: QualificationConfig = QualificationConfig()
     orientation: OrientationConfig = OrientationConfig()
     social_verification: SocialVerificationConfig = SocialVerificationConfig()
+    anomaly_window: AnomalyWindowConfig = AnomalyWindowConfig()  # AD-673
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
     memory_budget: MemoryBudgetConfig = MemoryBudgetConfig()  # AD-573
     metabolism: MetabolismConfig = MetabolismConfig()  # AD-670

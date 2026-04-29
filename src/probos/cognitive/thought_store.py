@@ -67,6 +67,14 @@ class ThoughtStore:
         if not thought or not thought.strip():
             return None
 
+        thought_text = thought.strip()
+        if thought_text.startswith("{") and '"intents"' in thought_text[:200]:
+            logger.debug(
+                "AD-606: Skipping raw decomposer JSON thought from %s; avoiding non-user memory pollution",
+                agent_id,
+            )
+            return None
+
         thought_value = thought_type.value if hasattr(thought_type, "value") else str(thought_type)
         try:
             thought_value = ThoughtType(thought_value).value
@@ -101,7 +109,7 @@ class ThoughtStore:
         episode = Episode(
             id=uuid.uuid4().hex,
             timestamp=time.time(),
-            user_input=thought.strip(),
+            user_input=thought_text,
             agent_ids=[resolved_agent_id],
             source=MemorySource.REFLECTION.value,
             anchors=AnchorFrame(channel="thought", trigger_type=thought_value),

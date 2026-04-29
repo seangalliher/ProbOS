@@ -682,6 +682,7 @@ class EpisodicMemory:
         self._reconsolidation_scheduler: Any = None  # AD-574: spaced review scheduling
         self._storage_gate: Any = None  # AD-610: utility-based storage gate
         self._retroactive_evolver: Any = None  # AD-608: store-time metadata evolution
+        self._anomaly_window_manager: Any = None  # AD-673: episode anomaly window stamping
         self._participant_index: Any = None  # AD-570b: Participant index sidecar
         self._tcm: Any = None  # AD-601: Temporal Context Model engine
         self._tcm_weight: float = 0.0             # AD-601: set by set_tcm() when wired
@@ -702,6 +703,10 @@ class EpisodicMemory:
     def set_retroactive_evolver(self, evolver: Any) -> None:
         """AD-608: Wire the retroactive evolver for store-time evolution."""
         self._retroactive_evolver = evolver
+
+    def set_anomaly_window_manager(self, manager: Any) -> None:
+        """AD-673: Wire anomaly window manager for episode stamping."""
+        self._anomaly_window_manager = manager
 
     def set_participant_index(self, index: Any) -> None:
         """AD-570b: Wire the participant index after construction."""
@@ -999,6 +1004,25 @@ class EpisodicMemory:
                     valid_from=episode.valid_from,
                     valid_until=episode.valid_until,
                 )
+
+        anomaly_window_manager = getattr(self, "_anomaly_window_manager", None)
+        if anomaly_window_manager is not None:
+            try:
+                active_window = anomaly_window_manager.get_active_window()
+            except Exception:
+                logger.debug(
+                    "AD-673: Failed to query anomaly window before storing episode %s; storing without stamp",
+                    episode.id,
+                    exc_info=True,
+                )
+                active_window = None
+            if active_window and episode.anchors is not None:
+                new_anchors = dataclasses.replace(
+                    episode.anchors,
+                    anomaly_window_id=active_window,
+                )
+                episode = dataclasses.replace(episode, anchors=new_anchors)
+                anomaly_window_manager.record_episode_stamped()
 
         metadata = self._episode_to_metadata(episode)
 

@@ -22,6 +22,61 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _wire_anomaly_window(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-673: Wire AnomalyWindowManager and subscribe to signal events."""
+    if not config.anomaly_window.enabled:
+        return False
+
+    from probos.cognitive.anomaly_window import AnomalyWindowManager
+    from probos.events import EventType
+
+    emit_fn = getattr(runtime, "_emit_event", None)
+    add_listener = getattr(runtime, "add_event_listener", None)
+    manager = AnomalyWindowManager(
+        config=config.anomaly_window,
+        emit_event_fn=emit_fn,
+        add_event_listener_fn=add_listener,
+    )
+
+    episodic_memory = getattr(runtime, "episodic_memory", None)
+    if episodic_memory is not None and hasattr(episodic_memory, "set_anomaly_window_manager"):
+        episodic_memory.set_anomaly_window_manager(manager)
+
+    if add_listener is not None:
+        async def on_signal_event(event: Any) -> None:
+            if isinstance(event, dict):
+                event_type = event.get("type", "")
+                data = event.get("data", {})
+            else:
+                event_type = getattr(event, "event_type", getattr(event, "type", ""))
+                data = getattr(event, "data", {})
+
+            event_type_value = event_type.value if isinstance(event_type, EventType) else str(event_type)
+            if event_type_value == EventType.TRUST_CASCADE_WARNING.value:
+                manager.open_window("trust_cascade", str(data))
+            elif event_type_value == EventType.LLM_HEALTH_CHANGED.value:
+                status = ""
+                if isinstance(data, dict):
+                    status = data.get("new_status") or data.get("status", "")
+                if status in ("degraded", "offline"):
+                    manager.open_window("llm_degraded", f"LLM status: {status}")
+                elif status in ("operational", "healthy") and manager.is_active():
+                    active_window = manager.get_active_window()
+                    if active_window:
+                        manager.close_window(active_window)
+
+        add_listener(
+            on_signal_event,
+            event_types=[
+                EventType.TRUST_CASCADE_WARNING.value,
+                EventType.LLM_HEALTH_CHANGED.value,
+            ],
+        )
+
+    runtime._anomaly_window_manager = manager
+    return True
+
+
 def _wire_tiered_knowledge_loader(*, runtime: Any, config: "SystemConfig") -> int:
     """AD-585: Wire one shared TieredKnowledgeLoader onto CognitiveAgents."""
     knowledge_store = getattr(runtime, "_knowledge_store", None)
@@ -159,6 +214,9 @@ async def finalize_startup(
     # both start from a clean cache.
     from probos.cognitive.standing_orders import clear_cache as clear_standing_orders_cache
     clear_standing_orders_cache()
+
+    if _wire_anomaly_window(runtime=runtime, config=config):
+        logger.info("AD-673: AnomalyWindowManager wired during finalization")
 
     # --- Proactive Cognitive Loop (Phase 28b) ---
     if config.proactive_cognitive.enabled and runtime.ward_room:

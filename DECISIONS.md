@@ -538,10 +538,10 @@ This completes the identity restoration chain: BF-057 (callsign from birth cert)
 ### AD-673 — Automated Anomaly Window Detection
 
 **Date:** 2026-04-26
-**Status:** Planned
+**Status:** Closed
 **Depends on:** AD-662 (AnchorFrame provenance fields), AD-663 (producer wiring)
 
-**Decision:** Create an AnomalyWindowManager service that detects system anomaly periods and manages their lifecycle. AD-662 added `anomaly_window_id` to AnchorFrame and social_verification.py applies the `anomaly_window_discount` (default 0.5) to pairs involving anomaly observations — but nothing currently detects anomaly windows or stamps episodes with window IDs. The field is consumer-ready infrastructure with no supplier. AnomalyWindowManager opens named windows (`aw-{uuid}`) based on system signals: NATS consumer lag (queue pressure), LLM error rate/latency spikes, trust cascade warnings (AD-558), and alert condition transitions (GREEN→YELLOW/RED). Episode stamping hooks into `EpisodicMemory.store()` to inject the active window ID into AnchorFrame at construction time — producers (AD-663) don't need per-site anomaly awareness. Retrospective tagging back-stamps recent episodes recorded before detection triggered. Note: `emergent_detector.py`'s `trust_anomaly_window` (600s rolling temporal window for anomaly count accumulation) is a different concept — it's a duration for counting anomaly occurrences, not a named period identifier.
+**Decision:** AD-673: AnomalyWindowManager populates AnchorFrame.anomaly_window_id. Triggered by trust cascade and LLM health events via _add_event_listener_fn pattern. Single concurrent window model. Episodes stamped during store() via dataclasses.replace on frozen AnchorFrame. Retrospective tagging deferred (stub only).
 
 ---
 

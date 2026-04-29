@@ -117,6 +117,18 @@ async def test_importance_threshold(fake_memory: _FakeEpisodicMemory) -> None:
 
 
 @pytest.mark.asyncio
+async def test_store_thought_raw_decomposer_json_skips_memory(thought_store: ThoughtStore, fake_memory: _FakeEpisodicMemory) -> None:
+    result = await thought_store.store_thought(
+        "agent-1",
+        '{"intents": [{"id": "t1", "intent": "introspect_memory"}], "reflect": true}',
+        "observation_synthesis",
+    )
+
+    assert result is None
+    assert fake_memory.stored == []
+
+
+@pytest.mark.asyncio
 async def test_max_thoughts_per_cycle(fake_memory: _FakeEpisodicMemory) -> None:
     store = ThoughtStore(
         episodic_memory=fake_memory,

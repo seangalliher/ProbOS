@@ -596,12 +596,13 @@ class DreamingEngine:
         # Step 7c-2: Failure distillation and comparative analysis (AD-609)
         failure_patterns_extracted = 0
         comparative_insights_count = 0
-        if self._failure_distiller and clusters:
+        failure_distiller = getattr(self, "_failure_distiller", None)
+        if failure_distiller and clusters:
             try:
                 success_clusters = [cluster for cluster in clusters if cluster.is_success_dominant]
                 failure_clusters_list = [cluster for cluster in clusters if cluster.is_failure_dominant]
 
-                failure_procedures = self._failure_distiller.distill_failure_patterns(
+                failure_procedures = failure_distiller.distill_failure_patterns(
                     failure_clusters_list
                 )
                 failure_patterns_extracted = len(failure_procedures)
@@ -617,7 +618,7 @@ class DreamingEngine:
                                     exc_info=True,
                                 )
 
-                comparative_results = self._failure_distiller.distill_comparative(
+                comparative_results = failure_distiller.distill_comparative(
                     success_clusters,
                     failure_clusters_list,
                 )
