@@ -4555,6 +4555,12 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 ---
 
+### Episodic-Procedural Bridge (AD-572)
+
+**AD-572: Episodic-Procedural Bridge — Dream Step 7h** *(complete, OSS, depends: AD-532, AD-533, AD-531)* — Added `EpisodicProceduralBridge` to scan dream clusters against existing procedures for novel cross-cycle patterns. Novelty uses episode provenance overlap with a configurable threshold, clusters require at least 5 episodes by default, and newly bridged procedures are saved with `evolution_type="BRIDGED"`. DreamReport now exposes `bridged_procedures`, and startup wires the bridge from `procedural_bridge` config.
+
+---
+
 ### Captain Engagement Priority (AD-572)
 
 **AD-572: Captain Engagement Priority — Active State Awareness in DM Path** *(complete, OSS)* — When the Captain opens a 1:1 DM with an agent, the agent has zero awareness of active interactive state (games, alerts, tasks). The proactive cycle injects rich context (BF-110 game state, Ward Room activity, bridge alerts), but the DM path only includes temporal awareness, episodic memories, and session history. If the Captain is playing tic-tac-toe against an agent and DMs them "make your move", the agent doesn't know the game exists.

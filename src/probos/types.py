@@ -546,6 +546,7 @@ class DreamReport:
     reflections_created: int = 0
     # AD-671: Dream-Working Memory bridge
     wm_entries_flushed: int = 0
+    bridged_procedures: int = 0  # AD-572: cross-cycle procedural bridge
     wm_priming_entries: int = 0
 
 

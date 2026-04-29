@@ -83,6 +83,7 @@ class DreamingEngine:
         behavioral_metrics_engine: Any = None,  # AD-569: behavioral metrics engine
         counselor: Any = None,  # AD-568d: Counselor agent for source metric updates
         dream_wm_bridge: Any = None,  # AD-671: working memory bridge
+        episodic_procedural_bridge: Any = None,  # AD-572: cross-cycle procedural bridge
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -109,6 +110,7 @@ class DreamingEngine:
         self._behavioral_metrics_engine = behavioral_metrics_engine  # AD-569
         self._counselor = counselor  # AD-568d
         self._dream_wm_bridge = dream_wm_bridge  # AD-671
+        self._episodic_procedural_bridge = episodic_procedural_bridge  # AD-572
         self._confidence_tracker: Any = None  # AD-444
         self._knowledge_linter: Any = None  # AD-563
         self._quality_trigger: Any = None  # AD-564
@@ -252,6 +254,7 @@ class DreamingEngine:
         t_start = time.monotonic()
         wm_entries_flushed = 0
         wm_priming_entries = 0
+        bridged_procedures = 0
         dream_wm_bridge = getattr(self, "_dream_wm_bridge", None)
 
         # AD-671: Pre-dream WM flush — capture session state before consolidation
@@ -924,6 +927,31 @@ class DreamingEngine:
         except Exception as e:
             logger.debug("Step 7g notebook consolidation failed (non-critical): %s", e)
 
+        # Step 7h: Cross-cycle episodic-procedural bridge (AD-572)
+        episodic_clusters = self._last_clusters
+        episodic_procedural_bridge = getattr(self, "_episodic_procedural_bridge", None)
+        if episodic_procedural_bridge and episodic_clusters:
+            try:
+                bridged = await episodic_procedural_bridge.bridge_episodes_to_procedures(
+                    episodes, episodic_clusters,
+                )
+                bridged_procedures = len(bridged)
+                if bridged_procedures > 0:
+                    if self._procedure_store:
+                        for proc in bridged:
+                            try:
+                                await self._procedure_store.save(proc)
+                            except Exception as e:
+                                logger.warning(
+                                    "Step 7h: Failed to save bridged procedure for cluster %s; continuing dream cycle: %s",
+                                    proc.origin_cluster_id,
+                                    e,
+                                )
+                    procedures.extend(bridged)
+                    logger.debug("Step 7h: Bridged %d cross-cycle procedures", bridged_procedures)
+            except Exception as e:
+                logger.warning("Step 7h episodic-procedural bridge failed; continuing dream cycle: %s", e)
+
         # Step 8: Enhanced capability gap detection (AD-385 + AD-539)
         gaps_predicted = 0
         gaps_classified = 0
@@ -1346,6 +1374,7 @@ class DreamingEngine:
                     reflections_created=reflections_created,
                     activation_pruned=activation_pruned,
                     contradictions_found=contradictions_found,
+                    bridged_procedures=bridged_procedures,
                 )
                 wm_priming_entries = dream_wm_bridge.post_dream_seed(
                     wm=agent_wm,
@@ -1369,6 +1398,7 @@ class DreamingEngine:
             procedures_extracted=procedures_extracted,
             chain_procedures_extracted=chain_procedures_extracted,  # AD-632g
             procedures=procedures,
+            bridged_procedures=bridged_procedures,
             procedures_evolved=procedures_evolved,
             negative_procedures_extracted=negative_procedures_extracted,
             fallback_evolutions=fallback_stats.get("evolved", 0),

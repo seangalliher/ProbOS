@@ -15,6 +15,7 @@ from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
 from probos.cognitive.dream_wm_bridge import DreamWorkingMemoryBridge
 from probos.cognitive.emergent_detector import EmergentDetector
 from probos.cognitive.emergence_metrics import EmergenceMetricsEngine
+from probos.cognitive.episodic_procedural_bridge import EpisodicProceduralBridge
 from probos.cognitive.retrieval_practice import RetrievalPracticeEngine
 from probos.cognitive.task_scheduler import TaskScheduler
 from probos.events import EventType
@@ -107,6 +108,14 @@ async def init_dreaming(
     dream_wm_bridge = None
     if config.dream_wm.enabled:
         dream_wm_bridge = DreamWorkingMemoryBridge(config=config.dream_wm)
+    # AD-572: Episodic-procedural bridge
+    procedural_bridge = None
+    if config.procedural_bridge.enabled:
+        procedural_bridge = EpisodicProceduralBridge(
+            config=config.procedural_bridge,
+            procedure_store=procedure_store,
+            episodic_memory=episodic_memory,
+        )
     # AD-541c: Spaced Retrieval Therapy
     retrieval_practice_engine = None
     retrieval_llm_client = None
@@ -150,6 +159,7 @@ async def init_dreaming(
             behavioral_metrics_engine=behavioral_metrics_engine,
             records_store=records_store,  # BF-106: constructor injection
             dream_wm_bridge=dream_wm_bridge,
+            episodic_procedural_bridge=procedural_bridge,
         )
         dream_scheduler = DreamScheduler(
             engine=dreaming_engine,

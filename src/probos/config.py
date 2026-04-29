@@ -1390,6 +1390,14 @@ class AgentTierConfig(BaseModel):
     core_types: list[str] = Field(default_factory=lambda: ["event_log", "vitals_monitor", "introspect"])
 
 
+class BridgeConfig(BaseModel):
+    """Episodic-procedural bridge configuration (AD-572)."""
+
+    enabled: bool = True
+    min_cross_cycle_episodes: int = 5
+    novelty_threshold: float = 0.3
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -1459,6 +1467,7 @@ class SystemConfig(BaseModel):
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571
+    procedural_bridge: BridgeConfig = BridgeConfig()  # AD-572
     nats: NatsConfig = NatsConfig()  # AD-637
     bill: BillConfig = BillConfig()  # AD-618b
     consultation: ConsultationConfig = ConsultationConfig()  # AD-594
