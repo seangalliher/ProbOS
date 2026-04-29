@@ -1,82 +1,122 @@
-# Prompt Review Sweep — 2026-04-27 (Re-review #3)
+# Prompt Review Sweep — 2026-04-29
 
 **Reviewer:** Architect
-**Scope:** All 20 active prompts in `prompts/`
-**Prior sweep:** `Reviews/archive/` (re-review #2 from earlier today)
+**Scope:** All 4 active prompts in `prompts/` (top level)
+**Prior sweep:** `Reviews/archive/README-2026-04-27.md` (re-review #3, 20 prompts approved)
+
+---
 
 ## Verdict Summary
 
-| Verdict | Count | Δ vs Prior |
-|---|---|---|
-| ✅ Approved | **20** | **+7** |
-| ⚠️ Conditional | 0 | -7 |
-| ❌ Not Ready | 0 | -1 |
+| Verdict | Count |
+|---|---|
+| ✅ Approved | **1** |
+| ⚠️ Conditional | **1** |
+| ❌ Not Ready | **2** |
 
-**Clean sweep.** All 20 prompts are ready to ship.
+---
 
-## Per-Prompt Verdict Table
+## Per-Prompt Verdicts
 
-| AD | Title | Old | New | Key Resolution |
-|---|---|---|---|---|
-| 444 | Knowledge Confidence Scoring | ✅ | ✅ | Stable — no changes needed |
-| 563 | Knowledge Linting | ✅ | ✅ | Stable |
-| 564 | Quality-Triggered Forced Consolidation | ✅ | ✅ | Stable |
-| 565 | Quality-Informed Routing | ✅ | ✅ | Stable |
-| 571 | Agent Tier Trust Separation | ⚠️ | ✅ | Private-attr access wrapped in `# TODO(AD-571)` comments + Builder note documents the wiring-code compromise |
-| 572 | Episodic→Procedural Bridge | ✅ | ✅ | Stable |
-| 573 | Memory Budget Accounting | ✅ | ✅ | Stable |
-| 574 | Episodic Decay & Reconsolidation | ✅ | ✅ | Stable (one minor list-default nit) |
-| 579a | Pinned Knowledge Buffer | ❌ | ✅ | **Dataclass field-ordering bug FIXED** — defaulted fields now correctly follow non-defaulted fields |
-| 579b | Temporal Validity Windows | ✅ | ✅ | Stable |
-| 579c | Validity-Aware Dream Consolidation | ✅ | ✅ | Stable |
-| 586 | Task-Contextual Standing Orders | ✅ | ✅ | Stable |
-| 600 | Transactive Memory | ✅ | ✅ | Stable |
-| 602 | Question-Adaptive Retrieval | ✅ | ✅ | Stable |
-| 604 | Spreading Activation | ⚠️ | ✅ | Constructor contradiction RESOLVED; uses `dataclasses.replace` for frozen RecallScore |
-| 606 | Think-in-Memory | ⚠️ | ✅ | Constructor contradiction RESOLVED; `ThoughtType` is StrEnum; explicit "Do NOT use `getattr`" Builder note |
-| 608 | Retroactive Memory Evolution | ⚠️ | ✅ | `update_episode_metadata()` body fully specified (ChromaDB read-modify-write); reverse-relation map and classifier defined |
-| 609 | Multi-Faceted Distillation | ⚠️ | ✅ | Constructor contradiction RESOLVED; explicit note explaining confidence formula saturates at 0.5 by design |
-| 610 | Utility-Based Storage Gating | ✅ | ✅ | Stable |
-| 673 | Anomaly Window Detection | ⚠️ | ✅ | `hasattr` REMOVED; `dataclasses.replace` for frozen AnchorFrame; switched to existing `_add_event_listener_fn` callback pattern; signal sources confirmed |
+| Prompt | Title | Verdict | Headline |
+|---|---|---|---|
+| AD-680 | Expose Runtime Public Properties | ❌ Not Ready | Three of five "private attrs" are already public; TODO markers don't exist; rework required |
+| BF-246 | LLM Tier Recovery Deadlock | ⚠️ Conditional | Real bug, sound design; one bug in proposed code + several spec gaps |
+| BF-247 | TieredKnowledgeLoader dag_summary Type | ✅ Approved | Clean fix, all references verified, two minor quality nits |
+| BF-248 | Anomaly Window Wrong Event Field | ❌ Not Ready (Stale) | Bug already fixed in production; SEARCH blocks won't match |
 
-## Cross-Cutting Patterns Resolved This Pass
+Per-prompt detail in:
 
-1. **Dataclass field ordering (AD-579a).** `PinnedFact` now has all non-defaulted fields (`fact`, `source`, `pinned_at`, `ttl_seconds`) declared before defaulted fields (`id`, `priority`). Will import without `TypeError`.
-2. **Constructor contradiction (AD-604, AD-606, AD-609).** Removed all `else: # Only for unit tests` fallback branches. Constructors now strictly require `config`. Tests pass `Config()` instances for defaults — the proper DI pattern.
-3. **`update_episode_metadata` API spec (AD-608).** Full body provided using ChromaDB get → merge → update pattern; bidirectional relation propagation defined; `_classify_relation` heuristic spelled out.
-4. **Frozen-dataclass mutation (AD-673, AD-604).** `dataclasses.replace()` used consistently for `AnchorFrame` and `RecallScore` updates. No more in-place mutation attempts on frozen types.
-5. **Event-bus subscription (AD-673).** Switched from undefined `runtime.subscribe()` to the existing `_add_event_listener_fn` callback pattern — matches AD-558 and BF-069 conventions.
-6. **Private-attribute access in wiring code (AD-571, AD-673).** Now flagged with explicit `# TODO(AD-571): Replace with public property once ProbOSRuntime exposes ...` comments + Builder note justifying it as acceptable in startup wiring.
+- [ad-680-expose-runtime-public-properties-review.md](ad-680-expose-runtime-public-properties-review.md)
+- [bf-246-llm-tier-recovery-deadlock-review.md](bf-246-llm-tier-recovery-deadlock-review.md)
+- [bf-247-tiered-knowledge-dag-summary-type-review.md](bf-247-tiered-knowledge-dag-summary-type-review.md)
+- [bf-248-anomaly-window-llm-event-field-review.md](bf-248-anomaly-window-llm-event-field-review.md)
 
-## Cross-Cutting Patterns Still Outstanding
+---
 
-These are minor and accepted, not blockers:
+## Cross-Cutting Patterns Observed
 
-- **`Field(default_factory=lambda: [...])` consistency (AD-574).** Bare `list[float] = [1.0, 6.0, ...]` default is technically safe in Pydantic v2 but inconsistent with the rest of the sweep.
-- **Defensive `getattr` lookups for in-prompt APIs (AD-608).** `_add_relation` uses `getattr(mem, 'update_episode_metadata', None)` even though `update_episode_metadata` is defined as a public method in the same prompt. Direct calls would be cleaner.
-- **`get_episode_metadata` body never specified (AD-608).** Public API is referenced but its body is not documented. Either spec it next to `update_episode_metadata` or accept the silent-degradation fallback.
-- **Future "expose runtime public properties" AD.** AD-571 and AD-673 both rely on private-attr access in wiring code. Worth a tracking AD to migrate `runtime._trust_network`, `runtime._emit_event`, `runtime._add_event_listener_fn`, etc. to public properties.
-- **StrEnum consistency (AD-602).** `QuestionType(str, Enum)` could be `StrEnum` to match AD-571 and AD-606.
+### 1. Verify-first discipline broke down for two of four prompts
+
+**AD-680** asserts the existence of five private attributes and `# TODO(AD-571)` /
+`# TODO(AD-673)` markers. Workspace grep shows:
+
+- `runtime._trust_network` — does not exist (already public as `runtime.trust_network`).
+- `runtime._router` — does not exist (already public as `runtime.hebbian_router`).
+- `runtime._add_event_listener_fn` — does not exist (already public as `runtime.add_event_listener`).
+- `# TODO(AD-571)` — zero matches in `src/`.
+- `# TODO(AD-673)` — zero matches in `src/`.
+
+**BF-248** describes a bug in `finalize.py:58` and proposes SEARCH/REPLACE blocks. The
+described buggy code does not exist in the current file — it was fixed out-of-band in a
+prior commit with no AD/BF record. The prompt cannot run.
+
+Both failures stem from the same root cause: the prompts were drafted from
+prior-state memory rather than against the live codebase. This is exactly the
+verify-first lesson from the user-memory file (`probos-architect-learnings.md`) and the
+copilot-instructions standing order on Build Prompt Verification.
+
+**Standing recommendation:** every prompt should include a "Verified against codebase"
+section near the top with grep evidence (paths + line numbers) for every concrete API,
+attribute, line number, and code fragment it references. The verification step is
+cheap; the cost of skipping it is two prompts that would have wasted Builder cycles.
+
+### 2. Defensive `getattr` for in-prompt APIs is creeping back in
+
+BF-246's `start_health_probe` initializes `self._health_probe_task` inside the start
+method, then `stop_health_probe` and `close()` use `getattr(self, "_health_probe_task", None)`
+fallbacks. This is the exact anti-pattern flagged in the user-memory:
+> "Defensive `getattr(obj, 'method', None)` for APIs defined in the same prompt."
+
+Fix at the source: initialize state in `__init__`, then references can be direct.
+
+### 3. Out-of-band fixes without an AD/BF record
+
+BF-248 reveals that AD-673's incorrect event-schema assertion was fixed without recording
+the change. The fix is good; the lack of a record meant a follow-up reviewer drafted a
+duplicate prompt. Recommend a one-line DECISIONS.md entry every time a prompt's spec is
+patched mid-flight.
+
+### 4. Stale prompts still on disk
+
+BF-248 describes a bug that no longer exists. Recommend a periodic sweep that diffs each
+active prompt's SEARCH blocks against the live files and archives any that no longer
+apply.
+
+---
 
 ## Recommended Build Order
 
-All 20 are ready. Suggested grouping by dependency layering:
+**Wave A — ship now:**
 
-**Wave A — Independent foundations** (can ship in parallel):
-- AD-444, 563, 564, 565, 573, 579a, 579b, 586, 602, 610
+- **BF-247** — Approved, low-risk, isolated fix. ~4 tests, two files.
 
-**Wave B — One-step dependencies:**
-- AD-571 (used by trust filtering downstream)
-- AD-572 (depends on EpisodeCluster API)
-- AD-574 (depends on Episode importance field)
-- AD-579c (depends on AD-579b validity fields)
-- AD-600 (depends on episode metadata)
+**Wave B — ship after one round of revisions:**
 
-**Wave C — Two-step dependencies:**
-- AD-604, 606, 608, 609, 673 (depend on episodic memory APIs and event bus)
+- **BF-246** — Conditional. Address Required items 1-5 (init bug, unused emit_fn,
+  AD-680 dependency, shutdown spec gap, config location) and ship.
+
+**Wave C — block on rework:**
+
+- **AD-680** — Rescope to the two real targets (`_emit_event`, `_emergence_metrics_engine`)
+  and re-author. Even better, **rename** `_emit_event` → `emit_event` instead of
+  exposing it via a property. Drop the trust_network / router / add_event_listener
+  workstreams entirely (the public surface already exists).
+
+**Wave D — disposition decision needed:**
+
+- **BF-248** — Either archive as already-resolved (cleaner) or rewrite as a small
+  cleanup AD that drops the dual-key fallback and the `"healthy"` legacy accept-state.
+
+---
 
 ## Notes
 
-- `Reviews/archive/` preserves prior sweep artifacts.
-- All 20 individual review files are in `Reviews/<stem>-review.md` form.
-- Author response time across this iteration was excellent — every Required item from the prior pass was addressed.
+- `Reviews/archive/` preserves the prior 20-prompt sweep and per-prompt review files.
+- All four current per-prompt review files are in `Reviews/<stem>-review.md` form.
+- AD-680 is structurally interesting because it sits at the boundary between "public API
+  hygiene" and "rename refactor." If the chosen path is the rename (recommended), the AD
+  should be reframed accordingly and a precedent recorded in DECISIONS.md.
+- BF-247's pattern (legacy `isinstance(x, str)` guard for type-evolved fields) is worth
+  documenting as a standard idiom — episode-shape evolution will keep happening, and a
+  consistent guard pattern reduces future bug surface.

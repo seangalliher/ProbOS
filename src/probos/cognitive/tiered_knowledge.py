@@ -215,9 +215,12 @@ class TieredKnowledgeLoader:
                 if isinstance(dag, str):
                     summary_text = dag
                 elif isinstance(dag, dict):
-                    summary_text = dag.get("summary", "") or str(dag.get("faithfulness_score", ""))
-                    if not summary_text:
-                        summary_text = getattr(episode, "reflection", "") or ""
+                    # BF-247: Extract readable summary; fall back to reflection
+                    summary_text = (
+                        dag.get("summary", "")
+                        or getattr(episode, "reflection", "")
+                        or ""
+                    )
                 else:
                     summary_text = ""
                 if department and hasattr(episode, "agent_ids"):
