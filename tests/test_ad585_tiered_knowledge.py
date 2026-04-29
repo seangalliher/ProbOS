@@ -189,6 +189,36 @@ class TestContextualLoading:
         assert len(result) >= 1
 
     @pytest.mark.asyncio
+    async def test_load_category_episodes_dict_dag_summary(self) -> None:
+        source = _FakeKnowledgeSource(
+            episodes=[
+                _FakeEpisode(
+                    dag_summary={"summary": "test observation"},
+                    reflection="fallback reflection",
+                ),
+            ],
+        )
+        config = KnowledgeLoadingConfig(intent_knowledge_map={"custom_intent": ["episodes"]})
+        loader = _make_loader(source, config=config)
+        result = await loader.load_contextual("custom_intent")
+        assert any("test observation" in snippet for snippet in result)
+
+    @pytest.mark.asyncio
+    async def test_load_category_episodes_empty_dag_summary(self) -> None:
+        source = _FakeKnowledgeSource(
+            episodes=[
+                _FakeEpisode(
+                    dag_summary={},
+                    reflection="fallback reflection",
+                ),
+            ],
+        )
+        config = KnowledgeLoadingConfig(intent_knowledge_map={"custom_intent": ["episodes"]})
+        loader = _make_loader(source, config=config)
+        result = await loader.load_contextual("custom_intent")
+        assert any("fallback reflection" in snippet for snippet in result)
+
+    @pytest.mark.asyncio
     async def test_load_contextual_no_mapping_returns_empty(self) -> None:
         loader = _make_loader()
         result = await loader.load_contextual("unknown_intent_xyz")
@@ -239,6 +269,34 @@ class TestOnDemandLoading:
         loader = _make_loader(source)
         result = await loader.load_on_demand("security")
         assert len(result) >= 1
+
+    @pytest.mark.asyncio
+    async def test_on_demand_dict_dag_summary(self) -> None:
+        source = _FakeKnowledgeSource(
+            episodes=[
+                _FakeEpisode(
+                    dag_summary={"summary": "dict summary present"},
+                    reflection="Security observation with dict dag summary",
+                ),
+            ],
+        )
+        loader = _make_loader(source)
+        result = await loader.load_on_demand("security")
+        assert any("Security observation" in snippet for snippet in result)
+
+    @pytest.mark.asyncio
+    async def test_on_demand_no_reflection_uses_dag_summary(self) -> None:
+        source = _FakeKnowledgeSource(
+            episodes=[
+                _FakeEpisode(
+                    dag_summary={"summary": "test observation from dag"},
+                    reflection="",
+                ),
+            ],
+        )
+        loader = _make_loader(source)
+        result = await loader.load_on_demand("test")
+        assert any("test observation from dag" in snippet for snippet in result)
 
     @pytest.mark.asyncio
     async def test_load_on_demand_no_match(self) -> None:

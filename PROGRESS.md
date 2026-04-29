@@ -32,6 +32,8 @@ AD-594 Crew Consultation Protocol — CLOSED. Added ConsultationProtocol request
 
 AD-600 Transactive Memory — CLOSED. Added in-memory ExpertiseDirectory with agent topic profiles, confidence decay, dream-cycle cluster profile updates, ExpertiseConfig, OracleService expertise routing across top-k agent shards, and startup/runtime wiring into cognitive services and dreaming. 14 new tests; focused AD-600 gate passed. Oracle regression suite passed 29 tests. Full xdist gate reported 9865 passing/14 skipped; 115 worker-crash nodeids passed serial triage.
 
+BF-247 CLOSED. TieredKnowledgeLoader dag_summary dict regression coverage added after production fix in 8be47d5. Added 4 tests covering contextual dict summaries, empty dict fallback to reflection, on-demand dict episodes, and no-reflection dag_summary fallback. Focused BF-247 gate passed: 36 tests.
+
 BF-249 CLOSED. Update AD-666 sensorium tests for 10K threshold after BF-247 raised SensoriumConfig.token_budget_warning from 6000 to 10000. Follow-up to 8be47d5. 2 assertions updated; 14 Sensorium tests passed.
 
 BF-250 OPEN. TestPerAgentCooldown.test_per_agent_cooldown_used_in_cycle hangs under pytest-timeout on Windows. Quarantined. Root cause TBD — likely interaction between _run_cycle's MagicMock-driven async flow and pytest-timeout's Windows event-loop cancellation. Investigate after the BF-247/BF-246/AD-680 sweep lands.
