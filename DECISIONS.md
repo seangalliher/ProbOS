@@ -178,6 +178,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** Episodes were effectively write-once after storage, leaving older memories without later-established context or explicit inter-episode relationships. A bounded no-LLM evolver lets storage create a denser recall graph while preserving existing ChromaDB-backed metadata APIs.
 **Status:** Implemented
 
+### AD-609: Multi-Faceted Distillation
+
+**Date:** 2026-04-29
+**Decision:** FailureDistiller extracts structured failure signals (departments, agents, triggers) from failure-dominant clusters and builds enriched negative procedures. Comparative analysis identifies differentiating factors between success and failure clusters on shared intents. No LLM dependency; analysis is purely structural metadata analysis. Results are tracked in DreamReport.
+**Rationale:** Dream consolidation captured success procedures and negative procedures, but did not expose structural failure signals or compare success and failure clusters for the same intent. Distillation makes those patterns observable without changing the existing LLM extraction flow.
+**Status:** Implemented
+
 ### AD-610: Utility-Based Storage Gating
 
 **Date:** 2026-04-28

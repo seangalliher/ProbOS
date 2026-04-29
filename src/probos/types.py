@@ -487,6 +487,8 @@ class DreamReport:
     procedures: list[Any] = field(default_factory=list)  # AD-532: Procedure objects
     procedures_evolved: int = 0  # AD-532b
     negative_procedures_extracted: int = 0  # AD-532c
+    failure_patterns_extracted: int = 0  # AD-609
+    comparative_insights: int = 0  # AD-609
     proactive_evolutions: int = 0  # AD-532e: procedures evolved by proactive scan
     reactive_flags: int = 0        # AD-532e: extraction candidates flagged by reactive trigger
     fallback_evolutions: int = 0   # AD-534b: procedures evolved from fallback learning evidence

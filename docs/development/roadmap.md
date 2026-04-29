@@ -5283,9 +5283,9 @@ MCP Apps is the convergence standard — adopted by Claude Desktop, VS Code GitH
 
 ---
 
-### Multi-Faceted Distillation — Failure & Comparative Analysis (AD-609) *(planned, OSS)*
+### Multi-Faceted Distillation — Failure & Comparative Analysis (AD-609) *(Complete, OSS)*
 
-**AD-609: Multi-Faceted Distillation — Failure Pattern & Comparative Insight Extraction** *(planned, OSS, depends: AD-532 Procedure Extraction, AD-567d Dream Consolidation)* — Extend dream consolidation to systematically extract failure patterns and comparative insights alongside success patterns. Currently Cognitive JIT (AD-532) captures how to do things (success procedures) but does not extract why things failed or how alternatives compared.
+**AD-609: Multi-Faceted Distillation — Failure Pattern & Comparative Insight Extraction** *(Complete, OSS, depends: AD-532 Procedure Extraction, AD-567d Dream Consolidation)* — Extend dream consolidation to systematically extract failure patterns and comparative insights alongside success patterns. Currently Cognitive JIT (AD-532) captures how to do things (success procedures) but does not extract why things failed or how alternatives compared.
 
 **Problem statement:** Learning from failure requires explicit failure-pattern extraction. An agent that encounters a circuit breaker trip, trust cascade, or negative outcome has no structured way to store "this approach failed because..." for future reference. Comparative insights ("approach A worked for X but not Y, approach B worked for Y") are never extracted, even when episodes contain natural A/B patterns.
 

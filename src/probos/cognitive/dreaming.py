@@ -86,6 +86,7 @@ class DreamingEngine:
         episodic_procedural_bridge: Any = None,  # AD-572: cross-cycle procedural bridge
         reconsolidation_scheduler: Any = None,  # AD-574: spaced review scheduling
         expertise_directory: Any = None,  # AD-600: transactive memory
+        failure_distiller: Any = None,  # AD-609: failure and comparative analysis
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -115,6 +116,7 @@ class DreamingEngine:
         self._episodic_procedural_bridge = episodic_procedural_bridge  # AD-572
         self._reconsolidation_scheduler = reconsolidation_scheduler  # AD-574
         self._expertise_directory = expertise_directory  # AD-600
+        self._failure_distiller = failure_distiller  # AD-609
         self._confidence_tracker: Any = None  # AD-444
         self._knowledge_linter: Any = None  # AD-563
         self._quality_trigger: Any = None  # AD-564
@@ -590,6 +592,45 @@ class DreamingEngine:
                         "Negative extraction failed for cluster %s (non-critical): %s",
                         cluster.cluster_id[:8], e,
                     )
+
+        # Step 7c-2: Failure distillation and comparative analysis (AD-609)
+        failure_patterns_extracted = 0
+        comparative_insights_count = 0
+        if self._failure_distiller and clusters:
+            try:
+                success_clusters = [cluster for cluster in clusters if cluster.is_success_dominant]
+                failure_clusters_list = [cluster for cluster in clusters if cluster.is_failure_dominant]
+
+                failure_procedures = self._failure_distiller.distill_failure_patterns(
+                    failure_clusters_list
+                )
+                failure_patterns_extracted = len(failure_procedures)
+                if failure_procedures:
+                    procedures.extend(failure_procedures)
+                    if self._procedure_store:
+                        for failure_procedure in failure_procedures:
+                            try:
+                                await self._procedure_store.save(failure_procedure)
+                            except Exception:
+                                logger.debug(
+                                    "AD-609: Failed to persist failure procedure; continuing dream cycle",
+                                    exc_info=True,
+                                )
+
+                comparative_results = self._failure_distiller.distill_comparative(
+                    success_clusters,
+                    failure_clusters_list,
+                )
+                comparative_insights_count = len(comparative_results)
+
+                if failure_patterns_extracted or comparative_insights_count:
+                    logger.debug(
+                        "Step 7c-2: Distilled %d failure patterns and %d comparative insights",
+                        failure_patterns_extracted,
+                        comparative_insights_count,
+                    )
+            except Exception:
+                logger.debug("Step 7c-2 failure distillation failed (non-critical)", exc_info=True)
 
         # Step 7d: Fallback learning (AD-534b)
         fallback_stats: dict[str, Any] = {"evolved": 0, "processed": 0}
@@ -1411,6 +1452,8 @@ class DreamingEngine:
                 partial_report = DreamReport(
                     procedures_extracted=procedures_extracted,
                     procedures_evolved=procedures_evolved,
+                    failure_patterns_extracted=failure_patterns_extracted,
+                    comparative_insights=comparative_insights_count,
                     gaps_classified=gaps_classified,
                     emergence_capacity=emergence_capacity,
                     notebook_consolidations=notebook_consolidations,
@@ -1444,6 +1487,8 @@ class DreamingEngine:
             bridged_procedures=bridged_procedures,
             procedures_evolved=procedures_evolved,
             negative_procedures_extracted=negative_procedures_extracted,
+            failure_patterns_extracted=failure_patterns_extracted,
+            comparative_insights=comparative_insights_count,
             fallback_evolutions=fallback_stats.get("evolved", 0),
             fallback_events_processed=fallback_stats.get("processed", 0),
             gaps_predicted=gaps_predicted,

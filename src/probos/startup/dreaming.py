@@ -145,6 +145,22 @@ async def init_dreaming(
             episodic_memory=episodic_memory,
         )
         logger.info("AD-574: ReconsolidationScheduler initialized")
+    # AD-609: Failure distiller
+    failure_distiller = None
+    if config.distillation.enabled:
+        try:
+            from probos.cognitive.failure_distiller import FailureDistiller as _FailureDistiller
+
+            failure_distiller = _FailureDistiller(
+                config=config.distillation,
+                procedure_store=procedure_store,
+            )
+            logger.info("AD-609: FailureDistiller initialized")
+        except Exception as exc:
+            logger.warning(
+                "AD-609: FailureDistiller failed to start: %s; continuing without structural distillation",
+                exc,
+            )
     if episodic_memory:
         dream_cfg = config.dreaming
         dreaming_engine = DreamingEngine(
@@ -172,6 +188,7 @@ async def init_dreaming(
             episodic_procedural_bridge=procedural_bridge,
             reconsolidation_scheduler=reconsolidation_scheduler,
             expertise_directory=expertise_directory,
+            failure_distiller=failure_distiller,
         )
         if reconsolidation_scheduler and hasattr(episodic_memory, "set_reconsolidation_scheduler"):
             episodic_memory.set_reconsolidation_scheduler(reconsolidation_scheduler)

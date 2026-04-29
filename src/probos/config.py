@@ -890,6 +890,14 @@ class ThoughtStoreConfig(BaseModel):
     max_thoughts_per_cycle: int = 3
 
 
+class DistillationConfig(BaseModel):
+    """AD-609: Multi-faceted distillation configuration."""
+
+    enabled: bool = True
+    min_failure_cluster_size: int = 3
+    comparative_enabled: bool = True
+
+
 class MetabolismConfig(BaseModel):
     """AD-670: Working memory metabolism — active lifecycle management."""
 
@@ -1523,6 +1531,7 @@ class SystemConfig(BaseModel):
     spreading_activation: SpreadingActivationConfig = SpreadingActivationConfig()  # AD-604
     thought_store: ThoughtStoreConfig = ThoughtStoreConfig()  # AD-606
     retroactive: RetroactiveConfig = RetroactiveConfig()  # AD-608
+    distillation: DistillationConfig = DistillationConfig()  # AD-609
     reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
 
 
