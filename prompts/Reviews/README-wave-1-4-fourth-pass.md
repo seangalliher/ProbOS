@@ -20,6 +20,31 @@ The 18 prompts not in this commit retain their third-pass verdicts.
 
 ---
 
+## Final Status (post-review reconciliation)
+
+After author confirmation, all remaining ⚠️ Conditional verdicts on this wave were
+resolved as **false positives** caused by the reviewer grepping the pre-build state
+rather than recognizing that each prompt's own Section-2 SEARCH/REPLACE introduces
+the "missing" entity:
+
+| AD | Original Conditional Reason | Resolution |
+|---|---|---|
+| 446 | Missing `EventType.COMPENSATION_TRIGGERED` | Prompt Section 2 already adds it. False positive. |
+| 448 | Missing `EventType.TOOL_INVOKED` | Prompt Section 2 already adds it. False positive. |
+| 465 | `model_validator` vs `field_validator` | `model_validator(mode="after")` is valid Pydantic v2; original note was style preference, not correctness. False positive. |
+| 470 | Defaultdict reassignment | Already downgraded to Won't Fix in Pass 3. Defaultdict semantics preserved on next missing-key access. |
+| 524 | OracleService.archive_store decision | Prompt Section 3 SEARCH/REPLACE adds the parameter. The prompt IS the migration. False positive. |
+
+**Final wave 1-4 status: 19 buildable + 1 sequenced hold (AD-678 on AD-677).**
+
+### Standing review-template lesson
+
+When a prompt's own Section 2/3 SEARCH/REPLACE introduces an entity the reviewer
+greps for and finds missing, that's not a Required finding — the prompt is the
+delta, not a description of post-build state. Update the review-criteria checklist
+(`prompts/review-criteria.md`) to call out this anti-pattern explicitly so future
+passes don't re-flag it.
+
 ## Updated Wave Readiness Tracker
 
 | AD | Status | Action Required |

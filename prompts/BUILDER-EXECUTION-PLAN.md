@@ -1,10 +1,12 @@
-# Builder Execution Plan — 2026-04-29 Sweep
+# Builder Execution Plan — Wave 1-4 (2026-04-29)
 
 **Date:** 2026-04-29
 **Author:** Architect
-**Mode:** Continuous build (no inter-prompt pause)
-**Active prompts:** 3 (BF-247, BF-246, AD-680)
-**Estimated tests added:** ~17 (4 + 9 + 4)
+**Mode:** Continuous build (one prompt = one commit, no inter-prompt pause)
+**Active prompts:** 19 buildable + 1 sequenced hold (AD-678 on AD-677)
+**Estimated tests added:** ~150–200 across the wave
+
+This plan supersedes `prompts/archive/BUILDER-EXECUTION-PLAN-bf247-bf246-ad680.md` (completed sweep).
 
 ---
 
@@ -12,190 +14,137 @@
 
 Read these in full **before** writing any code:
 
-1. `.github/copilot-instructions.md` — engineering principles, testing standards,
-   logging standards, type-annotation rules. Every commit must comply.
-2. `prompts/Reviews/README-2026-04-29-third-pass.md` — verdict and build order context.
-3. The three prompt files (in build order):
-   - `prompts/bf-247-tiered-knowledge-dag-summary-type.md`
-   - `prompts/bf-246-llm-tier-recovery-deadlock.md`
-   - `prompts/ad-680-expose-runtime-public-properties.md`
-4. The corresponding per-prompt review files in `prompts/Reviews/` — they call out
-   nits and edge cases the prompts themselves don't repeat.
+1. `.github/copilot-instructions.md` — engineering principles, testing standards, logging standards, type-annotation rules. Every commit must comply.
+2. `prompts/Reviews/README-wave-1-4-fourth-pass.md` — final wave verdicts and the false-positive resolution. **Do not re-flag the items listed there as buildable; their fixes are inside the prompts.**
+3. The 20 wave 1-4 prompt files at `prompts/ad-*.md`.
+4. The corresponding per-prompt review files at `prompts/Reviews/ad-*-review.md` — each has a "Re-review" section with non-blocking nits to apply at code-review time.
+
+---
+
+## Standing Rules (carry forward from prior sweep)
+
+- **Working tree:** if you encounter tracked-file modifications you didn't make, surface them. Do NOT `git stash` / `git reset --hard`. If they are clearly architect-authored prompt/review/doc artifacts, commit them on the architect's behalf with a descriptive message and continue.
+- **Test gate:** use `pytest tests/ -q -n 0` (serial). The `-n auto` xdist run on Windows exhibits worker-crash loops on this codebase. Serial baseline is the verified-stable mode. Per-prompt test files run in seconds even serially.
+- **Per-commit gate failure interpretation:** the only failures that block are real, reproducible-on-`-n 0` failures *in files you changed*. xdist-only `TestScoutDataDirectory` failures and similar concurrency-driven flakes are environmental and accepted.
+- **Quarantine threshold:** if you hit a pre-existing serial failure unrelated to your changes, file a BF, quarantine, and continue. Surface only if more than 3 quarantines accumulate during a single sweep.
+- **Pre-build SEARCH/REPLACE:** every prompt is its own delta. Do not assume `events.py`, `governance/`, or any file matches what the prompt asserts will exist *after* its SEARCH/REPLACE. The prompt IS the migration.
 
 ---
 
 ## Pre-flight Checklist
 
-Run these once before starting:
-
 ```pwsh
-# Working tree clean (no tracked-file modifications). Untracked runtime artifacts
-# (data/, *.log, etc.) are OK.
-git status --short
-
-# Full test gate is currently green
-d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n auto
+git status --short                                         # must be empty (or only untracked runtime artifacts)
+d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 0         # green baseline; record test count
 ```
 
-If either check fails, stop and surface the failure. Do **not** proceed onto a dirty
-working tree or a red baseline.
-
-Record the baseline test count from the pytest summary line — you'll compare against
-it after each prompt.
+Record the baseline. After each prompt, expect the test count to grow by the prompt's documented test count.
 
 ---
 
-## Build Order and Per-Prompt Workflow
+## Build Order and Dependency DAG
 
-Execute in this order. **Do not skip ahead.** Each prompt produces exactly one commit.
+The wave sequences into 4 build groups. Each prompt produces exactly one commit. Prompts within a group can run in any order; prompts in later groups must wait for earlier groups to land.
 
-### Wave A
+### Group 1 — Independent foundations (8 prompts, parallel-safe within the group)
 
-#### 1. BF-247 — TieredKnowledgeLoader Tests
+These have no in-wave dependencies. Build in any order.
 
-- **Risk:** Lowest. Test-only follow-up; production fix already landed in `8be47d5`.
-- **Files touched:** `tests/test_ad585_tiered_knowledge.py`, `PROGRESS.md`,
-  `docs/development/roadmap.md`.
-- **Procedure:**
-  1. Read `tests/test_ad585_tiered_knowledge.py` to understand the existing
-     `_FakeEpisode` and `_FakeKnowledgeSource` fixtures.
-  2. Add the 4 tests listed in the prompt.
-  3. Run `pytest tests/test_ad585_tiered_knowledge.py -v -n 0` — verify all 32+4 pass.
-  4. Run `pytest tests/ -q -n auto` — verify the gate is green.
-  5. Update PROGRESS.md and roadmap.md per the Tracking section.
-  6. Write build report `prompts/build-reports/bf-247-tiered-knowledge-build.md`.
-  7. Commit: `BF-247: TieredKnowledgeLoader dag_summary tests`.
+1. **AD-447** — Phase Gates for PoolGroup
+2. **AD-489** — Federation Code of Conduct
+3. **AD-490** — Agent Wiring Security Logs
+4. **AD-461** — Ship's Telemetry
+5. **AD-465** — Containerized Deployment
+6. **AD-566i** — Role Skill Template Expansion
+7. **AD-566f** — Qualification → Skill Bridge
+8. **AD-679** — Selective Disclosure Routing
 
-#### 2. BF-246 — LLM Health Probe
+### Group 2 — Governance substrate (3 prompts, sequenced)
 
-- **Risk:** Medium. New background async loop; touches startup wiring.
-- **Files touched:** `src/probos/cognitive/llm_client.py`,
-  `src/probos/config.py`, `src/probos/startup/finalize.py`,
-  `tests/test_bf246_llm_health_probe.py`, PROGRESS.md, roadmap.md.
-- **Procedure:**
-  1. Read each section of the prompt in order. The Steps in Section 1 are sequential
-     (1a → 1e). Apply them one at a time, not all at once.
-  2. **Critical:** initialize `_health_probe_task` and `_health_probe_emit` in
-     `__init__` (Step 1a). Do not initialize them inside `start_health_probe`.
-  3. Use `runtime.emit_event` (public method) in Section 3, not `runtime._emit_event`.
-  4. The `field_validator` in Section 2 must reject values < 5.0.
-  5. Test 9 instantiates `SystemConfig` — match the existing pattern in
-     `tests/test_config.py` (minimal valid config, not bare `SystemConfig()`).
-  6. Run `pytest tests/test_bf246_llm_health_probe.py -v -n 0` — all 9 pass.
-  7. Run `pytest tests/ -q -n auto` — gate green.
-  8. Update PROGRESS.md, roadmap.md per Tracking.
-  9. Build report, commit: `BF-246: LLM tier recovery health probe`.
+`src/probos/governance/` does not yet exist. **AD-676 owns directory creation.**
 
-### Wave B
+1. **AD-676** — Action Risk Tiers — creates `src/probos/governance/__init__.py` (empty) before adding `governance/risk_tiers.py`. Verify the directory does not pre-exist; if AD-445 raced ahead, skip the `__init__.py` step.
+2. **AD-445** — Decision Queue & Pause/Resume — references existing `governance/`.
+3. **AD-446** — Compensation & Recovery Pattern — depends on AD-445's DecisionQueue wiring.
 
-#### 3. AD-680 — Public Runtime API Promotion
+### Group 3 — Tool + Counselor + Routing (4 prompts, parallel-safe within the group)
 
-- **Risk:** Highest blast radius. Migration touches ~8 files and ~70 call sites.
-- **Files touched:** `src/probos/runtime.py`, `src/probos/protocols.py`, plus the 8
-  files in Section 3 and the 4 files in Section 4 of the prompt, plus
-  `tests/test_ad680_public_runtime_api.py`, PROGRESS.md, roadmap.md, DECISIONS.md.
-- **Procedure:**
-  1. **Section 1 first** — widen the `emit_event` type hint on both `runtime.py` and
-     `protocols.py`. Run the gate before continuing — this should be a no-op
-     behaviorally.
-  2. **Section 2 next** — add the `emergence_metrics_engine` property. Run the gate.
-  3. **Section 3 — call-site migration.** Before editing, run the grep yourself:
+1. **AD-438** — Ontology-Based Task Routing
+2. **AD-448** — Wrapped Tool Executor
+3. **AD-470** — IntentBus Enhancements
+4. **AD-561** — Intervention Classification
 
-     ```pwsh
-     # Find all external _emit_event accesses
-     d:/ProbOS/.venv/Scripts/python.exe -c "import re,pathlib; [print(f'{p}:{i+1}: {l.rstrip()}') for p in pathlib.Path('src/probos').rglob('*.py') if p.name != 'runtime.py' for i,l in enumerate(p.read_text(encoding='utf-8').splitlines()) if re.search(r'(runtime|rt|self\._runtime)\._emit_event', l)]"
-     ```
+### Group 4 — Northstar substrate + memory (5 prompts, sequenced where noted)
 
-     Confirm the file count and approximate counts match the prompt. Migrate
-     **one file at a time**, running the relevant test file after each. Use
-     `multi_replace_string_in_file` only within a single file, not across files.
+1. **AD-674** — Graduated Initiative Scale (must land first; introduces `InitiativeLevel` and `resolve_initiative_level()`)
+2. **AD-675** — Uncertainty-Calibrated Initiative (depends on AD-674)
+3. **AD-677** — Context Provenance Metadata
+4. **AD-678** — Memory Transparency Mechanism (depends on AD-677's `ProvenanceTag`/`ProvenanceEnvelope`)
+5. **AD-524** — Ship's Archive (independent within group)
 
-     **Critical disambiguation:** the prompt's "Do NOT touch" subsection is
-     binding. `self._emit_event` on `TrustNetwork`, `CognitiveQueue`,
-     `WardRoomService`, etc. are unrelated callback attributes. They must NOT be
-     migrated. The grep above includes the `runtime|rt|self\._runtime` prefix
-     specifically to avoid those false positives — preserve that prefix when
-     matching.
+---
 
-  4. **Section 4 — `_emergence_metrics_engine` migration.** 8 sites in 4 files.
-     Keep the `getattr(..., None)` pattern; only the attribute name changes.
-  5. Add the 4 tests in `tests/test_ad680_public_runtime_api.py`. Test 4 is the
-     regression guard — it scans `src/probos/` (excluding `runtime.py`) for
-     `runtime\._emit_event|rt\._emit_event|self\._runtime\._emit_event` and asserts
-     zero matches. After Section 3 is complete, this should pass.
-  6. Run `pytest tests/test_ad680_public_runtime_api.py -v -n 0` — all 4 pass.
-  7. Run `pytest tests/ -q -n auto` — gate green. This is the test that proves the
-     bulk migration didn't break anything.
-  8. Update PROGRESS.md, roadmap.md, **and DECISIONS.md** (record the
-     "no deprecation warning, one-shot migration" precedent per the prompt's
-     Tracking section).
-  9. Build report, commit: `AD-680: Promote runtime emit_event and emergence_metrics_engine to public API`.
+## Per-Prompt Workflow
+
+For each prompt, repeat:
+
+1. **Read the prompt + its review file.** The review's Re-review section calls out small inline cleanups (e.g., redundant `import time` in AD-561, `hasattr(assessment, 'trigger')` removal). Apply those at the same time as the main edits.
+2. **Verify-first.** Before editing, grep the live codebase for the prompt's named anchors (class names, method signatures, line ranges). Confirm SEARCH blocks match. If a SEARCH block doesn't match the live code, STOP and surface — do not improvise.
+3. **Implement section by section** in the order the prompt specifies. Some prompts (notably AD-674, AD-470) have inter-section dependencies (the Section 2 enum/import must land before Section 3 code references it).
+4. **Run the prompt's own tests** in serial: `pytest tests/test_<adNNN>_*.py -v -n 0`. All must pass before continuing.
+5. **Run the focused gate** for nearby files (the prompt's adjacent test areas) in serial.
+6. **Run the full gate** at `pytest tests/ -q -n 0`. Test count must be non-decreasing vs baseline + previously-added tests in this sweep.
+7. **Update trackers** as the prompt's Tracking section specifies (PROGRESS.md, roadmap.md, DECISIONS.md where called out).
+8. **Write a build report** at `prompts/build-reports/<ad-NNN>-build.md` matching the format in `prompts/build-reports/archive/`.
+9. **Commit** with format: `AD-NNN: <one-line summary>`.
+
+After a Group completes, run the full gate one extra time as a Group integration check before starting the next Group.
 
 ---
 
 ## Per-Commit Quality Gates
 
-Every commit must pass these checks before you advance to the next prompt:
+Every commit must pass:
 
-- `pytest tests/ -q -n auto` exits 0 (apply standard xdist worker-crash triage rule
-  from the user-memory: re-run any failing files in serial with `-n 0`; only real
-  failures block the gate).
-- Test count is **non-decreasing** vs the baseline you recorded.
-- No new files created outside what the prompt specifies.
+- `pytest tests/ -q -n 0` exits 0 (or only environmental flakes — judge per the standing rule).
+- Test count is non-decreasing vs the running baseline.
+- No new files outside what the prompt specifies (especially: no test scaffolding committed under `data/` or `tools/`).
 - No `print()` calls added (use `logger`).
 - All new public methods have type annotations.
 - All new log messages have context (what failed + what next).
-- `git status` shows only the files the prompt's Files Changed section anticipates.
-
-If any of these fail, **stop**, fix, re-run the gate, then commit. Do not move on
-with a dirty gate.
+- New `EventType` enum values are present in `events.py` exactly where the prompt's SEARCH/REPLACE places them — not duplicated, not in a different position.
+- `git status` shows only the files the prompt's "Files Changed" anticipates (modulo PROGRESS.md / roadmap.md / DECISIONS.md updates).
 
 ---
 
 ## Hard-Stop Conditions
 
-Stop the continuous build and report back to the architect immediately if any of
-these occur:
+Stop and surface to the architect immediately if any of these occur:
 
-1. **Phantom API in implementation** — the prompt asserts a method exists, but grep
-   shows it does not. Do not invent the method. Stop and surface.
-2. **Architectural change required** — the work cannot be completed without
-   modifying `BaseAgent`, `IntentMessage`, `RuntimeProtocol`, or any public
-   protocol contract beyond what the prompt explicitly specifies.
-3. **Test gate goes red and the failure is not in your changed files.** This means
-   a flaky test or environmental issue — re-run once in serial; if it persists,
-   stop.
-4. **Working tree contains tracked-file modifications you didn't make** — do not
-   `git stash` or `git reset --hard` to "clean up." Stop and surface.
-5. **Existing test assertions need to change in a way the prompt didn't anticipate.**
-   This is a sign the prompt's "What This Does NOT Change" section is wrong. Stop.
-
-The user-memory captures the lesson: phantom APIs and architectural changes are
-the two real hard-stop categories. Anything else is normal build friction — work
-through it.
+1. **Phantom API in implementation** — a method/attribute the prompt references doesn't exist AND isn't introduced by the prompt itself. Do not invent it.
+2. **Architectural change required** — work cannot proceed without modifying `BaseAgent`, `IntentMessage`, `RuntimeProtocol`, or any public protocol contract beyond what the prompt specifies.
+3. **Test gate persistently red** on a file you didn't change, reproducible under `-n 0`. Re-run once; if it persists, stop.
+4. **Working tree contains tracked-file modifications you didn't make and can't identify as architect artifacts.** Do not destroy.
+5. **Existing test assertions need changes the prompt's "What This Does NOT Change" section didn't anticipate.** Spec gap — stop.
+6. **More than 3 pre-existing test quarantines accumulate during the sweep.** That's a baseline hygiene issue; surface for triage.
 
 ---
 
-## Anti-Patterns to Avoid
+## Wave-Specific Reminders
 
-Per `prompts/Reviews/` cross-cutting findings:
-
-- **Defensive `getattr(obj, "method", None)` for APIs defined in the same prompt.**
-  If you just defined the method, call it directly.
-- **`else: # Only for unit tests` fallback branches in constructors.** Tests pass
-  real `Config()` instances. No fallback.
-- **Bare mutable defaults in Pydantic models.** Use `Field(default_factory=...)`.
-- **Frozen dataclass field ordering.** Defaulted fields must come after non-defaulted.
-- **Private-attr access in wiring code.** AD-680 is in this batch specifically to
-  eliminate this pattern. Don't reintroduce it elsewhere.
+- **AD-465** uses `@model_validator(mode="after")`. That is valid Pydantic v2 — do NOT change it to `@field_validator` despite an early review note. Confirmed correct.
+- **AD-524** Section 3 adds the `archive_store` parameter to `OracleService.__init__` itself; the SEARCH/REPLACE will insert the parameter, then wiring code uses it. The "phantom parameter" framing in early reviews was wrong direction.
+- **AD-446 / AD-448** include their `EventType` additions in their own Section 2. Do not assume the events are missing — apply the prompt as-is.
+- **AD-674 → AD-675:** AD-674 must land before AD-675 imports `InitiativeLevel`. Build order enforces this.
+- **AD-677 → AD-678:** same pattern with `ProvenanceTag` / `ProvenanceEnvelope`.
+- **`hasattr(runtime, 'emit_event')` guards in non-revised prompts** are dead code post-AD-680. Strip them when you encounter them in this wave's prompts. AD-561 also has a redundant `import time` instruction (already imported at counselor.py:14) — skip.
+- **`governance/__init__.py`:** create only if it doesn't already exist. AD-676 owns this; AD-445 has fallback instructions.
 
 ---
 
 ## Build Reports
 
-After each commit, write a build report at
-`prompts/build-reports/<prompt-stem>-build.md` matching the existing format in
-`prompts/build-reports/archive/`:
+After each commit, write `prompts/build-reports/ad-NNN-build.md` with:
 
 - Title, prompt path, builder identity, date, status
 - Files Changed
@@ -204,35 +153,28 @@ After each commit, write a build report at
 - Test results (commands run, pass/fail counts)
 - Any deviations from the prompt and why
 
-These reports are read by the architect to verify the prompt was implemented
-faithfully.
+Match the existing format in `prompts/build-reports/archive/`.
 
 ---
 
 ## Post-Sweep
 
-After all three prompts are committed:
+After the 19 prompts are committed:
 
-1. Run the full gate one more time: `pytest tests/ -q -n auto`.
-2. Confirm the test count grew by ~17 (4 + 9 + 4 — exact may vary).
-3. Move all three completed prompts to `prompts/archive/` (matching the convention
-   used for prior closed prompts).
-4. Move the per-prompt review files from `prompts/Reviews/` to
-   `prompts/Reviews/archive/`.
-5. Surface a final summary message: which commits landed, final test count, any
-   deferred nits from the per-prompt reviews.
+1. Run the full gate one final time: `pytest tests/ -q -n 0`.
+2. Confirm the test count grew by the documented total.
+3. Move all 19 completed prompts to `prompts/archive/` (matches prior sweep convention).
+4. Move per-prompt review files to `prompts/Reviews/archive/`.
+5. Surface a final summary message: commit hashes, final test count vs baseline, any deferred nits, and confirmation that AD-678 remains on hold pending AD-677 (now buildable in this wave but tracked as the lone sequenced item).
+6. Push: `git push`.
 
 ---
 
-## Reference: User-Memory Lessons Applied to This Sweep
+## Reference: Standing Lessons (carry forward)
 
-- "Continuous build mode (one AD = one commit, no inter-AD pause) works for batches
-  of ~20 ADs." → 3 prompts is well under 20; continuous mode is appropriate.
-- "Don't use `-x` with xdist — a single artifact kills the whole gate signal." →
-  Use `-n auto` for full gate, `-n 0` only for triaging individual failing files.
-- "Worker-crash failures from concurrent heavy-fixture boots are normal noise —
-  re-run failing files in serial to triage." → Apply this rule when interpreting
-  the gate.
-- "Pre-flight every prompt against the actual codebase before the final approval
-  pass." → All three prompts have a "Verified Against Codebase" section. Trust
-  it but run your own grep for Section 3 of AD-680 (the largest migration).
+- One prompt = one commit. No batched commits.
+- Continuous-build mode works for batches up to ~20.
+- xdist on Windows is unreliable for this codebase; use `-n 0` for the gate.
+- The "Verified Against Codebase" section in each prompt is binding — trust it for the post-build state.
+- Minor architect-authored modifications under `prompts/` are routine; commit on the architect's behalf and continue.
+- Do not re-litigate the false-positive items listed in `README-wave-1-4-fourth-pass.md` § "Final Status."
