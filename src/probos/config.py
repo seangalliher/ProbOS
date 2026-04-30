@@ -1117,6 +1117,14 @@ class EarnedAgencyConfig(BaseModel):
     enabled: bool = False
 
 
+class RiskTierConfig(BaseModel):
+    """Action Risk Tier configuration (AD-676)."""
+
+    enabled: bool = True
+    elevated_min_trust: float = 0.0
+    critical_min_trust: float = 0.70
+
+
 class DutyDefinition(BaseModel):
     """A single recurring duty for a crew agent type."""
     duty_id: str                # e.g., "scout_report"
@@ -1550,6 +1558,7 @@ class SystemConfig(BaseModel):
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571
+    risk_tiers: RiskTierConfig = RiskTierConfig()  # AD-676
     procedural_bridge: BridgeConfig = BridgeConfig()  # AD-572
     nats: NatsConfig = NatsConfig()  # AD-637
     bill: BillConfig = BillConfig()  # AD-618b

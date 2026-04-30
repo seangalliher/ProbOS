@@ -293,6 +293,37 @@ async def finalize_startup(
         )
     runtime.trust_network.set_event_callback(runtime.emit_event)
 
+    # AD-676: Action Risk Tiers
+    if config.risk_tiers.enabled:
+        from probos.governance.risk_tiers import (
+            ActionRiskRegistry,
+            RiskPolicy,
+            RiskTier,
+            TIER_POLICIES,
+        )
+
+        policies = dict(TIER_POLICIES)
+        if config.risk_tiers.elevated_min_trust != 0.0:
+            policies[RiskTier.ELEVATED] = RiskPolicy(
+                tier=RiskTier.ELEVATED,
+                min_rank_ordinal=1,
+                min_trust=config.risk_tiers.elevated_min_trust,
+                description=TIER_POLICIES[RiskTier.ELEVATED].description,
+            )
+        if config.risk_tiers.critical_min_trust != 0.70:
+            policies[RiskTier.CRITICAL] = RiskPolicy(
+                tier=RiskTier.CRITICAL,
+                min_rank_ordinal=2,
+                min_trust=config.risk_tiers.critical_min_trust,
+                description=TIER_POLICIES[RiskTier.CRITICAL].description,
+            )
+        risk_registry = ActionRiskRegistry(policies=policies)
+        runtime._risk_registry = risk_registry
+        logger.info(
+            "AD-676: ActionRiskRegistry initialized with %d actions",
+            len(risk_registry.list_actions()),
+        )
+
     # AD-679: Selective Disclosure Routing
     from probos.mesh.disclosure import DisclosureRouter
     disclosure_router = DisclosureRouter()
