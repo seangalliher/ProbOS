@@ -48,6 +48,7 @@ async def organize_fleet(
         display_name="Core Systems",
         pool_names={"system", "filesystem", "filesystem_writers", "directory", "search", "shell", "http", "introspect", "medical_vitals", "red_team", "system_qa"},
         exclude_from_scaler=True,
+        startup_phase=1,  # AD-447: infrastructure first
     ))
 
     if config.utility_agents.enabled:
@@ -55,6 +56,7 @@ async def organize_fleet(
             name="utility",
             display_name="Utility Agents",
             pool_names={"web_search", "page_reader", "weather", "news", "translator", "summarizer", "calculator", "todo_manager", "note_taker", "scheduler"},
+            startup_phase=4,
         ))
 
     if config.medical.enabled:
@@ -63,6 +65,7 @@ async def organize_fleet(
             display_name="Medical",
             pool_names={"medical_diagnostician", "medical_surgeon", "medical_pharmacist", "medical_pathologist"},
             exclude_from_scaler=True,
+            startup_phase=2,
         ))
 
     if config.self_mod.enabled:
@@ -72,6 +75,7 @@ async def organize_fleet(
             display_name="Self-Modification",
             pool_names=sm_pools,
             exclude_from_scaler=True,
+            startup_phase=3,
         ))
 
     # Security pool group (AD-398: cognitive security officer)
@@ -80,6 +84,7 @@ async def organize_fleet(
         display_name="Security",
         pool_names={"security_officer"},
         exclude_from_scaler=True,
+        startup_phase=2,
     ))
 
     # Engineering pool group (AD-302, AD-398: add engineering_officer)
@@ -88,6 +93,7 @@ async def organize_fleet(
         display_name="Engineering",
         pool_names={"builder", "engineering_officer"},
         exclude_from_scaler=True,
+        startup_phase=2,
     ))
 
     # Science pool group (AD-307)
@@ -96,6 +102,7 @@ async def organize_fleet(
         display_name="Science",
         pool_names={"architect", "scout", "science_data_analyst", "science_systems_analyst", "science_research_specialist"},
         exclude_from_scaler=True,
+        startup_phase=3,
     ))
 
     # Operations pool group (AD-398)
@@ -104,6 +111,7 @@ async def organize_fleet(
         display_name="Operations",
         pool_names={"operations_officer"},
         exclude_from_scaler=True,
+        startup_phase=2,
     ))
 
     # Bridge pool group (BF-015: Counselor was ungrouped)
@@ -112,6 +120,7 @@ async def organize_fleet(
         display_name="Bridge",
         pool_names={"counselor"},
         exclude_from_scaler=True,
+        startup_phase=1,  # AD-447: bridge is infrastructure
     ))
 
     # Start pool scaler if scaling is enabled

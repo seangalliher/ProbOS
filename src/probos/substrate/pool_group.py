@@ -22,6 +22,7 @@ class PoolGroup:
     display_name: str
     pool_names: set[str] = field(default_factory=set)
     exclude_from_scaler: bool = False
+    startup_phase: int = 1  # AD-447: 1=infrastructure, 2=department, 3=specialist, 4=utility
 
 
 class PoolGroupRegistry:
@@ -106,4 +107,49 @@ class PoolGroupRegistry:
         return {
             group.name: self.group_health(group.name, pools)
             for group in self.all_groups()
+        }
+
+    # ------------------------------------------------------------------
+    # AD-447: Phase Gates
+    # ------------------------------------------------------------------
+
+    def groups_by_phase(self) -> dict[int, list[PoolGroup]]:
+        """Return groups organized by startup phase (AD-447).
+
+        Phase 1: Infrastructure (core systems, always first)
+        Phase 2: Department crews (security, engineering, medical, etc.)
+        Phase 3: Specialist pools (self-mod, science specialists)
+        Phase 4: Utility and optional pools
+        """
+        phases: dict[int, list[PoolGroup]] = {}
+        for group in self.all_groups():
+            phase = group.startup_phase
+            if phase not in phases:
+                phases[phase] = []
+            phases[phase].append(group)
+        return dict(sorted(phases.items()))
+
+    def get_phase_pools(self, phase: int) -> set[str]:
+        """Return all pool names belonging to groups in the given phase."""
+        result: set[str] = set()
+        for group in self._groups.values():
+            if group.startup_phase == phase:
+                result.update(group.pool_names)
+        return result
+
+    def max_phase(self) -> int:
+        """Return the highest phase number across all groups."""
+        if not self._groups:
+            return 0
+        return max(g.startup_phase for g in self._groups.values())
+
+    def phase_summary(self) -> dict[str, Any]:
+        """Return a summary of phase assignments for diagnostics."""
+        phases = self.groups_by_phase()
+        return {
+            f"phase_{phase}": {
+                "groups": [g.name for g in groups],
+                "pool_count": sum(len(g.pool_names) for g in groups),
+            }
+            for phase, groups in phases.items()
         }

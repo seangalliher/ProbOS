@@ -4104,7 +4104,7 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 **AD-446: Compensation & Recovery Pattern** *(planned, OSS)* — Multi-step workflow failure handling: mark completed actions "NeedsReview" (no blind rollback), write compensation log, create Decision Request for human resolution, SHA-256 idempotency guards against duplicate execution on retry. *Connects to: AD-405 (Checkpointing), AD-345 (Build Failure Report), AD-347 (Builder Escalation Hook).*
 
-**AD-447: Phase Gates for Pool Orchestration** *(planned, OSS)* — Formal phase gates for PoolGroup orchestration. Phase N must complete + validate before Phase N+1 starts. Phases define participating agents, dependency ordering, completion criteria, and validation steps. *Connects to: PoolGroup orchestration, AD-438 (Ontology-Based Task Routing), AD-419 (Duty Schedule).*
+**AD-447: Phase Gates for Pool Orchestration** *(Complete, OSS)* — Formal phase gates for PoolGroup orchestration. Phase N must complete + validate before Phase N+1 starts. Phases define participating agents, dependency ordering, completion criteria, and validation steps. *Connects to: PoolGroup orchestration, AD-438 (Ontology-Based Task Routing), AD-419 (Duty Schedule).*
 
 **AD-448: Wrapped Tool Executor — Security Intercept Layer** *(planned, OSS)* — Transparent tool call interception: logging, rate limiting, policy enforcement, selective local/remote routing. Every outbound tool call passes through security middleware. Agent sees unified interface. *Connects to: AD-398 (Agent Classification), Earned Agency, SIF.*
 
