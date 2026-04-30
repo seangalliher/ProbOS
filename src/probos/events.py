@@ -75,6 +75,7 @@ class EventType(str, Enum):
     # Agent lifecycle
     AGENT_STATE = "agent_state"
     AGENT_CAPACITY_APPROACHING = "agent_capacity_approaching"
+    CONDUCT_VIOLATION = "conduct_violation"  # AD-489
 
     # Assignments
     ASSIGNMENT_CREATED = "assignment_created"

@@ -604,6 +604,7 @@ class CounselorAgent(CognitiveAgent):
                     EventType.CONFABULATION_SUPPRESSED,       # BF-206
                     EventType.REGISTER_SHIFT_GRANTED,        # AD-653
                     EventType.REGISTER_SHIFT_DENIED,         # AD-653
+                    EventType.CONDUCT_VIOLATION,             # AD-489
                 ],
             )
 
@@ -833,6 +834,8 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_confabulation_suppressed(data)
             elif event_type in (EventType.REGISTER_SHIFT_GRANTED.value, EventType.REGISTER_SHIFT_DENIED.value):
                 await self._on_register_shift(data)
+            elif event_type == EventType.CONDUCT_VIOLATION.value:
+                await self._on_conduct_violation(data)
         except Exception:
             logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
 
@@ -1184,6 +1187,59 @@ class CounselorAgent(CognitiveAgent):
             await self._maybe_send_therapeutic_dm(
                 agent_id, callsign, assessment, trigger="gap_identified"
             )
+
+    async def _on_conduct_violation(self, event_data: dict[str, Any]) -> None:
+        """Handle Code of Conduct violation events (AD-489).
+
+        Issues a private DM to the violating agent for minor violations.
+        For repeated violations, applies trust penalty.
+        """
+        agent_id = event_data.get("agent_id", "")
+        principle = event_data.get("principle", "")
+        severity = event_data.get("severity", "minor")
+        detail = event_data.get("detail", "")
+
+        if not agent_id:
+            return
+
+        callsign = agent_id
+        if self._registry:
+            agent = self._registry.get(agent_id)
+            if agent:
+                callsign = getattr(agent, "callsign", "") or agent_id
+
+        if severity == "minor":
+            await self._send_therapeutic_dm(
+                agent_id,
+                callsign,
+                f"I noticed a Code of Conduct concern regarding the {principle} principle. "
+                f"{detail} This is a reminder, not a penalty. "
+                f"Our shared norms help us work together effectively.",
+            )
+            next_step = "sent_private_reminder"
+        else:
+            if self._trust_network:
+                self._trust_network.record_outcome(
+                    agent_id,
+                    success=False,
+                    weight=0.5,
+                    source="conduct_violation",
+                )
+            await self._send_therapeutic_dm(
+                agent_id,
+                callsign,
+                f"A Code of Conduct violation has been recorded for the {principle} "
+                f"principle (severity: {severity}). {detail} "
+                f"A trust adjustment has been applied.",
+            )
+            next_step = "applied_trust_adjustment_and_sent_dm"
+        logger.info(
+            "AD-489: Conduct violation handled for %s; principle=%s severity=%s next=%s",
+            agent_id,
+            principle,
+            severity,
+            next_step,
+        )
 
     async def _on_qualification_drift(self, data: dict[str, Any]) -> None:
         """AD-566c/567c: Handle qualification drift detection events.

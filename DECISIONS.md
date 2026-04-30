@@ -10,6 +10,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-489: Federation Code of Conduct
+
+**Date:** 2026-04-30
+**Decision:** Code of Conduct is behavioral norms, not access control. Violations use the existing trust mechanism: severe or repeated conduct violations call `record_outcome(success=False, source="conduct_violation")`, while minor violations receive Counselor DM coaching without immediate trust penalty.
+**Rationale:** Behavioral standards belong in standing orders and Counselor intervention rather than in earned-agency authorization policy. Reusing `TrustNetwork.record_outcome(source=...)` preserves a single trust accounting path and avoids creating a parallel discipline subsystem.
+**Status:** Implemented
+
 ### AD-674: Graduated Initiative Scale
 
 **Date:** 2026-04-28
