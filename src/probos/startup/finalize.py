@@ -293,6 +293,12 @@ async def finalize_startup(
         )
     runtime.trust_network.set_event_callback(runtime.emit_event)
 
+    # AD-679: Selective Disclosure Routing
+    from probos.mesh.disclosure import DisclosureRouter
+    disclosure_router = DisclosureRouter()
+    runtime._disclosure_router = disclosure_router
+    logger.info("AD-679: DisclosureRouter initialized")
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

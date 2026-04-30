@@ -49,6 +49,18 @@ async def get_telemetry(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     return telemetry.get_report()
 
 
+@router.get("/disclosure-clearances")
+async def get_disclosure_clearances(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """Return disclosure clearance configuration (AD-679)."""
+    disclosure_router = getattr(runtime, "_disclosure_router", None)
+    if not disclosure_router:
+        return {"status": "disabled"}
+    return {
+        "status": "active",
+        "department_clearances": disclosure_router.get_clearance_map(),
+    }
+
+
 @router.get("/system/services")
 async def system_services(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """AD-436: Service status for Bridge System panel."""
