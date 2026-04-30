@@ -219,11 +219,14 @@ async def finalize_startup(
         logger.info("AD-673: AnomalyWindowManager wired during finalization")
 
     # BF-246: Start periodic LLM health probe for recovery from extended outages
+    # BF-254: hasattr() alone matches MagicMock auto-attributes; require the
+    # attribute to be an actual coroutine function before awaiting it.
     llm_client = getattr(runtime, "llm_client", None)
-    if llm_client and hasattr(llm_client, "start_health_probe"):
+    probe_fn = getattr(llm_client, "start_health_probe", None) if llm_client else None
+    if probe_fn is not None and asyncio.iscoroutinefunction(probe_fn):
         probe_interval = getattr(config, "health_probe_interval_seconds", 30.0)
         emit_fn = getattr(runtime, "emit_event", None)
-        await llm_client.start_health_probe(
+        await probe_fn(
             interval_seconds=probe_interval,
             emit_fn=emit_fn,
         )
