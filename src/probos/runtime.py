@@ -1556,6 +1556,24 @@ class ProbOSRuntime:
         self.cognitive_journal = comm.cognitive_journal
         self.skill_registry = comm.skill_registry
         self.skill_service = comm.skill_service
+        # AD-566f: Qualification → Skill Bridge
+        self._qual_skill_bridge = None
+        if self.skill_service and getattr(self, "_qualification_store", None):
+            from probos.cognitive.qual_skill_bridge import QualificationSkillBridge
+
+            self._qual_skill_bridge = QualificationSkillBridge(
+                skill_service=self.skill_service,
+                qualification_store=self._qualification_store,
+            )
+            self._qual_skill_bridge.register_mappings({
+                "threat_analysis_t1": "threat_analysis",
+                "ward_room_communication_t1": "ward_room_communication",
+                "trust_assessment_t1": "trust_assessment",
+            })
+            logger.info(
+                "AD-566f: QualificationSkillBridge initialized with %d mappings",
+                len(self._qual_skill_bridge.get_mappings()),
+            )
         self.cognitive_skill_catalog = comm.cognitive_skill_catalog
         self.acm = comm.acm
         self.ontology = comm.ontology
