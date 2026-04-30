@@ -211,6 +211,12 @@ def test_startup_population() -> None:
         ]),
         trust_network=trust,
         hebbian_router=router,
+        # BF-252: AD-680 promoted emergence_metrics_engine to a public property on
+        # ProbOSRuntime; finalize._populate_agent_tiers now reads the public name.
+        # SimpleNamespace doesn't expose @property descriptors, so the public attr
+        # must be set directly. Keep the private alias for any consumers that still
+        # read it.
+        emergence_metrics_engine=emergence,
         _emergence_metrics_engine=emergence,
     )
 
@@ -257,6 +263,8 @@ def test_all_agents_classified() -> None:
         ]),
         trust_network=None,
         hebbian_router=None,
+        # BF-252: see test_startup_population for rationale.
+        emergence_metrics_engine=None,
         _emergence_metrics_engine=None,
     )
 
