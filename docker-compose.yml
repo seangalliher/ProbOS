@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  probos:
+    build: .
+    ports:
+      - "18900:18900"
+    volumes:
+      - probos-data:/data
+      - ./config:/config:ro
+    environment:
+      - PROBOS_NATS_ENABLED=true
+      - PROBOS_NATS_URL=nats://nats:4222
+      # LLM config: set your provider URL
+      # - PROBOS_LLM_URL=http://ollama:11434/v1
+    depends_on:
+      nats:
+        condition: service_started
+    restart: unless-stopped
+
+  nats:
+    image: nats:2-alpine
+    ports:
+      - "4222:4222"   # Client
+      - "8222:8222"   # Monitoring
+    command: ["--jetstream", "--store_dir", "/data/jetstream"]
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+
+  # Optional: uncomment for local LLM
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+
+volumes:
+  probos-data:
+  nats-data:
+  # ollama-data:

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ─── Trust Threshold Constants ─────────────────────────────────────
@@ -168,6 +168,14 @@ class CognitiveConfig(BaseModel):
         if v < 1:
             raise ValueError("llm_health_min_consecutive_healthy must be >= 1")
         return v
+
+    @model_validator(mode="after")
+    def _apply_env_overrides(self) -> "CognitiveConfig":
+        """Docker-friendly: allow PROBOS_LLM_URL to override default LLM endpoint."""
+        url = os.environ.get("PROBOS_LLM_URL")
+        if url:
+            self.llm_base_url = url
+        return self
 
     # Per-tier endpoint overrides (None = fall back to shared)
     llm_base_url_fast: str | None = None

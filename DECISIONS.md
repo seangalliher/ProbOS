@@ -10,6 +10,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-465: Containerized Deployment
+
+**Date:** 2026-04-30
+**Decision:** Docker deployment uses a multi-stage Python 3.12 build for ProbOS with a NATS JetStream sidecar in `docker-compose.yml`. Runtime containers bind `probos serve` to `0.0.0.0:18900`, persist application data under `/data`, mount `config/` read-only, and allow Docker users to override the default LLM endpoint with `PROBOS_LLM_URL`.
+**Rationale:** A multi-stage image keeps runtime dependencies separate from build tooling, while the NATS sidecar matches ProbOS's event-bus requirements without requiring a host-level NATS installation. Environment-variable override for the primary LLM URL preserves normal config-file behavior while enabling container deployment to point at an external provider or optional Ollama service.
+**Status:** Implemented
+
 ### AD-489: Federation Code of Conduct
 
 **Date:** 2026-04-30
