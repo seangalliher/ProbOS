@@ -40,6 +40,15 @@ async def status(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     return runtime.status()
 
 
+@router.get("/telemetry")
+async def get_telemetry(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """Return current telemetry report (AD-461)."""
+    telemetry = getattr(runtime, "_telemetry_service", None)
+    if not telemetry:
+        return {"status": "disabled", "operations": {}}
+    return telemetry.get_report()
+
+
 @router.get("/system/services")
 async def system_services(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """AD-436: Service status for Bridge System panel."""

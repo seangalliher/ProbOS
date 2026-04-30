@@ -134,6 +134,7 @@ class EventType(str, Enum):
     GROUPTHINK_WARNING = "groupthink_warning"  # AD-557: redundancy dominates
     FRAGMENTATION_WARNING = "fragmentation_warning"  # AD-557: synergy near zero
     BEHAVIORAL_METRICS_UPDATED = "behavioral_metrics_updated"  # AD-569: behavioral snapshot computed
+    TELEMETRY_REPORT = "telemetry_report"  # AD-461
     ANOMALY_WINDOW_OPENED = "anomaly_window_opened"  # AD-673: anomaly window opened
     ANOMALY_WINDOW_CLOSED = "anomaly_window_closed"  # AD-673: anomaly window closed
     GAME_COMPLETED = "game_completed"  # AD-526a: Game finished

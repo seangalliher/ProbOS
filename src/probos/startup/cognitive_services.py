@@ -483,6 +483,24 @@ async def init_cognitive_services(
             )
             consultation_protocol = None
 
+    # AD-461: Ship's Telemetry
+    telemetry_service = None
+    if config.telemetry.enabled:
+        try:
+            from probos.substrate.telemetry import TelemetryService
+
+            telemetry_service = TelemetryService(
+                emit_fn=emit_event_fn,
+                report_interval_seconds=config.telemetry.report_interval_seconds,
+                max_samples_per_bucket=config.telemetry.max_samples_per_bucket,
+            )
+            logger.info("AD-461: TelemetryService initialized")
+        except Exception as e:
+            logger.warning(
+                "TelemetryService failed to start: %s; operation timing disabled and startup continues",
+                e,
+            )
+
     logger.info("Startup [cognitive_services]: complete")
     return CognitiveServicesResult(
         self_mod_pipeline=self_mod_pipeline,
@@ -507,4 +525,5 @@ async def init_cognitive_services(
         oracle_service=oracle_service,  # AD-462e
         consultation_protocol=consultation_protocol,  # AD-594
         expertise_directory=expertise_directory,  # AD-600
+        telemetry_service=telemetry_service,  # AD-461
     )

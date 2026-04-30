@@ -718,6 +718,14 @@ class RecordsConfig(BaseModel):
     notebook_staleness_alert_rate: float = 0.7
 
 
+class TelemetryConfig(BaseModel):
+    """Ship's Telemetry configuration (AD-461)."""
+
+    enabled: bool = True
+    report_interval_seconds: float = 60.0
+    max_samples_per_bucket: int = 1000
+
+
 class ConfidenceConfig(BaseModel):
     """AD-444: Knowledge confidence scoring configuration."""
 
@@ -1480,6 +1488,7 @@ class SystemConfig(BaseModel):
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     records: RecordsConfig = RecordsConfig()
+    telemetry: TelemetryConfig = TelemetryConfig()  # AD-461
     confidence: ConfidenceConfig = ConfidenceConfig()  # AD-444
     lint: LintConfig = LintConfig()  # AD-563
     quality_trigger: QualityTriggerConfig = QualityTriggerConfig()  # AD-564

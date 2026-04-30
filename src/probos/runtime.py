@@ -1283,6 +1283,7 @@ class ProbOSRuntime:
         self._oracle_service = cog.oracle_service  # AD-462e
         self._consultation_protocol = cog.consultation_protocol  # AD-594
         self._expertise_directory = cog.expertise_directory  # AD-600
+        self._telemetry_service = cog.telemetry_service  # AD-461
 
         # AD-588: Introspective Telemetry Service
         try:
