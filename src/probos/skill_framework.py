@@ -260,6 +260,41 @@ ROLE_SKILL_TEMPLATES: dict[str, list[SkillDefinition]] = {
         SkillDefinition(skill_id="strategic_planning", name="Strategic Planning", category=SkillCategory.ROLE, domain="science", prerequisites=["design_review"], decay_rate_days=14, origin="role"),
         SkillDefinition(skill_id="technology_evaluation", name="Technology Evaluation", category=SkillCategory.ROLE, domain="science", decay_rate_days=14, origin="role"),
     ],
+    "builder": [
+        SkillDefinition(skill_id="component_integration", name="Component Integration", category=SkillCategory.ROLE, domain="engineering", decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="build_automation", name="Build Automation", category=SkillCategory.ROLE, domain="engineering", decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="code_generation", name="Code Generation", category=SkillCategory.ROLE, domain="engineering", prerequisites=["component_integration"], decay_rate_days=14, origin="role"),
+    ],
+    "surgeon": [
+        SkillDefinition(skill_id="surgical_precision", name="Surgical Precision", category=SkillCategory.ROLE, domain="medical", decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="crisis_response", name="Crisis Response", category=SkillCategory.ROLE, domain="medical", decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="system_repair", name="System Repair", category=SkillCategory.ROLE, domain="medical", prerequisites=["surgical_precision", "crisis_response"], decay_rate_days=14, origin="role"),
+    ],
+    "pharmacist": [
+        SkillDefinition(skill_id="intervention_management", name="Intervention Management", category=SkillCategory.ROLE, domain="medical", decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="interaction_analysis", name="Interaction Analysis", category=SkillCategory.ROLE, domain="medical", decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="compliance_review", name="Compliance Review", category=SkillCategory.ROLE, domain="medical", prerequisites=["intervention_management"], decay_rate_days=14, origin="role"),
+    ],
+    "pathologist": [
+        SkillDefinition(skill_id="system_analysis", name="System Analysis", category=SkillCategory.ROLE, domain="medical", decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="failure_identification", name="Failure Identification", category=SkillCategory.ROLE, domain="medical", decay_rate_days=14, origin="role"),
+        SkillDefinition(skill_id="research_methodology", name="Research Methodology", category=SkillCategory.ROLE, domain="medical", prerequisites=["system_analysis"], decay_rate_days=14, origin="role"),
+    ],
+    "data_analyst": [
+        SkillDefinition(skill_id="data_visualization", name="Data Visualization", category=SkillCategory.ROLE, domain="science", decay_rate_days=7, origin="role"),
+        SkillDefinition(skill_id="statistical_analysis", name="Statistical Analysis", category=SkillCategory.ROLE, domain="science", decay_rate_days=7, origin="role"),
+        SkillDefinition(skill_id="trend_identification", name="Trend Identification", category=SkillCategory.ROLE, domain="science", prerequisites=["statistical_analysis"], decay_rate_days=7, origin="role"),
+    ],
+    "systems_analyst": [
+        SkillDefinition(skill_id="requirements_analysis", name="Requirements Analysis", category=SkillCategory.ROLE, domain="science", decay_rate_days=7, origin="role"),
+        SkillDefinition(skill_id="process_optimization", name="Process Optimization", category=SkillCategory.ROLE, domain="science", decay_rate_days=7, origin="role"),
+        SkillDefinition(skill_id="integration_testing", name="Integration Testing", category=SkillCategory.ROLE, domain="science", prerequisites=["requirements_analysis"], decay_rate_days=7, origin="role"),
+    ],
+    "research_specialist": [
+        SkillDefinition(skill_id="literature_review", name="Literature Review", category=SkillCategory.ROLE, domain="science", decay_rate_days=7, origin="role"),
+        SkillDefinition(skill_id="hypothesis_testing", name="Hypothesis Testing", category=SkillCategory.ROLE, domain="science", decay_rate_days=7, origin="role"),
+        SkillDefinition(skill_id="experimental_design", name="Experimental Design", category=SkillCategory.ROLE, domain="science", prerequisites=["hypothesis_testing"], decay_rate_days=7, origin="role"),
+    ],
 }
 
 
