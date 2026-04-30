@@ -1354,6 +1354,12 @@ async def transporter_build(
     # Emit HXI events for assembly + validation
     if on_event:
         class _EventEmitter:
+            # BF-253: AD-680 migrated _emit_transporter_events to rt.emit_event().
+            # This shim must expose the public name to match the helper's contract.
+            # The legacy private name is kept for any other consumers.
+            def emit_event(self_, event_type, data):
+                asyncio.create_task(on_event(event_type, data))
+
             def _emit_event(self_, event_type, data):
                 asyncio.create_task(on_event(event_type, data))
         await _emit_transporter_events(_EventEmitter(), "", blueprint, assembled, validation)

@@ -1288,7 +1288,12 @@ class TestTransporterEvents:
         emitted = []
 
         class FakeRuntime:
+            def emit_event(self, event_type, data):
+                emitted.append((event_type, data))
+
             def _emit_event(self, event_type, data):
+                # AD-680: keep legacy private event hook on the mock while
+                # exercising the public runtime API used by builder.py.
                 emitted.append((event_type, data))
 
         rt = FakeRuntime()
