@@ -253,6 +253,7 @@ class ProbOSRuntime:
     _qa_reports: dict[str, Any]
     _knowledge_store: KnowledgeStore | None
     _records_store: RecordsStore | None
+    _archive_store: Any | None
     _bill_runtime: "BillRuntime | None"  # AD-618d
     _last_execution: dict[str, Any] | None
     _previous_execution: dict[str, Any] | None
@@ -490,6 +491,9 @@ class ProbOSRuntime:
 
         # --- Records store (AD-434) ---
         self._records_store: RecordsStore | None = None
+
+        # --- Ship's Archive (AD-524) ---
+        self._archive_store: Any | None = None
 
         # --- Bill System (AD-618d) ---
         self._bill_runtime: BillRuntime | None = None
@@ -1281,6 +1285,7 @@ class ProbOSRuntime:
         self._social_verification = cog.social_verification  # AD-567f
         self._orientation_service = cog.orientation_service  # AD-567g
         self._oracle_service = cog.oracle_service  # AD-462e
+        self._archive_store = cog.archive_store  # AD-524
         self._consultation_protocol = cog.consultation_protocol  # AD-594
         self._expertise_directory = cog.expertise_directory  # AD-600
         self._telemetry_service = cog.telemetry_service  # AD-461

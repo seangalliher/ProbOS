@@ -384,6 +384,18 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         except Exception:
             pass
 
+    # AD-524: Close Ship's Archive store
+    if getattr(runtime, "_archive_store", None):
+        try:
+            await runtime._archive_store.close()
+            runtime._archive_store = None
+        except Exception as e:
+            logger.warning(
+                "AD-524: ArchiveStore shutdown close failed; shutdown continues "
+                "and the OS will reclaim the connection if needed: %s",
+                e,
+            )
+
     try:
         await runtime.event_log.log(category="system", event="stopped")
     except (asyncio.CancelledError, Exception):

@@ -112,6 +112,7 @@ class CognitiveServicesResult:
     consultation_protocol: "ConsultationProtocol | None" = None  # AD-594
     expertise_directory: Any = None  # AD-600
     telemetry_service: Any = None  # AD-461
+    archive_store: Any = None  # AD-524
 
 
 @dataclass

@@ -449,6 +449,45 @@ async def init_cognitive_services(
             logger.warning("AD-600: ExpertiseDirectory failed to start: %s; continuing without", e)
             expertise_directory = None
 
+    # AD-524: Ship's Archive — cross-reset knowledge persistence
+    archive_store = None
+    if config.archive.enabled:
+        try:
+            import os
+            import sys
+
+            from probos.knowledge.archive_store import ArchiveStore
+            from probos.storage.sqlite_factory import default_factory
+
+            archive_db_path = config.archive.db_path
+            if not archive_db_path:
+                if sys.platform == "win32":
+                    archive_base = Path.home() / "AppData" / "Local" / "ProbOS" / "archive"
+                elif sys.platform == "darwin":
+                    archive_base = (
+                        Path.home() / "Library" / "Application Support" / "ProbOS" / "archive"
+                    )
+                else:
+                    xdg_data_home = os.environ.get("XDG_DATA_HOME")
+                    archive_base = (
+                        Path(xdg_data_home) / "ProbOS" / "archive"
+                        if xdg_data_home
+                        else Path.home() / ".local" / "share" / "ProbOS" / "archive"
+                    )
+                archive_base.mkdir(parents=True, exist_ok=True)
+                archive_db_path = str(archive_base / "archive.db")
+
+            archive_store = ArchiveStore(archive_db_path, connection_factory=default_factory)
+            await archive_store.initialize()
+            logger.info("AD-524: ArchiveStore initialized at %s", archive_db_path)
+        except Exception as e:
+            logger.warning(
+                "AD-524: ArchiveStore failed to start at configured archive path; "
+                "Oracle Tier 4 archive recall will be disabled and startup continues: %s",
+                e,
+            )
+            archive_store = None
+
     # AD-462e: Oracle Service — cross-tier unified memory query
     oracle_service = None
     try:
@@ -457,6 +496,7 @@ async def init_cognitive_services(
             episodic_memory=episodic_memory,
             records_store=records_store,
             knowledge_store=knowledge_store,
+            archive_store=archive_store,  # AD-524
             trust_network=trust_network,
             hebbian_router=hebbian_router,
             expertise_directory=expertise_directory,
@@ -526,4 +566,5 @@ async def init_cognitive_services(
         consultation_protocol=consultation_protocol,  # AD-594
         expertise_directory=expertise_directory,  # AD-600
         telemetry_service=telemetry_service,  # AD-461
+        archive_store=archive_store,  # AD-524
     )

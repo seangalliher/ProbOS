@@ -17,6 +17,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** A multi-stage image keeps runtime dependencies separate from build tooling, while the NATS sidecar matches ProbOS's event-bus requirements without requiring a host-level NATS installation. Environment-variable override for the primary LLM URL preserves normal config-file behavior while enabling container deployment to point at an external provider or optional Ollama service.
 **Status:** Implemented
 
+### AD-524: Ship's Archive
+
+**Date:** 2026-04-30
+**Decision:** Archive is append-only SQLite outside `data_dir`, using the cloud-ready `ConnectionFactory` storage protocol. Oracle treats the archive as Tier 4 and returns `source_tier="archive"` results. Initial search is simple keyword `LIKE` matching; vector search and automatic archival are deferred.
+**Rationale:** Generational knowledge must survive resets without coupling to instance-scoped Ship's Records or episodic memory. Append-only storage preserves auditability, and Oracle integration makes cross-reset knowledge discoverable through the existing memory query path while keeping write curation explicit in this AD.
+**Status:** Implemented
+
 ### AD-489: Federation Code of Conduct
 
 **Date:** 2026-04-30

@@ -54,6 +54,7 @@ class OracleService:
         episodic_memory: Any = None,
         records_store: Any = None,
         knowledge_store: Any = None,
+        archive_store: Any = None,  # AD-524
         trust_network: Any = None,
         hebbian_router: Any = None,
         expertise_directory: Any = None,
@@ -61,6 +62,7 @@ class OracleService:
         self._episodic_memory = episodic_memory
         self._records_store = records_store
         self._knowledge_store = knowledge_store
+        self._archive_store = archive_store
         self._trust_network = trust_network
         self._hebbian_router = hebbian_router
         self._expertise_directory = expertise_directory
@@ -89,7 +91,7 @@ class OracleService:
         if not query_text:
             return []
 
-        active_tiers = tiers or ["episodic", "records", "operational"]
+        active_tiers = tiers or ["episodic", "records", "operational", "archive"]
         all_results: list[OracleResult] = []
 
         # Tier 1: Episodic Memory
@@ -136,6 +138,14 @@ class OracleService:
                 all_results.extend(tier_results)
             except Exception:
                 logger.debug("Oracle: Tier 3 (operational) query failed", exc_info=True)
+
+        # Tier 4: Ship's Archive (AD-524) — cross-reset knowledge
+        if self._archive_store and "archive" in active_tiers:
+            try:
+                tier_results = await self._query_archive(query_text, k=k_per_tier)
+                all_results.extend(tier_results)
+            except Exception:
+                logger.debug("Oracle: Tier 4 (archive) query failed", exc_info=True)
 
         # Merge & sort by score descending
         all_results.sort(key=lambda r: r.score, reverse=True)
@@ -285,3 +295,28 @@ class OracleService:
 
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:k]
+
+    async def _query_archive(
+        self, query_text: str, *, k: int = 5,
+    ) -> list[OracleResult]:
+        """Query the Ship's Archive for cross-reset knowledge."""
+        entries = await self._archive_store.search(query_text, limit=k)
+        results: list[OracleResult] = []
+        for entry in entries:
+            age_days = max(1, (time.time() - entry.archived_at) / 86400)
+            score = min(1.0, 1.0 / (1.0 + age_days * 0.01))
+
+            results.append(OracleResult(
+                source_tier="archive",
+                content=f"[{entry.category}] {entry.title}\n{entry.content}",
+                score=score,
+                metadata={
+                    "archive_id": entry.id,
+                    "timeline_id": entry.timeline_id,
+                    "category": entry.category,
+                    "author": entry.author_callsign or entry.author_agent_type,
+                    "archived_at": entry.archived_at,
+                },
+                provenance=f"Archive/{entry.category} (timeline {entry.timeline_id[:8]}...)",
+            ))
+        return results

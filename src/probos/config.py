@@ -726,6 +726,13 @@ class RecordsConfig(BaseModel):
     notebook_staleness_alert_rate: float = 0.7
 
 
+class ArchiveConfig(BaseModel):
+    """Ship's Archive configuration (AD-524)."""
+
+    enabled: bool = True
+    db_path: str = ""
+
+
 class TelemetryConfig(BaseModel):
     """Ship's Telemetry configuration (AD-461)."""
 
@@ -1510,6 +1517,7 @@ class SystemConfig(BaseModel):
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     records: RecordsConfig = RecordsConfig()
+    archive: ArchiveConfig = ArchiveConfig()
     telemetry: TelemetryConfig = TelemetryConfig()  # AD-461
     confidence: ConfidenceConfig = ConfidenceConfig()  # AD-444
     lint: LintConfig = LintConfig()  # AD-563
