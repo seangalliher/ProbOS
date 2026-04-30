@@ -170,16 +170,17 @@ direct access to the Oracle.
 
 **File:** `src/probos/events.py`
 
-Add after the `KNOWLEDGE_TIER_LOADED` event (line 169):
+Add after the `KNOWLEDGE_TIER_LOADED` event (around line 177; line numbers
+may drift, so match by SEARCH content not number):
 
 SEARCH:
 ```python
-    KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"
+    KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
 ```
 
 REPLACE:
 ```python
-    KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"
+    KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
     CONTEXT_PROVENANCE_INJECTED = "context_provenance_injected"  # AD-677
 ```
 
@@ -291,7 +292,7 @@ grep -n "class KnowledgeLoadingConfig" src/probos/config.py
 
 # KnowledgeTierLoadedEvent
 grep -n "KNOWLEDGE_TIER_LOADED" src/probos/events.py
-  169: KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"
+  177: KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
 
 # No existing context provenance
 grep -rn "ProvenanceTag\|ProvenanceEnvelope\|CONTEXT_PROVENANCE" src/probos/ → no matches
