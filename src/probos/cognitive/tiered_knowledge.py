@@ -14,7 +14,7 @@ import time
 from typing import Any, Callable, Protocol
 
 from probos.config import KnowledgeLoadingConfig
-from probos.events import KnowledgeTierLoadedEvent
+from probos.events import EventType, KnowledgeTierLoadedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +297,16 @@ class TieredKnowledgeLoader:
             )
             wire_event = event.to_dict()
             self._emit_event_fn(wire_event["type"], wire_event["data"])
+            self._emit_event_fn(
+                EventType.CONTEXT_PROVENANCE_INJECTED,
+                {
+                    "tier": tier,
+                    "agent_id": kwargs.get("agent_id", ""),
+                    "snippet_count": snippet_count,
+                    "cached": kwargs.get("cached", False),
+                    "timestamp": time.time(),
+                },
+            )
         except asyncio.CancelledError:
             raise
         except Exception:

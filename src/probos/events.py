@@ -175,6 +175,7 @@ class EventType(str, Enum):
     TOOL_UNLOCKED = "tool_unlocked"  # AD-423b: LOTO lock released
     TOOL_CONTEXT_CREATED = "tool_context_created"  # AD-423c: fired during onboarding
     KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
+    CONTEXT_PROVENANCE_INJECTED = "context_provenance_injected"  # AD-677
     DISCLOSURE_FILTERED = "disclosure_filtered"  # AD-679
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased

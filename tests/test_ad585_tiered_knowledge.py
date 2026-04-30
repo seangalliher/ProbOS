@@ -172,9 +172,13 @@ class TestAmbientLoading:
         source = _FakeKnowledgeSource(trust={"agent-a": {"alpha": 4.0, "beta": 1.0}})
         loader = _make_loader(source, emit_fn=emit_fn)
         await loader.load_ambient()
-        assert len(events) == 1
+        assert len(events) == 2
         assert events[0]["type"] == EventType.KNOWLEDGE_TIER_LOADED.value
         assert events[0]["data"]["tier"] == "ambient"
+        assert events[1]["type"] == EventType.CONTEXT_PROVENANCE_INJECTED
+        assert events[1]["data"]["tier"] == "ambient"
+        assert events[1]["data"]["snippet_count"] == 1
+        assert events[1]["data"]["cached"] is False
 
 
 class TestContextualLoading:
