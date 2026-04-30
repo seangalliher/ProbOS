@@ -1,0 +1,2510 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/memory-retrieval-research/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Memory Retrieval: Cognitive Science Research for Episodic Recall - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#memory-retrieval-cognitive-science-research-for-episodic-recall" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Memory Retrieval: Cognitive Science Research for Episodic Recall
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Problem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-how-the-human-brain-actually-retrieves-memories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. How the Human Brain Actually Retrieves Memories
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. How the Human Brain Actually Retrieves Memories">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-brain-doesnt-do-cosine-similarity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Brain Doesn't Do Cosine Similarity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#11-encoding-specificity-principle-tulving-thomson-1973" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 Encoding Specificity Principle (Tulving &amp; Thomson, 1973)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-transfer-appropriate-processing-morris-bransford-franks-1977" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 Transfer-Appropriate Processing (Morris, Bransford, &amp; Franks, 1977)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13-spreading-activation-networks-collins-loftus-1975" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 Spreading Activation Networks (Collins &amp; Loftus, 1975)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#14-hippocampal-pattern-completion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.4 Hippocampal Pattern Completion
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15-dual-process-theory-familiarity-vs-recollection-yonelinas-2002" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.5 Dual-Process Theory: Familiarity vs. Recollection (Yonelinas, 2002)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-associative-memory-and-spreading-activation-computational-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Associative Memory and Spreading Activation — Computational Models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Associative Memory and Spreading Activation — Computational Models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-how-the-brain-links-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 How the Brain Links Concepts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-computational-implementation-associative-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Computational Implementation: Associative Index
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-temporal-context-model-howard-kahana-2002" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Temporal Context Model (Howard &amp; Kahana, 2002)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-cognitive-science-of-questioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The Cognitive Science of Questioning
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. The Cognitive Science of Questioning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-what-happens-when-a-human-hears-a-question" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 What Happens When a Human Hears a Question
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-presupposition-extraction-as-a-retrieval-enhancement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Presupposition Extraction as a Retrieval Enhancement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-mental-models-johnson-laird-1983" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Mental Models (Johnson-Laird, 1983)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-multi-cue-retrieval-how-the-brain-integrates-multiple-signals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Multi-Cue Retrieval: How the Brain Integrates Multiple Signals
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Multi-Cue Retrieval: How the Brain Integrates Multiple Signals">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-the-brains-composite-scoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 The Brain's Composite Scoring
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-signal-integration-not-weighted-sum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Signal Integration: Not Weighted Sum
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-reconstruction-vs-reproduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Reconstruction vs. Reproduction
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Reconstruction vs. Reproduction">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-memory-is-reconstructive-bartlett-1932" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Memory Is Reconstructive (Bartlett, 1932)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-implications-for-probos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 Implications for ProbOS
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-interference-theory-and-distinctiveness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Interference Theory and Distinctiveness
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Interference Theory and Distinctiveness">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-when-similar-memories-compete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 When Similar Memories Compete
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-practical-applications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Practical Applications
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-elaborative-encoding-and-desirable-difficulties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Elaborative Encoding and Desirable Difficulties
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Elaborative Encoding and Desirable Difficulties">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-bjorks-desirable-difficulties-bjork-1994" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1 Bjork's Desirable Difficulties (Bjork, 1994)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#72-elaborative-encoding-craik-tulving-1975" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.2 Elaborative Encoding (Craik &amp; Tulving, 1975)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#73-implications-for-episode-encoding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.3 Implications for Episode Encoding
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-synthesis-a-biologically-informed-recall-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Synthesis: A Biologically-Informed Recall Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Synthesis: A Biologically-Informed Recall Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#81-what-the-brain-does-that-probos-doesnt-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.1 What the Brain Does That ProbOS Doesn't (Yet)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#82-recommended-architecture-three-phase-recall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.2 Recommended Architecture: Three-Phase Recall
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#83-highest-roi-change-query-time-question-to-statement-transformation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.3 Highest-ROI Change: Query-Time Question-to-Statement Transformation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#84-second-highest-roi-elaborative-encoding-with-question-seeding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.4 Second-Highest ROI: Elaborative Encoding with Question Seeding
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-references-and-intellectual-lineage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. References and Intellectual Lineage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-connection-to-existing-probos-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Connection to Existing ProbOS Architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="memory-retrieval-cognitive-science-research-for-episodic-recall">Memory Retrieval: Cognitive Science Research for Episodic Recall<a class="headerlink" href="#memory-retrieval-cognitive-science-research-for-episodic-recall" title="Permanent link">&para;</a></h1>
+<p><em>Sean Galliher, 2026-04-09</em>
+<em>Triggered by: Question-to-declarative retrieval gap — vector similarity fails when queries are semantically distant from stored factual answers</em></p>
+<h2 id="the-problem">The Problem<a class="headerlink" href="#the-problem" title="Permanent link">&para;</a></h2>
+<p>ProbOS agents store episodic memories as declarative statements ("The pool health threshold was set to 0.7") and need to retrieve them when asked questions ("What was the threshold?"). The current system uses ChromaDB's cosine similarity on MiniLM embeddings as the primary retrieval signal.</p>
+<p>This fails because <strong>questions and their answers occupy different regions of embedding space.</strong> "What was the threshold?" is semantically closer to other questions about thresholds than to the declarative statement "The pool health threshold was set to 0.7." The embedding captures <em>topic</em> but not the <em>question-answer relationship</em>. A question is a request for information; a declarative statement is the information itself. These are structurally different speech acts, and embedding models — trained on semantic similarity, not pragmatic completion — cannot bridge that gap reliably.</p>
+<p>The current composite scoring (AD-567b: 0.35 semantic + 0.10 keyword + 0.15 trust + 0.10 Hebbian + 0.20 recency + 0.10 anchor) helps, but the semantic signal is still the dominant retrieval channel. When it fails, everything downstream suffers.</p>
+<p><strong>The question: How does the human brain solve this problem? And what can we steal?</strong></p>
+<hr />
+<h2 id="1-how-the-human-brain-actually-retrieves-memories">1. How the Human Brain Actually Retrieves Memories<a class="headerlink" href="#1-how-the-human-brain-actually-retrieves-memories" title="Permanent link">&para;</a></h2>
+<h3 id="the-brain-doesnt-do-cosine-similarity">The Brain Doesn't Do Cosine Similarity<a class="headerlink" href="#the-brain-doesnt-do-cosine-similarity" title="Permanent link">&para;</a></h3>
+<p>Vector similarity search assumes: encode everything into the same space, find the nearest neighbors. The brain does something fundamentally different. It uses <strong>multiple, overlapping, partially redundant retrieval systems</strong> that operate simultaneously and vote on results.</p>
+<h3 id="11-encoding-specificity-principle-tulving-thomson-1973">1.1 Encoding Specificity Principle (Tulving &amp; Thomson, 1973)<a class="headerlink" href="#11-encoding-specificity-principle-tulving-thomson-1973" title="Permanent link">&para;</a></h3>
+<p>The single most important finding for our problem: <strong>a memory is most retrievable when the cues present at retrieval match the cues present at encoding.</strong></p>
+<p>Tulving demonstrated that recall depends not on the "strength" of a memory trace but on the <em>overlap between the retrieval cue and the encoding context.</em> A word encoded in the context "ground-COLD" is better recalled by the cue "ground" than by the cue "hot" — even though "hot" is more semantically similar to "COLD."</p>
+<p>This is devastating for pure vector similarity. The embedding of a question captures the <em>question's semantics</em>, not the <em>encoding context of the answer.</em> To recall "The threshold was 0.7," you need cues that match how that fact was encoded — not cues that match the fact's semantic meaning.</p>
+<p><strong>ProbOS implication:</strong> AnchorFrame (AD-567a) is already an implementation of encoding specificity. The anchors capture <em>when/where/who/why</em> a memory was formed — exactly the contextual cues Tulving says are critical. But currently anchors only contribute 10% of the composite score. The cognitive science says they should be a primary retrieval pathway, not a tiebreaker.</p>
+<p><strong>Practical translation:</strong> When an agent asks "What was the threshold?", the system should also ask: <em>When was the agent last discussing thresholds? What channel was that in? Who was involved?</em> These contextual cues should be used to narrow the search space before semantic matching even begins. This is what the brain does — context-dependent memory is a <em>filter</em>, not a <em>signal</em>.</p>
+<h3 id="12-transfer-appropriate-processing-morris-bransford-franks-1977">1.2 Transfer-Appropriate Processing (Morris, Bransford, &amp; Franks, 1977)<a class="headerlink" href="#12-transfer-appropriate-processing-morris-bransford-franks-1977" title="Permanent link">&para;</a></h3>
+<p>A refinement of encoding specificity: <strong>memory is best when the cognitive processes used during retrieval match those used during encoding.</strong></p>
+<p>If a fact was encoded via semantic processing (thinking about its meaning), it's best retrieved via semantic cues. If it was encoded via phonological processing (hearing it spoken), phonological cues work best. If it was encoded via procedural processing (doing something with the fact), procedural re-enactment triggers recall.</p>
+<p>This means there is no single "best" retrieval method. The optimal retrieval strategy depends on <em>how the memory was originally formed.</em></p>
+<p><strong>ProbOS implication:</strong> Episodes are encoded in different ways:
+- <strong>Duty cycle episodes</strong> = procedural context (what the agent was doing)
+- <strong>Ward Room episodes</strong> = social/conversational context (who said what)
+- <strong>Direct message episodes</strong> = relational context (1:1 with the Captain)
+- <strong>Dream consolidation episodes</strong> = reflective/analytical context</p>
+<p>A single retrieval method cannot be optimal for all of these. The <code>trigger_type</code> field in AnchorFrame already classifies encoding context. The retrieval pipeline should use this to select a retrieval strategy, not just a retrieval cue.</p>
+<p><strong>Practical translation:</strong> When searching for something discussed in a DM, weight social cues (who was the other participant) higher than semantic similarity. When searching for something from a duty cycle, weight temporal cues (when, which watch section) higher. The retrieval weights should be <em>adaptive to the expected encoding context</em>, not fixed.</p>
+<h3 id="13-spreading-activation-networks-collins-loftus-1975">1.3 Spreading Activation Networks (Collins &amp; Loftus, 1975)<a class="headerlink" href="#13-spreading-activation-networks-collins-loftus-1975" title="Permanent link">&para;</a></h3>
+<p>This is how the brain bridges the question-answer gap.</p>
+<p>Concepts in long-term memory are organized as a network of nodes connected by weighted edges (associations). When a concept is activated (e.g., by hearing the word "threshold"), activation <strong>spreads outward</strong> along association edges to related concepts. The spread is:
+- <strong>Distance-dependent:</strong> closer associations receive more activation
+- <strong>Fan-dependent:</strong> nodes with fewer connections spread activation more strongly per edge (less dilution)
+- <strong>Summative:</strong> activation from multiple sources accumulates at intersection nodes
+- <strong>Decay-dependent:</strong> activation fades with network distance</p>
+<p>When someone asks "What was the threshold?", the activation pattern is:
+1. "threshold" activates → "limit", "boundary", "value", "setting", "pool", "health"
+2. "pool" activates → "pool health", "pool size", "recycle"
+3. "health" + "pool" converge on → "pool health threshold"
+4. "pool health threshold" activates → "0.7", "configuration", "the meeting where we discussed it"
+5. The specific memory surfaces because it received activation from multiple converging pathways</p>
+<p>The key insight: <strong>the question and the answer don't need to be similar. They need to be CONNECTED through an intermediate activation path.</strong> Cosine similarity is a one-hop search. Spreading activation is a multi-hop search.</p>
+<p><strong>ProbOS implication:</strong> The system already has multiple retrieval channels (semantic + FTS5 keyword + anchor filtering). But they operate independently and merge by weighted sum. Spreading activation suggests they should operate <strong>iteratively</strong> — the results of one search inform the next.</p>
+<p><strong>Practical translation — a "Spreading Activation" recall pipeline:</strong>
+1. <strong>Direct match:</strong> Embed the query, search ChromaDB. Get top candidates.
+2. <strong>Extract expansion terms:</strong> From the top candidates, extract key terms, entities, and anchor dimensions that appear in them but not in the original query.
+3. <strong>Expanded search:</strong> Re-query with the expanded terms. This is the "spreading activation" step — the first results activate related concepts, which retrieve additional memories.
+4. <strong>Convergence scoring:</strong> Episodes that appear in both the direct and expanded searches get a convergence bonus. This is analogous to summative activation — memories activated by multiple pathways are more salient.</p>
+<p>This is computationally inexpensive (2x ChromaDB queries instead of 1x) and addresses the core problem: the question doesn't need to be semantically similar to the answer, it just needs to activate concepts that lead to the answer.</p>
+<h3 id="14-hippocampal-pattern-completion">1.4 Hippocampal Pattern Completion<a class="headerlink" href="#14-hippocampal-pattern-completion" title="Permanent link">&para;</a></h3>
+<p>The hippocampus doesn't store memories — it stores <strong>indexes.</strong> Full memories are distributed across cortical regions (visual cortex for images, auditory cortex for sounds, prefrontal cortex for context). The hippocampus stores a compressed pointer — a conjunction of features — that can reactivate the full memory when triggered by a partial cue.</p>
+<p>This is called <strong>pattern completion:</strong> given a subset of the features present during encoding, the hippocampus reconstructs the full conjunction and reactivates the original cortical ensemble. The CA3 region of the hippocampus is an auto-associative network — it can complete a stored pattern from as little as 20-25% of the original input.</p>
+<p>Complementary to this is <strong>pattern separation</strong> in the dentate gyrus: similar but distinct experiences are orthogonalized into different memory traces, preventing interference. This is why you can remember what you had for lunch yesterday vs. the day before, even though the two events are very similar.</p>
+<p><strong>ProbOS implication:</strong> ChromaDB's vector index is already a form of pattern completion — the embedding is the "compressed pointer," and retrieval reconstructs the full episode. But ChromaDB does <em>symmetric</em> retrieval (query must match stored pattern). The hippocampus does <em>asymmetric</em> retrieval (partial cue can complete full pattern). This asymmetry is exactly what we need for question → answer retrieval.</p>
+<p><strong>Practical translation:</strong> Store episodes with <strong>enriched embeddings</strong> that include not just the episode text, but also:
+- Key entities mentioned (people, values, settings, concepts)
+- The question(s) this episode could answer
+- Alternate phrasings and reformulations
+- Category tags (technical, social, procedural, evaluative)</p>
+<p>This creates a richer "hippocampal index" that allows partial cues (just a question, just a keyword, just a context) to match. The episode document in ChromaDB should be a <em>retrieval-optimized summary</em>, not a raw transcript.</p>
+<h3 id="15-dual-process-theory-familiarity-vs-recollection-yonelinas-2002">1.5 Dual-Process Theory: Familiarity vs. Recollection (Yonelinas, 2002)<a class="headerlink" href="#15-dual-process-theory-familiarity-vs-recollection-yonelinas-2002" title="Permanent link">&para;</a></h3>
+<p>Memory retrieval uses two distinct processes:</p>
+<ol>
+<li>
+<p><strong>Familiarity:</strong> A fast, automatic, signal-detection process. "This feels familiar." No contextual detail, just a sense of having encountered something before. Operates continuously, doesn't require effort.</p>
+</li>
+<li>
+<p><strong>Recollection:</strong> A slow, effortful, threshold process. "I specifically remember when/where/how I learned this." Requires retrieving contextual details — the source, the time, the associated events.</p>
+</li>
+</ol>
+<p>Familiarity is sufficient for recognition ("have I seen this word before?") but insufficient for source monitoring ("where did I learn this?"). Recollection is what produces the rich, contextualized episodic memories that ProbOS needs.</p>
+<p>The critical finding: <strong>familiarity and recollection can dissociate.</strong> You can feel something is familiar without being able to recollect it (tip-of-the-tongue), and you can recollect context without familiarity (know-remember distinction).</p>
+<p><strong>ProbOS implication:</strong> The current system conflates these. A high cosine similarity score is essentially a familiarity signal — "this episode is topically related." But it doesn't tell you whether the episode actually answers the question. Anchor confidence (AD-567c) is closer to a recollection signal — it measures the quality of contextual detail.</p>
+<p><strong>Practical translation:</strong> Two-stage retrieval:
+1. <strong>Familiarity filter (fast, cheap):</strong> Use embedding similarity + keyword to rapidly identify the candidate set. This is pattern matching — "does this feel relevant?"
+2. <strong>Recollection re-rank (slow, precise):</strong> For the top candidates, perform a more expensive comparison. This could involve:
+   - LLM-based relevance scoring ("Does this episode actually answer this question?")
+   - Cross-referencing anchor dimensions with the query context
+   - Checking temporal plausibility (was this memory from a time when the queried topic was being discussed?)</p>
+<p>The key insight: don't ask the embedding to do recollection's job. Use it for familiarity (cheap filtering), then use richer logic for recollection (precise ranking).</p>
+<hr />
+<h2 id="2-associative-memory-and-spreading-activation-computational-models">2. Associative Memory and Spreading Activation — Computational Models<a class="headerlink" href="#2-associative-memory-and-spreading-activation-computational-models" title="Permanent link">&para;</a></h2>
+<h3 id="21-how-the-brain-links-concepts">2.1 How the Brain Links Concepts<a class="headerlink" href="#21-how-the-brain-links-concepts" title="Permanent link">&para;</a></h3>
+<p>The brain's associative network is not a fixed taxonomy. It's a <strong>learned, weighted, dynamic graph</strong> where:
+- <strong>Hebbian learning</strong> strengthens associations between co-activated concepts ("neurons that fire together wire together")
+- <strong>Temporal contiguity</strong> creates associations between sequentially experienced concepts (the "temporal context model" — Howard &amp; Kahana, 2002)
+- <strong>Emotional tags</strong> modulate association strength (the amygdala enhances hippocampal encoding for emotionally salient events — McGaugh, 2004)
+- <strong>Sleep consolidation</strong> reorganizes associations, promoting important ones and pruning trivial ones (complementary learning systems theory — McClelland, McNaughton, &amp; O'Reilly, 1995)</p>
+<h3 id="22-computational-implementation-associative-index">2.2 Computational Implementation: Associative Index<a class="headerlink" href="#22-computational-implementation-associative-index" title="Permanent link">&para;</a></h3>
+<p>For ProbOS, a practical implementation of spreading activation:</p>
+<p><strong>Entity-Episode Association Graph:</strong>
+- Extract named entities from each episode at encoding time: agent names, numeric values, configuration terms, department names, event types
+- Store as a bipartite graph: Entity ↔ Episode
+- At retrieval time, extract entities from the query, find all episodes associated with those entities, then rank by association density</p>
+<p>This is cheaper than LLM inference and addresses the core problem:
+- Query: "What was the threshold?" → entities: ["threshold"]
+- Entity "threshold" → associated episodes: [ep_1 (mentions threshold=0.7), ep_2 (mentions threshold=0.5), ep_3 (discusses threshold concept)]
+- Now rank these by recency, anchor quality, trust — the entity association already did the hard work of bridging the semantic gap.</p>
+<p><strong>ProbOS already has pieces of this:</strong>
+- FTS5 keyword search does entity-level matching
+- AnchorFrame captures agent names and department context
+- The Hebbian router tracks intent-agent co-occurrences</p>
+<p>What's missing is an <strong>explicit entity index</strong> that maps concepts → episodes, enabling multi-hop traversal. The FTS5 sidecar is keyword-level; an entity index would be concept-level.</p>
+<h3 id="23-temporal-context-model-howard-kahana-2002">2.3 Temporal Context Model (Howard &amp; Kahana, 2002)<a class="headerlink" href="#23-temporal-context-model-howard-kahana-2002" title="Permanent link">&para;</a></h3>
+<p>This model explains why we remember things in temporal clusters. When you try to recall what happened on Tuesday, you don't search for "Tuesday-tagged" memories — you mentally reconstruct the <em>temporal context</em> of Tuesday (what you were doing, who you were with, what the weather was like) and use that reconstructed context as a retrieval cue.</p>
+<p>The formal model: at each moment, the brain maintains a slowly drifting "context vector." When a memory is encoded, it's bound to the current context vector. At retrieval, reinstating a similar context vector triggers recall of events encoded in that context.</p>
+<p><strong>ProbOS implication:</strong> The <code>watch_section</code>, <code>duty_cycle_id</code>, and <code>sequence_index</code> fields in AnchorFrame are temporal context markers. But the recall pipeline doesn't currently use temporal proximity as a retrieval cue in a dynamic way. If an agent was just discussing pool health 5 minutes ago, and now asks "What was the threshold?", the recent temporal context (pool health discussion) should bias retrieval toward pool-health-related episodes — even if the question itself doesn't mention "pool health."</p>
+<p><strong>Practical translation:</strong> Maintain a short-term "conversation context vector" for each agent — a running embedding of the last N utterances. Use this as a <em>secondary retrieval cue</em> alongside the literal query. This captures the temporal contiguity that makes human memory so effective in conversational settings.</p>
+<hr />
+<h2 id="3-the-cognitive-science-of-questioning">3. The Cognitive Science of Questioning<a class="headerlink" href="#3-the-cognitive-science-of-questioning" title="Permanent link">&para;</a></h2>
+<h3 id="31-what-happens-when-a-human-hears-a-question">3.1 What Happens When a Human Hears a Question<a class="headerlink" href="#31-what-happens-when-a-human-hears-a-question" title="Permanent link">&para;</a></h3>
+<p>When a human hears "What was the threshold?", they don't immediately search memory with those five words. A cascade of pre-retrieval processing occurs:</p>
+<ol>
+<li>
+<p><strong>Parse the question type:</strong> This is a WH-question (what), requesting a specific value. Not a yes/no, not a how, not a why. The answer should be a noun phrase or a value.</p>
+</li>
+<li>
+<p><strong>Extract presuppositions:</strong> The question presupposes:</p>
+</li>
+<li>There exists a threshold (existential presupposition)</li>
+<li>The listener knows about it (knowledge presupposition)</li>
+<li>It was set or discussed at some point (temporal presupposition)</li>
+<li>
+<p>The word "the" implies a specific, uniquely identifiable threshold (definiteness)</p>
+</li>
+<li>
+<p><strong>Construct an expected answer template:</strong> Before searching memory, the brain constructs a partial template of what the answer should look like. For "What was the threshold?", the template is something like "[entity] threshold was [value]" or "the threshold for [context] was [value]." This is the <strong>question-answer schema</strong> (Graesser &amp; Black, 1985).</p>
+</li>
+<li>
+<p><strong>Activate relevant schemas:</strong> "Threshold" activates the schema for settings/configurations, which primes retrieval toward episodes involving configuration, parameters, limits, values.</p>
+</li>
+<li>
+<p><strong>Search memory using the template AND the schemas,</strong> not the raw question.</p>
+</li>
+</ol>
+<h3 id="32-presupposition-extraction-as-a-retrieval-enhancement">3.2 Presupposition Extraction as a Retrieval Enhancement<a class="headerlink" href="#32-presupposition-extraction-as-a-retrieval-enhancement" title="Permanent link">&para;</a></h3>
+<p>This is directly implementable. Given a question, extract its presuppositions and use them as additional retrieval cues:</p>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Presuppositions</th>
+<th>Better Retrieval Cue</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"What was the threshold?"</td>
+<td>A threshold exists; it has a value</td>
+<td>"threshold value setting"</td>
+</tr>
+<tr>
+<td>"Who fixed the bug?"</td>
+<td>A bug existed; someone fixed it</td>
+<td>"bug fix resolved agent"</td>
+</tr>
+<tr>
+<td>"When did we discuss pools?"</td>
+<td>Pools were discussed; at a specific time</td>
+<td>"pool discussion meeting"</td>
+</tr>
+<tr>
+<td>"Why did trust drop?"</td>
+<td>Trust dropped; there was a cause</td>
+<td>"trust decrease decline reason cause"</td>
+</tr>
+</tbody>
+</table>
+<p>The presupposition extraction converts a question (which is sparse as a retrieval cue) into a richer set of declarative assertions and expected answer patterns (which are dense and more likely to match stored declarative memories).</p>
+<h3 id="33-mental-models-johnson-laird-1983">3.3 Mental Models (Johnson-Laird, 1983)<a class="headerlink" href="#33-mental-models-johnson-laird-1983" title="Permanent link">&para;</a></h3>
+<p>When processing a question, humans don't search a flat memory store. They activate a <strong>mental model</strong> — a structured representation of the relevant domain — and use the model to constrain their memory search.</p>
+<p>"What was the threshold?" activates the mental model for "system configuration" which contains slots for: parameter name, parameter value, when it was set, who set it, why it was set, what it affects. The question fills the "parameter name" slot with "threshold" and marks the "parameter value" slot as the target. Memory search is then directed at episodes that can fill the target slot.</p>
+<p><strong>ProbOS implication:</strong> This maps naturally to anchor-based retrieval. If the system can identify the <em>domain</em> of a question (system config, social interaction, procedure, diagnosis), it can select the right AnchorFrame dimensions to use as primary retrieval cues.</p>
+<p><strong>Practical translation — question decomposition pipeline:</strong>
+1. Classify the question type (what/who/when/where/why/how)
+2. Extract the topic entities
+3. Identify the expected answer type (value, person, time, place, reason, procedure)
+4. Construct an expanded retrieval query that includes the topic + expected answer type
+5. Select retrieval strategy based on question type:
+   - WHAT/WHO → entity-focused retrieval (spread activation from topic entities)
+   - WHEN → temporal-focused retrieval (scan recent episodes, use watch_section/duty_cycle_id)
+   - WHERE → spatial-focused retrieval (channel, department)
+   - WHY → causal-chain retrieval (trigger_type, preceding episodes)
+   - HOW → procedural retrieval (duty cycle episodes, procedure store)</p>
+<hr />
+<h2 id="4-multi-cue-retrieval-how-the-brain-integrates-multiple-signals">4. Multi-Cue Retrieval: How the Brain Integrates Multiple Signals<a class="headerlink" href="#4-multi-cue-retrieval-how-the-brain-integrates-multiple-signals" title="Permanent link">&para;</a></h2>
+<h3 id="41-the-brains-composite-scoring">4.1 The Brain's Composite Scoring<a class="headerlink" href="#41-the-brains-composite-scoring" title="Permanent link">&para;</a></h3>
+<p>The brain doesn't use a single retrieval signal. Memory search is influenced simultaneously by:</p>
+<table>
+<thead>
+<tr>
+<th>Brain Signal</th>
+<th>ProbOS Analog</th>
+<th>Current Weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Semantic association</td>
+<td>Cosine similarity (ChromaDB)</td>
+<td>0.35</td>
+</tr>
+<tr>
+<td>Lexical access</td>
+<td>FTS5 keyword search</td>
+<td>0.10</td>
+</tr>
+<tr>
+<td>Source credibility</td>
+<td>Trust weight</td>
+<td>0.15</td>
+</tr>
+<tr>
+<td>Habit/frequency</td>
+<td>Hebbian weight</td>
+<td>0.10</td>
+</tr>
+<tr>
+<td>Temporal proximity</td>
+<td>Recency weight</td>
+<td>0.20</td>
+</tr>
+<tr>
+<td>Contextual richness</td>
+<td>Anchor confidence</td>
+<td>0.10</td>
+</tr>
+<tr>
+<td><strong>Emotional valence</strong></td>
+<td><strong>Not implemented</strong></td>
+<td><strong>0.00</strong></td>
+</tr>
+<tr>
+<td><strong>Encoding depth</strong></td>
+<td><strong>Not implemented</strong></td>
+<td><strong>0.00</strong></td>
+</tr>
+<tr>
+<td><strong>Retrieval fluency</strong></td>
+<td><strong>Not implemented</strong></td>
+<td><strong>0.00</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Three signals the brain uses that ProbOS doesn't:</p>
+<ol>
+<li>
+<p><strong>Emotional valence:</strong> Emotionally tagged memories are more accessible (the amygdala's "memory enhancement" effect — LaBar &amp; Cabeza, 2006). Episodes involving conflict, surprise, significant trust changes, or Captain interactions should have higher baseline retrievability. This could be operationalized as an "emotional salience" field on the episode, scored by the magnitude of trust deltas, whether an alert condition was active, whether the Counselor was involved, etc.</p>
+</li>
+<li>
+<p><strong>Encoding depth (levels of processing, Craik &amp; Lockhart, 1972):</strong> Memories processed more deeply during encoding are more retrievable. A fact that was discussed, debated, applied, and reflected upon is easier to recall than one that was passively mentioned. Episodes that were part of dream consolidation, cited in crew notebooks, or referenced by multiple agents should score higher.</p>
+</li>
+<li>
+<p><strong>Retrieval fluency:</strong> The subjective ease of retrieval itself is a signal. If a memory "comes to mind easily," the brain treats it as more relevant (the availability heuristic — Tversky &amp; Kahneman, 1973). In ProbOS, the ActivationTracker (AD-567d) already implements ACT-R base-level activation, which is essentially retrieval fluency. Episodes with higher activation (more frequently recalled) should rank higher. This is already tracked but not currently integrated into composite scoring.</p>
+</li>
+</ol>
+<h3 id="42-signal-integration-not-weighted-sum">4.2 Signal Integration: Not Weighted Sum<a class="headerlink" href="#42-signal-integration-not-weighted-sum" title="Permanent link">&para;</a></h3>
+<p>The brain doesn't integrate retrieval signals by weighted linear combination. It uses something closer to <strong>evidence accumulation</strong> (the drift-diffusion model — Ratcliff, 1978). Multiple signals accumulate evidence for and against each candidate memory until a threshold is reached. This has three important properties:</p>
+<ol>
+<li>
+<p><strong>Any single strong signal can trigger retrieval:</strong> One overwhelmingly strong cue (e.g., the exact keyword match) can trigger recall even if other signals are weak. A weighted sum dilutes this.</p>
+</li>
+<li>
+<p><strong>Weak signals accumulate:</strong> Multiple weak-but-consistent signals can trigger retrieval when no single signal is strong. This is how context-dependent memory works — individually, "Tuesday" or "meeting room" or "Alice" are weak cues, but together they converge on a specific memory.</p>
+</li>
+<li>
+<p><strong>Negative evidence suppresses:</strong> Contradictory signals actively suppress candidates. If the temporal context says "this happened yesterday" but the memory is from two weeks ago, the mismatch suppresses that candidate. A weighted sum doesn't penalize mismatches — it just gives low positive scores.</p>
+</li>
+</ol>
+<p><strong>ProbOS implication:</strong> The current weighted sum is a reasonable approximation but misses properties #1 and #3. Consider:
+- <strong>Max-boosting:</strong> If any single signal exceeds a high threshold (e.g., keyword_hits &gt; 5, or exact entity match), boost that candidate regardless of other signals
+- <strong>Mismatch penalty:</strong> If the query has strong contextual cues (specific department, specific time frame) and the candidate's anchors contradict them, apply a penalty, not just a low score
+- <strong>Cascade gating:</strong> Use the strongest available signal as the primary filter, then use remaining signals for re-ranking within the filtered set</p>
+<hr />
+<h2 id="5-reconstruction-vs-reproduction">5. Reconstruction vs. Reproduction<a class="headerlink" href="#5-reconstruction-vs-reproduction" title="Permanent link">&para;</a></h2>
+<h3 id="51-memory-is-reconstructive-bartlett-1932">5.1 Memory Is Reconstructive (Bartlett, 1932)<a class="headerlink" href="#51-memory-is-reconstructive-bartlett-1932" title="Permanent link">&para;</a></h3>
+<p>One of the oldest findings in memory science: recall is not playback. The brain doesn't retrieve a verbatim copy of the original experience. It retrieves fragments (specific details, emotional tone, contextual cues) and <strong>reconstructs</strong> a plausible narrative from those fragments, filling in gaps using schemas and world knowledge.</p>
+<p>This is why eyewitness testimony is unreliable — the reconstruction process fills gaps with plausible-but-incorrect details (Loftus &amp; Palmer, 1974). But it's also why human memory is so flexible: you don't need an exact match to remember something. A partial cue triggers retrieval of fragments, which are assembled into a coherent response.</p>
+<h3 id="52-implications-for-probos">5.2 Implications for ProbOS<a class="headerlink" href="#52-implications-for-probos" title="Permanent link">&para;</a></h3>
+<p>The current system tries to retrieve a <em>single episode</em> that matches the query. This is <strong>reproduction</strong> — finding the exact memory that contains the answer. The brain does <strong>reconstruction</strong> — finding multiple relevant fragments and synthesizing them.</p>
+<p>For ProbOS, this suggests a two-phase architecture:</p>
+<p><strong>Phase 1: Fragment Retrieval (pattern completion)</strong>
+- Retrieve the top-N episodes that are partially relevant
+- Don't require any single episode to fully answer the question
+- Lower the relevance threshold — include "possibly related" episodes</p>
+<p><strong>Phase 2: Synthesis (reconstruction)</strong>
+- Present the fragments to the LLM with the original question
+- Let the LLM reconstruct the answer from the fragments
+- This is where the LLM's world knowledge fills gaps, just as human schemas do</p>
+<p>This reframes the retrieval problem. Instead of asking "which episode answers this question?" (hard, requires high similarity), ask "which episodes contain information relevant to this question?" (easier, requires lower similarity). The LLM handles the reconstruction.</p>
+<p><strong>Practical consideration:</strong> This already partially happens — recall results are injected into the agent's context, and the LLM synthesizes a response. But the current system <em>filters aggressively</em> before handing to the LLM (relevance_threshold = 0.35–0.7). Reconstruction theory says: <strong>widen the funnel, let more fragments through, trust the LLM to filter noise.</strong> The cost is more tokens in context; the benefit is catching memories that are fragmentarily relevant.</p>
+<hr />
+<h2 id="6-interference-theory-and-distinctiveness">6. Interference Theory and Distinctiveness<a class="headerlink" href="#6-interference-theory-and-distinctiveness" title="Permanent link">&para;</a></h2>
+<h3 id="61-when-similar-memories-compete">6.1 When Similar Memories Compete<a class="headerlink" href="#61-when-similar-memories-compete" title="Permanent link">&para;</a></h3>
+<p>As ProbOS accumulates episodes, many will be similar. Multiple discussions about thresholds, multiple pool health reports, multiple routine duty cycles. How does the brain handle retrieval when many similar memories exist?</p>
+<p><strong>Proactive interference:</strong> Old memories interfere with retrieval of new ones. When a threshold was changed from 0.7 to 0.5, asking "What is the threshold?" might retrieve the old value because it's been in memory longer and has more associations.</p>
+<p><strong>Retroactive interference:</strong> New memories interfere with retrieval of old ones. After discussing many different thresholds, no single threshold memory is distinctly retrievable — they blur together.</p>
+<p><strong>The distinctiveness solution (Hunt, 2006):</strong> Memories that are distinctive — different from their neighbors in some salient way — resist interference. The "Von Restorff effect" (isolation effect): a single unusual item in a list is better remembered than the surrounding items.</p>
+<h3 id="62-practical-applications">6.2 Practical Applications<a class="headerlink" href="#62-practical-applications" title="Permanent link">&para;</a></h3>
+<p><strong>For storage:</strong> Make important memories distinctive at encoding time. If a threshold change is significant, the episode should contain markers of significance — trust delta, alert condition, Captain involvement, explicit "this is important" annotation. These markers create distinctiveness that resists interference from routine episodes.</p>
+<p><strong>For retrieval:</strong> When many similar episodes compete, use <strong>temporal recency</strong> and <strong>distinctiveness markers</strong> to break ties. The current recency weight (0.20) already helps with proactive interference. Distinctiveness is not currently scored.</p>
+<p><strong>For maintenance:</strong> Dream consolidation should identify interfering memories and either:
+- <strong>Merge</strong> them (combine multiple "threshold" episodes into one consolidated fact)
+- <strong>Differentiate</strong> them (annotate each with distinct temporal context: "In the March discussion, the threshold was 0.7; in the April discussion, it was changed to 0.5")</p>
+<p>This connects to AD-551 (dream Step 7g consolidation) and AD-538 (lifecycle: merge, dedup). The interference problem provides cognitive science justification for aggressive consolidation.</p>
+<hr />
+<h2 id="7-elaborative-encoding-and-desirable-difficulties">7. Elaborative Encoding and Desirable Difficulties<a class="headerlink" href="#7-elaborative-encoding-and-desirable-difficulties" title="Permanent link">&para;</a></h2>
+<h3 id="71-bjorks-desirable-difficulties-bjork-1994">7.1 Bjork's Desirable Difficulties (Bjork, 1994)<a class="headerlink" href="#71-bjorks-desirable-difficulties-bjork-1994" title="Permanent link">&para;</a></h3>
+<p>Robert Bjork's counterintuitive finding: <strong>making encoding harder improves retrieval.</strong> Specifically:
+- <strong>Spacing</strong> (distributing study over time) &gt; massing (cramming)
+- <strong>Interleaving</strong> (mixing different topics) &gt; blocking (studying one topic at a time)
+- <strong>Generation</strong> (producing the answer yourself) &gt; reading (passively receiving it)
+- <strong>Testing</strong> (attempting retrieval) &gt; re-study (re-reading)</p>
+<p>The common thread: conditions that make initial encoding feel more difficult create more durable, more retrievable memory traces.</p>
+<h3 id="72-elaborative-encoding-craik-tulving-1975">7.2 Elaborative Encoding (Craik &amp; Tulving, 1975)<a class="headerlink" href="#72-elaborative-encoding-craik-tulving-1975" title="Permanent link">&para;</a></h3>
+<p>The deeper and more elaborately you process information during encoding, the more retrievable it becomes. Three levels:
+- <strong>Structural:</strong> What does it look like? (shallow — poor retrieval)
+- <strong>Phonemic:</strong> What does it sound like? (medium)
+- <strong>Semantic:</strong> What does it mean? How does it relate to things I already know? (deep — excellent retrieval)</p>
+<p>The best encoding combines semantic processing with <strong>self-referential processing</strong> (Rogers, Kuiper, &amp; Kirker, 1977): "How does this relate to me?" Memories encoded with self-reference are the most retrievable of all.</p>
+<h3 id="73-implications-for-episode-encoding">7.3 Implications for Episode Encoding<a class="headerlink" href="#73-implications-for-episode-encoding" title="Permanent link">&para;</a></h3>
+<p>Current episode encoding stores the raw facts: user input, DAG summary, outcomes, reflection. This is a relatively shallow encoding — the text is stored, but its connections, implications, and self-referential meaning are not explicitly represented.</p>
+<p><strong>Enriched encoding proposal:</strong>
+At episode storage time, generate additional metadata that creates richer, more retrievable traces:</p>
+<ol>
+<li><strong>Entity extraction:</strong> Who, what, when, where (already partially done via AnchorFrame)</li>
+<li><strong>Question generation:</strong> What questions could this episode answer? Store these as alternate embeddings or in the FTS5 index. If "The threshold was set to 0.7" also stores "What was the threshold?" and "What value was the threshold set to?", the question-answer gap disappears at storage time.</li>
+<li><strong>Relational tagging:</strong> How does this episode relate to other recent episodes? (before/after, cause/effect, contradiction, elaboration). Creates associative links for spreading activation.</li>
+<li><strong>Significance annotation:</strong> Why would someone want to recall this later? (decision, configuration change, interpersonal event, learning moment). Creates distinctiveness.</li>
+<li><strong>Abstract summary:</strong> A one-sentence distillation of the episode's key fact. This is the "semantic encoding" that produces the deepest, most retrievable traces.</li>
+</ol>
+<p>The cost is computational — generating this metadata requires LLM inference at storage time (or heuristic extraction). The benefit is dramatically improved retrievability, because the stored episode has been processed at multiple levels and contains retrieval cues that match diverse query types.</p>
+<hr />
+<h2 id="8-synthesis-a-biologically-informed-recall-architecture">8. Synthesis: A Biologically-Informed Recall Architecture<a class="headerlink" href="#8-synthesis-a-biologically-informed-recall-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="81-what-the-brain-does-that-probos-doesnt-yet">8.1 What the Brain Does That ProbOS Doesn't (Yet)<a class="headerlink" href="#81-what-the-brain-does-that-probos-doesnt-yet" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Brain Mechanism</th>
+<th>Current ProbOS</th>
+<th>Gap</th>
+<th>Priority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Spreading activation</strong> (multi-hop concept traversal)</td>
+<td>Single-hop embedding search</td>
+<td>No concept-to-concept expansion</td>
+<td><strong>HIGH</strong> — directly addresses the Q→A gap</td>
+</tr>
+<tr>
+<td><strong>Encoding specificity</strong> (context-matching)</td>
+<td>AnchorFrame exists, weighted at 10%</td>
+<td>Context used as tiebreaker, not filter</td>
+<td><strong>HIGH</strong> — anchors should be a primary pathway</td>
+</tr>
+<tr>
+<td><strong>Pre-retrieval question decomposition</strong></td>
+<td>None — raw query goes to ChromaDB</td>
+<td>Questions aren't transformed before search</td>
+<td><strong>HIGH</strong> — cheap, directly addresses the gap</td>
+</tr>
+<tr>
+<td><strong>Reconstructive recall</strong> (fragment synthesis)</td>
+<td>Aggressive filtering, single-best-match</td>
+<td>Filters out potentially useful fragments</td>
+<td><strong>MEDIUM</strong> — needs LLM at recall time</td>
+</tr>
+<tr>
+<td><strong>Temporal context model</strong> (recent-conversation bias)</td>
+<td>Recency weight on episode age</td>
+<td>No conversational context drift vector</td>
+<td><strong>MEDIUM</strong> — would help conversational recall</td>
+</tr>
+<tr>
+<td><strong>Dual-process</strong> (familiarity filter + recollection re-rank)</td>
+<td>Weighted sum conflates both</td>
+<td>No fast-filter/slow-rerank separation</td>
+<td><strong>MEDIUM</strong> — architectural change</td>
+</tr>
+<tr>
+<td><strong>Elaborative encoding</strong> (enriched storage)</td>
+<td>Raw episode text + AnchorFrame</td>
+<td>No question generation, no relation tagging</td>
+<td><strong>HIGH</strong> — prevents the gap at storage time</td>
+</tr>
+<tr>
+<td><strong>Distinctiveness scoring</strong></td>
+<td>Not implemented</td>
+<td>Important memories not marked at encoding</td>
+<td><strong>LOW</strong> — partially handled by trust deltas</td>
+</tr>
+<tr>
+<td><strong>Emotional valence</strong></td>
+<td>Not implemented</td>
+<td>Conflict/surprise episodes not prioritized</td>
+<td><strong>LOW</strong> — nice-to-have</td>
+</tr>
+<tr>
+<td><strong>Mismatch suppression</strong></td>
+<td>Not implemented</td>
+<td>Contradictory context not penalized</td>
+<td><strong>LOW</strong> — edge case optimization</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82-recommended-architecture-three-phase-recall">8.2 Recommended Architecture: Three-Phase Recall<a class="headerlink" href="#82-recommended-architecture-three-phase-recall" title="Permanent link">&para;</a></h3>
+<p><strong>Phase 1: Query Enrichment (Pre-Retrieval, 0 LLM tokens)</strong>
+- Extract entities from the query via regex/NLP
+- Classify question type (what/who/when/where/why/how)
+- Extract presuppositions and expected answer type
+- Expand query with synonyms and related terms from a simple thesaurus
+- Construct an "expected answer template" for embedding</p>
+<p><strong>Phase 2: Multi-Channel Retrieval (Parallel Candidate Gathering)</strong>
+- <strong>Channel A — Semantic:</strong> Embed the enriched query → ChromaDB top-K (familiarity filter)
+- <strong>Channel B — Keyword:</strong> FTS5 search with extracted entities (already implemented)
+- <strong>Channel C — Entity Association:</strong> If an entity index exists, find episodes associated with query entities (spreading activation)
+- <strong>Channel D — Context Match:</strong> If AnchorFrame context available (department, recent channel, conversation partner), filter by anchor dimensions
+- <strong>Channel E — Temporal:</strong> Recent episodes from the same agent's conversation (temporal context model)
+- Merge all candidates, deduplicate</p>
+<p><strong>Phase 3: Salience Re-Ranking (Composite Scoring)</strong>
+- Score each candidate with the existing composite formula (semantic + keyword + trust + Hebbian + recency + anchor)
+- <strong>Boost</strong> candidates found by multiple channels (convergence bonus — spreading activation)
+- <strong>Penalize</strong> candidates whose anchor context contradicts the query context (mismatch suppression)
+- Apply activation-level weighting from ActivationTracker (retrieval fluency)
+- Budget and return</p>
+<h3 id="83-highest-roi-change-query-time-question-to-statement-transformation">8.3 Highest-ROI Change: Query-Time Question-to-Statement Transformation<a class="headerlink" href="#83-highest-roi-change-query-time-question-to-statement-transformation" title="Permanent link">&para;</a></h3>
+<p>If I had to recommend a single change, it would be this:</p>
+<p><strong>Before sending a query to ChromaDB, transform questions into expected answer patterns.</strong></p>
+<p>"What was the threshold?" → "the threshold was [VALUE]" / "threshold setting value"
+"Who fixed the bug?" → "[AGENT] fixed the bug" / "bug fix resolved by"
+"When did we discuss pools?" → "discussed pools on [DATE]" / "pool discussion meeting"</p>
+<p>This is trivially implementable (a few regex patterns for WH-question types, plus keyword extraction), requires zero LLM tokens at retrieval time, and directly addresses the core problem: the embedding of "the threshold was 0.7" is much closer to "the threshold was [VALUE]" than to "What was the threshold?"</p>
+<p>This is what the brain does in step 3 of question processing (Section 3.1 above): construct an expected answer template before searching memory. The brain has been doing this trick for 200 million years. We should steal it.</p>
+<h3 id="84-second-highest-roi-elaborative-encoding-with-question-seeding">8.4 Second-Highest ROI: Elaborative Encoding with Question Seeding<a class="headerlink" href="#84-second-highest-roi-elaborative-encoding-with-question-seeding" title="Permanent link">&para;</a></h3>
+<p>At episode storage time, generate 2-3 questions that this episode could answer. Store these as additional text in the FTS5 index (not in the embedding — that would change the semantic space).</p>
+<p>When recall happens, FTS5 keyword search on the questions will bridge the Q→A gap for exact matches, and the expanded keyword terms will help ChromaDB's semantic search on near-matches.</p>
+<p>Cost: A few regex patterns or a lightweight LLM call at storage time (amortized across all future retrievals).
+Benefit: Permanently bridges the Q→A gap for that episode.</p>
+<hr />
+<h2 id="9-references-and-intellectual-lineage">9. References and Intellectual Lineage<a class="headerlink" href="#9-references-and-intellectual-lineage" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Anderson, J. R. (1983, 2007). <em>The Architecture of Cognition</em> / <em>How Can the Human Mind Occur in the Physical Universe?</em> — ACT-R theory, base-level activation equation (already implemented in ActivationTracker)</li>
+<li>Bartlett, F. C. (1932). <em>Remembering</em> — Reconstructive memory, schema theory</li>
+<li>Bjork, R. A. (1994). "Memory and metamemory considerations in the training of human beings" — Desirable difficulties</li>
+<li>Collins, A. M., &amp; Loftus, E. F. (1975). "A spreading-activation theory of semantic processing" — Spreading activation</li>
+<li>Craik, F. I. M., &amp; Lockhart, R. S. (1972). "Levels of processing: A framework for memory research" — Depth of processing</li>
+<li>Craik, F. I. M., &amp; Tulving, E. (1975). "Depth of processing and the retention of words in episodic memory" — Elaborative encoding</li>
+<li>Graesser, A. C., &amp; Black, J. B. (Eds.). (1985). <em>The Psychology of Questions</em> — Question answering schemas</li>
+<li>Howard, M. W., &amp; Kahana, M. J. (2002). "A distributed representation of temporal context" — Temporal context model</li>
+<li>Hunt, R. R. (2006). "The concept of distinctiveness in memory research" — Distinctiveness and interference</li>
+<li>Johnson, M. K., &amp; Raye, C. L. (1981). "Reality monitoring" — Source monitoring framework (already implemented in anchor_quality.py)</li>
+<li>Johnson-Laird, P. N. (1983). <em>Mental Models</em> — Mental model theory of reasoning</li>
+<li>LaBar, K. S., &amp; Cabeza, R. (2006). "Cognitive neuroscience of emotional memory" — Emotion-memory interaction</li>
+<li>Loftus, E. F., &amp; Palmer, J. C. (1974). "Reconstruction of automobile destruction" — Reconstructive memory, misinformation effect</li>
+<li>McClelland, J. L., McNaughton, B. L., &amp; O'Reilly, R. C. (1995). "Why there are complementary learning systems in the hippocampus and neocortex" — Complementary learning systems</li>
+<li>McGaugh, J. L. (2004). "The amygdala modulates the consolidation of memories of emotionally arousing experiences" — Emotional memory enhancement</li>
+<li>Morris, C. D., Bransford, J. D., &amp; Franks, J. J. (1977). "Levels of processing versus transfer appropriate processing" — Transfer-appropriate processing</li>
+<li>Ratcliff, R. (1978). "A theory of memory retrieval" — Drift-diffusion model</li>
+<li>Rogers, T. B., Kuiper, N. A., &amp; Kirker, W. S. (1977). "Self-reference and the encoding of personal information" — Self-referential processing</li>
+<li>Tulving, E., &amp; Thomson, D. M. (1973). "Encoding specificity and retrieval processes in episodic memory" — Encoding specificity principle</li>
+<li>Yonelinas, A. P. (2002). "The nature of recollection and familiarity: A review of 30 years of research" — Dual-process theory</li>
+</ul>
+<hr />
+<h2 id="10-connection-to-existing-probos-architecture">10. Connection to Existing ProbOS Architecture<a class="headerlink" href="#10-connection-to-existing-probos-architecture" title="Permanent link">&para;</a></h2>
+<p>This research connects to and validates several existing design decisions:</p>
+<table>
+<thead>
+<tr>
+<th>ProbOS Feature</th>
+<th>Cognitive Science Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AnchorFrame (AD-567a)</td>
+<td>Encoding specificity + source monitoring (Johnson &amp; Raye)</td>
+</tr>
+<tr>
+<td>Johnson-weighted anchor confidence (AD-567c)</td>
+<td>Reality monitoring framework</td>
+</tr>
+<tr>
+<td>ACT-R ActivationTracker (AD-567d)</td>
+<td>Base-level activation = retrieval fluency</td>
+</tr>
+<tr>
+<td>FTS5 keyword sidecar (AD-567b)</td>
+<td>Lexical access pathway (dual-route retrieval)</td>
+</tr>
+<tr>
+<td>Composite scoring formula</td>
+<td>Multi-cue retrieval (but needs mismatch suppression, convergence bonus)</td>
+</tr>
+<tr>
+<td>Dream consolidation (dreaming.py)</td>
+<td>Sleep-dependent memory reorganization (McClelland et al., 1995)</td>
+</tr>
+<tr>
+<td>Hebbian router</td>
+<td>Hebbian learning = association strengthening</td>
+</tr>
+<tr>
+<td>Episodic → procedural pipeline (Cognitive JIT)</td>
+<td>Declarative → procedural memory transition (Anderson's ACT-R)</td>
+</tr>
+<tr>
+<td>Episode dedup/merge (AD-538, AD-550)</td>
+<td>Interference reduction via consolidation</td>
+</tr>
+<tr>
+<td>Crew notebook quality pipeline (AD-550–555)</td>
+<td>Elaborative encoding, distinctiveness</td>
+</tr>
+</tbody>
+</table>
+<p>The architecture is already more brain-like than most AI memory systems. The research identifies specific gaps (query transformation, spreading activation, elaborative encoding at storage time) that can be addressed incrementally.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

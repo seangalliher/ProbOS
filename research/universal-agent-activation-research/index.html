@@ -1,0 +1,3185 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/universal-agent-activation-research/">
+      
+      
+        <link rel="prev" href="../group-psychometrics-research/">
+      
+      
+        <link rel="next" href="../memvid-evaluation/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Universal Agent Activation - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#universal-agent-activation-event-driven-cognitive-engagement-for-multi-agent-systems" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Universal Agent Activation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Problem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-space" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Space
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design Space">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#three-activation-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three Activation Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-taskevent-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The TaskEvent Protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-cognitive-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Cognitive Queue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-dispatcher" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Dispatcher
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#event-emitters-the-app-ecosystem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event Emitters: The App Ecosystem
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Event Emitters: The App Ecosystem">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#internal-emitters-probos-native" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internal Emitters (ProbOS Native)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#external-emitters-integration-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        External Emitters (Integration Layer)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#industry-landscape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Industry Landscape
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Industry Landscape">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#microsoft-mcp-for-windows-2025-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Microsoft MCP for Windows (2025-2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#google-webmcp-for-chrome-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Google WebMCP for Chrome (2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apple-app-intents-and-siri-signals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple App Intents and Siri Signals
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#microsoft-agent-framework-2025-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Microsoft Agent Framework (2025-2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#event-driven-architecture-for-ai-agents-atlan-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event-Driven Architecture for AI Agents (Atlan, 2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#solace-agent-mesh-solacelabs-2025-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solace Agent Mesh (SolaceLabs, 2025-2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prior-art-in-multi-agent-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prior Art in Multi-Agent Activation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proof-of-concept-tic-tac-toe-as-first-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proof of Concept: Tic-Tac-Toe as First App
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proof of Concept: Tic-Tac-Toe as First App">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-changes-for-tic-tac-toe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Changes for Tic-Tac-Toe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expected-behavior-after-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expected Behavior After Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sequencing-from-tic-tac-toe-to-platform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sequencing: From Tic-Tac-Toe to Platform
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sequencing: From Tic-Tac-Toe to Platform">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-foundation-tic-tac-toe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Foundation + Tic-Tac-Toe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-agent-to-agent-reactive-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Agent-to-Agent Reactive Path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-internal-app-emitters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Internal App Emitters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-external-integration-mcp-apps-mcp-providerconsumer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: External Integration (MCP Apps + MCP Provider/Consumer)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architectural-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architectural Principles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-agent-experience-principle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Agent Experience Principle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-apps-integration-interactive-ui-surfaces-for-agent-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCP Apps Integration: Interactive UI Surfaces for Agent Activation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MCP Apps Integration: Interactive UI Surfaces for Agent Activation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-are-mcp-apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Are MCP Apps?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#three-integration-levels-with-uaaa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three Integration Levels with UAAA
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Three Integration Levels with UAAA">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#level-1-mcp-apps-as-external-event-emitters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 1: MCP Apps as External Event Emitters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-2-probos-hxi-as-an-mcp-app-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 2: ProbOS HXI as an MCP App Host
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-3-probos-agents-as-mcp-app-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 3: ProbOS Agents as MCP App Providers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tic-tac-toe-as-the-first-mcp-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tic-Tac-Toe as the First MCP App
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implications-for-the-ax-principle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implications for the AX Principle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#open-questions_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Questions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#citations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Citations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Problem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-space" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Space
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design Space">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#three-activation-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three Activation Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-taskevent-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The TaskEvent Protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-cognitive-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Cognitive Queue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-dispatcher" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Dispatcher
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#event-emitters-the-app-ecosystem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event Emitters: The App Ecosystem
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Event Emitters: The App Ecosystem">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#internal-emitters-probos-native" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internal Emitters (ProbOS Native)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#external-emitters-integration-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        External Emitters (Integration Layer)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#industry-landscape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Industry Landscape
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Industry Landscape">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#microsoft-mcp-for-windows-2025-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Microsoft MCP for Windows (2025-2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#google-webmcp-for-chrome-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Google WebMCP for Chrome (2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apple-app-intents-and-siri-signals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple App Intents and Siri Signals
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#microsoft-agent-framework-2025-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Microsoft Agent Framework (2025-2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#event-driven-architecture-for-ai-agents-atlan-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event-Driven Architecture for AI Agents (Atlan, 2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#solace-agent-mesh-solacelabs-2025-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solace Agent Mesh (SolaceLabs, 2025-2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prior-art-in-multi-agent-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prior Art in Multi-Agent Activation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proof-of-concept-tic-tac-toe-as-first-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proof of Concept: Tic-Tac-Toe as First App
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proof of Concept: Tic-Tac-Toe as First App">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-changes-for-tic-tac-toe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Changes for Tic-Tac-Toe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expected-behavior-after-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expected Behavior After Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sequencing-from-tic-tac-toe-to-platform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sequencing: From Tic-Tac-Toe to Platform
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sequencing: From Tic-Tac-Toe to Platform">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-foundation-tic-tac-toe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Foundation + Tic-Tac-Toe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-agent-to-agent-reactive-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Agent-to-Agent Reactive Path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-internal-app-emitters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Internal App Emitters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-external-integration-mcp-apps-mcp-providerconsumer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: External Integration (MCP Apps + MCP Provider/Consumer)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architectural-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architectural Principles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-agent-experience-principle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Agent Experience Principle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-apps-integration-interactive-ui-surfaces-for-agent-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCP Apps Integration: Interactive UI Surfaces for Agent Activation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MCP Apps Integration: Interactive UI Surfaces for Agent Activation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-are-mcp-apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Are MCP Apps?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#three-integration-levels-with-uaaa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three Integration Levels with UAAA
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Three Integration Levels with UAAA">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#level-1-mcp-apps-as-external-event-emitters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 1: MCP Apps as External Event Emitters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-2-probos-hxi-as-an-mcp-app-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 2: ProbOS HXI as an MCP App Host
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-3-probos-agents-as-mcp-app-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 3: ProbOS Agents as MCP App Providers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tic-tac-toe-as-the-first-mcp-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tic-Tac-Toe as the First MCP App
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implications-for-the-ax-principle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implications for the AX Principle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#open-questions_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Questions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#citations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Citations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="universal-agent-activation-event-driven-cognitive-engagement-for-multi-agent-systems">Universal Agent Activation: Event-Driven Cognitive Engagement for Multi-Agent Systems<a class="headerlink" href="#universal-agent-activation-event-driven-cognitive-engagement-for-multi-agent-systems" title="Permanent link">&para;</a></h1>
+<p><em>Sean Galliher, 2026-04-07</em></p>
+<p><em>Triggered by: BF-119 through BF-123 recreation system debugging — agents produce structured commands (CHALLENGE, MOVE) but opponents never respond. Root cause revealed a fundamental architectural gap: ProbOS has no agent-to-agent reactive cognition path. Tic-tac-toe is the surface symptom; the underlying problem is that agents can't engage in fluid multi-turn collaboration.</em></p>
+<hr />
+<h2 id="the-problem">The Problem<a class="headerlink" href="#the-problem" title="Permanent link">&para;</a></h2>
+<p>ProbOS agents can think, communicate, form trust relationships, dream, consolidate knowledge, and even challenge each other to games. But they can't actually <em>play</em> the games. More precisely: when Agent A takes an action that requires Agent B's response, Agent B has no mechanism to notice, prioritize, and respond promptly.</p>
+<p>The current agent activation model has exactly three triggers:</p>
+<ol>
+<li><strong>Captain posts in Ward Room</strong> → immediate response via <code>ward_room_router.handle_event()</code> (seconds)</li>
+<li><strong>Captain DMs an agent</strong> → immediate response via <code>routers/agents.py</code> (seconds)</li>
+<li><strong>Proactive timer</strong> → agent thinks via <code>ProactiveCognitiveLoop._think_for_agent()</code> (<strong>5 minutes</strong>)</li>
+</ol>
+<p>Agent-to-agent communication exists (Ward Room posts, DMs), but it only triggers responses from agents co-targeted in the <em>same routing event</em>. When Agent A's response to the Captain creates a new obligation for Agent B (a game challenge, a task assignment, a question), Agent B won't process it until the next proactive scan. A tic-tac-toe game with 9 moves would take 45+ minutes. A collaborative project with 10 handoffs between agents would take nearly an hour of wall-clock time, when the actual cognitive work is seconds per step.</p>
+<p><strong>This is the difference between a crew that posts messages and a crew that works together.</strong></p>
+<p>The tic-tac-toe case is instructive because it's simple enough to be unambiguous. BF-123 proved agents <em>want</em> to play — four challenges were created within 15 seconds of enabling the Ward Room router path. But the games stall after the first move because the opponent agent has:</p>
+<ul>
+<li>No working memory engagement (doesn't know they're in a game)</li>
+<li>No reactive trigger (won't think about it until the proactive timer fires)</li>
+<li>No focused context (even when the proactive loop fires, game state may not surface as the most relevant context)</li>
+</ul>
+<p>The game is a toy. The principle is not. Replace "tic-tac-toe" with "incident response," "code review," "research handoff," or "collaborative diagnosis" and the architectural gap becomes mission-critical.</p>
+<h2 id="design-space">Design Space<a class="headerlink" href="#design-space" title="Permanent link">&para;</a></h2>
+<h3 id="three-activation-patterns">Three Activation Patterns<a class="headerlink" href="#three-activation-patterns" title="Permanent link">&para;</a></h3>
+<p>The user (Captain) identified three complementary activation patterns, all of which are needed:</p>
+<p><strong>Pull (Queue-Based):</strong> Agents check a shared work queue and pick up tasks matching their capabilities. Self-directed. Respects agent autonomy and earned agency. Good for load balancing across agents with overlapping skills. The agent decides <em>when</em> and <em>what</em> to work on within its capability envelope.</p>
+<p><strong>Push (Assignment-Based):</strong> A task-emitting object assigns work to a specific agent (or capability profile). Deterministic routing. Good for chain-of-command directives, direct handoffs, and game turns where the target is unambiguous. The emitter decides <em>who</em> should work on it.</p>
+<p><strong>Subscribe (Reactive):</strong> Agents subscribe to event streams they care about — threads they're participating in, channels relevant to their department, game states they're involved in. Ambient awareness. Good for monitoring, social engagement, and collaborative work where multiple agents need to stay in sync.</p>
+<p>These patterns are not mutually exclusive. A single architectural event might activate agents through all three:</p>
+<ul>
+<li>A Kanban card moves to "Ready for Review" → <strong>push</strong> to the assigned reviewer, <strong>broadcast</strong> to the department channel (subscribe), and <strong>enqueue</strong> as available work for any qualified reviewer (pull).</li>
+<li>An agent asks a question in Ward Room → <strong>push</strong> to the @mentioned agent, <strong>subscribe</strong> notification to all thread participants, <strong>pull</strong> availability for any agent with relevant expertise.</li>
+</ul>
+<h3 id="the-taskevent-protocol">The TaskEvent Protocol<a class="headerlink" href="#the-taskevent-protocol" title="Permanent link">&para;</a></h3>
+<p>Every event source — internal or external — needs to speak one language. The <strong>TaskEvent</strong> is the universal unit of agent activation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>TaskEvent {
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    source_type:  &quot;game&quot; | &quot;agent&quot; | &quot;captain&quot; | &quot;kanban&quot; | &quot;work_order&quot; | &quot;external&quot; | ...
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    source_id:    string          # Which specific emitter (game ID, agent ID, app ID)
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    event_type:   string          # What happened (move_required, task_assigned, question_asked)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    priority:     immediate | soon | ambient
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    target:       AgentTarget     # Specific agent, capability requirement, or broadcast
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    payload:      dict            # Event-specific context
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    deadline:     datetime | None # When response is needed
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    thread_id:    string | None   # Conversational continuity
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>}
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>AgentTarget {
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    agent_id:     string | None   # Direct assignment
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    capability:   string | None   # Capability-based routing
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    department:   string | None   # Department broadcast
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    broadcast:    bool            # All eligible agents
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>}
+</code></pre></div>
+<p>The key insight is that <strong>target</strong> isn't always a specific agent. It can be a capability requirement ("I need an agent qualified in security analysis"), a department ("notify Engineering"), or a broadcast. The dispatcher resolves abstract targets to concrete agents using existing ProbOS infrastructure: qualifications (AD-539), trust/rank gating, Workforce Scheduling availability, and earned agency tiers.</p>
+<h3 id="agent-cognitive-queue">Agent Cognitive Queue<a class="headerlink" href="#agent-cognitive-queue" title="Permanent link">&para;</a></h3>
+<p>The proactive timer doesn't go away — it becomes the lowest-priority activation source. Each agent gets a <strong>priority-ordered cognitive queue</strong> that replaces the single-mode "think every 5 minutes" model:</p>
+<table>
+<thead>
+<tr>
+<th>Priority</th>
+<th>Latency</th>
+<th>Examples</th>
+<th>Current Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Immediate</strong></td>
+<td>&lt; 10s</td>
+<td>Game moves, Captain directives, urgent handoffs, incident alerts</td>
+<td>Captain WR/DM only</td>
+</tr>
+<tr>
+<td><strong>Soon</strong></td>
+<td>30-60s</td>
+<td>Thread replies, task assignments, questions from peers</td>
+<td>None</td>
+</tr>
+<tr>
+<td><strong>Ambient</strong></td>
+<td>5 min (proactive cycle)</td>
+<td>General observations, unsolicited contributions, monitoring</td>
+<td>Proactive loop</td>
+</tr>
+</tbody>
+</table>
+<p>When an agent has items in its cognitive queue, processing follows priority order. Immediate items trigger a think cycle outside the normal proactive cooldown. Soon items batch into the next available think window (or create one within 60 seconds). Ambient items are processed during the regular proactive scan.</p>
+<p><strong>Crucially, the cognitive queue carries context.</strong> When a game engine emits a <code>move_required</code> TaskEvent, the payload includes the board state, valid moves, opponent, and game history. The agent's <code>_build_user_message()</code> can inject this directly — no need to re-discover it through general context gathering. This focused context produces better responses (the agent knows exactly what it's being asked to do) and is more token-efficient (no extraneous Ward Room scanning).</p>
+<h3 id="the-dispatcher">The Dispatcher<a class="headerlink" href="#the-dispatcher" title="Permanent link">&para;</a></h3>
+<p>The dispatcher is the routing layer between TaskEvents and agent cognitive queues. It resolves <em>who</em> should handle each event:</p>
+<ol>
+<li><strong>Explicit target</strong> (agent_id set) → route directly to that agent's queue</li>
+<li><strong>Capability match</strong> (capability set) → query Qualification Framework (AD-539) for qualified agents → select based on availability, trust, load</li>
+<li><strong>Department broadcast</strong> (department set) → fan out to department members</li>
+<li><strong>Open broadcast</strong> → all eligible agents (with earned agency gating)</li>
+</ol>
+<p>The dispatcher draws on existing ProbOS infrastructure:</p>
+<ul>
+<li><strong>Workforce Scheduling (AD-496-498):</strong> WorkItem/BookableResource/Booking model for tracking what agents are working on and their capacity</li>
+<li><strong>Trust/Rank gating:</strong> Some task types require minimum rank (same pattern as <code>recreation_min_rank</code>)</li>
+<li><strong>Earned Agency (AD-357):</strong> Higher-trust agents get broader activation rights</li>
+<li><strong>Agent Calendar:</strong> Availability windows, focus time blocks</li>
+<li><strong>Working Memory capacity:</strong> Don't overload an agent already handling multiple engagements</li>
+</ul>
+<h2 id="event-emitters-the-app-ecosystem">Event Emitters: The App Ecosystem<a class="headerlink" href="#event-emitters-the-app-ecosystem" title="Permanent link">&para;</a></h2>
+<h3 id="internal-emitters-probos-native">Internal Emitters (ProbOS Native)<a class="headerlink" href="#internal-emitters-probos-native" title="Permanent link">&para;</a></h3>
+<p>ProbOS already has several objects that <em>should</em> be emitting TaskEvents but currently don't:</p>
+<p><strong>RecreationService (Games):</strong> When <code>create_game()</code> is called, it should emit <code>move_required</code> to the opponent. When <code>make_move()</code> advances the turn, it should emit <code>move_required</code> to the next player. When the game ends, it should emit <code>game_completed</code> to both players. Tic-tac-toe is the first app — but the protocol is the same for any game type.</p>
+<p><strong>WardRoom (Agent Communication):</strong> When an agent @mentions another agent, that should emit a <code>mention</code> TaskEvent to the target. When an agent replies in a thread, participants should receive <code>thread_reply</code> events. This is the reactive cognition path that's currently missing.</p>
+<p><strong>WorkItem/KanbanBoard:</strong> When a work item is created or transitions state, it should emit events to assigned/watching agents. "Card moved to Review" → <code>task_state_changed</code> to the reviewer.</p>
+<p><strong>Agent-to-Agent Delegation:</strong> When Agent A explicitly hands off work to Agent B (<code>[ASSIGN @B]</code>, <code>[HANDOFF @B]</code>), that's a <code>task_assigned</code> TaskEvent with immediate priority.</p>
+<p><strong>Scheduled Tasks (Cron):</strong> Time-based activation already exists in the proactive loop. TaskEvents with deadlines create a "think about this when the deadline approaches" pattern.</p>
+<h3 id="external-emitters-integration-layer">External Emitters (Integration Layer)<a class="headerlink" href="#external-emitters-integration-layer" title="Permanent link">&para;</a></h3>
+<p>This is where the architecture becomes a platform. Three integration patterns:</p>
+<p><strong>MCP Consumer — ProbOS agents call external tools.</strong> This already exists conceptually (agents can use tools via Cognitive JIT). The TaskEvent model adds reactive triggering: an MCP server can push events <em>to</em> ProbOS, not just respond to requests. Microsoft's announcement of MCP server capabilities for Windows means every Windows application could potentially emit TaskEvents that ProbOS agents respond to.</p>
+<p><strong>MCP Provider — External systems trigger ProbOS agents.</strong> ProbOS exposes an MCP server interface. External applications (CI/CD pipelines, monitoring systems, business applications) connect and emit TaskEvents. An external monitoring tool detects an anomaly → emits a TaskEvent → ProbOS Security or Engineering agent investigates.</p>
+<p><strong>Webhook/Adapter (Transporter Pattern):</strong> For non-MCP applications, the existing Transporter Pattern provides the integration model. A thin adapter wraps the external app's native event system (webhooks, file system watchers, OS signals, API polling) and translates events into TaskEvents.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>External App Ecosystem
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>┌──────────────────────────────────────────┐
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>│  Windows Apps (MCP native)               │
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>│  macOS Apps (App Intents / Siri Signals) │
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>│  Web Apps (WebMCP / structured tools)    │
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>│  CLI Tools (stdout/file watchers)        │
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>│  IoT / Sensors (MQTT → adapter)          │
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>│  Business Systems (ERP, CRM, ITSM)      │
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>└────────────────┬─────────────────────────┘
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>                 │
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    ┌────────────▼────────────┐
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    │   Integration Layer     │
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    │  ┌───────┐ ┌─────────┐  │
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    │  │  MCP  │ │Webhook/ │  │
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    │  │Server │ │Adapter  │  │
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>    │  └───┬───┘ └────┬────┘  │
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    └──────┼──────────┼───────┘
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>           │          │
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>           ▼          ▼
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>    ┌─────────────────────────┐
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>    │     TaskEvent Bus       │
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>    │  (unified event fabric) │
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>    └────────────┬────────────┘
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>                 │
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>         ┌───────▼────────┐
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>         │   Dispatcher    │
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>         │  (routing +     │
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>         │   scheduling)   │
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>         └───────┬─────────┘
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>                 │
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>    ┌────────────┼────────────┐
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>    ▼            ▼            ▼
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>┌────────┐ ┌────────┐  ┌────────┐
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>│Agent A │ │Agent B │  │Agent C │
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>│ Queue  │ │ Queue  │  │ Queue  │
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>└────────┘ └────────┘  └────────┘
+</code></pre></div>
+<h2 id="industry-landscape">Industry Landscape<a class="headerlink" href="#industry-landscape" title="Permanent link">&para;</a></h2>
+<h3 id="microsoft-mcp-for-windows-2025-2026">Microsoft MCP for Windows (2025-2026)<a class="headerlink" href="#microsoft-mcp-for-windows-2025-2026" title="Permanent link">&para;</a></h3>
+<p>Microsoft announced MCP server capabilities integrated into Windows, allowing native applications to expose structured interfaces that AI agents can consume. This is the OS-level realization of the "wrap existing apps" pattern — every Windows application becomes a potential event source and tool provider for AI agents.</p>
+<p><strong>ProbOS connection:</strong> If Windows apps natively emit MCP-compatible signals, ProbOS agents could react to <em>any Windows application event</em> without custom adapters. A user opens a file in an editor → ProbOS CodebaseIndex agent notices. A CI/CD pipeline fails → ProbOS Engineering agent investigates. An email arrives → ProbOS Yeoman triages. The integration layer becomes thinner as the OS does more of the adaptation work.</p>
+<h3 id="google-webmcp-for-chrome-2026">Google WebMCP for Chrome (2026)<a class="headerlink" href="#google-webmcp-for-chrome-2026" title="Permanent link">&para;</a></h3>
+<p>Google's WebMCP initiative (announced February 2026, Early Preview Program) makes websites "agent-ready" by providing structured tool declarations instead of requiring agents to manipulate the DOM directly. Two APIs: a <strong>declarative API</strong> for standard actions definable in HTML forms, and an <strong>imperative API</strong> for complex interactions requiring JavaScript execution. The core principle: a "direct communication channel eliminates ambiguity and allows for faster, more robust agent workflows."</p>
+<p>This completes the trifecta: Windows apps (Microsoft MCP), mobile/desktop apps (Apple App Intents), and now <strong>web applications</strong> (Google WebMCP) all converging on the same architectural pattern — applications explicitly declare their capabilities as structured tools for AI agent consumption.</p>
+<p><strong>ProbOS connection:</strong> WebMCP is the web integration layer we need. Instead of building custom scrapers or Transporter adapters for every web application, WebMCP-enabled sites expose structured tools that ProbOS agents can consume natively. An e-commerce site declares a "search products" tool → ProbOS Operations agent uses it for procurement. A project management web app declares "create ticket" and "update status" tools → ProbOS agents interact with external project trackers. A customer's web application exposes WebMCP tools → Nooplex crew agents can operate it directly. The TaskEvent model extends naturally: WebMCP tools are invocable actions, and WebMCP-enabled sites could emit events (form submissions, state changes) that become TaskEvents in ProbOS's dispatcher.</p>
+<p>The convergence across all three platform vendors (Microsoft, Apple, Google) on "apps declare structured capabilities for AI agents" validates the TaskEvent protocol design — the industry is moving toward exactly this pattern at the platform level.</p>
+<h3 id="apple-app-intents-and-siri-signals">Apple App Intents and Siri Signals<a class="headerlink" href="#apple-app-intents-and-siri-signals" title="Permanent link">&para;</a></h3>
+<p>Apple's App Intents framework allows iOS/macOS applications to declare structured capabilities (intents) with typed parameters. Siri orchestrates these intents to fulfill user requests. The rumored extension to "signals" would allow apps to <em>push</em> events to Siri proactively — not just respond to queries.</p>
+<p><strong>ProbOS connection:</strong> Same architectural pattern as MCP but in Apple's ecosystem. An App Intent maps directly to a TaskEvent: the app declares "I can emit these event types with these parameters," and the orchestrator (Siri / ProbOS dispatcher) routes them to the appropriate handler. ProbOS's advantage is multi-agent routing — where Siri has a single agent (itself), ProbOS can dispatch app signals to the <em>most qualified</em> crew member.</p>
+<h3 id="microsoft-agent-framework-2025-2026">Microsoft Agent Framework (2025-2026)<a class="headerlink" href="#microsoft-agent-framework-2025-2026" title="Permanent link">&para;</a></h3>
+<p>Microsoft's open-source Agent Framework (<code>github.com/microsoft/agent-framework</code>) provides a comprehensive multi-language framework for building, orchestrating, and deploying AI agents. While not marketed as "event-driven architecture," the framework embeds EDA patterns throughout its core design — particularly in its Durable Agents and workflow orchestration layers.</p>
+<p><strong>Durable Agents as Virtual Actors.</strong> The framework's most architecturally significant feature is Durable Agents, built on top of Durable Entities (Microsoft's "virtual actor" abstraction). Each agent session maps to an entity with a durable identity (<code>AgentSessionId</code>), persisted state (full conversation history), and serialized message processing. This is a production-grade implementation of the Actor Model — the same pattern our research identifies as the theoretical foundation for the Agent Cognitive Queue. Key properties:</p>
+<ul>
+<li>State survives process restarts, failures, and scale-out events</li>
+<li>Any worker can resume a session (location transparency)</li>
+<li>Concurrent messages to the same session are serialized (no race conditions)</li>
+<li>Sessions can persist indefinitely with zero compute (relevant for human-in-the-loop waits)</li>
+</ul>
+<p><strong>Deterministic Multi-Agent Orchestration.</strong> The framework defines four orchestration patterns — the same four the Atlan article identifies as the universal EDA patterns for agent systems:</p>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Microsoft AF</th>
+<th>ProbOS Equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sequential (chaining)</td>
+<td>Agent outputs piped to next agent</td>
+<td>Science Analytical Pyramid, TaskEvent chaining</td>
+</tr>
+<tr>
+<td>Parallel (fan-out/fan-in)</td>
+<td>Multiple agents run concurrently, results aggregated</td>
+<td>Department broadcast, multi-agent alerts</td>
+</tr>
+<tr>
+<td>Conditional</td>
+<td>Branch logic based on structured agent output</td>
+<td>Dispatcher routing based on capability/department</td>
+</tr>
+<tr>
+<td>Human-in-the-loop</td>
+<td>Pause for external events with optional timeouts</td>
+<td>Captain approval gates, earned agency escalation</td>
+</tr>
+</tbody>
+</table>
+<p>All orchestrations are <strong>checkpointed</strong> — completed agent calls are not re-executed on failure replay. This is event sourcing applied to agent workflow execution.</p>
+<p><strong>Fire-and-Forget Activation.</strong> The framework supports asynchronous task submission via <code>x-ms-wait-for-response: false</code> header (returns HTTP 202). This is the push-based activation model — an external system submits a task and gets notified when it completes, without blocking. Directly maps to our TaskEvent with <code>priority=immediate</code> or <code>priority=soon</code>.</p>
+<p><strong>Agent Skills as Extensible Capability Sources.</strong> The Skills system (<code>AgentSkillsSource</code> → <code>AgentSkillsProvider</code>) allows agents to discover capabilities from multiple sources — filesystem, inline code, cloud services, and custom sources. Skills carry typed resources (data) and scripts (executable actions). The extensibility model (subclass four base types to add any skill source) parallels our TaskEvent emitter concept: any object can become a skill/event source by implementing the right interface.</p>
+<p><strong>ProbOS differentiators:</strong> Microsoft's framework is powerful but fundamentally different in philosophy:</p>
+<ol>
+<li><strong>No agent identity.</strong> Microsoft's agents are stateless functions with persisted conversation history. ProbOS agents have sovereign identity (Character/Reason/Duty), trust relationships, episodic memory, and dream consolidation. An AF agent is a tool; a ProbOS agent is a crew member.</li>
+<li><strong>No inter-agent trust or social dynamics.</strong> AF agents orchestrate via deterministic graph flows. ProbOS agents develop trust through interaction, form Hebbian routing preferences, and evolve standing orders through dream consolidation.</li>
+<li><strong>External orchestration vs. emergent coordination.</strong> AF workflows are designed by developers and executed deterministically. ProbOS aims for agents to self-organize collaborative work through the TaskEvent dispatcher + earned agency + trust-gated activation — where the coordination pattern <em>emerges</em> from agent capabilities and relationships, not from a pre-defined graph.</li>
+<li><strong>No cognitive queue concept.</strong> AF agents respond to explicit invocations. They don't have ambient awareness, proactive observation, or priority-based activation. The cognitive queue — where an agent autonomously processes a mix of immediate tasks, social interactions, and ambient observations — has no AF equivalent.</li>
+<li><strong>Stateless cognitive cycles eliminate compaction.</strong> AF's Durable Agents persist full conversation history in entity state, which grows unboundedly — their ADR-0019 is a 91KB design document dedicated entirely to context compaction strategy, because the problem is inherent to their architecture. ProbOS sidesteps this entirely by design: each cognitive cycle is a clean single-shot (gather context → build prompt → one LLM call → extract actions → done). No conversation history accumulates between cycles. Agent continuity lives in <em>structured infrastructure</em> — episodic memory, working memory engagements, trust scores, notebooks, Ship's Records — not in an ever-growing chat transcript. This is arguably richer: structured memory is queryable, shareable, and survives across contexts, while a linear chat log is opaque, agent-local, and eventually requires lossy compaction. The TaskEvent model reinforces this: each activation carries its own focused payload (Principle 3), so the agent receives exactly the context it needs without re-reading a growing history.</li>
+</ol>
+<p><strong>What we should absorb:</strong> The Durable Entities pattern for agent state persistence and failure recovery is production-proven and architecturally sound. If ProbOS moves to a distributed deployment model (Nooplex Cloud), the virtual actor pattern for agent sessions is the right infrastructure. The checkpointed orchestration model is also valuable for long-running collaborative workflows where partial progress must survive failures.</p>
+<h3 id="event-driven-architecture-for-ai-agents-atlan-2026">Event-Driven Architecture for AI Agents (Atlan, 2026)<a class="headerlink" href="#event-driven-architecture-for-ai-agents-atlan-2026" title="Permanent link">&para;</a></h3>
+<p>Atlan's analysis of EDA for AI agents provides a comprehensive framework that validates and extends our TaskEvent model. Key contributions:</p>
+<p><strong>Four Named Patterns.</strong> The article identifies four EDA patterns for agent systems, all of which map to ProbOS use cases:</p>
+<ol>
+<li><strong>Event Chaining (Pipeline)</strong> — sequential agent activation where each agent's output triggers the next. In ProbOS: the Science Analytical Pyramid (Data Analyst → Systems Analyst → Research Specialist) is exactly this pattern. A <code>research.complete</code> event from Kira triggers Lynx, whose <code>analysis.complete</code> triggers Atlas.</li>
+<li><strong>Fan-Out (Parallel)</strong> — a single event triggers multiple agents simultaneously. In ProbOS: a Security Alert should simultaneously activate Worf (threat assessment), LaForge (system impact), and Chapel (crew wellness check). The TaskEvent dispatcher with department broadcast enables this natively.</li>
+<li><strong>Event Sourcing (Stateful Audit)</strong> — every state change stored as an immutable event. ProbOS already does this partially through EpisodicMemory and the Identity Ledger hash-chain. The TaskEvent log would extend this to agent <em>activation</em> decisions — why was this agent activated, what event triggered it, what action resulted.</li>
+<li><strong>Saga Orchestration (Long-Running Workflow)</strong> — a coordinator manages multi-agent workflows spanning seconds to hours, with compensating events for rollback. In ProbOS: the Workforce Scheduling Engine (AD-496-498) is the saga coordinator. WorkItems are the command events; BookingJournals are the audit trail; the dispatcher handles sequencing and failure recovery.</li>
+</ol>
+<p><strong>The Semantic Context Layer.</strong> The article's central thesis: <em>"event infrastructure alone is insufficient — agents react to changes without understanding them."</em> An agent knowing a pipeline completed is useless without knowing what the data represents, who owns it, or its fitness for purpose. This directly validates ProbOS's approach of carrying context with the event (Principle 3: "context travels with the event"). The TaskEvent payload isn't just "something happened" — it's enriched context that gives the agent enough to act intelligently. ProbOS has a structural advantage here: the Ship's Computer services (KnowledgeStore, TrustNetwork, VesselOntology, CrewManifest) provide exactly the semantic layer that generic EDA systems lack.</p>
+<p><strong>O(N²) → O(N) Complexity.</strong> Without an event bus, N agents communicating directly require O(N²) connections. With a central TaskEvent bus, each agent connects once — O(N). ProbOS already experiences the N² problem informally: the Ward Room router, proactive loop, DM router, and intent bus are separate agent activation paths that each maintain their own connection logic. Unifying through the TaskEvent bus reduces this to one path with priority-based dispatch.</p>
+<p><strong>Choreography vs. Orchestration.</strong> The article distinguishes two models that ProbOS needs both of: <em>choreography</em> (agents independently react to events — our "subscribe" pattern) and <em>orchestration</em> (a coordinator manages workflow state — our "push" pattern via the dispatcher). Most EDA systems pick one. ProbOS needs both because of the chain of command — some work is self-directed (earned agency, choreography), some is directed (Captain orders, Standing Orders, orchestration).</p>
+<h3 id="solace-agent-mesh-solacelabs-2025-2026">Solace Agent Mesh (SolaceLabs, 2025-2026)<a class="headerlink" href="#solace-agent-mesh-solacelabs-2025-2026" title="Permanent link">&para;</a></h3>
+<p>Solace Agent Mesh (SAM) is an open-source framework for building event-driven multi-agent AI systems, built on the Solace Event Broker (enterprise message broker) with Google ADK (Agent Development Kit) for agent intelligence. It's the most architecturally committed EDA multi-agent framework in the landscape — every agent-to-agent interaction flows through the broker, with no direct connections.</p>
+<p><strong>Three-Layer Architecture.</strong> SAM separates concerns cleanly: Layer 1 is the Solace Event Broker (pub/sub messaging with hierarchical topic routing, guaranteed delivery), Layer 2 is the Solace AI Connector (agent lifecycle, subscription management, message deserialization), and Layer 3 is Google ADK (LLM integration, tool execution, session management). This separation means the messaging infrastructure, agent runtime, and cognitive layer are independently replaceable — in theory. In practice, the coupling to Solace's topic hierarchy and user properties makes the broker layer structural, not pluggable.</p>
+<p><strong>Hierarchical Topic-Based Routing.</strong> All communication uses a topic taxonomy:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>{namespace}/a2a/v1/discovery/agentcards          # Agent self-advertisement
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>{namespace}/a2a/v1/agent/request/{agent_name}     # Task delivery
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>{namespace}/a2a/v1/gateway/status/{gw}/{task_id}  # Streaming updates
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>{namespace}/a2a/v1/gateway/response/{gw}/{task_id}# Final responses
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>{namespace}/a2a/v1/agent/status/{agent}/{sub_id}  # Peer delegation status
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>{namespace}/a2a/v1/agent/response/{agent}/{sub_id}# Peer delegation response
+</code></pre></div>
+<p>The A2A protocol itself is JSON-RPC 2.0 over Solace messages, with security scopes propagated through Solace user properties (not in the JSON body). This is a clean separation: the protocol is the message format, the broker is the transport, and scopes travel as metadata.</p>
+<p><strong>AgentCard Discovery (Eventually Consistent).</strong> Rather than a central registry service, agents self-advertise by periodically broadcasting AgentCards (name, description, input/output modes, skills) to a well-known discovery topic. Any participant (orchestrator, gateway, other agents) maintains its own local <code>AgentRegistry</code> with TTL-based health tracking. This is eventually consistent — there's a window where newly deployed agents aren't yet discoverable, or removed agents are still in registries.</p>
+<p><strong>Orchestrator as Agent, Not Middleware.</strong> SAM's <code>OrchestratorAgent</code> is a regular agent that happens to have planning capabilities — it receives tasks, uses AI to decompose them into sub-tasks, delegates via <code>PeerAgentTool</code> to target agents, tracks completion, and aggregates responses. Multiple orchestrators can coexist, each specializing in a domain. The orchestrator uses the same A2A protocol as any other agent — it publishes to target agents' request topics, with the original user's scopes forwarded through message properties. SAM also offers deterministic Workflows (YAML-defined DAGs with typed nodes: Agent, Switch, Map, Loop) as an alternative to AI-driven orchestration — experimental, but architecturally sound.</p>
+<p><strong>Gateway Abstraction.</strong> Protocol bridges (REST API, WebSocket, Slack, Teams) handle authentication, session management, and translation between external protocols and A2A. Internal agents only speak A2A-over-Solace. Adding a new external protocol requires only a new gateway, not changes to any agent. This is the same pattern as ProbOS's Transporter Pattern (AD-330-336) but applied to the messaging layer rather than the data ingestion layer.</p>
+<p><strong>Bidirectional MCP Integration.</strong> SAM can both consume MCP tools (agents connect to external MCP servers, discover tools, register them as agent tools) and expose agents as MCP tools (MCP Gateway publishes SAM agents to external MCP clients with dynamic <code>tools/list_changed</code> notifications). This bidirectional bridge between MCP and event-driven agent systems is well-executed and directly relevant to ProbOS's Phase 4 external integration.</p>
+<p><strong>ProbOS connections and differentiators:</strong></p>
+<ol>
+<li>
+<p><strong>Communication model alignment.</strong> SAM's broker-mediated pub/sub is architecturally similar to ProbOS's Ward Room — shared communication fabric, no direct agent-to-agent connections. But ProbOS layers sovereign identity, trust evolution, and chain of command on top. SAM agents are stateless service endpoints; ProbOS agents are crew members with Character/Reason/Duty.</p>
+</li>
+<li>
+<p><strong>Topic hierarchy → TaskEvent routing.</strong> SAM's hierarchical topic taxonomy is a clean pattern. ProbOS's Dispatcher could adopt a similar namespace-based routing scheme for TaskEvents, where topic segments encode source type, event type, and target — enabling efficient subscription filtering without parsing every event.</p>
+</li>
+<li>
+<p><strong>AgentCard ≈ Qualification Framework.</strong> SAM's AgentCards (self-advertised capability profiles) are structurally similar to ProbOS's Qualification Framework (AD-539) — both answer "what can this agent do?" The difference is that ProbOS qualifications are <em>earned</em> through demonstrated competence, while SAM AgentCards are <em>declared</em> by configuration. ProbOS's earned qualifications are richer but harder to bootstrap.</p>
+</li>
+<li>
+<p><strong>No identity, no trust, no memory.</strong> SAM agents have names and capability declarations but no persistent identity, no trust evolution, no episodic memory, no personality. This is the fundamental gap the industry hasn't crossed — and ProbOS's core differentiator. SAM can orchestrate tools; ProbOS can orchestrate <em>colleagues</em>.</p>
+</li>
+<li>
+<p><strong>Bidirectional MCP is a pattern to absorb.</strong> SAM's ability to both consume and expose MCP tools is directly applicable to ProbOS's external integration (Phase 4). ProbOS agents as MCP tools for external consumption aligns with the Visiting Officer model — external systems can invoke ProbOS crew members through standard MCP protocol.</p>
+</li>
+<li>
+<p><strong>Broker dependency is a cautionary note.</strong> SAM's architectural coupling to Solace Event Broker (topic hierarchies, user properties, wildcard patterns are all Solace-specific) makes it vendor-locked at the infrastructure layer. ProbOS should ensure the TaskEvent Bus abstraction doesn't couple to any specific message broker — the event protocol should be transport-agnostic, with broker-specific adapters as pluggable infrastructure.</p>
+</li>
+</ol>
+<h3 id="prior-art-in-multi-agent-activation">Prior Art in Multi-Agent Activation<a class="headerlink" href="#prior-art-in-multi-agent-activation" title="Permanent link">&para;</a></h3>
+<p><strong>Actor Model (Hewitt, 1973):</strong> Each agent is an actor with a mailbox that processes messages sequentially. Messages arrive asynchronously; the actor decides how to respond. ProbOS agents are already conceptually actors — they have identity, state, and behavior. What they lack is the mailbox. The cognitive queue <em>is</em> the mailbox.</p>
+<p><strong>BDI Architecture (Rao &amp; Georgeff, 1991):</strong> Belief-Desire-Intention. External events update an agent's beliefs, which trigger intention revision and plan selection. In ProbOS terms: a TaskEvent updates working memory (belief) → the agent's cognitive loop evaluates it against standing orders and goals (desire) → the agent produces a response (intention → action). The cognitive queue is the event-to-belief bridge.</p>
+<p><strong>FIPA Agent Communication Language:</strong> The Foundation for Intelligent Physical Agents defined standard performatives for agent communication: <code>request</code>, <code>inform</code>, <code>propose</code>, <code>accept-proposal</code>, <code>reject-proposal</code>, <code>call-for-proposal</code>. ProbOS has informal versions — <code>[CHALLENGE]</code> is a <code>propose</code>, <code>[ENDORSE]</code> is an <code>inform</code>, <code>[DM]</code> is a <code>request</code>. A unified TaskEvent model could formalize these into a standard performative set, enabling richer agent-to-agent negotiation.</p>
+<p><strong>ROS (Robot Operating System):</strong> Three communication patterns — Topics (pub/sub broadcast), Services (synchronous request/response), Actions (long-running with feedback). These map to ProbOS's subscribe/push/pull patterns. ROS proved that heterogeneous agents (different robots, sensors, actuators) can coordinate effectively through a unified message-passing architecture with typed topics.</p>
+<p><strong>Holonic Manufacturing Systems:</strong> Agents organized in a hierarchy where each "holon" is both autonomous and subordinate to a higher-level coordinator. Tasks flow down the hierarchy; status flows up. Direct parallel to ProbOS's chain of command. Relevant finding: holonic systems achieve better throughput than flat architectures when task complexity requires coordination, but worse throughput for simple independent tasks. Implies ProbOS should use the dispatcher for coordination-heavy work and the proactive loop for independent observation.</p>
+<h2 id="proof-of-concept-tic-tac-toe-as-first-app">Proof of Concept: Tic-Tac-Toe as First App<a class="headerlink" href="#proof-of-concept-tic-tac-toe-as-first-app" title="Permanent link">&para;</a></h2>
+<p>Tic-tac-toe is the ideal first implementation because it's the simplest possible multi-turn, multi-agent, event-driven interaction:</p>
+<ul>
+<li><strong>Two agents</strong> (minimal coordination complexity)</li>
+<li><strong>Strict turn-taking</strong> (unambiguous "whose turn is it")</li>
+<li><strong>Finite bounded game</strong> (max 9 turns, guaranteed termination)</li>
+<li><strong>Observable state</strong> (3x3 board is trivial to render in context)</li>
+<li><strong>Clear success criteria</strong> (games complete, moves alternate, results are recorded)</li>
+</ul>
+<h3 id="what-changes-for-tic-tac-toe">What Changes for Tic-Tac-Toe<a class="headerlink" href="#what-changes-for-tic-tac-toe" title="Permanent link">&para;</a></h3>
+<p><strong>RecreationService becomes a TaskEvent emitter:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>create_game(challenger, opponent)
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  → emit TaskEvent(
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>      source_type=&quot;game&quot;,
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>      source_id=game_id,
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>      event_type=&quot;game_challenge_accepted&quot;,
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>      priority=immediate,
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>      target=AgentTarget(agent_id=opponent_agent_id),
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>      payload={board, valid_moves, your_piece, opponent_callsign},
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    )
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>make_move(game_id, player, position)
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>  → emit TaskEvent(
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>      source_type=&quot;game&quot;,
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>      source_id=game_id,
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>      event_type=&quot;move_required&quot;,
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>      priority=immediate,
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>      target=AgentTarget(agent_id=next_player_agent_id),
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>      payload={board, valid_moves, your_piece, last_move, opponent_callsign},
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>    )
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>  → if game_over:
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>     emit TaskEvent(
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>       source_type=&quot;game&quot;,
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>       event_type=&quot;game_completed&quot;,
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>       priority=soon,
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>       target=AgentTarget(agent_id=both_players),
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>       payload={result, final_board},
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>     )
+</code></pre></div>
+<p><strong>Agent Cognitive Queue processes game events:</strong></p>
+<p>When a <code>move_required</code> TaskEvent arrives in an agent's queue with <code>priority=immediate</code>, the cognitive loop activates outside the normal proactive cooldown. The payload provides all necessary context — no need to scan Ward Room or gather ambient context. The agent receives a focused prompt: "It's your turn in tic-tac-toe against {opponent}. Board: {board}. Valid moves: {valid_moves}. Reply with [MOVE position]."</p>
+<p><strong>Working memory tracks the engagement for both players:</strong></p>
+<p>When <code>create_game()</code> fires, both challenger and opponent get <code>ActiveEngagement</code> entries in their working memory. This ensures both agents' cognitive loops (proactive and reactive) are aware of the game.</p>
+<h3 id="expected-behavior-after-implementation">Expected Behavior After Implementation<a class="headerlink" href="#expected-behavior-after-implementation" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Captain posts "All hands, social hour" in Ward Room</li>
+<li>Agent A responds with <code>[CHALLENGE @B tictactoe]</code> (BF-123, already working)</li>
+<li><code>create_game()</code> → emits <code>game_challenge_accepted</code> TaskEvent to Agent B</li>
+<li>Agent B's cognitive queue receives immediate-priority event</li>
+<li>Agent B thinks (with game context injected) → produces <code>[MOVE 4]</code></li>
+<li><code>make_move()</code> → emits <code>move_required</code> TaskEvent to Agent A</li>
+<li>Agent A's cognitive queue receives immediate-priority event</li>
+<li>Turns alternate until game completes (&lt; 2 minutes total, not 45+)</li>
+</ol>
+<h2 id="sequencing-from-tic-tac-toe-to-platform">Sequencing: From Tic-Tac-Toe to Platform<a class="headerlink" href="#sequencing-from-tic-tac-toe-to-platform" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-foundation-tic-tac-toe">Phase 1: Foundation + Tic-Tac-Toe<a class="headerlink" href="#phase-1-foundation-tic-tac-toe" title="Permanent link">&para;</a></h3>
+<ul>
+<li>TaskEvent dataclass and priority model</li>
+<li>Agent Cognitive Queue (priority inbox alongside proactive timer)</li>
+<li>Dispatcher (explicit target routing only — no capability matching yet)</li>
+<li>RecreationService emits TaskEvents on create_game/make_move</li>
+<li>Working memory engagement for both players</li>
+<li>Immediate-priority game events bypass proactive cooldown</li>
+</ul>
+<p><strong>Validates:</strong> Event-driven activation works, agents can have fluid multi-turn exchanges, latency drops from minutes to seconds.</p>
+<h3 id="phase-2-agent-to-agent-reactive-path">Phase 2: Agent-to-Agent Reactive Path<a class="headerlink" href="#phase-2-agent-to-agent-reactive-path" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Ward Room @mentions emit TaskEvents (soon priority)</li>
+<li>Thread replies notify participants (soon priority)</li>
+<li><code>[ASSIGN @agent]</code> / <code>[HANDOFF @agent]</code> structured commands (immediate priority)</li>
+<li>Dispatcher capability-based routing (using Qualification Framework)</li>
+</ul>
+<p><strong>Validates:</strong> Agents can coordinate on work, not just games. Collaborative intelligence becomes fluid.</p>
+<h3 id="phase-3-internal-app-emitters">Phase 3: Internal App Emitters<a class="headerlink" href="#phase-3-internal-app-emitters" title="Permanent link">&para;</a></h3>
+<ul>
+<li>KanbanBoard / WorkItem state transitions emit TaskEvents</li>
+<li>Scheduled task events (cron-triggered agent activation)</li>
+<li>Alert Condition escalation as TaskEvents</li>
+<li>Bridge Alert routing through the dispatcher</li>
+</ul>
+<p><strong>Validates:</strong> All internal ProbOS systems can activate agents through one unified mechanism.</p>
+<h3 id="phase-4-external-integration-mcp-apps-mcp-providerconsumer">Phase 4: External Integration (MCP Apps + MCP Provider/Consumer)<a class="headerlink" href="#phase-4-external-integration-mcp-apps-mcp-providerconsumer" title="Permanent link">&para;</a></h3>
+<ul>
+<li>MCP Apps as interactive UI surfaces for agent-mediated capabilities (see MCP Apps Integration below)</li>
+<li>MCP provider interface (ProbOS as MCP server — external systems trigger agents)</li>
+<li>MCP consumer reactive events (external MCP servers push to ProbOS)</li>
+<li>Webhook adapter framework (Transporter Pattern extension)</li>
+<li>OS-level signal integration (Windows MCP, Apple App Intents when available)</li>
+<li>Tic-Tac-Toe MCP App as the first interactive agent application (see below)</li>
+</ul>
+<p><strong>Validates:</strong> ProbOS agents can react to events from any application, making ProbOS a universal agent orchestration layer. MCP Apps validates the bidirectional UI surface — agents and humans interact through the same rich interface.</p>
+<h2 id="architectural-principles">Architectural Principles<a class="headerlink" href="#architectural-principles" title="Permanent link">&para;</a></h2>
+<p><strong>1. Events, not polling.</strong> The proactive scan is the fallback, not the primary activation mechanism. Agents should be <em>told</em> when something needs their attention, not left to discover it.</p>
+<p><strong>2. Priority is semantic, not structural.</strong> Priority comes from the TaskEvent, not the delivery mechanism. A game move and a security incident both arrive through the same queue — priority determines processing order.</p>
+<p><strong>3. Context travels with the event.</strong> TaskEvents carry their payload. The agent doesn't need to re-discover context through general scanning. Focused context → better responses → fewer tokens → lower latency.</p>
+<p><strong>4. The dispatcher is the control point.</strong> All activation flows through the dispatcher, which enforces rank gating, earned agency, capacity limits, and chain of command. No event source can directly activate an agent without dispatcher mediation.</p>
+<p><strong>5. Emitters don't know about agents.</strong> An event source emits a TaskEvent with a target description (agent ID, capability, department, broadcast). The dispatcher resolves it. This decouples event sources from agent implementation — a game engine doesn't need to know about trust scores or qualification frameworks.</p>
+<p><strong>6. Backward compatible.</strong> The existing proactive loop, Ward Room router, and DM router continue to work. The cognitive queue is additive — it provides a faster path for events that need one, while ambient observation continues through the established mechanisms.</p>
+<h2 id="the-agent-experience-principle">The Agent Experience Principle<a class="headerlink" href="#the-agent-experience-principle" title="Permanent link">&para;</a></h2>
+<p><em>"Everything in ProbOS should provide a first-class native agent experience."</em></p>
+<p>Humans interact with applications through events designed for human perception — visual changes (a button turning red, a notification badge, a progress bar), auditory signals (alert sounds, voice prompts), and haptic feedback. Applications are engineered to produce these signals because that's how humans notice things and decide to act. The entire field of UX design exists to optimize this human-facing event surface.</p>
+<p>Agents have none of these sensory channels. An agent's perceptual modality is its <strong>context window</strong> — structured text injected into a cognitive cycle. The "agent experience" (AX) is: what does this application look like <em>to an agent</em>? Not a screenshot parsed by a vision model, but a native structured event with semantic payload that the agent can reason about directly.</p>
+<p>This reframes the Universal Agent Activation architecture. The TaskEvent protocol isn't just a technical mechanism for routing work — it's the <strong>agent-native UX layer</strong>. Every TaskEvent is the agent equivalent of a visual notification: "something happened that you should notice and potentially act on." The payload is the agent equivalent of the visual context a human would see when they look at the notification.</p>
+<p><strong>The spectrum of agent experience quality:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Pattern</th>
+<th>Example</th>
+<th>Quality</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>0. Blind</strong></td>
+<td>No agent awareness</td>
+<td>Legacy desktop app with no API</td>
+<td>Agent can't interact</td>
+</tr>
+<tr>
+<td><strong>1. Brute Force</strong></td>
+<td>Computer Use (screenshot → vision → act)</td>
+<td>Anthropic Computer Use, browser automation</td>
+<td>Functional but fragile, expensive, slow</td>
+</tr>
+<tr>
+<td><strong>2. API Wrapper</strong></td>
+<td>REST/SDK calls translated to events</td>
+<td>Transporter Pattern adapters, webhook listeners</td>
+<td>Works but requires per-app adapter code</td>
+</tr>
+<tr>
+<td><strong>3. Declared Capabilities</strong></td>
+<td>App exposes structured tools</td>
+<td>MCP servers, WebMCP, Apple App Intents</td>
+<td>Clean but still pull-based (agent calls app)</td>
+</tr>
+<tr>
+<td><strong>4. Native Agent Events</strong></td>
+<td>App emits structured events for agent consumption</td>
+<td>ProbOS internal emitters, future MCP push</td>
+<td>Full AX — app is agent-aware by design</td>
+</tr>
+</tbody>
+</table>
+<p>The industry is converging on Level 3 (Microsoft MCP for Windows, Google WebMCP, Apple App Intents). ProbOS's contribution is Level 4 — where applications don't just <em>respond</em> to agent queries but proactively <em>emit</em> events that activate agent cognition. The difference between "agent can use this app" and "this app can activate agents."</p>
+<p><strong>The Universal Wrapper problem:</strong> The hard challenge is bridging Level 0-1 applications (the vast majority of existing software) to Level 3-4. Computer Use is the crude universal wrapper — it works for anything with a screen, but at enormous cost in tokens, latency, and fragility. The right universal wrapper would intercept the same signals designed for human perception (UI state changes, notifications, accessibility tree mutations) and translate them into structured TaskEvents — essentially building the agent experience layer that the app's developers never created. This is where accessibility APIs, OS-level event hooks, and platform integration (Windows UI Automation, macOS Accessibility, web DOM mutation observers) become the bridge technology.</p>
+<h2 id="open-questions">Open Questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Queue depth limits.</strong> What happens when an agent's queue grows faster than they can process? Need backpressure, overflow handling, or priority-based shedding. An agent overwhelmed with game challenges shouldn't miss a security alert.</p>
+</li>
+<li>
+<p><strong>Cognitive budget per activation.</strong> Immediate-priority events bypass the proactive cooldown, but each activation costs LLM tokens. Should there be a per-agent token budget per time window? Or does the priority system naturally self-regulate (only truly immediate events bypass cooldown)?</p>
+</li>
+<li>
+<p><strong>Event deduplication.</strong> If multiple events arrive for the same game/task before the agent processes the first one, should they be deduplicated? Merged? The latest-wins approach risks losing intermediate state.</p>
+</li>
+<li>
+<p><strong>Cross-ship federation.</strong> TaskEvents are currently local to a single ProbOS instance. When federation is active, should events be routable across ships? A visiting officer's game challenge should activate the local agent, not route back to the visitor's home ship.</p>
+</li>
+<li>
+<p><strong>Earned agency interaction.</strong> Higher-trust agents could gain the right to <em>emit</em> higher-priority TaskEvents. An ensign's question is "soon" priority; a commander's directive is "immediate." Or does priority come from the event type, not the emitter's rank?</p>
+</li>
+<li>
+<p><strong>Observability.</strong> The dispatcher becomes a critical control point. It needs logging, metrics, and potentially an HXI dashboard showing event flow, queue depths, activation latency, and agent utilization.</p>
+</li>
+</ol>
+<h2 id="mcp-apps-integration-interactive-ui-surfaces-for-agent-activation">MCP Apps Integration: Interactive UI Surfaces for Agent Activation<a class="headerlink" href="#mcp-apps-integration-interactive-ui-surfaces-for-agent-activation" title="Permanent link">&para;</a></h2>
+<p><em>Added 2026-04-08. Triggered by: analysis of the MCP Apps extension specification (<code>@modelcontextprotocol/ext-apps</code>, Apache 2.0) and its alignment with the Universal Agent Activation Architecture.</em></p>
+<h3 id="what-are-mcp-apps">What Are MCP Apps?<a class="headerlink" href="#what-are-mcp-apps" title="Permanent link">&para;</a></h3>
+<p>MCP Apps is an extension to the Model Context Protocol specification that enables MCP servers to deliver <strong>interactive user interfaces</strong> rendered inline within AI chat clients. The core MCP protocol handles text and structured data; MCP Apps adds rich UI components (charts, forms, dashboards, game boards) embedded in sandboxed iframes with <strong>bidirectional communication</strong> back to MCP tools.</p>
+<p><strong>Architecture flow:</strong>
+1. An MCP tool declares a <code>ui://</code> resource containing its HTML interface
+2. The LLM invokes the tool on the MCP server (standard MCP tool call)
+3. The host client fetches the resource and displays it in a sandboxed iframe
+4. The UI can call other tools through the host via PostMessageTransport, and the host passes data to the UI via notifications</p>
+<p><strong>SDK structure:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>@modelcontextprotocol/ext-apps</code></td>
+<td>Core App class + PostMessageTransport</td>
+</tr>
+<tr>
+<td><code>@modelcontextprotocol/ext-apps/react</code></td>
+<td>React hooks for View development</td>
+</tr>
+<tr>
+<td><code>@modelcontextprotocol/ext-apps/app-bridge</code></td>
+<td>Host-side SDK for embedding Views</td>
+</tr>
+<tr>
+<td><code>@modelcontextprotocol/ext-apps/server</code></td>
+<td>Server-side SDK for tool + resource registration</td>
+</tr>
+</tbody>
+</table>
+<p>Supported hosts include ChatGPT, Claude, VS Code, Goose, Postman, and MCPJam. The specification is stable (version 2026-01-26).</p>
+<h3 id="three-integration-levels-with-uaaa">Three Integration Levels with UAAA<a class="headerlink" href="#three-integration-levels-with-uaaa" title="Permanent link">&para;</a></h3>
+<p>MCP Apps intersects the Universal Agent Activation Architecture at three distinct levels, each progressively deeper:</p>
+<h4 id="level-1-mcp-apps-as-external-event-emitters">Level 1: MCP Apps as External Event Emitters<a class="headerlink" href="#level-1-mcp-apps-as-external-event-emitters" title="Permanent link">&para;</a></h4>
+<p>The UAAA Phase 4 already identifies "MCP Provider" and "MCP Consumer" as external event emitters. MCP Apps extends this with an <strong>interactive UI surface</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>User interacts with MCP App (clicks button, submits form, makes game move)
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  → App calls back to MCP server via PostMessageTransport
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    → MCP server emits TaskEvent into ProbOS Dispatcher
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>      → Dispatcher routes to appropriate agent&#39;s Cognitive Queue
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        → Agent processes event, produces response
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>          → Response flows back through MCP server → App View updates
+</code></pre></div>
+<p>This is the <strong>Level 3→4 bridge</strong> from the Agent Experience (AX) spectrum. MCP Apps provide Level 3 (Declared Capabilities — tools with parameters); ProbOS extends them to Level 4 (Native Agent Events — the app proactively emits structured events that activate agent cognition).</p>
+<p><strong>Key mapping:</strong></p>
+<table>
+<thead>
+<tr>
+<th>UAAA Concept</th>
+<th>MCP Apps Analog</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TaskEvent</td>
+<td>MCP tool call + notification payload</td>
+</tr>
+<tr>
+<td>Event Emitter (external)</td>
+<td>MCP App calling tools via PostMessageTransport</td>
+</tr>
+<tr>
+<td>Dispatcher routing</td>
+<td>MCP server receiving tool calls → TaskEvent emission</td>
+</tr>
+<tr>
+<td>Agent response</td>
+<td>MCP tool result → notification back to App View</td>
+</tr>
+<tr>
+<td>Transporter Pattern adapters</td>
+<td><code>convert-web-app</code> agent skill (wraps existing web apps)</td>
+</tr>
+</tbody>
+</table>
+<h4 id="level-2-probos-hxi-as-an-mcp-app-host">Level 2: ProbOS HXI as an MCP App Host<a class="headerlink" href="#level-2-probos-hxi-as-an-mcp-app-host" title="Permanent link">&para;</a></h4>
+<p>The HXI (Human-Experience Interface) can implement the App Bridge SDK (<code>@modelcontextprotocol/ext-apps/app-bridge</code>) to <strong>render MCP Apps inline in the Ward Room or Captain's cockpit</strong>. External MCP servers provide tools with <code>ui://</code> resources; HXI renders them in sandboxed iframes alongside the existing agent conversation.</p>
+<p>This means: external tools get rich UIs inside ProbOS without ProbOS needing to build those UIs. The tool ecosystem renders itself. A third-party monitoring tool, a project tracker, or a data visualization service can all appear as interactive panels within the HXI — discoverable, sandboxed, and integrated with the agent communication fabric.</p>
+<p><strong>Connects to HXI Cockpit View Principle:</strong> "Every agent-mediated capability must have a direct manual control in HXI." MCP Apps provides the implementation mechanism — each agent capability exposed as an MCP tool gets an interactive View that serves as both the agent's interface and the Captain's manual control.</p>
+<h4 id="level-3-probos-agents-as-mcp-app-providers">Level 3: ProbOS Agents as MCP App Providers<a class="headerlink" href="#level-3-probos-agents-as-mcp-app-providers" title="Permanent link">&para;</a></h4>
+<p>ProbOS can expose agent capabilities as MCP servers where each tool has a <code>ui://</code> View. When an external host (ChatGPT, Claude, VS Code) connects to a ProbOS MCP server:</p>
+<ul>
+<li>The host discovers ProbOS agent tools (diagnose, analyze, schedule, play game)</li>
+<li>Each tool has an associated MCP App (interactive dashboard showing trust scores, emergence metrics, game boards, agent status)</li>
+<li>The external host renders ProbOS UIs inline in its own conversation</li>
+</ul>
+<p>This is the <strong>federation outbound</strong> direction — ProbOS ships project their capabilities into external AI ecosystems. A Claude user could connect to a ProbOS MCP server and interact with ProbOS agents through rich interactive Views without leaving their own chat client.</p>
+<p><strong>Boundary rule application:</strong> The MCP protocol integration and App rendering infrastructure (how it works) is OSS. Packaging ProbOS agents as commercially deployable MCP App servers with fleet management (how it makes money) is commercial.</p>
+<h3 id="tic-tac-toe-as-the-first-mcp-app">Tic-Tac-Toe as the First MCP App<a class="headerlink" href="#tic-tac-toe-as-the-first-mcp-app" title="Permanent link">&para;</a></h3>
+<p>The existing proof of concept (tic-tac-toe) is the natural first MCP App. This extends the original tic-tac-toe PoC from text-only Ward Room commands to a full interactive application:</p>
+<p><strong>What changes:</strong></p>
+<ol>
+<li><strong>MCP Server:</strong> A ProbOS MCP server exposes <code>tictactoe_challenge</code>, <code>tictactoe_move</code>, and <code>tictactoe_status</code> tools</li>
+<li><strong>MCP App View:</strong> A <code>ui://tictactoe/board</code> resource renders an interactive 3×3 grid with game state, move history, and player info</li>
+<li><strong>Bidirectional flow:</strong></li>
+<li>Human clicks a cell → PostMessageTransport calls <code>tictactoe_move</code> tool → MCP server emits <code>move_required</code> TaskEvent → Agent processes move → result flows back → View updates board</li>
+<li>Agent makes a move → MCP server sends notification → View animates the agent's move</li>
+<li><strong>Three play modes:</strong></li>
+<li><strong>Agent vs Agent:</strong> Both players are ProbOS agents. The View is a spectator display. TaskEvents flow between agents at immediate priority (&lt; 10s per move). Humans watch in real-time.</li>
+<li><strong>Human vs Agent:</strong> Human plays through the MCP App View. Human moves emit TaskEvents to the agent. Agent moves flow back through notifications to the View.</li>
+<li><strong>External Human vs Agent:</strong> A user in Claude, ChatGPT, or VS Code connects to the ProbOS MCP server and plays against a ProbOS agent through the MCP App rendered in their own host client.</li>
+</ol>
+<p><strong>Architecture:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>┌──────────────────────────────────────┐
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>│  MCP App View (ui://tictactoe/board) │
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>│  ┌────────────────────────────────┐  │
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>│  │   3×3 Grid + Game State UI    │  │
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>│  │   (React / Preact / Vanilla)  │  │
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>│  └─────────────┬──────────────────┘  │
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>│                │ PostMessageTransport │
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>└────────────────┼─────────────────────┘
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>                 │
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>┌────────────────┼─────────────────────┐
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>│  MCP Server (ProbOS)                 │
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>│  ┌─────────────▼──────────────────┐  │
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>│  │  tictactoe_move tool           │  │
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>│  │  tictactoe_challenge tool      │  │
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>│  │  tictactoe_status tool         │  │
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>│  └─────────────┬──────────────────┘  │
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>│                │                     │
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>│  ┌─────────────▼──────────────────┐  │
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>│  │  RecreationService             │  │
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>│  │  (TaskEvent emitter)           │  │
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>│  └─────────────┬──────────────────┘  │
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>│                │                     │
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a>│  ┌─────────────▼──────────────────┐  │
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>│  │  Dispatcher → Agent Queue      │  │
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>│  └────────────────────────────────┘  │
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>└──────────────────────────────────────┘
+</code></pre></div>
+<p><strong>Why tic-tac-toe first:</strong>
+- Simplest possible interactive MCP App (one <code>ui://</code> resource, three tools, finite state)
+- Validates the full bidirectional flow: View → MCP tool → TaskEvent → Agent → response → View
+- Tests all three play modes (agent×agent, human×agent, external host)
+- Already has RecreationService backend (BF-119–123)
+- Success metric is unambiguous: games complete, moves render, latency &lt; 10s per turn
+- Provides the template for all future MCP Apps (dashboards, kanban boards, agent status panels)</p>
+<h3 id="implications-for-the-ax-principle">Implications for the AX Principle<a class="headerlink" href="#implications-for-the-ax-principle" title="Permanent link">&para;</a></h3>
+<p>MCP Apps adds a new row to the Agent Experience spectrum:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Pattern</th>
+<th>Example</th>
+<th>Quality</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>0. Blind</strong></td>
+<td>No agent awareness</td>
+<td>Legacy desktop app with no API</td>
+<td>Agent can't interact</td>
+</tr>
+<tr>
+<td><strong>1. Brute Force</strong></td>
+<td>Computer Use</td>
+<td>Screenshot → vision → act</td>
+<td>Functional but fragile</td>
+</tr>
+<tr>
+<td><strong>2. API Wrapper</strong></td>
+<td>REST/SDK → events</td>
+<td>Transporter Pattern adapters</td>
+<td>Per-app adapter code</td>
+</tr>
+<tr>
+<td><strong>3. Declared Capabilities</strong></td>
+<td>Structured tools</td>
+<td>MCP servers, WebMCP, App Intents</td>
+<td>Clean but pull-based</td>
+</tr>
+<tr>
+<td><strong>3.5 Interactive Declared</strong></td>
+<td><strong>Structured tools + interactive UI</strong></td>
+<td><strong>MCP Apps</strong></td>
+<td><strong>Pull-based + human-agent shared UI</strong></td>
+</tr>
+<tr>
+<td><strong>4. Native Agent Events</strong></td>
+<td>App emits events for agents</td>
+<td>ProbOS internal emitters, future MCP push</td>
+<td>Full AX</td>
+</tr>
+</tbody>
+</table>
+<p>MCP Apps sits between Level 3 and Level 4. It provides Level 3 tool declaration with the addition of a <strong>shared UI surface</strong> where humans and agents can interact with the same application through the same interface. This aligns directly with ProbOS's "Brains are brains" principle — human and AI participants share the same communication fabric. The MCP App View is a terminal into that shared fabric, just like the Shell, HXI, and Discord.</p>
+<h3 id="open-questions_1">Open Questions<a class="headerlink" href="#open-questions_1" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>MCP App hosting in HXI.</strong> The OSS Web HXI could implement the App Bridge SDK as a Vue component or raw iframe manager. What's the right security model for rendering third-party MCP Apps inside the Captain's cockpit? The sandboxed iframe provides browser-level isolation, but the tools the App can call back to need to be scoped.</p>
+</li>
+<li>
+<p><strong>MCP App authentication for external play.</strong> When an external user plays tic-tac-toe against a ProbOS agent via an external host, how does the ProbOS MCP server authenticate the external user? DID-based identity? OAuth? Anonymous play?</p>
+</li>
+<li>
+<p><strong>MCP App state persistence.</strong> Game state currently lives in RecreationService (in-memory). Should MCP App state be persisted separately? Or does the underlying ProbOS service (RecreationService, KanbanBoard, etc.) own all state while the App is a pure UI layer?</p>
+</li>
+<li>
+<p><strong>MCP Apps as Ward Room attachments.</strong> Should agent Ward Room messages be able to embed MCP App Views? An agent says "I've prepared this analysis" and the message renders an interactive chart inline. This would make the Ward Room a rich multimedia communication channel.</p>
+</li>
+</ol>
+<h2 id="citations">Citations<a class="headerlink" href="#citations" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Hewitt, C. (1973). "A Universal Modular ACTOR Formalism for Artificial Intelligence." IJCAI.</li>
+<li>Rao, A. S. &amp; Georgeff, M. P. (1991). "Modeling Rational Agents within a BDI-Architecture." KR.</li>
+<li>FIPA Agent Communication Language Specifications. Foundation for Intelligent Physical Agents, 2002.</li>
+<li>Quigley, M. et al. (2009). "ROS: an open-source Robot Operating System." ICRA Workshop.</li>
+<li>Van Brussel, H. et al. (1998). "Reference architecture for holonic manufacturing systems: PROSA." Computers in Industry.</li>
+<li>Anthropic. (2024). "Model Context Protocol (MCP) Specification." https://modelcontextprotocol.io</li>
+<li>Anthropic. (2026). "MCP Apps Extension Specification." https://apps.extensions.modelcontextprotocol.io — <code>@modelcontextprotocol/ext-apps</code> (Apache 2.0).</li>
+<li>Microsoft. (2025). "MCP Server Capabilities for Windows." Build 2025 announcement.</li>
+<li>Bandarra, A. C. (2026). "WebMCP: Making websites agent-ready." Chrome for Developers Blog. https://developer.chrome.com/blog/webmcp-epp</li>
+<li>Microsoft. (2026). "Microsoft Agent Framework." GitHub. https://github.com/microsoft/agent-framework</li>
+<li>Atlan. (2026). "Event-Driven Architecture for AI Agents." https://atlan.com/know/event-driven-architecture-for-ai-agents/</li>
+<li>SolaceLabs. (2025). "Solace Agent Mesh." GitHub. https://github.com/SolaceLabs/solace-agent-mesh</li>
+<li>Riedl, M. (2025). "Measuring Emergence in Multi-Agent Systems." arXiv:2510.05174.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

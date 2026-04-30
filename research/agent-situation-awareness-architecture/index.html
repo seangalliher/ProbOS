@@ -1,0 +1,3151 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/agent-situation-awareness-architecture/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Agent Situation Awareness Architecture - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#agent-situation-awareness-architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Agent Situation Awareness Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-problem-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Problem Statement
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Problem Statement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-_build_prompt_text-accumulation-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The _build_prompt_text Accumulation Pattern
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-theoretical-foundations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Theoretical Foundations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Theoretical Foundations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-endsleys-situation-awareness-model-human-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Endsley's Situation Awareness Model (Human Factors)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-wickens-multiple-resource-theory-attention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Wickens' Multiple Resource Theory (Attention)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-kleins-recognition-primed-decision-model-ndm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Klein's Recognition-Primed Decision Model (NDM)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-neissers-perceptual-cycle-cognitive-psychology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Neisser's Perceptual Cycle (Cognitive Psychology)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-bdi-architecture-multi-agent-systems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 BDI Architecture (Multi-Agent Systems)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#26-soar-cognitive-architecture-ai" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.6 SOAR Cognitive Architecture (AI)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-naval-analogy-what-makes-a-watch-stander-present" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The Naval Analogy: What Makes a Watch Stander Present
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. The Naval Analogy: What Makes a Watch Stander Present">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-innate-faculties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Innate Faculties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-situation-awareness-perception-of-the-ship" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Situation Awareness (Perception of the Ship)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-watch-station-duties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Watch Station Duties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-standing-orders-and-regulations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 Standing Orders and Regulations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-the-insight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 The Insight
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-design-four-category-context-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Design: Four-Category Context Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Design: Four-Category Context Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-category-1-innate-faculties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Category 1 — Innate Faculties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-category-2-situation-awareness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Category 2 — Situation Awareness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-category-3-watch-station-duties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Category 3 — Watch Station Duties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-category-4-standing-orders-no-changes-needed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 Category 4 — Standing Orders (no changes needed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-prompt-template-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Prompt Template Updates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Prompt Template Updates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-analyze-prompt-_build_situation_review_prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 ANALYZE Prompt (_build_situation_review_prompt)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#proposed-prompt-structure-for-situation_review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed prompt structure for situation_review:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-compose-prompt-_build_proactive_compose_prompt-_build_user_prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 COMPOSE Prompt (_build_proactive_compose_prompt / _build_user_prompt)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-composability-and-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Composability and Scaling
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Composability and Scaling">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-the-four-categories-scale-independently" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 The Four Categories Scale Independently
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-composability-with-nats-pipeline-ad-641g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Composability with NATS Pipeline (AD-641g)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-composability-with-sop-bills-ad-618" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Composability with SOP Bills (AD-618)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64-composability-with-intent-routing-ad-643a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 Composability with Intent Routing (AD-643a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-implementation-phases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Implementation Phases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Implementation Phases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-duty-context-restoration-critical-fix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1 — Duty Context Restoration (Critical Fix)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-innate-faculties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2 — Innate Faculties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-situation-awareness-query-extensions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 — Situation Awareness (QUERY Extensions)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-standing-orders-additions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 — Standing Orders Additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-_build_prompt_text-deprecation-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5 — _build_prompt_text Deprecation Path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parity-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parity Checklist
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-what-this-does-not-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. What This Does NOT Do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-research-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Research Sources
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Research Sources">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#human-factors-cognitive-science" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Human Factors / Cognitive Science
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-agent-systems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-Agent Systems
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cognitive-architectures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cognitive Architectures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#naval" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Naval
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#probos-internal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Internal
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="agent-situation-awareness-architecture">Agent Situation Awareness Architecture<a class="headerlink" href="#agent-situation-awareness-architecture" title="Permanent link">&para;</a></h1>
+<p><strong>Research Document — ProbOS Cognitive Architecture</strong>
+<strong>Date:</strong> 2026-04-18
+<strong>Author:</strong> Sean Galliher (Architect)
+<strong>Status:</strong> Research Complete → AD-644 Scoped
+<strong>Related ADs:</strong> AD-632 (Cognitive Chain), AD-643a (Intent Routing), AD-504 (Self-Monitoring),
+AD-502 (Temporal Context), AD-573 (Working Memory), AD-576 (Infrastructure Awareness),
+AD-630 (Subordinate Stats), AD-618 (SOP Bill System)</p>
+<hr />
+<h2 id="1-problem-statement">1. Problem Statement<a class="headerlink" href="#1-problem-statement" title="Permanent link">&para;</a></h2>
+<p>ProbOS crew agents running through the cognitive chain (QUERY → ANALYZE → COMPOSE →
+EVALUATE → REFLECT) are producing <code>["silent"]</code> on virtually every cycle — including
+scheduled duty cycles where silence is incorrect. The crew has been running for days
+with zero duty reports.</p>
+<p><strong>Root cause:</strong> When <code>proactive_think</code> was added to <code>_CHAIN_ELIGIBLE_INTENTS</code>, the
+chain path bypassed <code>_build_prompt_text()</code> — a 290-line monolithic prompt builder that
+had accumulated ~20 context injections across 15+ ADs. These injections provided the
+agent's temporal awareness, self-monitoring data, duty context, Ward Room activity,
+infrastructure status, subordinate stats, working memory, and more.</p>
+<p>The chain's ANALYZE step (<code>_build_situation_review_prompt</code>) receives standing orders
+via <code>compose_instructions()</code> (system prompt) but receives virtually no dynamic data
+(user prompt). The <code>situation_content</code> comes from <code>context.get("context", "")</code> — which
+is an empty string for <code>proactive_think</code> because the IntentMessage stores dynamic data
+in <code>params.context_parts</code>, not in <code>context</code>.</p>
+<p><strong>Result:</strong> ANALYZE sees standing orders (who you are and what your rules are) but has
+no situation data (what is happening around you, what you were just doing, whether you
+have a duty to perform). It correctly concludes: "I have nothing to respond to" →
+<code>intended_actions: ["silent"]</code> → chain short-circuits at line 1918. The agent is
+conscious but blind.</p>
+<h3 id="the-_build_prompt_text-accumulation-pattern">The <code>_build_prompt_text</code> Accumulation Pattern<a class="headerlink" href="#the-_build_prompt_text-accumulation-pattern" title="Permanent link">&para;</a></h3>
+<p>The monolithic prompt builder grew organically across 15+ ADs:</p>
+<table>
+<thead>
+<tr>
+<th>AD</th>
+<th>Injection</th>
+<th>Lines</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AD-419</td>
+<td>Duty cycle header</td>
+<td>3328-3334</td>
+<td>"This is a scheduled duty"</td>
+</tr>
+<tr>
+<td>AD-502</td>
+<td>Temporal awareness</td>
+<td>3347-3353</td>
+<td>Current time, uptime, last action</td>
+</tr>
+<tr>
+<td>AD-573</td>
+<td>Working memory</td>
+<td>3355-3360</td>
+<td>Recent cognitive state</td>
+</tr>
+<tr>
+<td>BF-034</td>
+<td>Cold-start note</td>
+<td>3362-3366</td>
+<td>"Fresh start after reset"</td>
+</tr>
+<tr>
+<td>AD-576</td>
+<td>Infrastructure status</td>
+<td>3368-3374</td>
+<td>LLM/comms array health</td>
+</tr>
+<tr>
+<td>AD-429</td>
+<td>Ontology identity</td>
+<td>3376-3392</td>
+<td>Callsign, dept, reports-to, peers</td>
+</tr>
+<tr>
+<td>AD-630</td>
+<td>Subordinate stats</td>
+<td>3394-3406</td>
+<td>Direct report activity (Chiefs)</td>
+</tr>
+<tr>
+<td>AD-567g</td>
+<td>Orientation supplement</td>
+<td>3408-3412</td>
+<td>New crew onboarding guidance</td>
+</tr>
+<tr>
+<td>AD-429b</td>
+<td>Skill profile</td>
+<td>3414-3418</td>
+<td>Agent's declared skills</td>
+</tr>
+<tr>
+<td>AD-540</td>
+<td>Episodic memories</td>
+<td>3420-3428</td>
+<td>Past experiences</td>
+</tr>
+<tr>
+<td>AD-568d</td>
+<td>Source attribution</td>
+<td>3430-3446</td>
+<td>Cognitive proprioception</td>
+</tr>
+<tr>
+<td>—</td>
+<td>Recent alerts</td>
+<td>3448-3454</td>
+<td>Bridge alerts</td>
+</tr>
+<tr>
+<td>—</td>
+<td>Recent events</td>
+<td>3456-3462</td>
+<td>System events</td>
+</tr>
+<tr>
+<td>AD-413</td>
+<td>Ward Room activity</td>
+<td>3464-3488</td>
+<td>Recent department discussion</td>
+</tr>
+<tr>
+<td>BF-110</td>
+<td>Active games</td>
+<td>3490-3506</td>
+<td>Board state, turn indicator</td>
+</tr>
+<tr>
+<td>AD-504</td>
+<td>Self-monitoring data</td>
+<td>3508-3593</td>
+<td>Recent posts, similarity, zone</td>
+</tr>
+<tr>
+<td>AD-588</td>
+<td>Introspective telemetry</td>
+<td>3595-3599</td>
+<td>Runtime metrics snapshot</td>
+</tr>
+</tbody>
+</table>
+<p>Each injection was independently reasonable. The accumulation created a design where
+the agent's entire situation awareness lived in one function that the chain path
+skipped entirely. This was not a deliberate architectural choice — it was an
+accidental accretion. The cognitive chain (AD-632) was designed to replace the
+single-call path, but the context it needed was never migrated.</p>
+<hr />
+<h2 id="2-theoretical-foundations">2. Theoretical Foundations<a class="headerlink" href="#2-theoretical-foundations" title="Permanent link">&para;</a></h2>
+<h3 id="21-endsleys-situation-awareness-model-human-factors">2.1 Endsley's Situation Awareness Model (Human Factors)<a class="headerlink" href="#21-endsleys-situation-awareness-model-human-factors" title="Permanent link">&para;</a></h3>
+<p><strong>Endsley (1995), "Toward a Theory of Situation Awareness in Dynamic Systems"</strong></p>
+<p>The canonical model for operator awareness in military, aviation, and maritime
+domains. Three hierarchical levels:</p>
+<ul>
+<li>
+<p><strong>Level 1 — Perception:</strong> Detection of relevant elements in the environment.
+  What entities, events, and conditions are present?</p>
+</li>
+<li>
+<p><strong>Level 2 — Comprehension:</strong> Understanding the meaning and significance of
+  perceived elements in relation to operator goals. What does this situation mean?</p>
+</li>
+<li>
+<p><strong>Level 3 — Projection:</strong> Ability to predict future states based on current
+  comprehension. What will happen next, and what should I do?</p>
+</li>
+</ul>
+<p><strong>ProbOS mapping:</strong></p>
+<table>
+<thead>
+<tr>
+<th>SA Level</th>
+<th>ProbOS Mechanism</th>
+<th>Current State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>L1 Perception</td>
+<td>QUERY step + observation context</td>
+<td>Minimal — 2 of ~17 data sources</td>
+</tr>
+<tr>
+<td>L2 Comprehension</td>
+<td>ANALYZE step (LLM reasoning)</td>
+<td>Works, but starved of L1 input</td>
+</tr>
+<tr>
+<td>L3 Projection</td>
+<td>ANALYZE → <code>intended_actions</code></td>
+<td>Defaults to <code>["silent"]</code> due to L1 gap</td>
+</tr>
+</tbody>
+</table>
+<p>The chain architecture maps perfectly to Endsley's levels. QUERY gathers percepts
+(L1), ANALYZE comprehends them (L2) and projects actions (L3), COMPOSE executes.
+The problem is not architectural — it's that L1 is nearly empty. ANALYZE cannot
+comprehend what it cannot perceive.</p>
+<p><strong>Key insight:</strong> Endsley distinguishes SA from the <strong>decision</strong> that follows it.
+SA is the prerequisite — the mental model of "what is happening" — that informs
+the decision. ProbOS's ANALYZE is both SA builder (L1→L2→L3) and decision maker
+(<code>intended_actions</code>). The chain separates the decision from execution (COMPOSE),
+but not from perception. This is correct for single-agent cognition — the agent
+builds SA and decides in the same cognitive step.</p>
+<h3 id="22-wickens-multiple-resource-theory-attention">2.2 Wickens' Multiple Resource Theory (Attention)<a class="headerlink" href="#22-wickens-multiple-resource-theory-attention" title="Permanent link">&para;</a></h3>
+<p><strong>Wickens (2002), "Multiple Resources and Performance Prediction"</strong></p>
+<p>Operators have limited attentional resources distributed across modalities.
+Overloading a single channel degrades performance even when total cognitive
+load is manageable.</p>
+<p><strong>ProbOS relevance:</strong> <code>_build_prompt_text</code> loaded all 17 context injections
+into a single undifferentiated prompt — the cognitive equivalent of playing
+all instruments at once. The chain architecture provides natural attention
+channels (QUERY → ANALYZE → COMPOSE), but only if each channel receives
+appropriate input. Currently QUERY receives two data points and ANALYZE
+gets the full standing orders — an inverted load distribution.</p>
+<h3 id="23-kleins-recognition-primed-decision-model-ndm">2.3 Klein's Recognition-Primed Decision Model (NDM)<a class="headerlink" href="#23-kleins-recognition-primed-decision-model-ndm" title="Permanent link">&para;</a></h3>
+<p><strong>Klein (1993), "A Recognition-Primed Decision (RPD) Model of Rapid Decision Making"</strong></p>
+<p>Experienced operators don't analytically weigh options — they pattern-match
+the situation against experience and select the first workable option. The
+quality of the decision depends on the quality of the situational assessment,
+not the depth of deliberation.</p>
+<p><strong>ProbOS mapping:</strong> This is exactly the ANALYZE → <code>intended_actions</code> pipeline.
+ANALYZE pattern-matches the situation (with episodic memory providing experience)
+and selects actions. The chain's COMPOSE step is the execution of the selected
+action, not a separate decision. But RPD requires rich situation assessment —
+Klein's firefighters see the fire, feel the heat, hear the structure. ProbOS's
+agents currently see nothing.</p>
+<h3 id="24-neissers-perceptual-cycle-cognitive-psychology">2.4 Neisser's Perceptual Cycle (Cognitive Psychology)<a class="headerlink" href="#24-neissers-perceptual-cycle-cognitive-psychology" title="Permanent link">&para;</a></h3>
+<p><strong>Neisser (1976), "Cognition and Reality"</strong></p>
+<p>Perception is not passive reception but an active cycle: schema (expectations)
+→ exploration (directed search) → sampling (what you find) → schema update.
+The observer's existing mental model determines what they look for, which
+determines what they find, which updates the model.</p>
+<p><strong>ProbOS mapping:</strong> This is the QUERY → ANALYZE loop. Standing orders and
+episodic memory provide the <strong>schema</strong> (what the agent expects and cares
+about). QUERY provides <strong>exploration</strong> (directed data gathering). ANALYZE
+performs <strong>sampling</strong> (selecting what matters) and <strong>schema update</strong> (changing
+<code>intended_actions</code>). The architecture embodies the perceptual cycle, but QUERY
+currently explores almost nothing.</p>
+<h3 id="25-bdi-architecture-multi-agent-systems">2.5 BDI Architecture (Multi-Agent Systems)<a class="headerlink" href="#25-bdi-architecture-multi-agent-systems" title="Permanent link">&para;</a></h3>
+<p><strong>Rao &amp; Georgeff (1995), "BDI Agents: From Theory to Practice"</strong></p>
+<p>Already in ProbOS's intellectual lineage (AD-643a). The BDI model maps:</p>
+<ul>
+<li><strong>Beliefs:</strong> What the agent knows about the world — situation awareness</li>
+<li><strong>Desires:</strong> What the agent wants to achieve — standing orders, duty schedule</li>
+<li><strong>Intentions:</strong> What the agent has committed to doing — <code>intended_actions</code></li>
+</ul>
+<p>The chain currently provides desires (standing orders) and produces intentions
+(<code>intended_actions</code>), but beliefs are nearly empty. The belief revision cycle
+(perception → belief update → intention formation) requires percepts to function.</p>
+<h3 id="26-soar-cognitive-architecture-ai">2.6 SOAR Cognitive Architecture (AI)<a class="headerlink" href="#26-soar-cognitive-architecture-ai" title="Permanent link">&para;</a></h3>
+<p><strong>Laird (2012), "The Soar Cognitive Architecture"</strong></p>
+<p>Already referenced in ProbOS cognitive sub-task protocol research. SOAR
+distinguishes:</p>
+<ul>
+<li><strong>Working Memory:</strong> Active situation model (what's happening now)</li>
+<li><strong>Long-Term Memory:</strong> Procedural + semantic + episodic (what you know)</li>
+<li><strong>Perception:</strong> Input from the environment that updates working memory</li>
+<li><strong>Elaboration:</strong> Applying rules to the situation model</li>
+</ul>
+<p>ProbOS already has working memory (AD-573), episodic memory (AD-540),
+procedural memory (Cognitive JIT AD-531+), and elaboration (ANALYZE).
+What's missing is perception — the pipeline that updates working memory
+from the environment each cycle.</p>
+<hr />
+<h2 id="3-the-naval-analogy-what-makes-a-watch-stander-present">3. The Naval Analogy: What Makes a Watch Stander Present<a class="headerlink" href="#3-the-naval-analogy-what-makes-a-watch-stander-present" title="Permanent link">&para;</a></h2>
+<p>A sailor standing watch on a naval vessel has access to information through
+four distinct cognitive categories:</p>
+<h3 id="31-innate-faculties">3.1 Innate Faculties<a class="headerlink" href="#31-innate-faculties" title="Permanent link">&para;</a></h3>
+<p>Things a watch stander has simply by being a conscious, present human:</p>
+<ul>
+<li><strong>Temporal awareness:</strong> What time it is, how long they've been on watch.
+  A sailor doesn't need a briefing to know the time.</li>
+<li><strong>Working memory:</strong> What they were just doing, what happened 5 minutes ago.
+  A sailor remembers they just answered a phone call.</li>
+<li><strong>Self-awareness:</strong> How they're feeling — fatigue, alertness, confidence.
+  A sailor knows if they're struggling.</li>
+<li><strong>Episodic memory:</strong> Experiences from their career that inform judgment.
+  A sailor remembers the last time they saw this reading.</li>
+<li><strong>Identity:</strong> Who they are, what they're qualified for, their rank.
+  A sailor doesn't need reminding of their name.</li>
+</ul>
+<p>These are <strong>faculties of being an agent</strong>, not information provided by the
+ship. A crew member who lacks these isn't standing watch — they're unconscious.</p>
+<p><strong>ProbOS mapping:</strong> Temporal awareness (AD-502), working memory (AD-573),
+self-monitoring state (AD-504), episodic memory (AD-540), identity/orientation
+(AD-429/567g). All currently live in <code>_build_prompt_text</code>. Some (identity,
+episodic memory) already flow through the chain. The rest don't.</p>
+<h3 id="32-situation-awareness-perception-of-the-ship">3.2 Situation Awareness (Perception of the Ship)<a class="headerlink" href="#32-situation-awareness-perception-of-the-ship" title="Permanent link">&para;</a></h3>
+<p>Things a watch stander knows because they are <em>physically present</em> on the ship:</p>
+<ul>
+<li><strong>Status boards:</strong> Glancing at engineering status, navigation displays, reactor
+  plant parameters. The watch stander doesn't request this data — it's on the
+  bulkhead in front of them.</li>
+<li><strong>Ward Room / bridge activity:</strong> Hearing conversations, knowing what's being
+  discussed. The OOD hears the navigator report the course change.</li>
+<li><strong>Crew status:</strong> Knowing who's on watch, who's qualified, who reported for duty.
+  The EOOW knows which watch section is on duty.</li>
+<li><strong>Ship's status:</strong> Alert condition, current operations, recent events. The
+  quarterdeck watch knows the ship is in port because they can see the pier.</li>
+<li><strong>Alerts and announcements:</strong> 1MC broadcasts, alarm bells, status changes.
+  The entire crew hears "General Quarters, General Quarters."</li>
+</ul>
+<p>These are <strong>percepts from being present</strong>, not briefings or procedures. The ship
+makes this information available to anyone who's on board and paying attention.</p>
+<p><strong>ProbOS mapping:</strong> Ward Room activity (AD-413), infrastructure status (AD-576),
+subordinate stats (AD-630), recent alerts/events, cold-start context (BF-034).
+All gathered by <code>_gather_context()</code> in the proactive loop, stuffed into
+<code>params.context_parts</code>, and then ignored by the chain.</p>
+<h3 id="33-watch-station-duties">3.3 Watch Station Duties<a class="headerlink" href="#33-watch-station-duties" title="Permanent link">&para;</a></h3>
+<p>Structured obligations tied to the current watch station:</p>
+<ul>
+<li><strong>Watch station requirements:</strong> The Engineering Officer of the Watch (EOOW) is
+  required to log main engine readings every hour, tour the main spaces every 2
+  hours, and report engineering status to the Officer of the Deck (OOD). These are
+  specified in the Watch, Quarter, and Station Bill (WQSB).</li>
+<li><strong>Planned Maintenance System (PMS) cards:</strong> Specific procedural checklists
+  assigned to this watch station for this watch period.</li>
+<li><strong>Turnover notes:</strong> Specific items from the outgoing watch stander.</li>
+</ul>
+<p>These are <strong>assigned obligations</strong>, not percepts or faculties. The watch stander
+consults their WQSB entry and PMS schedule. Without them, they might not know
+they need to do something — but they'd still be conscious and aware.</p>
+<p><strong>ProbOS mapping:</strong> Duty schedule (config/system.yaml <code>duty_schedule</code>), SOP Bills
+(AD-618, future). Currently the duty dict is passed in <code>params.duty</code> but never
+reaches the ANALYZE prompt. The chain doesn't know the agent has a duty.</p>
+<h3 id="34-standing-orders-and-regulations">3.4 Standing Orders and Regulations<a class="headerlink" href="#34-standing-orders-and-regulations" title="Permanent link">&para;</a></h3>
+<p>Internalized policies governing behavior:</p>
+<ul>
+<li><strong>Standing orders:</strong> "If you detect a fire, sound the alarm before investigating."
+  The watch stander has memorized these. They're not consulted mid-action.</li>
+<li><strong>Regulations:</strong> SORM, OPNAVINST, fleet directives. Training, not reference.</li>
+<li><strong>Rules of engagement:</strong> When to escalate, when to act independently.</li>
+</ul>
+<p>These are <strong>internalized guidance</strong> that the watch stander carries in their head.
+They don't read standing orders every cycle — they've learned them.</p>
+<p><strong>ProbOS mapping:</strong> Standing orders system (AD-339), 7-tier hierarchy via
+<code>compose_instructions()</code>. This already works correctly in the chain's system
+prompt. No fix needed.</p>
+<h3 id="35-the-insight">3.5 The Insight<a class="headerlink" href="#35-the-insight" title="Permanent link">&para;</a></h3>
+<p><code>_build_prompt_text</code> conflated all four categories into a single undifferentiated
+blob injected into the user prompt. The cognitive chain provides the right
+structure to separate them, but during the transition, all four categories were
+dropped instead of migrated.</p>
+<p>The correct architecture gives each category a distinct mechanism:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌──────────────────────────────────────────────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│  COGNITIVE AGENT — One Proactive Cycle                        │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│                                                              │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│  ┌─────────────────────────────────────────────────────────┐ │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│  │  INNATE FACULTIES  (always present)                     │ │
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│  │  Temporal awareness, working memory, self-monitoring,   │ │
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│  │  identity, episodic memory                              │ │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│  │  ── Part of the agent&#39;s cognitive state ──              │ │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│  │  Mechanism: populated into observation dict by the      │ │
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│  │  agent itself (perceive / pre-chain enrichment)         │ │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>│  └─────────────────────────────────────────────────────────┘ │
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│                          │                                   │
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│                          ▼                                   │
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│  ┌─────────────────────────────────────────────────────────┐ │
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│  │  SITUATION AWARENESS  (perceived from ship)             │ │
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│  │  Ward Room activity, infrastructure status, alerts,     │ │
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│  │  subordinate stats, crew status                         │ │
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>│  │  ── The ship makes this visible ──                      │ │
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>│  │  Mechanism: QUERY step operations                       │ │
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>│  │  (extend _QUERY_OPERATIONS registry)                    │ │
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>│  └─────────────────────────────────────────────────────────┘ │
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>│                          │                                   │
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>│                          ▼                                   │
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>│  ┌─────────────────────────────────────────────────────────┐ │
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>│  │  WATCH STATION DUTIES  (assigned obligations)           │ │
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>│  │  Duty cycle context, PMS cards, SOP Bills               │ │
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>│  │  ── What you were told to do ──                         │ │
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>│  │  Mechanism: duty context in observation dict,           │ │
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>│  │  ANALYZE prompt renders duty instructions               │ │
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>│  └─────────────────────────────────────────────────────────┘ │
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>│                          │                                   │
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>│                          ▼                                   │
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>│  ┌─────────────────────────────────────────────────────────┐ │
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>│  │  STANDING ORDERS  (internalized guidance)               │ │
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>│  │  Behavioral rules, communication protocols,             │ │
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>│  │  self-monitoring rules, cognitive zones                  │ │
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>│  │  ── Who you are and how you behave ──                   │ │
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>│  │  Mechanism: compose_instructions() → system prompt      │ │
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>│  │  (already works correctly)                              │ │
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>│  └─────────────────────────────────────────────────────────┘ │
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a>│                          │                                   │
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>│                          ▼                                   │
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>│  ┌─────────────────────────────────────────────────────────┐ │
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>│  │           ANALYZE (Endsley L2+L3)                       │ │
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a>│  │  Comprehends situation, forms intended_actions          │ │
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>│  │  Now receives all four categories of input              │ │
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>│  └─────────────────────────────────────────────────────────┘ │
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a>│                          │                                   │
+<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a>│                          ▼                                   │
+<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a>│              COMPOSE → EVALUATE → REFLECT                    │
+<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a>└──────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<hr />
+<h2 id="4-design-four-category-context-architecture">4. Design: Four-Category Context Architecture<a class="headerlink" href="#4-design-four-category-context-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="41-category-1-innate-faculties">4.1 Category 1 — Innate Faculties<a class="headerlink" href="#41-category-1-innate-faculties" title="Permanent link">&para;</a></h3>
+<p><strong>What:</strong> Cognitive state the agent possesses by virtue of being an agent.
+<strong>When populated:</strong> Before the chain runs, by the agent itself.
+<strong>Mechanism:</strong> A new method <code>_build_cognitive_state()</code> on CognitiveAgent that
+populates the observation dict with innate state. Runs for <strong>every</strong> chain
+execution, not just proactive_think. These are faculties of consciousness.</p>
+<table>
+<thead>
+<tr>
+<th>Faculty</th>
+<th>Source</th>
+<th>Observation Key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Current time</td>
+<td><code>time.time()</code></td>
+<td><code>_temporal_context</code></td>
+</tr>
+<tr>
+<td>System uptime</td>
+<td><code>runtime._start_time_wall</code></td>
+<td>(included in temporal)</td>
+</tr>
+<tr>
+<td>Last action time</td>
+<td>Agent's last act timestamp</td>
+<td>(included in temporal)</td>
+</tr>
+<tr>
+<td>Working memory</td>
+<td><code>self._working_memory.render_context()</code></td>
+<td><code>_working_memory</code></td>
+</tr>
+<tr>
+<td>Self-monitoring state</td>
+<td><code>context_parts.self_monitoring</code></td>
+<td><code>_self_monitoring</code></td>
+</tr>
+<tr>
+<td>Cognitive zone</td>
+<td>From self_monitoring</td>
+<td>(included in self_monitoring)</td>
+</tr>
+<tr>
+<td>Recent posts</td>
+<td>From self_monitoring</td>
+<td>(included in self_monitoring)</td>
+</tr>
+<tr>
+<td>Self-similarity score</td>
+<td>From self_monitoring</td>
+<td>(included in self_monitoring)</td>
+</tr>
+<tr>
+<td>Notebook index</td>
+<td>From self_monitoring</td>
+<td>(included in self_monitoring)</td>
+</tr>
+<tr>
+<td>Memory state</td>
+<td>Episode count, lifecycle</td>
+<td>(included in self_monitoring)</td>
+</tr>
+<tr>
+<td>Source attribution DATA</td>
+<td><code>_source_attribution</code> (episodic_count, procedural_count, oracle_used)</td>
+<td><code>_source_attribution</code></td>
+</tr>
+<tr>
+<td>Introspective telemetry</td>
+<td>AD-588 metrics snapshot</td>
+<td><code>_introspective_telemetry</code></td>
+</tr>
+<tr>
+<td>Trust / agency / rank</td>
+<td><code>params.trust_score</code>, <code>params.agency_level</code>, <code>params.rank</code></td>
+<td><code>_agent_metrics</code></td>
+</tr>
+<tr>
+<td>Ontology identity</td>
+<td>AD-429 <code>context_parts.ontology</code> (reports_to, peers, alert condition)</td>
+<td><code>_ontology_context</code></td>
+</tr>
+<tr>
+<td>Orientation supplement</td>
+<td>AD-567g time-gated onboarding context</td>
+<td><code>_orientation_supplement</code></td>
+</tr>
+<tr>
+<td>No-memory confabulation guard</td>
+<td>Warning when episodic memories empty</td>
+<td><code>_confabulation_guard</code></td>
+</tr>
+<tr>
+<td>Comm proficiency guidance</td>
+<td>Cognitive JIT <code>_get_comm_proficiency_guidance()</code></td>
+<td><code>_comm_proficiency</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Source attribution note:</strong> Source attribution has two parts: (1) <em>policy</em> — "ground
+your responses in identified sources" — which belongs in standing orders (Category 4).
+(2) <em>data</em> — the agent's awareness of what sources it actually has available right now
+(episodic count, procedural count, oracle access) — which is an innate faculty. The
+data component is listed here; the policy component is in Category 4.</p>
+<p><strong>Ontology identity note:</strong> Basic identity (callsign, department, rank) already flows
+through <code>compose_instructions()</code> / standing orders. The <em>dynamic</em> ontology — chain of
+command (reports_to, direct_reports, peers) and vessel state (alert condition) — is
+situational context that changes with crew composition and ship state. It belongs here
+as an innate faculty because the agent always knows who they report to and who their
+peers are, regardless of intent.</p>
+<p><strong>Orientation supplement note:</strong> AD-567g provides diminishing onboarding context for
+young agents (&lt; N cycles). Time-gated: fades as agent gains experience. Belongs in
+innate faculties because it's a property of the agent's maturity, not an external
+percept. Implementation: read <code>context_parts.orientation_supplement</code>, inject when
+present, omit when absent (self-removing by design).</p>
+<p><strong>No-memory confabulation guard note:</strong> When an agent has zero episodic memories, the
+old path injected: "You have no stored episodic memories yet. Do not reference or
+invent past experiences you do not have." This is a grounded self-knowledge guardrail
+(Westworld Principle) — the agent must know what it doesn't know. Without this, LLMs
+confabulate past experiences.</p>
+<p><strong>Note:</strong> Episodic memory and basic identity/orientation already flow through the chain
+via <code>_formatted_memories</code> and <code>compose_instructions()</code> respectively. No changes
+needed for those.</p>
+<p><strong>Design principle:</strong> These keys are set on the observation dict in
+<code>_execute_chain_with_intent_routing()</code> alongside the existing agent identity
+injections (lines 1802-1865). They are part of what makes the agent <em>present</em>.</p>
+<h3 id="42-category-2-situation-awareness">4.2 Category 2 — Situation Awareness<a class="headerlink" href="#42-category-2-situation-awareness" title="Permanent link">&para;</a></h3>
+<p><strong>What:</strong> Dynamic data about the ship's current state, perceived by the agent.
+<strong>When populated:</strong> During the QUERY step, via <code>_QUERY_OPERATIONS</code>.
+<strong>Mechanism:</strong> Extend the QUERY handler's operation registry with new operations.
+Update the proactive_think chain's <code>context_keys</code> to request them.</p>
+<table>
+<thead>
+<tr>
+<th>Percept</th>
+<th>QUERY Operation Key</th>
+<th>Source Service</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ward Room activity</td>
+<td><code>ward_room_activity</code></td>
+<td>WardRoomService</td>
+</tr>
+<tr>
+<td>Recent alerts</td>
+<td><code>recent_alerts</code></td>
+<td>AlertEngine</td>
+</tr>
+<tr>
+<td>Recent events</td>
+<td><code>recent_events</code></td>
+<td>EventBus</td>
+</tr>
+<tr>
+<td>Infrastructure status</td>
+<td><code>infrastructure_status</code></td>
+<td>LLMClient health</td>
+</tr>
+<tr>
+<td>Subordinate stats</td>
+<td><code>subordinate_stats</code></td>
+<td>WardRoomService + Ontology</td>
+</tr>
+<tr>
+<td>Cold-start note</td>
+<td><code>cold_start_context</code></td>
+<td>Runtime lifecycle</td>
+</tr>
+<tr>
+<td>Alert condition</td>
+<td><code>alert_condition</code></td>
+<td>AlertConditionService</td>
+</tr>
+<tr>
+<td>Active games</td>
+<td><code>active_games</code></td>
+<td>GameService</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Design principle:</strong> QUERY operations are deterministic (zero LLM calls), follow
+the existing dispatch-table pattern, and are registered in <code>_QUERY_OPERATIONS</code> —
+new operations added without touching <code>__call__()</code>. Open/Closed.</p>
+<p><strong>Chain spec update:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Current (2 keys):</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">context_keys</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;unread_counts&quot;</span><span class="p">,</span> <span class="s2">&quot;trust_score&quot;</span><span class="p">),</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># After AD-644 (extended):</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">context_keys</span><span class="o">=</span><span class="p">(</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="s2">&quot;unread_counts&quot;</span><span class="p">,</span> <span class="s2">&quot;trust_score&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="s2">&quot;ward_room_activity&quot;</span><span class="p">,</span> <span class="s2">&quot;recent_alerts&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="s2">&quot;infrastructure_status&quot;</span><span class="p">,</span> <span class="s2">&quot;subordinate_stats&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="s2">&quot;cold_start_context&quot;</span><span class="p">,</span> <span class="s2">&quot;alert_condition&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="p">),</span>
+</code></pre></div></p>
+<h3 id="43-category-3-watch-station-duties">4.3 Category 3 — Watch Station Duties<a class="headerlink" href="#43-category-3-watch-station-duties" title="Permanent link">&para;</a></h3>
+<p><strong>What:</strong> Active duty assignment, if any.
+<strong>When populated:</strong> Before the chain runs, from <code>params.duty</code>.
+<strong>Mechanism:</strong> The proactive loop already passes <code>duty</code> in the IntentMessage's
+<code>params</code>. The chain's observation enrichment reads it and sets <code>_active_duty</code>.
+ANALYZE prompt renders duty context when present.</p>
+<p><strong>Observation keys:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_active_duty</code></td>
+<td><code>{"duty_id": "...", "description": "...", "is_scheduled": True}</code> or <code>None</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>ANALYZE prompt behavior when duty is active:</strong>
+- Replaces generic "assess the situation" with duty-specific instructions
+- Biases away from <code>["silent"]</code> — the agent has an <em>obligation</em> to report
+- Duty description becomes the focus of analysis
+- Maps to WQSB: the agent knows what their watch station requires</p>
+<p><strong>ANALYZE prompt behavior when no duty (free-form):</strong>
+- Current situation_review behavior: assess, justify any response
+- Silence remains the expected default for free-form cycles
+- Maps to a sailor on watch with no specific PMS due — they monitor, but
+  don't generate unnecessary reports</p>
+<h3 id="44-category-4-standing-orders-no-changes-needed">4.4 Category 4 — Standing Orders (no changes needed)<a class="headerlink" href="#44-category-4-standing-orders-no-changes-needed" title="Permanent link">&para;</a></h3>
+<p>The chain's system prompt already receives the full standing orders hierarchy
+via <code>compose_instructions()</code>. Self-monitoring rules, cognitive zone descriptions,
+communication protocols, action vocabulary — all present.</p>
+<p><strong>Two additions to standing orders markdown (zero code changes):</strong></p>
+<ol>
+<li>
+<p><strong>Source attribution POLICY</strong> (AD-568d) — currently only in <code>_build_prompt_text</code>.
+   Move the policy guidance ("Ground your responses in identified sources. Do not
+   present training knowledge as personal experience.") to
+   <code>config/standing_orders/ship.md</code>. Note: the <em>data</em> component (episodic_count,
+   procedural_count, oracle_used) is in Category 1 innate faculties — the agent
+   sees what sources it has. The <em>policy</em> tells it how to use them.</p>
+</li>
+<li>
+<p><strong>Duty reporting expectations</strong> — add to ship standing orders: "When executing
+   a scheduled duty, produce a structured report of your findings. Silence during
+   a duty cycle requires explicit justification."</p>
+</li>
+</ol>
+<hr />
+<h2 id="5-prompt-template-updates">5. Prompt Template Updates<a class="headerlink" href="#5-prompt-template-updates" title="Permanent link">&para;</a></h2>
+<h3 id="51-analyze-prompt-_build_situation_review_prompt">5.1 ANALYZE Prompt (<code>_build_situation_review_prompt</code>)<a class="headerlink" href="#51-analyze-prompt-_build_situation_review_prompt" title="Permanent link">&para;</a></h3>
+<p>The <code>_build_situation_review_prompt</code> in <code>analyze.py</code> currently renders only:
+- <code>context.get("context", "")</code> — situation content (empty for proactive_think)
+- Prior QUERY results (unread_counts, trust_score)
+- <code>_formatted_memories</code> — episodic recall</p>
+<p>After AD-644, it renders all four categories. The prompt template becomes the
+<strong>rendering layer</strong> that assembles the agent's situation model for the LLM.</p>
+<h3 id="proposed-prompt-structure-for-situation_review">Proposed prompt structure for <code>situation_review</code>:<a class="headerlink" href="#proposed-prompt-structure-for-situation_review" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>## Your Current State (Innate Faculties)
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>{temporal_context}
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>{trust_score} | {agency_level} | {rank}
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>{ontology_context — reports_to, peers, alert condition}
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>{working_memory}
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>{self_monitoring — zone, recent posts, similarity}
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>{source_attribution — episodic_count, procedural_count, oracle_used}
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>{confabulation_guard — if no episodic memories}
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>{orientation_supplement — if young agent, time-gated}
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>## Ship Status (Situation Awareness — from QUERY)
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>{ward_room_activity}
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>{infrastructure_status}
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>{recent_alerts}
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>{recent_events}
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>{subordinate_stats}  (if Chief)
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>{alert_condition}
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>{cold_start_context}  (if system recently started)
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>{active_game}  (if game in progress)
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>## Active Duty  (if duty assigned)
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>[Duty: {description}]
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>This is a scheduled duty. Assess your area of responsibility and report findings.
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>--- OR ---
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>## Proactive Review  (no duty)
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>No scheduled duty. Post only if you observe something genuinely noteworthy.
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>## Episodic Memories
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>{formatted_memories}
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>## Assessment Required
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>{existing analysis questions — topics, gaps, contribution_assessment, intended_actions}
+</code></pre></div>
+<p><strong>Key difference from <code>_build_prompt_text</code>:</strong> The prompt template is structured
+and labeled. Each section has a clear cognitive category. The LLM receives a
+situation model with named sections rather than an undifferentiated wall of text.
+This aligns with Wickens' multiple resource theory — structured input reduces
+cognitive channel interference.</p>
+<h3 id="52-compose-prompt-_build_proactive_compose_prompt-_build_user_prompt">5.2 COMPOSE Prompt (<code>_build_proactive_compose_prompt</code> / <code>_build_user_prompt</code>)<a class="headerlink" href="#52-compose-prompt-_build_proactive_compose_prompt-_build_user_prompt" title="Permanent link">&para;</a></h3>
+<p><strong>This is a second consumer of the same data.</strong> The COMPOSE step also needs
+situation context — not just ANALYZE's output. Currently <code>_build_user_prompt()</code>
+in <code>compose.py</code> reads <code>context.get("context", "")</code> (empty) and renders ANALYZE
+results + QUERY data + memories. But COMPOSE also needs:</p>
+<ul>
+<li>
+<p><strong>Duty/free-form framing</strong> — COMPOSE must know whether to produce a duty report
+  ("Compose a Ward Room post with your findings") or a free-form observation
+  ("If something genuinely warrants attention, compose a brief observation").
+  This comes from Category 3 (<code>_active_duty</code>).</p>
+</li>
+<li>
+<p><strong>Comm proficiency guidance</strong> — <code>_get_comm_proficiency_guidance()</code> provides
+  Cognitive JIT skill injection for communication quality. Currently injected by
+  <code>_build_prompt_text</code> via <code>_frame_task_with_skill()</code> when Ward Room activity is
+  present. COMPOSE is the natural home for this — it's about <em>how to communicate</em>,
+  not <em>what to analyze</em>.</p>
+</li>
+<li>
+<p><strong>Source attribution data</strong> — COMPOSE must render source awareness so the agent
+  attributes correctly in its output.</p>
+</li>
+<li>
+<p><strong>No-memory confabulation guard</strong> — if the agent has no episodic memories, COMPOSE
+  must include the guard to prevent fabricating past experiences in the output.</p>
+</li>
+</ul>
+<p><strong>Design principle:</strong> COMPOSE reads from the same observation dict as ANALYZE. The
+observation dict is set once in <code>_execute_chain_with_intent_routing()</code>. Both
+prompts are rendering layers over the same data — they just emphasize different
+aspects (ANALYZE: "assess this", COMPOSE: "produce output from this").</p>
+<p><strong>Implementation:</strong> <code>_build_proactive_compose_prompt</code> reads innate faculties and
+duty context from the observation dict (which already flows through the chain).
+No new data gathering needed — just prompt template updates.</p>
+<hr />
+<h2 id="6-composability-and-scaling">6. Composability and Scaling<a class="headerlink" href="#6-composability-and-scaling" title="Permanent link">&para;</a></h2>
+<h3 id="61-the-four-categories-scale-independently">6.1 The Four Categories Scale Independently<a class="headerlink" href="#61-the-four-categories-scale-independently" title="Permanent link">&para;</a></h3>
+<p>Each category has a different growth dynamic:</p>
+<ul>
+<li><strong>Innate faculties:</strong> Fixed set. Working memory, temporal awareness, self-monitoring
+  are architectural features. New faculties are rare (maybe 1-2 per era).</li>
+<li><strong>Situation awareness:</strong> Grows with ship capabilities. New QUERY operations added
+  as new services come online. Each is a function in a dispatch table — O(1) to add.</li>
+<li><strong>Watch station duties:</strong> Grows with the SOP Bill system (AD-618). New duty types
+  add new duty contexts. The ANALYZE template renders them uniformly.</li>
+<li><strong>Standing orders:</strong> Grows with policy evolution. Markdown files, no code changes.</li>
+</ul>
+<p>This is fundamentally more scalable than <code>_build_prompt_text</code>, where every new
+context injection required modifying a 290-line function with 17 conditional blocks.</p>
+<h3 id="62-composability-with-nats-pipeline-ad-641g">6.2 Composability with NATS Pipeline (AD-641g)<a class="headerlink" href="#62-composability-with-nats-pipeline-ad-641g" title="Permanent link">&para;</a></h3>
+<p>When the cognitive chain is decoupled via NATS subjects:</p>
+<ul>
+<li><strong>QUERY becomes a persistent subscriber.</strong> Ward Room activity, alerts, infrastructure
+  status are NATS events that QUERY naturally consumes. No polling needed.</li>
+<li><strong>Innate faculties travel with the message.</strong> The agent's cognitive state is attached
+  to the message payload as it moves through <code>chain.{agent_id}.analyze</code>.</li>
+<li><strong>Duty context is a triggering event.</strong> The duty scheduler publishes to
+  <code>duty.{agent_id}.due</code>, which triggers a chain execution with duty context attached.</li>
+</ul>
+<p>The four-category model maps directly to NATS message sources:
+1. Innate → agent-local state, attached at message creation
+2. Situation → NATS subscriptions (events from ship services)
+3. Duty → NATS trigger from scheduler
+4. Standing orders → loaded once, cached, refreshed on change</p>
+<h3 id="63-composability-with-sop-bills-ad-618">6.3 Composability with SOP Bills (AD-618)<a class="headerlink" href="#63-composability-with-sop-bills-ad-618" title="Permanent link">&para;</a></h3>
+<p>When the SOP Bill system replaces the hardcoded duty schedule:</p>
+<ul>
+<li><strong>Bills define the duty context.</strong> A Bill's <code>trigger: schedule:&lt;cron&gt;</code> fires the
+  duty. The Bill's steps define what the agent should do. Category 3 (Watch Station)
+  is populated from the Bill spec, not from <code>config/system.yaml</code>.</li>
+<li><strong>Bills can modify perception.</strong> A Bill step might require specific QUERY operations
+  ("check pool health", "review recent DMs"). The Bill extends Category 2 for its
+  execution context.</li>
+<li><strong>Bills are composable.</strong> Multiple Bills can be active simultaneously. The agent
+  sees all active duties and prioritizes.</li>
+</ul>
+<h3 id="64-composability-with-intent-routing-ad-643a">6.4 Composability with Intent Routing (AD-643a)<a class="headerlink" href="#64-composability-with-intent-routing-ad-643a" title="Permanent link">&para;</a></h3>
+<p>The intent routing system already works with this model:</p>
+<ul>
+<li><strong>ANALYZE produces <code>intended_actions</code> from situation awareness.</strong> With richer
+  input, ANALYZE makes better action decisions.</li>
+<li><strong>Trigger awareness (AD-643b) scopes available actions.</strong> The agent sees only
+  actions relevant to their department/rank, reducing decision space.</li>
+<li><strong>Skills load after intent routing.</strong> Category 2 data (Ward Room posts, alerts)
+  informs the action choice, then skills load to help execute.</li>
+</ul>
+<hr />
+<h2 id="7-implementation-phases">7. Implementation Phases<a class="headerlink" href="#7-implementation-phases" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-duty-context-restoration-critical-fix">Phase 1 — Duty Context Restoration (Critical Fix)<a class="headerlink" href="#phase-1-duty-context-restoration-critical-fix" title="Permanent link">&para;</a></h3>
+<p>Minimum viable fix to restore duty cycle functionality:</p>
+<ol>
+<li>Pass <code>params.duty</code> into observation dict as <code>_active_duty</code></li>
+<li>Pass <code>params.trust_score</code>, <code>params.agency_level</code>, <code>params.rank</code> into <code>_agent_metrics</code></li>
+<li>Update <code>_build_situation_review_prompt</code> to render duty context and agent metrics</li>
+<li>Update <code>_build_proactive_compose_prompt</code> to render duty framing</li>
+<li>When <code>_active_duty</code> is present, ANALYZE knows the agent has an obligation</li>
+</ol>
+<p><strong>Scope:</strong> 3 files modified (cognitive_agent.py, analyze.py, compose.py). ~50 lines.
+<strong>Validates:</strong> Duty cycles produce reports instead of <code>["silent"]</code>.</p>
+<h3 id="phase-2-innate-faculties">Phase 2 — Innate Faculties<a class="headerlink" href="#phase-2-innate-faculties" title="Permanent link">&para;</a></h3>
+<p>Populate innate cognitive state into the observation dict:</p>
+<ol>
+<li>Add <code>_build_cognitive_state()</code> method to CognitiveAgent</li>
+<li>Call it in <code>_execute_chain_with_intent_routing()</code> alongside existing identity injection</li>
+<li>Populate: <code>_temporal_context</code>, <code>_working_memory</code>, <code>_self_monitoring</code>,
+   <code>_source_attribution</code> (data), <code>_introspective_telemetry</code>, <code>_ontology_context</code>,
+   <code>_orientation_supplement</code>, <code>_confabulation_guard</code>, <code>_comm_proficiency</code></li>
+<li>Update ANALYZE prompt template to render all innate faculties</li>
+<li>Update COMPOSE prompt template to render source attribution, confabulation guard,
+   comm proficiency, and duty/free-form framing from observation dict</li>
+</ol>
+<p><strong>Scope:</strong> 3 files modified (cognitive_agent.py, analyze.py, compose.py). ~120 lines.
+<strong>Validates:</strong> Agents have temporal awareness, self-monitoring, ontology, source
+attribution data, confabulation guards, and comm proficiency in chain path.</p>
+<h3 id="phase-3-situation-awareness-query-extensions">Phase 3 — Situation Awareness (QUERY Extensions)<a class="headerlink" href="#phase-3-situation-awareness-query-extensions" title="Permanent link">&para;</a></h3>
+<p>Extend the QUERY step with new operations:</p>
+<ol>
+<li>Register new operations in <code>_QUERY_OPERATIONS</code>: ward_room_activity,
+   infrastructure_status, subordinate_stats, recent_alerts, recent_events,
+   cold_start_context, active_game</li>
+<li>Update proactive_think chain's <code>context_keys</code></li>
+<li>Update ANALYZE prompt template to render QUERY results</li>
+</ol>
+<p><strong>Scope:</strong> 2 files modified (query.py, cognitive_agent.py). ~120 lines.
+<strong>Validates:</strong> Agents perceive ship status through QUERY step.</p>
+<h3 id="phase-4-standing-orders-additions">Phase 4 — Standing Orders Additions<a class="headerlink" href="#phase-4-standing-orders-additions" title="Permanent link">&para;</a></h3>
+<p>Add missing policies to standing orders markdown:</p>
+<ol>
+<li>Source attribution POLICY → <code>ship.md</code> (the behavioral guidance, not the data)</li>
+<li>Duty reporting expectations → <code>ship.md</code></li>
+</ol>
+<p><strong>Scope:</strong> 1 file modified (config/standing_orders/ship.md). ~10 lines.
+<strong>Validates:</strong> Chain system prompt includes previously-missing policies.</p>
+<h3 id="phase-5-_build_prompt_text-deprecation-path">Phase 5 — <code>_build_prompt_text</code> Deprecation Path<a class="headerlink" href="#phase-5-_build_prompt_text-deprecation-path" title="Permanent link">&para;</a></h3>
+<p>Once all four categories flow through the chain:</p>
+<ol>
+<li>Verify chain path produces equivalent or better output than single-call path</li>
+<li>Mark <code>_build_prompt_text</code> proactive_think block as deprecated</li>
+<li>Eventually remove when <code>_CHAIN_ELIGIBLE_INTENTS</code> covers all intent types</li>
+</ol>
+<p><strong>Note:</strong> <code>_build_prompt_text</code> still serves non-chain intents. Only the
+proactive_think block is replaced by this work.</p>
+<h3 id="parity-checklist">Parity Checklist<a class="headerlink" href="#parity-checklist" title="Permanent link">&para;</a></h3>
+<p>Complete inventory of <code>_build_prompt_text</code> proactive_think block (lines 3319-3607)
+mapped to AD-644 categories. Every item must have a destination:</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th><code>_build_prompt_text</code> Item</th>
+<th>AD-644 Category</th>
+<th>Phase</th>
+<th>Observation Key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Duty/free-form header framing</td>
+<td>Cat 3 — Watch Station</td>
+<td>1</td>
+<td><code>_active_duty</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>Trust / agency / rank display</td>
+<td>Cat 1 — Innate</td>
+<td>1</td>
+<td><code>_agent_metrics</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Temporal awareness (AD-502)</td>
+<td>Cat 1 — Innate</td>
+<td>2</td>
+<td><code>_temporal_context</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>Working memory (AD-573)</td>
+<td>Cat 1 — Innate</td>
+<td>2</td>
+<td><code>_working_memory</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td>Cold-start system note (BF-034)</td>
+<td>Cat 2 — SA</td>
+<td>3</td>
+<td><code>cold_start_context</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td>Infrastructure status (AD-576)</td>
+<td>Cat 2 — SA</td>
+<td>3</td>
+<td><code>infrastructure_status</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td>Ontology identity (AD-429) — reports_to, peers, alert</td>
+<td>Cat 1 — Innate</td>
+<td>2</td>
+<td><code>_ontology_context</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td>Subordinate stats (AD-630)</td>
+<td>Cat 2 — SA</td>
+<td>3</td>
+<td><code>subordinate_stats</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td>Orientation supplement (AD-567g)</td>
+<td>Cat 1 — Innate</td>
+<td>2</td>
+<td><code>_orientation_supplement</code></td>
+</tr>
+<tr>
+<td>10</td>
+<td>Skill profile (AD-429b)</td>
+<td>Already flows</td>
+<td>—</td>
+<td>(existing chain path)</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Episodic memories (AD-540)</td>
+<td>Already flows</td>
+<td>—</td>
+<td><code>_formatted_memories</code></td>
+</tr>
+<tr>
+<td>12</td>
+<td>No-memory confabulation guard</td>
+<td>Cat 1 — Innate</td>
+<td>2</td>
+<td><code>_confabulation_guard</code></td>
+</tr>
+<tr>
+<td>13</td>
+<td>Source attribution DATA (AD-568d)</td>
+<td>Cat 1 — Innate</td>
+<td>2</td>
+<td><code>_source_attribution</code></td>
+</tr>
+<tr>
+<td>14</td>
+<td>Source attribution POLICY (AD-568d)</td>
+<td>Cat 4 — Standing Orders</td>
+<td>4</td>
+<td>ship.md</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Recent alerts</td>
+<td>Cat 2 — SA</td>
+<td>3</td>
+<td><code>recent_alerts</code></td>
+</tr>
+<tr>
+<td>16</td>
+<td>Recent events</td>
+<td>Cat 2 — SA</td>
+<td>3</td>
+<td><code>recent_events</code></td>
+</tr>
+<tr>
+<td>17</td>
+<td>Comm proficiency guidance (Cog JIT)</td>
+<td>Cat 1 — Innate</td>
+<td>2</td>
+<td><code>_comm_proficiency</code></td>
+</tr>
+<tr>
+<td>18</td>
+<td>Ward Room activity (AD-413)</td>
+<td>Cat 2 — SA</td>
+<td>3</td>
+<td><code>ward_room_activity</code></td>
+</tr>
+<tr>
+<td>19</td>
+<td>Active game state (BF-110)</td>
+<td>Cat 2 — SA</td>
+<td>3</td>
+<td><code>active_game</code></td>
+</tr>
+<tr>
+<td>20</td>
+<td>Self-monitoring (AD-504/506)</td>
+<td>Cat 1 — Innate</td>
+<td>2</td>
+<td><code>_self_monitoring</code></td>
+</tr>
+<tr>
+<td>21</td>
+<td>Introspective telemetry (AD-588)</td>
+<td>Cat 1 — Innate</td>
+<td>2</td>
+<td><code>_introspective_telemetry</code></td>
+</tr>
+<tr>
+<td>22</td>
+<td>Final duty/free-form instructions</td>
+<td>Cat 3 — Watch Station</td>
+<td>1</td>
+<td><code>_active_duty</code></td>
+</tr>
+<tr>
+<td>23</td>
+<td>Duty reporting expectations (policy)</td>
+<td>Cat 4 — Standing Orders</td>
+<td>4</td>
+<td>ship.md</td>
+</tr>
+</tbody>
+</table>
+<p><strong>COMPOSE template parity:</strong> Items 1, 2, 12, 13, 17, 22 also need rendering in
+<code>_build_proactive_compose_prompt</code> (Phase 1 for duty framing, Phase 2 for the rest).</p>
+<hr />
+<h2 id="8-what-this-does-not-do">8. What This Does NOT Do<a class="headerlink" href="#8-what-this-does-not-do" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>Does not change the chain architecture.</strong> QUERY → ANALYZE → COMPOSE → EVALUATE
+  → REFLECT sequence is unchanged. We're feeding the chain, not restructuring it.</p>
+</li>
+<li>
+<p><strong>Does not replace the proactive loop.</strong> <code>_gather_context()</code> continues to gather
+  dynamic data. The change is in how that data reaches the chain — through the
+  observation dict and QUERY operations, not through <code>_build_prompt_text</code>.</p>
+</li>
+<li>
+<p><strong>Does not implement SOP Bills.</strong> Duty context comes from the existing
+  <code>duty_schedule</code> config. AD-618 is the long-term replacement.</p>
+</li>
+<li>
+<p><strong>Does not implement NATS decoupling.</strong> The chain remains synchronous. AD-641g
+  is the long-term evolution.</p>
+</li>
+<li>
+<p><strong>Does not add new data sources.</strong> Every injection listed already exists in
+  <code>_build_prompt_text</code> / <code>_gather_context()</code>. This is a migration, not new features.</p>
+</li>
+</ul>
+<hr />
+<h2 id="9-research-sources">9. Research Sources<a class="headerlink" href="#9-research-sources" title="Permanent link">&para;</a></h2>
+<h3 id="human-factors-cognitive-science">Human Factors / Cognitive Science<a class="headerlink" href="#human-factors-cognitive-science" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Endsley, M. R. (1995). "Toward a Theory of Situation Awareness in Dynamic Systems." <em>Human Factors</em>, 37(1), 32-64.</li>
+<li>Wickens, C. D. (2002). "Multiple Resources and Performance Prediction." <em>Theoretical Issues in Ergonomics Science</em>, 3(2), 159-177.</li>
+<li>Klein, G. A. (1993). "A Recognition-Primed Decision (RPD) Model of Rapid Decision Making." In Klein et al. (Eds.), <em>Decision Making in Action: Models and Methods</em>. Ablex.</li>
+<li>Neisser, U. (1976). <em>Cognition and Reality: Principles and Implications of Cognitive Psychology</em>. W. H. Freeman.</li>
+<li>Flavell, J. H. (1979). "Metacognition and Cognitive Monitoring." <em>American Psychologist</em>, 34(10), 906-911.</li>
+</ul>
+<h3 id="multi-agent-systems">Multi-Agent Systems<a class="headerlink" href="#multi-agent-systems" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Rao, A. S., &amp; Georgeff, M. P. (1995). "BDI Agents: From Theory to Practice." <em>Proceedings of ICMAS-95</em>.</li>
+</ul>
+<h3 id="cognitive-architectures">Cognitive Architectures<a class="headerlink" href="#cognitive-architectures" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Laird, J. E. (2012). <em>The Soar Cognitive Architecture</em>. MIT Press.</li>
+<li>Anderson, J. R. (2007). <em>How Can the Human Mind Occur in the Physical Universe?</em> (ACT-R). Oxford University Press.</li>
+</ul>
+<h3 id="naval">Naval<a class="headerlink" href="#naval" title="Permanent link">&para;</a></h3>
+<ul>
+<li>OPNAVINST 3120.32D — Ship's Organization and Regulations Manual (SORM)</li>
+<li>NAVEDTRA 43100 — Personnel Qualification Standards (PQS)</li>
+<li>Navy Watch Quarter and Station Bill (WQSB) procedures</li>
+</ul>
+<h3 id="probos-internal">ProbOS Internal<a class="headerlink" href="#probos-internal" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>docs/research/cognitive-sub-task-protocol.md</code> — Three cognitive processing levels, SOAR mapping</li>
+<li><code>docs/research/metacognitive-architecture.md</code> — Grounded self-knowledge, source monitoring</li>
+<li><code>docs/research/crew-capability-architecture.md</code> — Four-tier capability model, Navy personnel mapping</li>
+<li><code>docs/research/standard-operating-procedures.md</code> — SOP Bill system design (AD-618)</li>
+<li>AD-632 (Cognitive Chain), AD-643a/b (Intent Routing + Trigger Learning)</li>
+<li>AD-504/506 (Self-Monitoring + Self-Regulation Wave)</li>
+<li>AD-502 (Temporal Context), AD-573 (Working Memory)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

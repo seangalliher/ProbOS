@@ -1,0 +1,2829 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/group-psychometrics-research/">
+      
+      
+        <link rel="prev" href="../crew-development-research/">
+      
+      
+        <link rel="next" href="../universal-agent-activation-research/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Group Psychometrics - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#group-psychometrics-for-multi-agent-crew-assessment" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Group Psychometrics
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-measurement-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The Measurement Problem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-generalizability-theory-g-theory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Generalizability Theory (G-Theory)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Generalizability Theory (G-Theory)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-concept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Concept
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#probos-facets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Facets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#g-study-and-d-study" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        G-Study and D-Study
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#application-to-ad-569-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Application to AD-569 Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-intraclass-correlation-coefficient-icc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Intraclass Correlation Coefficient (ICC)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Intraclass Correlation Coefficient (ICC)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#forms-relevant-to-probos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Forms Relevant to ProbOS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#probos-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Interpretation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-within-group-agreement-r_wg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Within-Group Agreement: r_wg
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Within-Group Agreement: r_wg">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-concept_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Concept
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#probos-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Application
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-hierarchical-linear-modeling-hlm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Hierarchical Linear Modeling (HLM)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Hierarchical Linear Modeling (HLM)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nested-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Nested Structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-it-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why It Matters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-level-effects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-Level Effects
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-construct-validation-multi-trait-multi-method-mtmm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Construct Validation: Multi-Trait Multi-Method (MTMM)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Construct Validation: Multi-Trait Multi-Method (MTMM)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mtmm-matrix-design-for-ad-569" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MTMM Matrix Design for AD-569
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation Criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-mtmm-matrix-reveals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the MTMM Matrix Reveals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-transactive-memory-systems-tms-measurement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Transactive Memory Systems (TMS) Measurement
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Transactive Memory Systems (TMS) Measurement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tms-scale-three-subscales" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TMS Scale — Three Subscales
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adaptation-for-ai-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adaptation for AI Agents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-shared-mental-models-smm-measurement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Shared Mental Models (SMM) Measurement
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Shared Mental Models (SMM) Measurement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#measurement-approaches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measurement Approaches
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-key-insight-for-probos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Key Insight for ProbOS
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-psychometric-network-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Psychometric Network Analysis
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Psychometric Network Analysis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alternative-to-latent-variable-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative to Latent Variable Models
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-methodological-caution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Methodological Caution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-integration-with-existing-probos-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Integration with Existing ProbOS Assessment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11. Integration with Existing ProbOS Assessment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-agent-psychometrics-research" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Agent Psychometrics Research
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-existing-tier-3-probes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Existing Tier 3 Probes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-publication-potential" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Publication Potential
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-measurement-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The Measurement Problem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-generalizability-theory-g-theory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Generalizability Theory (G-Theory)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Generalizability Theory (G-Theory)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-concept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Concept
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#probos-facets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Facets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#g-study-and-d-study" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        G-Study and D-Study
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#application-to-ad-569-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Application to AD-569 Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-intraclass-correlation-coefficient-icc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Intraclass Correlation Coefficient (ICC)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Intraclass Correlation Coefficient (ICC)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#forms-relevant-to-probos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Forms Relevant to ProbOS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#probos-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Interpretation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-within-group-agreement-r_wg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Within-Group Agreement: r_wg
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Within-Group Agreement: r_wg">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-concept_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Concept
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#probos-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Application
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-hierarchical-linear-modeling-hlm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Hierarchical Linear Modeling (HLM)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Hierarchical Linear Modeling (HLM)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nested-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Nested Structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-it-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why It Matters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-level-effects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-Level Effects
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-construct-validation-multi-trait-multi-method-mtmm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Construct Validation: Multi-Trait Multi-Method (MTMM)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Construct Validation: Multi-Trait Multi-Method (MTMM)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mtmm-matrix-design-for-ad-569" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MTMM Matrix Design for AD-569
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation Criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-mtmm-matrix-reveals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the MTMM Matrix Reveals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-transactive-memory-systems-tms-measurement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Transactive Memory Systems (TMS) Measurement
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Transactive Memory Systems (TMS) Measurement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tms-scale-three-subscales" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TMS Scale — Three Subscales
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adaptation-for-ai-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adaptation for AI Agents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-shared-mental-models-smm-measurement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Shared Mental Models (SMM) Measurement
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Shared Mental Models (SMM) Measurement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#measurement-approaches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measurement Approaches
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-key-insight-for-probos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Key Insight for ProbOS
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-psychometric-network-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Psychometric Network Analysis
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Psychometric Network Analysis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alternative-to-latent-variable-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative to Latent Variable Models
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-methodological-caution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Methodological Caution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-integration-with-existing-probos-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Integration with Existing ProbOS Assessment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11. Integration with Existing ProbOS Assessment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-agent-psychometrics-research" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Agent Psychometrics Research
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-existing-tier-3-probes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Existing Tier 3 Probes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-publication-potential" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Publication Potential
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="group-psychometrics-for-multi-agent-crew-assessment">Group Psychometrics for Multi-Agent Crew Assessment<a class="headerlink" href="#group-psychometrics-for-multi-agent-crew-assessment" title="Permanent link">&para;</a></h1>
+<p><strong>Date:</strong> 2026-04-05
+<strong>Purpose:</strong> Survey of psychometric methodology for group-level assessment, applied to ProbOS crew intelligence measurement. Establishes the measurement framework for AD-569 (Observation-Grounded Crew Intelligence Metrics).
+<strong>Triggered by:</strong> Metrics misalignment — observed collaborative intelligence (iatrogenic trust detection, Wesley case, five-agent analytical lens) not captured by existing Tier 3 qualification probes, which rely on information-theoretic abstractions rather than behavioral content analysis.
+<strong>Connects to:</strong> AD-569, AD-557, AD-566 (qualification framework), agent-psychometrics-research (commercial — individual-level assessment)</p>
+<hr />
+<h2 id="1-the-measurement-problem">1. The Measurement Problem<a class="headerlink" href="#1-the-measurement-problem" title="Permanent link">&para;</a></h2>
+<p>ProbOS has two layers of crew assessment:</p>
+<p><strong>Individual (Tier 1-2):</strong> Agent-level psychometrics — Big Five personality, ToM false-belief tasks, episodic recall, confabulation probes. Well-grounded in existing research (Ge et al. IRT, Matsenas et al. BFI validation, Kosinski ToM). Documented in <code>agent-psychometrics-research-2026-04-03.md</code>.</p>
+<p><strong>Collective (Tier 3):</strong> Five probes measuring group-level properties — all produce near-zero or uninformative scores despite observed collaborative intelligence:</p>
+<table>
+<thead>
+<tr>
+<th>Probe</th>
+<th>What It Measures</th>
+<th>Why It Fails</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CoordinationBreakevenSpread</td>
+<td><code>synergy / (synergy + overhead)</code></td>
+<td>Uses emergence_capacity (itself near-zero) and Ward Room post/thread ratio (structural, not semantic)</td>
+</tr>
+<tr>
+<td>ScaffoldDecomposition</td>
+<td>IRT architecture multiplier</td>
+<td>Individual scores aggregated — no group interaction analysis</td>
+</tr>
+<tr>
+<td>CollectiveIntelligenceCFactor</td>
+<td>Turn-taking equality + ToM + personality diversity</td>
+<td>Woolley's social sensitivity dimension missing; content analysis absent</td>
+</tr>
+<tr>
+<td>ConvergenceRate</td>
+<td>Significant PID pairs / total pairs</td>
+<td>Measures WHETHER convergence, not WHETHER correct</td>
+</tr>
+<tr>
+<td>EmergenceCapacity</td>
+<td>Passthrough of AD-557 metric</td>
+<td>Information-theoretic; doesn't examine WHAT emerged</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The gap:</strong> Individual psychometrics are rigorous. Collective psychometrics are ad hoc. The field of industrial/organizational psychology solved this problem decades ago with group-level assessment methodology. ProbOS should absorb it.</p>
+<hr />
+<h2 id="2-generalizability-theory-g-theory">2. Generalizability Theory (G-Theory)<a class="headerlink" href="#2-generalizability-theory-g-theory" title="Permanent link">&para;</a></h2>
+<p><strong>Cronbach, Gleser, Nanda &amp; Rajaratnam (1972).</strong> "The Dependability of Behavioral Measurements."</p>
+<h3 id="core-concept">Core Concept<a class="headerlink" href="#core-concept" title="Permanent link">&para;</a></h3>
+<p>Classical Test Theory: <code>Observed Score = True Score + Error</code></p>
+<p>G-Theory: <code>Observed Score = Grand Mean + Agent Effect + Department Effect + Stimulus Effect + Occasion Effect + Agent×Department + Agent×Stimulus + ... + Residual</code></p>
+<p>Instead of one undifferentiated error term, G-theory decomposes variance into <strong>facets</strong> — each a known source of variability. This answers the question: "When a metric score changes, WHY did it change?"</p>
+<h3 id="probos-facets">ProbOS Facets<a class="headerlink" href="#probos-facets" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Facet</th>
+<th>What It Captures</th>
+<th>Design Implication</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Agent (a)</strong></td>
+<td>Individual capability differences</td>
+<td>Some agents are genuinely better collaborators than others</td>
+</tr>
+<tr>
+<td><strong>Department (d)</strong></td>
+<td>Team culture/structure effect</td>
+<td>Medical's analytical framing differs from Engineering's</td>
+</tr>
+<tr>
+<td><strong>Stimulus (s)</strong></td>
+<td>What triggered the collaborative response</td>
+<td>Alerts vs observations vs questions elicit different patterns</td>
+</tr>
+<tr>
+<td><strong>Occasion (o)</strong></td>
+<td>Temporal context</td>
+<td>Cold-start vs mature crew; pre-dream vs post-dream</td>
+</tr>
+<tr>
+<td><strong>a × d</strong></td>
+<td>Agent-department interaction</td>
+<td>An agent's contribution is shaped by their department context</td>
+</tr>
+<tr>
+<td><strong>a × s</strong></td>
+<td>Agent-stimulus interaction</td>
+<td>Some agents respond better to certain stimulus types</td>
+</tr>
+<tr>
+<td><strong>d × s</strong></td>
+<td>Department-stimulus interaction</td>
+<td>Some departments are better equipped for certain stimuli</td>
+</tr>
+<tr>
+<td><strong>d × o</strong></td>
+<td>Department-occasion interaction</td>
+<td>Departments mature at different rates</td>
+</tr>
+</tbody>
+</table>
+<h3 id="g-study-and-d-study">G-Study and D-Study<a class="headerlink" href="#g-study-and-d-study" title="Permanent link">&para;</a></h3>
+<p><strong>G-Study (Generalizability Study):</strong> Measure all facets to determine how much variance each contributes. If the agent facet dominates, improvements come from individual training. If the department facet dominates, improvements come from team structure changes. If the stimulus facet dominates, the metric is unstable and stimulus-dependent.</p>
+<p><strong>D-Study (Decision Study):</strong> Given the variance decomposition, how many observations are needed for reliable measurement? If agent variance is small relative to residual, you need many observations per agent. If department variance dominates, fewer observations per department suffice.</p>
+<h3 id="application-to-ad-569-metrics">Application to AD-569 Metrics<a class="headerlink" href="#application-to-ad-569-metrics" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Critical Facets</th>
+<th>What High Variance Would Mean</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Analytical Frame Diversity</td>
+<td>Department, Agent × Department</td>
+<td>Department structure drives perspective (architecture is working)</td>
+</tr>
+<tr>
+<td>Synthesis Detection</td>
+<td>Agent, Stimulus</td>
+<td>Synthesis ability varies by agent and task type</td>
+</tr>
+<tr>
+<td>Cross-Department Trigger Rate</td>
+<td>Department × Occasion</td>
+<td>Inter-department awareness develops over time</td>
+</tr>
+<tr>
+<td>Convergence Correctness</td>
+<td>Stimulus, Occasion</td>
+<td>Correctness depends on problem difficulty and crew maturity</td>
+</tr>
+<tr>
+<td>Anchor-Grounded Emergence</td>
+<td>Agent × Department, Stimulus</td>
+<td>Emergence requires both capable agents and the right prompt</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-intraclass-correlation-coefficient-icc">3. Intraclass Correlation Coefficient (ICC)<a class="headerlink" href="#3-intraclass-correlation-coefficient-icc" title="Permanent link">&para;</a></h2>
+<p><strong>Shrout &amp; Fleiss (1979).</strong> "Intraclass Correlations: Uses in Assessing Rater Reliability."</p>
+<h3 id="forms-relevant-to-probos">Forms Relevant to ProbOS<a class="headerlink" href="#forms-relevant-to-probos" title="Permanent link">&para;</a></h3>
+<p><strong>ICC(1):</strong> Proportion of total variance attributable to group membership.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ICC(1) = (MSbetween - MSwithin) / (MSbetween + (k-1) × MSwithin)
+</code></pre></div>
+<p>Where k = average group size, MS = mean squares from one-way ANOVA.</p>
+<p><strong>ICC(2):</strong> Reliability of group means (is the department average stable?).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ICC(2) = (MSbetween - MSwithin) / MSbetween
+</code></pre></div>
+<h3 id="probos-interpretation">ProbOS Interpretation<a class="headerlink" href="#probos-interpretation" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ICC(1) Value</th>
+<th>Interpretation for Department-Level Metrics</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>&gt; 0.25</td>
+<td>Strong group effect — department membership meaningfully shapes metric</td>
+</tr>
+<tr>
+<td>0.10 – 0.25</td>
+<td>Moderate group effect — department matters but individual variation dominates</td>
+</tr>
+<tr>
+<td>&lt; 0.10</td>
+<td>Weak group effect — department structure is not driving the metric</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Critical insight:</strong> If Analytical Frame Diversity has ICC(1) ≈ 0 for departments, then agents within the same department aren't producing more similar frames than agents across departments. The department structure is decorative — not producing genuine professional specialization.</p>
+<p><strong>Target:</strong> ICC(2) &gt; 0.70 for all department-level metrics (standard threshold in organizational psychology for aggregation justification).</p>
+<hr />
+<h2 id="4-within-group-agreement-r_wg">4. Within-Group Agreement: r_wg<a class="headerlink" href="#4-within-group-agreement-r_wg" title="Permanent link">&para;</a></h2>
+<p><strong>James, Demaree &amp; Wolf (1984).</strong> "Estimating Within-Group Interrater Reliability With and Without Response Bias."</p>
+<h3 id="core-concept_1">Core Concept<a class="headerlink" href="#core-concept_1" title="Permanent link">&para;</a></h3>
+<p>r_wg compares observed within-group variance to expected variance under a null (random/uniform) distribution:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>r_wg = 1 - (S²_x / σ²_EU)
+</code></pre></div>
+<p>Where S²_x = observed within-group variance, σ²_EU = expected variance under uniform distribution.</p>
+<p>r_wg = 1.0 → perfect agreement (no within-group variance)
+r_wg = 0.0 → agreement no better than chance
+r_wg &lt; 0.0 → systematic disagreement (more variance than chance)</p>
+<h3 id="probos-application">ProbOS Application<a class="headerlink" href="#probos-application" title="Permanent link">&para;</a></h3>
+<p><strong>Convergence Correctness (AD-569d):</strong> The current ConvergenceRate probe counts convergent pairs. r_wg tells you whether each convergence event is <strong>statistically meaningful</strong> — more agreement than random agents would produce.</p>
+<p><strong>Threshold:</strong> r_wg &gt; 0.70 is the standard cutoff for justifying within-group consensus.</p>
+<p><strong>Novel adaptation:</strong> ProbOS can compute r_wg for semantic similarity rather than Likert ratings. Agent Ward Room posts about the same stimulus → pairwise semantic similarity → compute variance → compare to expected random pairwise similarity from the same agents on unrelated topics.</p>
+<hr />
+<h2 id="5-hierarchical-linear-modeling-hlm">5. Hierarchical Linear Modeling (HLM)<a class="headerlink" href="#5-hierarchical-linear-modeling-hlm" title="Permanent link">&para;</a></h2>
+<p><strong>Raudenbush &amp; Bryk (2002).</strong> "Hierarchical Linear Models."</p>
+<h3 id="nested-structure">Nested Structure<a class="headerlink" href="#nested-structure" title="Permanent link">&para;</a></h3>
+<p>ProbOS has a natural three-level hierarchy:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Level 1: Individual response (agent post/action in response to stimulus)
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>Level 2: Department aggregate (agents nested in departments)
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>Level 3: Ship aggregate (departments nested in ship — relevant for federation)
+</code></pre></div>
+<h3 id="why-it-matters">Why It Matters<a class="headerlink" href="#why-it-matters" title="Permanent link">&para;</a></h3>
+<p>When behavioral metrics improve after an architectural change (e.g., AD-567 memory anchoring), HLM determines WHERE the improvement happened:</p>
+<ul>
+<li><strong>Level 1 improvement</strong> → individual agents got better (memory helps each agent independently)</li>
+<li><strong>Level 2 improvement</strong> → department-level dynamics improved (better communication within Medical)</li>
+<li><strong>Level 3 improvement</strong> → ship-wide architecture improved (Ward Room changes benefit everyone)</li>
+</ul>
+<p>Without HLM, you can't distinguish these. A rising metric could mean one exceptional agent is carrying the crew, or it could mean the architecture genuinely amplifies collective performance.</p>
+<h3 id="cross-level-effects">Cross-Level Effects<a class="headerlink" href="#cross-level-effects" title="Permanent link">&para;</a></h3>
+<p>The most interesting HLM question: <strong>Do Level 2 variables predict Level 1 outcomes?</strong> E.g., does department trust density (Level 2) predict individual agent synthesis quality (Level 1)? If yes, improving department dynamics is the lever. If no, focus on individual agent capabilities.</p>
+<hr />
+<h2 id="6-construct-validation-multi-trait-multi-method-mtmm">6. Construct Validation: Multi-Trait Multi-Method (MTMM)<a class="headerlink" href="#6-construct-validation-multi-trait-multi-method-mtmm" title="Permanent link">&para;</a></h2>
+<p><strong>Campbell &amp; Fiske (1959).</strong> "Convergent and Discriminant Validation by the Multitrait-Multimethod Matrix."</p>
+<h3 id="mtmm-matrix-design-for-ad-569">MTMM Matrix Design for AD-569<a class="headerlink" href="#mtmm-matrix-design-for-ad-569" title="Permanent link">&para;</a></h3>
+<p><strong>Traits (what we're measuring):</strong>
+1. Analytical Frame Diversity
+2. Synthesis Detection
+3. Cross-Department Trigger Rate
+4. Convergence Correctness
+5. Anchor-Grounded Emergence</p>
+<p><strong>Methods (how we measure each trait):</strong>
+1. Ward Room thread analysis (naturalistic observation)
+2. Dream consolidation output analysis (internal processing)
+3. Qualification probe administration (structured assessment)</p>
+<h3 id="validation-criteria">Validation Criteria<a class="headerlink" href="#validation-criteria" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Convergent validity:</strong> Same trait, different methods should correlate. If Frame Diversity measured via Ward Room threads doesn't correlate with Frame Diversity measured via dream outputs, the trait is method-dependent (bad).</p>
+</li>
+<li>
+<p><strong>Discriminant validity:</strong> Different traits, same method should NOT correlate highly. If Frame Diversity and Convergence Correctness from Ward Room analysis correlate r &gt; 0.9, they're the same construct measured twice.</p>
+</li>
+<li>
+<p><strong>Method variance:</strong> If all traits from the same method intercorrelate more than traits across methods, the method dominates the signal (measurement artifact).</p>
+</li>
+</ol>
+<h3 id="what-the-mtmm-matrix-reveals">What the MTMM Matrix Reveals<a class="headerlink" href="#what-the-mtmm-matrix-reveals" title="Permanent link">&para;</a></h3>
+<p>If the 5 metrics form:
+- <strong>One factor</strong> (all intercorrelate high) → "collective intelligence" is a unitary construct, and 5 metrics are redundant. Simplify to one composite.
+- <strong>Two factors</strong> (e.g., content metrics 1-2 cluster, process metrics 3-5 cluster) → collective intelligence has content and process dimensions. Report both.
+- <strong>Five independent dimensions</strong> (low intercorrelation) → collective intelligence is genuinely multidimensional. All 5 metrics needed.</p>
+<p>Any of these outcomes is scientifically informative. The current Tier 3 probes were never subjected to this analysis — we don't know if they measure 5 things or 1.</p>
+<hr />
+<h2 id="7-transactive-memory-systems-tms-measurement">7. Transactive Memory Systems (TMS) Measurement<a class="headerlink" href="#7-transactive-memory-systems-tms-measurement" title="Permanent link">&para;</a></h2>
+<p><strong>Wegner (1987).</strong> "Transactive Memory: A Contemporary Analysis of the Group Mind."
+<strong>Lewis (2003).</strong> "Measuring Transactive Memory Systems in the Field."</p>
+<h3 id="tms-scale-three-subscales">TMS Scale — Three Subscales<a class="headerlink" href="#tms-scale-three-subscales" title="Permanent link">&para;</a></h3>
+<p>Lewis (2003) validated a 15-item scale with three subscales:</p>
+<ol>
+<li><strong>Specialization</strong> — "Each team member has specialized knowledge of some aspect of our project."</li>
+<li>
+<p><em>ProbOS mapping:</em> Cross-Department Trigger Rate. Do agents know which department holds relevant expertise? High specialization awareness → agents route questions to the right department, not broadcast.</p>
+</li>
+<li>
+<p><strong>Credibility</strong> — "I'm comfortable accepting procedural suggestions from other team members."</p>
+</li>
+<li>
+<p><em>ProbOS mapping:</em> Trust Network scores + Hebbian weights. Already measured. Forms the bridge between existing metrics and new behavioral metrics.</p>
+</li>
+<li>
+<p><strong>Coordination</strong> — "Our team works together in a well-coordinated fashion."</p>
+</li>
+<li><em>ProbOS mapping:</em> Synthesis Detection. Coordination isn't just acting in parallel — it's producing combined output that exceeds individual contributions.</li>
+</ol>
+<h3 id="adaptation-for-ai-agents">Adaptation for AI Agents<a class="headerlink" href="#adaptation-for-ai-agents" title="Permanent link">&para;</a></h3>
+<p>Human TMS measurement uses self-report surveys. AI agents don't self-report reliably (confabulation problem — see AD-566b). Instead, TMS subscales must be measured <strong>behaviorally</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>TMS Subscale</th>
+<th>Human Measurement</th>
+<th>ProbOS Behavioral Measurement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Specialization</td>
+<td>Self-report survey</td>
+<td>Who does the agent consult? (Ward Room @mentions, thread participants by topic)</td>
+</tr>
+<tr>
+<td>Credibility</td>
+<td>Self-report survey</td>
+<td>Trust Network scores (already measured), Hebbian routing weights</td>
+</tr>
+<tr>
+<td>Coordination</td>
+<td>Self-report survey</td>
+<td>Synthesis Detection score, thread conclusion quality</td>
+</tr>
+</tbody>
+</table>
+<p>This is actually an advantage over human TMS research — ProbOS has ground truth behavioral data where human studies rely on perceptual surveys.</p>
+<hr />
+<h2 id="8-shared-mental-models-smm-measurement">8. Shared Mental Models (SMM) Measurement<a class="headerlink" href="#8-shared-mental-models-smm-measurement" title="Permanent link">&para;</a></h2>
+<p><strong>Cannon-Bowers, Salas &amp; Converse (1993).</strong> "Shared Mental Models in Expert Team Decision Making."
+<strong>Mohammed, Ferzandi &amp; Hamilton (2010).</strong> "Metaphor No More: A 15-Year Review of the Team Mental Model Construct."</p>
+<h3 id="measurement-approaches">Measurement Approaches<a class="headerlink" href="#measurement-approaches" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Concept Mapping</strong> — agents produce concept maps of a domain; pairwise similarity computed.</li>
+<li>
+<p><em>ProbOS adaptation:</em> Ward Room posts about the same stimulus are natural language concept maps. Extract key concepts, map relationships, compute structural similarity.</p>
+</li>
+<li>
+<p><strong>Pathfinder Networks</strong> — convert proximity data (concept co-occurrence) to network structure. Compare agent networks via network overlap metrics.</p>
+</li>
+<li>
+<p><em>ProbOS adaptation:</em> Build concept co-occurrence networks from each agent's Ward Room contributions. Similar networks = shared mental model. Divergent networks = diverse perspectives (may be desirable for Analytical Frame Diversity).</p>
+</li>
+<li>
+<p><strong>QAP (Quadratic Assignment Procedure)</strong> — correlation between two agents' knowledge networks, accounting for network autocorrelation.</p>
+</li>
+<li><em>ProbOS adaptation:</em> More rigorous than keyword overlap for measuring Analytical Frame Diversity. Accounts for the fact that concepts in knowledge networks are not independent observations.</li>
+</ol>
+<h3 id="the-key-insight-for-probos">The Key Insight for ProbOS<a class="headerlink" href="#the-key-insight-for-probos" title="Permanent link">&para;</a></h3>
+<p>Traditional SMM research asks: "Do team members share a mental model?" and treats high sharing as universally good. ProbOS needs a more nuanced stance:</p>
+<ul>
+<li><strong>Task-related SMM should converge</strong> → agents should share understanding of how the system works, what the standing orders mean, what the chain of command is.</li>
+<li><strong>Analytical SMM should diverge</strong> → agents should maintain distinct professional perspectives (clinical vs pathological vs operational). This is Analytical Frame Diversity.</li>
+</ul>
+<p>This dual requirement (convergence on process, divergence on analysis) is unique to ProbOS's design philosophy and distinguishes its psychometric needs from standard team assessment.</p>
+<hr />
+<h2 id="9-psychometric-network-analysis">9. Psychometric Network Analysis<a class="headerlink" href="#9-psychometric-network-analysis" title="Permanent link">&para;</a></h2>
+<p><strong>Borsboom (2008).</strong> "Latent Variable Theory vs Network Theory."</p>
+<h3 id="alternative-to-latent-variable-models">Alternative to Latent Variable Models<a class="headerlink" href="#alternative-to-latent-variable-models" title="Permanent link">&para;</a></h3>
+<p>Traditional psychometrics assumes a latent variable (e.g., "collective intelligence") causes observed scores. Network analysis proposes that observed variables directly influence each other.</p>
+<p>For ProbOS, the causal chain:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Frame Diversity → enables → Synthesis Detection → drives → Cross-Department Trigger Rate
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>                                                         ↓
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>                                           Convergence Correctness
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>                                                         ↓
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>                                         Anchor-Grounded Emergence
+</code></pre></div></p>
+<p>This is NOT a latent "collective intelligence" causing all five metrics. It's a <strong>causal network</strong> where diverse frames enable synthesis, synthesis triggers cross-department investigation, investigations produce convergence, and grounded convergence yields emergence.</p>
+<p><strong>Implication:</strong> Don't compute a single composite "collective intelligence score." Instead, map the network of causal relationships between metrics. A crew that excels at Frame Diversity but fails at Synthesis has a specific bottleneck — the network model identifies it.</p>
+<hr />
+<h2 id="10-methodological-caution">10. Methodological Caution<a class="headerlink" href="#10-methodological-caution" title="Permanent link">&para;</a></h2>
+<p><strong>Suhr et al. (2025).</strong> "Stop Evaluating AI with Human Tests."</p>
+<p>The critique from agent-psychometrics-research applies here too: using human group assessment instruments on AI agent teams is an "ontological error." Group psychometric theory was developed for humans with embodied cognition, emotional regulation, social identity, and motivated reasoning.</p>
+<p><strong>ProbOS response:</strong> Same as the individual-level response. Group psychometric <strong>methodology</strong> (G-theory variance decomposition, ICC, r_wg, MTMM, HLM) is mathematical and theory-agnostic — it works for any nested measurement structure. The specific <strong>instruments</strong> (survey items, Likert scales) are human-specific and must be replaced with behavioral measures.</p>
+<p>ProbOS is actually better positioned than human research for group psychometrics: all behavioral data is observable (no hidden states), all communication is recorded (no off-channel conversations), and variables like trust and routing weights are directly measurable (no self-report bias). The measurement methodology transfers; the measurement instruments must be rebuilt for the AI multi-agent context.</p>
+<hr />
+<h2 id="11-integration-with-existing-probos-assessment">11. Integration with Existing ProbOS Assessment<a class="headerlink" href="#11-integration-with-existing-probos-assessment" title="Permanent link">&para;</a></h2>
+<h3 id="relationship-to-agent-psychometrics-research">Relationship to Agent Psychometrics Research<a class="headerlink" href="#relationship-to-agent-psychometrics-research" title="Permanent link">&para;</a></h3>
+<p>The individual-level research (agent-psychometrics-research-2026-04-03.md) covers Tiers 1-2 (individual agent assessment). This document covers <strong>Tier 3</strong> (group-level assessment). The connection:</p>
+<ul>
+<li><strong>Tier 1</strong> (individual baselines) → <strong>provides facet data</strong> for G-theory decomposition (agent facet)</li>
+<li><strong>Tier 2</strong> (domain-specific) → <strong>provides role context</strong> for ICC department calculations</li>
+<li><strong>Tier 3</strong> (collective, THIS document) → <strong>adds group-level rigor</strong> that Tiers 1-2 can't capture</li>
+</ul>
+<h3 id="relationship-to-existing-tier-3-probes">Relationship to Existing Tier 3 Probes<a class="headerlink" href="#relationship-to-existing-tier-3-probes" title="Permanent link">&para;</a></h3>
+<p>AD-569 does NOT replace existing probes. It adds a <strong>behavioral content layer</strong> alongside the existing <strong>structural/information-theoretic layer</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Probes</th>
+<th>What It Measures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Structural</strong> (existing)</td>
+<td>CBS, ScaffoldDecomposition, CFactorProbe, ConvergenceRate, EmergenceCapacity</td>
+<td>Graph properties, information flow, mathematical abstraction</td>
+</tr>
+<tr>
+<td><strong>Behavioral</strong> (AD-569)</td>
+<td>Frame Diversity, Synthesis, Trigger Rate, Convergence Correctness, Anchor-Grounded Emergence</td>
+<td>Content quality, consequence, semantic analysis</td>
+</tr>
+<tr>
+<td><strong>Psychometric</strong> (AD-569 framework)</td>
+<td>G-theory, ICC, r_wg, MTMM, HLM</td>
+<td>Measurement rigor: reliability, validity, variance sources</td>
+</tr>
+</tbody>
+</table>
+<p>The psychometric layer is meta — it validates whether both the structural and behavioral layers are measuring real constructs reliably.</p>
+<hr />
+<h2 id="12-publication-potential">12. Publication Potential<a class="headerlink" href="#12-publication-potential" title="Permanent link">&para;</a></h2>
+<p>This framework connects to two entries in the publication portfolio:</p>
+<ol>
+<li>
+<p><strong>Paper 4: Distributed Cognition as Mind Architecture</strong> — ProbOS crew as a cognitive unit assessed with group psychometric methodology. G-theory applied to AI multi-agent teams. ICC/r_wg demonstrating that department structure produces measurable group-level effects.</p>
+</li>
+<li>
+<p><strong>Novel Benchmark: AI c-factor</strong> — Woolley's collective intelligence factor measured for AI teams with proper psychometric validation. No prior work applies G-theory or MTMM to AI multi-agent collective intelligence measurement.</p>
+</li>
+</ol>
+<p><strong>The unique contribution:</strong> Existing multi-agent evaluation (SiloBench, CRAFT, CBS) measures task performance. ProbOS would be the first to apply the full psychometric toolkit — reliability analysis, construct validation, variance decomposition — to AI agent team assessment. The parallel to industrial/organizational psychology's treatment of human teams is deliberate and novel.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

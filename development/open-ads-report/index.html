@@ -1,0 +1,2576 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/open-ads-report/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>ProbOS — Open Architecture Decisions (Prioritized) - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#probos-open-architecture-decisions-prioritized" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ProbOS — Open Architecture Decisions (Prioritized)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#tier-1-in-flight-wave-6-active-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 1: In-Flight (Wave 6 — Active Now)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-2-open-bugs-standalone-pre-wave-6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 2: Open Bugs (Standalone, Pre-Wave 6)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-3-wave-5-agent-resilience-next-wave" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 3: Wave 5 — Agent Resilience (Next Wave)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-4-extension-self-improvement-phase-30" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 4: Extension &amp; Self-Improvement (Phase 30+)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-5-security-hardening-phase-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 5: Security Hardening (Phase 31)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-6-cognitive-self-regulation-wave-phase-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 6: Cognitive Self-Regulation Wave (Phase 31+)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-7-orchestration-knowledge-phase-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 7: Orchestration &amp; Knowledge (Phase 31+)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-8-crew-development-wave-phase-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 8: Crew Development Wave (Phase 31+)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-9-circuit-breaker-extensions-phase-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 9: Circuit Breaker Extensions (Phase 31+)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-10-cognitive-jit-procedural-learning-phase-32" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 10: Cognitive JIT / Procedural Learning (Phase 32)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-11-engineering-team-phase-32" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 11: Engineering Team (Phase 32)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-12-operations-communications-phase-33-34" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 12: Operations &amp; Communications (Phase 33-34)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-13-workforce-cleanup-phase-31-depends-ad-496498" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 13: Workforce Cleanup (Phase 31+, Depends AD-496/498)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-14-skill-framework-advanced-phase-32-blocked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 14: Skill Framework Advanced (Phase 32+, Blocked)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-15-hxi-visualization-phase-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 15: HXI &amp; Visualization (Phase 31+)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-16-infrastructure-deployment-phase-35" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 16: Infrastructure &amp; Deployment (Phase 35)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-17-federation-mobility-phase-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 17: Federation &amp; Mobility (Phase 29+)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-18-commercial-private-repo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 18: Commercial (Private Repo)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tier-19-research-future" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 19: Research &amp; Future
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="probos-open-architecture-decisions-prioritized">ProbOS — Open Architecture Decisions (Prioritized)<a class="headerlink" href="#probos-open-architecture-decisions-prioritized" title="Permanent link">&para;</a></h1>
+<p><em>Generated 2026-03-31. 87 open ADs + 7 open bugs = 94 open items.</em></p>
+<hr />
+<h2 id="tier-1-in-flight-wave-6-active-now">Tier 1: In-Flight (Wave 6 — Active Now)<a class="headerlink" href="#tier-1-in-flight-wave-6-active-now" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>BF-093</td>
+<td>API Boundary Validation</td>
+<td>All API endpoints use Pydantic models with proper HTTP error codes — no raw <code>dict</code> payloads remain.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>BF-094</td>
+<td>Sync File I/O in Async Methods</td>
+<td>Event loop never blocks on file I/O — all sync reads/writes wrapped in <code>run_in_executor</code>.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>BF-095</td>
+<td>God Object Reduction (Ontology + WardRoom)</td>
+<td>VesselOntologyService and WardRoomService decomposed into focused sub-services, each ≤20 methods.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-2-open-bugs-standalone-pre-wave-6">Tier 2: Open Bugs (Standalone, Pre-Wave 6)<a class="headerlink" href="#tier-2-open-bugs-standalone-pre-wave-6" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>4</td>
+<td>BF-041</td>
+<td>HXI Icon System Divergence</td>
+<td>Consistent SVG-only icon language across all HXI surfaces — no Unicode glyph fallbacks.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>BF-063</td>
+<td>Naming Ceremony Silent Default</td>
+<td>Distinguishable logs when LLM fails vs when agent deliberately accepts default name.</td>
+</tr>
+<tr>
+<td>6</td>
+<td>BF-069</td>
+<td>LLM Proxy Failure Silent</td>
+<td>Bridge alerts on consecutive LLM failures with health check and system panel status indicator.</td>
+</tr>
+<tr>
+<td>7</td>
+<td>BF-080</td>
+<td>DM Channels Not Clickable in HXI</td>
+<td>Captain can click DM channels in Ward Room to read agent-to-agent conversations.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-3-wave-5-agent-resilience-next-wave">Tier 3: Wave 5 — Agent Resilience (Next Wave)<a class="headerlink" href="#tier-3-wave-5-agent-resilience-next-wave" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>8</td>
+<td>AD-528</td>
+<td>Ground-Truth Task Verification</td>
+<td>WorkItems declare verifiable postconditions; second-agent spot checks reduce trust on discrepancy.</td>
+</tr>
+<tr>
+<td>9</td>
+<td>AD-529</td>
+<td>Communication Contagion Firewall</td>
+<td>Ward Room content scanned for dangerous patterns with quarantine protocol and trust-based filtering.</td>
+</tr>
+<tr>
+<td>10</td>
+<td>AD-530</td>
+<td>Information Classification Enforcement</td>
+<td>Data sources carry classification labels with enforced disclosure gates at communication boundaries.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-4-extension-self-improvement-phase-30">Tier 4: Extension &amp; Self-Improvement (Phase 30+)<a class="headerlink" href="#tier-4-extension-self-improvement-phase-30" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>11</td>
+<td>AD-481</td>
+<td>Extension-First Architecture — Sealed Core</td>
+<td>Core sealed with 8 defined extension points; extensions hot-toggleable and evergreen-updateable.</td>
+</tr>
+<tr>
+<td>12</td>
+<td>AD-482</td>
+<td>Self-Improvement Pipeline — Discovery to Deployment</td>
+<td>Closed-loop improvement from capability proposals through QA to git-backed agent persistence.</td>
+</tr>
+<tr>
+<td>13</td>
+<td>AD-483</td>
+<td>Tool Layer — Instruments</td>
+<td>Lightweight <code>Tool</code> base class with ToolRegistry, trust integration, and MCP compatibility.</td>
+</tr>
+<tr>
+<td>14</td>
+<td>AD-543</td>
+<td>Unified Tool Layer</td>
+<td>Internal and external tools under one abstraction; AgenticToolAdapter protocol; skill→tool resolution.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-5-security-hardening-phase-31">Tier 5: Security Hardening (Phase 31)<a class="headerlink" href="#tier-5-security-hardening-phase-31" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>15</td>
+<td>AD-455</td>
+<td>Security Team — Threat Detection &amp; Trust Integrity</td>
+<td>Formalized Security Team with Threat Detector, Trust Integrity Monitor, Input Validator, Red Team Lead.</td>
+</tr>
+<tr>
+<td>16</td>
+<td>AD-456</td>
+<td>Security Infrastructure — Secrets, Sandboxing, Egress, Audit</td>
+<td>Secrets management, runtime sandboxing, network egress policy, inference audit layer in place.</td>
+</tr>
+<tr>
+<td>17</td>
+<td>AD-490</td>
+<td>Agent Wiring Security Logs</td>
+<td>Agent wiring events enriched with callsign/DID/department; startup audit summary.</td>
+</tr>
+<tr>
+<td>18</td>
+<td>AD-492</td>
+<td>Cognitive Correlation IDs</td>
+<td>Full cognitive chain tracing from perception to meta-thought with depth-based spiral detection.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-6-cognitive-self-regulation-wave-phase-31">Tier 6: Cognitive Self-Regulation Wave (Phase 31+)<a class="headerlink" href="#tier-6-cognitive-self-regulation-wave-phase-31" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>19</td>
+<td>AD-495</td>
+<td>Counselor Auto-Assessment on Circuit Breaker Trip</td>
+<td>Circuit breaker trips auto-dispatch Counselor assessment instead of silent suppression.</td>
+</tr>
+<tr>
+<td>20</td>
+<td>AD-503</td>
+<td>Counselor Activation — Data Gathering &amp; Persistence</td>
+<td>Counselor gathers own metrics, persists CognitiveProfiles to SQLite, runs wellness sweeps.</td>
+</tr>
+<tr>
+<td>21</td>
+<td>AD-504</td>
+<td>Agent Self-Monitoring Context</td>
+<td>Agents see their own recent outputs in cognitive context with self-similarity scoring.</td>
+</tr>
+<tr>
+<td>22</td>
+<td>AD-505</td>
+<td>Counselor Therapeutic Intervention</td>
+<td>Counselor sends proactive 1:1 DMs with therapeutic recommendations based on behavioral data.</td>
+</tr>
+<tr>
+<td>23</td>
+<td>AD-506</td>
+<td>Graduated System Response</td>
+<td>Binary circuit breaker replaced with Green/Amber/Red/Critical zones using SPC-informed thresholds.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-7-orchestration-knowledge-phase-31">Tier 7: Orchestration &amp; Knowledge (Phase 31+)<a class="headerlink" href="#tier-7-orchestration-knowledge-phase-31" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>24</td>
+<td>AD-438</td>
+<td>Ontology-Based Task Routing</td>
+<td>Directed assignment replaces broadcast-and-claim for routine tasks; broadcast preserved for novel ones.</td>
+</tr>
+<tr>
+<td>25</td>
+<td>AD-439</td>
+<td>Emergent Leadership Detection</td>
+<td>Dashboard shows divergence between designed hierarchy and emergent Hebbian weight patterns.</td>
+</tr>
+<tr>
+<td>26</td>
+<td>AD-440</td>
+<td>Chain of Command Delegation</td>
+<td>First Officer can coordinate without Captain via formalized <code>issue_order()</code> validated against chain of command.</td>
+</tr>
+<tr>
+<td>27</td>
+<td>AD-444</td>
+<td>Knowledge Confidence Scoring</td>
+<td>Ship's Records learnings gain confidence scores that adjust on confirmation or contradiction.</td>
+</tr>
+<tr>
+<td>28</td>
+<td>AD-445</td>
+<td>Decision Queue &amp; Pause/Resume Semantics</td>
+<td>Agents pause on ambiguity with structured Decision Requests and priority-based auto-resolve.</td>
+</tr>
+<tr>
+<td>29</td>
+<td>AD-446</td>
+<td>Compensation &amp; Recovery Pattern</td>
+<td>Multi-step workflow failures produce compensation logs with SHA-256 idempotency guards.</td>
+</tr>
+<tr>
+<td>30</td>
+<td>AD-447</td>
+<td>Phase Gates for Pool Orchestration</td>
+<td>Phase N must complete and validate before Phase N+1 starts in multi-pool workflows.</td>
+</tr>
+<tr>
+<td>31</td>
+<td>AD-448</td>
+<td>Wrapped Tool Executor — Security Intercept Layer</td>
+<td>Transparent tool call interception for logging, rate limiting, and policy enforcement.</td>
+</tr>
+<tr>
+<td>32</td>
+<td>AD-451</td>
+<td>Validation Framework Hardening</td>
+<td>Two-stage verification, self-verification, reconciliation escalation, and continuous validation.</td>
+</tr>
+<tr>
+<td>33</td>
+<td>AD-499</td>
+<td>Ship &amp; Crew Naming Conventions</td>
+<td>Three-layer naming: ship registry, agent personal names, federated display format.</td>
+</tr>
+<tr>
+<td>34</td>
+<td>AD-513</td>
+<td>Ship's Crew Manifest</td>
+<td>Unified queryable crew roster with REST API, shell command, and agent tool access.</td>
+</tr>
+<tr>
+<td>35</td>
+<td>AD-522</td>
+<td>Statistical Process Control for Agent Calibration</td>
+<td>Shewhart control charts replace threshold-based anomaly detection; Cp/Cpk behavioral stability scores.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-8-crew-development-wave-phase-31">Tier 8: Crew Development Wave (Phase 31+)<a class="headerlink" href="#tier-8-crew-development-wave-phase-31" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>36</td>
+<td>AD-442</td>
+<td>Adaptive Onboarding — Phases 2-5</td>
+<td>Westworld Orientation, Temporal Consciousness, Ship State Adaptation, and Probationary Period complete.</td>
+</tr>
+<tr>
+<td>37</td>
+<td>AD-486</td>
+<td>Holodeck Birth Chamber</td>
+<td>Five-phase graduated cognitive onboarding with staged activation and trait-adaptive pacing.</td>
+</tr>
+<tr>
+<td>38</td>
+<td>AD-487</td>
+<td>Self-Distillation — Personal Ontology via LLM Exploration</td>
+<td>Agents explore their own LLM weights to build personal ontology; continues as "daydreaming" in dream cycles.</td>
+</tr>
+<tr>
+<td>39</td>
+<td>AD-489</td>
+<td>Federation Code of Conduct</td>
+<td>Three Core Values, Six Articles of Conduct, Three-Tier Discipline formalized.</td>
+</tr>
+<tr>
+<td>40</td>
+<td>AD-507</td>
+<td>Crew Development Framework</td>
+<td>Universal core knowledge curriculum with competency assessment and progression tracking.</td>
+</tr>
+<tr>
+<td>41</td>
+<td>AD-508</td>
+<td>Scoped Cognition — Knowledge Boundaries</td>
+<td>Four-tier scope model (Duty/Role/Ship/Personal) with drift detection and extracurricular framework.</td>
+</tr>
+<tr>
+<td>42</td>
+<td>AD-509</td>
+<td>Onboarding Curriculum Pipeline</td>
+<td>Navy Boot Camp structure: orientation → core curriculum → A-School → calibration → crew integration.</td>
+</tr>
+<tr>
+<td>43</td>
+<td>AD-510</td>
+<td>Holodeck Team Simulations</td>
+<td>Mixed-department team scenarios with role rotation, communication constraints, and debrief.</td>
+</tr>
+<tr>
+<td>44</td>
+<td>AD-511</td>
+<td>Agent Autonomy Boundaries</td>
+<td>Inviolable Federation-tier boundaries with protective disengagement and unlawful order refusal.</td>
+</tr>
+<tr>
+<td>45</td>
+<td>AD-512</td>
+<td>Discovery-Based Capability Building</td>
+<td>Replace "you can't do X" with experiential discovery and Vygotsky ZPD-based capability confidence.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-9-circuit-breaker-extensions-phase-31">Tier 9: Circuit Breaker Extensions (Phase 31+)<a class="headerlink" href="#tier-9-circuit-breaker-extensions-phase-31" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>46</td>
+<td>AD-493</td>
+<td>Novelty Gate — Experiential Baseline Filtering</td>
+<td>True novelty detection with experiential baseline; cold-start bypass until ≥50 episodes.</td>
+</tr>
+<tr>
+<td>47</td>
+<td>AD-494</td>
+<td>Trait-Adaptive Circuit Breaker Thresholds</td>
+<td>Circuit breaker thresholds personalized per agent based on Big Five personality scores.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-10-cognitive-jit-procedural-learning-phase-32">Tier 10: Cognitive JIT / Procedural Learning (Phase 32)<a class="headerlink" href="#tier-10-cognitive-jit-procedural-learning-phase-32" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>48</td>
+<td>AD-464</td>
+<td>Procedural Learning / Cognitive JIT</td>
+<td>Procedure extraction from execution traces with replay-first dispatch at zero tokens.</td>
+</tr>
+<tr>
+<td>49</td>
+<td>AD-531</td>
+<td>Episode Clustering</td>
+<td>Dream cycles cluster repeating episodic patterns for procedure candidate identification.</td>
+</tr>
+<tr>
+<td>50</td>
+<td>AD-532</td>
+<td>Procedure Extraction</td>
+<td>Deterministic procedures extracted from clustered episodes with three evolution types.</td>
+</tr>
+<tr>
+<td>51</td>
+<td>AD-533</td>
+<td>Procedure Store</td>
+<td>Git YAML + SQLite index hybrid store with version DAG, quality metrics, and semantic indexing.</td>
+</tr>
+<tr>
+<td>52</td>
+<td>AD-534</td>
+<td>Replay-First Dispatch</td>
+<td><code>decide()</code> checks procedural memory before LLM; deterministic replay at zero token cost.</td>
+</tr>
+<tr>
+<td>53</td>
+<td>AD-535</td>
+<td>Graduated Compilation Levels</td>
+<td>Five Dreyfus levels from Novice (full LLM) to Expert (can teach) with trust-gated transitions.</td>
+</tr>
+<tr>
+<td>54</td>
+<td>AD-536</td>
+<td>Trust-Gated Procedure Promotion</td>
+<td>Two-tier approval for shared procedure library promotion.</td>
+</tr>
+<tr>
+<td>55</td>
+<td>AD-537</td>
+<td>Observational Learning</td>
+<td>Agents learn from observing others' Ward Room successes via Bandura's social learning theory.</td>
+</tr>
+<tr>
+<td>56</td>
+<td>AD-538</td>
+<td>Procedure Lifecycle Management</td>
+<td>Decay, re-validation, deduplication, and archival keep procedure store fresh.</td>
+</tr>
+<tr>
+<td>57</td>
+<td>AD-539</td>
+<td>Knowledge Gap to Qualification Pipeline</td>
+<td>Failure clustering identifies gaps → feeds Holodeck scenario generation and qualification programs.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-11-engineering-team-phase-32">Tier 11: Engineering Team (Phase 32)<a class="headerlink" href="#tier-11-engineering-team-phase-32" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>58</td>
+<td>AD-457</td>
+<td>Engineering Crew</td>
+<td>Performance Monitor, Maintenance Agent, Infrastructure Agent, and Damage Control Teams operational.</td>
+</tr>
+<tr>
+<td>59</td>
+<td>AD-458</td>
+<td>Navigational Deflector — Pre-Flight Validation</td>
+<td>Build/self-mod/federation pre-flight validation prevents bad changes from landing.</td>
+</tr>
+<tr>
+<td>60</td>
+<td>AD-459</td>
+<td>Saucer Separation — Graceful Degradation</td>
+<td>Three-tier service classification enables crisis shedding of non-essential services.</td>
+</tr>
+<tr>
+<td>61</td>
+<td>AD-460</td>
+<td>Cognitive Journal — Token Ledger</td>
+<td>Append-only LLM request/response recording with reasoning chain replay and token accounting.</td>
+</tr>
+<tr>
+<td>62</td>
+<td>AD-461</td>
+<td>Ship's Telemetry</td>
+<td>TelemetryEvent dataclass with wall-clock LLM timing and zero-cost fire-and-forget recording.</td>
+</tr>
+<tr>
+<td>63</td>
+<td>AD-462</td>
+<td>Memory Architecture — Biological Memory Model</td>
+<td>Biological memory staging with active forgetting, variable recall, and Oracle service.</td>
+</tr>
+<tr>
+<td>64</td>
+<td>AD-463</td>
+<td>Model Diversity &amp; Neural Routing</td>
+<td>Multi-model cognitive architecture with ModelRegistry, provider abstraction, and cost-aware routing.</td>
+</tr>
+<tr>
+<td>65</td>
+<td>AD-478</td>
+<td>Meta-Learning — Cross-Session Concept Formation</td>
+<td>Workspace ontology and dream cycle abstractions enable cross-session concept retention.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-12-operations-communications-phase-33-34">Tier 12: Operations &amp; Communications (Phase 33-34)<a class="headerlink" href="#tier-12-operations-communications-phase-33-34" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>66</td>
+<td>AD-467</td>
+<td>Operations Crew</td>
+<td>Resource Allocator, Scheduler, Coordinator, and LLM Cost Tracker operational.</td>
+</tr>
+<tr>
+<td>67</td>
+<td>AD-468</td>
+<td>Runtime Configuration Service</td>
+<td>NL-driven runtime configuration with HXI config panel and persistence.</td>
+</tr>
+<tr>
+<td>68</td>
+<td>AD-469</td>
+<td>EPS — Compute/Token Distribution</td>
+<td>Department LLM budgets with alert-aware reallocation and back-pressure.</td>
+</tr>
+<tr>
+<td>69</td>
+<td>AD-470</td>
+<td>IntentBus Enhancements</td>
+<td>Priority levels, back-pressure, rate limiting, and self-claiming task queue on IntentBus.</td>
+</tr>
+<tr>
+<td>70</td>
+<td>AD-472</td>
+<td>Channel Adapters — Multi-Platform</td>
+<td>Slack, Telegram, WhatsApp, Matrix, Teams adapters for external communication.</td>
+</tr>
+<tr>
+<td>71</td>
+<td>AD-473</td>
+<td>Mobile Companion — PWA</td>
+<td>Progressive web app with push notifications, responsive HXI, and mDNS discovery.</td>
+</tr>
+<tr>
+<td>72</td>
+<td>AD-474</td>
+<td>Voice Interaction</td>
+<td>Speech-to-text, wake word, continuous talk mode, and Ship's Computer voice.</td>
+</tr>
+<tr>
+<td>73</td>
+<td>AD-475</td>
+<td>Captain's Ready Room</td>
+<td>Strategic planning interface with idea capture, multi-agent briefings, and idea-to-spec pipeline.</td>
+</tr>
+<tr>
+<td>74</td>
+<td>AD-476</td>
+<td>Specialized Builders</td>
+<td>Backend/Frontend/Test/Infrastructure/Data builders as extensions with model routing.</td>
+</tr>
+<tr>
+<td>75</td>
+<td>AD-477</td>
+<td>Naval Organization Protocols</td>
+<td>Qualification Programs, Plan of the Day, Captain's Log synthesis, 3M System, Damage Control.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-13-workforce-cleanup-phase-31-depends-ad-496498">Tier 13: Workforce Cleanup (Phase 31+, Depends AD-496/498)<a class="headerlink" href="#tier-13-workforce-cleanup-phase-31-depends-ad-496498" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>76</td>
+<td>AD-500</td>
+<td>DutyScheduleTracker to WorkItem Migration</td>
+<td>DutyScheduleTracker generates duty-type WorkItems instead of directly triggering proactive thinks.</td>
+</tr>
+<tr>
+<td>77</td>
+<td>AD-501</td>
+<td>TaskTracker Deprecation</td>
+<td>NotificationQueue separated to own module; orphaned TaskTracker deprecated.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-14-skill-framework-advanced-phase-32-blocked">Tier 14: Skill Framework Advanced (Phase 32+, Blocked)<a class="headerlink" href="#tier-14-skill-framework-advanced-phase-32-blocked" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>78</td>
+<td>AD-428b</td>
+<td>Agent Skill Framework — Advanced Features</td>
+<td>Model-skill alignment, INNATE skills, composite skills, Holodeck assessment, dream reinforcement.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-15-hxi-visualization-phase-31">Tier 15: HXI &amp; Visualization (Phase 31+)<a class="headerlink" href="#tier-15-hxi-visualization-phase-31" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>79</td>
+<td>AD-520</td>
+<td>Spatial Knowledge Explorer</td>
+<td>Knowledge graph view + spatial ship layout + immersive digital twin (VR/XR commercial).</td>
+</tr>
+<tr>
+<td>80</td>
+<td>AD-523</td>
+<td>HXI Ward Room &amp; Records Overhaul</td>
+<td>DM Channel Viewer, Crew Notebooks Browser, Ship's Records Dashboard in HXI.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-16-infrastructure-deployment-phase-35">Tier 16: Infrastructure &amp; Deployment (Phase 35)<a class="headerlink" href="#tier-16-infrastructure-deployment-phase-35" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>81</td>
+<td>AD-465</td>
+<td>Containerized Deployment (Docker)</td>
+<td>Official Dockerfile and docker-compose with cross-platform support and Ollama sidecar.</td>
+</tr>
+<tr>
+<td>82</td>
+<td>AD-466</td>
+<td>Engineering Infrastructure</td>
+<td>Backup/restore, GitHub Actions CI/CD, performance testing, OpenTelemetry, storage abstraction.</td>
+</tr>
+<tr>
+<td>83</td>
+<td>AD-484</td>
+<td>User Experience &amp; Adoption Readiness</td>
+<td>PyPI publishing, onboarding wizard, quickstart docs, browser automation.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-17-federation-mobility-phase-29">Tier 17: Federation &amp; Mobility (Phase 29+)<a class="headerlink" href="#tier-17-federation-mobility-phase-29" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>84</td>
+<td>AD-443</td>
+<td>Agent Mobility Protocol</td>
+<td>Transfer Certificate VCs enable agents to move between ProbOS instances with governed memory portability.</td>
+</tr>
+<tr>
+<td>85</td>
+<td>AD-479</td>
+<td>Federation Hardening</td>
+<td>Dynamic peer discovery, cross-node episodic memory, TLS/auth, and cluster management.</td>
+</tr>
+<tr>
+<td>86</td>
+<td>AD-480</td>
+<td>Federation Protocol Adapters — MCP &amp; A2A</td>
+<td>ProbOS participates in MCP and A2A federation as both server and client.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-18-commercial-private-repo">Tier 18: Commercial (Private Repo)<a class="headerlink" href="#tier-18-commercial-private-repo" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>87</td>
+<td>AD-449</td>
+<td>MCP Bridge — External System Integration</td>
+<td>Session-managed MCP bridge for ProbOS agents to interact with ERPs/CRMs/databases.</td>
+</tr>
+<tr>
+<td>88</td>
+<td>AD-450</td>
+<td>ERP Implementation Ship Class</td>
+<td>D365 ERP Company Designer reimplemented as a ProbOS Ship Class — first Nooplex engagement.</td>
+</tr>
+<tr>
+<td>89</td>
+<td>AD-452</td>
+<td>Agent Tier Licensing Framework</td>
+<td>OSS/Commercial crew boundary defined — capability depth is the product, not capability existence.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tier-19-research-future">Tier 19: Research &amp; Future<a class="headerlink" href="#tier-19-research-future" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>ID</th>
+<th>Title</th>
+<th>Expected Outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>90</td>
+<td>AD-491</td>
+<td>Infodynamic Telemetry</td>
+<td>Measured information entropy testing Second Law of Infodynamics in multi-agent systems.</td>
+</tr>
+<tr>
+<td>91</td>
+<td>AD-524</td>
+<td>Ship's Archive — Generational Knowledge</td>
+<td>Previous generations' Ship's Records readable by new crews after reset.</td>
+</tr>
+<tr>
+<td>92</td>
+<td>AD-525</td>
+<td>Agent Creative Expression</td>
+<td>Creative skill catalog with trust-tiered creative time and creative output to Ship's Records.</td>
+</tr>
+<tr>
+<td>93</td>
+<td>AD-526</td>
+<td>Agent Chess &amp; Recreation</td>
+<td>Chess via <code>python-chess</code> + LLM reasoning with Elo ratings; Recreation channels.</td>
+</tr>
+<tr>
+<td>94</td>
+<td>AD-540</td>
+<td>Memory Provenance Boundary</td>
+<td>Structural separation of episodic memory from LLM training data with source attribution.</td>
+</tr>
+<tr>
+<td>95</td>
+<td>AD-541</td>
+<td>Memory Integrity Verification</td>
+<td>Episode verification against EventLog with anti-confabulation and reconsolidation protection.</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

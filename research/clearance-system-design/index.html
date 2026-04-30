@@ -1,0 +1,2262 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/clearance-system-design/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Clearance System Design — Separation of Rank and Access Eligibility - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#clearance-system-design-separation-of-rank-and-access-eligibility" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Clearance System Design — Separation of Rank and Access Eligibility
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#navy-reference-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Navy Reference Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Navy Reference Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rank
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security-clearance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Clearance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#access-need-to-know" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access (Need-to-Know)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#special-access-programs-saps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Special Access Programs (SAPs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Principles
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#probos-current-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Current State
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ProbOS Current State">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#where-rank-is-currently-checked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where Rank Is Currently Checked
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#probos-proposed-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Proposed Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ProbOS Proposed Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-solves-the-counselor-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Solves the Counselor Problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#billet-clearance-assignments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Billet Clearance Assignments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#oracle-gate-simplification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Oracle Gate Simplification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#channel-visibility-separate-from-clearance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channel Visibility (Separate from Clearance)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#special-access-grants-sap-analog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Special Access Grants (SAP Analog)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-breakdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD Breakdown
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AD Breakdown">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ad-620-clearance-model-foundation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-620: Clearance Model Foundation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-621-billet-driven-channel-visibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-621: Billet-Driven Channel Visibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-622-special-access-grants-clearancegrant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-622: Special Access Grants (ClearanceGrant)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#build-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build Order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-gets-removed-ad-619-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Gets Removed (AD-619 Cleanup)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sovereign-memory-principle-preserved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sovereign Memory Principle (Preserved)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="clearance-system-design-separation-of-rank-and-access-eligibility">Clearance System Design — Separation of Rank and Access Eligibility<a class="headerlink" href="#clearance-system-design-separation-of-rank-and-access-eligibility" title="Permanent link">&para;</a></h1>
+<p><strong>Author:</strong> Architect (AD-620/621/622 scoping)
+<strong>Date:</strong> 2026-04-13
+<strong>Status:</strong> Design complete, ready for AD build prompts</p>
+<h2 id="navy-reference-model">Navy Reference Model<a class="headerlink" href="#navy-reference-model" title="Permanent link">&para;</a></h2>
+<p>The US military separates three concepts that ProbOS currently conflates:</p>
+<h3 id="rank">Rank<a class="headerlink" href="#rank" title="Permanent link">&para;</a></h3>
+<p>Position in the chain of command, earned through performance and time-in-service.
+Determines authority and responsibility. An E-6 and an O-3 have different ranks
+but could hold the same clearance level. <strong>Rank is about who you are in the
+hierarchy.</strong></p>
+<h3 id="security-clearance">Security Clearance<a class="headerlink" href="#security-clearance" title="Permanent link">&para;</a></h3>
+<p>Eligibility to access classified information at a given level. Levels:
+Confidential → Secret → Top Secret → TS/SCI. Clearance is granted to
+<strong>billets (positions)</strong>, not just individuals. A position might require TS/SCI
+regardless of the rank of the person filling it. A general without the right
+compartment access cannot view certain material, while a junior analyst with
+proper authorization can. <strong>Clearance is about what information you're eligible
+to access.</strong></p>
+<blockquote>
+<p>"No individual is granted automatic access to classified information solely
+because of rank, position, or a security clearance."</p>
+</blockquote>
+<h3 id="access-need-to-know">Access (Need-to-Know)<a class="headerlink" href="#access-need-to-know" title="Permanent link">&para;</a></h3>
+<p>Actual permission to see specific classified material. Requires BOTH appropriate
+clearance AND a demonstrated need to know. Having TS clearance doesn't mean you
+can read every TS document — you must have operational justification for that
+specific information. <strong>Access is clearance + justification.</strong></p>
+<h3 id="special-access-programs-saps">Special Access Programs (SAPs)<a class="headerlink" href="#special-access-programs-saps" title="Permanent link">&para;</a></h3>
+<p>Compartmented programs with access controls beyond the normal classification
+system. Even with TS/SCI, you need to be specifically "read into" a SAP.
+Access is tracked, controlled, and can be revoked independently of base
+clearance. SAPs limit access to a small subset of individuals and permit
+additional security measures.</p>
+<h3 id="key-principles">Key Principles<a class="headerlink" href="#key-principles" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Clearance follows the billet.</strong> The position determines what clearance is
+   required. When you're assigned to that billet, you're investigated for that
+   clearance. When you transfer, your clearance may lapse.</li>
+<li><strong>Rank does NOT determine clearance.</strong> A Senior Chief (E-8) might have Secret
+   while a Lieutenant JG (O-2) in intelligence has TS/SCI. It's about the job.</li>
+<li><strong>Need-to-know gates access within clearance.</strong> Clearance establishes
+   eligibility; need-to-know justifies specific access.</li>
+<li><strong>Compartmentation is additive.</strong> SAP/SCI access layers on top of base
+   clearance. You can be "read into" or "read out of" programs independently.</li>
+</ol>
+<h2 id="probos-current-state">ProbOS Current State<a class="headerlink" href="#probos-current-state" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Current Implementation</th>
+<th>Problem</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Rank</td>
+<td><code>Rank</code> enum (Ensign→Senior), purely trust-driven via <code>Rank.from_trust()</code></td>
+<td>Rank is behavioral maturity AND access eligibility — conflated</td>
+</tr>
+<tr>
+<td>Clearance</td>
+<td>Does not exist. <code>RecallTier</code> mapped 1:1 from Rank via <code>recall_tier_from_rank()</code></td>
+<td>A Bridge officer with trust 0.5 gets ENHANCED recall, same as a Science Ensign</td>
+</tr>
+<tr>
+<td>Need-to-know</td>
+<td><code>RetrievalStrategy</code> (SHALLOW/DEEP) based on intent classification</td>
+<td>Already exists, sound design</td>
+</tr>
+<tr>
+<td>SAP/Compartments</td>
+<td>Does not exist. AD-619 added <code>has_ship_wide_authority()</code> as a hack</td>
+<td>Hardcoded set, not principled</td>
+</tr>
+<tr>
+<td>Billet clearance</td>
+<td>Not in ontology. <code>Post</code> dataclass has no clearance field</td>
+<td>Ship's Counselor has same access as any crew member</td>
+</tr>
+</tbody>
+</table>
+<h3 id="where-rank-is-currently-checked">Where Rank Is Currently Checked<a class="headerlink" href="#where-rank-is-currently-checked" title="Permanent link">&para;</a></h3>
+<p>Rank currently does triple duty:</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>What it gates</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>recall_tier_from_rank()</code></td>
+<td>Memory recall capability</td>
+<td>earned_agency.py</td>
+</tr>
+<tr>
+<td><code>agency_from_rank()</code></td>
+<td>Behavioral agency level</td>
+<td>earned_agency.py</td>
+</tr>
+<tr>
+<td><code>can_respond_ambient()</code></td>
+<td>Ambient response permission</td>
+<td>earned_agency.py</td>
+</tr>
+<tr>
+<td><code>can_think_proactively()</code></td>
+<td>Proactive thought permission</td>
+<td>earned_agency.py</td>
+</tr>
+<tr>
+<td><code>can_perform_action()</code></td>
+<td>Action-space permissions (endorse, reply, DM, lock/pin)</td>
+<td>earned_agency.py</td>
+</tr>
+<tr>
+<td><code>Rank.from_trust()</code> in perceive()</td>
+<td>Recall tier for episodic memory</td>
+<td>cognitive_agent.py</td>
+</tr>
+<tr>
+<td><code>Rank.from_trust()</code> in proactive</td>
+<td>Recall + self-monitoring tier</td>
+<td>proactive.py</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Only <code>recall_tier_from_rank()</code> is an access/clearance concern.</strong> The rest
+(agency, ambient response, proactive thinking, action permissions) are correctly
+rank-driven — they're about behavioral maturity, not information access.</p>
+<h2 id="probos-proposed-model">ProbOS Proposed Model<a class="headerlink" href="#probos-proposed-model" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Navy Concept</th>
+<th>ProbOS Analog</th>
+<th>Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rank</strong></td>
+<td><code>Rank</code> enum (unchanged)</td>
+<td>Trust-driven, earned. Gates behavioral agency.</td>
+</tr>
+<tr>
+<td><strong>Clearance</strong></td>
+<td><code>RecallTier</code> (reused, new computation)</td>
+<td><code>effective_recall_tier(rank, billet, grants)</code> — max of all sources</td>
+</tr>
+<tr>
+<td><strong>Billet Clearance</strong></td>
+<td><code>Post.clearance</code> field in ontology</td>
+<td>Each post defines its required RecallTier</td>
+</tr>
+<tr>
+<td><strong>Need-to-Know</strong></td>
+<td><code>RetrievalStrategy</code> (unchanged)</td>
+<td>Intent-based classification gates specific queries</td>
+</tr>
+<tr>
+<td><strong>SAP</strong></td>
+<td><code>ClearanceGrant</code> records</td>
+<td>Captain-issued, time-limited, scoped, revocable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="how-it-solves-the-counselor-problem">How It Solves the Counselor Problem<a class="headerlink" href="#how-it-solves-the-counselor-problem" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Echo's <strong>rank</strong> = Lieutenant (trust 0.5) → behavioral maturity, agency level</li>
+<li>Echo's <strong>billet clearance</strong> = ORACLE (Counselor post in ontology requires it)</li>
+<li>Echo's <strong>effective RecallTier</strong> = max(ENHANCED from rank, ORACLE from billet) = ORACLE</li>
+<li>Echo's <strong>access</strong> = Oracle queries gated by clearance (no strategy gate needed for clearance-holders)</li>
+</ul>
+<p>No <code>has_ship_wide_authority()</code>. No hardcoded set. The ontology defines the
+requirement, the clearance system computes eligibility.</p>
+<h3 id="billet-clearance-assignments">Billet Clearance Assignments<a class="headerlink" href="#billet-clearance-assignments" title="Permanent link">&para;</a></h3>
+<p>From the organization chart, natural clearance assignments:</p>
+<table>
+<thead>
+<tr>
+<th>Post</th>
+<th>reports_to</th>
+<th>Billet Clearance</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>captain</code></td>
+<td>null</td>
+<td>ORACLE</td>
+<td>Ship commander, full access (external/human)</td>
+</tr>
+<tr>
+<td><code>first_officer</code></td>
+<td>captain</td>
+<td>ORACLE</td>
+<td>Direct Captain report, ship-wide authority</td>
+</tr>
+<tr>
+<td><code>counselor</code></td>
+<td>captain</td>
+<td>ORACLE</td>
+<td>Direct Captain report, crew-wide clinical authority</td>
+</tr>
+<tr>
+<td><code>chief_engineer</code></td>
+<td>first_officer</td>
+<td>FULL</td>
+<td>Department head, leadership authority</td>
+</tr>
+<tr>
+<td><code>chief_science</code></td>
+<td>first_officer</td>
+<td>FULL</td>
+<td>Department head (dual-hatted with First Officer)</td>
+</tr>
+<tr>
+<td><code>chief_medical</code></td>
+<td>first_officer</td>
+<td>FULL</td>
+<td>Department head</td>
+</tr>
+<tr>
+<td><code>chief_security</code></td>
+<td>first_officer</td>
+<td>FULL</td>
+<td>Department head</td>
+</tr>
+<tr>
+<td><code>chief_operations</code></td>
+<td>first_officer</td>
+<td>FULL</td>
+<td>Department head</td>
+</tr>
+<tr>
+<td>All officers</td>
+<td>chief_*</td>
+<td>ENHANCED</td>
+<td>Department members, proven competence</td>
+</tr>
+<tr>
+<td>Default (no post)</td>
+<td>—</td>
+<td>BASIC</td>
+<td>Unassigned, minimal access</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Rule of thumb:</strong>
+- <code>reports_to: captain</code> → ORACLE (Bridge officers, ship-wide responsibility)
+- <code>authority_over: [...]</code> non-empty → FULL (department leadership)
+- <code>reports_to: chief_*</code> → ENHANCED (department members)
+- No post assignment → BASIC (unassigned)</p>
+<p>This can be derived automatically from the ontology structure OR explicitly
+set per-post. Explicit is better — it allows exceptions without changing the
+derivation logic (a Security Officer might need FULL for investigations even
+though they report to a chief).</p>
+<h3 id="oracle-gate-simplification">Oracle Gate Simplification<a class="headerlink" href="#oracle-gate-simplification" title="Permanent link">&para;</a></h3>
+<p>Currently the Oracle gate requires <code>RecallTier.ORACLE</code> AND <code>RetrievalStrategy.DEEP</code>
+(plus the AD-619 hack for ship-wide authority). With a proper clearance system:</p>
+<p><strong>Clearance IS the gate.</strong> If you have ORACLE clearance (from any source — rank,
+billet, or grant), Oracle access is authorized. The strategy gate (DEEP
+requirement) was a cost optimization, not an access control. But it creates
+confusing UX — a senior officer asks a question in a DM and Oracle doesn't fire
+because the intent is classified as SHALLOW.</p>
+<p><strong>Proposed:</strong> Remove the strategy gate for Oracle. <code>RecallTier.ORACLE</code> alone
+is sufficient. The clearance system ensures only authorized agents reach ORACLE tier.
+Cost concerns can be addressed by Oracle's own internal budget limits (<code>k_per_tier</code>,
+<code>max_chars</code>), not by blocking the query.</p>
+<h3 id="channel-visibility-separate-from-clearance">Channel Visibility (Separate from Clearance)<a class="headerlink" href="#channel-visibility-separate-from-clearance" title="Permanent link">&para;</a></h3>
+<p>Channel subscriptions are about <strong>visibility</strong> (being in the room), not
+<strong>capability</strong> (what you can do). The ontology can drive this:</p>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th>Channel Subscription</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Every crew agent</td>
+<td>Own department channel</td>
+</tr>
+<tr>
+<td><code>reports_to: captain</code></td>
+<td>ALL department channels</td>
+</tr>
+<tr>
+<td>All crew</td>
+<td>Ship-wide channels (All Hands, Proposals, Recreation, Creative)</td>
+</tr>
+</tbody>
+</table>
+<p>Future extension: <code>authority_over</code> could grant visibility into subordinate
+departments' channels for department chiefs who oversee cross-department work.</p>
+<h3 id="special-access-grants-sap-analog">Special Access Grants (SAP Analog)<a class="headerlink" href="#special-access-grants-sap-analog" title="Permanent link">&para;</a></h3>
+<p>Captain-issued grants for specific duties or projects:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ClearanceGrant:
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  id: str               # unique grant ID
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  target_agent_id: str   # who receives the grant
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  recall_tier: RecallTier # granted tier level
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  scope: str             # &quot;general&quot; | &quot;project:{name}&quot; | &quot;investigation:{id}&quot;
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  reason: str            # justification (audit trail)
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  issued_by: str         # Captain&#39;s agent_id or &quot;system&quot;
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  issued_at: float       # timestamp
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  expires_at: float | None  # None = until revoked
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>  revoked: bool          # soft-delete
+</code></pre></div>
+<p><strong>Use cases:</strong>
+- Captain assigns a junior agent to a security investigation → grants ORACLE
+  for the duration
+- Temporary elevated recall for a cross-department project
+- Emergency access during an incident</p>
+<p><strong>Governance:</strong>
+- Only Captain (or First Officer with Captain's authority) can issue grants
+- Grants are logged and auditable
+- Expired/revoked grants are retained for audit history
+- <code>effective_recall_tier()</code> considers active, non-expired, non-revoked grants</p>
+<h2 id="ad-breakdown">AD Breakdown<a class="headerlink" href="#ad-breakdown" title="Permanent link">&para;</a></h2>
+<h3 id="ad-620-clearance-model-foundation">AD-620: Clearance Model Foundation<a class="headerlink" href="#ad-620-clearance-model-foundation" title="Permanent link">&para;</a></h3>
+<p><strong>Scope:</strong> Medium (5 source files modified, 1 config file modified)
+<strong>Depends on:</strong> None
+<strong>Cleans up:</strong> AD-619 (removes ship-wide authority bypass)</p>
+<ol>
+<li>Add <code>clearance</code> field to <code>Post</code> dataclass in <code>ontology/models.py</code></li>
+<li>Add <code>clearance</code> field to all posts in <code>config/ontology/organization.yaml</code></li>
+<li>Add <code>effective_recall_tier()</code> function to <code>earned_agency.py</code> — computes
+   RecallTier from max(rank_tier, billet_tier, grant_tiers)</li>
+<li>Add <code>resolve_billet_clearance()</code> to <code>ontology/service.py</code> — looks up
+   the post's clearance for a given agent_type</li>
+<li>Modify <code>cognitive_agent.py</code> perceive() — replace <code>recall_tier_from_rank()</code>
+   with <code>effective_recall_tier()</code>, remove AD-619 <code>_has_swa</code> hack</li>
+<li>Modify <code>proactive.py</code> — replace <code>recall_tier_from_rank()</code> with
+   <code>effective_recall_tier()</code> at all recall tier resolution points</li>
+<li>Simplify Oracle gate — remove strategy requirement, clearance is the gate</li>
+<li>Remove <code>_SHIP_WIDE_AUTHORITY_TYPES</code> and <code>has_ship_wide_authority()</code> from
+   <code>crew_utils.py</code></li>
+</ol>
+<p><strong>Key design decisions:</strong>
+- No new enum — reuse <code>RecallTier</code> as the unit of clearance
+- Explicit clearance per post (not derived from reports_to) — allows exceptions
+- <code>recall_tier_from_rank()</code> preserved for backward compatibility, called
+  internally by <code>effective_recall_tier()</code> as one input source
+- Oracle gate simplified: clearance alone, no strategy requirement</p>
+<h3 id="ad-621-billet-driven-channel-visibility">AD-621: Billet-Driven Channel Visibility<a class="headerlink" href="#ad-621-billet-driven-channel-visibility" title="Permanent link">&para;</a></h3>
+<p><strong>Scope:</strong> Small (2 source files modified)
+<strong>Depends on:</strong> AD-620 (needs Post.clearance and ontology resolution)</p>
+<ol>
+<li>Modify <code>startup/communication.py</code> — replace <code>has_ship_wide_authority()</code>
+   with ontology-driven subscription logic. Bridge officers (<code>reports_to: captain</code>)
+   get all department channels.</li>
+<li>Remove <code>has_ship_wide_authority</code> import and usage</li>
+<li>Handle ontology timing — either resolve billet data from a static source
+   (like organization.yaml directly) or move subscription after ontology init</li>
+</ol>
+<p><strong>Key design decisions:</strong>
+- Channel visibility is ontology-driven, not clearance-driven. Being in a
+  room and having access to capabilities are separate concerns.
+- <code>reports_to: captain</code> → all department channels (derived from org chart)
+- Future: <code>authority_over</code> could grant subordinate department channel access</p>
+<h3 id="ad-622-special-access-grants-clearancegrant">AD-622: Special Access Grants (ClearanceGrant)<a class="headerlink" href="#ad-622-special-access-grants-clearancegrant" title="Permanent link">&para;</a></h3>
+<p><strong>Scope:</strong> Medium (4 source files modified, 1 new file)
+<strong>Depends on:</strong> AD-620 (ClearanceGrant feeds into effective_recall_tier)</p>
+<ol>
+<li>Add <code>ClearanceGrant</code> dataclass to <code>earned_agency.py</code></li>
+<li>Add grant storage — either on <code>CrewProfile</code> (list of grants) or a
+   separate <code>ClearanceGrantStore</code> (SQLite-backed for audit trail)</li>
+<li>Captain command to issue grants — new command in <code>experience/commands/</code>
+   or via directive mechanism</li>
+<li>Captain command to revoke grants</li>
+<li>Integrate with <code>effective_recall_tier()</code> — active grants are one input</li>
+<li>Grant audit logging</li>
+</ol>
+<p><strong>Key design decisions:</strong>
+- Grants are persistent (survive restart) — stored in DB, not memory
+- Grants have explicit expiration — prevents orphaned elevated access
+- Revocation is soft-delete (record retained for audit)
+- Only Captain/First Officer can issue (enforced by rank check on issuer)</p>
+<h2 id="build-order">Build Order<a class="headerlink" href="#build-order" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>AD-620 (Foundation) → AD-621 (Channel Visibility) → AD-622 (Grants)
+</code></pre></div>
+<p>AD-620 is the foundation. AD-621 and AD-622 build on it independently
+(could be parallelized after AD-620 completes).</p>
+<h2 id="what-gets-removed-ad-619-cleanup">What Gets Removed (AD-619 Cleanup)<a class="headerlink" href="#what-gets-removed-ad-619-cleanup" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>What's removed</th>
+<th>Replaced by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>crew_utils.py</code></td>
+<td><code>_SHIP_WIDE_AUTHORITY_TYPES</code>, <code>has_ship_wide_authority()</code></td>
+<td>Billet clearance in ontology</td>
+</tr>
+<tr>
+<td><code>cognitive_agent.py</code></td>
+<td>Recall tier override (<code>_has_swa</code>, lines 2691-2696)</td>
+<td><code>effective_recall_tier()</code></td>
+</tr>
+<tr>
+<td><code>cognitive_agent.py</code></td>
+<td>Strategy gate relaxation (<code>_swa</code> in Oracle condition)</td>
+<td>Simplified Oracle gate (clearance only)</td>
+</tr>
+<tr>
+<td><code>startup/communication.py</code></td>
+<td><code>has_ship_wide_authority</code> in subscription loop</td>
+<td>Ontology-driven subscription (AD-621)</td>
+</tr>
+</tbody>
+</table>
+<p>AD-619's <strong>channel subscriptions</strong> (the valuable part) are preserved and
+improved — moved from a hardcoded set to ontology-driven logic.</p>
+<p>AD-619's <strong>Oracle bypass</strong> (the hack) is eliminated — replaced by principled
+billet clearance.</p>
+<h2 id="sovereign-memory-principle-preserved">Sovereign Memory Principle (Preserved)<a class="headerlink" href="#sovereign-memory-principle-preserved" title="Permanent link">&para;</a></h2>
+<p>Nothing in this clearance system changes the sovereign memory principle.
+Clearance determines what <strong>system capabilities</strong> an agent can access
+(Oracle queries, recall budget, etc.), not what <strong>other agents' memories</strong>
+they can read. The BF-164 rejection stands:</p>
+<ul>
+<li>ORACLE clearance → access to Oracle Service (Tier 2 Records + Tier 3 Operational + Tier 1 own shard)</li>
+<li>ORACLE clearance ≠ access to other agents' episodic shards</li>
+<li>Cross-agent awareness comes from observation (channels) and interaction (DMs), not memory access</li>
+</ul>
+<h2 id="key-references">Key References<a class="headerlink" href="#key-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>src/probos/earned_agency.py</code> — RecallTier, Rank mappings, agency functions</li>
+<li><code>src/probos/ontology/models.py:20-26</code> — Post dataclass</li>
+<li><code>config/ontology/organization.yaml</code> — all posts with reports_to/authority_over</li>
+<li><code>src/probos/cognitive/cognitive_agent.py:2684-2696</code> — recall tier resolution + AD-619 override</li>
+<li><code>src/probos/cognitive/cognitive_agent.py:2843-2853</code> — Oracle gate</li>
+<li><code>src/probos/proactive.py:304,828,1350</code> — rank-based checks</li>
+<li><code>src/probos/crew_utils.py</code> — ship_wide_authority (to be removed)</li>
+<li><code>src/probos/startup/communication.py:135-176</code> — subscription loop</li>
+<li><code>src/probos/crew_profile.py:130-135</code> — rank fields on CrewProfile</li>
+<li><code>src/probos/ontology/service.py:131,440-450</code> — post resolution, rank enrichment</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

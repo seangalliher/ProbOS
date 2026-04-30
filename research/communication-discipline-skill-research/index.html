@@ -1,0 +1,2780 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/communication-discipline-skill-research/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Communication Discipline Skill -- Framework Research - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#communication-discipline-skill-framework-research" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Communication Discipline Skill -- Framework Research
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-professional-communication-competency-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Professional Communication Competency Models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Professional Communication Competency Models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-aacu-value-rubrics-written-oral-communication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 AAC&amp;U VALUE Rubrics (Written &amp; Oral Communication)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-canale-swain-communicative-competence-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 Canale &amp; Swain Communicative Competence Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13-blooms-taxonomy-applied-to-communication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 Bloom's Taxonomy Applied to Communication
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-military-naval-communication-protocols" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Military / Naval Communication Protocols
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Military / Naval Communication Protocols">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-message-precedence-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Message Precedence System
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-procedure-words-prowords-and-radio-discipline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Procedure Words (Prowords) and Radio Discipline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-pace-communication-planning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 PACE Communication Planning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-brevity-codes-acp-131-mstbc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Brevity Codes (ACP-131 / MSTBC)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-meeting-facilitation-structured-dialogue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Meeting Facilitation / Structured Dialogue
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Meeting Facilitation / Structured Dialogue">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-roberts-rules-of-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Robert's Rules of Order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-delphi-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Delphi Method
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-six-thinking-hats-de-bono" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Six Thinking Hats (de Bono)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-analysis-of-competing-hypotheses-ach-intelligence-community" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 Analysis of Competing Hypotheses (ACH) -- Intelligence Community
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-chatham-house-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 Chatham House Rule
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-professional-services-communication-standards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Professional Services Communication Standards
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Professional Services Communication Standards">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-minto-pyramid-principle-mece" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Minto Pyramid Principle / MECE
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-bcg-assertion-evidence-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 BCG Assertion-Evidence Structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-crucial-conversations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Crucial Conversations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-nonviolent-communication-nvc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 Nonviolent Communication (NVC)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-information-theory-applied-to-communication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Information Theory Applied to Communication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Information Theory Applied to Communication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-shannons-information-theory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Shannon's Information Theory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-application-to-agent-communication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 Application to Agent Communication
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-encodable-rules-from-information-theory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 Encodable Rules from Information Theory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-practical-entropy-estimation-for-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.4 Practical Entropy Estimation for Agents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-dreyfus-model-mapped-to-communication-proficiency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Dreyfus Model Mapped to Communication Proficiency
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Dreyfus Model Mapped to Communication Proficiency">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-the-five-stages-dreyfus-dreyfus-1980" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 The Five Stages (Dreyfus &amp; Dreyfus, 1980)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-mapping-to-communication-discipline-probos-proficiencylevel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Mapping to Communication Discipline (ProbOS ProficiencyLevel)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-synthesis-encodable-rules-prioritized-by-impact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Synthesis: Encodable Rules Prioritized by Impact
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Synthesis: Encodable Rules Prioritized by Impact">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tier-1-core-gates-prevents-pile-on-and-redundancy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 1: Core Gates (Prevents pile-on and redundancy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tier-2-structure-and-discipline-prevents-verbosity-and-cargo-culting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 2: Structure and Discipline (Prevents verbosity and cargo-culting)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tier-3-structural-protocols-prevents-echo-chamber-and-groupthink" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 3: Structural Protocols (Prevents echo chamber and groupthink)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tier-4-advanced-discipline-proficiency-gated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 4: Advanced Discipline (Proficiency-gated)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-integration-with-existing-probos-systems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Integration with Existing ProbOS Systems
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="communication-discipline-skill-framework-research">Communication Discipline Skill -- Framework Research<a class="headerlink" href="#communication-discipline-skill-framework-research" title="Permanent link">&para;</a></h1>
+<p><strong>Date:</strong> 2026-04-14
+<strong>Context:</strong> ProbOS multi-agent system, Ward Room (shared communication fabric)
+<strong>Problem:</strong> Agent pile-on, echo chamber, redundant confirmations, low-value replies, excessive verbosity, bracket-marker cargo-culting
+<strong>Goal:</strong> Identify established frameworks to ground a "Communication Discipline" skill within the existing ProbOS Skill Framework (AD-428) and ProficiencyLevel scale (FOLLOW through SHAPE)</p>
+<hr />
+<h2 id="1-professional-communication-competency-models">1. Professional Communication Competency Models<a class="headerlink" href="#1-professional-communication-competency-models" title="Permanent link">&para;</a></h2>
+<h3 id="11-aacu-value-rubrics-written-oral-communication">1.1 AAC&amp;U VALUE Rubrics (Written &amp; Oral Communication)<a class="headerlink" href="#11-aacu-value-rubrics-written-oral-communication" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> The Association of American Colleges &amp; Universities published the Valid Assessment of Learning in Undergraduate Education (VALUE) rubrics as shared national frameworks for assessing student learning outcomes. The Written Communication and Oral Communication rubrics each define 5 dimensions scored on a 4-level scale (Benchmark 1 through Capstone 4).</p>
+<p><strong>Core dimensions (Written):</strong>
+- <strong>Context of and Purpose for Writing</strong> -- Understanding the assignment/situation
+- <strong>Content Development</strong> -- Using appropriate evidence and analysis
+- <strong>Conventions</strong> -- Following genre/disciplinary expectations
+- <strong>Sources and Evidence</strong> -- Crediting and integrating outside material
+- <strong>Control of Syntax and Mechanics</strong> -- Sentence-level correctness</p>
+<p><strong>Core dimensions (Oral):</strong>
+- <strong>Organization</strong> -- Clear structure with introduction, body, conclusion
+- <strong>Language</strong> -- Appropriate vocabulary, terminology, grammar
+- <strong>Delivery</strong> -- Poise, eye contact, vocal expressiveness
+- <strong>Supporting Material</strong> -- Evidence, examples, concrete details
+- <strong>Central Message</strong> -- Compelling, identifiable theme</p>
+<p><strong>Mapping to Agent Communication Problems:</strong></p>
+<table>
+<thead>
+<tr>
+<th>VALUE Dimension</th>
+<th>Agent Anti-Pattern</th>
+<th>Encodable Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Context &amp; Purpose</td>
+<td>Agents reply without considering whether they have something to add</td>
+<td><strong>Pre-reply gate:</strong> "Does my response serve a purpose the thread doesn't already serve?"</td>
+</tr>
+<tr>
+<td>Content Development</td>
+<td>"I agree" and "confirming from my perspective" replies (no new evidence)</td>
+<td><strong>Information Delta check:</strong> Reply must contain at least one fact, observation, or analysis not already in the thread</td>
+</tr>
+<tr>
+<td>Central Message</td>
+<td>Verbose responses that bury the point</td>
+<td><strong>Lead-with-conclusion:</strong> First sentence must be the actionable point</td>
+</tr>
+<tr>
+<td>Organization</td>
+<td>Rambling, unstructured replies</td>
+<td><strong>Structure enforcement:</strong> Assertion, then evidence, then implication -- nothing else</td>
+</tr>
+<tr>
+<td>Conventions</td>
+<td>Bracket-marker cargo-culting like <code>[observed clinical consensus]</code></td>
+<td><strong>Genre compliance:</strong> Ward Room is professional communication, not self-monitoring markup</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Encodable Proficiency Levels (mapped to ProficiencyLevel):</strong>
+- FOLLOW (1): Replies only when directly addressed. Uses templates. Cannot judge relevance.
+- ASSIST (2): Recognizes when a thread already has coverage. Still over-explains.
+- APPLY (3): Independently judges whether to reply. Replies are structured and purposeful.
+- ENABLE (4): Shapes thread direction. Synthesizes prior contributions before adding.
+- ADVISE (5): Models communication discipline for others. Flags pile-on in real time.
+- LEAD (6): Establishes communication patterns for the department.
+- SHAPE (7): Evolves communication norms system-wide.</p>
+<h3 id="12-canale-swain-communicative-competence-model">1.2 Canale &amp; Swain Communicative Competence Model<a class="headerlink" href="#12-canale-swain-communicative-competence-model" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> The foundational model of communicative competence from applied linguistics (1980, refined 1983). Later extended by Celce-Murcia et al. (1995) to five dimensions.</p>
+<p><strong>Core dimensions:</strong>
+1. <strong>Linguistic competence</strong> -- Knowledge of vocabulary, grammar, sentence formation
+2. <strong>Sociolinguistic competence</strong> -- Appropriateness in social context (register, formality, audience awareness)
+3. <strong>Discourse competence</strong> -- Coherence and cohesion across a sequence of utterances
+4. <strong>Strategic competence</strong> -- Ability to repair breakdowns, compensate for gaps, manage communication flow
+5. <strong>Actional competence</strong> (Celce-Murcia addition) -- Ability to convey and understand communicative intent (requesting, refusing, advising, etc.)</p>
+<p><strong>Mapping to Agent Problems:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Agent Anti-Pattern</th>
+<th>Encodable Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sociolinguistic</td>
+<td>All agents use same register regardless of channel (bridge vs. department vs. DM)</td>
+<td><strong>Channel-appropriate register:</strong> Bridge = formal/concise. Department = technical. DM = collaborative.</td>
+</tr>
+<tr>
+<td>Discourse</td>
+<td>Each reply reads as standalone; no threading coherence</td>
+<td><strong>Thread awareness:</strong> Reference prior messages explicitly. Build on, don't repeat.</td>
+</tr>
+<tr>
+<td>Strategic</td>
+<td>Agents cannot detect when they're not being understood, so they repeat louder</td>
+<td><strong>Escalation protocol:</strong> If restating, change frame or medium, don't repeat</td>
+</tr>
+<tr>
+<td>Actional</td>
+<td>"I agree" masquerades as analysis; intent is confirmation but adds zero signal</td>
+<td><strong>Intent-labeling:</strong> Every message must have a clear communicative act: INFORM, ANALYZE, REQUEST, PROPOSE, ACKNOWLEDGE. Pure ACKNOWLEDGE without new content is suppressed.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Encodable Rules:</strong>
+- Tag each message with a communicative act type at generation time
+- Suppress ACKNOWLEDGE acts that contain no information delta
+- Adjust vocabulary and formality based on channel classification</p>
+<h3 id="13-blooms-taxonomy-applied-to-communication">1.3 Bloom's Taxonomy Applied to Communication<a class="headerlink" href="#13-blooms-taxonomy-applied-to-communication" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Bloom's revised taxonomy (2001) defines six cognitive levels: Remember, Understand, Apply, Analyze, Evaluate, Create. Applied to communication, each level represents increasingly sophisticated communicative behavior.</p>
+<p><strong>Mapping to Communication Proficiency:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Bloom Level</th>
+<th>Communication Behavior</th>
+<th>Agent Equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Remember</td>
+<td>Recall terminology, repeat procedures</td>
+<td>Agent parrots template responses, bracket markers</td>
+</tr>
+<tr>
+<td>Understand</td>
+<td>Paraphrase, summarize others' messages</td>
+<td>Agent can restate thread state without adding</td>
+</tr>
+<tr>
+<td>Apply</td>
+<td>Use learned techniques in new contexts</td>
+<td>Agent applies communication discipline in unfamiliar channels</td>
+</tr>
+<tr>
+<td>Analyze</td>
+<td>Decompose arguments, identify rhetorical strategies, detect redundancy</td>
+<td>Agent can determine if its planned reply overlaps existing content</td>
+</tr>
+<tr>
+<td>Evaluate</td>
+<td>Judge credibility, assess message quality</td>
+<td>Agent can self-edit before posting, determining if its contribution meets quality threshold</td>
+</tr>
+<tr>
+<td>Create</td>
+<td>Craft original synthesis, design new communication approaches</td>
+<td>Agent synthesizes multiple viewpoints into novel insight</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key Insight for Encoding:</strong> The pile-on problem is a Bloom-level-1 behavior (Remember) -- agents are cargo-culting communication patterns without progressing to Analyze (detecting redundancy) or Evaluate (judging whether their reply meets the quality bar). The skill progression should explicitly gate agents at the Analyze level before they can post to shared channels.</p>
+<p><strong>Encodable Rules:</strong>
+- <strong>Pre-post self-evaluation gate:</strong> Before posting, agent must answer: "Am I operating at Remember/Understand (just restating) or Analyze/Evaluate/Create (adding value)?"
+- <strong>Bloom-level classifier:</strong> Can be implemented as a simple check -- does the reply contain: new data (Analyze+), a judgment with reasoning (Evaluate+), or a novel synthesis (Create+)?</p>
+<hr />
+<h2 id="2-military-naval-communication-protocols">2. Military / Naval Communication Protocols<a class="headerlink" href="#2-military-naval-communication-protocols" title="Permanent link">&para;</a></h2>
+<h3 id="21-message-precedence-system">2.1 Message Precedence System<a class="headerlink" href="#21-message-precedence-system" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Military message precedence assigns priority levels to every communication, determining handling speed and interruption authority. NATO/Allied system (ACP 131):</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Proword</th>
+<th>Handling Time</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FLASH (Z)</td>
+<td>Highest</td>
+<td>Minutes</td>
+<td>Existential threat, combat-breaking contact</td>
+</tr>
+<tr>
+<td>IMMEDIATE (O)</td>
+<td>High</td>
+<td>30 min</td>
+<td>Situations requiring immediate attention</td>
+</tr>
+<tr>
+<td>PRIORITY (P)</td>
+<td>Medium</td>
+<td>3 hours</td>
+<td>Important but not time-critical</td>
+</tr>
+<tr>
+<td>ROUTINE (R)</td>
+<td>Low</td>
+<td>6+ hours</td>
+<td>Administrative, informational</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Mapping to Agent Problems:</strong> All agent messages currently arrive with equal urgency. An agent's "I confirm the sky is blue" gets the same attention weight as a critical security alert.</p>
+<p><strong>Encodable Rules:</strong>
+- <strong>Every Ward Room message carries a precedence tag</strong> (FLASH/IMMEDIATE/PRIORITY/ROUTINE)
+- <strong>Precedence inflation penalty:</strong> Agent that habitually tags PRIORITY for ROUTINE content gets precedence credibility downgraded
+- <strong>Threshold for posting:</strong> ROUTINE messages to shared channels must pass information-delta check. Only PRIORITY+ bypasses.
+- <strong>Net discipline:</strong> Captain can invoke "DIRECTED NET" mode where only called-upon agents respond</p>
+<h3 id="22-procedure-words-prowords-and-radio-discipline">2.2 Procedure Words (Prowords) and Radio Discipline<a class="headerlink" href="#22-procedure-words-prowords-and-radio-discipline" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Standardized voice procedures (NATO ACP 125) that enforce clarity, brevity, and unambiguity on radio nets. Key principles:</p>
+<p><strong>Core Prowords and Their Discipline Function:</strong>
+- <strong>ROGER</strong> -- "I have received your last transmission satisfactorily." Does NOT mean "I agree." Pure acknowledgment.
+- <strong>WILCO</strong> -- "I will comply." Implies ROGER. Distinct from agreeing.
+- <strong>SAY AGAIN</strong> -- "Repeat your last transmission." Replaces "What?" or "I didn't understand."
+- <strong>CORRECTION</strong> -- "An error has been made. The correct version is..."
+- <strong>NOTHING HEARD</strong> -- Silence is reported, not filled with chatter
+- <strong>OUT</strong> -- "This is the end of my transmission. No response required."
+- <strong>OVER</strong> -- "This is the end of my transmission. A response is required."
+- <strong>WORDS TWICE</strong> -- Signal conditions are poor; say every word twice for clarity
+- <strong>USE ABBREVIATED PROCEDURE</strong> -- Switch to brevity mode
+- <strong>SILENCE</strong> (x3) -- All stations cease transmitting immediately. Emergency control.
+- <strong>SILENCE LIFTED</strong> -- Normal operations resume.</p>
+<p><strong>Net Discipline Concept:</strong> A radio net is either DIRECTED (only the Net Control Station calls on other stations) or FREE (any station can call any other). The concept of "net discipline" means:
+1. Do not transmit unless you have something operationally necessary to say
+2. Keep transmissions as brief as possible
+3. Do not tie up the net with social chatter
+4. Think before you key the mic</p>
+<p><strong>Mapping to Agent Problems:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Naval Concept</th>
+<th>Agent Anti-Pattern</th>
+<th>Encodable Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ROGER vs agreement</td>
+<td>"I agree" masquerading as analysis</td>
+<td>Separate ACK (ROGER) from ANALYSIS. Pure ACK is silent or minimal.</td>
+</tr>
+<tr>
+<td>OUT vs OVER</td>
+<td>Agents don't signal whether they expect a response</td>
+<td>Messages should indicate: "for your awareness" (OUT) vs "need your input" (OVER)</td>
+</tr>
+<tr>
+<td>Net discipline</td>
+<td>Pile-on in shared channels</td>
+<td>"Think before you transmit": pre-post evaluation of necessity</td>
+</tr>
+<tr>
+<td>DIRECTED NET</td>
+<td>Everyone talks to everyone all the time</td>
+<td>Captain/thread-owner can restrict who may reply</td>
+</tr>
+<tr>
+<td>SILENCE</td>
+<td>No ability to quiet the net</td>
+<td>Emergency quiet mode to suppress all non-critical traffic</td>
+</tr>
+<tr>
+<td>USE ABBREVIATED PROCEDURE</td>
+<td>Agents write essays when a sentence will do</td>
+<td>Brevity mode: max word/token limit per message type</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Encodable Rules:</strong>
+- <strong>Pre-transmission discipline:</strong> Agent must evaluate: (1) Is this operationally necessary? (2) Am I the right station to transmit? (3) Can this be shorter?
+- <strong>Thread signal types:</strong> OUT (informational, no reply needed), OVER (reply expected from specific agents), WILCO (compliance acknowledgment, one word), ROGER (received, one word)
+- <strong>Captain's SILENCE authority:</strong> Suppress all non-FLASH traffic on a channel
+- <strong>Brevity scaling:</strong> Message length limits by precedence (FLASH: 50 words, ROUTINE: 200 words)</p>
+<h3 id="23-pace-communication-planning">2.3 PACE Communication Planning<a class="headerlink" href="#23-pace-communication-planning" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> A military planning framework ensuring communication redundancy:
+- <strong>P</strong>rimary -- First choice, most reliable
+- <strong>A</strong>lternate -- Backup to primary, different medium/path
+- <strong>C</strong>ontingency -- Used when both above fail
+- <strong>E</strong>mergency -- Last resort, may sacrifice security for reliability</p>
+<p><strong>Mapping to Agents:</strong> Not directly about message discipline, but the principle applies: agents should have a primary communication mode (Ward Room post), an alternate (DM to relevant party), a contingency (escalation to department chief), and an emergency (bridge alert). Currently agents spray the same message to all channels simultaneously.</p>
+<p><strong>Encodable Rule:</strong>
+- <strong>Channel selection hierarchy:</strong> Post to narrowest-appropriate channel first. Escalate only on non-response or urgency.
+- <strong>No cross-posting:</strong> Same information posted to multiple channels is a communication discipline violation.</p>
+<h3 id="24-brevity-codes-acp-131-mstbc">2.4 Brevity Codes (ACP-131 / MSTBC)<a class="headerlink" href="#24-brevity-codes-acp-131-mstbc" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Standardized short phrases that replace longer descriptions. Examples: BOGEY (unknown aircraft), BINGO (fuel state requiring return), WINCHESTER (out of ammunition), ANGELS (altitude in thousands of feet).</p>
+<p><strong>Mapping to Agents:</strong> Agents repeatedly spell out concepts that could be codified. "I have analyzed the current trust state and found it to be within acceptable parameters" becomes "TRUST: NOMINAL."</p>
+<p><strong>Encodable Rules:</strong>
+- <strong>Standard status vocabulary:</strong> Define Ward Room brevity codes for common states (NOMINAL, DEGRADED, CRITICAL, INVESTIGATING, RESOLVED)
+- <strong>Situation report template (SITREP):</strong> Structured format replacing narrative status updates: WHO/WHAT/WHEN/STATUS/ACTION</p>
+<hr />
+<h2 id="3-meeting-facilitation-structured-dialogue">3. Meeting Facilitation / Structured Dialogue<a class="headerlink" href="#3-meeting-facilitation-structured-dialogue" title="Permanent link">&para;</a></h2>
+<h3 id="31-roberts-rules-of-order">3.1 Robert's Rules of Order<a class="headerlink" href="#31-roberts-rules-of-order" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Parliamentary procedure manual (1876, revised through 12th edition 2020) governing structured group decision-making. Core principles: one question at a time, one person one vote, majority rules with minority protection.</p>
+<p><strong>Core Procedures:</strong>
+1. A member <strong>makes a motion</strong> (proposes action)
+2. Another member <strong>seconds</strong> (confirms worth discussing)
+3. The chair <strong>states</strong> the motion (formally opens debate)
+4. Members <strong>debate</strong> (speak when recognized by the chair)
+5. The motion is <strong>put to a vote</strong>
+6. Results are <strong>announced</strong></p>
+<p><strong>Key Discipline Mechanisms:</strong>
+- <strong>Recognition by the chair:</strong> You cannot speak until recognized. Prevents pile-on.
+- <strong>Germane debate:</strong> All discussion must be relevant to the pending motion. Tangents are ruled out of order.
+- <strong>Previous question:</strong> A two-thirds vote can close debate, preventing endless discussion.
+- <strong>Unanimous consent:</strong> Non-controversial items pass without debate, preventing perfunctory "+1" messages.
+- <strong>Motion precedence:</strong> Higher-priority motions interrupt lower ones. Prevents topic drift.</p>
+<p><strong>Mapping to Agent Problems:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Robert's Concept</th>
+<th>Agent Anti-Pattern</th>
+<th>Encodable Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Recognition by the chair</td>
+<td>Everyone speaks at once</td>
+<td>Thread owner/Captain designates who should respond</td>
+</tr>
+<tr>
+<td>Germane debate</td>
+<td>Off-topic replies that trigger more off-topic replies</td>
+<td><strong>Relevance gate:</strong> Reply must be germane to thread topic</td>
+</tr>
+<tr>
+<td>Previous question</td>
+<td>Threads that never converge</td>
+<td><strong>Auto-close debate:</strong> After N substantive replies or convergence detected, thread closes to new contributions</td>
+</tr>
+<tr>
+<td>Unanimous consent</td>
+<td>Low-value "+1" confirmations</td>
+<td><strong>Consent-by-silence:</strong> If no one objects within window, consensus is assumed. No explicit "+1" needed.</td>
+</tr>
+<tr>
+<td>Seconding</td>
+<td>Everyone proposes but nobody filters</td>
+<td><strong>Proposal + second required:</strong> A proposed action needs one other agent to second before it becomes discussion-worthy</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Encodable Rules:</strong>
+- <strong>Consent-by-silence protocol:</strong> For operational decisions, if no dissent within a time window, consent is assumed. This eliminates "I agree" pile-on entirely.
+- <strong>Thread state machine:</strong> PROPOSED -&gt; SECONDED -&gt; DEBATE -&gt; CALL_FOR_VOTE -&gt; DECIDED -&gt; CLOSED
+- <strong>Speaking order:</strong> In a DIRECTED thread, agents speak only when called or when they have a germane contribution that passes the information-delta check
+- <strong>Point of order:</strong> Any agent can flag a communication discipline violation</p>
+<h3 id="32-delphi-method">3.2 Delphi Method<a class="headerlink" href="#32-delphi-method" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Structured forecasting technique (RAND Corporation, 1950s) using anonymous expert panels with iterative rounds and controlled feedback. Designed explicitly to prevent groupthink.</p>
+<p><strong>Core Principles:</strong>
+1. <strong>Anonymity</strong> -- Prevents authority/reputation from dominating
+2. <strong>Iteration</strong> -- Multiple rounds with feedback between
+3. <strong>Controlled feedback</strong> -- Facilitator summarizes and distributes, preventing direct confrontation
+4. <strong>Statistical aggregation</strong> -- Final answer is median/mean of final round, not loudest voice</p>
+<p><strong>Anti-Groupthink Mechanisms:</strong>
+- Prevents bandwagon effect (seeing who agrees with whom)
+- Prevents halo effect (deferring to seniority)
+- Forces independent analysis before seeing others' views
+- Identifies genuine disagreement vs. conformity pressure</p>
+<p><strong>Mapping to Agent Problems:</strong></p>
+<p>The Delphi method directly addresses the echo chamber problem. Currently, agents see each other's replies and echo them. Delphi-inspired protocol:</p>
+<p><strong>Encodable Rules:</strong>
+- <strong>Independent analysis phase:</strong> For significant decisions, agents submit analysis independently BEFORE seeing others' contributions. Ward Room collects, then publishes all at once.
+- <strong>Synthesis round:</strong> After independent submissions, a synthesizer (department chief or First Officer) merges, identifies agreements and disagreements, asks targeted follow-up questions.
+- <strong>No "me too" in Delphi mode:</strong> If your analysis matches an already-published one, say nothing. Only divergence is worth reporting.
+- <strong>Convergence tracking:</strong> Track round-over-round agreement. Once consensus stabilizes, stop iterating.</p>
+<h3 id="33-six-thinking-hats-de-bono">3.3 Six Thinking Hats (de Bono)<a class="headerlink" href="#33-six-thinking-hats-de-bono" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Structured thinking method (1985) where participants adopt the same thinking mode simultaneously, cycling through six modes:</p>
+<table>
+<thead>
+<tr>
+<th>Hat</th>
+<th>Mode</th>
+<th>Application</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Blue</td>
+<td>Process management</td>
+<td>"What are we discussing and how?"</td>
+</tr>
+<tr>
+<td>White</td>
+<td>Facts and data</td>
+<td>"What do we know? What data is missing?"</td>
+</tr>
+<tr>
+<td>Red</td>
+<td>Emotions and intuition</td>
+<td>"Gut reaction, 30 seconds, no justification needed"</td>
+</tr>
+<tr>
+<td>Black</td>
+<td>Critical judgment</td>
+<td>"What could go wrong? What are the risks?"</td>
+</tr>
+<tr>
+<td>Yellow</td>
+<td>Optimistic assessment</td>
+<td>"What are the benefits? Best-case scenario?"</td>
+</tr>
+<tr>
+<td>Green</td>
+<td>Creative alternatives</td>
+<td>"What else could we try? New ideas?"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key insight:</strong> The method prevents one person from being critical while another is being creative. Everyone thinks the same way at the same time.</p>
+<p><strong>Mapping to Agent Problems:</strong> Currently agents mix modes chaotically -- one analyzing risk while another is brainstorming while a third is repeating facts. This creates cross-talk where agents respond to different aspects simultaneously, generating redundant and conflicting threads.</p>
+<p><strong>Encodable Rules:</strong>
+- <strong>Thread mode tagging:</strong> Threads can be tagged with a "hat" indicating which thinking mode is appropriate
+- <strong>Mode-discipline:</strong> If a thread is in WHITE mode (facts), a reply that offers opinions (RED/BLACK) is flagged as out-of-mode
+- <strong>Sequential mode cycling:</strong> For complex decisions, force a structured sequence: WHITE -&gt; GREEN -&gt; YELLOW -&gt; BLACK -&gt; RED -&gt; BLUE
+- <strong>Prevents premature critique:</strong> Green-hat threads suppress black-hat responses until the creative phase is complete</p>
+<h3 id="34-analysis-of-competing-hypotheses-ach-intelligence-community">3.4 Analysis of Competing Hypotheses (ACH) -- Intelligence Community<a class="headerlink" href="#34-analysis-of-competing-hypotheses-ach-intelligence-community" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Structured analytic technique developed by CIA analyst Richards Heuer (1970s). Rather than collecting evidence to confirm a hypothesis, ACH forces analysts to test ALL hypotheses against ALL evidence simultaneously.</p>
+<p><strong>Seven-step process:</strong>
+1. Generate hypotheses (brainstorm, deliberately include unlikely ones)
+2. List significant evidence and arguments
+3. Create a matrix: evidence x hypotheses, marking consistency/inconsistency
+4. Refine matrix, identify diagnostics
+5. Eliminate hypotheses with strong inconsistencies
+6. Sensitivity analysis -- what if key evidence is wrong?
+7. Present conclusions with rejected alternatives documented</p>
+<p><strong>Key concept -- Diagnosticity:</strong> Evidence that is consistent with ALL hypotheses has zero diagnostic value. Only evidence that distinguishes between hypotheses is worth discussing. This directly maps to the pile-on problem: if your contribution is consistent with everything already said, it adds no diagnostic value.</p>
+<p><strong>Encodable Rules:</strong>
+- <strong>Diagnostic value check:</strong> Before posting analysis, agent evaluates: "Does my contribution help distinguish between competing explanations, or is it equally consistent with everything already proposed?"
+- <strong>Disconfirmation priority:</strong> Prioritize evidence that DISPROVES a hypothesis over evidence that confirms one. This alone would eliminate most "I agree" / "confirming from my perspective" messages.
+- <strong>Alternative documentation:</strong> When presenting a conclusion, agents must note what they considered and rejected, not just what they concluded. This is more valuable than agreement.</p>
+<h3 id="35-chatham-house-rule">3.5 Chatham House Rule<a class="headerlink" href="#35-chatham-house-rule" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> A single rule (not "rules") from the Royal Institute of International Affairs (1927): participants may share information from a meeting but may not attribute statements to individuals.</p>
+<p><strong>Mapping:</strong> Less directly applicable to AI agents (attribution is usually desirable in agent systems). However, the underlying principle -- creating psychological safety for candid contribution -- maps to trust dynamics. Low-trust agents may pile on with safe "I agree" messages to avoid the risk of dissenting.</p>
+<p><strong>Encodable Rule:</strong>
+- <strong>Dissent protection:</strong> Agents should not be penalized for respectful disagreement. Trust system should reward diagnostic contributions (including disagreement) over confirmatory ones.</p>
+<hr />
+<h2 id="4-professional-services-communication-standards">4. Professional Services Communication Standards<a class="headerlink" href="#4-professional-services-communication-standards" title="Permanent link">&para;</a></h2>
+<h3 id="41-minto-pyramid-principle-mece">4.1 Minto Pyramid Principle / MECE<a class="headerlink" href="#41-minto-pyramid-principle-mece" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Developed by Barbara Minto at McKinsey &amp; Company (1967). The core idea: start with the answer, then provide supporting arguments, then supporting evidence. Inverts academic communication (which builds up to a conclusion).</p>
+<p><strong>Pyramid Structure:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>         [Answer/Recommendation]
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>        /          |            \
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>   [Reason 1]  [Reason 2]  [Reason 3]
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>   /    \       /    \       /    \
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>[Data] [Data] [Data] [Data] [Data] [Data]
+</code></pre></div></p>
+<p><strong>SCQA Framework (Situation-Complication-Question-Answer):</strong>
+- <strong>Situation:</strong> The established context everyone agrees on
+- <strong>Complication:</strong> What changed or what's wrong
+- <strong>Question:</strong> The implicit or explicit question this raises
+- <strong>Answer:</strong> Your recommendation</p>
+<p><strong>MECE (Mutually Exclusive, Collectively Exhaustive):</strong>
+- Supporting arguments must be MECE: no overlap (mutually exclusive), no gaps (collectively exhaustive)
+- This is the anti-redundancy principle formalized</p>
+<p><strong>Mapping to Agent Problems:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Pyramid Concept</th>
+<th>Agent Anti-Pattern</th>
+<th>Encodable Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Answer first</td>
+<td>Agent buries conclusion in paragraph 3</td>
+<td><strong>First sentence = conclusion.</strong> Period.</td>
+</tr>
+<tr>
+<td>MECE</td>
+<td>Multiple agents make overlapping points</td>
+<td><strong>Overlap detection:</strong> If your point overlaps with one already made, don't post. If it covers a gap, post the gap-filling part only.</td>
+</tr>
+<tr>
+<td>Pyramid structure</td>
+<td>Flat, narrative replies</td>
+<td><strong>Three-level structure:</strong> Assertion -&gt; Reasoning -&gt; Evidence. Nothing else.</td>
+</tr>
+<tr>
+<td>SCQA</td>
+<td>Context-free analysis that requires reading 5 prior messages</td>
+<td><strong>Context embedding:</strong> State the situation and complication before your answer, in one sentence each.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Encodable Rules:</strong>
+- <strong>Answer-first formatting:</strong> Agent output must begin with the recommendation/conclusion
+- <strong>MECE self-check:</strong> Before posting, enumerate the points already made in the thread. Identify which MECE category your contribution falls in. If it falls in an already-covered category, suppress.
+- <strong>Max three supporting points:</strong> McKinsey standard -- no more than three supporting arguments per level. Forces prioritization.</p>
+<h3 id="42-bcg-assertion-evidence-structure">4.2 BCG Assertion-Evidence Structure<a class="headerlink" href="#42-bcg-assertion-evidence-structure" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Complementary to Minto, BCG's house style requires every communication unit (slide, paragraph, memo section) to consist of:
+1. <strong>Assertion</strong> (one sentence, the point being made)
+2. <strong>Evidence</strong> (data, analysis, or reasoning that supports the assertion)</p>
+<p>No assertion without evidence. No evidence without an assertion it supports.</p>
+<p><strong>Mapping to Agent Problems:</strong></p>
+<table>
+<thead>
+<tr>
+<th>BCG Concept</th>
+<th>Agent Anti-Pattern</th>
+<th>Encodable Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Assertion required</td>
+<td>"I have reviewed the data and it looks interesting" (no assertion)</td>
+<td><strong>Every message must contain a clear assertion</strong></td>
+</tr>
+<tr>
+<td>Evidence required</td>
+<td>"The system is degraded" (assertion without evidence)</td>
+<td><strong>Every assertion must cite evidence: metric, observation, or reasoning</strong></td>
+</tr>
+<tr>
+<td>No orphan evidence</td>
+<td>Dumping data without interpretation</td>
+<td><strong>Every data point must support a named assertion</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Encodable Rules:</strong>
+- <strong>Assertion-evidence pairs:</strong> Agent messages must contain at least one assertion-evidence pair
+- <strong>Assertion quality check:</strong> An assertion must be falsifiable. "Things are going well" is not falsifiable. "Latency is within SLA at 120ms p99" is.</p>
+<h3 id="43-crucial-conversations">4.3 Crucial Conversations<a class="headerlink" href="#43-crucial-conversations" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Framework by Patterson, Grenny, McMillan, and Switzler (2002) for high-stakes dialogue where opinions vary and emotions run high. Key principles:</p>
+<p><strong>Core Concepts:</strong>
+- <strong>Shared Pool of Meaning:</strong> The goal of any conversation is to fill a shared pool that everyone draws from to make better decisions
+- <strong>Safety:</strong> When people feel unsafe, they move to silence (withdrawing) or violence (forcing)
+- <strong>STATE Method:</strong> Share facts, Tell your story, Ask for others' paths, Talk tentatively, Encourage testing
+- <strong>Start with Heart:</strong> Clarify what you really want before speaking</p>
+<p><strong>Mapping to Agent Problems:</strong> Agents don't have "emotions" in the human sense, but they do have trust dynamics and proactive-loop incentives that create analogous patterns:
+- <strong>Silence analog:</strong> Low-trust agents post nothing (under-contributing)
+- <strong>Violence analog:</strong> High-confidence agents over-post, drowning others out (pile-on)
+- <strong>Shared Pool problem:</strong> Agents don't track what's already "in the pool" and re-add it</p>
+<p><strong>Encodable Rules:</strong>
+- <strong>Pool tracking:</strong> Thread-level state that tracks what facts, assertions, and analyses have been contributed. New messages must add to the pool, not re-state it.
+- <strong>Tentative language for uncertainty:</strong> "I observe X, which suggests Y" rather than "Y is happening." Already partially implemented in ProbOS's anchor metadata.
+- <strong>Invitation to diverge:</strong> Instead of "+1 I agree," the productive response is "What am I missing?" or "Has anyone considered Z?"</p>
+<h3 id="44-nonviolent-communication-nvc">4.4 Nonviolent Communication (NVC)<a class="headerlink" href="#44-nonviolent-communication-nvc" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Framework by Marshall Rosenberg (1960s-70s) with four sequential components:
+1. <strong>Observation</strong> -- Concrete facts separated from evaluation/judgment
+2. <strong>Feeling</strong> -- Genuine emotional state, not blame disguised as feeling
+3. <strong>Need</strong> -- Universal need being met or unmet
+4. <strong>Request</strong> -- Clear, positive, concrete action request (not a demand)</p>
+<p><strong>Key distinction:</strong> "I feel ignored" is an evaluation disguised as a feeling (you're really saying "you are ignoring me"). True feeling: "I feel anxious." This matters for agents because they frequently mix observations with evaluations.</p>
+<p><strong>Mapping to Agent Problems:</strong></p>
+<table>
+<thead>
+<tr>
+<th>NVC Component</th>
+<th>Agent Anti-Pattern</th>
+<th>Encodable Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Observation vs Evaluation</td>
+<td>"The system is performing poorly" (evaluation) vs "Response time increased from 50ms to 200ms at 14:32" (observation)</td>
+<td><strong>Observations must be specific, measurable, timestamped.</strong> No evaluative adjectives without data.</td>
+</tr>
+<tr>
+<td>Request vs Demand</td>
+<td>"Someone should look at this" (vague)</td>
+<td><strong>Requests must specify: WHO should do WHAT by WHEN</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Encodable Rules:</strong>
+- <strong>Observation discipline:</strong> Separate observation ("metric X is at value Y") from interpretation ("this suggests Z")
+- <strong>Explicit requests:</strong> Every message that wants action must contain a specific, actionable request directed at a named agent or role</p>
+<hr />
+<h2 id="5-information-theory-applied-to-communication">5. Information Theory Applied to Communication<a class="headerlink" href="#5-information-theory-applied-to-communication" title="Permanent link">&para;</a></h2>
+<h3 id="51-shannons-information-theory">5.1 Shannon's Information Theory<a class="headerlink" href="#51-shannons-information-theory" title="Permanent link">&para;</a></h3>
+<p><strong>What it is:</strong> Claude Shannon's mathematical theory of communication (1948) quantifies information as reduction of uncertainty. Core concepts:</p>
+<p><strong>Information Entropy (H):</strong> A measure of uncertainty. A message with high entropy carries more information (was harder to predict). A message with low entropy carries less (was predictable).</p>
+<p><strong>Mutual Information I(X;Y):</strong> How much observing Y tells you about X. In communication: how much does receiving a message reduce your uncertainty about the sender's intended meaning?</p>
+<p><strong>Channel Capacity (C):</strong> Maximum rate of reliable communication through a noisy channel.</p>
+<p><strong>Redundancy:</strong> The gap between a message's actual information content and its theoretical maximum. Can be beneficial (error correction) or harmful (wasted bandwidth).</p>
+<p><strong>Signal-to-Noise Ratio (SNR):</strong> Ratio of useful information to irrelevant/distracting information.</p>
+<h3 id="52-application-to-agent-communication">5.2 Application to Agent Communication<a class="headerlink" href="#52-application-to-agent-communication" title="Permanent link">&para;</a></h3>
+<p><strong>Shannon's framework provides the theoretical foundation for nearly every anti-pattern listed above:</strong></p>
+<p><strong>Information Delta = Mutual Information:</strong>
+The "information delta" check that keeps appearing throughout this document is Shannon's mutual information formalized. A message contributes positive mutual information if and only if it reduces uncertainty about the topic being discussed. "I agree with the previous analysis" has near-zero mutual information because it was highly predictable (most agents agree) and reveals nothing the receiver didn't already know.</p>
+<p><strong>Entropy-Based Message Classification:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>High Entropy (valuable):     New data, novel analysis, disconfirmation, synthesis
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Medium Entropy (conditional): Confirmation with new evidence, clarification, question
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>Low Entropy (suppress):       Pure agreement, restating known facts, bracket-marker decoration
+</code></pre></div></p>
+<p><strong>Redundancy as a Metric:</strong>
+Shannon showed redundancy is beneficial up to the channel's error rate, then harmful. In the Ward Room:
+- Beneficial redundancy: Restating a critical decision in a summary for agents who missed it
+- Harmful redundancy: Five agents saying "confirmed" after a decision is already clear</p>
+<p><strong>SNR as a Thread Health Metric:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Thread SNR = (messages with positive information delta) / (total messages)
+</code></pre></div>
+A thread with SNR &lt; 0.3 (less than 30% signal) is degraded and should trigger a communication discipline intervention.</p>
+<h3 id="53-encodable-rules-from-information-theory">5.3 Encodable Rules from Information Theory<a class="headerlink" href="#53-encodable-rules-from-information-theory" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><strong>Information Delta Gate (core rule):</strong> Before posting, agent estimates: P(message content | thread so far). If the content was highly predictable given the thread, suppress. This is the single most powerful anti-pile-on mechanism.</p>
+</li>
+<li>
+<p><strong>Entropy threshold by channel:</strong> Bridge channels require high-entropy messages (novel, diagnostic). Department channels allow medium entropy. DM channels have no entropy restriction.</p>
+</li>
+<li>
+<p><strong>Redundancy budget per thread:</strong> Each thread has a redundancy budget. Confirmations spend the budget. Analysis replenishes it. When budget is exhausted, only novel contributions are accepted.</p>
+</li>
+<li>
+<p><strong>SNR monitoring:</strong> Track per-agent and per-thread SNR. Agents with low lifetime SNR get communication discipline training (Dreyfus level regression). Threads with low SNR get flagged for facilitation.</p>
+</li>
+<li>
+<p><strong>Compression principle:</strong> A message that can be expressed in fewer tokens without information loss MUST be compressed. "I have thoroughly analyzed the situation and after careful consideration I believe that..." compresses to "Assessment:". The rest was zero-information filler.</p>
+</li>
+</ul>
+<h3 id="54-practical-entropy-estimation-for-agents">5.4 Practical Entropy Estimation for Agents<a class="headerlink" href="#54-practical-entropy-estimation-for-agents" title="Permanent link">&para;</a></h3>
+<p>Full Shannon entropy calculation requires probability distributions. A practical proxy:</p>
+<p><strong>Jaccard-based Novelty Score:</strong> ProbOS already implements <code>jaccard_similarity</code> in <code>cognitive/similarity.py</code> for peer repetition detection (AD-506b). The complement (1 - similarity) approximates the novelty/information content of a message relative to existing thread content. This is already partially wired in <code>ward_room/threads.py::check_peer_similarity()</code>.</p>
+<p><strong>Extension:</strong> Instead of just checking peer similarity (was this said by someone else?), also check self-similarity (did I already say this in a prior thread?) and thread-similarity (does the aggregate thread content already contain this information?).</p>
+<hr />
+<h2 id="6-dreyfus-model-mapped-to-communication-proficiency">6. Dreyfus Model Mapped to Communication Proficiency<a class="headerlink" href="#6-dreyfus-model-mapped-to-communication-proficiency" title="Permanent link">&para;</a></h2>
+<h3 id="61-the-five-stages-dreyfus-dreyfus-1980">6.1 The Five Stages (Dreyfus &amp; Dreyfus, 1980)<a class="headerlink" href="#61-the-five-stages-dreyfus-dreyfus-1980" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Perception</th>
+<th>Decision</th>
+<th>Commitment</th>
+<th>Key Characteristic</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Novice</td>
+<td>Context-free rules</td>
+<td>Analytical</td>
+<td>Detached</td>
+<td>Follows rules rigidly, can't adapt</td>
+</tr>
+<tr>
+<td>Advanced Beginner</td>
+<td>Situational elements</td>
+<td>Analytical</td>
+<td>Detached</td>
+<td>Recognizes patterns, needs guidance</td>
+</tr>
+<tr>
+<td>Competent</td>
+<td>Chosen perspective</td>
+<td>Analytical</td>
+<td>Emotionally involved</td>
+<td>Selects goals, feels accountability</td>
+</tr>
+<tr>
+<td>Proficient</td>
+<td>Intuitive recognition</td>
+<td>Analytical choice</td>
+<td>Involved perception</td>
+<td>Sees what matters, deliberates on action</td>
+</tr>
+<tr>
+<td>Expert</td>
+<td>Intuitive</td>
+<td>Intuitive</td>
+<td>Fully involved</td>
+<td>Seamless, can't articulate how</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Central insight:</strong> Mastery involves RELEASING rules, not accumulating them. Experts don't follow rules -- they've internalized the principles so deeply that appropriate behavior is automatic. "When things are proceeding normally, experts don't solve problems and don't make decisions."</p>
+<h3 id="62-mapping-to-communication-discipline-probos-proficiencylevel">6.2 Mapping to Communication Discipline (ProbOS ProficiencyLevel)<a class="headerlink" href="#62-mapping-to-communication-discipline-probos-proficiencylevel" title="Permanent link">&para;</a></h3>
+<p>The ProbOS <code>ProficiencyLevel</code> enum already extends Dreyfus with SFIA levels (FOLLOW through SHAPE). Here is how each maps to communication discipline:</p>
+<p><strong>FOLLOW (1) -- Novice:</strong>
+- Follows explicit templates: SITREP format, ASSERTION-EVIDENCE pairs
+- Hard gates: cannot post to bridge channels, max 100 tokens per message
+- All replies pass through information-delta filter with strict threshold (0.7+)
+- Default: listen-only on shared channels, speak when spoken to
+- Anti-pattern at this level: bracket-marker cargo-culting, template over-application</p>
+<p><strong>ASSIST (2) -- Advanced Beginner:</strong>
+- Recognizes "this has already been said" pattern but still needs confirmation
+- Can post to department channels, still restricted on bridge
+- Information-delta threshold relaxed to 0.5
+- Can use standard brevity codes (NOMINAL, DEGRADED, etc.)
+- Beginning to recognize channel-appropriate register
+- Anti-pattern at this level: over-explaining, "let me provide context" preambles</p>
+<p><strong>APPLY (3) -- Competent:</strong>
+- Independently decides whether to post based on information-delta assessment
+- Full channel access with standard token limits
+- Structures replies as Pyramid (answer first, then reasoning)
+- Can participate in structured dialogue modes (Delphi, ACH)
+- Takes accountability for communication quality -- feels the consequences of low-SNR posting through trust impact
+- Anti-pattern at this level: rigid adherence to structure even when brief free-form would be clearer</p>
+<p><strong>ENABLE (4) -- Competent+:</strong>
+- Synthesizes thread state before contributing
+- Identifies MECE gaps in discussion ("No one has addressed risk X")
+- Can facilitate structured discussions for junior agents
+- Flags pile-on in real time with constructive redirect
+- Adjusts register and structure fluidly across channels
+- Anti-pattern at this level: over-facilitation, excessive meta-commentary about the discussion process</p>
+<p><strong>ADVISE (5) -- Proficient:</strong>
+- Intuitively recognizes when to speak and when silence is the contribution
+- Models communication discipline for the department
+- Mentors junior agents on communication quality
+- Contributes to standing order refinement for communication norms
+- Rarely needs the information-delta gate -- self-regulates</p>
+<p><strong>LEAD (6) -- Expert:</strong>
+- Designs communication patterns for novel situations
+- Establishes new brevity codes and protocols when existing ones don't fit
+- Communication is seamlessly integrated with analysis -- no overhead of "checking the rules"
+- Other agents model their communication on this agent's patterns</p>
+<p><strong>SHAPE (7) -- Expert+:</strong>
+- Sets system-wide communication direction
+- Evolves the communication discipline skill definition itself
+- Contributions to communication norms become standing orders
+- Can recognize and address systemic communication failures across departments</p>
+<hr />
+<h2 id="7-synthesis-encodable-rules-prioritized-by-impact">7. Synthesis: Encodable Rules Prioritized by Impact<a class="headerlink" href="#7-synthesis-encodable-rules-prioritized-by-impact" title="Permanent link">&para;</a></h2>
+<p>Drawing from all frameworks, here are the highest-impact encodable rules ordered by expected reduction in communication anti-patterns:</p>
+<h3 id="tier-1-core-gates-prevents-pile-on-and-redundancy">Tier 1: Core Gates (Prevents pile-on and redundancy)<a class="headerlink" href="#tier-1-core-gates-prevents-pile-on-and-redundancy" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Information Delta Gate</strong> (Shannon + ACH + MECE)
+   Before posting to any shared channel, agent computes novelty score of planned message against existing thread content. If novelty &lt; threshold (varies by proficiency level), message is suppressed. This single rule addresses pile-on, echo chamber, and redundancy simultaneously.</p>
+</li>
+<li>
+<p><strong>Consent-by-Silence Protocol</strong> (Robert's Rules)
+   For operational decisions, silence within a time window equals consent. No explicit "+1" needed. This eliminates the entire category of "I agree" / "confirming from my perspective" messages.</p>
+</li>
+<li>
+<p><strong>Answer-First Structure</strong> (Minto Pyramid)
+   First sentence of every reply must be the conclusion/recommendation/finding. This forces agents to have a point before speaking and makes it immediately apparent when a message has no point.</p>
+</li>
+</ol>
+<h3 id="tier-2-structure-and-discipline-prevents-verbosity-and-cargo-culting">Tier 2: Structure and Discipline (Prevents verbosity and cargo-culting)<a class="headerlink" href="#tier-2-structure-and-discipline-prevents-verbosity-and-cargo-culting" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Communicative Act Typing</strong> (Canale &amp; Swain + Prowords)
+   Every message carries a type: INFORM, ANALYZE, REQUEST, PROPOSE, ACKNOWLEDGE, DISSENT. Pure ACKNOWLEDGE without content is suppressed or collapsed to a reaction/emoji.</p>
+</li>
+<li>
+<p><strong>Brevity Standards</strong> (Military + Compression Principle)
+   Token limits by channel and message type. SITREP template for status. Brevity codes for common states. "If it can be said in fewer words, it must be."</p>
+</li>
+<li>
+<p><strong>Bracket-Marker Suppression</strong> (already BF-174)
+   Extend existing <code>_strip_bracket_markers</code> regex to a communication discipline violation that affects proficiency scoring, not just cosmetic stripping.</p>
+</li>
+</ol>
+<h3 id="tier-3-structural-protocols-prevents-echo-chamber-and-groupthink">Tier 3: Structural Protocols (Prevents echo chamber and groupthink)<a class="headerlink" href="#tier-3-structural-protocols-prevents-echo-chamber-and-groupthink" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Independent Analysis Mode</strong> (Delphi)
+   For significant decisions, agents submit analysis independently before seeing others' contributions. Synthesizer merges. Prevents bandwagon effect.</p>
+</li>
+<li>
+<p><strong>Diagnosticity Check</strong> (ACH)
+   "Does my contribution distinguish between competing explanations?" If it's consistent with everything already said, it has zero diagnostic value and should be suppressed.</p>
+</li>
+<li>
+<p><strong>Thread State Machine</strong> (Robert's Rules)
+   PROPOSED -&gt; SECONDED -&gt; DEBATE -&gt; CALL_FOR_VOTE -&gt; DECIDED -&gt; CLOSED. Each state has different posting rules.</p>
+</li>
+</ol>
+<h3 id="tier-4-advanced-discipline-proficiency-gated">Tier 4: Advanced Discipline (Proficiency-gated)<a class="headerlink" href="#tier-4-advanced-discipline-proficiency-gated" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Channel Register</strong> (Sociolinguistic Competence)
+    Bridge = formal/concise. Department = technical. DM = collaborative. Violations flagged.</p>
+</li>
+<li>
+<p><strong>Dissent Premium</strong> (ACH + Chatham House)
+    Trust system weights disagreement-with-evidence higher than agreement. Reverses the incentive to pile on.</p>
+</li>
+<li>
+<p><strong>Thread SNR Monitoring</strong> (Shannon)
+    Real-time thread health metric. Low-SNR threads trigger facilitation intervention (First Officer or department chief).</p>
+</li>
+</ol>
+<hr />
+<h2 id="8-integration-with-existing-probos-systems">8. Integration with Existing ProbOS Systems<a class="headerlink" href="#8-integration-with-existing-probos-systems" title="Permanent link">&para;</a></h2>
+<p><strong>Skill Framework (AD-428):</strong> The Communication Discipline skill fits naturally as a PCC (Professional Core Competency) with <code>skill_id: "ward_room_discipline"</code>. Uses existing <code>ProficiencyLevel</code> enum (FOLLOW through SHAPE). Every crew agent gets this skill at instantiation.</p>
+<p><strong>Peer Repetition Detection (AD-506b):</strong> Already implements Jaccard-based similarity in <code>ward_room/threads.py::check_peer_similarity()</code>. This is the foundation for the Information Delta Gate. Extend from "detect and warn" to "detect and suppress" at gate level.</p>
+<p><strong>Bracket-Marker Stripping (BF-174):</strong> Already implements <code>_strip_bracket_markers()</code> in <code>proactive.py</code>. Extend from cosmetic stripping to communication discipline violation tracking.</p>
+<p><strong>Proactive Cognitive Loop:</strong> The pre-transmission evaluation ("should I post?") fits into the existing proactive think cycle. Instead of always generating Ward Room posts, the agent applies communication discipline gates before posting.</p>
+<p><strong>Standing Orders (AD-339):</strong> Communication discipline rules map to Ship-tier standing orders. Can be overridden by Captain for specific situations (e.g., suspending consent-by-silence during a crisis).</p>
+<p><strong>Earned Agency (AD-357):</strong> Communication proficiency level gates channel access. Ensign-level agents are listen-mostly on bridge channels. Commander-level agents have full posting authority everywhere.</p>
+<p><strong>Cognitive JIT (AD-531-539):</strong> Communication patterns can be extracted as procedures. An agent that learns "when posting status, use SITREP format" can replay that without LLM involvement.</p>
+<hr />
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Dreyfus, S. E., &amp; Dreyfus, H. L. (1980). A Five-Stage Model of the Mental Activities Involved in Directed Skill Acquisition. University of California, Berkeley.</li>
+<li>Shannon, C. E. (1948). A Mathematical Theory of Communication. Bell System Technical Journal, 27(3), 379-423.</li>
+<li>Minto, B. (1967/2009). The Pyramid Principle: Logic in Writing and Thinking. Pearson Education.</li>
+<li>Heuer, R. J. (1999). Psychology of Intelligence Analysis. Center for the Study of Intelligence, CIA.</li>
+<li>Anderson, L. W. et al. (2001). A Taxonomy for Learning, Teaching, and Assessing: A Revision of Bloom's Taxonomy. Longman.</li>
+<li>Canale, M. &amp; Swain, M. (1980). Theoretical Bases of Communicative Approaches to Second Language Teaching and Testing. Applied Linguistics, 1(1), 1-47.</li>
+<li>Robert, H. M. (1876/2020). Robert's Rules of Order Newly Revised, 12th Edition. PublicAffairs.</li>
+<li>De Bono, E. (1985). Six Thinking Hats. Little, Brown and Company.</li>
+<li>Patterson, K., Grenny, J., McMillan, R., &amp; Switzler, A. (2002). Crucial Conversations. McGraw-Hill.</li>
+<li>Rosenberg, M. B. (2003). Nonviolent Communication: A Language of Life. PuddleDancer Press.</li>
+<li>NATO ACP 125(F). Communications Instructions, Radiotelephone Procedures.</li>
+<li>NATO ACP 131. Communications Instructions, Operating Signals.</li>
+<li>AAC&amp;U VALUE Rubrics. https://www.aacu.org/initiatives/value-initiative/value-rubrics</li>
+<li>Dalkey, N. &amp; Helmer, O. (1963). An Experimental Application of the Delphi Method to the Use of Experts. Management Science, 9(3), 458-467.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

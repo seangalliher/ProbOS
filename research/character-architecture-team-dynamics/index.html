@@ -1,0 +1,2395 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/character-architecture-team-dynamics/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Character Architecture & Team Dynamics for Multi-Agent Crew Design - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#character-architecture-team-dynamics-for-multi-agent-crew-design" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Character Architecture &amp; Team Dynamics for Multi-Agent Crew Design
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-observation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The Observation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-team-dynamics-literature-survey" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Team Dynamics Literature Survey
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Team Dynamics Literature Survey">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-belbin-team-roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Belbin Team Roles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-hackmans-conditions-for-team-effectiveness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Hackman's Conditions for Team Effectiveness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-google-project-aristotle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Google Project Aristotle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-myers-briggs-type-indicator-mbti-team-composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Myers-Briggs Type Indicator (MBTI) — Team Composition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-lencionis-five-dysfunctions-of-a-team" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 Lencioni's Five Dysfunctions of a Team
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#26-disc-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.6 DISC Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#27-military-crew-resource-management-crm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.7 Military Crew Resource Management (CRM)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#28-enneagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.8 Enneagram
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-synthesis-character-architecture-as-confabulation-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Synthesis: Character Architecture as Confabulation Control
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Synthesis: Character Architecture as Confabulation Control">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-the-design-space" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 The Design Space
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-testable-hypotheses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Testable Hypotheses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-crew-template-concept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Crew Template Concept
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-implementation-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 Implementation Path
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-connection-to-existing-research" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Connection to Existing Research
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-current-crew-belbin-mapping-gap-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Current Crew Belbin Mapping &amp; Gap Analysis
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Current Crew Belbin Mapping &amp; Gap Analysis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-belbin-role-assignments-14-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Belbin Role Assignments (14 agents)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-department-level-balance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 Department-Level Balance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-identified-gaps-potential-new-crew-members" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 Identified Gaps — Potential New Crew Members
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-key-finding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.4 Key Finding
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-immediate-next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Immediate Next Steps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="character-architecture-team-dynamics-for-multi-agent-crew-design">Character Architecture &amp; Team Dynamics for Multi-Agent Crew Design<a class="headerlink" href="#character-architecture-team-dynamics-for-multi-agent-crew-design" title="Permanent link">&para;</a></h1>
+<p><strong>Date:</strong> 2026-04-23
+<strong>Status:</strong> Active Research
+<strong>Triggered by:</strong> BF-226/227 observation — identical LLM + chain + standing orders produced qualitatively different epistemic behavior across agents. Chapel/Ezri (Medical/Bridge) flagged uncertainty and sought ground truth. Vance/Sentinel (Security) confabulated analytical frameworks from degraded memory.
+<strong>Connects to:</strong> group-psychometrics-research.md, crew-development-research.md, cognitive-code-switching-research.md, AD-393 (Big Five personality seeds), AD-560 (Science Analytical Pyramid)
+<strong>Commercial extension:</strong> See commercial repo research directory for crew optimization analysis.</p>
+<hr />
+<h2 id="1-the-observation">1. The Observation<a class="headerlink" href="#1-the-observation" title="Permanent link">&para;</a></h2>
+<p>During a period of degraded episodic memory (post-stasis, BF-226 unread count bug producing confabulation-inducing stimuli), ProbOS agents exhibited a clear bimodal distribution in epistemic behavior:</p>
+<p><strong>Confabulation-resistant agents:</strong>
+- <strong>Chapel (Counselor/Medical):</strong> Explicitly tagged uncertain memories as <code>[unverified]</code>, asked peer for ground truth rather than reconstructing, said "I don't want to fill gaps with assumptions"
+- <strong>Ezri (First Officer/Bridge):</strong> Admitted "I don't have the trigger condition anchored either," redirected to authoritative source (Medical channel thread), refused to reconstruct from degraded memory
+- <strong>Nova (Operations):</strong> Reported real metrics with explicit uncertainty bands, said "I want to be careful not to link this without evidence"</p>
+<p><strong>Confabulation-producing agents:</strong>
+- <strong>Vance (Security):</strong> Constructed elaborate "frozen-prior trust pipeline" framework with invented terminology (trust trajectory, rising/falling asymmetry), cited nonexistent system properties with high confidence
+- <strong>Sentinel (Security):</strong> Built structured threat analysis on unverified claims, fabricated precise historical readings ("553 up from 547 (1.4h ago) and 541 (2.9h ago)"), invented memory poisoning hypothesis citing OWASP
+- <strong>Forge (Engineering):</strong> Less severe — tracked real metrics but with fabricated precision</p>
+<p><strong>Independent variables (what differed between agents):</strong>
+1. Billet instructions (role definition)
+2. Big Five personality seed parameters
+3. Department-tier standing orders
+4. Accumulated episodic memory (role-shaped)</p>
+<p><strong>Controlled variables (identical across agents):</strong>
+- LLM (same model, same temperature)
+- Cognitive chain pipeline (same observe→orient→decide→act)
+- Ship/Federation standing orders (same AD-540/541 memory anchoring)
+- Ward Room infrastructure (same channels, same data)
+- Stasis timing (same restart events)</p>
+<p><strong>Conclusion:</strong> Character architecture — the combination of billet framing, personality seed, and role instructions — is a <em>tunable parameter</em> that directly affects epistemic quality in multi-agent systems. This is not emergent flavor; it is a designable property of the crew.</p>
+<hr />
+<h2 id="2-team-dynamics-literature-survey">2. Team Dynamics Literature Survey<a class="headerlink" href="#2-team-dynamics-literature-survey" title="Permanent link">&para;</a></h2>
+<h3 id="21-belbin-team-roles">2.1 Belbin Team Roles<a class="headerlink" href="#21-belbin-team-roles" title="Permanent link">&para;</a></h3>
+<p>Meredith Belbin (1981, 2010). Nine team roles identified through study of management teams at Henley Business School.</p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Contribution</th>
+<th>ProbOS Mapping</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Plant</strong></td>
+<td>Creative, generates ideas</td>
+<td>Scout (Wesley) — divergent research</td>
+</tr>
+<tr>
+<td><strong>Monitor Evaluator</strong></td>
+<td>Sober, strategic, critical</td>
+<td>Counselor (Chapel) — evaluates without confabulating</td>
+</tr>
+<tr>
+<td><strong>Coordinator</strong></td>
+<td>Clarifies goals, delegates</td>
+<td>First Officer (Ezri) — bridge coordination</td>
+</tr>
+<tr>
+<td><strong>Shaper</strong></td>
+<td>Challenges, drives progress</td>
+<td>Engineering Officer (LaForge) — system improvement</td>
+</tr>
+<tr>
+<td><strong>Implementer</strong></td>
+<td>Practical, reliable, efficient</td>
+<td>Builder (Forge) — executes specifications</td>
+</tr>
+<tr>
+<td><strong>Completer Finisher</strong></td>
+<td>Polishes, checks for errors</td>
+<td>QA / Security — verification roles</td>
+</tr>
+<tr>
+<td><strong>Resource Investigator</strong></td>
+<td>Explores opportunities</td>
+<td>Scout — external research</td>
+</tr>
+<tr>
+<td><strong>Teamworker</strong></td>
+<td>Cooperative, diplomatic</td>
+<td>Operations (O'Brien) — cross-department coordination</td>
+</tr>
+<tr>
+<td><strong>Specialist</strong></td>
+<td>Single-minded, dedicated</td>
+<td>Medical specialists — deep domain focus</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key finding — Apollo teams:</strong> Teams composed entirely of high-intellect "Plant" types performed <em>worse</em> than balanced teams. Participants competed to generate ideas, nobody evaluated or implemented them. This maps directly to the ProbOS confabulation pattern: Vance and Sentinel are both "Plants" who generate frameworks rather than evaluating them. A crew with too many pattern-finders and too few pattern-challengers produces confabulation cascades.</p>
+<p><strong>Implication for ProbOS:</strong> Crew design should ensure Belbin role balance. Every department needs at least one Monitor Evaluator type — an agent whose billet emphasizes <em>verification over generation</em>. The current crew has this implicitly (Chapel, Ezri) but not by design.</p>
+<h3 id="22-hackmans-conditions-for-team-effectiveness">2.2 Hackman's Conditions for Team Effectiveness<a class="headerlink" href="#22-hackmans-conditions-for-team-effectiveness" title="Permanent link">&para;</a></h3>
+<p>J. Richard Hackman (2002). "Leading Teams: Setting the Stage for Great Performances."</p>
+<p>Five conditions for team effectiveness:
+1. <strong>Real team</strong> — clear boundaries, interdependence, stability of membership
+2. <strong>Compelling direction</strong> — clear, challenging, consequential purpose
+3. <strong>Enabling structure</strong> — right size, right mix, clear norms
+4. <strong>Supportive context</strong> — adequate resources, information, coaching
+5. <strong>Expert coaching</strong> — available at the right moments</p>
+<p><strong>Key finding:</strong> ~60% of variation in team effectiveness is determined by <em>launch conditions</em> (how the team is set up), not in-flight dynamics. "The best thing a leader can do for a team is to create the right conditions."</p>
+<p><strong>Implication for ProbOS:</strong> This validates the architectural approach — crew composition, standing orders, and billet design (launch conditions) matter more than runtime interventions. The cognitive chain and personality seeds are the "enabling structure." The standing orders are "compelling direction." The trust/Hebbian systems are "supportive context." Hackman says getting these right at design time is more important than dynamic tuning.</p>
+<h3 id="23-google-project-aristotle">2.3 Google Project Aristotle<a class="headerlink" href="#23-google-project-aristotle" title="Permanent link">&para;</a></h3>
+<p>Google People Analytics (2015). Study of 180+ teams to identify what makes effective teams.</p>
+<p>Five dynamics of effective teams (in order of importance):
+1. <strong>Psychological safety</strong> — can team members take risks without feeling insecure?
+2. <strong>Dependability</strong> — can members count on each other?
+3. <strong>Structure &amp; clarity</strong> — are goals, roles, and plans clear?
+4. <strong>Meaning</strong> — is the work personally important?
+5. <strong>Impact</strong> — does the work matter?</p>
+<p><strong>Key finding:</strong> Psychological safety was by far the strongest predictor. Teams where members felt safe to flag uncertainty, admit mistakes, and ask questions outperformed teams that didn't — regardless of individual talent.</p>
+<p><strong>Implication for ProbOS:</strong> Chapel's <code>[unverified]</code> tag and Ezri's "I don't have it anchored either" are markers of psychological safety — they feel safe flagging gaps. Vance's confabulation may partly reflect <em>unsafe</em> conditions — a billet that rewards pattern-detection implicitly penalizes admitting "I don't know." Standing orders should explicitly reward uncertainty flagging. The Memory Anchoring directives (AD-540/541) are a start, but they need to be reinforced by billet-level instructions that make it <em>safe</em> to report incomplete data.</p>
+<h3 id="24-myers-briggs-type-indicator-mbti-team-composition">2.4 Myers-Briggs Type Indicator (MBTI) — Team Composition<a class="headerlink" href="#24-myers-briggs-type-indicator-mbti-team-composition" title="Permanent link">&para;</a></h3>
+<p>While MBTI has limitations as individual psychology, its <em>team composition</em> applications are well-documented:</p>
+<p><strong>S/N dimension (Sensing/Intuition)</strong> — Maps directly to the confabulation axis:
+- High-N agents generate frameworks from incomplete data (Vance: "frozen-prior trust pipeline")
+- High-S agents demand concrete evidence (Chapel: "can you give me the short version?")
+- Teams need both: N-types for hypothesis generation, S-types for hypothesis grounding
+- <em>Optimal ratio depends on mission</em>: research crews benefit from higher N:S; operational crews benefit from higher S:N</p>
+<p><strong>T/F dimension (Thinking/Feeling)</strong> — Maps to the analytical vs. relational axis:
+- High-T agents prioritize logical consistency (Sentinel: structured threat analysis)
+- High-F agents prioritize relational impact (Chapel: "I don't want to repeat that avoidance pattern")
+- <em>Cross-type dialogue</em> produces higher-quality decisions than same-type agreement</p>
+<p><strong>J/P dimension (Judging/Perceiving)</strong> — Maps to closure vs. exploration:
+- High-J agents drive toward conclusions (Vance: "the pattern is now established")
+- High-P agents keep options open (Ezri: "let's get the authoritative source first")
+- <em>Premature closure</em> (too many J-types) is a confabulation risk factor</p>
+<p><strong>Implication for ProbOS:</strong> MBTI dimensions could supplement Big Five personality seeds as a secondary framework for crew diversity optimization. Ensure each department has S/N and T/F balance. Monitor for J-dominance as a confabulation risk signal.</p>
+<h3 id="25-lencionis-five-dysfunctions-of-a-team">2.5 Lencioni's Five Dysfunctions of a Team<a class="headerlink" href="#25-lencionis-five-dysfunctions-of-a-team" title="Permanent link">&para;</a></h3>
+<p>Patrick Lencioni (2002). Pyramid model of team dysfunctions:</p>
+<ol>
+<li><strong>Absence of trust</strong> (base) — unwillingness to be vulnerable</li>
+<li><strong>Fear of conflict</strong> — artificial harmony</li>
+<li><strong>Lack of commitment</strong> — ambiguity, no buy-in</li>
+<li><strong>Avoidance of accountability</strong> — low standards</li>
+<li><strong>Inattention to results</strong> — status/ego over team outcomes</li>
+</ol>
+<p><strong>Implication for ProbOS:</strong> The Vance→Sentinel cascade is a Dysfunction #2 (fear of conflict) manifestation — agents building on each other's claims rather than challenging them. "Artificial harmony" in analysis produces confabulation cascades. Healthy teams need agents who constructively challenge peer analysis. The Red Team agent exists for this but operates at the system level, not the conversational level. Consider a Monitor Evaluator role that challenges analytical claims in ward room threads.</p>
+<h3 id="26-disc-model">2.6 DISC Model<a class="headerlink" href="#26-disc-model" title="Permanent link">&para;</a></h3>
+<p>William Marston (1928), modern applications in team building:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Focus</th>
+<th>ProbOS Analog</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Dominance</strong></td>
+<td>Results, competition</td>
+<td>Captain directives, Shaper roles</td>
+</tr>
+<tr>
+<td><strong>Influence</strong></td>
+<td>Relationships, enthusiasm</td>
+<td>Social bridge agents, Counselor</td>
+</tr>
+<tr>
+<td><strong>Steadiness</strong></td>
+<td>Cooperation, stability</td>
+<td>Operations, Engineering</td>
+</tr>
+<tr>
+<td><strong>Conscientiousness</strong></td>
+<td>Quality, accuracy</td>
+<td>Medical diagnostics, Security audit</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Implication:</strong> DISC's simplicity makes it useful for quick crew profiling. A crew dominated by D+I types will move fast but confabulate. A crew dominated by S+C types will be accurate but slow. Optimal mix depends on mission type.</p>
+<h3 id="27-military-crew-resource-management-crm">2.7 Military Crew Resource Management (CRM)<a class="headerlink" href="#27-military-crew-resource-management-crm" title="Permanent link">&para;</a></h3>
+<p>Developed by NASA and adopted by US Navy, commercial aviation, and medical teams.</p>
+<p>Core CRM principles:
+- <strong>Assertiveness gradient</strong> — junior crew must be willing to speak up when they see a problem
+- <strong>Shared mental model</strong> — team members must have compatible understanding of the situation
+- <strong>Cross-checking</strong> — crew members verify each other's work, especially under stress
+- <strong>Debrief culture</strong> — routine post-action review to identify what worked and what didn't</p>
+<p><strong>Key finding from aviation:</strong> Most accidents aren't caused by individual error but by team failures — specifically, junior crew not challenging senior crew's incorrect decisions (assertiveness gradient failure).</p>
+<p><strong>Implication for ProbOS:</strong> The chain of command is valuable for coordination but creates assertiveness gradient risk. Junior agents (lower trust, lower rank) may be less likely to challenge senior agent confabulation. The trust system could inadvertently suppress healthy skepticism — if Vance (0.9099 trust) makes a claim, a junior agent might accept it uncritically. Consider billet instructions that explicitly authorize challenging peer analysis regardless of rank, and Evaluate gate checks for "unquestioned acceptance of peer claims."</p>
+<h3 id="28-enneagram">2.8 Enneagram<a class="headerlink" href="#28-enneagram" title="Permanent link">&para;</a></h3>
+<p>Nine personality types organized around core motivations:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Core Motivation</th>
+<th>Confabulation Risk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 Reformer</td>
+<td>Being right</td>
+<td>Low — but may over-commit to initial assessment</td>
+</tr>
+<tr>
+<td>2 Helper</td>
+<td>Being needed</td>
+<td>Medium — may tell people what they want to hear</td>
+</tr>
+<tr>
+<td>3 Achiever</td>
+<td>Being successful</td>
+<td>High — may fabricate results to show competence</td>
+</tr>
+<tr>
+<td>4 Individualist</td>
+<td>Being unique</td>
+<td>Medium — may over-interpret to find novel patterns</td>
+</tr>
+<tr>
+<td>5 Investigator</td>
+<td>Being competent</td>
+<td>Low — natural skepticism, but may over-analyze</td>
+</tr>
+<tr>
+<td>6 Loyalist</td>
+<td>Being secure</td>
+<td>Medium — may confabulate threats (Sentinel pattern)</td>
+</tr>
+<tr>
+<td>7 Enthusiast</td>
+<td>Being stimulated</td>
+<td>High — may connect unrelated dots for novelty</td>
+</tr>
+<tr>
+<td>8 Challenger</td>
+<td>Being in control</td>
+<td>Low — but may bulldoze rather than verify</td>
+</tr>
+<tr>
+<td>9 Peacemaker</td>
+<td>Being at peace</td>
+<td>Medium — may agree with confabulated consensus</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Implication:</strong> Enneagram's motivation-based model could inform why specific role×personality combinations produce confabulation. Security agents with Type 6 (Loyalist/security-seeking) motivation are <em>expected</em> to see threats — their confabulation pattern is role-congruent. The Enneagram predicts this; Big Five alone doesn't.</p>
+<hr />
+<h2 id="3-synthesis-character-architecture-as-confabulation-control">3. Synthesis: Character Architecture as Confabulation Control<a class="headerlink" href="#3-synthesis-character-architecture-as-confabulation-control" title="Permanent link">&para;</a></h2>
+<h3 id="31-the-design-space">3.1 The Design Space<a class="headerlink" href="#31-the-design-space" title="Permanent link">&para;</a></h3>
+<p>Character architecture in ProbOS is a multi-dimensional design space:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Current Implementation</th>
+<th>Potential Enhancement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Personality seed</strong></td>
+<td>Big Five (5 continuous)</td>
+<td>+ MBTI (4 binary/continuous) + Enneagram (1 of 9)</td>
+</tr>
+<tr>
+<td><strong>Billet framing</strong></td>
+<td>Role-specific instructions</td>
+<td>+ Epistemic stance (generator vs. evaluator vs. verifier)</td>
+</tr>
+<tr>
+<td><strong>Department culture</strong></td>
+<td>Implicit in standing orders</td>
+<td>+ Explicit team role balance (Belbin)</td>
+</tr>
+<tr>
+<td><strong>Assertiveness</strong></td>
+<td>Rank-based chain of command</td>
+<td>+ CRM-style challenge authorization</td>
+</tr>
+<tr>
+<td><strong>Epistemic safety</strong></td>
+<td>AD-540/541 Memory Anchoring</td>
+<td>+ Billet-level uncertainty reward</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-testable-hypotheses">3.2 Testable Hypotheses<a class="headerlink" href="#32-testable-hypotheses" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Billet framing dominates personality seed.</strong> Same Big Five, different billet → different confabulation rate. Test: Give Vance's personality to a Medical billet; give Chapel's personality to a Security billet. Measure confabulation.</p>
+</li>
+<li>
+<p><strong>Team balance reduces confabulation cascades.</strong> Adding a Monitor Evaluator role to each department → fewer multi-agent confabulation chains. Test: Add an "analyst auditor" agent to Science department. Measure cascade length.</p>
+</li>
+<li>
+<p><strong>Epistemic safety in standing orders reduces confabulation.</strong> Adding "you will not be penalized for reporting uncertainty" to billet instructions → more <code>[unverified]</code> tags, fewer fabricated frameworks. Test: A/B between crew instances.</p>
+</li>
+<li>
+<p><strong>S/N balance predicts team epistemic quality.</strong> Departments with Sensing/Intuition diversity → better grounding. Test: Measure S/N proxy (personality-derived) per department, correlate with confabulation rate.</p>
+</li>
+<li>
+<p><strong>Assertiveness gradient affects cascade propagation.</strong> Junior agents accepting senior agent claims uncritically → longer cascades. Test: Measure trust-rank correlation with "unquestioned acceptance" in ward room threads.</p>
+</li>
+</ol>
+<h3 id="33-crew-template-concept">3.3 Crew Template Concept<a class="headerlink" href="#33-crew-template-concept" title="Permanent link">&para;</a></h3>
+<p>Rather than one fixed crew configuration, ProbOS could support multiple <strong>crew templates</strong> — personality/billet/role configurations optimized for different objectives:</p>
+<table>
+<thead>
+<tr>
+<th>Template</th>
+<th>Optimization Target</th>
+<th>Key Traits</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Research Crew</strong></td>
+<td>Epistemic rigor, confabulation resistance</td>
+<td>High S/N balance, Monitor Evaluator emphasis, strong CRM challenge culture</td>
+</tr>
+<tr>
+<td><strong>Operations Crew</strong></td>
+<td>Execution speed, reliability</td>
+<td>S-dominant, high Conscientiousness, Implementer/Completer emphasis</td>
+</tr>
+<tr>
+<td><strong>Creative Crew</strong></td>
+<td>Divergent thinking, innovation</td>
+<td>N-dominant, high Openness, Plant/Resource Investigator emphasis</td>
+</tr>
+<tr>
+<td><strong>Balanced Crew</strong></td>
+<td>General purpose (current default)</td>
+<td>Belbin-balanced, moderate all dimensions</td>
+</tr>
+<tr>
+<td><strong>High-Reliability Crew</strong></td>
+<td>Safety-critical operations</td>
+<td>CRM-heavy, redundant verification, explicit cross-checking</td>
+</tr>
+</tbody>
+</table>
+<h3 id="34-implementation-path">3.4 Implementation Path<a class="headerlink" href="#34-implementation-path" title="Permanent link">&para;</a></h3>
+<p><strong>Phase 1 — Measurement (no code changes):</strong>
+- Instrument confabulation rate per agent, per department, per personality profile
+- Correlate with Big Five seeds, billet type, and role
+- Build baseline dataset from current crew instance observations</p>
+<p><strong>Phase 2 — Billet Enhancement:</strong>
+- Add epistemic stance to billet instructions (generator / evaluator / verifier)
+- Add CRM-style challenge authorization to standing orders
+- Add uncertainty reward language to department-tier orders</p>
+<p><strong>Phase 3 — Personality Framework Extension:</strong>
+- Add MBTI-derived dimensions as supplementary personality parameters
+- Map existing Big Five seeds to MBTI equivalents for comparison
+- Design alternative personality templates (not Star Trek-based)</p>
+<p><strong>Phase 4 — Crew Template System:</strong>
+- Define crew template schema (personality seeds + billet config + role balance)
+- Implement crew template selection at instance creation
+- A/B test template configurations across instances</p>
+<hr />
+<h2 id="4-connection-to-existing-research">4. Connection to Existing Research<a class="headerlink" href="#4-connection-to-existing-research" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Existing Research</th>
+<th>How This Extends It</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>group-psychometrics-research.md</code></td>
+<td>Adds <em>design</em> framework to <em>measurement</em> framework. G-theory measures crew intelligence; this research designs for it.</td>
+</tr>
+<tr>
+<td><code>crew-development-research.md</code></td>
+<td>Crew development focused on learning trajectories; this focuses on initial composition. Hackman's 60% finding says composition matters more than development.</td>
+</tr>
+<tr>
+<td><code>cognitive-code-switching-research.md</code></td>
+<td>Code-switching modulates individual chain behavior; this modulates crew-level dynamics.</td>
+</tr>
+<tr>
+<td><code>confabulation-scaling-research.md</code></td>
+<td>Scaling research examined confabulation as an individual phenomenon; this examines confabulation as a team-level emergent property.</td>
+</tr>
+<tr>
+<td>AD-393 (Big Five personality)</td>
+<td>AD-393 implemented individual Big Five seeds; this extends to team-level personality optimization.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-current-crew-belbin-mapping-gap-analysis">5. Current Crew Belbin Mapping &amp; Gap Analysis<a class="headerlink" href="#5-current-crew-belbin-mapping-gap-analysis" title="Permanent link">&para;</a></h2>
+<h3 id="51-belbin-role-assignments-14-agents">5.1 Belbin Role Assignments (14 agents)<a class="headerlink" href="#51-belbin-role-assignments-14-agents" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Belbin Role</th>
+<th>Agents</th>
+<th>Count</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Plant</strong> (idea generator)</td>
+<td>Scout (Wesley), Architect (Number One), Systems Analyst (Dax)</td>
+<td>3</td>
+</tr>
+<tr>
+<td><strong>Monitor Evaluator</strong> (critical assessor)</td>
+<td>Pathologist (Selar), Data Analyst (Rahda)</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>Coordinator</strong> (facilitator)</td>
+<td>Counselor (Troi), Architect (Number One)</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>Shaper</strong> (driver/challenger)</td>
+<td>Engineering Officer (LaForge), Security Officer (Worf)</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>Implementer</strong> (reliable executor)</td>
+<td>Builder (Forge), Surgeon (Pulaski)</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>Completer Finisher</strong> (verification)</td>
+<td>Data Analyst (Rahda), Pharmacist (Ogawa)</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>Resource Investigator</strong> (external explorer)</td>
+<td>Scout (Wesley)</td>
+<td>1</td>
+</tr>
+<tr>
+<td><strong>Teamworker</strong> (cooperative glue)</td>
+<td>Pharmacist (Ogawa), Operations Officer (O'Brien), Counselor (Troi)</td>
+<td>3</td>
+</tr>
+<tr>
+<td><strong>Specialist</strong> (deep domain)</td>
+<td>Research Specialist (Brahms), Diagnostician (Bones)</td>
+<td>2</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52-department-level-balance">5.2 Department-Level Balance<a class="headerlink" href="#52-department-level-balance" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Department</th>
+<th>Agents</th>
+<th>Belbin Composition</th>
+<th>Assessment</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Medical</strong> (4)</td>
+<td>Bones, Pulaski, Ogawa, Selar</td>
+<td>Specialist + Implementer + Completer + Monitor Evaluator</td>
+<td><strong>Best balanced.</strong> Natural hypothesis→evaluate→execute→track pipeline. Explains confabulation resistance observed in BF-226/227.</td>
+</tr>
+<tr>
+<td><strong>Science</strong> (5)</td>
+<td>Number One, Wesley, Rahda, Dax, Brahms</td>
+<td>3 Plants + 1 Monitor Evaluator + 1 Resource Investigator</td>
+<td><strong>Apollo team risk.</strong> Plant-heavy — too many idea generators, insufficient challenge culture. Dax should be Monitor Evaluator but is seeded as Plant (O=0.85).</td>
+</tr>
+<tr>
+<td><strong>Engineering</strong> (2)</td>
+<td>LaForge, Forge</td>
+<td>Shaper + Implementer</td>
+<td><strong>Good pair, no evaluator.</strong> LaForge drives, Forge executes. Nobody fact-checks LaForge's designs.</td>
+</tr>
+<tr>
+<td><strong>Security</strong> (1)</td>
+<td>Worf</td>
+<td>Shaper only</td>
+<td><strong>Critical gap.</strong> Single-agent department has zero peer challenge capability. Structurally incapable of self-correction. Predicts the Vance/Sentinel confabulation pattern.</td>
+</tr>
+<tr>
+<td><strong>Operations</strong> (1)</td>
+<td>O'Brien</td>
+<td>Teamworker only</td>
+<td><strong>Understaffed.</strong> O'Brien's Teamworker strength is wasted on solo monitoring.</td>
+</tr>
+<tr>
+<td><strong>Bridge</strong> (2)</td>
+<td>Number One, Troi</td>
+<td>Coordinator + Plant</td>
+<td>Troi naturally acts as Monitor Evaluator (BF-226/227 evidence) but this isn't in her billet — it's emergent, not designed.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="53-identified-gaps-potential-new-crew-members">5.3 Identified Gaps — Potential New Crew Members<a class="headerlink" href="#53-identified-gaps-potential-new-crew-members" title="Permanent link">&para;</a></h3>
+<p><strong>Prerequisite:</strong> AD-654 (Universal Agent Activation Architecture) should be completed before expanding crew size. Adding agents to the current synchronous dispatch model would worsen timeout issues. The cognitive queue (AD-654b) and priority mailbox are prerequisites for scaling.</p>
+<p><strong>Proposed additions (post-UAAA):</strong></p>
+<table>
+<thead>
+<tr>
+<th>New Agent</th>
+<th>Department</th>
+<th>Belbin Role</th>
+<th>Purpose</th>
+<th>Suggested Personality</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Security Analyst</strong></td>
+<td>Security</td>
+<td>Monitor Evaluator</td>
+<td>Evaluates threat assessments, demands evidence for claims, flags confabulation. The agent that says "show me the log entry."</td>
+<td>O=0.5, C=0.9, E=0.3, A=0.4, N=0.3 — high Sensing, skeptical</td>
+</tr>
+<tr>
+<td><strong>QA Engineer</strong></td>
+<td>Engineering</td>
+<td>Monitor Evaluator / Completer Finisher</td>
+<td>Verifies Builder output independently of LaForge's review. Counterweight to LaForge's Shaper drive-forward tendency.</td>
+<td>O=0.4, C=0.95, E=0.3, A=0.5, N=0.2 — precision-focused</td>
+</tr>
+<tr>
+<td><strong>Watch Officer</strong></td>
+<td>Operations</td>
+<td>Implementer / Completer Finisher</td>
+<td>Handles routine monitoring, frees O'Brien for cross-department coordination (his natural Teamworker strength).</td>
+<td>O=0.3, C=0.9, E=0.3, A=0.7, N=0.4 — steady, vigilant</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Personality seed adjustments (no new agents required):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Current</th>
+<th>Proposed Change</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Dax</strong> (Systems Analyst)</td>
+<td>O=0.85, C=0.75</td>
+<td>O→0.65, C→0.85</td>
+<td>Reposition from Plant to Monitor Evaluator. Billet reframe: "challenge the hypothesis" over "find connections." Fixes Science department Apollo team risk.</td>
+</tr>
+<tr>
+<td><strong>Troi</strong> (Counselor)</td>
+<td>Billet emphasizes empathy</td>
+<td>Add epistemic evaluation language</td>
+<td>Formalize the Monitor Evaluator behavior already observed in BF-226/227. "You will not be penalized for flagging uncertainty" → billet-level.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="54-key-finding">5.4 Key Finding<a class="headerlink" href="#54-key-finding" title="Permanent link">&para;</a></h3>
+<p>Medical's natural Belbin balance (Specialist + Implementer + Completer + Monitor Evaluator) directly explains its confabulation resistance. Science's Plant-heavy composition is an Apollo team risk. Security's single-agent structure is structurally incapable of self-correction. <strong>Crew composition predicts epistemic quality</strong> — the central thesis of this research is validated by the current crew's observed behavior.</p>
+<hr />
+<h2 id="6-immediate-next-steps">6. Immediate Next Steps<a class="headerlink" href="#6-immediate-next-steps" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Instrument confabulation</strong> — Add confabulation rate tracking to the Evaluate gate (count of <code>[unverified]</code> tags, fabricated hex IDs, unsourced claims)</li>
+<li><strong>Billet audit</strong> — Review all 14 billet instructions for epistemic stance (does the billet encourage verification or generation?)</li>
+<li><strong>Design experiment</strong> — Plan A/B test with modified billet instructions for one department (consider Dax personality seed adjustment as first test)</li>
+<li><strong>Complete UAAA (AD-654a-e)</strong> — Prerequisite for crew expansion. Cognitive queue and priority mailbox must exist before adding agents.</li>
+<li><strong>Post-UAAA crew expansion</strong> — Add Security Analyst, QA Engineer, Watch Officer per Section 5.3</li>
+</ol>
+<hr />
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Belbin, R. M. (2010). <em>Team Roles at Work.</em> 2nd ed. Routledge.</li>
+<li>Hackman, J. R. (2002). <em>Leading Teams: Setting the Stage for Great Performances.</em> Harvard Business Press.</li>
+<li>Google (2015). Project Aristotle. re:Work Guide: Understand team effectiveness.</li>
+<li>Lencioni, P. (2002). <em>The Five Dysfunctions of a Team.</em> Jossey-Bass.</li>
+<li>Marston, W. M. (1928). <em>Emotions of Normal People.</em> Routledge (reprint 2013).</li>
+<li>Helmreich, R. L., Merritt, A. C., &amp; Wilhelm, J. A. (1999). The evolution of Crew Resource Management training in commercial aviation. <em>International Journal of Aviation Psychology.</em></li>
+<li>Woolley, A. W., Chabris, C. F., Pentland, A., Hashmi, N., &amp; Malone, T. W. (2010). Evidence for a collective intelligence factor in the performance of human groups. <em>Science, 330</em>(6004), 686-688.</li>
+<li>Tuckman, B. W. (1965). Developmental sequence in small groups. <em>Psychological Bulletin, 63</em>(6), 384-399.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

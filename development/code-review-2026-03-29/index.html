@@ -1,0 +1,2674 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/code-review-2026-03-29/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>ProbOS Comprehensive Code Review — 2026-03-29 - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#probos-comprehensive-code-review-2026-03-29" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ProbOS Comprehensive Code Review — 2026-03-29
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#executive-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executive Summary
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Executive Summary">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#severity-distribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Severity Distribution
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-god-object-probosruntime-critical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 God Object: ProbOSRuntime — CRITICAL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-god-function-apipycreate_app-high" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 God Function: api.py:create_app() — HIGH
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13-private-member-access-across-boundaries-high" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 Private Member Access Across Boundaries — HIGH
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#14-layer-violations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.4 Layer Violations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15-event-system-not-formalized" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.5 Event System — Not Formalized
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-code-quality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Code Quality
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Code Quality">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-swallowed-exceptions-critical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Swallowed Exceptions — CRITICAL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-duplicated-code-high" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Duplicated Code — HIGH
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-type-safety-high" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Type Safety — HIGH
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-hasattr-instead-of-proper-init-medium" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 hasattr Instead of Proper Init — MEDIUM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-os_exit0-high" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 os._exit(0) — HIGH
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Security
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Security">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-no-api-authentication-critical-context-dependent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 No API Authentication — CRITICAL (context-dependent)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-path-traversal-in-ships-records-medium" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Path Traversal in Ship's Records — MEDIUM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-shell-command-execution-medium" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Shell Command Execution — MEDIUM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-sql-safety-mostly-safe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 SQL Safety — MOSTLY SAFE
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-race-conditions-low" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 Race Conditions — LOW
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#36-positive-security-findings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.6 Positive Security Findings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-test-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Test Coverage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Test Coverage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-overall-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Overall Assessment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-well-tested-modules-thorough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Well-Tested Modules (Thorough)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-coverage-gaps-modules-without-dedicated-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Coverage Gaps — Modules Without Dedicated Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-critical-untested-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 Critical Untested Paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45-regression-test-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 Regression Test Gaps
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#46-test-quality-concerns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.6 Test Quality Concerns
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-missed-considerations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Missed Considerations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Missed Considerations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-unbounded-database-growth-critical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Unbounded Database Growth — CRITICAL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-foreign-keys-not-enforced-medium" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 Foreign Keys Not Enforced — MEDIUM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-missing-database-indexes-medium" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 Missing Database Indexes — MEDIUM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-configuration-drift-medium" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.4 Configuration Drift — MEDIUM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#55-open-without-encoding-windows-medium" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.5 open() Without Encoding (Windows) — MEDIUM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#56-deprecated-async-patterns-medium" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.6 Deprecated Async Patterns — MEDIUM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#57-sif-placeholder-methods-low" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.7 SIF Placeholder Methods — LOW
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#58-stale-lru_cache-low" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.8 Stale lru_cache — LOW
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#59-only-1-todo-in-entire-codebase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.9 Only 1 TODO in Entire Codebase
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-recommended-priority-actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Recommended Priority Actions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Recommended Priority Actions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#immediate-before-next-feature-wave" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immediate (Before Next Feature Wave)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#short-term-next-1-2-sprints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Short-Term (Next 1-2 Sprints)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#medium-term-architecture-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Medium-Term (Architecture Health)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#long-term-test-quality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Long-Term (Test Quality)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-files-scanned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix: Files Scanned
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="probos-comprehensive-code-review-2026-03-29">ProbOS Comprehensive Code Review — 2026-03-29<a class="headerlink" href="#probos-comprehensive-code-review-2026-03-29" title="Permanent link">&para;</a></h1>
+<p><strong>Scope:</strong> Full codebase audit across 5 dimensions: code quality, architecture, test coverage, security, and missed considerations.</p>
+<p><strong>Codebase:</strong> 126 Python source files, 173 test files (3,899 tests), 55 TSX/TS frontend files (10 test files, ~149 tests).</p>
+<hr />
+<h2 id="executive-summary">Executive Summary<a class="headerlink" href="#executive-summary" title="Permanent link">&para;</a></h2>
+<p>The codebase is functionally strong with excellent test coverage in core systems (trust, Ward Room, workforce, dreaming, self-mod). The main structural risk is the <strong>God Object pattern</strong> in <code>runtime.py</code> (5,306 lines) and <code>api.py</code> (3,094 lines), which concentrates all responsibilities and creates fragile initialization ordering. Security is appropriate for a local-first application (no auth needed for localhost), but path traversal in Ship's Records and unbounded database growth are real operational risks. The project has remarkably few TODOs (just 1) and no stub implementations, indicating disciplined delivery.</p>
+<h3 id="severity-distribution">Severity Distribution<a class="headerlink" href="#severity-distribution" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Severity</th>
+<th>Count</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Critical</strong></td>
+<td>4</td>
+<td>God Object, swallowed exceptions, events.db unbounded growth, no API auth (see note)</td>
+</tr>
+<tr>
+<td><strong>High</strong></td>
+<td>8</td>
+<td>980-line start(), 95 Any types, private member access, path traversal, os._exit, shell=True, sandbox exec, duplicate code</td>
+</tr>
+<tr>
+<td><strong>Medium</strong></td>
+<td>12</td>
+<td>Missing DB indexes, hasattr patterns, config drift, race conditions, encoding issues, deprecated async, schema migration pattern</td>
+</tr>
+<tr>
+<td><strong>Low</strong></td>
+<td>10</td>
+<td>SIF placeholders, fire-and-forget tasks, abbreviation clarity, config version stale, lru_cache invalidation</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Note on API auth:</strong> ProbOS is a local-first application running on localhost. The lack of API authentication is a known design choice, not an oversight. This becomes a real issue only when network-exposed (federation, remote HXI). Listed as Critical for awareness, not immediate action.</p>
+</blockquote>
+<hr />
+<h2 id="1-architecture">1. Architecture<a class="headerlink" href="#1-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="11-god-object-probosruntime-critical">1.1 God Object: <code>ProbOSRuntime</code> — CRITICAL<a class="headerlink" href="#11-god-object-probosruntime-critical" title="Permanent link">&para;</a></h3>
+<p><code>runtime.py</code> is 5,306 lines with 60+ methods and 50+ instance attributes. The <code>start()</code> method alone is <strong>980 lines</strong> (lines 799-1779) performing 36 sequential initialization steps. The <code>__init__</code> spans 285 lines.</p>
+<p><strong>Impact:</strong> Impossible to test in isolation, fragile initialization ordering, every change risks side effects.</p>
+<p><strong>Recommendation:</strong> Extract a <code>ServiceRegistry</code> or builder pattern. Group the 36 init steps into focused initializer classes (InfrastructureInitializer, CognitiveInitializer, CommunicationsInitializer, etc.).</p>
+<h3 id="12-god-function-apipycreate_app-high">1.2 God Function: <code>api.py:create_app()</code> — HIGH<a class="headerlink" href="#12-god-function-apipycreate_app-high" title="Permanent link">&para;</a></h3>
+<p>3,094 lines inside a single closure containing ~80+ REST endpoints. Business logic for self-modification (200+ lines), build execution, and knowledge store writes lives in the API layer instead of services.</p>
+<p><strong>Recommendation:</strong> Extract endpoint groups into FastAPI routers (<code>APIRouter</code>). Move business logic to service methods on the runtime.</p>
+<h3 id="13-private-member-access-across-boundaries-high">1.3 Private Member Access Across Boundaries — HIGH<a class="headerlink" href="#13-private-member-access-across-boundaries-high" title="Permanent link">&para;</a></h3>
+<p>15+ instances of <code>obj._private_attr = value</code> post-construction:</p>
+<table>
+<thead>
+<tr>
+<th>Location</th>
+<th>Pattern</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>runtime.py:1792</code></td>
+<td><code>self.ward_room._db</code> — raw SQL against Ward Room's private DB</td>
+</tr>
+<tr>
+<td><code>runtime.py:1212</code></td>
+<td><code>self.self_mod_pipeline._validator</code>, <code>._sandbox</code></td>
+</tr>
+<tr>
+<td><code>runtime.py:1077</code></td>
+<td><code>self.escalation_manager._surge_fn</code></td>
+</tr>
+<tr>
+<td><code>runtime.py:1116</code></td>
+<td><code>self.intent_bus._federation_fn</code></td>
+</tr>
+<tr>
+<td><code>runtime.py:1371-1373</code></td>
+<td><code>self.dream_scheduler._post_dream_fn</code> (3 patches)</td>
+</tr>
+<tr>
+<td><code>runtime.py:1689</code></td>
+<td><code>self.ward_room._ontology</code></td>
+</tr>
+<tr>
+<td><code>assignment.py:378,416</code></td>
+<td><code>self._ward_room._db.execute(...)</code> — direct DB manipulation</td>
+</tr>
+<tr>
+<td><code>sif.py:191,241</code></td>
+<td><code>._weights</code>, <code>._subscribers</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Root cause:</strong> Services are constructed before their dependencies exist, then patched afterward. A dependency injection or builder pattern would eliminate this.</p>
+<h3 id="14-layer-violations">1.4 Layer Violations<a class="headerlink" href="#14-layer-violations" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Violation</th>
+<th>Assessment</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cognitive/</code> imports from <code>consensus/</code> and <code>mesh/</code></td>
+<td>Documented as "AD-399 allowed edges" but real coupling</td>
+</tr>
+<tr>
+<td><code>experience/shell.py</code> accesses 30+ runtime attributes</td>
+<td>Treats runtime as a bag of services</td>
+</tr>
+<tr>
+<td><code>api.py</code> accesses <code>runtime._records_store</code>, <code>._emit_event</code>, <code>._knowledge_store</code></td>
+<td>API reaches into private internals</td>
+</tr>
+<tr>
+<td><code>assignment.py</code> writes SQL to Ward Room's DB</td>
+<td>Completely bypasses service API</td>
+</tr>
+</tbody>
+</table>
+<h3 id="15-event-system-not-formalized">1.5 Event System — Not Formalized<a class="headerlink" href="#15-event-system-not-formalized" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Events are plain dicts with string type fields. No schema, no event type registry, no typed event classes.</li>
+<li><code>_emit_event</code> is synchronous but triggers async WebSocket broadcasts — works but fragile.</li>
+<li>Event types (<code>"self_mod_started"</code>, <code>"trust_update"</code>, etc.) are string literals scattered across files.</li>
+</ul>
+<hr />
+<h2 id="2-code-quality">2. Code Quality<a class="headerlink" href="#2-code-quality" title="Permanent link">&para;</a></h2>
+<h3 id="21-swallowed-exceptions-critical">2.1 Swallowed Exceptions — CRITICAL<a class="headerlink" href="#21-swallowed-exceptions-critical" title="Permanent link">&para;</a></h3>
+<p>40+ occurrences of <code>except Exception: pass</code> silently discarding errors:</p>
+<table>
+<thead>
+<tr>
+<th>Location</th>
+<th>Impact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>runtime.py:448</code></td>
+<td><code>_emit_event</code> — all event emission failures invisible</td>
+</tr>
+<tr>
+<td><code>runtime.py:1255</code></td>
+<td>Lifecycle detection eats corrupted session records</td>
+</tr>
+<tr>
+<td><code>ward_room.py:226-236</code></td>
+<td>Schema migration failures masked — could hide data corruption</td>
+</tr>
+<tr>
+<td><code>ward_room.py:971,1151,1171,1208</code></td>
+<td>Post creation flow — 4 silent swallow points</td>
+</tr>
+<tr>
+<td><code>discord_adapter.py:174-196</code></td>
+<td>4 consecutive silent exception swallows</td>
+</tr>
+<tr>
+<td><code>proactive.py:131</code></td>
+<td>Cooldown restoration failure silently ignored</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong> Define an error handling policy with three categories: "swallow" (truly non-critical), "log-and-degrade", and "propagate". Audit each <code>except Exception: pass</code> against this policy.</p>
+<h3 id="22-duplicated-code-high">2.2 Duplicated Code — HIGH<a class="headerlink" href="#22-duplicated-code-high" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>_format_duration()</code> — identical implementation in 3 files (<code>runtime.py:110</code>, <code>proactive.py:58</code>, <code>cognitive_agent.py:487</code>)</li>
+<li><code>import time as _time</code> pattern — 9 occurrences across 5 files (workaround for local vars shadowing <code>time</code> module)</li>
+<li>Dry-run / confirmation prompt Rich tables — near-identical construction in <code>__main__.py</code></li>
+<li><code>to_dict()</code> — repetitive manual field-by-field serialization in 8 workforce dataclasses</li>
+<li>Ward Room thread construction from SQL rows — 5 identical 15-field extraction blocks</li>
+</ul>
+<h3 id="23-type-safety-high">2.3 Type Safety — HIGH<a class="headerlink" href="#23-type-safety-high" title="Permanent link">&para;</a></h3>
+<p>95 occurrences of <code>: Any</code> across 30 files. Most impactful in <code>runtime.py</code> (lines 230-328) where all conditionally-initialized services are typed <code>Any | None</code> instead of their concrete types.</p>
+<p><code>api.py:273</code> — <code>runtime: Any</code> — the primary dependency of the entire API has no type constraint.</p>
+<h3 id="24-hasattr-instead-of-proper-init-medium">2.4 hasattr Instead of Proper Init — MEDIUM<a class="headerlink" href="#24-hasattr-instead-of-proper-init-medium" title="Permanent link">&para;</a></h3>
+<p>30+ uses of <code>hasattr(self, ...)</code> to check if attributes exist (14 in <code>runtime.py</code> alone). Indicates attributes set outside <code>__init__</code>, creating unpredictable class shape.</p>
+<h3 id="25-os_exit0-high">2.5 <code>os._exit(0)</code> — HIGH<a class="headerlink" href="#25-os_exit0-high" title="Permanent link">&para;</a></h3>
+<p>3 occurrences (<code>api.py:415</code>, <code>__main__.py:340,451</code>) bypassing <code>finally</code> blocks, <code>atexit</code> handlers, and buffer flushing. Intentional (BF-068 hang fix) but aggressive.</p>
+<hr />
+<h2 id="3-security">3. Security<a class="headerlink" href="#3-security" title="Permanent link">&para;</a></h2>
+<h3 id="31-no-api-authentication-critical-context-dependent">3.1 No API Authentication — CRITICAL (context-dependent)<a class="headerlink" href="#31-no-api-authentication-critical-context-dependent" title="Permanent link">&para;</a></h3>
+<p>All ~80+ API endpoints are fully open. Critical unauthenticated endpoints:
+- <code>POST /api/system/shutdown</code> — system shutdown
+- <code>POST /api/chat</code> — command execution
+- <code>POST /api/build/submit</code> — code generation pipeline
+- <code>POST /api/selfmod/approve</code> — self-modification approval</p>
+<blockquote>
+<p><strong>Context:</strong> ProbOS runs on localhost with CORS restricted to <code>localhost:5173/18900</code>. No auth is reasonable for local-first. Becomes critical when network-exposed (federation, remote HXI).</p>
+</blockquote>
+<h3 id="32-path-traversal-in-ships-records-medium">3.2 Path Traversal in Ship's Records — MEDIUM<a class="headerlink" href="#32-path-traversal-in-ships-records-medium" title="Permanent link">&para;</a></h3>
+<p><code>records_store.py</code> has no path sanitization:</p>
+<table>
+<thead>
+<tr>
+<th>Line</th>
+<th>Method</th>
+<th>Risk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>119</td>
+<td><code>write_entry()</code></td>
+<td><code>../../etc</code> in callsign could write outside repo</td>
+</tr>
+<tr>
+<td>203</td>
+<td><code>read_entry()</code></td>
+<td><code>../../etc/passwd</code> could read outside repo</td>
+</tr>
+<tr>
+<td>236</td>
+<td><code>list_entries()</code></td>
+<td>Directory parameter unsanitized</td>
+</tr>
+</tbody>
+</table>
+<p>Flows from API endpoints <code>POST /api/records/notebooks/{callsign}</code> and <code>GET /api/records/documents/{path:path}</code>.</p>
+<p><strong>Fix:</strong> Add <code>.resolve()</code> + <code>is_relative_to()</code> validation.</p>
+<h3 id="33-shell-command-execution-medium">3.3 Shell Command Execution — MEDIUM<a class="headerlink" href="#33-shell-command-execution-medium" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>shell_command.py:222</code> — <code>shell=True</code> with LLM-generated commands (by design — it's a shell agent)</li>
+<li><code>red_team.py:384</code> — <code>shell=True</code> for verification commands</li>
+<li><code>sandbox.py:79-100</code> — <code>importlib</code> exec of LLM-generated Python. Static analysis guard (<code>CodeValidator</code>) uses regex patterns, bypassable via <code>getattr()</code> indirection</li>
+</ul>
+<h3 id="34-sql-safety-mostly-safe">3.4 SQL Safety — MOSTLY SAFE<a class="headerlink" href="#34-sql-safety-mostly-safe" title="Permanent link">&para;</a></h3>
+<p>All user-value SQL uses parameterized queries. Two dynamic column name patterns:
+- <code>workforce.py:1089,1121</code> — <code>SET {key} = ?</code> from kwargs dict keys (no whitelist)
+- <code>ward_room.py:1333</code> — <code>target_type</code> in table name selection (constrained by calling code but no SQL-layer validation)</p>
+<h3 id="35-race-conditions-low">3.5 Race Conditions — LOW<a class="headerlink" href="#35-race-conditions-low" title="Permanent link">&para;</a></h3>
+<p>Only 3 <code>asyncio.Lock</code> instances in entire codebase (identity, records, registry). No locking on:
+- <code>_ws_clients</code> list (api.py:301) — concurrent WebSocket connect/disconnect
+- <code>_pending_failures</code> / <code>_pending_designs</code> dicts (api.py:31,304)
+- Ward Room endorsement voting (TOCTOU in read-modify-write sequence)</p>
+<h3 id="36-positive-security-findings">3.6 Positive Security Findings<a class="headerlink" href="#36-positive-security-findings" title="Permanent link">&para;</a></h3>
+<ul>
+<li>No hardcoded secrets. Proper <code>CredentialStore</code> with resolution chain + TTL caching.</li>
+<li><code>.env</code> files are gitignored.</li>
+<li>No <code>pickle</code>, no unsafe <code>yaml.load</code>. All YAML uses <code>yaml.safe_load()</code>.</li>
+<li>No <code>eval</code> except one calculator agent with strict regex guard.</li>
+<li>Pre-commit hook guards against commercial content leaking to OSS.</li>
+<li>No dependency lockfile (<code>poetry.lock</code> or pinned requirements) — builds not reproducible.</li>
+</ul>
+<hr />
+<h2 id="4-test-coverage">4. Test Coverage<a class="headerlink" href="#4-test-coverage" title="Permanent link">&para;</a></h2>
+<h3 id="41-overall-assessment">4.1 Overall Assessment<a class="headerlink" href="#41-overall-assessment" title="Permanent link">&para;</a></h3>
+<p><strong>Python:</strong> 3,899 tests across 173 files. Strong coverage of core systems.</p>
+<p><strong>Frontend:</strong> 149 vitest tests across 10 files. <strong>All store-level only</strong> — zero component rendering tests. ~40+ React components untested.</p>
+<h3 id="42-well-tested-modules-thorough">4.2 Well-Tested Modules (Thorough)<a class="headerlink" href="#42-well-tested-modules-thorough" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Tests</th>
+<th>Files</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ward Room</td>
+<td>137</td>
+<td>3 test files</td>
+</tr>
+<tr>
+<td>Builder</td>
+<td>231</td>
+<td>3 test files</td>
+</tr>
+<tr>
+<td>Knowledge Store</td>
+<td>117</td>
+<td>1 test file</td>
+</tr>
+<tr>
+<td>Workforce</td>
+<td>114</td>
+<td>1 test file</td>
+</tr>
+<tr>
+<td>Decomposer</td>
+<td>107</td>
+<td>1 test file</td>
+</tr>
+<tr>
+<td>Self-Mod</td>
+<td>93</td>
+<td>3 test files</td>
+</tr>
+<tr>
+<td>Proactive</td>
+<td>92</td>
+<td>2 test files</td>
+</tr>
+<tr>
+<td>Ontology</td>
+<td>91</td>
+<td>5 test files</td>
+</tr>
+<tr>
+<td>Architect</td>
+<td>77</td>
+<td>2 test files</td>
+</tr>
+<tr>
+<td>Emergent Detector</td>
+<td>67</td>
+<td>1 test file</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43-coverage-gaps-modules-without-dedicated-tests">4.3 Coverage Gaps — Modules Without Dedicated Tests<a class="headerlink" href="#43-coverage-gaps-modules-without-dedicated-tests" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Risk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cognitive/self_model.py</code></td>
+<td>No tests</td>
+</tr>
+<tr>
+<td><code>cognitive/code_validator.py</code></td>
+<td>No tests (security-critical)</td>
+</tr>
+<tr>
+<td><code>cognitive/sandbox.py</code></td>
+<td>No tests (security-critical)</td>
+</tr>
+<tr>
+<td><code>cognitive/skill_designer.py</code></td>
+<td>No tests</td>
+</tr>
+<tr>
+<td><code>cognitive/skill_validator.py</code></td>
+<td>No tests</td>
+</tr>
+<tr>
+<td><code>agents/shell_command.py</code></td>
+<td>No tests</td>
+</tr>
+<tr>
+<td><code>agents/http_fetch.py</code></td>
+<td>No tests (only regression coverage)</td>
+</tr>
+<tr>
+<td><code>utils/response_formatter.py</code></td>
+<td>No tests</td>
+</tr>
+<tr>
+<td><code>experience/shell.py</code></td>
+<td>15 tests — formatting helpers only. <strong>64% coverage.</strong> No REPL, command dispatch, or error handling tests.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="44-critical-untested-paths">4.4 Critical Untested Paths<a class="headerlink" href="#44-critical-untested-paths" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Full reset cycle</strong> — No test creates state, resets, then verifies cleanup vs. preservation with actual files</li>
+<li><strong>Agent lifecycle integration</strong> — ACM state changes not tested for runtime behavioral impact (suspended agent stops receiving work)</li>
+<li><strong>Full episodic pipeline</strong> — No test covers: request → execution → episode storage → dream → Hebbian strengthening</li>
+<li><strong>Trust recovery trajectory</strong> — No test verifies recovery from near-zero back to healthy</li>
+<li><strong><code>code_validator.py</code> and <code>sandbox.py</code></strong> — Security-critical modules with zero dedicated tests</li>
+</ol>
+<h3 id="45-regression-test-gaps">4.5 Regression Test Gaps<a class="headerlink" href="#45-regression-test-gaps" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Bug Fix</th>
+<th>Regression Test?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BF-065 (Stasis lifecycle)</td>
+<td>YES — <code>test_temporal_context.py</code></td>
+</tr>
+<tr>
+<td>BF-066 (DM extraction)</td>
+<td><strong>MISSING</strong></td>
+</tr>
+<tr>
+<td>BF-067 (Ward Room link)</td>
+<td><strong>MISSING</strong> (UI-only)</td>
+</tr>
+<tr>
+<td>BF-068 (Shutdown exit)</td>
+<td><strong>MISSING</strong> (arguably untestable — <code>os._exit</code>)</td>
+</tr>
+<tr>
+<td>BF-070 (Tiered Reset)</td>
+<td>YES — <code>test_distribution.py</code>, <code>test_proactive.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="46-test-quality-concerns">4.6 Test Quality Concerns<a class="headerlink" href="#46-test-quality-concerns" title="Permanent link">&para;</a></h3>
+<p><strong>Mock overuse:</strong> 1,548 mock invocations across 87 files. Worst offenders:
+- <code>test_proactive.py</code> — 163 mocks + 36 assert_called
+- <code>test_builder_agent.py</code> — 117 mocks
+- <code>test_escalation.py</code> — 81 mocks</p>
+<p><strong>Flaky risk:</strong> <code>test_dreaming.py</code> has 10+ <code>asyncio.sleep()</code> calls. Two tests have <strong>10-second sleeps</strong> (<code>test_builder_agent.py:654</code>, <code>test_decomposer.py:586</code>).</p>
+<p><strong>Frontend:</strong> All 149 vitest tests are Zustand store state tests. Zero <code>@testing-library/react</code> component rendering tests. No DOM assertions, no user interaction tests. ~40+ React components completely untested.</p>
+<hr />
+<h2 id="5-missed-considerations">5. Missed Considerations<a class="headerlink" href="#5-missed-considerations" title="Permanent link">&para;</a></h2>
+<h3 id="51-unbounded-database-growth-critical">5.1 Unbounded Database Growth — CRITICAL<a class="headerlink" href="#51-unbounded-database-growth-critical" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Database</th>
+<th>Table</th>
+<th>Cleanup?</th>
+<th>Risk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>events.db</code></td>
+<td><code>events</code></td>
+<td><strong>None</strong></td>
+<td>Append-only, every heartbeat/spawn/intent logged. Grows indefinitely.</td>
+</tr>
+<tr>
+<td><code>journal.db</code></td>
+<td><code>journal</code></td>
+<td>Reset only</td>
+<td>LLM trace log, append-only during operation.</td>
+</tr>
+<tr>
+<td><code>workforce.db</code></td>
+<td><code>work_items</code>, <code>bookings</code></td>
+<td><strong>None</strong></td>
+<td>No cleanup mechanism found.</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>events.db</code> is the most urgent</strong> — every system event appended with no eviction, rotation, or size cap. Could reach hundreds of MB over weeks.</p>
+<h3 id="52-foreign-keys-not-enforced-medium">5.2 Foreign Keys Not Enforced — MEDIUM<a class="headerlink" href="#52-foreign-keys-not-enforced-medium" title="Permanent link">&para;</a></h3>
+<p>SQLite requires <code>PRAGMA foreign_keys = ON</code> per connection. This pragma is <strong>never executed</strong> anywhere in the codebase. Foreign keys in <code>ward_room.db</code> (threads→channels, posts→threads) are purely documentary.</p>
+<h3 id="53-missing-database-indexes-medium">5.3 Missing Database Indexes — MEDIUM<a class="headerlink" href="#53-missing-database-indexes-medium" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Database</th>
+<th>Column</th>
+<th>Query Pattern</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ward_room.db</code> threads</td>
+<td><code>channel_id</code></td>
+<td><code>WHERE channel_id = ?</code> (frequent)</td>
+</tr>
+<tr>
+<td><code>ward_room.db</code> posts</td>
+<td><code>thread_id</code></td>
+<td><code>WHERE thread_id = ?</code> (frequent)</td>
+</tr>
+<tr>
+<td><code>ward_room.db</code> posts</td>
+<td><code>author_id</code></td>
+<td>Author-based lookups</td>
+</tr>
+<tr>
+<td><code>persistent_tasks.db</code></td>
+<td><code>status</code>, <code>webhook_name</code></td>
+<td>WHERE filters</td>
+</tr>
+<tr>
+<td><code>assignments.db</code></td>
+<td><code>status</code></td>
+<td>WHERE filters</td>
+</tr>
+</tbody>
+</table>
+<h3 id="54-configuration-drift-medium">5.4 Configuration Drift — MEDIUM<a class="headerlink" href="#54-configuration-drift-medium" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Location</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pools.spawn_cooldown_ms</code> defined, never read</td>
+<td><code>config.py:17</code></td>
+</tr>
+<tr>
+<td><code>dreaming.dream_interval_seconds</code> defined, never read</td>
+<td><code>config.py:165</code></td>
+</tr>
+<tr>
+<td><code>scaling.idle_scale_down_seconds</code> defined, never read</td>
+<td><code>config.py:186</code></td>
+</tr>
+<tr>
+<td><code>scaling.observation_window_seconds</code> defined, never read</td>
+<td><code>config.py:185</code></td>
+</tr>
+<tr>
+<td>Config version <code>0.1.0</code> vs actual <code>v0.4.0-phase29c</code></td>
+<td><code>config.py:423</code></td>
+</tr>
+<tr>
+<td>Default model names stale (<code>gpt-4o-mini</code>, <code>claude-sonnet-4</code>)</td>
+<td><code>config.py:54-56</code></td>
+</tr>
+<tr>
+<td><code>EarnedAgencyConfig</code> exists but no code reads it</td>
+<td><code>config.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="55-open-without-encoding-windows-medium">5.5 <code>open()</code> Without Encoding (Windows) — MEDIUM<a class="headerlink" href="#55-open-without-encoding-windows-medium" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Line</th>
+<th>Risk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>crew_profile.py</code></td>
+<td>328</td>
+<td><code>open(yaml_file, "r")</code> — no encoding, will fail on non-ASCII</td>
+</tr>
+<tr>
+<td><code>crew_profile.py</code></td>
+<td>409</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><code>config.py</code></td>
+<td>464</td>
+<td>Config loader — same risk</td>
+</tr>
+</tbody>
+</table>
+<h3 id="56-deprecated-async-patterns-medium">5.6 Deprecated Async Patterns — MEDIUM<a class="headerlink" href="#56-deprecated-async-patterns-medium" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>asyncio.ensure_future()</code> used in 10 locations (should be <code>asyncio.create_task()</code>)</li>
+<li><code>asyncio.get_event_loop()</code> in <code>records_store.py:403</code> (deprecated since Python 3.10)</li>
+</ul>
+<h3 id="57-sif-placeholder-methods-low">5.7 SIF Placeholder Methods — LOW<a class="headerlink" href="#57-sif-placeholder-methods-low" title="Permanent link">&para;</a></h3>
+<p><code>sif.py:273-294</code> — Three check methods are no-ops returning empty lists:
+- <code>check_config_validity</code>
+- <code>check_index_consistency</code>
+- <code>check_memory_integrity</code></p>
+<p>Registered in the check pipeline but perform no validation. Creates false sense of completeness.</p>
+<h3 id="58-stale-lru_cache-low">5.8 Stale lru_cache — LOW<a class="headerlink" href="#58-stale-lru_cache-low" title="Permanent link">&para;</a></h3>
+<p><code>standing_orders.py:79-89</code> — <code>@lru_cache(maxsize=32)</code> on <code>_load_file(path)</code>. If standing orders files change on disk, cache serves stale content with no invalidation mechanism.</p>
+<h3 id="59-only-1-todo-in-entire-codebase">5.9 Only 1 TODO in Entire Codebase<a class="headerlink" href="#59-only-1-todo-in-entire-codebase" title="Permanent link">&para;</a></h3>
+<p><code>api.py:2802</code> — <code>escalation_hook=None,  # TODO(Phase-33): wire to ChainOfCommand</code></p>
+<p>This is impressively clean. No stub implementations (<code>NotImplementedError</code>) exist anywhere.</p>
+<hr />
+<h2 id="6-recommended-priority-actions">6. Recommended Priority Actions<a class="headerlink" href="#6-recommended-priority-actions" title="Permanent link">&para;</a></h2>
+<h3 id="immediate-before-next-feature-wave">Immediate (Before Next Feature Wave)<a class="headerlink" href="#immediate-before-next-feature-wave" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Add <code>events.db</code> retention/rotation</strong> — Append-only with no eviction is a ticking time bomb. Add a <code>max_events</code> or <code>max_age_days</code> config with periodic cleanup.</li>
+<li><strong>Fix path traversal in <code>records_store.py</code></strong> — Add <code>Path.resolve()</code> + <code>is_relative_to()</code> checks. 3 endpoints affected.</li>
+<li><strong>Add missing DB indexes</strong> — Ward Room <code>channel_id</code> and <code>thread_id</code> indexes will prevent degradation as data grows.</li>
+</ol>
+<h3 id="short-term-next-1-2-sprints">Short-Term (Next 1-2 Sprints)<a class="headerlink" href="#short-term-next-1-2-sprints" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Establish error handling policy</strong> — Audit 40+ swallowed exceptions. Define which are acceptable (truly non-critical, best-effort) vs. which need logging.</li>
+<li><strong>Extract <code>_format_duration()</code> to shared utility</strong> — 3 identical copies. Classic DRY fix.</li>
+<li><strong>Add <code>encoding="utf-8"</code> to <code>open()</code> calls</strong> — 3 locations in <code>crew_profile.py</code> and <code>config.py</code>.</li>
+<li><strong>Replace <code>asyncio.ensure_future()</code> with <code>create_task()</code></strong> — 10 locations. Modern pattern, prevents GC issues.</li>
+<li><strong>Add <code>PRAGMA foreign_keys = ON</code></strong> to SQLite connection initialization.</li>
+</ol>
+<h3 id="medium-term-architecture-health">Medium-Term (Architecture Health)<a class="headerlink" href="#medium-term-architecture-health" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Decompose <code>ProbOSRuntime</code></strong> — Extract initialization into focused initializer classes. Replace private-attribute patching with dependency injection or builder pattern.</li>
+<li><strong>Extract <code>api.py</code> into FastAPI routers</strong> — Group the 80+ endpoints into <code>APIRouter</code> instances by domain.</li>
+<li><strong>Replace 95 <code>Any</code> annotations with concrete types</strong> — Start with <code>runtime.py</code> service attributes.</li>
+<li><strong>Add public APIs for cross-object access</strong> — Eliminate the 15+ private member accesses, especially <code>assignment.py</code> writing SQL to Ward Room's DB.</li>
+<li><strong>Formalize event system</strong> — Create an event type registry or typed event classes instead of scattered string literals.</li>
+</ol>
+<h3 id="long-term-test-quality">Long-Term (Test Quality)<a class="headerlink" href="#long-term-test-quality" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Add security tests for <code>code_validator.py</code> and <code>sandbox.py</code></strong> — These are security-critical with zero dedicated tests.</li>
+<li><strong>Add integration tests for full reset cycle</strong> — Create state → reset → verify.</li>
+<li><strong>Add frontend component rendering tests</strong> — Zero DOM/interaction tests currently. At least cover critical flows (chat, Ward Room, agent profile).</li>
+<li><strong>Reduce mock density</strong> in <code>test_proactive.py</code> (163 mocks) and <code>test_builder_agent.py</code> (117 mocks).</li>
+<li><strong>Replace 10-second sleeps</strong> in <code>test_builder_agent.py:654</code> and <code>test_decomposer.py:586</code>.</li>
+</ol>
+<hr />
+<h2 id="appendix-files-scanned">Appendix: Files Scanned<a class="headerlink" href="#appendix-files-scanned" title="Permanent link">&para;</a></h2>
+<p><strong>Source:</strong> 126 Python files in <code>src/probos/</code>
+<strong>Tests:</strong> 173 test files in <code>tests/</code>
+<strong>Frontend:</strong> 55 TSX/TS files in <code>ui/src/</code>, 10 test files in <code>ui/src/__tests__/</code>
+<strong>Config/Docs:</strong> PROGRESS.md, DECISIONS.md, roadmap.md, pyproject.toml, .gitignore</p>
+<p><strong>Review agents:</strong> 5 parallel exploration agents covering code quality, architecture, test coverage, security, and missed considerations. Each agent independently read 30-90+ files.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,2147 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/roadmap-completed/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Roadmap — Completed Work - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#roadmap-completed-work" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Roadmap — Completed Work
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#engineering-team-completed-ads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engineering Team Completed ADs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#northstar-i-automated-build-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Northstar I — Automated Build Pipeline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Northstar I — Automated Build Pipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runtime-safety-correctness-gpt-54-code-review-ad-325-through-ad-329" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime Safety &amp; Correctness (GPT-5.4 Code Review — AD-325 through AD-329)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#northstar-ii-phase-1-transporter-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Northstar II Phase 1 — Transporter Pattern
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Northstar II Phase 1 — Transporter Pattern">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-transporter-pattern-builder-ad-330-through-ad-336" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Transporter Pattern (Builder — AD-330 through AD-336)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mission-control-completed-ads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mission Control Completed ADs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mission Control Completed ADs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hxi-glass-bridge-progressive-enhancement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HXI Glass Bridge — Progressive Enhancement
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cognitive-evolution-concrete-ads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cognitive Evolution Concrete ADs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cognitive Evolution Concrete ADs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cognitive-evolution-concrete-ads-phase-28b" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cognitive Evolution — Concrete ADs (Phase 28b)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bug-tracker-closed-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug Tracker — Closed Issues
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bug Tracker — Closed Issues">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bf-001-self-mod-false-positive-on-knowledge-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BF-001: Self-Mod False Positive on Knowledge Questions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bf-002-agent-orbs-escape-pool-group-spheres-on-cognitive-canvas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BF-002: Agent Orbs Escape Pool Group Spheres on Cognitive Canvas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bf-003-run-diagnostic-bypasses-vitals-monitor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BF-003: "Run Diagnostic" Bypasses Vitals Monitor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bf-004-transporter-hxi-visualization-not-rendered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BF-004: Transporter HXI Visualization Not Rendered
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bf-007-verification-false-positive-on-per-pool-agent-counts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BF-007: Verification False Positive on Per-Pool Agent Counts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bf-008-dream-cycle-double-replay-after-dolphin-dreaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BF-008: Dream Cycle Double-Replay After Dolphin Dreaming
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="roadmap-completed-work">Roadmap — Completed Work<a class="headerlink" href="#roadmap-completed-work" title="Permanent link">&para;</a></h1>
+<p><em>Archived from <a href="../roadmap/">roadmap.md</a>. Reference for completed ADs, closed bugs, and historical decisions.</em></p>
+<hr />
+<h2 id="engineering-team-completed-ads">Engineering Team Completed ADs<a class="headerlink" href="#engineering-team-completed-ads" title="Permanent link">&para;</a></h2>
+<p><strong>Builder Quality Gates &amp; Standing Orders (AD-337–341)</strong></p>
+<p><em>"All hands, new standing orders from the bridge."</em></p>
+<p>AD-337 proved the Builder pipeline works end-to-end but revealed systemic quality gaps: the builder committed code with failing tests, the test-fix loop was disabled in practice, and test-writing guidance was minimal. These ADs fix the pipeline and introduce ProbOS's own constitution system.</p>
+<ul>
+<li><strong>AD-337: Implement /ping Command</strong> <em>(done)</em> — First successful end-to-end Builder test. Added <code>/ping</code> slash command showing system uptime, agent count, health score. Revealed pipeline gaps: commit not gated on test passage, test-fix loop disabled (no llm_client passed), "Files: 0" reporting bug for MODIFY-only builds.</li>
+<li><strong>AD-338: Builder Commit Gate &amp; Fix Loop</strong> <em>(done)</em> — Gate commits on test passage (don't commit broken code). Pass llm_client from api.py to enable 2-retry test-fix loop. Fix "Files: 0" reporting bug (count files_modified + files_written).</li>
+<li><strong>AD-339: Standing Orders Architecture</strong> <em>(done)</em> — ProbOS's own hierarchical instruction system. Four tiers: Federation Constitution (universal, immutable) → Ship Standing Orders (per-instance) → Department Protocols (per-department) → Agent Standing Orders (per-agent, evolvable). <code>config/standing_orders/</code> directory with <code>federation.md</code>, <code>ship.md</code>, <code>engineering.md</code>, <code>science.md</code>, <code>medical.md</code>, <code>security.md</code>, <code>bridge.md</code>. <code>compose_instructions()</code> assembles complete system prompt at call time. Like Claude Code's <code>CLAUDE.md</code> and OpenClaw's <code>soul.md</code>, but hierarchical and evolvable. No IDE dependency.</li>
+<li><strong>AD-340: Builder Instructions Enhancement</strong> <em>(done)</em> — Add concrete test-writing rules to Builder's hardcoded instructions: read <strong>init</strong> signatures, use full import paths, trace mock coverage, match actual output format.</li>
+<li><strong>AD-341: Code Review Agent</strong> <em>(done)</em> — CodeReviewAgent reviews Builder output against Standing Orders before commit gate. Engineering department, standard tier. Starts as soft gate (advisory, logs issues). Earns hard gate authority through ProbOS trust model. Reads standards from Standing Orders, not IDE config.</li>
+<li><strong>Future: Hard Gate Upgrade</strong> (absorbed from Claude Code code-review plugin, 2026-03-20) — When the reviewer earns hard-gate authority, enhance with patterns from Anthropic's code-review plugin:<ul>
+<li><strong>Parallel specialist reviewers</strong> — Launch 3-4 independent review agents in parallel (Standing Orders compliance, bug detection, pattern adherence, historical context via git blame). Redundancy catches more issues than a single reviewer</li>
+<li><strong>Confidence scoring</strong> — Each finding scored 0-100. Only issues ≥80 surface to Captain. Reduces false positives that erode trust in the reviewer. Scoring considers: explicit Standing Orders match, evidence strength, whether issue is pre-existing vs introduced</li>
+<li><strong>Validation pass</strong> — After initial findings, a separate agent validates each issue before surfacing. "Review the review" — expensive but high-signal. Optional, activated only in hard-gate mode</li>
+<li><strong>False positive exclusion list</strong> — Standing Orders for the reviewer itself: don't flag pre-existing issues, linter-catchable items, pedantic nitpicks, code with lint-ignore comments</li>
+<li><strong>Model tiering for review tasks</strong> — Fast tier for triage (is this build worth deep review?), standard for compliance, deep for subtle bugs. Cognitive Division of Labor applied to review</li>
+</ul>
+</li>
+<li><strong>AD-342: Standing Orders Display Command</strong> <em>(done)</em> — <code>/orders</code> slash command showing all standing orders files with tier classification (Federation/Ship/Department/Agent), summaries, and sizes.</li>
+</ul>
+<p><strong>Builder Failure Escalation &amp; Diagnostic Reporting (AD-343–347)</strong></p>
+<p><em>"Damage report, Number One."</em></p>
+<p>AD-342's <code>/orders</code> build revealed the next pipeline gap: when the builder fails, the Captain gets a raw error dump with no classification, no context, and no actionable options. The test runner also runs the full 2254-test suite with a 120s timeout, causing spurious timeouts when only a handful of targeted tests are relevant. These ADs introduce structured failure diagnostics, smart test selection, resolution options in the HXI, and the foundation for chain-of-command escalation.</p>
+<ul>
+<li><strong>AD-343: BuildFailureReport &amp; Classification</strong> <em>(done)</em> — Structured failure report dataclass with failure categorization (timeout, test_failure, syntax_error, import_error, llm_error). Parses pytest output to extract failed test names and file:line error locations. Generates context-appropriate resolution options per category. 12 tests.</li>
+<li><strong>AD-344: Smart Test Selection</strong> <em>(done)</em> — Two-phase test runner: targeted tests first (by file naming convention), full suite only if targeted pass. Maps <code>src/probos/foo/bar.py</code> → <code>tests/test_bar*.py</code>. Drops typical test-fix iteration from ~120s to ~5-15s. Fix loop uses targeted tests for faster retries. 6 tests. <strong>Future enhancement:</strong> Build classification (additive vs integration) to skip full suite entirely for new standalone files. Wave-level batching — run full suite once per build wave rather than per AD, saving ~6 min per additive build.</li>
+<li><strong>AD-345: Enriched Failure Event &amp; Resolution API</strong> <em>(done)</em> — Wire <code>BuildFailureReport</code> into <code>build_failure</code> WebSocket event. New <code>/api/build/resolve</code> endpoint handles: retry_extended, retry_targeted, retry_fix, commit_override, abort, investigate. Pending failure cache with 30-min expiry. 1 test.</li>
+<li><strong>AD-346: HXI Build Failure Diagnostic Card</strong> <em>(done)</em> — Frontend rendering of structured failure report with category badge, failed tests list, collapsible error output, and resolution action buttons. Red/amber accent styling. Mirrors build proposal card pattern.</li>
+<li><strong>AD-347: Builder Escalation Hook</strong> <em>(done)</em> — Pluggable callback on <code>execute_approved_build()</code> that fires before failure reaches the Captain. No-op initially; Phase 33 wires it to Engineering Chief → Architect → Captain cascade. Returns <code>BuildResult</code> if resolved, <code>None</code> to escalate. 4 tests.</li>
+</ul>
+<p><strong>Builder Pipeline Guardrails (AD-360)</strong></p>
+<p><em>"The ship's safety systems catch what the crew might miss."</em></p>
+<p>Visiting officer builds failed 2 of 3 times by creating files in wrong directories and generating files not in the spec. AD-360 adds six structural guardrails to catch these problems automatically. Inspired by Aider (pre-edit dirty commit), Cline (shadow git checkpoints, workspace access tiers), SWE-Agent (container isolation), OpenHands (overlay mounts).</p>
+<ul>
+<li><strong>AD-360: Builder Pipeline Guardrails</strong> <em>(done)</em> — Six guardrails: (1) branch lifecycle management — cleanup on failure + stale branch deletion, (2) <code>_validate_file_path()</code> — blocks traversal, absolute, forbidden, and out-of-scope paths (hard gate), (3) visiting officer disk scan filtering in <code>CopilotBuilderAdapter</code> (first line of defense), (4) build spec file allowlist warning (soft gate), (5) dirty working tree protection via <code>_is_dirty_working_tree()</code> (hard gate), (6) untracked file cleanup in <code>finally</code> block — deletes created files + empty parent dirs on failure. 10 tests.</li>
+<li><strong>AD-361: CI/CD Pipeline</strong> <em>(done)</em> — GitHub Actions workflow with two parallel jobs: <code>python-tests</code> (Python 3.12, uv, pytest) and <code>ui-tests</code> (Node 22, npm, vitest + tsc build). Runs on push to main and PRs. CI stabilization: flaky monotonic TTL fix, ToolResult SDK fallback, SDK test skip marker.</li>
+</ul>
+<p><strong>GPT-5.4 Code Review Findings (AD-362–364)</strong></p>
+<p><em>Identified by GPT-5.4 via GitHub Copilot. All findings verified against source with line numbers confirmed.</em></p>
+<ul>
+<li><strong>AD-362: Fix Bundled Persistence</strong> <em>(done)</em> — Silent data loss in TodoAgent, NoteTakerAgent, SchedulerAgent. <code>_mesh_write_file()</code> saw a proposal response as success without calling <code>commit_write()</code>. Fixed: call <code>FileWriterAgent.commit_write()</code> directly (personal data, no consensus needed), check return value, propagate failure. 4 tests.</li>
+<li><strong>AD-363: Fix Mock Reminder Routing</strong> <em>(done)</em> — "remind me to..." routed to <code>manage_todo</code> instead of <code>manage_schedule</code> in MockLLMClient due to first-match-wins regex ordering. Fixed: moved <code>remind</code> phrase to scheduler regex. 1 test.</li>
+<li><strong>AD-364: Fix get_event_loop in Async Code</strong> <em>(done)</em> — 7 call sites in shell.py and renderer.py using deprecated <code>get_event_loop()</code> inside <code>async def</code> methods, violating Standing Orders. Fixed: mechanical replacement with <code>get_running_loop()</code>.</li>
+</ul>
+<p><strong>GPT-5.4 Code Review Findings — Round 2 (AD-365–369)</strong></p>
+<p><em>Second batch of GPT-5.4 findings across Runtime/Consensus, HXI/UI, Builder/Self-Mod. 9 findings triaged → 2 already addressed (AD-362, BF-004), 7 new.</em></p>
+<ul>
+<li><strong>AD-365: Red-Team Write Verification</strong> <em>(done)</em> — RedTeamAgent had no real handler for <code>write_file</code> intents — fell through to <code>verified=True</code> with <code>confidence=0.1</code>. Added <code>_verify_write()</code> with path traversal, forbidden path, empty path, and content size checks. 4 tests.</li>
+<li><strong>AD-366: Fix API Import Approval Callback Leak</strong> <em>(done)</em> — API self-mod path set <code>_import_approval_fn</code> to auto-approve but never restored it in <code>finally</code> block. All future import approvals silently auto-approved. Fixed: save/restore pattern matching <code>_user_approval_fn</code>. 1 test.</li>
+<li><strong>AD-367: Move Validation Check Before Commit</strong> <em>(done)</em> — <code>validation_errors</code> checked after commit step; with <code>run_tests=False</code>, syntax-invalid files got committed. Fixed: moved check before commit using if/elif chain. 1 test.</li>
+<li><strong>AD-368: Self-Mod Registration Rollback</strong> <em>(done)</em> — Agent type registered in spawner/decomposer before pool creation; if pool fails, phantom type remained. Added <code>unregister_fn</code> plumbing and rollback on failure. 1 test.</li>
+<li><strong>AD-369: Fix WebSocket Protocol Detection</strong> <em>(done)</em> — Hardcoded <code>ws://</code> in <code>useWebSocket.ts</code> breaks behind HTTPS. Dynamic protocol detection via <code>window.location.protocol</code>.</li>
+</ul>
+<p><strong>SIF Implementation (AD-370)</strong></p>
+<ul>
+<li><strong>AD-370: Structural Integrity Field</strong> <em>(done)</em> — Runtime service with 7 invariant checks (trust bounds, Hebbian bounds, pool consistency, IntentBus coherence, config validity, index consistency, memory integrity). Background asyncio task at 5s interval. <code>SIFReport</code> with <code>health_pct</code> property. No LLM calls.</li>
+</ul>
+<p><strong>Automated Builder Dispatch (AD-371–374)</strong></p>
+<p><em>"The ship builds itself — and dispatches its own builders."</em></p>
+<p>Full automation of the Architect→Builder pipeline. Captain approves ADs, builders automatically pick up work, execute in isolated worktrees, and submit for review. No copy-paste, no manual dispatch.</p>
+<ul>
+<li><strong>AD-371: BuildQueue + WorktreeManager</strong> <em>(done)</em> — Priority-ordered queue of <code>QueuedBuild</code> items with status lifecycle validation, file footprint conflict detection, cancel support. <code>WorktreeManager</code> handles async git worktree lifecycle: create, remove, collect diff, merge to main, cleanup. 20 tests.</li>
+<li><strong>AD-372: BuildDispatcher + SDK Integration</strong> <em>(done)</em> — Core dispatch loop: watches BuildQueue, allocates worktrees, invokes CopilotBuilderAdapter, applies changes via <code>execute_approved_build()</code> with full guardrails. Configurable concurrency, Captain approve/reject actions, <code>on_build_complete</code> callback. Absorbs AD-374. 11 tests.</li>
+<li><strong>AD-373: HXI Build Dashboard</strong> <em>(done)</em> — Real-time build queue card with engineering amber theme. <code>BuildQueueItem</code> type, <code>build_queue_update</code>/<code>build_queue_item</code> event handlers, status dots, approve/reject buttons, file footprint display.</li>
+<li><strong>AD-374: File Footprint Conflict Detection</strong> <em>(absorbed into AD-372)</em> — <code>_find_dispatchable()</code> checks <code>has_footprint_conflict()</code> before dispatch. Overlapping specs serialized, non-overlapping run concurrently.</li>
+<li><strong>AD-375: Dispatch System Runtime Wiring</strong> <em>(done)</em> — Wire BuildQueue, WorktreeManager, BuildDispatcher into runtime lifecycle. API endpoints: <code>/api/build/queue/approve</code>, <code>/api/build/queue/reject</code>, <code>/api/build/enqueue</code>, <code>GET /api/build/queue</code>. <code>_emit_queue_snapshot</code> broadcasts full state, <code>_on_build_complete</code> emits per-item events. HXI button URLs fixed. 9 tests.</li>
+</ul>
+<p><strong>Crew Identity + Operations (AD-376–379)</strong></p>
+<p><em>"A crew isn't a list of agents — it's people with personalities, ranks, histories, and duty shifts."</em></p>
+<p>The foundational identity layer for ProbOS agents. Every crew member gets a formal profile, seeded personality, cognitive assessment record, individual standing orders, and scheduled duty shifts.</p>
+<ul>
+<li><strong>AD-376: CrewProfile + Personality System</strong> <em>(done)</em> — <code>CrewProfile</code> dataclass with identity (display_name, callsign, department, role), rank (Ensign→Senior, earned via trust), <code>PersonalityTraits</code> (Big Five dimensions seeded from YAML, evolvable), <code>PerformanceReview</code> history, <code>ProfileStore</code> (SQLite persistence). Crew profile YAML seeds for 12 agent types in <code>config/standing_orders/crew_profiles/</code>. 25 tests.</li>
+<li><strong>AD-377: Watch Rotation + Duty Shifts</strong> <em>(done)</em> — Naval-style watch system (Alpha/Beta/Gamma). <code>WatchManager</code> with duty roster, <code>StandingTask</code> (recurring department tasks with interval scheduling), <code>CaptainOrder</code> (persistent directives, one-shot or recurring). Dispatch loop executes due tasks for on-duty agents.</li>
+<li><strong>AD-378: CounselorAgent + Cognitive Profiles</strong> <em>(done)</em> — Ship's Counselor (Bridge-level CognitiveAgent). <code>CognitiveProfile</code> per agent with <code>CognitiveBaseline</code> snapshot and <code>CounselorAssessment</code> history. Deterministic assessment: trust drift, confidence drift, Hebbian drift, personality drift → wellness score + concerns + recommendations. Alert levels (green/yellow/red). Promotion fitness assessments.</li>
+<li><strong>AD-379: Per-Agent Standing Orders</strong> <em>(done)</em> — Tier 5 standing orders for all 12 agent types. Individual responsibilities, boundaries, personality expression. Callsigns matching crew profiles. Under 20 lines each. Evolvable via self-improvement pipeline.</li>
+</ul>
+<p><strong>Callsign Addressing — AD-397</strong> <em>(done)</em></p>
+<p><em>"Wesley, report." — not "af37b1ec37ac4af49aeb45c3d80e604e, report."</em></p>
+<p>Agent IDs are implementation details. The Captain addresses crew by name or by role — and agents address each other the same way. Two addressing modes:</p>
+<ul>
+<li><strong><code>@callsign</code></strong> → address a specific crew member by name. <code>@wesley scan for new projects</code> routes to the specific Scout agent with callsign "Wesley." Like calling a person</li>
+<li><strong><code>/role</code></strong> → address the station/pool. <code>/scout scan for new projects</code> routes to any available agent in the scout pool. Like calling "Helm" — whoever is on duty answers</li>
+</ul>
+<p><strong>Universal addressing — Captain and agents alike:</strong></p>
+<p><code>@callsign</code> is not a Captain-only privilege. Agents use the same syntax to address each other. Wesley can <code>@bones</code> to ask about an anomaly. Scotty can <code>@numberone</code> to clarify a build spec. The Counselor can <code>@wesley</code> to check in on drift patterns. Same resolution mechanism, same routing, same Ward Room delivery — regardless of whether the sender is the Captain or another agent. The callsign registry is the ship's universal directory.</p>
+<p>Implementation:
+- <strong>Callsign registry</strong> — at startup, build <code>callsign → agent_type → agent_id</code> lookup from YAML seed profiles + ProfileStore. Ship's Computer service on the runtime. Queryable by any agent via <code>resolve_callsign()</code>
+- <strong>NL resolution</strong> — decomposer recognizes <code>@callsign</code> mentions in natural language input. Resolves to specific agent routing (bypasses pool broadcast, targets individual)
+- <strong>Agent-side resolution</strong> — agents include <code>@callsign</code> in Ward Room messages. Ward Room resolves callsign to agent_id via the registry before delivery. Agents never need to know IDs
+- <strong>Shell <code>@</code> prefix</strong> — <code>@wesley report</code> in the command surface. Tab-completion of callsigns
+- <strong><code>/role</code> already works</strong> — existing <code>/scout</code>, <code>/build</code>, etc. slash commands already address pools. No change needed
+- <strong>HXI display</strong> — Bridge panel, notifications, pool views show callsigns alongside (or instead of) agent IDs. Scout report should say "Wesley" not <code>af37b1ec...</code>
+- <strong>Ambiguity handling</strong> — if multiple agents share a callsign (e.g., scaled pool with 3 builders all "Scotty"), <code>@scotty</code> routes to the healthiest/most trusted. Or each gets a unique callsign variant (Scotty-1, Scotty-2)</p>
+<p><strong>1:1 Crew Sessions:</strong></p>
+<p>The Captain doesn't just issue one-shot commands — they have conversations. "Wesley, give me a check-in report" → "What about that repo you flagged yesterday?" → "Keep an eye on it." This is the Captain's office hours with individual crew members.</p>
+<ul>
+<li><strong><code>@wesley</code> opens a 1:1 session</strong> — subsequent messages route directly to that agent (bypassing the Decomposer) until the Captain exits. Like DMs vs. a channel</li>
+<li><strong>Persistent conversation context</strong> — the 1:1 maintains message history so the agent can reference earlier exchanges. Context scoped to the session. Stored in EpisodicMemory with session tag</li>
+<li><strong>Agent responds as themselves</strong> — Wesley's personality, standing orders, and callsign inform the response. Not the Ship's Computer paraphrasing. "Aye Captain, here's what I've been tracking..." not "The scout agent reports..."</li>
+<li><strong>Check-in reports</strong> — any agent can be asked for a status check-in during a 1:1. Agent reports what they've done recently (from CognitiveJournal), current observations, anything flagged for Captain's attention</li>
+<li><strong>Session indicator</strong> — HXI shows who the Captain is talking to. Command surface shows crew member's callsign and department color. Bridge panel shows "1:1 with Wesley (Science)"</li>
+<li><strong>Return to bridge</strong> — <code>/bridge</code> or <code>@computer</code> exits the 1:1 and returns to normal Ship's Computer routing. Like hanging up a call</li>
+</ul>
+<hr />
+<h2 id="northstar-i-automated-build-pipeline">Northstar I — Automated Build Pipeline<a class="headerlink" href="#northstar-i-automated-build-pipeline" title="Permanent link">&para;</a></h2>
+<p><strong>Automated Build Pipeline — Northstar I (AD-311+) ✓ COMPLETE</strong></p>
+<p><em>"The ship builds itself — with the Captain's approval."</em></p>
+<p>The Architect and Builder agents form an automated design-and-build pipeline. The Architect reads full source via CodebaseIndex (import graphs, caller analysis, API surface verification), produces structured proposals with embedded BuildSpecs, and the Builder executes them with test-fix retry (AD-314). Ship's Computer identity grounds the Decomposer's self-knowledge (AD-317), with a four-level progression: SystemSelfModel (AD-318), Pre-Response Verification (AD-319), and Introspection Delegation (AD-320). A GPT-5.4 code review (AD-325–329) hardened runtime safety, validator correctness, and HXI resilience. All 18 steps complete.</p>
+<p>Inspired by: SWE-agent (Princeton NLP) for tool design, Aider for repo maps, Agentless (UIUC) for localize-then-repair pipelines, AutoCodeRover for call graph analysis, LangChain Open SWE/Deep Agents for middleware-based determinism and mid-run input injection patterns.</p>
+<ul>
+<li><strong>AD-311: Architect Deep Localize</strong> <em>(done)</em> — 3-step localize pipeline: fast-tier LLM selects 8 most relevant files from 20 candidates, reads full source (up to 4000 lines), auto-discovers test files, callers, and verified API surface.</li>
+<li><strong>AD-312: CodebaseIndex Structured Tools</strong> <em>(done)</em> — <code>find_callers()</code>, <code>find_tests_for()</code>, <code>get_full_api_surface()</code> methods. Expanded <code>_KEY_CLASSES</code> with CodebaseIndex, PoolGroupRegistry, Shell.</li>
+<li><strong>AD-315: CodebaseIndex Import Graph</strong> <em>(done)</em> — AST-based <code>_import_graph</code> and <code>_reverse_import_graph</code> built at startup. <code>get_imports()</code> and <code>find_importers()</code> query methods. Architect Layer 2a+ traces imports of selected files, expanding context up to 12 files.</li>
+<li><strong>AD-313: Builder File Edit Support</strong> <em>(done)</em> — Search-and-replace <code>===SEARCH===</code>/<code>===REPLACE===</code> MODIFY mode in <code>execute_approved_build()</code>. Builder <code>perceive()</code> reads target files for accurate SEARCH blocks. <code>ast.parse()</code> validation after writes. Old <code>===AFTER LINE:===</code> format deprecated.</li>
+<li><strong>AD-317: Ship's Computer Identity</strong> <em>(done)</em> — The Decomposer is the Ship's Computer (LCARS, TNG/Voyager). PROMPT_PREAMBLE with 6 grounding rules, dynamic System Configuration section with tier counts, runtime_summary injection as SYSTEM CONTEXT, confabulating examples fixed. Level 1 of self-knowledge grounding (prompt rules).</li>
+<li><strong>AD-314: Builder Test-Fix Loop</strong> <em>(done)</em> — After writing code, run tests. On failure, feed errors back to the LLM for fix attempts (up to 2 retries). <code>_run_tests()</code> helper extracted, <code>_build_fix_prompt()</code> for fix context, <code>max_fix_attempts</code> parameter on <code>execute_approved_build()</code>, <code>fix_attempts</code> tracked in BuildResult. Two flaky network tests fixed with proper mocks.</li>
+<li><strong>AD-316a: Architect Proposal Validation + Pattern Recipes</strong> <em>(done)</em> — New <code>_validate_proposal()</code> method with 6 programmatic checks (non-empty required fields, non-empty test_files, target/reference file paths verified against file tree with directory pattern matching, valid priority, description minimum length). Advisory warnings in <code>act()</code> result — non-blocking. 3 Pattern Recipes (New Agent, New Slash Command, New API Endpoint) appended to <code>instructions</code> with file paths, reference files, and structural checklists. Zero LLM calls. 14 tests.</li>
+<li><strong>AD-318: SystemSelfModel</strong> <em>(done)</em> — <code>SystemSelfModel</code> dataclass in <code>cognitive/self_model.py</code>: identity (version), topology (pool_count, agent_count, per-pool <code>PoolSnapshot</code> with name/type/count/department, departments, intent_count), health (system_mode active/idle/dreaming, uptime_seconds, recent_errors capped at 5, last_capability_gap). <code>to_context()</code> serializes to compact text (&lt;500 chars). <code>_build_system_self_model()</code> on runtime replaces <code>_build_runtime_summary()</code>. <code>_record_error()</code> helper and capability gap tracking wired into <code>process_natural_language()</code>. Level 2 of self-knowledge grounding (rules → <strong>data</strong> → verification → delegation). 9 new + 1 updated tests.</li>
+<li><strong>AD-319: Pre-Response Verification</strong> <em>(done)</em> — <code>_verify_response()</code> method on runtime with 5 programmatic checks: pool count claims, agent count claims, fabricated department names (context-aware regex), fabricated pool names (with generic word exclusion), system mode contradictions. Appends <code>[Note: ...]</code> correction footnote with verified facts when violations detected — non-blocking, zero-LLM. Wired at both response paths: no-nodes <code>dag.response</code> and nodes <code>reflection</code> (self_model passed through <code>_execute_dag()</code>). Warning logging on violations. Level 3 of self-knowledge grounding (rules → data → <strong>verification</strong> → delegation). 14 tests.</li>
+<li><strong>AD-320: Introspection Delegation</strong> <em>(done)</em> — <code>_grounded_context()</code> on IntrospectionAgent builds detailed verified text from <code>SystemSelfModel</code> (per-pool breakdowns by department, intent listing, health). 4 intent handlers (<code>_agent_info</code>, <code>_system_health</code>, <code>_team_info</code>, <code>_introspect_system</code>) enriched with <code>grounded_context</code> key. REFLECT_PROMPT rule 7 treats it as VERIFIED SYSTEM FACTS. <code>_summarize_node_result()</code> preserves outside truncation. Level 4 of self-knowledge grounding (rules → data → verification → <strong>delegation</strong>). 12 tests.</li>
+</ul>
+<h4 id="runtime-safety-correctness-gpt-54-code-review-ad-325-through-ad-329">Runtime Safety &amp; Correctness (GPT-5.4 Code Review — AD-325 through AD-329)<a class="headerlink" href="#runtime-safety-correctness-gpt-54-code-review-ad-325-through-ad-329" title="Permanent link">&para;</a></h4>
+<p><em>Identified by GPT-5.4 deep code review. All findings verified against source with line numbers confirmed.</em></p>
+<ul>
+<li><strong>AD-325: Escalation Tier 3 Timeout</strong> <em>(done)</em> — <code>_tier3_user()</code> now wraps user callback in <code>asyncio.wait_for(timeout=user_timeout)</code> (default 120s). On timeout, returns <code>EscalationResult(resolved=False, user_approved=None)</code> with descriptive reason. User-wait seconds accumulated on timeout for accurate DAG deadline accounting. New <code>user_timeout</code> constructor parameter on <code>EscalationManager</code>. 5 tests.</li>
+<li><strong>AD-326: API Task Lifecycle &amp; WebSocket Hardening</strong> <em>(done)</em> — <code>_background_tasks</code> set tracks all pipeline tasks with <code>_track_task()</code> helper (7 call sites converted). <code>_safe_send()</code> inner coroutine catches per-client <code>send_json()</code> failures and prunes dead WebSocket clients. <code>GET /api/tasks</code> endpoint for Captain visibility. FastAPI <code>_lifespan</code> handler drains/cancels tasks on shutdown. 5 tests.</li>
+<li><strong>AD-327: CodeValidator Hardening</strong> <em>(done)</em> — (a) <code>_check_schema()</code> now rejects code with multiple <code>BaseAgent</code> subclasses (was silently picking first). (b) New <code>_check_class_body_side_effects()</code> scans class bodies for bare function calls, loops, and conditionals that execute at import time. Both early-return patterns consistent with existing validator flow. 4 tests.</li>
+<li><strong>AD-328: Self-Mod Durability &amp; Bloom Fix</strong> <em>(done)</em> — (a) Knowledge store and semantic layer post-deployment failures now logged with <code>logger.warning(exc_info=True)</code> instead of bare <code>except: pass</code>. Partial failure warnings propagated in <code>self_mod_success</code> event and displayed to Captain. (b) <code>self_mod_success</code> event includes <code>agent_id</code>. Bloom stores <code>agent_id</code> (falling back to <code>agent_type</code>), lookup uses <code>a.id || a.agentType</code>. 3 Python + 1 Vitest tests.</li>
+<li><strong>AD-329: HXI Canvas Resilience &amp; Component Tests</strong> <em>(done)</em> — <code>connections.tsx</code> pool centers cached in <code>useMemo</code> keyed on <code>agentCount</code>, reactive <code>agents</code> subscription replaced with ref + count-based re-render pattern. <code>CognitiveCanvas.tsx</code> and <code>AgentTooltip.tsx</code> action subscriptions (<code>setHoveredAgent</code>, <code>setPinnedAgent</code>) replaced with <code>useStore.getState()</code> calls. 8 new Vitest tests covering pool center computation, connection filtering, tooltip state, and animation event clearing. 30 Vitest total.</li>
+</ul>
+<hr />
+<h2 id="northstar-ii-phase-1-transporter-pattern">Northstar II Phase 1 — Transporter Pattern<a class="headerlink" href="#northstar-ii-phase-1-transporter-pattern" title="Permanent link">&para;</a></h2>
+<h4 id="phase-1-transporter-pattern-builder-ad-330-through-ad-336">Phase 1: Transporter Pattern (Builder — AD-330 through AD-336)<a class="headerlink" href="#phase-1-transporter-pattern-builder-ad-330-through-ad-336" title="Permanent link">&para;</a></h4>
+<p><em>The first concrete implementation. Prove the architecture in the Builder, then generalize.</em></p>
+<p>The Builder faces the most acute version of the bottleneck: generating code for 1000+ line files in a single LLM call. The Transporter Pattern applies decompose-execute-merge to code generation — MapReduce for building software.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>BuildBlueprint ─→ ChunkDecomposer ─→ ┌─ Chunk 1 ──→ LLM ──→ Output 1 ─┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                                      │  Chunk 2 ──→ LLM ──→ Output 2  │──→ Assembler ──→ Validator ──→ Final
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                                      │  Chunk 3 ──→ LLM ──→ Output 3  │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                                      └─ Chunk N ──→ LLM ──→ Output N ─┘
+</code></pre></div>
+<p><strong>Components (starship transporter metaphor):</strong></p>
+<ol>
+<li>
+<p><strong>Pattern Buffer (BuildBlueprint)</strong> — Enhanced specification format that captures function signatures, interface contracts, and inter-chunk dependencies. The shared "truth" that all chunks reference. Extends the existing BuildSpec with structural metadata the decomposer needs.</p>
+</li>
+<li>
+<p><strong>Dematerializer (ChunkDecomposer)</strong> — Analyzes the BluePrint and breaks it into independent ChunkSpecs. Each chunk specifies: what to generate (a function, a class, a test block), what context it needs (interface signatures, imports, type definitions), and what it produces (function signature, exports). The decomposer uses CodebaseIndex and import graph data to identify natural seams.</p>
+</li>
+<li>
+<p><strong>Matter Stream (Parallel Chunk Execution)</strong> — Multiple Builder LLM calls run simultaneously. Each chunk gets only its required context (interface contracts + minimal surrounding code), keeping every call well within context budget. Uses <code>asyncio.gather()</code> for parallel execution with per-chunk timeout.</p>
+</li>
+<li>
+<p><strong>Rematerializer (ChunkAssembler)</strong> — Merges chunk outputs into unified file changes. Handles import deduplication, ordering (classes before functions that reference them), and conflict detection when two chunks modify the same region.</p>
+</li>
+<li>
+<p><strong>Heisenberg Compensator (Interface Validator)</strong> — AST-based verification that assembled code is correct: function signatures match their declarations, imports resolve, cross-chunk references are consistent, type annotations align. Catches errors that arise from independent generation. Zero-LLM validation pass.</p>
+</li>
+<li>
+<p><strong>HXI Integration</strong> — Visualize chunks on the Cognitive Canvas as parallel transporter streams. Show decomposition plan, per-chunk generation progress, assembly result with per-chunk attribution. Captain can inspect individual chunks before approving the assembled result.</p>
+</li>
+</ol>
+<p><strong>AD Breakdown:</strong></p>
+<ul>
+<li>
+<p><strong>AD-330: BuildBlueprint &amp; ChunkSpec</strong> <em>(done)</em> — New data structures extending BuildSpec. <code>BuildBlueprint</code> adds <code>interface_contracts</code> (function signatures, class APIs that chunks must conform to), <code>shared_imports</code>, <code>shared_context</code>, and <code>chunk_hints</code> (suggested decomposition boundaries). <code>ChunkSpec</code> captures what to generate, required context, expected output signature, and dependencies on other chunks. <code>ChunkResult</code> uses a <strong>Structured Information Protocol</strong> (adapted from LLM×MapReduce): <code>generated_code</code> (extracted information), <code>decisions</code> (rationale — why specific implementation choices were made), <code>output_signature</code> (what was actually produced), and <code>confidence: int</code> (1-5, reflecting contextual completeness — chunks with full interface contracts score higher than those working from minimal hints). Confidence scores are critical for conflict resolution in assembly. <code>validate_chunk_dag()</code> uses Kahn's algorithm for cycle detection. <code>get_ready_chunks()</code> returns chunks whose dependencies are satisfied. <code>create_blueprint()</code> factory. All dataclasses in <code>cognitive/builder.py</code>.</p>
+</li>
+<li>
+<p><strong>AD-331: ChunkDecomposer</strong> <em>(done)</em> — <code>decompose_blueprint()</code> async function: fast-tier LLM analyzes BuildBlueprint and produces ChunkSpec list. Builds AST outlines of target files, gathers import context from CodebaseIndex (optional). Parses JSON response, normalizes <code>depends_on</code> references. Validates DAG (no cycles) and coverage (adds catch-all chunks for uncovered files). <code>_build_chunk_context()</code> helper builds L1-L3 context slices (interface contracts, shared imports, AST outline). <code>_fallback_decompose()</code> robust fallback: one chunk per target file, one per test file. Three fallback triggers: LLM error, invalid JSON, cyclic DAG.</p>
+</li>
+<li>
+<p><strong>AD-332: Parallel Chunk Execution</strong> <em>(done)</em> — <code>execute_chunks()</code> wave-based parallel execution via <code>asyncio.gather()</code>. Independent chunks run concurrently, dependent chunks wait for prerequisites via <code>get_ready_chunks()</code>. <code>_execute_single_chunk()</code> with deep-tier LLM, <code>asyncio.wait_for()</code> per-chunk timeout, configurable retry count. <code>_build_chunk_prompt()</code> assembles focused per-chunk prompt with context slices and dependency outputs. <code>_parse_chunk_response()</code> extracts file blocks, DECISIONS rationale, CONFIDENCE score (1-5 clamped). Partial success is valid — assembler handles incomplete results.</p>
+</li>
+<li>
+<p><strong>AD-333: ChunkAssembler (Rematerializer)</strong> <em>(done)</em> — Zero-LLM static assembly of ChunkResults into unified file-block format. <code>assemble_chunks()</code> merges per-file CREATE blocks (import dedup via <code>_merge_create_blocks()</code>) and MODIFY blocks (replacement list concat). Confidence-weighted ordering (higher-confidence chunk content first). Partial assembly (failed chunks skipped). <code>assembly_summary()</code> produces debug/HXI metrics. Output format compatible with <code>execute_approved_build()</code> — downstream pipeline unchanged. 24 tests.</p>
+</li>
+<li>
+<p><strong>AD-334: Interface Validator (Heisenberg Compensator)</strong> <em>(done)</em> — Zero-LLM AST-based post-assembly verification. <code>validate_assembly()</code> runs 5 check categories: syntax validity (<code>ast.parse</code>), duplicate top-level definitions, empty MODIFY search strings, interface contract satisfaction, confidence-aware unresolved name detection (stricter for chunks ≤2). <code>ValidationResult</code> dataclass with per-chunk error attribution via <code>_find_chunk_for_file()</code>. <code>_find_unresolved_names()</code> conservative name resolution (builtins, imports, parameters excluded). 15 tests.</p>
+</li>
+<li>
+<p><strong>AD-335: HXI Transporter Visualization</strong> <em>(done)</em> — Optional <code>on_event</code> callbacks on <code>decompose_blueprint()</code> and <code>execute_chunks()</code> emit <code>transporter_decomposed</code>, <code>transporter_wave_start</code>, <code>transporter_chunk_done</code>, <code>transporter_execution_done</code>. <code>_emit_transporter_events()</code> helper emits <code>transporter_assembled</code> and <code>transporter_validated</code>. Frontend: <code>TransporterProgress</code> state in useStore.ts, 6 event handler cases with Star Trek-themed chat panel messages. Canvas "matter stream" visualization deferred. 8 tests.</p>
+</li>
+<li>
+<p><strong>AD-336: End-to-End Integration &amp; Fallback</strong> <em>(done)</em> — <code>_should_use_transporter()</code> decision function (&gt;2 targets, &gt;20K context, &gt;2 impl+test). <code>transporter_build()</code> orchestrates full pipeline returning <code>_parse_file_blocks()</code>-format output. <code>BuilderAgent.perceive()</code>/<code>decide()</code>/<code>act()</code> augmented with Transporter branch + graceful fallback. <code>execute_approved_build()</code> unchanged. 12 tests.</p>
+</li>
+</ul>
+<hr />
+<h2 id="mission-control-completed-ads">Mission Control Completed ADs<a class="headerlink" href="#mission-control-completed-ads" title="Permanent link">&para;</a></h2>
+<p><strong>AD-316: AgentTask Data Model + TaskTracker Service</strong> <em>(done)</em></p>
+<p>Unified task lifecycle tracking. <code>TaskTracker</code> service (SIF/BuildQueue pattern), <code>AgentTask</code> dataclass with full lifecycle (queued→working→review→done/failed), <code>TaskStep</code> with timing, step_progress (current/total), WebSocket events (<code>task_created</code>/<code>task_updated</code>), frontend <code>AgentTaskView</code> types and store wiring. 30 tests.</p>
+<p><strong>AD-321: Activity Drawer (React)</strong> <em>(done)</em></p>
+<p>Slide-out panel from right edge of HXI. Three collapsible sections: Needs Attention (amber, action buttons, always expanded), Active (working tasks with step progress bars and <code>neural-pulse</code> animation, always expanded), Recent (done/failed, most recent first, capped at 10, collapsed by default). Task cards with department color left border stripe, status dot, type badge, truncated title, agent type, department, elapsed time, AD number. Click to expand: full title, step checklist with status icons, progress bar, Approve/Reject buttons, error text, metadata display. Glass panel styling, ACTIVITY toggle button with attention count badge. <code>ActivityDrawer.tsx</code> (new, 351 lines), <code>IntentSurface.tsx</code> modified for toggle + rendering. Consumes <code>agentTasks</code> from TaskTracker (AD-316) — no backend changes.</p>
+<p><strong>AD-322: Kanban Board View</strong> <em>(done)</em></p>
+<p>Mission Control Kanban dashboard — 4-column board (Queued → Working → Review → Done). <code>MissionControl.tsx</code> with <code>TaskCard</code> component showing department color coding, AD numbers, agent type, elapsed time, status pulse animation. Approve/Reject buttons on review-status items. <code>MissionControlTask</code> type derived from existing <code>BuildQueueItem</code> via <code>buildQueueToTasks()</code> — no new backend endpoints needed. Toggle button in HXI header switches between standard view and Mission Control overlay. Extensible to non-build task types (design, diagnostic, assessment) via <code>MissionControlTask.type</code>.</p>
+<p>Previously planned features for future iteration:
+- Columns: <code>Queued</code> → <code>Working</code> → <code>Needs Review</code> → <code>Done</code>
+- Cards show: agent type icon, task title, team color, elapsed time, step progress bar
+- Click card to expand into full detail panel: original prompt, step-by-step progress, file diffs (build tasks), proposal text (design tasks), action buttons (Approve / Reject / Respond)
+- Cards auto-move between columns as task state changes
+- Filter by team (Science, Engineering, Medical, etc.) or agent type
+- "Done" column auto-archives after configurable time</p>
+<p><strong>AD-323: Agent Notification Queue</strong> <em>(done)</em></p>
+<p>Implemented: <code>AgentNotification</code> dataclass + <code>NotificationQueue</code> service in <code>task_tracker.py</code>. <code>Runtime.notify()</code> convenience method with auto-lookup of agent_type/department. <code>build_state_snapshot()</code> includes <code>notifications</code> + <code>unread_count</code>. Two API endpoints: <code>POST /api/notifications/{id}/ack</code> and <code>POST /api/notifications/ack-all</code>. <code>NotificationDropdown</code> React component with glass panel styling, type-colored left borders (info=blue, action_required=amber, error=red), relative time, click-to-ack, mark-all-read. Bell button (<code>NOTIF</code>) at <code>right: 210</code> with unread count badge. Zustand: <code>notifications: NotificationView[]</code> state with <code>notification</code>/<code>notification_ack</code>/<code>notification_snapshot</code> event handlers + snapshot hydration. 12 pytest + 4 vitest tests.</p>
+<p><strong>AD-324: Orb Hover Enhancement</strong> <em>(done)</em></p>
+<p>Upgrade the existing system health orb with per-agent hover preview:</p>
+<ul>
+<li>When hovering over an agent representation in the orb, show a tooltip with: current task prompt (truncated), current step label, elapsed time, progress fraction (step 3 of 5)</li>
+<li>Visual indicator on the orb when any agent requires Captain attention (pulsing amber)</li>
+<li>Click-through from orb tooltip to the Activity Drawer card for that agent</li>
+</ul>
+<p><strong>AD-387: Unified Bridge — Single Panel HXI Redesign</strong> <em>(done)</em></p>
+<p>Replace three separate panels (NOTIF, ACTIVITY, MISSION CTRL) with a single BRIDGE button and unified command panel. Bridge panel (380px right sidebar) has five priority-ordered sections: Attention (merged <code>requires_action</code> tasks + <code>action_required</code> notifications, always expanded), Active (working tasks), Notifications (info/error), Kanban (compact inline, expandable to main viewer), Recent (done/failed). Empty sections auto-hide. Shared card components extracted into <code>bridge/</code> subdirectory. Main viewer switches between 3D canvas and full kanban via <code>mainViewer</code> state. ViewSwitcher appears top-left when non-canvas view active. Old components deleted: ActivityDrawer, NotificationDropdown, MissionControl. <code>bridgeOpen</code> + <code>mainViewer</code> replace <code>missionControlView</code> + <code>activityDrawerOpen</code> in Zustand store.</p>
+<h4 id="hxi-glass-bridge-progressive-enhancement">HXI Glass Bridge — Progressive Enhancement<a class="headerlink" href="#hxi-glass-bridge-progressive-enhancement" title="Permanent link">&para;</a></h4>
+<p><em>"A sheet of frosted glass over a living neural mesh — the Captain's bridge for a starship that runs on agents, not engines."</em></p>
+<p>The Glass Bridge layers a frosted working surface over the existing orb mesh. Three depth layers: Backdrop (3D mesh, z=0), Glass (task/collaboration surface, z=1), Controls (Bridge panel + Command Surface, z=2). The mesh is never replaced — the glass is translucent, the orbs breathe beneath. Each phase builds on the current HXI. Full design spec: <code>docs/design/hxi-glass-bridge.md</code>.</p>
+<p><strong>AD-388: Glass Overlay &amp; Center Task Cards</strong> <em>(done)</em></p>
+<p>Frosted glass layer over the canvas with center task card(s). <code>GlassLayer.tsx</code> renders at z-index 5 between canvas and controls. Dynamic frost level (backdrop-filter blur scales 0→2→4→6px with task count). Multi-task constellation layout (1-5+ tasks arranged spatially). <code>GlassTaskCard.tsx</code> with glass morphism, department-colored left border, progress bar, JetBrains Mono system data. Attention tasks elevated (-8px) with amber pulse animation. Click-through opens Bridge panel. Noise texture overlay. 9 new vitest tests.</p>
+<p><strong>AD-389: DAG Visualization</strong> <em>(done)</em></p>
+<p><code>GlassDAGNodes.tsx</code> renders step nodes radially around expanded task cards. 28px circles with status-colored borders and icons (done=green filled, in_progress=pulsing dept color, pending=ghosted, failed=red). SVG dependency lines connecting sequential nodes. Hover tooltips show step label and duration. Single-click card → expand steps, double-click → open Bridge panel. <code>expandedGlassTask: string | null</code> in store (one expanded at a time). Staggered fade-in animation (80ms per node). 7 new vitest tests.</p>
+<p><strong>AD-390: Ambient Intelligence &amp; Bridge States</strong> <em>(done)</em></p>
+<p>Three bridge states (idle/autonomous/attention) derived from agentTasks + notifications. <code>ContextRibbon.tsx</code> HUD strip at top with bridge state dot, agent count, active tasks, attention count, system mode. Ambient edge glow (inset box-shadow: cyan→gold→amber, 1.2s transition). <code>BriefingCard.tsx</code> return-to-bridge summary after 3+ min inactivity (auto-dismiss 8s). Completion celebrations: department-colored bloom (600ms) on task status → done. 11 new vitest tests.</p>
+<p><strong>AD-391: Cyberpunk Atmosphere Layer</strong> <em>(done)</em></p>
+<p>Opt-in visual effects: <code>ScanLineOverlay.tsx</code> (CSS repeating gradient, intensity-adjustable), <code>DataRainOverlay.tsx</code> (canvas hex characters colored by bridge state, Ctrl+Shift+D toggle), chromatic aberration (inline SVG filter with feColorMatrix/feOffset). Luminance ripple (80ms left-to-right sweep on bridge state change, always on). Sound engine: <code>playStepComplete</code> ascending chords, <code>playBridgeHum</code> continuous ambient per state, <code>playCaptainReturn</code> welcoming chime. All visual effects off by default, preferences persisted to localStorage. 10 new vitest tests.</p>
+<p><strong>AD-392: Adaptive Bridge</strong> <em>(done)</em></p>
+<p>Trust-driven progressive reveal: <code>trustBand()</code> categorizes agents into low/medium/high with corresponding visual treatment (prominent→standard→condensed). Command Surface breathing via IntentSurface: pill recedes to 80x4px glow line during autonomous mode when mouse is far, swells on 200px proximity. Captain's Gaze: throttled mouse tracking (100ms) promotes nearest task card with scale(1.03) + glow. <code>useBreakpoint()</code> hook adapts layout across 5 viewport ranges. 16 new vitest tests.</p>
+<hr />
+<h2 id="cognitive-evolution-concrete-ads">Cognitive Evolution Concrete ADs<a class="headerlink" href="#cognitive-evolution-concrete-ads" title="Permanent link">&para;</a></h2>
+<h3 id="cognitive-evolution-concrete-ads-phase-28b">Cognitive Evolution — Concrete ADs (Phase 28b)<a class="headerlink" href="#cognitive-evolution-concrete-ads-phase-28b" title="Permanent link">&para;</a></h3>
+<p><em>"The biggest structural gap is that a sentiment agent learning doesn't help the file agent."</em></p>
+<p>Six ADs that close the gaps between the theoretical Cognitive Evolution framework above and buildable code. Identified via Nooplex emergence criteria gap analysis. These make the existing data (ring buffers, episodic memory, dream cycles) actually useful for cross-agent learning.</p>
+<p><strong>Wave 1 (parallel, no shared files):</strong></p>
+<p><strong>AD-380: EmergentDetector Trend Regression</strong> <em>(done)</em> — Compute slopes over the snapshot ring buffer: <code>tc_n_slope</code>, <code>entropy_slope</code>, <code>cluster_stability_index</code>, <code>trust_convergence_rate</code>. Simple linear regression (pure Python, no numpy). <code>TrendReport</code> dataclass with direction (rising/stable/falling), r_squared confidence, significance test. Replace list with <code>collections.deque</code>. Wire into <code>detect_anomalies()</code> output. 12 tests.</p>
+<p><strong>AD-382: ServiceProfile — Learned External Service Modeling</strong> <em>(done)</em> — Replace hardcoded <code>_KNOWN_RATE_LIMITS</code> in HttpFetchAgent with SQLite-backed <code>ServiceProfile</code> per domain. Learned <code>min_interval</code>, latency percentiles (EMA), error rate, reliability history. Profiles persist across restarts. <code>ServiceProfileStore</code> (CrewProfile pattern). Seed intervals become defaults, overridden by learned data. 17 tests.</p>
+<p><strong>Wave 2:</strong></p>
+<p><strong>AD-381: InitiativeEngine — SIF → Remediation Proposals</strong> <em>(done)</em> — Bridge SIF (read-only monitoring) and the self-mod pipeline. New Ship's Computer service monitors SIF violations, EmergentDetector falling trends (from AD-380), Counselor red/yellow alerts. When triggers persist for N consecutive checks, generates <code>RemediationProposal</code> with trust-gated execution: AUTO (diagnose, alert_captain), COMMANDER (scale, recycle), CAPTAIN (patch). Fails-open, no LLM calls. (~300 lines + 18 tests).</p>
+<p><strong>Wave 3 (sequential chain):</strong></p>
+<p><strong>AD-383: Strategy Extraction — Dream-Derived Transferable Patterns</strong> <em>(done)</em> — New dream pass after trust consolidation. Scans episodic memory for cross-agent recurring patterns: error→recovery across agent types, high-confidence intent patterns across agents, intent co-occurrence sequences. Outputs <code>StrategyPattern</code> objects stored in KnowledgeStore. The dream cycle literally extracts crew wisdom from experience. (~250 lines + 15 tests).</p>
+<p><strong>AD-385: Capability Gap Prediction — Proactive Self-Mod</strong> <em>(done)</em> — New dream pass after strategy extraction. Analyzes episodic memory for: repeated low confidence on an intent type, repeated fallback (no intent matched), partial DAG coverage (one node consistently fails). Outputs <code>CapabilityGapPrediction</code> objects surfaced to Captain. The system says "I've noticed we struggle with X — shall I design a specialist?" instead of waiting for the user to hit the wall. (~200 lines + 14 tests).</p>
+<p><strong>AD-384: Strategy Application — Cross-Agent Knowledge Transfer</strong> <em>(done)</em> — <code>StrategyAdvisor</code> queries KnowledgeStore for strategies matching the current intent, formats them as "[CREW EXPERIENCE]" context for the LLM. New <code>REL_STRATEGY</code> relationship type on HebbianRouter tracks which strategies work for which agents. Strategies that help get reinforced; strategies that don't get decayed. MemoryForge (Long Horizon) becomes a consumer of the strategies collection. (~200 lines + 12 tests).</p>
+<table>
+<thead>
+<tr>
+<th>AD</th>
+<th>Title</th>
+<th>Wave</th>
+<th>Depends On</th>
+<th>Est. Lines</th>
+<th>Est. Tests</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AD-380</td>
+<td>EmergentDetector Trends</td>
+<td>1</td>
+<td>None</td>
+<td>~150</td>
+<td>12</td>
+</tr>
+<tr>
+<td>AD-382</td>
+<td>ServiceProfile</td>
+<td>1</td>
+<td>None</td>
+<td>~200</td>
+<td>14</td>
+</tr>
+<tr>
+<td>AD-381</td>
+<td>InitiativeEngine</td>
+<td>2</td>
+<td>AD-380</td>
+<td>~300</td>
+<td>18</td>
+</tr>
+<tr>
+<td>AD-383</td>
+<td>Strategy Extraction</td>
+<td>3</td>
+<td>None</td>
+<td>~250</td>
+<td>15</td>
+</tr>
+<tr>
+<td>AD-385</td>
+<td>Capability Gap Prediction</td>
+<td>3</td>
+<td>AD-383</td>
+<td>~200</td>
+<td>14</td>
+</tr>
+<tr>
+<td>AD-384</td>
+<td>Strategy Application</td>
+<td>3</td>
+<td>AD-383</td>
+<td>~200</td>
+<td>12</td>
+</tr>
+<tr>
+<td>AD-386</td>
+<td>Runtime Directive Overlays</td>
+<td>4</td>
+<td>AD-376 (Rank)</td>
+<td>~200</td>
+<td>30</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Nooplex emergence impact:</strong> AD-380 + AD-385 directly advance emergence criteria (trend measurement, proactive capability expansion). AD-383 + AD-384 close the biggest structural gap (cross-agent transfer learning). AD-381 + AD-382 create practical value while building infrastructure those criteria require.</p>
+<p><strong>AD-386: Runtime Directive Overlays — Evolvable Chain-of-Command Instructions</strong> <em>(done)</em> — Instructions today are static files; no crew member can issue new directives at runtime. This AD adds a persistent tier 6 instruction layer: <code>RuntimeDirective</code> objects issued through the chain of command (Captain→any, Bridge→advisory, Chief→subordinates, Self→self, Peer→suggestion). SQLite-backed <code>DirectiveStore</code>, authorized by <code>Rank</code> from CrewProfile. Self-updates tiered by trust: Ensign needs Captain approval, Lieutenant+ auto-approved (Counselor monitors drift). Wired into <code>compose_instructions()</code> as an additional layer after personal standing orders. Shell commands <code>/order</code> and <code>/directives</code>. (~200 lines + 30 tests). Build prompt: <code>prompts/runtime-directives.md</code>.</p>
+<hr />
+<h2 id="bug-tracker-closed-issues">Bug Tracker — Closed Issues<a class="headerlink" href="#bug-tracker-closed-issues" title="Permanent link">&para;</a></h2>
+<h3 id="bf-001-self-mod-false-positive-on-knowledge-questions">BF-001: Self-Mod False Positive on Knowledge Questions<a class="headerlink" href="#bf-001-self-mod-false-positive-on-knowledge-questions" title="Permanent link">&para;</a></h3>
+<p><strong>Severity:</strong> Medium — UX confusion, not data loss
+<strong>Found:</strong> 2026-03-18 (Captain testing)
+<strong>Component:</strong> Decomposer → Runtime self-mod pipeline → IntentSurface UI</p>
+<p><strong>Symptom:</strong> "Build Agent" / "Design Agent" / "Skip" buttons appear after conversational responses that have nothing to do with agent building (e.g., financial advice, general knowledge questions).</p>
+<p><strong>Root Cause Chain:</strong></p>
+<ol>
+<li><strong>Decomposer rule 12b</strong> (decomposer.py line 113) classifies all "knowledge questions" as tasks requiring intelligence → returns <code>capability_gap: true</code> when no matching intent exists. This is too broad — financial advice and trivia are not missing system capabilities.</li>
+<li><strong>Runtime self-mod filter</strong> (runtime.py line 1524-1537) triggers <code>_extract_unhandled_intent()</code> on every capability gap in API mode. No check for whether building an agent is actually appropriate.</li>
+<li><strong><code>_extract_unhandled_intent()</code></strong> (runtime.py line 3057-3120) always succeeds — the LLM prompt assumes every unhandled request should become a new agent. Will happily propose <code>financial_advisor</code>, <code>recipe_generator</code>, etc.</li>
+</ol>
+<p><strong>Fix Strategy:</strong> Three-layer fix, any one of which would prevent the false positive:</p>
+<ol>
+<li><strong>(Recommended) Refine rule 12b</strong> — Distinguish between "system capability gap" (trust scoring, monitoring, scheduling — agent-worthy) and "general knowledge question" (finance, weather, recipes — answer conversationally). The decomposer should answer general knowledge questions directly in the response field with <code>capability_gap: false</code>.</li>
+<li><strong>Add relevance filter in runtime</strong> — Before calling <code>_extract_unhandled_intent()</code>, check if the gap is system-relevant (mentions ProbOS concepts, agents, pools, intents) vs. general knowledge. Only propose self-mod for system-relevant gaps.</li>
+<li><strong>Let <code>_extract_unhandled_intent()</code> return null</strong> — Add an instruction to the LLM prompt: "If this request is a general knowledge question that doesn't warrant a permanent agent, return an empty object." This is the weakest fix (LLM-dependent) but adds a safety net.</li>
+</ol>
+<p><strong>Files to modify:</strong> <code>src/probos/cognitive/decomposer.py</code> (rule 12b), <code>src/probos/runtime.py</code> (<code>_extract_unhandled_intent</code> call site and/or prompt)</p>
+<h3 id="bf-002-agent-orbs-escape-pool-group-spheres-on-cognitive-canvas">BF-002: Agent Orbs Escape Pool Group Spheres on Cognitive Canvas<a class="headerlink" href="#bf-002-agent-orbs-escape-pool-group-spheres-on-cognitive-canvas" title="Permanent link">&para;</a></h3>
+<p><strong>Severity:</strong> High — visual corruption of the primary HXI visualization
+<strong>Found:</strong> 2026-03-18 (Captain testing)
+<strong>Component:</strong> Cognitive Canvas → useStore.ts <code>computeLayout()</code> → <code>agent_state</code> event handler</p>
+<p><strong>Symptom:</strong> Agent orbs (glowing spheres representing individual agents) explode outward and scatter far beyond their department wireframe geodesic spheres (Medical, Engineering, Science, etc.) on the Cognitive Canvas.</p>
+<p><strong>Root Cause Chain:</strong></p>
+<ol>
+<li><strong><code>agent_state</code> handler loses pool group data</strong> (useStore.ts line 423) — When any agent changes state (spawning, active, degraded, recycling), the handler calls <code>computeLayout(agents)</code> with NO <code>poolToGroup</code> or <code>poolGroups</code> parameters. This makes <code>computeLayout()</code> take the flat Fibonacci fallback branch (line 75) instead of the grouped cluster layout (line 110). All agents are repositioned on large tier-based spheres (radii 3.5/5.5/7.5) while the geodesic shells remain at their cluster positions (radius ~6.0).</li>
+<li><strong>No containment force or boundary clamping</strong> — There is no physics simulation, spring system, or boundary enforcement anywhere in the canvas code. Agents are placed once by <code>computeLayout()</code> and never constrained. If placed wrong, they stay wrong.</li>
+<li><strong>Small group margin overflow</strong> (minor) — For groups with 1-3 agents, the visual orb radius (up to 0.50 units) can exceed the shell's 15% margin over placement radius. E.g., 1-agent group: clusterRadius=1.2, shell=1.38, but orb edge can reach 1.70.</li>
+</ol>
+<p><strong>Fix Strategy:</strong></p>
+<ol>
+<li><strong>(Primary) Persist <code>poolToGroup</code> and <code>poolGroups</code> in Zustand state</strong> on <code>state_snapshot</code> receipt. In the <code>agent_state</code> handler, pass the stored values to <code>computeLayout()</code> so agents always use the grouped layout path.</li>
+<li><strong>(Alternative) Skip re-layout on agent state changes</strong> — For state transitions that don't add/remove agents, just update the agent's non-position fields (status, confidence, etc.) in place. Only re-run <code>computeLayout()</code> when pool membership actually changes.</li>
+<li><strong>(Enhancement) Add soft containment</strong> — After layout, clamp agent positions to stay within <code>clusterRadius * 0.95</code> of their group center. Provides a safety net even if future layout changes introduce drift.</li>
+</ol>
+<p><strong>Files to modify:</strong> <code>ui/src/store/useStore.ts</code> (<code>agent_state</code> handler line 423, <code>computeLayout()</code> call)</p>
+<h3 id="bf-003-run-diagnostic-bypasses-vitals-monitor">BF-003: "Run Diagnostic" Bypasses Vitals Monitor<a class="headerlink" href="#bf-003-run-diagnostic-bypasses-vitals-monitor" title="Permanent link">&para;</a></h3>
+<p><strong>Severity:</strong> Medium — broken user experience, medical team partially unreachable
+<strong>Found:</strong> 2026-03-18 (Captain testing)
+<strong>Component:</strong> Medical pool → IntentBus routing → Diagnostician</p>
+<p><strong>Symptom:</strong> When the user asks "perform a diagnostic and suggest system performance optimization opportunities," the Diagnostician responds by asking the user to provide health alert data (severity, metric, value, threshold, affected components) instead of proactively scanning the system.</p>
+<p><strong>Root Cause Chain:</strong></p>
+<ol>
+<li><strong>No proactive scan intent</strong> — The medical team has two entry points: <code>medical_alert</code> (from VitalsMonitor threshold breaches) and <code>diagnose_system</code> (on-demand). But <code>diagnose_system</code> still expects structured alert data as input, not a high-level command.</li>
+<li><strong>Missing orchestration</strong> — There is no workflow that chains VitalsMonitor scan → Diagnostician analysis → unified report. The Diagnostician can't trigger a VitalsMonitor scan because the VitalsMonitor is a HeartbeatAgent (runs on a timer, doesn't handle intents).</li>
+<li><strong>No department lead / CMO pattern</strong> — Every pool treats agents as flat peers. There is no "Chief Medical Officer" that can receive a high-level bridge order ("run a full diagnostic"), orchestrate the right specialists in sequence, and return a unified answer. This is a broader architectural gap affecting all departments.</li>
+</ol>
+<p><strong>Fix Strategy:</strong></p>
+<ol>
+<li><strong>(Short-term) Add a <code>full_diagnostic</code> intent handler to Diagnostician</strong> — When no alert data is provided, the Diagnostician proactively calls VitalsMonitor's metric collection functions directly (they're pure code, no LLM needed) to gather current system state, then runs its normal LLM analysis on the collected data.</li>
+<li><strong>(Medium-term) Department Lead pattern</strong> — Add a <code>lead: bool</code> field to pool agent configuration. The lead agent receives high-level commands from the bridge and orchestrates its department's specialists. For Medical: Diagnostician becomes the CMO (lead). For Engineering: BuilderAgent or a new ChiefEngineer. For Science: ArchitectAgent. This is a broader architectural enhancement that would benefit all departments.</li>
+<li><strong>(Long-term) Ward Room integration (Phase 33)</strong> — Department leads participate in the Ward Room for cross-department coordination. Bridge orders route to department leads, not individual specialists.</li>
+</ol>
+<p><strong>Files to modify:</strong> <code>src/probos/agents/medical/diagnostician.py</code> (add proactive scan path), potentially <code>src/probos/substrate/pool.py</code> (lead agent concept)</p>
+<h3 id="bf-004-transporter-hxi-visualization-not-rendered">BF-004: Transporter HXI Visualization Not Rendered<a class="headerlink" href="#bf-004-transporter-hxi-visualization-not-rendered" title="Permanent link">&para;</a></h3>
+<p><strong>Severity:</strong> Medium — data flow works, visual rendering missing
+<strong>Found:</strong> 2026-03-19 (Captain testing)
+<strong>Component:</strong> HXI → IntentSurface.tsx → TransporterProgress state</p>
+<p><strong>Symptom:</strong> When the Transporter Pattern activates during a build, chunk decomposition and execution are tracked in the Zustand store (<code>transporterProgress</code>) and announced in chat messages ("Transporter: decomposed into N chunks"), but no visual progress card renders in the IntentSurface component. The user only sees chat text, not a structured visualization with chunk statuses.</p>
+<p><strong>Root Cause:</strong> AD-335 (HXI Transporter Visualization) created the complete data flow — 6 WebSocket event types (<code>transporter_decomposed</code>, <code>transporter_wave_start</code>, <code>transporter_chunk_done</code>, <code>transporter_execution_done</code>, <code>transporter_assembled</code>, <code>transporter_validated</code>), <code>TransporterProgress</code> Zustand state with per-chunk status tracking, and chat messages. However, <code>IntentSurface.tsx</code> has no rendering block that reads <code>transporterProgress</code> from the store. The state updates correctly but nothing draws it.</p>
+<p><strong>Fix:</strong> Add a <code>TransporterProgress</code> card to <code>IntentSurface.tsx</code> following the build proposal card pattern. Show: chunk list with per-chunk status (pending/executing/done/failed), wave progress, assembly phase indicator. Use the existing <code>transporterProgress</code> state from the store.</p>
+<p><strong>Files to modify:</strong> <code>ui/src/components/IntentSurface.tsx</code> (add rendering block for <code>transporterProgress</code>)</p>
+<h3 id="bf-007-verification-false-positive-on-per-pool-agent-counts">BF-007: Verification False Positive on Per-Pool Agent Counts<a class="headerlink" href="#bf-007-verification-false-positive-on-per-pool-agent-counts" title="Permanent link">&para;</a></h3>
+<p><strong>Severity:</strong> Medium — unnecessary correction footnotes on valid responses
+<strong>Found:</strong> 2026-03-21 (Captain log review)
+<strong>Component:</strong> <code>runtime.py</code> → <code>_verify_response()</code> → Check 1 &amp; 2</p>
+<p><strong>Symptom:</strong> When the LLM describes per-pool or per-department agent counts (e.g. "Engineering has 18 agents, Medical has 3 agents"), each number is flagged as a violation because the regex <code>(\d+)\s+agents?\b</code> compares every match against the system-wide total (53). Five false positives in a single response: <code>agents: claimed 18, actual 53; claimed 20, actual 53; claimed 5, actual 53; claimed 2, actual 53; claimed 3, actual 53</code>. Same issue affects pool count check.</p>
+<p><strong>Root Cause:</strong> Checks 1 and 2 treat all numeric agent/pool references as system-wide total claims. No contextual awareness — "3 agents in the medical pool" is treated the same as "the system has 3 agents."</p>
+<p><strong>Fix:</strong> Add context-window analysis around each regex match. Examine 80 chars before the match for pool/department names or subset-indicating words ("pool", "department", "team", "each", "per"). Skip matches that reference a specific pool or department. Also whitelist numbers matching any individual <code>pool.agent_count</code> from the self-model. Only flag matches claiming system-wide totals. See <code>prompts/bf-004-verification-false-positive.md</code>.</p>
+<p><strong>Files to modify:</strong> <code>src/probos/runtime.py</code> (<code>_verify_response()</code>)</p>
+<h3 id="bf-008-dream-cycle-double-replay-after-dolphin-dreaming">BF-008: Dream Cycle Double-Replay After Dolphin Dreaming<a class="headerlink" href="#bf-008-dream-cycle-double-replay-after-dolphin-dreaming" title="Permanent link">&para;</a></h3>
+<p><strong>Severity:</strong> Low — wasted computation, no data loss or incorrect behavior
+<strong>Found:</strong> 2026-03-21 (Captain log review)
+<strong>Component:</strong> <code>dreaming.py</code> → <code>DreamingEngine</code> → <code>dream_cycle()</code> + <code>micro_dream()</code></p>
+<p><strong>Symptom:</strong> Log shows static <code>replayed=50 strengthened=80</code> every 10 minutes even with no new user activity. The same 50 episodes are re-replayed every full dream cycle, double-strengthening Hebbian weights that micro-dream already consolidated.</p>
+<p><strong>Root Cause:</strong> Micro-dream (Tier 1, every 10s) incrementally replays new episodes and advances <code>_last_consolidated_count</code>. Full dream (Tier 2, every 10min) then replays the last 50 episodes regardless, re-strengthening already-consolidated pathways. No coordination between tiers.</p>
+<p><strong>Fix:</strong> Remove replay (<code>_replay_episodes()</code>) from <code>dream_cycle()</code> — micro-dream owns incremental Hebbian consolidation, full dream owns maintenance (pruning, trust consolidation, pre-warming, strategy extraction, gap prediction). Add <code>micro_dream()</code> flush before direct <code>dream_cycle()</code> callers (shutdown, Surgeon force_dream) to catch stragglers. See <code>prompts/bf-008-dream-double-replay.md</code>.</p>
+<p><strong>Files to modify:</strong> <code>src/probos/cognitive/dreaming.py</code>, <code>src/probos/runtime.py</code>, <code>src/probos/agents/medical/surgeon.py</code></p>
+<hr />
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

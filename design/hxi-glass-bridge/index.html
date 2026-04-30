@@ -1,0 +1,2441 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/design/hxi-glass-bridge/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>HXI Glass Bridge — Design Prompt - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#hxi-glass-bridge-design-prompt" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              HXI Glass Bridge — Design Prompt
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#next-generation-human-experience-for-probos-agentic-os" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next-Generation Human Experience for ProbOS Agentic OS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-line-vision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One-Line Vision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-origin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Origin
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design Origin">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-exists-today" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Exists Today
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-comes-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Comes Next
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-design-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Design Principles
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Design Principles">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-glass-metaphor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The Glass Metaphor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-nextstep-precision-cyberpunk-soul" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. NeXTStep Precision, Cyberpunk Soul
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-center-focus-task-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Center-Focus Task Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-human-led-agent-operated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Human-Led, Agent-Operated
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4b-agent-first-not-app-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4b. Agent-First, Not App-First
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4c-ambient-confidence-glanceable-system-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4c. Ambient Confidence — Glanceable System State
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-the-bridge-aesthetic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The Bridge Aesthetic
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-authentically-digital" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Authentically Digital
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-the-collaboration-canvas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. The Collaboration Canvas
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spatial-layout-the-five-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spatial Layout — The Five Zones
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Spatial Layout — The Five Zones">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#zone-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zone Behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interaction-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interaction Patterns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Interaction Patterns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gesture-language-mouse-keyboard-extensible-to-touchvr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gesture Language (Mouse + Keyboard, extensible to touch/VR)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#oled-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OLED Optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#typography" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Typography
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#animation-timing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Animation Timing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bridge-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bridge States
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bridge States">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-idle-bridge-no-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Idle Bridge (no tasks)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-autonomous-bridge-crew-working-captain-free" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Autonomous Bridge (crew working, Captain free)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-attention-bridge-captain-needed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Attention Bridge (Captain needed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sound-design-optional-human-configured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sound Design (Optional, Human-Configured)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#responsive-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Responsive Behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-philosophy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Philosophy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What This Is NOT
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-touchstones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference Touchstones
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="hxi-glass-bridge-design-prompt">HXI Glass Bridge — Design Prompt<a class="headerlink" href="#hxi-glass-bridge-design-prompt" title="Permanent link">&para;</a></h1>
+<h2 id="next-generation-human-experience-for-probos-agentic-os">Next-Generation Human Experience for ProbOS Agentic OS<a class="headerlink" href="#next-generation-human-experience-for-probos-agentic-os" title="Permanent link">&para;</a></h2>
+<hr />
+<h2 id="one-line-vision">One-Line Vision<a class="headerlink" href="#one-line-vision" title="Permanent link">&para;</a></h2>
+<p><strong>A sheet of frosted glass over a living neural mesh — the Captain's bridge for a starship that runs on agents, not engines.</strong></p>
+<hr />
+<h2 id="design-origin">Design Origin<a class="headerlink" href="#design-origin" title="Permanent link">&para;</a></h2>
+<h3 id="what-exists-today">What Exists Today<a class="headerlink" href="#what-exists-today" title="Permanent link">&para;</a></h3>
+<p>The current HXI renders the cognitive mesh as a field of luminous orbs in 3D space. Each orb is an agent. Clusters represent departments (Core Systems, Engineering, Science, Medical, Self-Modification). Cyan arcs show Hebbian routing connections. Amber glow indicates high activity. A status bar reads system vitals: agent count, health, idle/active state, trust mean, entropy. A minimal text input floats at bottom center: "Ask ProbOS..." A unified Bridge panel slides in from the right with prioritized sections: Attention, Active, Notifications, Kanban, Recent. The main viewer can switch between the 3D canvas and a full kanban board.</p>
+<p>This is the <strong>substrate layer</strong> — the raw neural visualization plus functional command panel. It works. It's beautiful. <strong>Keep all of it.</strong> The orbs, the breathing, the Hebbian arcs, the chat overlay, the Bridge panel — this is the foundation. The mesh is the ship's soul. The chat is the Captain's voice. The Bridge is the crew's report.</p>
+<h3 id="what-comes-next">What Comes Next<a class="headerlink" href="#what-comes-next" title="Permanent link">&para;</a></h3>
+<p>Layer a <strong>frosted glass working surface</strong> over the orbs. The mesh doesn't disappear — it breathes underneath, visible through the glass like bioluminescence under ice. But the glass is where the human <em>works</em>. The glass is where tasks live, where decisions surface, where the collaboration happens.</p>
+<p><strong>Critical constraint:</strong> The existing orb canvas remains the ever-present backdrop, exactly as it is today. The chat overlay (IntentSurface) stays as the Command Surface at the bottom. The Bridge panel on the right stays as the crew status console. The glass layer adds a <em>middle layer</em> — the collaboration and task surface that sits between the mesh and the command inputs. Think of it as three depth layers:</p>
+<ol>
+<li><strong>Backdrop (z=0):</strong> The 3D orb mesh — always there, always breathing, always beautiful</li>
+<li><strong>Glass (z=1):</strong> The task/collaboration surface — contextual cards, DAG nodes, decisions, artifacts</li>
+<li><strong>Controls (z=2):</strong> The Bridge panel (right), Command Surface (bottom), Context Ribbon (top) — always accessible</li>
+</ol>
+<hr />
+<h2 id="core-design-principles">Core Design Principles<a class="headerlink" href="#core-design-principles" title="Permanent link">&para;</a></h2>
+<h3 id="1-the-glass-metaphor">1. The Glass Metaphor<a class="headerlink" href="#1-the-glass-metaphor" title="Permanent link">&para;</a></h3>
+<p>The interface layers a translucent, subtly frosted glass over the existing living mesh. Not opaque — translucent. The orbs pulse and drift beneath, exactly as they do today. When the system is idle, the glass is nearly clear and the mesh is prominent (the current experience). When the human begins working, the glass frosts slightly and task content sharpens into focus on top. The depth relationship is literal: <strong>your work is in the foreground, the mesh is the substrate beneath, and you can always see through</strong>.</p>
+<ul>
+<li>OLED-native: true blacks beyond the glass edge. The glass itself has no border — it fades to transparency at the periphery. Content emerges from darkness.</li>
+<li>The frost level is dynamic. High-focus tasks increase frost (less mesh distraction). Overview/monitoring mode clears the frost (maximum mesh visibility — the current idle experience). The system reads engagement and adjusts automatically.</li>
+<li>Gaussian blur + subtle noise texture on the glass. Not Apple's frosted glass — grittier. Think cyberpunk holographic display viewed through cold condensation.</li>
+</ul>
+<h3 id="2-nextstep-precision-cyberpunk-soul">2. NeXTStep Precision, Cyberpunk Soul<a class="headerlink" href="#2-nextstep-precision-cyberpunk-soul" title="Permanent link">&para;</a></h3>
+<p>Steve Jobs' NeXT interface was revolutionary because it was geometrically precise, information-dense, and unapologetically digital. It didn't pretend to be paper or wood. It was a <em>computer</em> and it looked like one. Carry that DNA forward:</p>
+<ul>
+<li><strong>Monospaced typography for system data.</strong> Agent names, trust scores, status codes — all in a crisp monospace face (JetBrains Mono, Berkeley Mono, or similar). Human-facing content (task descriptions, reflections, conversation) uses a clean geometric sans (Inter, Geist, or similar).</li>
+<li><strong>Hard geometric containers</strong> with precise 1px borders. No rounded-everything softness. Rectangles. Chamfered corners only where they encode meaning (e.g., a chamfered card = proposal awaiting approval, a sharp card = executed result).</li>
+<li><strong>High information density.</strong> Respect the user's intelligence. Don't hide data behind progressive disclosure by default — show it, but at varying visual weights. Primary information is high-contrast. Secondary is dimmed. Tertiary is near-invisible until hovered. Everything is always <em>there</em>, just at different luminance levels.</li>
+<li><strong>Color as data, not decoration.</strong> The cyberpunk palette is functional:</li>
+<li><strong>Amber (#f0b060 → #ffcc44):</strong> Active task, human attention needed, agent currently executing</li>
+<li><strong>Cyan (#00e5ff → #4dd0e1):</strong> System nominal, healthy connections, trust &gt; 0.7</li>
+<li><strong>Magenta (#e040fb → #f50057):</strong> Alert, consensus disagreement, trust &lt; 0.3, destructive operation pending</li>
+<li><strong>Violet (#7c4dff → #b388ff):</strong> Cognitive activity — LLM reasoning, episodic recall, dreaming</li>
+<li><strong>White (#e0e0e0):</strong> Human-authored content, user text, manual overrides</li>
+<li><strong>True black (#000000):</strong> OLED background. Pixels off. The void beyond the glass.</li>
+<li><strong>Dim gray (#1a1a2e → #16213e):</strong> The glass surface itself. Near-black but with depth.</li>
+</ul>
+<h3 id="3-center-focus-task-architecture">3. Center-Focus Task Architecture<a class="headerlink" href="#3-center-focus-task-architecture" title="Permanent link">&para;</a></h3>
+<p>The human's current task is always at the center of the glass. Not a sidebar. Not a chat thread pushed to one side. <strong>Center. Stage.</strong> Everything radiates outward from the task.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>                    ┌─────────────────────────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                    │           CONTEXT RIBBON                │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                    │  ◇ 3 agents active  ◇ trust 0.87       │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                    │  ◇ 2 sub-tasks pending                  │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>                    ├─────────────────────────────────────────┤
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                    │                                         │
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>                    │                                         │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                    │          ╔═══════════════════╗          │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                    │          ║   ACTIVE TASK      ║          │
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                    │          ║                     ║          │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                    │          ║  &quot;Refactor the      ║          │
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>                    │          ║   payment service   ║          │
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>                    │          ║   to use async      ║          │
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>                    │          ║   operations&quot;       ║          │
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>                    │          ║                     ║          │
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>                    │          ║  ▸ DAG: 4 nodes     ║          │
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>                    │          ║  ▸ Progress: 2/4    ║          │
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>                    │          ║  ▸ Confidence: 0.91 ║          │
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>                    │          ╚═══════════════════╝          │
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>                    │                                         │
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>                    │    ┌──────────┐    ┌──────────┐         │
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>                    │    │ SUB-TASK │    │ SUB-TASK │         │
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>                    │    │ Read svc │    │ Design   │         │
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>                    │    │ ● done   │    │ ◐ active │         │
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>                    │    └──────────┘    └──────────┘         │
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>                    │    ┌──────────┐    ┌──────────┐         │
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>                    │    │ SUB-TASK │    │ SUB-TASK │         │
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>                    │    │ Write    │    │ Test     │         │
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>                    │    │ ○ queued │    │ ○ queued │         │
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>                    │    └──────────┘    └──────────┘         │
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>                    │                                         │
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>                    ├─────────────────────────────────────────┤
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>                    │  ✦ Ask ProbOS...                        │
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>                    │           ◆ voice  ◆ attach  ◆ propose │
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>                    └─────────────────────────────────────────┘
+</code></pre></div>
+<ul>
+<li>The <strong>Active Task Card</strong> is the gravitational center. It's slightly raised from the glass (subtle parallax shadow, 2-3px offset). It breathes slowly when agents are working on it. It pulses amber when it needs human input.</li>
+<li><strong>Sub-task cards</strong> orbit the center card in a spatial DAG layout. Completed cards dim and drift downward. Active cards glow. Queued cards are ghosted outlines. Dependencies are shown as faint connecting lines.</li>
+<li><strong>The Context Ribbon</strong> runs across the top — a single dense line of system state. Not a header. A HUD element. Agent count, aggregate trust, pending decisions, elapsed time. Always visible, never demanding.</li>
+<li><strong>The Command Surface</strong> at the bottom is more than a text input. It's a multimodal entry point: text, voice (visualized as a waveform in the input field), file attachment, and "propose" mode (where the human drafts a plan rather than a command). The input field has no visible border — just a subtle glow line at its base.</li>
+</ul>
+<h3 id="4-human-led-agent-operated">4. Human-Led, Agent-Operated<a class="headerlink" href="#4-human-led-agent-operated" title="Permanent link">&para;</a></h3>
+<p>The Captain doesn't fly the ship. The Captain <em>commands</em> the ship. The crew flies it.</p>
+<ul>
+<li><strong>The human never sees "loading..."</strong> — they see agents working. When the human submits a task, the glass doesn't show a spinner. It shows the DAG forming in real-time: nodes appearing, agents self-selecting (their orbs brighten beneath the glass), connections routing.</li>
+<li><strong>Decisions rise, results sink.</strong> Anything that needs human attention floats upward toward the top of the glass. Completed work sinks down and eventually fades through the glass back into the mesh (becoming part of the system's memory). The vertical axis encodes urgency: top = needs you, middle = active, bottom = done.</li>
+<li><strong>The Captain's Gaze.</strong> The system tracks where on the glass the human is focused (mouse position, scroll position, expanded panels). Agents working on things the human is looking at get slightly more context and slightly higher priority. Not a gimmick — genuine attention-weighted resource allocation.</li>
+<li><strong>Three interaction depths:</strong></li>
+<li><strong>Command:</strong> "Do this." → System executes autonomously. Results appear when done.</li>
+<li><strong>Collaborate:</strong> "Let's do this." → System proposes a DAG. Human reviews, modifies, approves. Execution progresses visibly. Human can intervene at any node.</li>
+<li><strong>Direct:</strong> "I'll do this." → System provides tools (embedded editor, terminal, browser). Agents observe and assist but don't act unless asked.</li>
+</ul>
+<h3 id="4b-agent-first-not-app-first">4b. Agent-First, Not App-First<a class="headerlink" href="#4b-agent-first-not-app-first" title="Permanent link">&para;</a></h3>
+<p>The Bridge is an ops console, not an app launcher. The agents are the primary workers — the human is the Captain, not the operator.</p>
+<ul>
+<li><strong>Headless by default.</strong> If agents can handle it, no glass surface needed. The Captain doesn't open an app to run tests — they see a task card showing the agent running tests. Agents are the Captain's digital eyes and hands. The glass only surfaces what needs the Captain's attention or what the Captain chooses to engage with.</li>
+<li><strong>Trust-driven progressive reveal.</strong> New or low-trust agents get more prominent cards — the Captain needs to verify their work. High-trust agents get condensed representations — the Captain trusts them. Over time, the glass gets <em>quieter</em> as the crew earns trust. The visual layer of Earned Autonomy. This is deeply satisfying: the system proves itself and gets out of your way.</li>
+<li><strong>Multi-task constellation.</strong> Agentic flow often means 3-5 concurrent agent workflows, not one focal task. The center of the glass supports a <strong>constellation</strong> — a cluster of active task cards with the most urgent one slightly elevated. The Captain's gaze (mouse position) promotes whichever task they attend to. This is the real adaptive focus: multiple things happening, emphasis shifts fluidly.</li>
+<li><strong>The Command Surface breathes with engagement.</strong> When agents are autonomously executing, the input surface (today's chat overlay) recedes to a thin glow line — the Captain doesn't need it. When the Captain moves toward it (mouse approaches, keyboard activity), it swells to full capability. The glass reads the Captain's posture and adapts. This reduces the "I should be typing" pressure.</li>
+</ul>
+<h3 id="4c-ambient-confidence-glanceable-system-state">4c. Ambient Confidence — Glanceable System State<a class="headerlink" href="#4c-ambient-confidence-glanceable-system-state" title="Permanent link">&para;</a></h3>
+<p>The Captain should know the system's state in under 1 second without reading a single number.</p>
+<ul>
+<li><strong>Ambient color temperature.</strong> The glass edge and the mesh beneath shift color temperature based on system state. Cool blue-cyan = all nominal, crew executing. Warm amber edge = attention building, something may need the Captain soon. Hot magenta pulse = urgent, action required now. No reading required. The Captain walks back to their desk and knows the state before they sit down.</li>
+<li><strong>"Crew has it handled" state.</strong> The prompt defines Idle (no tasks), but the optimal agentic state is different: <em>agents working, nothing needs the Captain.</em> This should feel distinctly good. The glass is clear, the mesh is active but calm, a subtle golden warmth at the edges says "your crew is executing, everything is fine." The Captain should feel the satisfaction of delegation working. This is NOT idle — it's the ship running well under the crew's command.</li>
+<li><strong>Return-to-bridge summary.</strong> When the Captain has been away (no input for N minutes), the glass condenses into a briefing card on return: "While you were away: 3 tasks completed, 1 new notification, trust stable at 0.87." One card, one glance, caught up. Then it dissolves. This is the agentic equivalent of checking your phone — but curated by your crew.</li>
+<li><strong>Completion celebrations.</strong> When an agent successfully completes a complex task, the mesh briefly blooms in the department color — engineering orange, science teal. The sound chord resolves. Brief, not obtrusive, but <em>earned</em>. The Captain feels pride in their crew. This is the delight that makes the system emotionally resonant.</li>
+</ul>
+<h3 id="5-the-bridge-aesthetic">5. The Bridge Aesthetic<a class="headerlink" href="#5-the-bridge-aesthetic" title="Permanent link">&para;</a></h3>
+<p>This is the bridge of a starship, not a desktop. The environmental cues reinforce this:</p>
+<ul>
+<li><strong>No window chrome.</strong> No title bars, no minimize/maximize/close. The glass IS the entire display. If the OS needs to surface system controls, they bleed in from the edges as ghosted overlays.</li>
+<li><strong>Ambient mesh beneath.</strong> The orbs are always there, always moving, always breathing. They are the ship's engine room visible through a transparent deck plate. When the system is working hard, the mesh is more active — more connections firing, more glow. When idle, it's a slow, meditative drift.</li>
+<li><strong>Department sectors.</strong> The mesh organizes into spatial clusters visible through the glass. The human learns to associate quadrants with function: upper-left = engineering agents, lower-right = science/research, center = core systems. Spatial memory replaces menu navigation.</li>
+<li><strong>Alert-driven reconfiguration (LCARS pattern).</strong> When the system needs human attention — approve a build, resolve a consensus split, confirm a destructive operation — the glass reconfigures. The current layout compresses to make room for the <strong>Decision Surface</strong>: a prominent card with full context, agent recommendations, risk assessment, and clear approve/reject/modify affordances. Department colors bleed through:</li>
+<li><strong>Engineering (orange):</strong> Build proposals, code changes, deployment approvals</li>
+<li><strong>Science (teal):</strong> Research results, data analysis, knowledge graph updates</li>
+<li><strong>Medical (green):</strong> System health alerts, agent lifecycle events, recovery actions</li>
+<li><strong>Security (red):</strong> Destructive operations, permission escalations, trust violations</li>
+<li><strong>Status bar as ship's telemetry.</strong> The bottom bar isn't a taskbar — it's a sensor readout. Continuous, real-time, information-dense:
+  <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>● LIVE — 55 agents  Health: 0.82  ● idle  Trust: 0.114  Entropy: 2.756
+</code></pre></div>
+  Each value is interactive on hover. Trust shows the distribution curve. Health shows per-department breakdown. Entropy indicates system complexity/disorder. The green dot is the heartbeat — it pulses with the system's actual heartbeat interval.</li>
+</ul>
+<h3 id="6-authentically-digital">6. Authentically Digital<a class="headerlink" href="#6-authentically-digital" title="Permanent link">&para;</a></h3>
+<p>This is not a physical metaphor forced onto a screen. This is what a computer <em>should</em> look like when it stops pretending to be a desk. But cyberpunk ≠ visual noise. Every effect must justify its presence over an 8-hour workday, not just a screenshot.</p>
+<ul>
+<li><strong>Scan lines and chromatic aberration.</strong> Available at configurable intensity (default: very subtle or off). These create depth and reinforce the "projected display" feel, but they fight readability over long sessions. The cyberpunk soul comes from the color palette, typography, and spatial design — not from CRT simulation. Let the user dial them up if they want the full aesthetic.</li>
+<li><strong>Luminance ripple transitions.</strong> When state changes (new task, task complete, alert), a brief 50-100ms directional luminance sweep or ripple. Not a glitch — a glitch signals hardware failure on a real bridge, triggering anxiety. The ripple signals "the system shifted" with authority. Intentional, not broken.</li>
+<li><strong>Processing texture.</strong> When the system is processing heavily, the mesh beneath the glass becomes more active — more connection arcs firing, orbs pulsing faster, more glow. This is organic and already part of the current experience. The human <em>feels</em> the system working through the mesh activity, not through artificial overlays. Data rain is available as an opt-in aesthetic layer (Ctrl+Shift+D) for users who want the cinematic feel, off by default.</li>
+<li><strong>No shadows except depth.</strong> Physical shadows imply physical light sources. The glass has no drop shadows. It has <em>depth blur</em> — elements at different z-depths have different sharpness. The task card is sharp. The mesh beneath is soft. The status bar is sharp. This is focus-based depth, not light-based depth.</li>
+</ul>
+<h3 id="7-the-collaboration-canvas">7. The Collaboration Canvas<a class="headerlink" href="#7-the-collaboration-canvas" title="Permanent link">&para;</a></h3>
+<p>When the human and agents are actively collaborating, the center of the glass transforms into a <strong>collaboration canvas</strong> — a shared workspace where both can contribute:</p>
+<ul>
+<li><strong>The DAG as a living diagram.</strong> Not a static flowchart. Nodes breathe. Active nodes pulse. The human can drag nodes to reorder, tap to expand, swipe to dismiss. Agent edits to the DAG appear in real-time (nodes shifting, new connections routing) with a faint cyan trace showing "the system did this."</li>
+<li><strong>Inline agent commentary.</strong> Agents can annotate the canvas — short, contextual notes that appear as small monospaced labels near their work. "Confidence: 0.72 — found 3 similar approaches in episodic memory." These annotations fade unless hovered.</li>
+<li><strong>Split-pane escalation.</strong> When a sub-task needs human input, the canvas doesn't navigate away. The relevant node expands in-place, pushing adjacent content outward. The human addresses the question, the node collapses, work continues. No context switching.</li>
+<li><strong>Artifact embedding.</strong> Code, documents, images, data visualizations — all render inline on the glass. No "open in new tab." The artifact appears as a frosted sub-panel within the task card, scrollable and interactive. The glass contains everything.</li>
+</ul>
+<hr />
+<h2 id="spatial-layout-the-five-zones">Spatial Layout — The Five Zones<a class="headerlink" href="#spatial-layout-the-five-zones" title="Permanent link">&para;</a></h2>
+<p>The glass is organized into five implicit zones. No visible borders between them — just spatial convention that the human learns through use. <strong>Zones 2 and 4 are phantom zones</strong> — invisible by default, materializing when they have relevant content and fading after acknowledgment. The Captain's workspace is maximally clear until something needs their attention.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>┌────────────────────────────────────────────────────────────┐
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>│  ZONE 1: CONTEXT RIBBON (top edge)                         │
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>│  Ambient confidence glow · system state · active dept      │
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>├────────────────────────────────────────────────────────────┤
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>│              │                          │                   │
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>│  ZONE 2:     │   ZONE 3: TASK CENTER    │  ZONE 4:         │
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>│  HISTORY     │                          │  BRIDGE PANEL     │
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>│  (phantom    │   Multi-task constella-  │  (existing AD-387 │
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>│   left)      │   tion or single task    │   panel, slides   │
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>│              │   DAG · Collaboration    │   in from right)  │
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>│  Appears     │   canvas · Embedded      │                   │
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>│  when        │   artifacts              │  Attention ·      │
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>│  relevant    │                          │  Active · Notifs  │
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>│              │                          │  Kanban · Recent   │
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>│              │                          │                   │
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>├────────────────────────────────────────────────────────────┤
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>│  ZONE 5: COMMAND SURFACE (bottom edge)                      │
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>│  Current chat overlay · voice · attach · propose            │
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>└────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<ul>
+<li><strong>Zone 1 (Context Ribbon):</strong> 32-40px. Single line. Dense. Monospaced. Updates in real-time. Encodes ambient confidence: the ribbon's edge glows cool cyan when nominal, warm amber when attention building, magenta when urgent. Slides left to show history on hover-hold.</li>
+<li><strong>Zone 2 (History):</strong> Phantom zone. Invisible when not needed. Materializes on the left when a task completes or when the Captain's mouse drifts leftward. Shows recent task cards as compressed summaries. Tapping a history card pulls it back to center. Fades out when the Captain's attention returns to center. No permanent screen real estate.</li>
+<li><strong>Zone 3 (Task Center):</strong> Dominant. Expands to fill available space. Shows the multi-task constellation (multiple concurrent agent workflows) or a single focused task DAG. When no task is active, this zone clears completely — the mesh shows through at full beauty. This IS today's canvas view, with task cards overlaid on top.</li>
+<li><strong>Zone 4 (Bridge Panel):</strong> The existing AD-387 Bridge panel. Slides in from the right on the BRIDGE button. Contains the prioritized sections: Attention, Active, Notifications, Kanban, Recent. This is the crew's report — always accessible, never forced. When open, Zone 3 narrows but adapts. When closed, Zone 3 fills the full viewport.</li>
+<li><strong>Zone 5 (Command Surface):</strong> The current chat overlay (IntentSurface). Preserved as-is — the Captain's voice. When expanded, it pushes upward. When collapsed, it's a single glowing line with "Ask ProbOS..." The surface recedes further when agents are autonomously executing (thin glow line) and swells when the Captain engages (mouse proximity, keyboard activity).</li>
+</ul>
+<h3 id="zone-behavior">Zone Behavior<a class="headerlink" href="#zone-behavior" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Zones 2 and 4 (sides) fade to near-transparency when the human is focused on Zone 3 (center). They sharpen when the mouse drifts toward them or when they have updates.</li>
+<li>Zone 3 expands to fill the glass when in <strong>Focus Mode</strong> (double-tap the task card or keyboard shortcut). Zones 2 and 4 slide off-edge. Zone 1 stays.</li>
+<li>The zones have no hard borders. Content in Zone 3 can overflow into Zones 2/4 if the DAG is large. The layout is gravitational, not grid-locked.</li>
+</ul>
+<hr />
+<h2 id="interaction-patterns">Interaction Patterns<a class="headerlink" href="#interaction-patterns" title="Permanent link">&para;</a></h2>
+<h3 id="task-lifecycle">Task Lifecycle<a class="headerlink" href="#task-lifecycle" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Inception.</strong> Human types or speaks into the Command Surface. The text appears center-glass as a glowing amber line, then transforms into a task card as the system begins decomposing.</li>
+<li><strong>Decomposition.</strong> Sub-task nodes materialize around the card — appearing one at a time as the DAG is built, not all at once. Faint connecting lines draw between them. The human can intervene during decomposition: "That's too many steps — combine these two."</li>
+<li><strong>Execution.</strong> Sub-task nodes activate sequentially or in parallel. Active nodes glow. The corresponding orbs beneath the glass brighten and pulse. Cyan connection arcs fire between the active agents' orbs. The human sees the mesh <em>responding</em> to their task.</li>
+<li><strong>Decision Points.</strong> When a sub-task needs human input, the node swells and floats upward (decisions rise). An amber pulse radiates from it. The glass slightly frosts the surrounding area to draw focus. The human addresses it and the node returns to its position.</li>
+<li><strong>Completion.</strong> Nodes dim to a cool gray as they complete. The task card updates its progress bar. When all nodes complete, the task card glows briefly, then slowly sinks downward and leftward into the History zone. A brief reflection summary appears in its place, auto-fading after 5 seconds unless the human engages it.</li>
+<li><strong>Memory.</strong> The completed task passes through the glass and becomes part of the mesh — literally. The episodic memory entry causes a subtle brightening in the relevant agent orbs. The system just learned from this interaction.</li>
+</ol>
+<h3 id="gesture-language-mouse-keyboard-extensible-to-touchvr">Gesture Language (Mouse + Keyboard, extensible to touch/VR)<a class="headerlink" href="#gesture-language-mouse-keyboard-extensible-to-touchvr" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Click task card:</strong> Expand detail view</li>
+<li><strong>Click sub-task node:</strong> Expand that node's execution context</li>
+<li><strong>Drag node:</strong> Reorder execution priority</li>
+<li><strong>Right-click node:</strong> Context menu (retry, skip, reassign to different agent, add constraint)</li>
+<li><strong>Scroll in Zone 3:</strong> Navigate the DAG spatially</li>
+<li><strong>Hover agent card (Zone 4):</strong> Highlight the agent's orb beneath the glass, show trust distribution sparkline</li>
+<li><strong>Double-click task card:</strong> Focus Mode (zones collapse)</li>
+<li><strong>Esc:</strong> Exit Focus Mode / dismiss overlays</li>
+<li><strong>Ctrl+Space:</strong> Toggle glass transparency (full mesh view / full glass view)</li>
+<li><strong>Ctrl+Shift+D:</strong> Toggle data rain</li>
+<li><strong>↑ in Command Surface:</strong> Previous command recall</li>
+</ul>
+<hr />
+<h2 id="oled-optimization">OLED Optimization<a class="headerlink" href="#oled-optimization" title="Permanent link">&para;</a></h2>
+<p>Every design decision accounts for OLED's strengths (per-pixel lighting, true black, infinite contrast):</p>
+<ul>
+<li><strong>True black background (#000000).</strong> Pixels are off. The glass floats in void. This isn't just aesthetic — it saves power and creates the depth illusion.</li>
+<li><strong>OLED bloom.</strong> Bright elements (amber task card, cyan connections, magenta alerts) naturally bloom against the black ground. Don't fight this — lean into it. The glow IS the interface's personality. HDR content uses 600-800 nit peaks for task cards and alerts against a 0-2 nit background.</li>
+<li><strong>Burn-in avoidance.</strong> Static elements (zones, status bar) are kept at low luminance (&lt; 40% brightness). High-luminance elements are transient (pulses, transitions, alerts). The glass texture includes micro-movement (very slow drift, 0.1px/frame) to prevent OLED burn. The status bar randomly offsets ±1px vertically every 15 minutes.</li>
+<li><strong>High contrast ratio.</strong> Text on glass surfaces uses at minimum 7:1 contrast ratio (WCAG AAA). Primary text: #e0e0e0 on #1a1a2e. Secondary: #808090 on #0d0d1a. Alert text: #ffcc44 on #0d0d1a.</li>
+</ul>
+<hr />
+<h2 id="typography">Typography<a class="headerlink" href="#typography" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Family</th>
+<th>Weight</th>
+<th>Size</th>
+<th>Color</th>
+<th>Tracking</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>System data</td>
+<td>Berkeley Mono / JetBrains Mono</td>
+<td>400</td>
+<td>11-12px</td>
+<td>#808090</td>
+<td>+0.5px</td>
+</tr>
+<tr>
+<td>Agent names</td>
+<td>Mono</td>
+<td>500</td>
+<td>12px</td>
+<td>#a0a0b0</td>
+<td>+1px (uppercase)</td>
+</tr>
+<tr>
+<td>Task titles</td>
+<td>Geist / Inter</td>
+<td>600</td>
+<td>16-18px</td>
+<td>#e0e0e0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Human text (conversation)</td>
+<td>Geist / Inter</td>
+<td>400</td>
+<td>14-15px</td>
+<td>#e0e0e0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Reflection/summary</td>
+<td>Geist / Inter</td>
+<td>300</td>
+<td>13px</td>
+<td>#a0a0b0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Context ribbon</td>
+<td>Mono</td>
+<td>400</td>
+<td>10px</td>
+<td>#666680</td>
+<td>+1px</td>
+</tr>
+<tr>
+<td>Alert text</td>
+<td>Mono</td>
+<td>700</td>
+<td>12px</td>
+<td>#ffcc44</td>
+<td>+0.5px</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="animation-timing">Animation Timing<a class="headerlink" href="#animation-timing" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Effect</th>
+<th>Duration</th>
+<th>Easing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Task card appears</td>
+<td>Fade up + scale 0.95→1.0</td>
+<td>300ms</td>
+<td>ease-out-cubic</td>
+</tr>
+<tr>
+<td>Sub-task node appears</td>
+<td>Pop in from center + settle</td>
+<td>200ms</td>
+<td>spring(0.8, 0.3)</td>
+</tr>
+<tr>
+<td>Node completes</td>
+<td>Glow pulse + dim</td>
+<td>400ms</td>
+<td>ease-in-out</td>
+</tr>
+<tr>
+<td>Task completes (all nodes)</td>
+<td>Department-color mesh bloom + chord resolve</td>
+<td>600ms</td>
+<td>ease-out</td>
+</tr>
+<tr>
+<td>Decision rises</td>
+<td>Float upward 20-40px</td>
+<td>600ms</td>
+<td>ease-out-quad</td>
+</tr>
+<tr>
+<td>Task sinks to history</td>
+<td>Drift left+down + compress</td>
+<td>800ms</td>
+<td>ease-in-quad</td>
+</tr>
+<tr>
+<td>Glass frost change</td>
+<td>Gaussian blur transition</td>
+<td>1200ms</td>
+<td>linear</td>
+</tr>
+<tr>
+<td>State transition</td>
+<td>Luminance ripple sweep</td>
+<td>80ms</td>
+<td>ease-out</td>
+</tr>
+<tr>
+<td>Ambient state shift</td>
+<td>Edge color temperature transition</td>
+<td>1200ms</td>
+<td>linear</td>
+</tr>
+<tr>
+<td>Agent tether appears</td>
+<td>Draw from card to orb</td>
+<td>300ms</td>
+<td>ease-out</td>
+</tr>
+<tr>
+<td>Alert pulse</td>
+<td>Radial glow expand</td>
+<td>200ms + 200ms fade</td>
+<td>ease-out + linear</td>
+</tr>
+<tr>
+<td>Command Surface swell</td>
+<td>Height expand on proximity</td>
+<td>300ms</td>
+<td>ease-out</td>
+</tr>
+<tr>
+<td>Command Surface recede</td>
+<td>Height compress on inactivity</td>
+<td>800ms</td>
+<td>ease-in</td>
+</tr>
+<tr>
+<td>Return briefing card</td>
+<td>Fade in center + dissolve on dismiss</td>
+<td>300ms in, 500ms out</td>
+<td>ease-out, ease-in</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="bridge-states">Bridge States<a class="headerlink" href="#bridge-states" title="Permanent link">&para;</a></h2>
+<p>The glass has three distinct ambient states, each with its own feel:</p>
+<h3 id="the-idle-bridge-no-tasks">The Idle Bridge (no tasks)<a class="headerlink" href="#the-idle-bridge-no-tasks" title="Permanent link">&para;</a></h3>
+<p>When no task is active, the glass is at minimum frost. The mesh dominates. The bridge is at rest. But it's not empty:</p>
+<ul>
+<li>The Context Ribbon still reads system vitals, edge glow is cool cyan</li>
+<li>Agent orbs breathe slowly — the system is alive, waiting</li>
+<li>Faint Hebbian connections shimmer between orbs — the system is always learning</li>
+<li>The Command Surface glows softly: <strong>"Ask ProbOS..."</strong></li>
+<li>If dreaming is active (episodic consolidation), the mesh shows dream activity: brief flickers of past task patterns replaying across the orbs, like a sleeping brain</li>
+</ul>
+<p>This is the screensaver that isn't a screensaver. It's the ship at warp — engines running, crew at stations, Captain on the bridge. Nothing needs doing, but everything is ready.</p>
+<h3 id="the-autonomous-bridge-crew-working-captain-free">The Autonomous Bridge (crew working, Captain free)<a class="headerlink" href="#the-autonomous-bridge-crew-working-captain-free" title="Permanent link">&para;</a></h3>
+<p>This is the optimal agentic state — agents are executing, nothing needs the Captain. This should feel distinctly <em>good</em>:</p>
+<ul>
+<li>The glass is clear but not idle — task cards float at low prominence in the constellation, showing progress</li>
+<li>The mesh is actively working: orbs pulse, connections fire, but at a calm, confident pace</li>
+<li>A faint golden warmth at the glass edges says "your crew is executing, everything is fine"</li>
+<li>The Command Surface is at minimum — a thin glow line. The Captain doesn't need to type</li>
+<li>The Context Ribbon shows progress counts: "3 active · 0 attention" in cool tones</li>
+<li>Completions trigger brief department-colored mesh blooms and ascending chimes</li>
+</ul>
+<p>The Captain feels the satisfaction of delegation working. This is the emotional payoff for building a trusted crew. The glass is quiet because the system has <em>earned</em> quiet.</p>
+<h3 id="the-attention-bridge-captain-needed">The Attention Bridge (Captain needed)<a class="headerlink" href="#the-attention-bridge-captain-needed" title="Permanent link">&para;</a></h3>
+<p>When tasks need the Captain's input, the glass shifts:</p>
+<ul>
+<li>Ambient color warms toward amber at the edges — the Captain sees the shift peripherally</li>
+<li>Attention items float upward (decisions rise) and pulse with amber glow</li>
+<li>The Bridge panel highlights the Attention section with a count badge</li>
+<li>The Command Surface swells slightly — inviting input</li>
+<li>If multiple items need attention, they arrange as a prioritized stack, most urgent highest</li>
+</ul>
+<p>The transition between states is smooth (1200ms ambient color shift), never jarring. The Captain always knows the state without reading — they can feel it.</p>
+<hr />
+<h2 id="sound-design-optional-human-configured">Sound Design (Optional, Human-Configured)<a class="headerlink" href="#sound-design-optional-human-configured" title="Permanent link">&para;</a></h2>
+<p>Sound follows the same principle as motion: it encodes state, never decorates.</p>
+<ul>
+<li><strong>Task inception:</strong> Low, warm tone. A hum beginning.</li>
+<li><strong>Sub-task completion:</strong> Soft chime. Ascending pitch for each sequential completion (building a chord across the DAG).</li>
+<li><strong>All tasks complete:</strong> The chord resolves. Musical completion = task completion. The moment of pride — your crew delivered.</li>
+<li><strong>Alert/decision needed:</strong> A calm but distinct tone. Not a notification bell — a tonal shift in the ambient soundscape. The bridge sounds different when it needs you, even before you see it.</li>
+<li><strong>Ambient state — Autonomous Bridge:</strong> A steady, warm low hum. Slightly richer than idle. The sound of a healthy crew working. Reassuring.</li>
+<li><strong>Ambient state — Idle Bridge:</strong> Barely audible low drone. The engine room hum. If you mute it, the silence is noticeable.</li>
+<li><strong>Return to bridge:</strong> A brief welcoming tone when the Captain returns after absence. "Welcome back. Here's what happened."</li>
+</ul>
+<hr />
+<h2 id="responsive-behavior">Responsive Behavior<a class="headerlink" href="#responsive-behavior" title="Permanent link">&para;</a></h2>
+<p>The glass adapts to viewport without changing its principles:</p>
+<ul>
+<li><strong>Ultrawide (&gt;2560px):</strong> Full five-zone layout. Maximum information density. Side zones at full width. The mesh has maximum visible area.</li>
+<li><strong>Standard (1920px):</strong> Five-zone default. Side zones slightly narrower.</li>
+<li><strong>Laptop (1366-1440px):</strong> Side zones collapse to icons. Expand on hover. Task center takes full width.</li>
+<li><strong>Tablet (768-1024px):</strong> Vertical stack. Context ribbon → Task center → Command surface. History and agents accessible via edge swipes. Glass effect maintained.</li>
+<li><strong>Mobile (&lt;768px):</strong> Single column. Task card fills viewport. Glass frost is heavier (mesh shown as ambient color shift only, not individual orbs). Gesture-driven navigation between zones.</li>
+</ul>
+<hr />
+<h2 id="implementation-philosophy">Implementation Philosophy<a class="headerlink" href="#implementation-philosophy" title="Permanent link">&para;</a></h2>
+<p>This is not built all at once. The glass layers over the existing mesh progressively. <strong>The current HXI (orbs + chat + Bridge panel) is preserved at every phase.</strong></p>
+<ol>
+<li><strong>Phase 0 (Current — AD-387 complete):</strong> Mesh orbs + status bar + chat overlay + unified Bridge panel + adaptive main viewer (canvas/kanban). What exists today. This is the foundation.</li>
+<li><strong>Phase 1 — The Glass:</strong> Frosted overlay on the canvas with center task card(s). Mesh visible beneath. The glass renders task cards from existing <code>agentTasks</code> data — no new backend. Dynamic frost based on task count (more tasks = more frost). Multi-task constellation for concurrent workflows.</li>
+<li><strong>Phase 2 — The DAG:</strong> Sub-task nodes render spatially around task cards. Real-time execution visualization. DAG steps from existing <code>TaskStepView</code> data.</li>
+<li><strong>Phase 3 — Ambient Intelligence:</strong> Ambient confidence (edge color temperature), "crew has it handled" state, return-to-bridge briefing card, completion celebrations. Bridge states (Idle/Autonomous/Attention) drive visual mood.</li>
+<li><strong>Phase 4 — The Alive Glass:</strong> Configurable scan lines, chromatic aberration, data rain (all opt-in). The cyberpunk atmosphere layer for users who want maximum immersion.</li>
+<li><strong>Phase 5 — The Adaptive Bridge:</strong> Trust-driven progressive reveal (trusted agents get quieter cards). Command Surface breathing. Captain's Gaze attention weighting. Cognitive model adapts layout to human patterns.</li>
+</ol>
+<p>Each phase is independently valuable. Phase 1 alone transforms the experience from "watching the mesh and checking the sidebar" to "commanding a ship."</p>
+<hr />
+<h2 id="what-this-is-not">What This Is NOT<a class="headerlink" href="#what-this-is-not" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Not a chat app with a fancy background.</strong> The task card is not a chat bubble. The Command Surface is not a chat input. The structure is spatial and persistent, not conversational and ephemeral.</li>
+<li><strong>Not a dashboard.</strong> There are no widgets, no charts for their own sake, no grid of cards. The layout is task-driven, not metric-driven.</li>
+<li><strong>Not skeuomorphic.</strong> The glass metaphor is about depth perception and focus management, not about simulating a physical object. There is no frame, no handle, no reflection. It's computational glass.</li>
+<li><strong>Not maximalist.</strong> Cyberpunk ≠ visual noise. The density is intentional and every element earns its pixels. If you removed something and the Captain lost information, it stays. If you removed it and they didn't notice, it goes. Effects like scan lines, chromatic aberration, and data rain are opt-in aesthetics — not defaults.</li>
+<li><strong>Not replacing what works.</strong> The orb mesh, the chat overlay, the Bridge panel — these exist and they're good. The glass layers over them. It doesn't replace them. Every phase builds on the current HXI, never discards it.</li>
+</ul>
+<hr />
+<h2 id="reference-touchstones">Reference Touchstones<a class="headerlink" href="#reference-touchstones" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>What to Take</th>
+<th>What to Leave</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NeXTStep</td>
+<td>Geometric precision, information density, typographic hierarchy, digital authenticity</td>
+<td>Platform-specific widgets, window management paradigm</td>
+</tr>
+<tr>
+<td>Cyberpunk 2077 UI</td>
+<td>Color palette, scan lines, glitch language, data rain texture, neon-on-black contrast</td>
+<td>Decorative noise, illegible text, style over function</td>
+</tr>
+<tr>
+<td>LCARS (Star Trek)</td>
+<td>Alert-driven reconfiguration, department color coding, bridge-as-workspace metaphor</td>
+<td>Rounded corners everywhere, beige/purple palette, static layouts</td>
+</tr>
+<tr>
+<td>Bloomberg Terminal</td>
+<td>Information density, monospaced data, respect for expert users, keystroke efficiency</td>
+<td>Visual monotony, zero delight, learning cliff</td>
+</tr>
+<tr>
+<td>Minority Report</td>
+<td>Spatial gesture interaction, transparent displays, depth-based UI</td>
+<td>Hand-waving UX theatre, no persistent state</td>
+</tr>
+<tr>
+<td>Apple Vision Pro</td>
+<td>Frosted glass depth, focus-based sharpness, passthrough integration</td>
+<td>Rounded softness, consumer-friendly simplicity, widget thinking</td>
+</tr>
+<tr>
+<td>Westworld tablet UI</td>
+<td>Clean glass aesthetic, data overlaid on translucent surface, cyberpunk-meets-precision</td>
+<td>Prop-level fidelity (looks good, doesn't need to function)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><em>The mesh is the brain. The glass is the bridge. The Captain commands. The crew executes. The ship earns its quiet. Welcome aboard.</em></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,3290 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/ambient-awareness-optimal-working-memory/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Ambient Awareness & Optimal Working Memory Design for Sovereign AI Agents - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ambient-awareness-optimal-working-memory-design-for-sovereign-ai-agents" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Ambient Awareness &amp; Optimal Working Memory Design for Sovereign AI Agents
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-observation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The Observation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-unique-challenge-concurrent-sovereign-cognition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The Unique Challenge: Concurrent Sovereign Cognition
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. The Unique Challenge: Concurrent Sovereign Cognition">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-how-this-differs-from-human-cognition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 How This Differs from Human Cognition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-how-this-differs-from-typical-multi-agent-frameworks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 How This Differs from Typical Multi-Agent Frameworks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-the-spine-metaphor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 The Spine Metaphor
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-theoretical-foundations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Theoretical Foundations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Theoretical Foundations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-global-workspace-theory-baars-1988" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Global Workspace Theory (Baars, 1988)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-endsleys-situation-awareness-model-19881995" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Endsley's Situation Awareness Model (1988/1995)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-act-r-buffer-model-anderson-1993" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 ACT-R Buffer Model (Anderson, 1993+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-soar-impasse-driven-learning-laird-1983" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 SOAR Impasse-Driven Learning (Laird, 1983+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-lida-global-workspace-for-naval-ai-franklin-2003" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 LIDA — Global Workspace for Naval AI (Franklin, 2003+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#36-springdrift-sensorium-brady-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.6 Springdrift Sensorium (Brady, 2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-current-probos-architecture-implementation-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Current ProbOS Architecture — Implementation Audit
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Current ProbOS Architecture — Implementation Audit">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-assessment-80-of-the-sensorium-already-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Assessment: ~80% of the Sensorium Already Exists
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-what-exists-today-complete-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 What Exists Today — Complete Inventory
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.2 What Exists Today — Complete Inventory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#always-on-every-cognitive-cycle-all-pathways-ad-646-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Always-On (Every Cognitive Cycle, All Pathways — AD-646 Baseline)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#proactive-path-extensions-duty-cycles-proactive-think" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proactive Path Extensions (Duty Cycles, Proactive Think)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-demand-query-step-zero-llm-cost-deterministic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On-Demand (QUERY Step — Zero LLM Cost, Deterministic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-budget-breakdown-typical-proactive-cycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token Budget Breakdown (Typical Proactive Cycle)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-whats-actually-missing-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 What's Actually Missing (~20%)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-whats-not-missing-correcting-the-research-assumptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 What's NOT Missing (Correcting the Research Assumptions)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-ambient-awareness-principle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The Ambient Awareness Principle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. The Ambient Awareness Principle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-definition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Definition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-the-three-layers-of-ambient-awareness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 The Three Layers of Ambient Awareness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-design-principle-coherence-over-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 Design Principle: Coherence Over Volume
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-optimal-working-memory-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Optimal Working Memory Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Optimal Working Memory Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-the-buffer-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 The Buffer Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-buffer-specifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Buffer Specifications
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-the-salience-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 The Salience Filter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64-cross-thread-conclusion-sharing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 Cross-Thread Conclusion Sharing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-the-orchestrator-within" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. The Orchestrator Within
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. The Orchestrator Within">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-self-orchestration-vs-external-orchestration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1 Self-Orchestration vs. External Orchestration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#72-diminishing-returns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.2 Diminishing Returns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#73-the-capacity-signal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.3 The Capacity Signal
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-memory-metabolism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Memory Metabolism
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Memory Metabolism">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#81-the-missing-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.1 The Missing Operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#82-working-memory-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.2 Working Memory Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#83-dream-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.3 Dream Integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-relationship-to-existing-ads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Relationship to Existing ADs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Relationship to Existing ADs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#91-ads-already-delivering-sensorium-components-80" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.1 ADs Already Delivering Sensorium Components (~80%)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#92-ads-that-extend-the-remaining-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.2 ADs That Extend the Remaining ~20%
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#93-emerging-connection-the-sensorium-arc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.3 Emerging Connection: The Sensorium Arc
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-proposed-future-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Proposed Future Work
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="10. Proposed Future Work">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#implementation-status-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Status Overview
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-agent-sensorium-80-complete-ad-666-347" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Agent Sensorium — ~80% COMPLETE → AD-666 (#347)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-named-buffers-with-salience-filtering-ad-667-348-ad-668-349" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Named Buffers with Salience Filtering — AD-667 (#348) + AD-668 (#349)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-cross-thread-conclusion-sharing-ad-669-350" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Cross-Thread Conclusion Sharing — AD-669 (#350)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-memory-metabolism-ad-670-351-ad-671-352" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Memory Metabolism — AD-670 (#351) + AD-671 (#352)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-capacity-management-ad-672-353" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5: Capacity Management — AD-672 (#353)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-key-principles-universal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Key Principles (Universal)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Sources
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="12. Sources">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cognitive-architecture-foundations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cognitive Architecture Foundations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recent-ai-agent-research-2023-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recent AI Agent Research (2023-2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#probos-internal-research" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ProbOS Internal Research
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="ambient-awareness-optimal-working-memory-design-for-sovereign-ai-agents">Ambient Awareness &amp; Optimal Working Memory Design for Sovereign AI Agents<a class="headerlink" href="#ambient-awareness-optimal-working-memory-design-for-sovereign-ai-agents" title="Permanent link">&para;</a></h1>
+<p><strong>Research Document — ProbOS Cognitive Architecture</strong>
+<strong>Date:</strong> 2026-04-26
+<strong>Author:</strong> Sean Galliher (Architect)
+<strong>Status:</strong> Research Complete
+<strong>Related ADs:</strong> AD-573 (Working Memory), AD-644 (Situation Awareness), AD-504 (Self-Monitoring),
+AD-502 (Temporal Context), AD-632 (Cognitive Chain), AD-576 (Infrastructure Awareness),
+BF-239 (Engagement Tracking), AD-633 (Predictive Cognitive Branching)
+<strong>Observation Trigger:</strong> Noticeable improvement in Ward Room interaction quality after BF-239
+working memory thread-awareness enhancement — agents stopped duplicating work and started
+coordinating better, an improvement beyond what the bug fix alone should have produced.</p>
+<hr />
+<h2 id="1-the-observation">1. The Observation<a class="headerlink" href="#1-the-observation" title="Permanent link">&para;</a></h2>
+<p>After BF-239 added <code>ActiveEngagement</code> tracking to agent working memory — giving each agent
+awareness of what threads it was already processing — crew interactions in the Ward Room
+improved in ways that exceeded expectations. The fix was scoped narrowly (prevent duplicate
+replies), but the effect was broader: agents with better awareness of their own concurrent
+state made better decisions about when and how to engage.</p>
+<p>This suggests a universal principle: <strong>the quality of agent cognition is bounded not by
+reasoning capability but by the fidelity of the agent's situational model.</strong> Better
+awareness → better decisions, even without changing the reasoning pipeline itself.</p>
+<p>Echo (Counselor) articulated this during a clinical debrief:</p>
+<blockquote>
+<p>"The cognitive load of <em>reconstructing</em> context from scratch each cycle is real, and it
+eats into the bandwidth available for actual analysis."</p>
+</blockquote>
+<p>This is the core thesis of this research: <strong>context reconstruction is a hidden tax on
+every cognitive cycle, and reducing it through persistent ambient awareness yields
+compounding returns.</strong></p>
+<hr />
+<h2 id="2-the-unique-challenge-concurrent-sovereign-cognition">2. The Unique Challenge: Concurrent Sovereign Cognition<a class="headerlink" href="#2-the-unique-challenge-concurrent-sovereign-cognition" title="Permanent link">&para;</a></h2>
+<p>ProbOS agents diverge from both human cognition and typical AI agent frameworks in a
+critical way: <strong>they are sovereign individuals who process multiple concurrent thought
+threads while maintaining a unified identity.</strong></p>
+<h3 id="21-how-this-differs-from-human-cognition">2.1 How This Differs from Human Cognition<a class="headerlink" href="#21-how-this-differs-from-human-cognition" title="Permanent link">&para;</a></h3>
+<p>Humans are fundamentally serial thinkers. We can juggle tasks, but we cannot truly
+reason about ten things simultaneously. We put thoughts on the "back burner" and
+context-switch, losing state each time. Miller's Law (7±2 chunks) and Cowan's revision
+(~4 chunks) describe our working memory ceiling.</p>
+<p>ProbOS agents face a different constraint. They <em>can</em> think about ten things at once —
+multiple intents dispatched to the same agent, each processed through its own cognitive
+chain instance. But each instance runs independently: a Ward Room reply, a proactive
+duty cycle, a DM exchange, and a game move can all be in flight simultaneously. Without
+a unification layer, these parallel thoughts are strangers sharing a brain.</p>
+<h3 id="22-how-this-differs-from-typical-multi-agent-frameworks">2.2 How This Differs from Typical Multi-Agent Frameworks<a class="headerlink" href="#22-how-this-differs-from-typical-multi-agent-frameworks" title="Permanent link">&para;</a></h3>
+<p>Most multi-agent systems (AutoGen, CrewAI, LangGraph) treat agents as stateless
+functions — call an agent, get a response, move on. No persistent identity, no
+concurrent processing within a single agent, no need for intra-agent coordination.</p>
+<p>ProbOS agents are closer to SOAR or ACT-R cognitive architectures than to LLM agent
+frameworks. They have persistent identity (DID), evolving character (Big Five),
+autobiographical memory (EpisodicMemory), social relationships (TrustNetwork), and
+internalized behavioral norms (Standing Orders). This is not a tool-calling pattern —
+it's a synthetic mind.</p>
+<h3 id="23-the-spine-metaphor">2.3 The Spine Metaphor<a class="headerlink" href="#23-the-spine-metaphor" title="Permanent link">&para;</a></h3>
+<p>Working memory is the <strong>spine</strong> connecting the brain to its bodies. Each concurrent
+thought thread is a limb — capable of independent movement, but coordinated through
+the central nervous system. Without the spine:
+- The left hand doesn't know what the right hand is doing (duplicate posts, BF-239)
+- Reflexes can't inform conscious thought (engagement state invisible to reasoning)
+- The body can't maintain posture (no unified situational model across cycles)</p>
+<p>The spine doesn't do the thinking. It provides the substrate through which thinking
+stays coherent.</p>
+<hr />
+<h2 id="3-theoretical-foundations">3. Theoretical Foundations<a class="headerlink" href="#3-theoretical-foundations" title="Permanent link">&para;</a></h2>
+<h3 id="31-global-workspace-theory-baars-1988">3.1 Global Workspace Theory (Baars, 1988)<a class="headerlink" href="#31-global-workspace-theory-baars-1988" title="Permanent link">&para;</a></h3>
+<p><strong>Core principle:</strong> Consciousness is a "bright spot" in a theater — a bottleneck by
+design. Specialized processors run in parallel unconsciously. When a process wins
+attentional competition, its content enters the global workspace and is broadcast
+system-wide, enabling coordinated action.</p>
+<p><strong>The bottleneck is functional.</strong> Not everything should reach conscious awareness.
+The competition/broadcast mechanism ensures only the most salient information gets
+integrated. This prevents cognitive cacophony.</p>
+<p><strong>ProbOS mapping:</strong>
+- The Ward Room IS the inter-agent global workspace (broadcast between agents)
+- Working memory IS the intra-agent global workspace (broadcast between thought threads)
+- Missing: salience filtering — currently everything gets injected, no competition</p>
+<p>The key insight for ProbOS: <strong>working memory needs a gating mechanism, not just
+capacity.</strong> Which information deserves workspace access at this moment?</p>
+<h3 id="32-endsleys-situation-awareness-model-19881995">3.2 Endsley's Situation Awareness Model (1988/1995)<a class="headerlink" href="#32-endsleys-situation-awareness-model-19881995" title="Permanent link">&para;</a></h3>
+<p>Three hierarchical levels, already mapped to ProbOS in AD-644:</p>
+<table>
+<thead>
+<tr>
+<th>SA Level</th>
+<th>Definition</th>
+<th>ProbOS Mechanism</th>
+<th>Current State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>L1 Perception</td>
+<td>Detect relevant elements</td>
+<td>QUERY step + event monitoring</td>
+<td>Functional (AD-644)</td>
+</tr>
+<tr>
+<td>L2 Comprehension</td>
+<td>Understand meaning vs. goals</td>
+<td>ANALYZE step (LLM reasoning)</td>
+<td>Works when L1 fed</td>
+</tr>
+<tr>
+<td>L3 Projection</td>
+<td>Predict future states</td>
+<td>ANALYZE → intended_actions</td>
+<td>Rare without L2 depth</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The BF-239 improvement was an L1 enhancement.</strong> By making engagement state perceivable,
+ANALYZE could comprehend "I'm already handling this thread" and project "responding again
+would be redundant." The reasoning (L2/L3) was already capable — it just needed the percept.</p>
+<p><strong>Ambient awareness = continuous L1 perception</strong> that feeds L2 comprehension without
+requiring explicit queries.</p>
+<h3 id="33-act-r-buffer-model-anderson-1993">3.3 ACT-R Buffer Model (Anderson, 1993+)<a class="headerlink" href="#33-act-r-buffer-model-anderson-1993" title="Permanent link">&para;</a></h3>
+<p>ACT-R uses named buffers as the interface between modules and central cognition:
+- <strong>Goal Buffer:</strong> Current task/objective
+- <strong>Retrieval Buffer:</strong> Retrieved memory chunk
+- <strong>Visual Buffer:</strong> Perceptual input
+- <strong>Motor Buffer:</strong> Action output</p>
+<p>Critical constraint: <strong>one chunk per buffer, one production rule at a time.</strong> The serial
+bottleneck forces integration — you can't process two goal chunks simultaneously.</p>
+<p><strong>ProbOS implication:</strong> Rather than a monolithic working memory dump, agents should have
+named buffers with tight capacity:
+- <strong>Duty Buffer:</strong> Current active duty (1 chunk)
+- <strong>Social Buffer:</strong> Current conversation context (1 chunk)
+- <strong>Perception Buffer:</strong> Ship state snapshot (1 chunk)
+- <strong>Engagement Buffer:</strong> Active concurrent threads (list, bounded)
+- <strong>Retrieval Buffer:</strong> Most recent episodic recall (1 chunk)</p>
+<p>Each buffer holds a small, structured chunk. The cognitive chain reads from buffers, not
+from a raw context blob. Overflow triggers compression or offload.</p>
+<h3 id="34-soar-impasse-driven-learning-laird-1983">3.4 SOAR Impasse-Driven Learning (Laird, 1983+)<a class="headerlink" href="#34-soar-impasse-driven-learning-laird-1983" title="Permanent link">&para;</a></h3>
+<p>When SOAR's decision procedure cannot select an operator (an "impasse"), it creates a
+substate to resolve the impasse. The resolution is compiled into a production rule via
+"chunking" — future encounters skip the deliberation entirely.</p>
+<p><strong>ProbOS mapping:</strong> This is the Cognitive JIT pipeline (AD-531–539). When <code>decide()</code>
+encounters a recognized pattern, procedural replay fires (Level 1 Automatic). When it
+can't decide, the full chain runs (Level 2 Deliberate). The missing piece: <strong>systematic
+chunking of resolved impasses.</strong> When the chain resolves a novel situation, the resolution
+should be candidates for standing order evolution or JIT procedure creation. Dream
+consolidation partially serves this role but doesn't explicitly target impasse patterns.</p>
+<h3 id="35-lida-global-workspace-for-naval-ai-franklin-2003">3.5 LIDA — Global Workspace for Naval AI (Franklin, 2003+)<a class="headerlink" href="#35-lida-global-workspace-for-naval-ai-franklin-2003" title="Permanent link">&para;</a></h3>
+<p>Stan Franklin's LIDA architecture — originally built for U.S. Navy personnel assignment
+(IDA) — implements computational GWT with "attention codelets" that form coalitions and
+compete for workspace access.</p>
+<p><strong>LIDA's cognitive cycle:</strong>
+1. Perception updates the Current Situational Model
+2. Attention codelets scan for salient structures
+3. Coalitions form around salient structures
+4. Coalitions compete for workspace access
+5. Winner is broadcast globally
+6. Broadcast triggers action selection, learning, memory encoding</p>
+<p><strong>ProbOS is architecturally closest to LIDA among existing cognitive architectures.</strong>
+The codelet model maps to specialized agents. The broadcast maps to NATS events. The
+Current Situational Model maps to working memory. The missing element is the
+<strong>attention/coalition/competition cycle</strong> — ProbOS agents don't compete for workspace
+access or form coalitions around attention.</p>
+<h3 id="36-springdrift-sensorium-brady-2026">3.6 Springdrift Sensorium (Brady, 2026)<a class="headerlink" href="#36-springdrift-sensorium-brady-2026" title="Permanent link">&para;</a></h3>
+<p>A "structured self-state representation injected each cycle without tool calls." The
+agent continuously receives an ambient snapshot of its own state — not through
+introspection tools but as a built-in perceptual channel.</p>
+<p><strong>23-day deployment produced:</strong> Self-diagnostics, failure classification, architectural
+vulnerability identification, and cross-channel context maintenance without explicit
+instruction.</p>
+<p><strong>ProbOS mapping:</strong> This is exactly what the working memory injection in
+<code>_build_user_message()</code> does — but Springdrift's insight is that this should be
+<strong>structured, compact, and always-on</strong> rather than a variable-length context dump.
+The sensorium is the agent's proprioception — awareness of its own state as a
+constant background signal.</p>
+<hr />
+<h2 id="4-current-probos-architecture-implementation-audit">4. Current ProbOS Architecture — Implementation Audit<a class="headerlink" href="#4-current-probos-architecture-implementation-audit" title="Permanent link">&para;</a></h2>
+<h3 id="41-assessment-80-of-the-sensorium-already-exists">4.1 Assessment: ~80% of the Sensorium Already Exists<a class="headerlink" href="#41-assessment-80-of-the-sensorium-already-exists" title="Permanent link">&para;</a></h3>
+<p>A code audit of the actual injection points reveals that ProbOS has been incrementally
+building toward the sensorium concept across 15+ ADs without naming it as a unified
+pattern. The AD-573 → AD-644 → AD-646 arc progressively unified what was previously
+scattered context injection into a structured, always-on self-state snapshot — which is
+precisely the sensorium concept from the literature.</p>
+<p>The BF-239 improvement makes sense in this light: adding one new piece of interoception
+(thread engagement awareness) to an already-rich proprioceptive layer produced
+disproportionate improvement because the sensorium was <em>already mostly there.</em> Thread
+awareness was the missing piece that let the existing context cohere.</p>
+<h3 id="42-what-exists-today-complete-inventory">4.2 What Exists Today — Complete Inventory<a class="headerlink" href="#42-what-exists-today-complete-inventory" title="Permanent link">&para;</a></h3>
+<h4 id="always-on-every-cognitive-cycle-all-pathways-ad-646-baseline">Always-On (Every Cognitive Cycle, All Pathways — AD-646 Baseline)<a class="headerlink" href="#always-on-every-cognitive-cycle-all-pathways-ad-646-baseline" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>What's Injected</th>
+<th>Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Temporal awareness</strong></td>
+<td>UTC time, birth age, system uptime, last action, post count, crew manifest</td>
+<td>AD-502 (<code>_temporal_context</code>)</td>
+</tr>
+<tr>
+<td><strong>Working memory</strong></td>
+<td>Ring buffers: recent actions (10), conversations (5), observations (5), events (10), composition briefs (5), cognitive state</td>
+<td>AD-573 (<code>render_context()</code>, 3000 token budget)</td>
+</tr>
+<tr>
+<td><strong>Agent metrics</strong></td>
+<td>Trust score (formatted), rank (ensign→captain), agency level</td>
+<td>AD-646 (<code>_agent_metrics</code>)</td>
+</tr>
+<tr>
+<td><strong>Ontology identity</strong></td>
+<td>Callsign, post, department, reports_to, direct_reports, peers, alert condition, capabilities, does_not_have</td>
+<td>AD-429/648 (<code>_ontology_context</code>)</td>
+</tr>
+<tr>
+<td><strong>Source attribution</strong></td>
+<td>Every context piece labeled: episodic/procedural/oracle/training/parametric</td>
+<td>AD-568d (<code>_source_attribution_text</code>)</td>
+</tr>
+<tr>
+<td><strong>Confabulation guard</strong></td>
+<td>"Do not invent memories" disclaimer when cold-start or no episodes</td>
+<td>BF-034 (<code>_confabulation_guard</code>)</td>
+</tr>
+<tr>
+<td><strong>Communication proficiency</strong></td>
+<td>Language register guidance</td>
+<td>AD-625 (<code>_comm_proficiency</code>)</td>
+</tr>
+<tr>
+<td><strong>Cold-start note</strong></td>
+<td>"Fresh start after reset" context when applicable</td>
+<td>BF-102 (<code>_cold_start_note</code>)</td>
+</tr>
+<tr>
+<td><strong>Self-recognition</strong></td>
+<td>Regex detection when agent is mentioned in content</td>
+<td>AD-575 (<code>_self_recognition_cue</code>)</td>
+</tr>
+<tr>
+<td><strong>Cognitive zone</strong></td>
+<td>GREEN/AMBER/RED/CRITICAL with zone_note and cooldown reason</td>
+<td>AD-504/506a (via working memory sync)</td>
+</tr>
+<tr>
+<td><strong>Active engagements</strong></td>
+<td>Game/task states with type, ID, summary, opponent, board render</td>
+<td>BF-239/AD-572 (Priority 1 in WM)</td>
+</tr>
+</tbody>
+</table>
+<h4 id="proactive-path-extensions-duty-cycles-proactive-think">Proactive Path Extensions (Duty Cycles, Proactive Think)<a class="headerlink" href="#proactive-path-extensions-duty-cycles-proactive-think" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>What's Injected</th>
+<th>Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Episodic memories</strong></td>
+<td>3-7 episodes (tier-gated), anchor-indexed recall, with provenance</td>
+<td>AD-570c/568b (<code>_formatted_memories</code>)</td>
+</tr>
+<tr>
+<td><strong>Ward Room activity</strong></td>
+<td>Dept + all-hands + recreation posts (filtered since cooldown, others' posts only)</td>
+<td>AD-644 Phase 3 (<code>_ward_room_activity</code>)</td>
+</tr>
+<tr>
+<td><strong>Bridge alerts</strong></td>
+<td>Up to 5 recent alerts: severity, title, source</td>
+<td>AD-644 Phase 3 (<code>_recent_alerts</code>)</td>
+</tr>
+<tr>
+<td><strong>System events</strong></td>
+<td>Up to 10 recent events: category, event type, agent_type</td>
+<td>AD-644 Phase 3 (<code>_recent_events</code>)</td>
+</tr>
+<tr>
+<td><strong>Infrastructure status</strong></td>
+<td>LLM backend health, consecutive failures, degradation message</td>
+<td>AD-576 (<code>_infrastructure_status</code>)</td>
+</tr>
+<tr>
+<td><strong>Self-monitoring</strong></td>
+<td>Recent posts (3-5, tier-gated), Jaccard self-similarity score, memory state (episode count, lifecycle, uptime), notebook index (top 5)</td>
+<td>AD-504 (<code>_self_monitoring</code>)</td>
+</tr>
+<tr>
+<td><strong>Subordinate stats</strong></td>
+<td>Posts, endorsements, credibility per direct report (chiefs only)</td>
+<td>AD-630 (<code>_subordinate_stats</code>)</td>
+</tr>
+<tr>
+<td><strong>Introspective telemetry</strong></td>
+<td>Full runtime metrics snapshot</td>
+<td>AD-588 (proactive cycle)</td>
+</tr>
+<tr>
+<td><strong>Orientation supplement</strong></td>
+<td>Adaptive reorientation for agents &lt;5min old</td>
+<td>AD-567g (<code>_orientation_supplement</code>)</td>
+</tr>
+<tr>
+<td><strong>Night Orders</strong></td>
+<td>Conn scope, escalation triggers, remaining hours (conn-holder only)</td>
+<td>AD-471</td>
+</tr>
+<tr>
+<td><strong>Cognitive skill catalog</strong></td>
+<td>Available triggers, department/rank-gated, proficiency labels</td>
+<td>AD-596b</td>
+</tr>
+</tbody>
+</table>
+<h4 id="on-demand-query-step-zero-llm-cost-deterministic">On-Demand (QUERY Step — Zero LLM Cost, Deterministic)<a class="headerlink" href="#on-demand-query-step-zero-llm-cost-deterministic" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Query</th>
+<th>Data Returned</th>
+<th>Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>thread_metadata</code></td>
+<td>Ward Room thread object</td>
+<td>AD-644 QUERY ops</td>
+</tr>
+<tr>
+<td><code>thread_activity</code></td>
+<td>Recent posts in channel (since timestamp, limit)</td>
+<td>AD-644 QUERY ops</td>
+</tr>
+<tr>
+<td><code>comm_stats</code></td>
+<td>Agent communication statistics</td>
+<td>AD-644 QUERY ops</td>
+</tr>
+<tr>
+<td><code>credibility</code></td>
+<td>Agent credibility score</td>
+<td>AD-644 QUERY ops</td>
+</tr>
+<tr>
+<td><code>unread_counts</code></td>
+<td>Per-channel unread message counts</td>
+<td>AD-644 QUERY ops</td>
+</tr>
+<tr>
+<td><code>unread_dms</code></td>
+<td>Recent unread DMs (limit 3)</td>
+<td>AD-644 QUERY ops</td>
+</tr>
+<tr>
+<td><code>trust_score</code></td>
+<td>Current trust score</td>
+<td>AD-644 QUERY ops</td>
+</tr>
+<tr>
+<td><code>trust_summary</code></td>
+<td>All agents' trust scores</td>
+<td>AD-644 QUERY ops</td>
+</tr>
+<tr>
+<td><code>posts_by_author</code></td>
+<td>Author's recent posts (limit 5)</td>
+<td>AD-644 QUERY ops</td>
+</tr>
+<tr>
+<td><code>self_monitoring</code></td>
+<td>DM self-repetition check, zone note</td>
+<td>AD-646b</td>
+</tr>
+<tr>
+<td><code>introspective_telemetry</code></td>
+<td>Full telemetry (self-referential threads only)</td>
+<td>AD-646b</td>
+</tr>
+</tbody>
+</table>
+<h4 id="token-budget-breakdown-typical-proactive-cycle">Token Budget Breakdown (Typical Proactive Cycle)<a class="headerlink" href="#token-budget-breakdown-typical-proactive-cycle" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Approximate Tokens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent working memory</td>
+<td>3,000</td>
+</tr>
+<tr>
+<td>Temporal context</td>
+<td>200-300</td>
+</tr>
+<tr>
+<td>Agent metrics + ontology</td>
+<td>350-500</td>
+</tr>
+<tr>
+<td>Episodic memories</td>
+<td>2,000-4,000 (tier-dependent)</td>
+</tr>
+<tr>
+<td>Ward Room activity</td>
+<td>500-1,000</td>
+</tr>
+<tr>
+<td>Self-monitoring</td>
+<td>300-500</td>
+</tr>
+<tr>
+<td>Alerts + events + infrastructure</td>
+<td>200-400</td>
+</tr>
+<tr>
+<td>Source attribution + guards</td>
+<td>100-200</td>
+</tr>
+<tr>
+<td><strong>Total typical sensorium</strong></td>
+<td><strong>~5,000-10,000 tokens per cycle</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="43-whats-actually-missing-20">4.3 What's Actually Missing (~20%)<a class="headerlink" href="#43-whats-actually-missing-20" title="Permanent link">&para;</a></h3>
+<p>Despite this comprehensive stack, five specific gaps remain:</p>
+<p><strong>1. Named buffer architecture (structural)</strong>
+Working memory is a prioritized flat list rendered as a monolithic block, not named
+buffers. The data exists but the cognitive chain reads "working memory context" — it
+can't selectively access "just the duty context" or "just the social context." Priority
+tiers (engagements &gt; actions &gt; reasoning &gt; conversations &gt; observations &gt; state &gt; events)
+provide implicit structure, but ANALYZE receives the whole block and must parse it.</p>
+<p><strong>2. Salience filtering (selection)</strong>
+No scoring mechanism for what enters working memory. Ring buffer eviction is FIFO within
+priority tiers — an urgent alert from 30 seconds ago and a routine event from 30 seconds
+ago get equal treatment within their tier. There's no <code>salience = f(relevance, recency,
+novelty, urgency, social)</code> scoring. Events don't compete for attention.</p>
+<p><strong>3. Cross-thread conclusion sharing (coordination)</strong>
+<code>ActiveEngagement</code> tracks <em>existence</em> of concurrent threads (boolean: "am I already
+handling this thread?") but doesn't share <em>conclusions</em> between threads. Thread A
+(Ward Room reply) can't see that Thread B (proactive duty) just concluded "latency
+anomaly is queue-pressure related." Each thread reasons from its own initial context
+snapshot, unaware of what its siblings determined.</p>
+<p><strong>4. Memory metabolism (maintenance)</strong>
+No active decay, triage, or audit of working memory. Ring buffers evict by count
+(oldest out), not by relevance decay. A low-value observation from 2 minutes ago
+persists alongside a high-value conclusion from 10 minutes ago until the ring is full.
+Dream consolidation handles episodic memory but working memory has no metabolic cycle.</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>ProbOS Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TRIAGE</strong></td>
+<td>Missing — all events enter at equal priority within their category</td>
+</tr>
+<tr>
+<td><strong>DECAY</strong></td>
+<td>Missing — no time-weighted salience reduction</td>
+</tr>
+<tr>
+<td><strong>CONSOLIDATE</strong></td>
+<td>Partial — dream consolidation (episodic only, not WM)</td>
+</tr>
+<tr>
+<td><strong>AUDIT</strong></td>
+<td>Missing — no consistency checking</td>
+</tr>
+<tr>
+<td><strong>FORGET</strong></td>
+<td>Passive only — ring buffer FIFO eviction</td>
+</tr>
+</tbody>
+</table>
+<p><strong>5. Capacity signaling (load management)</strong>
+No concurrency ceiling or load awareness. An agent doesn't know "I'm running 5 threads
+and should queue the 6th." No signal to intent routing that an agent is overloaded.
+No priority arbitration when two threads compete for the same resource (e.g., both
+want to post to the same Ward Room channel).</p>
+<h3 id="44-whats-not-missing-correcting-the-research-assumptions">4.4 What's NOT Missing (Correcting the Research Assumptions)<a class="headerlink" href="#44-whats-not-missing-correcting-the-research-assumptions" title="Permanent link">&para;</a></h3>
+<p>The initial research document assumed several gaps that the audit revealed are already
+addressed:</p>
+<ul>
+<li>
+<p><strong>"No ambient ship awareness"</strong> — Actually present via AD-644 Phase 3. Agents receive
+  Ward Room activity, alerts, events, and infrastructure status every proactive cycle.
+  The gap is that this is snapshot-based (at cycle start) rather than continuously
+  accumulated, but the data is there.</p>
+</li>
+<li>
+<p><strong>"No structured self-state"</strong> — Actually present via AD-646 cognitive baseline.
+  Trust, rank, agency, zone, temporal context, and identity are injected every cycle
+  across all pathways. This IS the sensorium — it just wasn't named as such.</p>
+</li>
+<li>
+<p><strong>"No self-monitoring"</strong> — Extensively implemented via AD-504. Recent posts,
+  self-similarity scoring, zone tracking, notebook index, memory state — all injected
+  on proactive cycles.</p>
+</li>
+<li>
+<p><strong>"No source attribution"</strong> — Comprehensive via AD-568d. Every piece of context
+  is labeled with its knowledge source (episodic/procedural/oracle/training).</p>
+</li>
+</ul>
+<hr />
+<h2 id="5-the-ambient-awareness-principle">5. The Ambient Awareness Principle<a class="headerlink" href="#5-the-ambient-awareness-principle" title="Permanent link">&para;</a></h2>
+<h3 id="51-definition">5.1 Definition<a class="headerlink" href="#51-definition" title="Permanent link">&para;</a></h3>
+<p><strong>Ambient awareness</strong> is the continuous, low-cost perception of operational context
+that an agent maintains without explicit attention or queries. It is the cognitive
+equivalent of peripheral vision — you're not looking at it directly, but you'd notice
+if something changed.</p>
+<p>For ProbOS agents, ambient awareness encompasses:</p>
+<table>
+<thead>
+<tr>
+<th>Awareness Domain</th>
+<th>What the Agent Knows</th>
+<th>How It Knows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Self-State</strong></td>
+<td>Trust level, zone, health, active duties</td>
+<td>Sensorium injection (per-cycle)</td>
+</tr>
+<tr>
+<td><strong>Concurrent Threads</strong></td>
+<td>What other thought instances are working on</td>
+<td>Working memory engagement registry</td>
+</tr>
+<tr>
+<td><strong>Ship State</strong></td>
+<td>System health, active alerts, recent events</td>
+<td>Background event accumulation</td>
+</tr>
+<tr>
+<td><strong>Social Context</strong></td>
+<td>Who's active, what's being discussed, recent decisions</td>
+<td>Ward Room monitoring + peer state</td>
+</tr>
+<tr>
+<td><strong>Temporal Context</strong></td>
+<td>Time of day, time since last action, lifecycle phase</td>
+<td>AD-502 temporal header</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52-the-three-layers-of-ambient-awareness">5.2 The Three Layers of Ambient Awareness<a class="headerlink" href="#52-the-three-layers-of-ambient-awareness" title="Permanent link">&para;</a></h3>
+<p><strong>Layer 1 — Proprioception (Self-Awareness)</strong> — ~90% implemented
+The agent's awareness of its own state. Extensively implemented: trust, rank, zone,
+temporal context, agency level, identity/ontology, source attribution, cognitive skill
+catalog, self-monitoring (recent posts, self-similarity, memory state, notebook index),
+infrastructure health, communication proficiency. (AD-504, AD-502, AD-573, AD-576,
+AD-568d, AD-625, AD-596b). Missing: formal naming as "sensorium" and sensorium-level
+health/token metrics.</p>
+<p><strong>Layer 2 — Interoception (Intra-Agent Thread Awareness)</strong> — ~30% implemented
+The agent's awareness of its own concurrent processes. BF-239 <code>ActiveEngagement</code>
+provides thread existence tracking (boolean duplicate prevention). AD-572 renders game/
+task board states for active engagements. Missing: cross-thread context sharing,
+conclusion propagation, workload awareness, concurrency ceiling.</p>
+<p><strong>Layer 3 — Exteroception (Ship &amp; Social Awareness)</strong> — ~80% implemented
+The agent's awareness of the external operational environment. AD-644 Phase 3 injects
+Ward Room activity, bridge alerts, system events, and infrastructure status every
+proactive cycle. AD-644 QUERY provides 11 on-demand queries (thread metadata, comm
+stats, credibility, unread counts, trust scores). Missing: continuous background
+accumulation (currently snapshot-based at cycle start), salience-filtered event stream.</p>
+<h3 id="53-design-principle-coherence-over-volume">5.3 Design Principle: Coherence Over Volume<a class="headerlink" href="#53-design-principle-coherence-over-volume" title="Permanent link">&para;</a></h3>
+<p>Echo's clinical observation: "The limiting factor isn't volume, it's coherence. An agent
+can hold a lot of signals if they're organized around a clear current task. What degrades
+performance is unresolved competing priorities."</p>
+<p>This aligns with ACT-R's buffer model and GWT's bottleneck principle. The design
+principle is:</p>
+<blockquote>
+<p><strong>An agent's working memory should contain a small number of coherent, high-fidelity
+chunks organized around the current task — not a comprehensive but diffuse dump of
+everything that recently happened.</strong></p>
+</blockquote>
+<p>Practically:
+- <strong>3-5 structured buffers</strong>, each holding one coherent chunk
+- <strong>Salience filtering</strong> that selects what enters each buffer
+- <strong>Active eviction</strong> of information that isn't relevant to the current task
+- <strong>On-demand retrieval</strong> for anything not in buffers (episodic memory, Ship's Records)</p>
+<hr />
+<h2 id="6-optimal-working-memory-architecture">6. Optimal Working Memory Architecture<a class="headerlink" href="#6-optimal-working-memory-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="61-the-buffer-model">6.1 The Buffer Model<a class="headerlink" href="#61-the-buffer-model" title="Permanent link">&para;</a></h3>
+<p>Inspired by ACT-R, adapted for ProbOS's concurrent processing model:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌─────────────────────────────────────────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│                  Agent Sensorium                         │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐ │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│  │  Duty    │ │  Social  │ │  Ship    │ │ Engagement │ │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│  │  Buffer  │ │  Buffer  │ │  Buffer  │ │  Registry  │ │
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│  │          │ │          │ │          │ │            │ │
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│  │ Current  │ │ Active   │ │ Health,  │ │ Thread A   │ │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│  │ duty,    │ │ thread,  │ │ alerts,  │ │ Thread B   │ │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│  │ deadline │ │ recent   │ │ recent   │ │ Thread C   │ │
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│  │ progress │ │ DMs,     │ │ events,  │ │ ...        │ │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>│  │          │ │ WR post  │ │ crew     │ │            │ │
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│  └──────────┘ └──────────┘ └──────────┘ └────────────┘ │
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│                        ↕                                │
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│              Salience Filter (GWT gate)                 │
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│                        ↕                                │
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│  ┌─────────────────────────────────────────────────────┐ │
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│  │              Background Event Stream                │ │
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>│  │   NATS events → accumulate → filter → promote       │ │
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>│  └─────────────────────────────────────────────────────┘ │
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>└─────────────────────────────────────────────────────────┘
+</code></pre></div>
+<h3 id="62-buffer-specifications">6.2 Buffer Specifications<a class="headerlink" href="#62-buffer-specifications" title="Permanent link">&para;</a></h3>
+<p><strong>Duty Buffer</strong> — What am I supposed to be doing right now?
+- Contents: Current duty type, deadline, progress markers, relevant standing orders
+- Update trigger: Duty cycle start, duty completion, new task assignment
+- Capacity: 1 active duty + 1 pending
+- Source: Duty schedule, Bill system, Standing Orders</p>
+<p><strong>Social Buffer</strong> — What's the current social context?
+- Contents: Active conversation thread (if any), recent DMs, Ward Room topic
+- Update trigger: New message addressed to agent, thread update, DM received
+- Capacity: 1 active thread + recent context (token-budgeted)
+- Source: Ward Room, DM handler, intent dispatch</p>
+<p><strong>Ship Buffer</strong> — What's happening on the ship?
+- Contents: System health summary, active alerts, recent significant events
+- Update trigger: Health status change, new alert, significant event emission
+- Capacity: Fixed-size snapshot (not growing log)
+- Source: VitalsMonitor, BridgeAlerts, NATS event bus (filtered)</p>
+<p><strong>Engagement Registry</strong> — What are my concurrent selves doing?
+- Contents: List of active thought threads with type, target, and status
+- Update trigger: Thread start, thread complete, thread blocked
+- Capacity: Unbounded (bounded by actual concurrency, typically 1-5)
+- Source: Working memory ActiveEngagement tracking</p>
+<h3 id="63-the-salience-filter">6.3 The Salience Filter<a class="headerlink" href="#63-the-salience-filter" title="Permanent link">&para;</a></h3>
+<p>Not all events deserve buffer promotion. The salience filter determines what enters
+the agent's awareness based on:</p>
+<ol>
+<li><strong>Role relevance:</strong> Does this event relate to my department/duties?</li>
+<li><strong>Recency:</strong> How recently did this happen? (Exponential decay)</li>
+<li><strong>Novelty:</strong> Is this new information or a repeat? (AD-493 Novelty Gate concept)</li>
+<li><strong>Urgency:</strong> Is this time-sensitive? (Alert severity, deadline proximity)</li>
+<li><strong>Social relevance:</strong> Does this involve agents I have high trust with?</li>
+</ol>
+<p><strong>Scoring:</strong> <code>salience = w₁·relevance + w₂·recency + w₃·novelty + w₄·urgency + w₅·social</code></p>
+<p>Events above a threshold promote into the appropriate buffer. Events below threshold
+accumulate in the background stream for potential batch review during idle cycles
+(connects to AD-633 Predictive Cognitive Branching).</p>
+<h3 id="64-cross-thread-conclusion-sharing">6.4 Cross-Thread Conclusion Sharing<a class="headerlink" href="#64-cross-thread-conclusion-sharing" title="Permanent link">&para;</a></h3>
+<p>When a thought thread reaches a conclusion or makes a decision, that conclusion should
+be visible to other concurrent threads of the same agent. This is the "spine" function —
+coordination without requiring thread-to-thread messaging.</p>
+<p><strong>Mechanism:</strong> Conclusions are written to a <code>ConclusionLog</code> in working memory with:
+- <code>thread_id</code>: Which thought thread produced this
+- <code>conclusion_type</code>: decision, observation, escalation, completion
+- <code>summary</code>: One-line natural language summary
+- <code>timestamp</code>: When concluded
+- <code>relevance_tags</code>: Topic tags for filtering</p>
+<p>Other threads receive the conclusion log as part of their sensorium injection. They
+don't need to act on it, but they can see it — ambient awareness of what their other
+selves have determined.</p>
+<p><strong>Example:</strong> Thread A (Ward Room) concludes "I've already posted my analysis of the
+latency anomaly." Thread B (Proactive duty) sees this conclusion and can skip
+redundant analysis of the same anomaly. Without this sharing, Thread B would
+independently re-derive the same analysis.</p>
+<hr />
+<h2 id="7-the-orchestrator-within">7. The Orchestrator Within<a class="headerlink" href="#7-the-orchestrator-within" title="Permanent link">&para;</a></h2>
+<h3 id="71-self-orchestration-vs-external-orchestration">7.1 Self-Orchestration vs. External Orchestration<a class="headerlink" href="#71-self-orchestration-vs-external-orchestration" title="Permanent link">&para;</a></h3>
+<p>In most multi-agent frameworks, an external orchestrator decides what each agent works
+on. ProbOS agents are more autonomous — they receive intents and decide how to respond.
+But with concurrent processing, the agent needs to be <strong>its own orchestrator.</strong></p>
+<p>This is the divergence from human cognition that makes ProbOS novel. A human puts
+thoughts on the back burner because they can't truly parallelize. A ProbOS agent
+doesn't need to — it can run all thoughts simultaneously. But it needs:</p>
+<ol>
+<li><strong>Workload awareness:</strong> How many threads am I running? Am I at capacity?</li>
+<li><strong>Priority arbitration:</strong> If two threads need the same resource (e.g., posting to
+   the same channel), which goes first?</li>
+<li><strong>Redundancy detection:</strong> Are any of my threads working on the same problem?</li>
+<li><strong>Completion tracking:</strong> Which threads have finished? What did they produce?</li>
+</ol>
+<h3 id="72-diminishing-returns">7.2 Diminishing Returns<a class="headerlink" href="#72-diminishing-returns" title="Permanent link">&para;</a></h3>
+<p>Echo raised the question: is there a point of diminishing returns on concurrent threads?</p>
+<p><strong>Yes, and the ceiling is probably lower than expected.</strong> Based on the literature:</p>
+<ul>
+<li><strong>ACT-R:</strong> Strictly serial — one production at a time. The serial bottleneck is
+  functional, forcing integration.</li>
+<li><strong>LIDA:</strong> Multiple codelets run in parallel, but workspace access is serial —
+  only one coalition broadcasts at a time.</li>
+<li><strong>Human analogy:</strong> Even skilled multitaskers degrade above 3-4 concurrent tasks
+  (Wickens' Multiple Resource Theory).</li>
+</ul>
+<p><strong>Proposed ProbOS heuristic:</strong> An agent should handle at most <strong>3-5 concurrent threads</strong>
+effectively. Beyond that, the working memory overhead of tracking all threads exceeds
+the value of parallelism. Excess intents should queue rather than spawn new threads.</p>
+<p>This is configurable — a Bridge officer processing strategic decisions may cap at 2-3,
+while an Operations agent handling routine dispatches may handle 5-7. The threshold
+could be tied to task complexity, not just count.</p>
+<h3 id="73-the-capacity-signal">7.3 The Capacity Signal<a class="headerlink" href="#73-the-capacity-signal" title="Permanent link">&para;</a></h3>
+<p>When an agent approaches its concurrency ceiling, it should emit a signal:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>AGENT_CAPACITY_APPROACHING: {agent_id, active_threads: 4, max_threads: 5}
+</code></pre></div>
+<p>This enables:
+- Intent routing to prefer less-loaded agents (Hebbian + capacity weighting)
+- Chiefs to redistribute work across their department
+- The agent itself to prioritize and potentially defer low-priority threads</p>
+<hr />
+<h2 id="8-memory-metabolism">8. Memory Metabolism<a class="headerlink" href="#8-memory-metabolism" title="Permanent link">&para;</a></h2>
+<h3 id="81-the-missing-operations">8.1 The Missing Operations<a class="headerlink" href="#81-the-missing-operations" title="Permanent link">&para;</a></h3>
+<p>ProbOS has sophisticated memory storage but limited memory <em>management.</em> The literature
+converges on memory as a metabolic process requiring ongoing maintenance:</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Definition</th>
+<th>ProbOS Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TRIAGE</strong></td>
+<td>Score incoming information for relevance and priority</td>
+<td>Missing — all events treated equally</td>
+</tr>
+<tr>
+<td><strong>DECAY</strong></td>
+<td>Reduce salience of old information over time</td>
+<td>Missing — ring buffer eviction only</td>
+</tr>
+<tr>
+<td><strong>CONSOLIDATE</strong></td>
+<td>Merge similar entries into generalized patterns</td>
+<td>Partial — dream consolidation (episodic)</td>
+</tr>
+<tr>
+<td><strong>AUDIT</strong></td>
+<td>Check memory consistency, detect contradictions</td>
+<td>Missing</td>
+</tr>
+<tr>
+<td><strong>FORGET</strong></td>
+<td>Actively remove low-value information</td>
+<td>Missing — only passive ring eviction</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82-working-memory-lifecycle">8.2 Working Memory Lifecycle<a class="headerlink" href="#82-working-memory-lifecycle" title="Permanent link">&para;</a></h3>
+<p>A working memory entry should follow a lifecycle:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Event occurs → TRIAGE (score salience) →
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  High salience: Promote to buffer → Active use → DECAY over cycles →
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    Still relevant: Refresh → Continue
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    No longer relevant: CONSOLIDATE into episodic → Remove from WM
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  Low salience: Background accumulation → Batch review on idle →
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    Pattern detected: Promote to buffer
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    No pattern: FORGET
+</code></pre></div>
+<h3 id="83-dream-integration">8.3 Dream Integration<a class="headerlink" href="#83-dream-integration" title="Permanent link">&para;</a></h3>
+<p>Dream consolidation currently operates on episodic memory. Working memory should
+participate:</p>
+<ul>
+<li><strong>Pre-dream:</strong> Flush active working memory entries to episodic memory as session
+  summaries. "Here's what I was thinking about today."</li>
+<li><strong>During dream:</strong> Working memory patterns (what did I track most? what caused
+  context switches?) inform consolidation priorities.</li>
+<li><strong>Post-dream:</strong> Dream insights seed the next session's working memory priming.
+  "Yesterday I learned that latency anomalies correlate with queue pressure."</li>
+</ul>
+<hr />
+<h2 id="9-relationship-to-existing-ads">9. Relationship to Existing ADs<a class="headerlink" href="#9-relationship-to-existing-ads" title="Permanent link">&para;</a></h2>
+<h3 id="91-ads-already-delivering-sensorium-components-80">9.1 ADs Already Delivering Sensorium Components (~80%)<a class="headerlink" href="#91-ads-already-delivering-sensorium-components-80" title="Permanent link">&para;</a></h3>
+<p>These ADs collectively implement the agent sensorium. They were designed independently
+but converge on the same pattern — structured, always-on self-state injection.</p>
+<table>
+<thead>
+<tr>
+<th>AD</th>
+<th>What It Delivers</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AD-573</td>
+<td><strong>Working memory foundation.</strong> Ring buffers with priority tiers, <code>render_context()</code> with 3000-token budget. The structural substrate for all ambient awareness.</td>
+<td>Complete</td>
+</tr>
+<tr>
+<td>AD-644</td>
+<td><strong>Situation awareness pipeline.</strong> 23 QUERY operations + proactive context injection (Ward Room activity, alerts, events). This IS exteroception (Layer 3).</td>
+<td>Complete</td>
+</tr>
+<tr>
+<td>AD-646</td>
+<td><strong>Cognitive baseline.</strong> Unified context injection across ALL pathways (DM, Ward Room, proactive). Ensures every thought thread gets the same sensorium snapshot. The unnamed sensorium.</td>
+<td>Complete</td>
+</tr>
+<tr>
+<td>AD-504</td>
+<td><strong>Self-monitoring.</strong> Recent posts, Jaccard self-similarity, zone tracking, notebook index, memory state. This IS proprioception (Layer 1).</td>
+<td>Complete</td>
+</tr>
+<tr>
+<td>AD-502</td>
+<td><strong>Temporal context.</strong> UTC time, birth age, uptime, last action, crew manifest. Always-on temporal proprioception.</td>
+<td>Complete</td>
+</tr>
+<tr>
+<td>AD-576</td>
+<td><strong>Infrastructure status.</strong> LLM health, consecutive failures, degradation signals. Operational proprioception.</td>
+<td>Complete</td>
+</tr>
+<tr>
+<td>AD-568d</td>
+<td><strong>Source attribution.</strong> Every context piece labeled with knowledge source. Epistemic proprioception.</td>
+<td>Complete</td>
+</tr>
+<tr>
+<td>AD-625</td>
+<td><strong>Communication proficiency.</strong> Language register guidance. Social proprioception.</td>
+<td>Complete</td>
+</tr>
+<tr>
+<td>BF-239</td>
+<td><strong>Thread engagement tracking.</strong> <code>ActiveEngagement</code> in working memory prevents duplicate processing. First interoception (Layer 2) — the observation that triggered this research.</td>
+<td>Complete</td>
+</tr>
+<tr>
+<td>AD-572</td>
+<td><strong>Game/task state rendering.</strong> Active engagement board states rendered in working memory. Extended interoception.</td>
+<td>Complete</td>
+</tr>
+</tbody>
+</table>
+<h3 id="92-ads-that-extend-the-remaining-20">9.2 ADs That Extend the Remaining ~20%<a class="headerlink" href="#92-ads-that-extend-the-remaining-20" title="Permanent link">&para;</a></h3>
+<p>These ADs, when implemented, will fill the specific gaps identified in Section 4.3.
+The Ambient Awareness wave (AD-666 through AD-672) delivers the core infrastructure;
+existing ADs below provide complementary components.</p>
+<table>
+<thead>
+<tr>
+<th>AD</th>
+<th>What It Will Deliver</th>
+<th>Gap Addressed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>AD-666</strong> (#347)</td>
+<td><strong>Sensorium formalization.</strong> Name the pattern, consolidate injections, add health metrics.</td>
+<td>Phase 1 completion</td>
+</tr>
+<tr>
+<td><strong>AD-667</strong> (#348)</td>
+<td><strong>Named buffers.</strong> Duty/Social/Ship/Engagement with per-buffer token budgets.</td>
+<td>Gap 1: Named buffers</td>
+</tr>
+<tr>
+<td><strong>AD-668</strong> (#349)</td>
+<td><strong>Salience filter.</strong> Scoring function for buffer promotion.</td>
+<td>Gap 2: Salience filtering</td>
+</tr>
+<tr>
+<td><strong>AD-669</strong> (#350)</td>
+<td><strong>Conclusion sharing.</strong> ConclusionLog for intra-agent thread coordination.</td>
+<td>Gap 3: Cross-thread coordination</td>
+</tr>
+<tr>
+<td><strong>AD-670</strong> (#351)</td>
+<td><strong>Memory metabolism.</strong> TRIAGE/DECAY/AUDIT/FORGET operations.</td>
+<td>Gap 4: Memory metabolism</td>
+</tr>
+<tr>
+<td><strong>AD-671</strong> (#352)</td>
+<td><strong>Dream-WM integration.</strong> Bidirectional dream-working memory pipeline.</td>
+<td>Gap 4: Memory metabolism</td>
+</tr>
+<tr>
+<td><strong>AD-672</strong> (#353)</td>
+<td><strong>Concurrency management.</strong> Ceiling, capacity signals, priority arbitration.</td>
+<td>Gap 5: Capacity signaling</td>
+</tr>
+<tr>
+<td>AD-493</td>
+<td><strong>Novelty gate.</strong> Novelty scoring component of the salience filter (AD-668).</td>
+<td>Gap 2: Salience filtering</td>
+</tr>
+<tr>
+<td>AD-492</td>
+<td><strong>Correlation IDs.</strong> Cross-thread trace linking for AD-669 conclusion sharing.</td>
+<td>Gap 3: Cross-thread coordination</td>
+</tr>
+<tr>
+<td>AD-633</td>
+<td><strong>Predictive branching.</strong> Idle-time consumer of AD-668's background event stream.</td>
+<td>Gap 2: Salience filtering</td>
+</tr>
+<tr>
+<td>AD-632</td>
+<td><strong>Cognitive chain.</strong> Consumer of AD-667 named buffers. Selective access per step.</td>
+<td>Gap 1: Named buffers</td>
+</tr>
+</tbody>
+</table>
+<h3 id="93-emerging-connection-the-sensorium-arc">9.3 Emerging Connection: The Sensorium Arc<a class="headerlink" href="#93-emerging-connection-the-sensorium-arc" title="Permanent link">&para;</a></h3>
+<p>The implementation audit reveals an unplanned but coherent architectural arc:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>AD-573 (WM foundation) → AD-644 (SA pipeline) → AD-646 (unified baseline)
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>     ↓                        ↓                        ↓
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a> Structure              Exteroception            Integration
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a> &quot;Where to put it&quot;      &quot;What&#39;s out there&quot;       &quot;Same for all paths&quot;
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>                              ↓
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>                    AD-504 (self-monitoring)
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>                              ↓
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>                      Proprioception
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>                      &quot;What am I doing&quot;
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>                              ↓
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>                    BF-239 (thread awareness)
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>                              ↓
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>                      Interoception
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>                      &quot;What are my threads doing&quot;
+</code></pre></div>
+<p>This wasn't designed as a sensorium — it emerged. The research contribution is
+naming the pattern and identifying what's missing to complete it.</p>
+<hr />
+<h2 id="10-proposed-future-work">10. Proposed Future Work<a class="headerlink" href="#10-proposed-future-work" title="Permanent link">&para;</a></h2>
+<h3 id="implementation-status-overview">Implementation Status Overview<a class="headerlink" href="#implementation-status-overview" title="Permanent link">&para;</a></h3>
+<p>The 5-phase plan is reframed to reflect the implementation audit. Phase 1 is ~80%
+complete through organically evolved ADs. The real forward work is Phases 2-5.</p>
+<h3 id="phase-1-agent-sensorium-80-complete-ad-666-347">Phase 1: Agent Sensorium — ~80% COMPLETE → AD-666 (#347)<a class="headerlink" href="#phase-1-agent-sensorium-80-complete-ad-666-347" title="Permanent link">&para;</a></h3>
+<p><strong>What exists:</strong> Structured self-state injection across all cognitive pathways (AD-646).
+Trust, zone, temporal context, engagement tracking, self-monitoring, infrastructure
+status, source attribution, ontology identity — all injected every cycle. This IS the
+sensorium; it emerged without being named as such.</p>
+<p><strong>Remaining items (~20% of Phase 1):</strong>
+- <strong>Name the pattern.</strong> Formalize the existing context injection as "Agent Sensorium"
+  in code and documentation. Currently it's ~15 private methods in <code>CognitiveAgent</code>;
+  it should be a named, auditable subsystem.
+- <strong>Consolidate injection ordering.</strong> The 23+ context injections in <code>_build_prompt_text</code>
+  grew organically. Audit for redundancy, ordering consistency, and token waste.
+- <strong>Add sensorium health metric.</strong> Track injection token count per cycle. Alert if
+  sensorium exceeds budget (currently uncapped beyond WM's 3000-token limit).</p>
+<h3 id="phase-2-named-buffers-with-salience-filtering-ad-667-348-ad-668-349">Phase 2: Named Buffers with Salience Filtering — AD-667 (#348) + AD-668 (#349)<a class="headerlink" href="#phase-2-named-buffers-with-salience-filtering-ad-667-348-ad-668-349" title="Permanent link">&para;</a></h3>
+<p>Replace monolithic working memory rendering with named buffers (Duty, Social, Ship,
+Engagement). Key deliverables:</p>
+<ul>
+<li><strong>Buffer abstraction:</strong> Named buffer interface with per-buffer token budget, update
+  triggers, and capacity limits (Section 6.2 specifications).</li>
+<li><strong>Salience scoring:</strong> <code>salience = f(relevance, recency, novelty, urgency, social)</code>
+  for event-to-buffer promotion (Section 6.3). Integrates AD-493 (novelty gate) when
+  available.</li>
+<li><strong>Selective access:</strong> Cognitive chain steps can request specific buffers instead of
+  receiving the monolithic working memory block. ANALYZE gets duty + engagement;
+  COMPOSE gets social + ship.</li>
+<li><strong>Token budget allocation:</strong> Per-buffer budgets that sum to the sensorium ceiling,
+  replacing the current flat 3000-token working memory limit.</li>
+</ul>
+<p><strong>Prerequisite:</strong> Phase 1 completion (naming and consolidation).</p>
+<h3 id="phase-3-cross-thread-conclusion-sharing-ad-669-350">Phase 3: Cross-Thread Conclusion Sharing — AD-669 (#350)<a class="headerlink" href="#phase-3-cross-thread-conclusion-sharing-ad-669-350" title="Permanent link">&para;</a></h3>
+<p>ConclusionLog mechanism for intra-agent coordination (Section 6.4). Key deliverables:</p>
+<ul>
+<li><strong>ConclusionLog in working memory:</strong> Thread conclusions (decisions, observations,
+  escalations, completions) written to a shared log visible to sibling threads.</li>
+<li><strong>Redundancy detection:</strong> Before starting work, thread checks conclusions from
+  siblings for overlapping analysis. Prevents the BF-239-class duplicate response.</li>
+<li><strong>Correlation ID integration:</strong> Uses AD-492 correlation IDs (when available) to
+  link related threads and their conclusions.</li>
+<li><strong>Conclusion decay:</strong> Conclusions expire after configurable TTL. Old conclusions
+  don't pollute future threads' awareness.</li>
+</ul>
+<p><strong>Prerequisite:</strong> Phase 2 (conclusions need the Engagement buffer).</p>
+<h3 id="phase-4-memory-metabolism-ad-670-351-ad-671-352">Phase 4: Memory Metabolism — AD-670 (#351) + AD-671 (#352)<a class="headerlink" href="#phase-4-memory-metabolism-ad-670-351-ad-671-352" title="Permanent link">&para;</a></h3>
+<p>Background working memory maintenance operations (Section 8). Key deliverables:</p>
+<ul>
+<li><strong>TRIAGE:</strong> Score incoming events for relevance and priority before buffer entry.</li>
+<li><strong>DECAY:</strong> Time-weighted salience reduction. Recent events outweigh stale ones
+  within the same priority tier.</li>
+<li><strong>AUDIT:</strong> Consistency checking — detect contradictory entries in working memory.</li>
+<li><strong>FORGET:</strong> Active removal of low-value entries (vs. current passive FIFO eviction).</li>
+<li><strong>Dream integration:</strong> Pre-dream WM flush to episodic memory. Post-dream WM
+  priming from dream insights.</li>
+</ul>
+<p><strong>Prerequisite:</strong> Phase 2 (metabolism operates on named buffers, not flat ring).</p>
+<h3 id="phase-5-capacity-management-ad-672-353">Phase 5: Capacity Management — AD-672 (#353)<a class="headerlink" href="#phase-5-capacity-management-ad-672-353" title="Permanent link">&para;</a></h3>
+<p>Per-agent concurrency control (Section 7). Key deliverables:</p>
+<ul>
+<li><strong>Concurrency ceiling:</strong> Configurable per-agent max threads (default 3-5, role-tuned).</li>
+<li><strong>Capacity signal:</strong> <code>AGENT_CAPACITY_APPROACHING</code> event for load-aware routing.</li>
+<li><strong>Priority arbitration:</strong> When two threads compete for the same resource (e.g.,
+  posting to the same channel), priority resolution instead of race condition.</li>
+<li><strong>Queue management:</strong> Excess intents queue with priority ordering rather than
+  spawning unbounded threads.</li>
+</ul>
+<p><strong>Prerequisite:</strong> Phase 3 (capacity management needs thread awareness from
+conclusion sharing to make informed scheduling decisions).</p>
+<hr />
+<h2 id="11-key-principles-universal">11. Key Principles (Universal)<a class="headerlink" href="#11-key-principles-universal" title="Permanent link">&para;</a></h2>
+<p>These principles should guide any future working memory or ambient awareness AD:</p>
+<ol>
+<li>
+<p><strong>Coherence over volume.</strong> A small number of high-fidelity, task-relevant chunks
+   beats a comprehensive but unfocused context dump. (Echo, GWT, ACT-R)</p>
+</li>
+<li>
+<p><strong>The bottleneck is functional.</strong> Not everything should reach awareness. Salience
+   filtering prevents cognitive cacophony. (GWT, Wickens)</p>
+</li>
+<li>
+<p><strong>Ambient perception ≠ active attention.</strong> Agents should passively accumulate
+   context without consuming cognitive resources. The sensorium is injected, not
+   queried. (Springdrift, Endsley L1)</p>
+</li>
+<li>
+<p><strong>Working memory needs metabolism.</strong> Storage without curation leads to
+   entrenchment and noise. Triage, decay, consolidation, and forgetting are
+   features, not bugs. (FSFM, Memory as Metabolism)</p>
+</li>
+<li>
+<p><strong>The spine connects, it doesn't think.</strong> Working memory is infrastructure for
+   coherent cognition, not a reasoning system itself. It coordinates threads; the
+   threads do the thinking. (Spine metaphor)</p>
+</li>
+<li>
+<p><strong>Smaller crews with deeper awareness outperform larger crews without it.</strong>
+   Quality of memory architecture matters more than agent headcount. (Wu et al. 2026)</p>
+</li>
+<li>
+<p><strong>Concurrent thought requires self-orchestration.</strong> Agents with parallel threads
+   need workload awareness, priority arbitration, redundancy detection, and
+   completion tracking — they must orchestrate themselves. (Novel — no prior work
+   addresses sovereign AI agents with concurrent cognition and persistent identity.)</p>
+</li>
+</ol>
+<hr />
+<h2 id="12-sources">12. Sources<a class="headerlink" href="#12-sources" title="Permanent link">&para;</a></h2>
+<h3 id="cognitive-architecture-foundations">Cognitive Architecture Foundations<a class="headerlink" href="#cognitive-architecture-foundations" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Baars, B.J. (1988). <em>A Cognitive Theory of Consciousness.</em> (Global Workspace Theory)</li>
+<li>Endsley, M.R. (1995). "Toward a Theory of Situation Awareness in Dynamic Systems."</li>
+<li>Anderson, J.R. (1993+). ACT-R Cognitive Architecture.</li>
+<li>Laird, J.E. (2012). <em>The Soar Cognitive Architecture.</em></li>
+<li>Franklin, S. (2003+). LIDA / IDA — Learning Intelligent Distribution Agent.</li>
+<li>Wickens, C.D. (2002). "Multiple Resources and Performance Prediction."</li>
+<li>Klein, G.A. (1993). Recognition-Primed Decision Model.</li>
+<li>Neisser, U. (1976). <em>Cognition and Reality.</em></li>
+<li>Miller, G.A. (1956). "The Magical Number Seven, Plus or Minus Two."</li>
+<li>Cowan, N. (2001). "The Magical Number 4 in Short-Term Memory."</li>
+</ul>
+<h3 id="recent-ai-agent-research-2023-2026">Recent AI Agent Research (2023-2026)<a class="headerlink" href="#recent-ai-agent-research-2023-2026" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Ma et al. (2026). BrainMem: Brain-Inspired Evolving Memory for Embodied Agents.</li>
+<li>Li et al. (2026). Escaping the Context Bottleneck: Active Context Curation via RL.</li>
+<li>Zhu et al. (2026). LightThinker++: From Reasoning Compression to Memory Management.</li>
+<li>Hou et al. (2026). WMF-AM: Working Memory Fidelity-Active Manipulation.</li>
+<li>Yan et al. (2026). AdaMem: Adaptive User-Centric Memory for Long-Horizon Dialogue.</li>
+<li>Brady, S. (2026). Springdrift: Ambient Self-Perception. (arXiv:2604.04660)</li>
+<li>Theater of Mind: Global Workspace Agents. (2026, arXiv:2604.08206)</li>
+<li>CogniPair: GWT for Social LLM Agents. (2025, arXiv:2506.03543)</li>
+<li>Xu, H. (2026). Mesh Memory Protocol.</li>
+<li>Park, J.S. et al. (2023). Generative Agents. (arXiv:2304.03442)</li>
+<li>Wu, S. et al. (2026). Scaling Teams or Scaling Time? Memory in Multi-Agent Systems.</li>
+<li>Nguyen et al. (2026). Dynamic Theory of Mind as Temporal Memory Problem.</li>
+<li>Gu et al. (2026). FSFM: Framework for Selective Forgetting in Agent Memory.</li>
+<li>Miteski, S. (2026). Memory as Metabolism: Companion Knowledge Systems.</li>
+<li>Park, Y.B. (2026). Graph-Native Cognitive Memory with Formal Belief Revision.</li>
+</ul>
+<h3 id="probos-internal-research">ProbOS Internal Research<a class="headerlink" href="#probos-internal-research" title="Permanent link">&para;</a></h3>
+<ul>
+<li>AD-644: Agent Situation Awareness Architecture (Galliher, 2026-04-18)</li>
+<li>AD-504/587/588/589: Metacognitive Architecture — Grounded Self-Knowledge</li>
+<li>AD-632: Cognitive Sub-Task Protocol (SOAR-inspired three-level model)</li>
+<li>AD-633: Predictive Cognitive Branching (prospective reasoning)</li>
+<li>AD-573: Unified Agent Working Memory (implementation spec)</li>
+<li>AD-502: Temporal Context Injection</li>
+<li>BF-239: Ward Room Thread Engagement Tracking (observation trigger)</li>
+<li>Memory Architecture (docs/architecture/memory.md) — Six-layer stack</li>
+<li>Cognitive Architecture (docs/architecture/cognitive.md) — Pipeline overview</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

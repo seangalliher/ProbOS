@@ -1,0 +1,2176 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/unified-tool-layer/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>AD-543: Unified Tool Layer — Skill-Tool Binding & Agentic Tool Adapters - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ad-543-unified-tool-layer-skill-tool-binding-agentic-tool-adapters" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AD-543: Unified Tool Layer — Skill-Tool Binding &amp; Agentic Tool Adapters
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#part-1-srcprobostools-package-tool-layer-home" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part 1: src/probos/tools/ Package — Tool Layer Home
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#part-2-agentictooladapter-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part 2: AgenticToolAdapter Protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#part-3-probos-context-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part 3: ProbOS Context Provider
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#part-4-skilltool-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part 4: Skill→Tool Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#part-5-fallback-cascades-cost-aware-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part 5: Fallback Cascades &amp; Cost-Aware Routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#part-6-bidirectional-mcp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part 6: Bidirectional MCP
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#part-7-language-cleanup-retiring-visiting-officer-for-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part 7: Language Cleanup — Retiring "Visiting Officer" for Tools
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#part-8-implementation-blueprint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part 8: Implementation Blueprint
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-not-to-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What NOT to Do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#principles-compliance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principles Compliance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relationship-to-existing-ads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Existing ADs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prior-art" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prior Art
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="ad-543-unified-tool-layer-skill-tool-binding-agentic-tool-adapters">AD-543: Unified Tool Layer — Skill-Tool Binding &amp; Agentic Tool Adapters<a class="headerlink" href="#ad-543-unified-tool-layer-skill-tool-binding-agentic-tool-adapters" title="Permanent link">&para;</a></h1>
+<p><em>"The crew member is the sovereign constant; everything else is infrastructure."</em></p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>ProbOS has extensive <strong>design</strong> for the tool layer (AD-422 taxonomy, AD-423 registry, AD-483 instruments) but limited <strong>implementation</strong> (one hardcoded adapter in <code>cognitive/copilot_adapter.py</code>). The current Copilot SDK integration works but has three architectural problems:</p>
+<ol>
+<li><strong>Wrong location:</strong> <code>CopilotBuilderAdapter</code> lives in <code>cognitive/</code> — implying it's a cognitive component. It's a tool. Tools don't think; crew members think.</li>
+<li><strong>Hardcoded to one role:</strong> The adapter is Builder-specific, but the same external tools serve Code Review, Test Writing, and infrastructure roles. GitHub Copilot CLI's <code>/review</code> command is a code review tool; its agentic loop writes tests. One tool, multiple crew skills.</li>
+<li><strong>No skill↔tool binding:</strong> Three systems exist independently — SkillFramework (AD-428, how well agents do things), CapabilityRegistry (what agents can do), and the Tool Layer design (AD-422/423/483, what tools are available). The missing link: how a crew member's skill resolves to a tool.</li>
+</ol>
+<p>Additionally, the "visiting officer" language was applied to tools, creating confusion. Per AD-398's three-tier architecture: tools have no sovereign identity. Real visiting officers are future federation crew from other ProbOS ships. The language cleanup is overdue.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<h3 id="part-1-srcprobostools-package-tool-layer-home">Part 1: <code>src/probos/tools/</code> Package — Tool Layer Home<a class="headerlink" href="#part-1-srcprobostools-package-tool-layer-home" title="Permanent link">&para;</a></h3>
+<p>Create a new top-level package for all tool-layer code. This is the physical manifestation of AD-422/423/483 in the source tree.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>src/probos/tools/
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  __init__.py              # Package exports
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  protocol.py             # AgenticToolAdapter protocol + base Tool protocol
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  context_provider.py     # ProbOS MCP context provider (extracted from copilot_adapter)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  copilot_adapter.py      # CopilotSDKAdapter (moved from cognitive/copilot_adapter.py)
+</code></pre></div>
+<p><strong>What moves:</strong>
+- <code>cognitive/copilot_adapter.py</code> → <code>tools/copilot_adapter.py</code> (renamed: <code>CopilotBuilderAdapter</code> → <code>CopilotSDKAdapter</code>)
+- MCP tool construction logic extracted into <code>context_provider.py</code> — reusable by any adapter</p>
+<p><strong>What stays in <code>cognitive/</code>:</strong>
+- <code>builder.py</code> — still a CognitiveAgent. It <em>uses</em> tools; it doesn't <em>become</em> one.
+- <code>builder.py</code> imports from <code>tools.copilot_adapter</code> instead of <code>cognitive.copilot_adapter</code></p>
+<h3 id="part-2-agentictooladapter-protocol">Part 2: AgenticToolAdapter Protocol<a class="headerlink" href="#part-2-agentictooladapter-protocol" title="Permanent link">&para;</a></h3>
+<p>A generic interface for external AI coding tools. Any tool that provides an agentic loop (read files, generate code, iterate, run tests) implements this protocol.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># src/probos/tools/protocol.py</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Protocol</span><span class="p">,</span> <span class="n">runtime_checkable</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nd">@runtime_checkable</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">AgenticToolAdapter</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Protocol for external AI coding tools used by ProbOS crew.</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="sd">    An agentic tool provides a full agent loop (plan, code, iterate, test)</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="sd">    governed by ProbOS&#39;s chain of command. The tool executes; ProbOS controls</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="sd">    context, commits, model selection, and output capture.</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="sd">    Implementations: CopilotSDKAdapter, ClaudeCodeAdapter (future),</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="sd">    CodexAdapter (future).</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="nd">@classmethod</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">is_available</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Check if this tool is installed and accessible.&quot;&quot;&quot;</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>        <span class="o">...</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the tool (auth, session setup).&quot;&quot;&quot;</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>        <span class="o">...</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Shut down the tool (cleanup, session teardown).&quot;&quot;&quot;</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>        <span class="o">...</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">(</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>        <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>        <span class="n">spec</span><span class="p">:</span> <span class="s2">&quot;BuildSpec&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>        <span class="n">file_contents</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>        <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>        <span class="n">timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">300.0</span><span class="p">,</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;AgenticToolResult&quot;</span><span class="p">:</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Execute a task using the tool&#39;s agentic loop.</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="sd">        The tool receives:</span>
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="sd">        - spec: What to build (title, description, target files, constraints)</span>
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="sd">        - file_contents: Current state of relevant files</span>
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a><span class="sd">        - timeout: Maximum execution time</span>
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a>
+<a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="sd">        The tool returns:</span>
+<a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a><span class="sd">        - AgenticToolResult with file changes, raw output, success status</span>
+<a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a>
+<a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a><span class="sd">        ProbOS controls everything else: Standing Orders (via system message),</span>
+<a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a><span class="sd">        context (via MCP tools), model selection, output validation.</span>
+<a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a><span class="sd">        &quot;&quot;&quot;</span>
+<a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a>        <span class="o">...</span>
+<a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a>
+<a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_capabilities</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<a id="__codelineno-1-53" name="__codelineno-1-53" href="#__codelineno-1-53"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;What this tool can do: [&quot;code-generation&quot;, &quot;code-review&quot;, &quot;test-generation&quot;].&quot;&quot;&quot;</span>
+<a id="__codelineno-1-54" name="__codelineno-1-54" href="#__codelineno-1-54"></a>        <span class="o">...</span>
+<a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a>
+<a id="__codelineno-1-56" name="__codelineno-1-56" href="#__codelineno-1-56"></a>    <span class="nd">@property</span>
+<a id="__codelineno-1-57" name="__codelineno-1-57" href="#__codelineno-1-57"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">tool_id</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-1-58" name="__codelineno-1-58" href="#__codelineno-1-58"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Unique identifier for this tool in the ToolRegistry.&quot;&quot;&quot;</span>
+<a id="__codelineno-1-59" name="__codelineno-1-59" href="#__codelineno-1-59"></a>        <span class="o">...</span>
+<a id="__codelineno-1-60" name="__codelineno-1-60" href="#__codelineno-1-60"></a>
+<a id="__codelineno-1-61" name="__codelineno-1-61" href="#__codelineno-1-61"></a>    <span class="nd">@property</span>
+<a id="__codelineno-1-62" name="__codelineno-1-62" href="#__codelineno-1-62"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">display_name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-1-63" name="__codelineno-1-63" href="#__codelineno-1-63"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Human-readable name for HXI display.&quot;&quot;&quot;</span>
+<a id="__codelineno-1-64" name="__codelineno-1-64" href="#__codelineno-1-64"></a>        <span class="o">...</span>
+</code></pre></div>
+<p><strong><code>AgenticToolResult</code> dataclass:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">AgenticToolResult</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">success</span><span class="p">:</span> <span class="nb">bool</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">file_blocks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span>      <span class="c1"># [{path, content, mode}] — same format as BuilderAgent</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">raw_output</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">error</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">tool_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">model_used</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">tokens_used</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">duration_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">capabilities_used</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># Which capabilities were exercised</span>
+</code></pre></div>
+<p><strong>Relationship to AD-483 <code>Tool</code> base class:</strong> <code>AgenticToolAdapter</code> is a specialization. AD-483's <code>Tool</code> is the generic callable instrument (file reader, HTTP fetch). <code>AgenticToolAdapter</code> is specifically for tools that run their own agentic loop. The <code>ToolRegistry</code> (AD-423) registers both — an <code>AgenticToolAdapter</code> is a <code>Tool</code> with <code>category=agentic</code>.</p>
+<p><strong>Three Execution Models:</strong></p>
+<p>The protocol is deliberately execution-model-agnostic. Under the hood, <code>execute()</code> can use any of these — the crew member never knows or cares:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Execution Pattern</th>
+<th>Context Delivery</th>
+<th>Output Capture</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SDK (in-process)</strong></td>
+<td>Python library call, session-based</td>
+<td>MCP tools registered on session</td>
+<td>SDK return values + worktree scan</td>
+<td>Copilot SDK (<code>session.send_and_wait()</code>)</td>
+</tr>
+<tr>
+<td><strong>CLI (subprocess)</strong></td>
+<td><code>asyncio.create_subprocess_exec()</code> with timeout + kill</td>
+<td><code>--system-prompt</code> flag, <code>--mcp-server</code> flag, stdin injection, context files in worktree</td>
+<td>stdout/stderr capture + worktree diff (before/after snapshot)</td>
+<td>Claude Code (<code>claude --print</code>), Codex CLI</td>
+</tr>
+<tr>
+<td><strong>API (HTTP)</strong></td>
+<td><code>httpx.AsyncClient</code> POST/stream</td>
+<td>Request body (system message, tools array)</td>
+<td>JSON response body</td>
+<td>Future cloud-hosted agentic tools</td>
+</tr>
+</tbody>
+</table>
+<p><strong>CLI-specific patterns (subprocess adapters):</strong></p>
+<p>CLI tools like Claude Code CLI and Codex CLI are shell commands, not libraries. Their adapters handle:</p>
+<ol>
+<li><strong>Subprocess lifecycle</strong> — <code>asyncio.create_subprocess_exec()</code> with <code>timeout</code> enforcement. On timeout: <code>SIGTERM</code> → grace period → <code>SIGKILL</code>. On cancellation: clean process teardown.</li>
+<li><strong>Working directory isolation</strong> — CLI tools operate in the worktree directory (already provided by BuildDispatcher). The adapter sets <code>cwd=worktree_path</code> on the subprocess.</li>
+<li><strong>File change detection</strong> — Snapshot the worktree file tree + hashes before invocation. After completion, diff against snapshot. New/modified files become <code>file_blocks</code> in <code>AgenticToolResult</code>. This is the same pattern <code>CopilotBuilderAdapter</code> already uses (lines 288-320 in current code: <code>cwd.rglob("*")</code> scan).</li>
+<li><strong>Context injection</strong> — Each CLI has its own flags:</li>
+<li>Claude Code: <code>claude --print --system-prompt "..." --mcp-server "probos-context"</code> or context via <code>CLAUDE.md</code> file placed in worktree</li>
+<li>Codex: <code>codex --model ... --prompt "..."</code> with context in prompt or config</li>
+<li>Generic: Standing Orders + file contents injected via system prompt flag or stdin</li>
+<li><strong>Non-interactive mode</strong> — CLI tools must run in non-interactive (headless) mode. Claude Code's <code>--print</code> flag, Codex's API mode, etc. Interactive TUI modes are incompatible with subprocess capture.</li>
+<li><strong>Auth via environment</strong> — CLI tools authenticate via environment variables (<code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>, <code>GH_TOKEN</code>). The adapter sets these on the subprocess environment, sourced from ProbOS's credential configuration (future CredentialStore).</li>
+<li><strong>Output parsing</strong> — Raw stdout is parsed for file blocks. The existing <code>BuilderAgent._parse_file_blocks()</code> function handles <code>===FILE:===</code> / <code>===MODIFY:===</code> format. CLI tools that produce structured output (JSON mode) get a format-specific parser; tools that produce free-form output fall back to the file block parser or worktree diff.</li>
+</ol>
+<p><strong>The key insight:</strong> From the crew member's perspective, all three models look identical. Scotty says "generate code for this spec." Whether that invokes a Python SDK, spawns a shell process, or calls a cloud API is an adapter implementation detail behind the <code>AgenticToolAdapter</code> protocol. The crew member's skill is the same; the tool is interchangeable.</p>
+<h3 id="part-3-probos-context-provider">Part 3: ProbOS Context Provider<a class="headerlink" href="#part-3-probos-context-provider" title="Permanent link">&para;</a></h3>
+<p>The current <code>CopilotBuilderAdapter._build_mcp_tools()</code> hardcodes MCP tool construction. Extract this into a reusable provider that any adapter can use.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># src/probos/tools/context_provider.py</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">ProbOSContextProvider</span><span class="p">:</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Provides ProbOS context to external agentic tools.</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="sd">    Exposes internal capabilities (CodebaseIndex, SystemSelfModel,</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="sd">    Standing Orders) in a tool-agnostic format. Each adapter translates</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="sd">    these into its tool&#39;s native format (MCP tools for Copilot SDK,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="sd">    system prompt injection for Claude Code CLI, etc.).</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">codebase_index</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">runtime</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_codebase_index</span> <span class="o">=</span> <span class="n">codebase_index</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_runtime</span> <span class="o">=</span> <span class="n">runtime</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_context_tools</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">ContextToolSpec</span><span class="p">]:</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Return tool specifications for all available ProbOS context.</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="sd">        Each ContextToolSpec has: name, description, parameters, handler.</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="sd">        Adapters translate these into their native format.</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="sd">        &quot;&quot;&quot;</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>        <span class="o">...</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">compose_system_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">role</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;builder&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Compose Standing Orders for the given role.</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="sd">        Uses compose_instructions() to assemble the full chain:</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="sd">        Federation → Ship → Department → Agent.</span>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a><span class="sd">        &quot;&quot;&quot;</span>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>        <span class="o">...</span>
+</code></pre></div>
+<p><strong>Why extract?</strong> The Copilot SDK adapter wraps these as MCP <code>Tool</code> objects. A Claude Code CLI adapter would inject them differently (e.g., <code>--system-prompt</code> flag + STDIN context). A Codex adapter might package them as API function definitions. The context is the same; the delivery format varies by tool.</p>
+<h3 id="part-4-skilltool-resolution">Part 4: Skill→Tool Resolution<a class="headerlink" href="#part-4-skilltool-resolution" title="Permanent link">&para;</a></h3>
+<p>Connect AD-428 SkillFramework to the tool layer. When a crew member exercises a skill, the system resolves which tool(s) can fulfill it.</p>
+<p><strong>New concept: <code>ToolRequirement</code></strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">ToolRequirement</span><span class="p">:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;What a skill needs from the tool layer.&quot;&quot;&quot;</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">capabilities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>                <span class="c1"># Required tool capabilities</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">preferred_categories</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">()</span>   <span class="c1"># e.g., [&quot;agentic&quot;, &quot;onboard&quot;]</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">tool_allowlist</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># If set, only these tools</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">tool_denylist</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">()</span>          <span class="c1"># Never use these tools</span>
+</code></pre></div>
+<p><strong>Extended SkillDefinition:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># In skill_framework.py, SkillDefinition gains:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">tool_requirements</span><span class="p">:</span> <span class="n">ToolRequirement</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</code></pre></div>
+<p><strong>Resolution flow:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>1. Crew member exercises skill (e.g., &quot;code-generation&quot;)
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>2. SkillDefinition.tool_requirements specifies: capabilities=[&quot;code-generation&quot;]
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>3. ToolRegistry.discover(capabilities=[&quot;code-generation&quot;]) returns:
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>   [copilot-sdk (weight=0.8), native-llm (weight=0.4)]
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>4. HebbianRouter.get_preferred_targets(&quot;code-generation&quot;, candidates) ranks by learned weight
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>5. Cost-aware filter applies (if commercial): prefer lower-cost tool at comparable quality
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>6. Fallback cascade: if preferred tool unavailable, next candidate
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>7. Selected tool executes via AgenticToolAdapter.execute()
+</code></pre></div>
+<p><strong>Skill→Tool examples:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Skill</th>
+<th>tool_requirements.capabilities</th>
+<th>Fulfilled By</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Code Generation (PCC)</td>
+<td><code>["code-generation"]</code></td>
+<td>CopilotSDK, ClaudeCode, NativeLLM</td>
+</tr>
+<tr>
+<td>Code Review (PCC)</td>
+<td><code>["code-review"]</code></td>
+<td>CopilotSDK (/review), NativeReviewer</td>
+</tr>
+<tr>
+<td>Codebase Analysis (Role)</td>
+<td><code>["codebase-query", "import-graph"]</code></td>
+<td>CodebaseIndex (internal only)</td>
+</tr>
+<tr>
+<td>Test Generation (Role)</td>
+<td><code>["code-generation", "test-execution"]</code></td>
+<td>CopilotSDK, ClaudeCode</td>
+</tr>
+<tr>
+<td>Vulnerability Scan (Role)</td>
+<td><code>["security-scan"]</code></td>
+<td>Internal scanner, external tool</td>
+</tr>
+<tr>
+<td>Desktop Automation (Acquired)</td>
+<td><code>["computer-use"]</code></td>
+<td>Anthropic Computer Use (external only)</td>
+</tr>
+</tbody>
+</table>
+<p>Some skills have mixed tool eligibility (internal + external). Some are internal-only (codebase analysis — no external tool has the ship's index). Some are external-only (computer use — no internal equivalent yet). The <code>ToolRequirement</code> makes this explicit.</p>
+<h3 id="part-5-fallback-cascades-cost-aware-routing">Part 5: Fallback Cascades &amp; Cost-Aware Routing<a class="headerlink" href="#part-5-fallback-cascades-cost-aware-routing" title="Permanent link">&para;</a></h3>
+<p><strong>A. Fallback Cascades</strong></p>
+<p>When a tool is unavailable (CLI not installed, API down, token quota exhausted), the system falls back to the next viable tool automatically.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">FallbackChain</span><span class="p">:</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">capability</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">providers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>      <span class="c1"># Ordered tool_ids: preferred → fallback</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">routing</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;hebbian&quot;</span>  <span class="c1"># &quot;hebbian&quot; | &quot;round-robin&quot; | &quot;cost-optimized&quot;</span>
+</code></pre></div>
+<p>The HebbianRouter already supports <code>get_preferred_targets(source, candidates)</code> which ranks by learned weight. Extend with availability check:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>1. HebbianRouter ranks candidates by weight
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>2. Filter to available tools (is_available() == True)
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>3. Apply cost filter if routing == &quot;cost-optimized&quot;
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>4. Return first available candidate
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>5. If none available: degrade gracefully, return error to crew member
+</code></pre></div>
+<p>This replaces the current binary <code>_should_use_visiting_builder()</code> with a generalized multi-tool resolution.</p>
+<p><strong>B. Cost-Aware Routing</strong></p>
+<p>HebbianRouter's <code>_score_match()</code> currently uses only success/failure signals. For commercial deployments, add a cost factor:</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Cost Model</th>
+<th>Est. Cost/Task</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Native LLM (Copilot proxy)</td>
+<td>Included in subscription</td>
+<td>~$0</td>
+</tr>
+<tr>
+<td>Copilot SDK</td>
+<td>Premium request quota</td>
+<td>~$0.10-0.50/task</td>
+</tr>
+<tr>
+<td>Claude Code CLI</td>
+<td>Anthropic API billing</td>
+<td>~$0.50-5.00/task</td>
+</tr>
+<tr>
+<td>Codex CLI</td>
+<td>OpenAI API billing</td>
+<td>~$0.20-2.00/task</td>
+</tr>
+</tbody>
+</table>
+<p>Commercial routing: <code>score = hebbian_weight * (1.0 - cost_weight * normalized_cost)</code>. The <code>cost_weight</code> is configurable per deployment (0.0 = pure quality, 1.0 = pure cost optimization).</p>
+<p>This is a <strong>commercial feature</strong> — OSS always routes by quality (Hebbian + availability). Commercial adds cost awareness.</p>
+<h3 id="part-6-bidirectional-mcp">Part 6: Bidirectional MCP<a class="headerlink" href="#part-6-bidirectional-mcp" title="Permanent link">&para;</a></h3>
+<p><strong>Outbound (already implemented):</strong> ProbOS exposes internal capabilities TO external tools via MCP. Currently hardcoded in <code>CopilotBuilderAdapter._build_mcp_tools()</code>. Moves to <code>ProbOSContextProvider</code>.</p>
+<p><strong>Inbound (designed, not implemented):</strong> External MCP servers consumed BY ProbOS crew. Designed in AD-449 (MCP Bridge). When the ToolRegistry and MCP Bridge are implemented, external MCP servers auto-register as ProbOS tools.</p>
+<p><strong>Symmetry principle:</strong> Agentic tools are both consumers (they use ProbOS's CodebaseIndex) and providers (they offer code generation). The adapter protocol handles both directions:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Outbound: ProbOSContextProvider → adapter-specific format → external tool
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>Inbound:  External tool → AgenticToolResult → ProbOS guardrail pipeline
+</code></pre></div>
+<h3 id="part-7-language-cleanup-retiring-visiting-officer-for-tools">Part 7: Language Cleanup — Retiring "Visiting Officer" for Tools<a class="headerlink" href="#part-7-language-cleanup-retiring-visiting-officer-for-tools" title="Permanent link">&para;</a></h3>
+<p>Per AD-398, tools have no sovereign identity. The "visiting officer" label was incorrectly applied to external AI tools. Update:</p>
+<table>
+<thead>
+<tr>
+<th>Current Language</th>
+<th>New Language</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Visiting officer" (for tools)</td>
+<td>"Agentic tool" or "external tool"</td>
+</tr>
+<tr>
+<td><code>CopilotBuilderAdapter</code></td>
+<td><code>CopilotSDKAdapter</code></td>
+</tr>
+<tr>
+<td><code>_should_use_visiting_builder()</code></td>
+<td><code>_select_agentic_tool()</code></td>
+</tr>
+<tr>
+<td><code>builder_source: "visiting"</code></td>
+<td><code>builder_source: "copilot-sdk"</code> (tool_id)</td>
+</tr>
+<tr>
+<td><code>REL_BUILDER_VARIANT</code> targets <code>"visiting"/"native"</code></td>
+<td>Targets tool_ids: <code>"copilot-sdk"/"native-llm"</code></td>
+</tr>
+<tr>
+<td>Roadmap "Visiting Officer" section title</td>
+<td>"Agentic Tools — External AI Coding Tools"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>What keeps "Visiting Officer":</strong> The federation concept of crew from another ProbOS ship visiting this ship's Ward Room. That IS a visiting officer — a sovereign individual from another command. Tools are not this.</p>
+<p><strong>Files to update:</strong>
+- <code>src/probos/cognitive/copilot_adapter.py</code> — module docstring, class name, comments
+- <code>src/probos/cognitive/builder.py</code> — <code>_should_use_visiting_builder()</code> name, <code>builder_source</code> values, comments
+- <code>src/probos/mesh/routing.py</code> — Hebbian weight targets (data migration)
+- <code>docs/development/roadmap.md</code> — section titles, narrative
+- <code>docs/development/tool-taxonomy.md</code> — minor language updates
+- <code>C:\Users\seang\.claude\projects\d--ProbOS\memory\visiting-officers.md</code> — retitle, update framing
+- <code>C:\Users\seang\.claude\projects\d--ProbOS\memory\copilot-sdk.md</code> — update framing
+- Prompt files in <code>prompts/</code> — <code>copilot-sdk-visiting-officer.md</code>, etc.</p>
+<h3 id="part-8-implementation-blueprint">Part 8: Implementation Blueprint<a class="headerlink" href="#part-8-implementation-blueprint" title="Permanent link">&para;</a></h3>
+<p><strong>Phase 1 (Foundation) — Can be a single build prompt:</strong></p>
+<ol>
+<li>Create <code>src/probos/tools/</code> package</li>
+<li>Define <code>AgenticToolAdapter</code> protocol + <code>AgenticToolResult</code> in <code>tools/protocol.py</code></li>
+<li>Extract <code>ProbOSContextProvider</code> from <code>CopilotBuilderAdapter._build_mcp_tools()</code></li>
+<li>Move + rename <code>CopilotBuilderAdapter</code> → <code>CopilotSDKAdapter</code> in <code>tools/copilot_adapter.py</code></li>
+<li>Update all imports: <code>builder.py</code>, <code>build_dispatcher.py</code>, tests</li>
+<li>Language cleanup in source code (docstrings, variable names, comments)</li>
+<li>Backward-compat: <code>cognitive/copilot_adapter.py</code> re-exports from new location (deprecated)</li>
+</ol>
+<p><strong>Phase 2 (Skill→Tool Binding) — Separate AD/build:</strong></p>
+<ol>
+<li>Add <code>ToolRequirement</code> to <code>SkillDefinition</code> in <code>skill_framework.py</code></li>
+<li>Generalize <code>_should_use_visiting_builder()</code> → multi-tool resolution using HebbianRouter</li>
+<li><code>FallbackChain</code> configuration</li>
+<li>Update BuildDispatcher to accept any <code>AgenticToolAdapter</code>, not just Copilot</li>
+</ol>
+<p><strong>Phase 3 (New Adapters) — Per-tool builds:</strong></p>
+<ol>
+<li><code>ClaudeCodeAdapter</code> — spawn <code>claude --print</code> subprocess, scan for changes</li>
+<li><code>CodexAdapter</code> — Codex CLI integration</li>
+<li>Each gets its own build prompt when the tool matures</li>
+</ol>
+<p><strong>Phase 4 (Commercial Extensions):</strong></p>
+<ol>
+<li>Cost-aware routing in HebbianRouter</li>
+<li>Tool usage metering + billing</li>
+<li>Nooplex tool marketplace</li>
+</ol>
+<h2 id="what-not-to-do">What NOT to Do<a class="headerlink" href="#what-not-to-do" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Do NOT move <code>BuilderAgent</code> out of <code>cognitive/</code> — it's a CognitiveAgent (crew role), not a tool</li>
+<li>Do NOT implement <code>ToolRegistry</code> in this AD — that's AD-483's scope (Phase 25b)</li>
+<li>Do NOT change any threshold values or behavior — this is structural refactoring</li>
+<li>Do NOT implement ClaudeCodeAdapter or CodexAdapter yet — protocol + CopilotSDK relocation only</li>
+<li>Do NOT modify the guardrail pipeline (<code>execute_approved_build()</code>) — it already works for any tool output</li>
+<li>Do NOT create a <code>Tool</code> base class — that's AD-483. This AD defines <code>AgenticToolAdapter</code> as a specialization</li>
+</ul>
+<h2 id="principles-compliance">Principles Compliance<a class="headerlink" href="#principles-compliance" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>SOLID (D):</strong> <code>AgenticToolAdapter</code> protocol enables dependency inversion — BuilderAgent depends on the protocol, not CopilotSDKAdapter</li>
+<li><strong>SOLID (S):</strong> Context provision (what the tool knows) separated from tool execution (what the tool does)</li>
+<li><strong>SOLID (I):</strong> Narrow <code>AgenticToolAdapter</code> protocol — 6 methods. Tools implement only what they need.</li>
+<li><strong>DRY:</strong> ProbOSContextProvider eliminates future per-adapter duplication of MCP tool construction</li>
+<li><strong>Law of Demeter:</strong> BuilderAgent talks to tools through the protocol, never reaches into tool internals</li>
+<li><strong>AD-398:</strong> Tools stay in the tool layer. Crew stays in cognitive. Clean separation.</li>
+<li><strong>Cloud-Ready:</strong> Cost-aware routing planned as commercial extension</li>
+</ul>
+<h2 id="relationship-to-existing-ads">Relationship to Existing ADs<a class="headerlink" href="#relationship-to-existing-ads" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>AD</th>
+<th>Relationship</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AD-398</td>
+<td>Three-tier architecture: this AD enforces tools≠crew at the code level</td>
+</tr>
+<tr>
+<td>AD-422</td>
+<td>Tool taxonomy: agentic tools are a tool category, not a new concept</td>
+</tr>
+<tr>
+<td>AD-423</td>
+<td>Tool Registry: <code>AgenticToolAdapter</code> registers there when ToolRegistry is built</td>
+</tr>
+<tr>
+<td>AD-428</td>
+<td>Skill Framework: <code>ToolRequirement</code> connects skills to tools</td>
+</tr>
+<tr>
+<td>AD-448</td>
+<td>Security Intercept: wraps tool calls with logging/rate limiting</td>
+</tr>
+<tr>
+<td>AD-449</td>
+<td>MCP Bridge: bidirectional MCP design that this AD prepares for</td>
+</tr>
+<tr>
+<td>AD-483</td>
+<td>Tool Layer Instruments: <code>AgenticToolAdapter</code> is a specialization of <code>Tool</code></td>
+</tr>
+<tr>
+<td>AD-351–355</td>
+<td>Copilot SDK: existing implementation that gets relocated + generalized</td>
+</tr>
+<tr>
+<td>AD-542</td>
+<td>Database abstraction: same DI pattern (protocol + factory + default impl)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="prior-art">Prior Art<a class="headerlink" href="#prior-art" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>DSPy modules</strong> — modules optimized independently of LLM provider. Same skill, different tool → different performance. Validates the skill↔tool separation.</li>
+<li><strong>Voyager skill library</strong> — skills stored as reusable programs with tool references. Maps to SkillDefinition + ToolRequirement.</li>
+<li><strong>AutoGen/CrewAI tool binding</strong> — bind tools at agent registration time. ProbOS's approach (dynamic resolution via HebbianRouter) is more flexible.</li>
+<li><strong>Kubernetes Operator pattern</strong> — controllers reconcile desired state using available resources. Crew exercises skill (desired state), tool layer resolves to available tool (resource).</li>
+<li><strong>Service mesh (Istio)</strong> — transparent routing layer between services. The tool layer is ProbOS's service mesh for capabilities.</li>
+<li><strong>Unix philosophy</strong> — small, composable tools. Crew composes tools (CodebaseIndex → BuilderTool → TestRunner → Git) the same way shell scripts compose CLI tools.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

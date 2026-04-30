@@ -1,0 +1,2290 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/cognitive-code-switching-research/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Cognitive Code-Switching — Research Synthesis - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cognitive-code-switching-research-synthesis" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Cognitive Code-Switching — Research Synthesis
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-problem-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Problem Statement
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-research-findings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Research Findings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Research Findings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-language-production-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Language Production Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-dual-process-theory-system-1-system-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Dual-Process Theory (System 1 / System 2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-communication-accommodation-theory-giles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Communication Accommodation Theory (Giles)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-register-theory-halliday" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Register Theory (Halliday)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-working-memory-and-cognitive-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 Working Memory and Cognitive Load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#26-military-code-switching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.6 Military Code-Switching
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#27-self-monitoring-theory-snyder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.7 Self-Monitoring Theory (Snyder)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#28-ai-agent-communication-research" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.8 AI Agent Communication Research
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-synthesis-architectural-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Synthesis: Architectural Principles
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Synthesis: Architectural Principles">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#principle-1-unified-cognitive-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principle 1: Unified Cognitive Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#principle-2-contextual-modulation-via-fieldtenormode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principle 2: Contextual Modulation via Field/Tenor/Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#principle-3-structured-format-overlays-billet-instructions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principle 3: Structured Format Overlays (Billet Instructions)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#principle-4-variable-chain-depth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principle 4: Variable Chain Depth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#principle-5-self-monitoring-as-character-trait" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principle 5: Self-Monitoring as Character Trait
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-mapping-to-existing-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Mapping to Existing Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Mapping to Existing Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mode-registries-already-exist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mode Registries (Already Exist)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chain-building-already-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chain Building (Already Exists)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#billet-instructions-ad-651-in-progress" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Billet Instructions (AD-651, In Progress)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-what-changes-vs-what-stays" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. What Changes vs. What Stays
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. What Changes vs. What Stays">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stays-the-same" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stays the Same
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changes-future-ads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changes (Future ADs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-analogy-chat-experience-temperature-slider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Analogy: Chat Experience Temperature Slider
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-key-citations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Key Citations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-design-principles-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Design Principles Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="cognitive-code-switching-research-synthesis">Cognitive Code-Switching — Research Synthesis<a class="headerlink" href="#cognitive-code-switching-research-synthesis" title="Permanent link">&para;</a></h1>
+<p><strong>Date:</strong> 2026-04-20
+<strong>Author:</strong> Sean Galliher (Architect)
+<strong>Status:</strong> Research complete, principles adopted
+<strong>Related ADs:</strong> AD-632 (cognitive chain umbrella), AD-651 (billet instructions),
+AD-651a (compose billet injection), AD-639 (chain personality tuning)</p>
+<hr />
+<h2 id="1-problem-statement">1. Problem Statement<a class="headerlink" href="#1-problem-statement" title="Permanent link">&para;</a></h2>
+<p>The cognitive chain pipeline (AD-632) replaced one-shot LLM calls with a
+multi-step chain: QUERY → ANALYZE → COMPOSE → EVALUATE → REFLECT. This
+recovered analytical depth and structured output but introduced two costs:</p>
+<ol>
+<li>
+<p><strong>Personality attenuation</strong> — splitting context across steps means each step
+   sees a slice. One-shot saw everything simultaneously, producing stronger
+   personality expression and creative synthesis (AD-639 finding).</p>
+</li>
+<li>
+<p><strong>Uniform rigidity</strong> — the same chain structure runs for duty reports,
+   casual observations, and social interactions. A systems health check and
+   a game challenge both traverse five chain steps with the same framing weight.</p>
+</li>
+</ol>
+<p>This raised a fundamental architecture question: should ProbOS use <strong>distinct
+cognitive pipelines</strong> for different communication types (professional vs.
+personal), or a <strong>single pipeline with contextual modulation</strong>?</p>
+<p>The question mirrors a real cognitive science problem: how do humans
+code-switch between formal and casual registers?</p>
+<hr />
+<h2 id="2-research-findings">2. Research Findings<a class="headerlink" href="#2-research-findings" title="Permanent link">&para;</a></h2>
+<h3 id="21-language-production-architecture">2.1 Language Production Architecture<a class="headerlink" href="#21-language-production-architecture" title="Permanent link">&para;</a></h3>
+<p><strong>Levelt's Speaking Model (1989)</strong> — the dominant framework for human language
+production — posits a <strong>single</strong> conceptualizer → formulator → articulator
+pipeline. Register and style are parameters applied during formulation, not
+separate architectures. Dell's spreading activation model (1986) confirms:
+when a doctor says "the patient presents with dyspnea" vs. "they can't
+breathe," the same semantic representation routes through different lexical
+selection filters — not different production systems.</p>
+<p><strong>Paradis (2004, 2009)</strong> found that register switching engages the prefrontal
+cortex and anterior cingulate — the same inhibitory control network used for
+bilingual language switching. This means register switching, while using the
+same production system, requires active <strong>suppression</strong> of the non-target
+register. The system is singular, but switching has real cognitive cost
+(Monsell, 2003).</p>
+<p><strong>Conclusion:</strong> One production system with contextual modulation, not parallel
+systems. Switching between registers has measurable cost but does not warrant
+separate architectures.</p>
+<h3 id="22-dual-process-theory-system-1-system-2">2.2 Dual-Process Theory (System 1 / System 2)<a class="headerlink" href="#22-dual-process-theory-system-1-system-2" title="Permanent link">&para;</a></h3>
+<p>The Kahneman (2011) mapping is tempting — casual = System 1 (fast, intuitive),
+professional = System 2 (deliberate, structured) — but only partially correct.</p>
+<p>Evans and Stanovich (2013) refined the model: Type 1 (autonomous, fast) vs.
+Type 2 (working-memory dependent, deliberate). Casual conversation is more
+Type 1 dominant — practiced social scripts, automatic politeness, personality-
+expressive defaults. Professional communication recruits more Type 2 —
+deliberate structure, evidence evaluation, hedging calibration.</p>
+<p><strong>Critical nuance:</strong> Dreyfus and Dreyfus's skill acquisition model (1986)
+shows expertise shifts processing from Type 2 to Type 1. A seasoned naval
+officer's formal report voice becomes as automatic as casual speech. The
+distinction is not casual=System1 vs. professional=System2, but
+<strong>unfamiliar register = System 2, practiced register = System 1</strong>.</p>
+<p><strong>Implication:</strong> A pipeline split based on System 1 vs. System 2 would model
+the wrong axis. As agents develop expertise (through episodic memory and
+dream consolidation), their formal reporting should become more natural, not
+more rigid.</p>
+<h3 id="23-communication-accommodation-theory-giles">2.3 Communication Accommodation Theory (Giles)<a class="headerlink" href="#23-communication-accommodation-theory-giles" title="Permanent link">&para;</a></h3>
+<p>Giles's CAT (1991, 2007) demonstrates that style adjustment is <strong>continuous,
+not discrete</strong>. Speakers converge toward or diverge from interlocutors along
+multiple simultaneous dimensions: speech rate, lexical complexity, formality
+markers, topic selection, affect display. This is gradient, not binary.</p>
+<p><strong>Key finding:</strong> Interpersonal adjustment is continuous. Medium-constrained
+communication (reports, formal channels) introduces more discrete boundaries.
+A manager talking to their CEO vs. their team uses continuous adjustment; the
+same manager writing a formal report vs. a Slack message engages more discrete
+mode selection because <strong>the medium itself enforces structural constraints</strong>.</p>
+<p><strong>ProbOS mapping:</strong> The Ward Room is one medium (conversational), duty reports
+are another (structured). The medium/channel type naturally creates register
+boundaries without requiring separate cognitive systems.</p>
+<h3 id="24-register-theory-halliday">2.4 Register Theory (Halliday)<a class="headerlink" href="#24-register-theory-halliday" title="Permanent link">&para;</a></h3>
+<p>Halliday's Systemic Functional Linguistics (1978) defines register through
+three continuous variables:</p>
+<ul>
+<li><strong>Field</strong> — what is being discussed (topic domain)</li>
+<li><strong>Tenor</strong> — the relationship between participants (formality, power distance)</li>
+<li><strong>Mode</strong> — the channel (spoken, written, formal document, casual message)</li>
+</ul>
+<p>Registers are not discrete categories but regions in a three-dimensional
+continuum. Biber's (1995) multi-dimensional corpus analysis confirmed this
+empirically: registers cluster along continuous dimensions rather than falling
+into discrete bins.</p>
+<p><strong>Exception:</strong> Institutional registers (military, legal, medical) show tighter
+clustering — they are more formulaic and convention-bound, creating something
+closer to discrete modes in practice. Military report formats (SITREP, SALUTE)
+are explicitly drilled protocols, not natural language variation.</p>
+<p><strong>ProbOS mapping:</strong> Duty reports and proposals are institutional registers —
+they warrant explicit format overlays (billet instructions). Social
+observations and casual Ward Room posts are natural register variation —
+they warrant contextual modulation of the same pipeline.</p>
+<h3 id="25-working-memory-and-cognitive-load">2.5 Working Memory and Cognitive Load<a class="headerlink" href="#25-working-memory-and-cognitive-load" title="Permanent link">&para;</a></h3>
+<p>Baddeley (2000) and Kellogg (2008) show that structured communication imposes
+higher working memory demands — specifically on planning and monitoring.
+Casual communication distributes resources more toward social monitoring and
+pragmatic inference.</p>
+<p>Robinson's Cognition Hypothesis (2001): increasing task complexity drives
+greater syntactic complexity and lexical sophistication. The cognitive
+resources are the same pool, but the <strong>allocation pattern</strong> differs — formal
+communication front-loads planning, casual communication front-loads social
+awareness.</p>
+<p><strong>ProbOS mapping:</strong> The chain's step count and prescriptiveness should vary
+with cognitive load requirements. Duty reports need more planning steps
+(ANALYZE → structured COMPOSE). Casual observations may need fewer steps
+but more social context (memories, personality, channel history).</p>
+<h3 id="26-military-code-switching">2.6 Military Code-Switching<a class="headerlink" href="#26-military-code-switching" title="Permanent link">&para;</a></h3>
+<p>Military communication research (Soeters, Winslow, &amp; Weibull, 2006) shows
+formal communication protocols are <strong>trained as explicit procedures</strong>, not
+natural code-switching. NATO STANAG, naval bridge protocol, and military
+report formats are drilled until automatized.</p>
+<p>Weick and Sutcliffe's (2007) High Reliability Organization research shows
+formal communication serves a specific cognitive function: <strong>reducing ambiguity
+under cognitive load</strong>. The formality is engineered cognitive scaffolding, not
+mere convention.</p>
+<p>Off-duty switching to casual registers is rapid and complete, suggesting the
+formal register is an <strong>overlay</strong> on natural communication, not a replacement.</p>
+<p><strong>ProbOS mapping:</strong> Billet instructions (AD-651) are exactly this — trained
+overlays. A duty report format template is scaffolding injected into the
+natural pipeline, not a separate system. The pipeline stays the same; the
+output format is constrained when the situation demands it.</p>
+<h3 id="27-self-monitoring-theory-snyder">2.7 Self-Monitoring Theory (Snyder)<a class="headerlink" href="#27-self-monitoring-theory-snyder" title="Permanent link">&para;</a></h3>
+<p>Snyder's construct (1974, 1987) identifies a stable individual difference:
+<strong>high self-monitors</strong> adjust presentation substantially across contexts,
+while <strong>low self-monitors</strong> maintain consistent self-expression.</p>
+<p>Gangestad and Snyder (2000) showed self-monitoring correlates with social
+adaptability but <strong>inversely with perceived authenticity</strong>. High code-switching
+agents may seem more competent but less genuine.</p>
+<p><strong>ProbOS mapping:</strong> Code-switching range should vary by agent character. Some
+agents (a Chief Engineer) should shift dramatically between duty formality and
+mess-hall casualness. Others (a Counselor) should maintain warm, consistent
+voice. This is derivable from Big Five personality traits — conscientiousness
+and agreeableness modulate self-monitoring range. This is a <strong>character
+parameter</strong>, not a pipeline decision.</p>
+<h3 id="28-ai-agent-communication-research">2.8 AI Agent Communication Research<a class="headerlink" href="#28-ai-agent-communication-research" title="Permanent link">&para;</a></h3>
+<p>Park et al. (2023, "Generative Agents") used a single generation pipeline with
+memory-informed context to produce natural style variation without explicit mode
+switching — agents adjusted based on conversational context in memory.</p>
+<p>Li et al. (2023, "Style-Controlled Generation") showed LLMs can modulate style
+through prompt conditioning more effectively than through separate fine-tuned
+models. Zhou et al. (2023) found persona consistency degrades when style
+modulation is applied through post-processing rather than integrated into
+generation.</p>
+<p><strong>Conclusion:</strong> Style modulation should happen at the prompt/context level
+(where ProbOS already operates), not through pipeline branching or
+post-processing.</p>
+<hr />
+<h2 id="3-synthesis-architectural-principles">3. Synthesis: Architectural Principles<a class="headerlink" href="#3-synthesis-architectural-principles" title="Permanent link">&para;</a></h2>
+<p>The research converges on a clear answer: <strong>one pipeline, contextual
+modulation, with structured format overlays for institutional communication.</strong></p>
+<h3 id="principle-1-unified-cognitive-pipeline">Principle 1: Unified Cognitive Pipeline<a class="headerlink" href="#principle-1-unified-cognitive-pipeline" title="Permanent link">&para;</a></h3>
+<p>Humans use one language production system. Separate chains for "casual" and
+"professional" would be architecturally wasteful and would produce uncanny
+identity discontinuity. The agent should sound recognizably like <em>themselves</em>
+across all contexts — the same person writing a formal report and joking in
+the mess hall.</p>
+<p>The existing chain infrastructure (QUERY → ANALYZE → COMPOSE → EVALUATE →
+REFLECT) is the unified pipeline. What varies is <strong>which steps run</strong> and
+<strong>what context each step receives</strong>, not the pipeline itself.</p>
+<h3 id="principle-2-contextual-modulation-via-fieldtenormode">Principle 2: Contextual Modulation via Field/Tenor/Mode<a class="headerlink" href="#principle-2-contextual-modulation-via-fieldtenormode" title="Permanent link">&para;</a></h3>
+<p>Following Halliday's register theory, three parameters modulate the pipeline:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Source in ProbOS</th>
+<th>Effect on Chain</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Field</strong></td>
+<td>Duty type, trigger content, channel topic</td>
+<td>Selects analysis focus and composition domain</td>
+</tr>
+<tr>
+<td><strong>Tenor</strong></td>
+<td>Duty vs. social, channel type, audience</td>
+<td>Controls formality level and output structure</td>
+</tr>
+<tr>
+<td><strong>Mode</strong></td>
+<td>Communication medium (report, post, DM, notebook)</td>
+<td>Determines format constraints</td>
+</tr>
+</tbody>
+</table>
+<p>These parameters are already available in the chain context — duty status,
+channel metadata, trigger type, intended_actions. The modulation happens
+through compose framing and billet instructions, not pipeline branching.</p>
+<h3 id="principle-3-structured-format-overlays-billet-instructions">Principle 3: Structured Format Overlays (Billet Instructions)<a class="headerlink" href="#principle-3-structured-format-overlays-billet-instructions" title="Permanent link">&para;</a></h3>
+<p>Following the military research, institutional outputs (duty reports,
+proposals, formal briefings) use <strong>explicit format templates</strong> injected into
+the compose step. These are trained overlays on natural language capacity:</p>
+<ul>
+<li>Duty cycle active → structured Findings/Assessment/Recommendation format</li>
+<li><code>"proposal"</code> in intended_actions → <code>[PROPOSAL]</code> block syntax</li>
+<li>Scout report → domain-specific analytical structure</li>
+</ul>
+<p>These overlays reduce ambiguity and ensure repeatable output for operational
+tasks — exactly the HRO cognitive scaffolding function.</p>
+<p>AD-651a implements this pattern. AD-651 Phase 2 should generalize it into
+a billet instruction registry that maps (task_type, tenor) → format overlay.</p>
+<h3 id="principle-4-variable-chain-depth">Principle 4: Variable Chain Depth<a class="headerlink" href="#principle-4-variable-chain-depth" title="Permanent link">&para;</a></h3>
+<p>Not every cognitive task needs five steps. The chain depth should match
+cognitive load requirements:</p>
+<table>
+<thead>
+<tr>
+<th>Context</th>
+<th>Recommended Chain</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Duty report</td>
+<td>QUERY → ANALYZE → COMPOSE (prescriptive)</td>
+<td>High structure, evidence-based, format overlay</td>
+</tr>
+<tr>
+<td>Proactive observation</td>
+<td>QUERY → ANALYZE → COMPOSE</td>
+<td>Moderate structure, analytical depth needed</td>
+</tr>
+<tr>
+<td>Social/casual post</td>
+<td>QUERY → COMPOSE (lighter framing)</td>
+<td>Low structure, personality-forward, emergent</td>
+</tr>
+<tr>
+<td>DM response</td>
+<td>QUERY → COMPOSE</td>
+<td>Conversational, direct, personality-forward</td>
+</tr>
+<tr>
+<td>Game challenge/reply</td>
+<td>COMPOSE only</td>
+<td>Minimal cognitive overhead, playful</td>
+</tr>
+</tbody>
+</table>
+<p>This is not multiple pipelines — it is the same pipeline with different step
+compositions. The mode registries in each handler already support this;
+<code>_build_chain_for_intent()</code> in <code>cognitive_agent.py</code> already selects different
+step configurations per intent.</p>
+<h3 id="principle-5-self-monitoring-as-character-trait">Principle 5: Self-Monitoring as Character Trait<a class="headerlink" href="#principle-5-self-monitoring-as-character-trait" title="Permanent link">&para;</a></h3>
+<p>Per Snyder, the degree of code-switching should vary by agent personality.
+High-conscientiousness agents shift more between duty formality and social
+casualness. High-openness agents may maintain creative voice even in formal
+contexts. This is a personality parameter that modulates compose framing,
+not a pipeline architecture decision.</p>
+<hr />
+<h2 id="4-mapping-to-existing-architecture">4. Mapping to Existing Architecture<a class="headerlink" href="#4-mapping-to-existing-architecture" title="Permanent link">&para;</a></h2>
+<p>The current chain architecture already contains the building blocks for
+contextual modulation:</p>
+<h3 id="mode-registries-already-exist">Mode Registries (Already Exist)<a class="headerlink" href="#mode-registries-already-exist" title="Permanent link">&para;</a></h3>
+<p>Each chain step dispatches via <code>spec.prompt_template</code> to mode-specific
+prompt builders:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ANALYZE modes:  thread_analysis | situation_review | dm_comprehension
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>COMPOSE modes:  ward_room_response | dm_response | proactive_observation
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>EVALUATE modes: ward_room_quality | proactive_quality | notebook_quality
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>REFLECT modes:  ward_room_reflection | proactive_reflection | general_reflection
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>QUERY ops:      thread_metadata | thread_activity | comm_stats | ...
+</code></pre></div>
+<p>These mode registries are exactly the dispatch mechanism for process-specific
+chains. A scout report process uses different mode keys than a Ward Room
+response process, but both flow through the same handler infrastructure.</p>
+<h3 id="chain-building-already-exists">Chain Building (Already Exists)<a class="headerlink" href="#chain-building-already-exists" title="Permanent link">&para;</a></h3>
+<p><code>_build_chain_for_intent()</code> in <code>cognitive_agent.py</code> already constructs
+different step compositions per intent:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="s2">&quot;ward_room_notification&quot;</span> <span class="err">→</span> <span class="n">Query</span> <span class="err">→</span> <span class="n">Analyze</span> <span class="err">→</span> <span class="n">Compose</span> <span class="err">→</span> <span class="n">Evaluate</span> <span class="err">→</span> <span class="n">Reflect</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="s2">&quot;proactive_think&quot;</span>        <span class="err">→</span> <span class="n">Query</span> <span class="err">→</span> <span class="n">Analyze</span> <span class="err">→</span> <span class="n">Compose</span> <span class="err">→</span> <span class="n">Evaluate</span> <span class="err">→</span> <span class="n">Reflect</span>
+</code></pre></div>
+<p>Extending this to support variable chain depth is additive:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="s2">&quot;social_observation&quot;</span>     <span class="err">→</span> <span class="n">Query</span> <span class="err">→</span> <span class="n">Compose</span> <span class="p">(</span><span class="n">light</span> <span class="n">framing</span><span class="p">)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="s2">&quot;duty_report&quot;</span>            <span class="err">→</span> <span class="n">Query</span> <span class="err">→</span> <span class="n">Analyze</span> <span class="err">→</span> <span class="n">Compose</span> <span class="p">(</span><span class="n">prescriptive</span> <span class="n">billet</span><span class="p">)</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="s2">&quot;scout_report&quot;</span>           <span class="err">→</span> <span class="n">Query</span> <span class="p">(</span><span class="n">specialized</span><span class="p">)</span> <span class="err">→</span> <span class="n">Analyze</span> <span class="p">(</span><span class="n">domain</span><span class="p">)</span> <span class="err">→</span> <span class="n">Compose</span>
+</code></pre></div>
+<h3 id="billet-instructions-ad-651-in-progress">Billet Instructions (AD-651, In Progress)<a class="headerlink" href="#billet-instructions-ad-651-in-progress" title="Permanent link">&para;</a></h3>
+<p>AD-651a injects format overlays conditionally based on intended_actions and
+duty context. This is the structured format overlay principle in practice.
+Generalizing this into a tenor-aware compose framing system is the natural
+Phase 2 evolution.</p>
+<hr />
+<h2 id="5-what-changes-vs-what-stays">5. What Changes vs. What Stays<a class="headerlink" href="#5-what-changes-vs-what-stays" title="Permanent link">&para;</a></h2>
+<h3 id="stays-the-same">Stays the Same<a class="headerlink" href="#stays-the-same" title="Permanent link">&para;</a></h3>
+<ul>
+<li>SubTaskExecutor orchestration framework</li>
+<li>Handler registration and mode registry pattern</li>
+<li>Five sub-task types (QUERY, ANALYZE, COMPOSE, EVALUATE, REFLECT)</li>
+<li>Intent-driven chain activation in CognitiveAgent.decide()</li>
+</ul>
+<h3 id="changes-future-ads">Changes (Future ADs)<a class="headerlink" href="#changes-future-ads" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>_build_chain_for_intent()</code> gains tenor/mode awareness — selects chain
+  depth and step configuration based on context, not just intent type</li>
+<li>COMPOSE mode registry gains tenor-modulated variants — same
+  <code>proactive_observation</code> mode but with formality parameter affecting framing</li>
+<li>Billet instruction registry (AD-651 Phase 2) — maps
+  (task_type, tenor) → format overlay, replacing scattered conditional blocks</li>
+<li>Character-driven self-monitoring — personality traits modulate compose
+  framing parameters (how much formality shift between duty and social)</li>
+</ul>
+<hr />
+<h2 id="6-analogy-chat-experience-temperature-slider">6. Analogy: Chat Experience Temperature Slider<a class="headerlink" href="#6-analogy-chat-experience-temperature-slider" title="Permanent link">&para;</a></h2>
+<p>Modern chat interfaces let users adjust "temperature" from formal to friendly.
+ProbOS's version of this is:</p>
+<ul>
+<li>The <strong>situation</strong> sets the default temperature (duty = formal, social = warm)</li>
+<li>The <strong>agent's character</strong> determines their range (high self-monitor = wide
+  range, low self-monitor = narrow range)</li>
+<li><strong>Billet instructions</strong> are hard constraints that override temperature for
+  specific output types (duty report format, proposal syntax)</li>
+</ul>
+<p>The LLM's literal temperature parameter is one lever, but the more powerful
+modulation is in <strong>what context and instructions the prompt contains</strong>. A
+prescriptive billet with structured format naturally produces formal output
+regardless of temperature setting. A light framing with personality context
+and episodic memories naturally produces warmer, more personal output.</p>
+<hr />
+<h2 id="7-key-citations">7. Key Citations<a class="headerlink" href="#7-key-citations" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Researcher</th>
+<th>Contribution</th>
+<th>Relevance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Levelt (1989)</td>
+<td>Single language production pipeline</td>
+<td>One system, not parallel</td>
+</tr>
+<tr>
+<td>Dell (1986)</td>
+<td>Spreading activation lexical access</td>
+<td>Context modulates selection</td>
+</tr>
+<tr>
+<td>Paradis (2004)</td>
+<td>Register switching = inhibitory control</td>
+<td>Switching cost, not separate systems</td>
+</tr>
+<tr>
+<td>Kahneman (2011), Evans &amp; Stanovich (2013)</td>
+<td>Dual-process (Type 1/2)</td>
+<td>Maps to practiced vs. novel, not casual vs. formal</td>
+</tr>
+<tr>
+<td>Dreyfus &amp; Dreyfus (1986)</td>
+<td>Skill acquisition → automaticity</td>
+<td>Formal register becomes automatic with practice</td>
+</tr>
+<tr>
+<td>Giles (1991)</td>
+<td>Communication Accommodation Theory</td>
+<td>Continuous adjustment, not binary</td>
+</tr>
+<tr>
+<td>Halliday (1978)</td>
+<td>Register = field + tenor + mode</td>
+<td>Three modulation axes, not one switch</td>
+</tr>
+<tr>
+<td>Biber (1995)</td>
+<td>Corpus register analysis</td>
+<td>Registers are clusters on a continuum</td>
+</tr>
+<tr>
+<td>Snyder (1974, 1987)</td>
+<td>Self-Monitoring Theory</td>
+<td>Code-switching range as personality trait</td>
+</tr>
+<tr>
+<td>Weick &amp; Sutcliffe (2007)</td>
+<td>HRO formal communication</td>
+<td>Formality as cognitive scaffolding</td>
+</tr>
+<tr>
+<td>Park et al. (2023)</td>
+<td>Generative Agents</td>
+<td>Memory-informed context &gt; explicit modes</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-design-principles-summary">8. Design Principles Summary<a class="headerlink" href="#8-design-principles-summary" title="Permanent link">&para;</a></h2>
+<p>These principles are adopted for all future cognitive chain pipeline work:</p>
+<ol>
+<li>
+<p><strong>Unified Pipeline</strong> — one cognitive chain framework, not parallel pipelines
+   for different communication types. Identity continuity requires architectural
+   unity.</p>
+</li>
+<li>
+<p><strong>Contextual Modulation</strong> — field, tenor, and mode parameters modulate chain
+   behavior (step composition, framing prescriptiveness, format overlays).
+   The situation selects the register, not a pipeline branch.</p>
+</li>
+<li>
+<p><strong>Structured Format Overlays</strong> — institutional outputs (duty reports,
+   proposals, formal briefings) use billet instructions injected as format
+   templates. These are cognitive scaffolding — trained overlays on natural
+   language capacity, not separate systems.</p>
+</li>
+<li>
+<p><strong>Variable Chain Depth</strong> — chain step composition varies with cognitive load
+   requirements. High-structure tasks get more steps with prescriptive framing.
+   Low-structure tasks get fewer steps with lighter framing. Same pipeline,
+   different configurations.</p>
+</li>
+<li>
+<p><strong>Character-Driven Self-Monitoring</strong> — code-switching range is a personality
+   parameter derived from Big Five traits, not an architecture decision. Some
+   agents shift dramatically between duty and social voice; others maintain
+   consistent register.</p>
+</li>
+<li>
+<p><strong>Process-Specific Chains</strong> — fundamentally different cognitive tasks (scout
+   report vs. Ward Room communication vs. DM response) can have different step
+   compositions and mode keys. But if two tasks are the same process with
+   different context, they share the chain and modulate parameters — they don't
+   fork into separate pipelines.</p>
+</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

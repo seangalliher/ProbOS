@@ -1,0 +1,2088 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/agent-memory-survey-absorption/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Agent Memory Survey Absorption: "AI Meets Brain" - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#agent-memory-survey-absorption-ai-meets-brain" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Agent Memory Survey Absorption: "AI Meets Brain"
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#survey-taxonomy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Survey Taxonomy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-papers-cataloged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Papers Cataloged
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gap-analysis-what-probos-does-not-have" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gap Analysis — What ProbOS Does NOT Have
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Gap Analysis — What ProbOS Does NOT Have">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-enhanced-embedding-content-metadata-concatenation-a-mem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Enhanced Embedding — Content + Metadata Concatenation (A-MEM)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-think-in-memory-evolved-thought-storage-tim" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Think-in-Memory — Evolved Thought Storage (TiM)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-memory-security-framework-survey-section-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Memory Security Framework (Survey Section 8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-retroactive-memory-evolution-a-mem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Retroactive Memory Evolution (A-MEM)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-multi-faceted-distillation-successfailurecomparative-reme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Multi-Faceted Distillation — Success/Failure/Comparative (ReMe)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-utility-based-storage-gating-reme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Utility-Based Storage Gating (ReMe)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-absorbed-already-covered-or-low-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not Absorbed (Already Covered or Low Value)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-probos-ahead-of-survey-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation — ProbOS Ahead of Survey Baseline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#research-lineage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Research Lineage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-priority-ranking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD Priority Ranking
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connection-to-existing-probos-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection to Existing ProbOS Architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="agent-memory-survey-absorption-ai-meets-brain">Agent Memory Survey Absorption: "AI Meets Brain"<a class="headerlink" href="#agent-memory-survey-absorption-ai-meets-brain" title="Permanent link">&para;</a></h1>
+<p><em>Sean Galliher, 2026-04-11</em>
+<em>Source: "AI Meets Brain: A Unified Survey on Memory Systems from Cognitive Neuroscience to Autonomous Agents" (arXiv:2512.23343)</em>
+<em>Repository: github.com/AgentMemory/Huaman-Agent-Memory (reading list, not code)</em>
+<em>Authors: Harbin Institute of Technology, Peng Cheng Laboratory, NUS, Fudan, Peking University (Dec 2025, v2)</em></p>
+<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
+<p>This document records the gap analysis between ProbOS's episodic memory architecture and the state-of-the-art agent memory research cataloged in the "AI Meets Brain" survey. The survey is the first systematic cross-disciplinary framework mapping cognitive neuroscience memory models onto LLM agent memory architectures. It catalogs 100+ papers.</p>
+<p>ProbOS is already ahead of the baseline "Generative Agents" retrieval formula <code>f(recency, importance, relevance)</code> — our composite scoring includes 6 weighted channels + convergence bonus + temporal match/mismatch + anchor confidence gating + quality degradation stops + RPMS confidence gating. However, the survey surfaces several ideas ProbOS does not implement.</p>
+<h2 id="survey-taxonomy">Survey Taxonomy<a class="headerlink" href="#survey-taxonomy" title="Permanent link">&para;</a></h2>
+<p>The survey proposes a two-dimensional classification:</p>
+<p><strong>Nature-based:</strong>
+- <strong>Episodic Memory</strong> — sequential interaction trajectories, tool call logs, decision branches
+- <strong>Semantic Memory</strong> — declarative knowledge repository, no tool dependencies</p>
+<p><strong>Scope-based:</strong>
+- <strong>Inside-trail Memory</strong> — single execution trajectory, cleared when episode ends (working memory)
+- <strong>Cross-trail Memory</strong> — persists across trajectories, stores generalizable patterns</p>
+<p><strong>Three LLM memory types:</strong>
+1. Parametric memory (weights — frozen post-training, subject to hallucination)
+2. Working memory (context window, key-value attention caches, exhibits positional bias)
+3. Explicit external memory (vector DBs, knowledge graphs — RAG paradigm)</p>
+<p><strong>Four storage formats:</strong>
+1. Natural language text — most interpretable, least efficient for machine indexing
+2. Graph structures — preserve relational information
+3. Internalized parameters — memory written into model weights via fine-tuning
+4. Latent representations — high-dimensional vectors for similarity-based retrieval</p>
+<h2 id="key-papers-cataloged">Key Papers Cataloged<a class="headerlink" href="#key-papers-cataloged" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Paper</th>
+<th>Key Contribution</th>
+<th>ProbOS Relevance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A-MEM</strong> (Xu et al., NeurIPS 2025)</td>
+<td>Zettelkasten-inspired memory with dynamic linking + retroactive evolution</td>
+<td>Enhanced embedding, retroactive metadata update</td>
+</tr>
+<tr>
+<td><strong>Mem0</strong> (Chhikara et al.)</td>
+<td>Production memory with graph-based representations, 26% improvement over OpenAI, 91% lower latency</td>
+<td>Graph-based retrieval validation</td>
+</tr>
+<tr>
+<td><strong>G-Memory</strong> (Zhang et al.)</td>
+<td>Three-tier hierarchical graph (Insight/Query/Interaction) for multi-agent</td>
+<td>Multi-agent knowledge hierarchy</td>
+</tr>
+<tr>
+<td><strong>ReMe</strong> (Cao et al.)</td>
+<td>Multi-faceted distillation (success/failure/comparative) + utility-based pruning</td>
+<td>Failure analysis, storage gating</td>
+</tr>
+<tr>
+<td><strong>Memory-R1</strong> (Yan et al.)</td>
+<td>Two RL agents (Memory Manager + Answer Agent), trained with 152 QA pairs</td>
+<td>RL-based memory curation (future)</td>
+</tr>
+<tr>
+<td><strong>Think-in-Memory</strong> (Liu et al.)</td>
+<td>Stores evolved thoughts not raw history, LSH retrieval</td>
+<td>Evolved thought storage</td>
+</tr>
+<tr>
+<td><strong>LiCoMemory / CogniGraph</strong></td>
+<td>Separated semantic/topology layers, temporal+hierarchy-aware search</td>
+<td>Entity-relation indexing</td>
+</tr>
+<tr>
+<td><strong>H-MEM</strong></td>
+<td>Positional index encoding in memory vectors for layer-by-layer retrieval</td>
+<td>Scale optimization (not needed yet)</td>
+</tr>
+<tr>
+<td><strong>FLEX</strong> (Cai et al.)</td>
+<td>Experience inheritance across agents, scaling law of experiential growth</td>
+<td>Validates AD-537 observational learning</td>
+</tr>
+<tr>
+<td><strong>Memento</strong> (Zhou et al.)</td>
+<td>Memory-augmented MDP, neural case-selection, episodic rewriting via RL</td>
+<td>RL-based memory operations</td>
+</tr>
+<tr>
+<td><strong>RCR-Router</strong></td>
+<td>Role-aware context routing, 30% token reduction</td>
+<td>Already covered by sovereign shards + anchors</td>
+</tr>
+</tbody>
+</table>
+<h2 id="gap-analysis-what-probos-does-not-have">Gap Analysis — What ProbOS Does NOT Have<a class="headerlink" href="#gap-analysis-what-probos-does-not-have" title="Permanent link">&para;</a></h2>
+<h3 id="1-enhanced-embedding-content-metadata-concatenation-a-mem">1. Enhanced Embedding — Content + Metadata Concatenation (A-MEM)<a class="headerlink" href="#1-enhanced-embedding-content-metadata-concatenation-a-mem" title="Permanent link">&para;</a></h3>
+<p><strong>Gap:</strong> ProbOS stores episodes with <code>documents=[episode.user_input]</code> in ChromaDB (3 call sites: <code>store()</code> line 738, <code>seed()</code> line 606, <code>_force_update()</code> line 791). Anchor metadata (department, channel, watch_section, trigger_type, trigger_agent) is stored in ChromaDB's <code>metadatas</code> dict but is <strong>never concatenated into the document text</strong> that gets embedded. The embedding captures only the raw interaction text.</p>
+<p><strong>A-MEM's approach:</strong> Concatenates <code>content + context + keywords + tags</code> before generating the embedding vector. The embedding captures not just raw text but also the LLM's semantic interpretation of it.</p>
+<p><strong>ProbOS adaptation:</strong> Concatenate anchor metadata into a <code>_prepare_document(episode)</code> helper. Department, channel, watch_section, and trigger_type create structured context that enriches the embedding space. This directly addresses <code>memory-retrieval-research.md</code> Section 7.2 (Elaborative Encoding) — enriching the stored representation improves retrievability.</p>
+<p><strong>Value:</strong> HIGH. <strong>Cost:</strong> LOW. No LLM calls, no new dependencies, no architectural changes. Simple string concatenation at 3 call sites.</p>
+<p><strong>AD:</strong> AD-605.</p>
+<h3 id="2-think-in-memory-evolved-thought-storage-tim">2. Think-in-Memory — Evolved Thought Storage (TiM)<a class="headerlink" href="#2-think-in-memory-evolved-thought-storage-tim" title="Permanent link">&para;</a></h3>
+<p><strong>Gap:</strong> ProbOS stores raw episodes (user_input + agent_response + reflection) and retrieves them for re-reasoning every time. Dream consolidation (Step 7 micro-dream, Step 7g notebook) extracts patterns but these go into notebooks, not back into the episodic recall pipeline. An agent re-encountering a similar situation must re-reason from raw episodes rather than retrieving a pre-computed conclusion.</p>
+<p><strong>TiM's approach:</strong> Instead of storing raw interaction history, TiM stores the LLM's <em>conclusions</em> — evolved thoughts that have been refined through recall-reason-update cycles. Three operations: insert, forget, merge. Uses Locality-Sensitive Hashing for efficient retrieval.</p>
+<p><strong>ProbOS adaptation:</strong> Dream consolidation could produce "evolved thought" episodes — pre-reasoned conclusions stored as first-class episodic entries with a new <code>source="consolidated_thought"</code> tag. These would be high-priority recall candidates (via source-aware scoring). Reduces redundant re-reasoning at recall time. Conceptually adjacent to Cognitive JIT procedures (AD-532) but at a higher abstraction level — CJT captures <em>how to do things</em>, evolved thoughts capture <em>what is true</em>.</p>
+<p><strong>Value:</strong> HIGH. <strong>Cost:</strong> MEDIUM. Requires dream pipeline extension + new episode source type + scoring adjustment.</p>
+<p><strong>AD:</strong> AD-606.</p>
+<h3 id="3-memory-security-framework-survey-section-8">3. Memory Security Framework (Survey Section 8)<a class="headerlink" href="#3-memory-security-framework-survey-section-8" title="Permanent link">&para;</a></h3>
+<p><strong>Gap:</strong> ProbOS has source governance (retrieval strategy classification, AD-568a) and qualification probes (memory reliability testing, AD-566/582), but no explicit defense against:
+- <strong>Extraction attacks:</strong> Crafted queries designed to leak private data from memory banks
+- <strong>Poisoning attacks:</strong> Adversarial content injected into external memory</p>
+<p><strong>Survey's three defense layers:</strong>
+1. <strong>Retrieval-based defense:</strong> Filtering/validating retrieved content, anomaly detection, source provenance
+2. <strong>Response-based defense:</strong> Output monitoring, safety guardrails at generation time
+3. <strong>Privacy-based defense:</strong> Data sanitization during extraction, access control, differential privacy</p>
+<p><strong>ProbOS adaptation:</strong> Source governance can be extended with retrieval-based defense (anomaly detection on recalled episodes — e.g., flagging episodes with unusual entropy, unexpected source patterns, or content that doesn't match anchor context). Critical for federation (Inter-Ship Trust Protocol) and multi-instance deployment where episodes may cross trust boundaries.</p>
+<p><strong>Value:</strong> HIGH (strategic, grows with federation). <strong>Cost:</strong> MEDIUM-HIGH.</p>
+<p><strong>AD:</strong> AD-607.</p>
+<h3 id="4-retroactive-memory-evolution-a-mem">4. Retroactive Memory Evolution (A-MEM)<a class="headerlink" href="#4-retroactive-memory-evolution-a-mem" title="Permanent link">&para;</a></h3>
+<p><strong>Gap:</strong> When a new episode is stored, ProbOS does not retroactively update metadata on related existing episodes. Old memories are static until dream consolidation (which runs on a schedule, not at storage time). A-MEM's evolution agent analyzes nearest neighbors at insertion time and strengthens connections / updates existing episode metadata.</p>
+<p><strong>ProbOS adaptation:</strong> A lightweight version using embedding similarity to trigger metadata propagation at store time — when a new episode is stored, query top-K nearest episodes and update their anchor metadata (e.g., add relational tags, update freshness signals). Much cheaper than A-MEM's LLM-per-insertion approach. Connects to <code>memory-retrieval-research.md</code> Section 7.3 (relational tagging) and the spreading activation concept.</p>
+<p><strong>Value:</strong> MEDIUM. <strong>Cost:</strong> MEDIUM. Adds ChromaDB query at every store() call.</p>
+<p><strong>AD:</strong> AD-608.</p>
+<h3 id="5-multi-faceted-distillation-successfailurecomparative-reme">5. Multi-Faceted Distillation — Success/Failure/Comparative (ReMe)<a class="headerlink" href="#5-multi-faceted-distillation-successfailurecomparative-reme" title="Permanent link">&para;</a></h3>
+<p><strong>Gap:</strong> Cognitive JIT procedure extraction (AD-532) captures <em>how to do things</em> but does not systematically extract <em>why things failed</em> or <em>how alternatives compared</em>. Dream consolidation extracts patterns but through a general lens, not structured failure/comparative analysis.</p>
+<p><strong>ReMe's approach:</strong> Extracts lessons through three explicit lenses: success patterns, failure triggers, and comparative insights ("approach A worked but approach B didn't because...").</p>
+<p><strong>ProbOS adaptation:</strong> Dream Step 7 (micro-dream replay) could be extended with failure-pattern extraction. When an episode contains negative trust deltas or circuit breaker events, extract the failure trigger and store as a negative-exemplar thought. Comparative insights could be extracted when episodes contain A/B decision patterns.</p>
+<p><strong>Value:</strong> MEDIUM. <strong>Cost:</strong> MEDIUM. Dream pipeline extension.</p>
+<p><strong>AD:</strong> AD-609.</p>
+<h3 id="6-utility-based-storage-gating-reme">6. Utility-Based Storage Gating (ReMe)<a class="headerlink" href="#6-utility-based-storage-gating-reme" title="Permanent link">&para;</a></h3>
+<p><strong>Gap:</strong> ProbOS stores all episodes and relies on Ebbinghaus decay (AD-538) and dream pruning (AD-593) to remove low-value entries after the fact. There is no write-time validation of whether a new episode adds value given what already exists.</p>
+<p><strong>ReMe's approach:</strong> Autonomously evaluates whether a new memory adds value before persisting. Prunes outdated entries to maintain a compact, high-quality experience pool.</p>
+<p><strong>ProbOS adaptation:</strong> Before <code>store()</code>, query top-K nearest episodes. If the new episode's content is highly similar (&gt;0.95 cosine) to existing episodes with the same anchor context, skip storage (near-duplicate). If the new episode contradicts an existing episode from the same temporal context, flag for conflict resolution rather than silent accumulation. Complements AD-538 (decay) and AD-593 (pruning) by filtering at the input boundary.</p>
+<p><strong>Value:</strong> MEDIUM. <strong>Cost:</strong> LOW-MEDIUM. Adds similarity check at store time.</p>
+<p><strong>AD:</strong> AD-610.</p>
+<h2 id="not-absorbed-already-covered-or-low-value">Not Absorbed (Already Covered or Low Value)<a class="headerlink" href="#not-absorbed-already-covered-or-low-value" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Source</th>
+<th>Why Not</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Zettelkasten episode-to-episode linking</td>
+<td>A-MEM</td>
+<td>Hebbian router already provides inter-agent connection strength. Convergence bonus (AD-584c) rewards multi-channel evidence. Adding explicit links would be architecturally redundant.</td>
+</tr>
+<tr>
+<td>Role-aware context routing</td>
+<td>RCR-Router</td>
+<td>Sovereign shards (per-agent ChromaDB partition) + department-based anchor recall (AD-570) + recall tier gating (AD-462c) already filter by role.</td>
+</tr>
+<tr>
+<td>RL-trained memory operations</td>
+<td>Memory-R1</td>
+<td>Requires fine-tuning infrastructure ProbOS doesn't have. Theoretically superior but practically premature. Revisit when ProbOS has training pipeline.</td>
+</tr>
+<tr>
+<td>Positional index encoding</td>
+<td>H-MEM</td>
+<td>Scale optimization for O(n) retrieval. ProbOS episode counts (~hundreds to low thousands per agent) don't create retrieval latency problems.</td>
+</tr>
+<tr>
+<td>Three-tier hierarchical graph</td>
+<td>G-Memory</td>
+<td>ProbOS already has three knowledge tiers: Tier 1 Experience (EpisodicMemory), Tier 2 Records (Ship's Records), Tier 3 Operational State (KnowledgeStore). The hierarchy exists, just structured differently.</td>
+</tr>
+<tr>
+<td>Experience inheritance across agents</td>
+<td>FLEX</td>
+<td>AD-537 (observational learning — three Bandura pathways) already handles inter-agent knowledge transfer. FLEX's finding of a scaling law validates our approach.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="validation-probos-ahead-of-survey-baseline">Validation — ProbOS Ahead of Survey Baseline<a class="headerlink" href="#validation-probos-ahead-of-survey-baseline" title="Permanent link">&para;</a></h2>
+<p>The survey identifies the Park et al. "Generative Agents" formula <code>f(recency, importance, relevance)</code> as the seminal retrieval approach, still used by most agent systems. ProbOS's composite scoring is substantially more sophisticated:</p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Generative Agents</th>
+<th>ProbOS (AD-584c)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scoring channels</td>
+<td>3 (recency, importance, relevance)</td>
+<td>6 (semantic, keyword, trust, hebbian, recency, anchor)</td>
+</tr>
+<tr>
+<td>Convergence bonus</td>
+<td>No</td>
+<td>Yes (+0.10 for multi-channel evidence)</td>
+</tr>
+<tr>
+<td>Temporal match/mismatch</td>
+<td>No</td>
+<td>Yes (+0.25 match, -0.15 mismatch, BF-155)</td>
+</tr>
+<tr>
+<td>Anchor confidence gating</td>
+<td>No</td>
+<td>Yes (RPMS confidence, AD-567c)</td>
+</tr>
+<tr>
+<td>Quality degradation stop</td>
+<td>No</td>
+<td>Yes (AD-591)</td>
+</tr>
+<tr>
+<td>Composite score floor</td>
+<td>No</td>
+<td>Yes (AD-590)</td>
+</tr>
+<tr>
+<td>Budget enforcement</td>
+<td>Simple top-K</td>
+<td>Quality-aware budget with 3 stop conditions (AD-591)</td>
+</tr>
+<tr>
+<td>Query reformulation</td>
+<td>No</td>
+<td>Yes (Q→declarative templates, AD-584a/b)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="research-lineage">Research Lineage<a class="headerlink" href="#research-lineage" title="Permanent link">&para;</a></h2>
+<p>This analysis extends ProbOS's existing research documents:
+- <code>memory-retrieval-research.md</code> — Cognitive neuroscience foundations (Tulving, Collins &amp; Loftus, Howard &amp; Kahana)
+- <code>recall-pipeline-research-synthesis.md</code> — Q→A embedding gap analysis and fix strategy
+- <code>confabulation-scaling-research.md</code> — Anti-confabulation research</p>
+<p>New citations from the survey:
+- Xu et al. (NeurIPS 2025). "A-MEM: Agentic Memory for LLM Agents" — Zettelkasten-inspired retroactive memory evolution
+- Chhikara et al. "Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory" — Graph-based memory, 26% improvement
+- Liu et al. "Think-in-Memory: Recalling and Post-Thinking Enable LLMs with Long-Term Memory" — Evolved thought storage
+- Cao et al. "ReMe: Learning to REtrieve and MEmorize" — Multi-faceted distillation, utility-based pruning
+- Yan et al. "Memory-R1: Let AI Learn to Manage Memory Like Humans" — RL-trained memory operations
+- Cai et al. "FLEX: Scaling Experience Inheritance Across Agents" — Experiential scaling law</p>
+<h2 id="ad-priority-ranking">AD Priority Ranking<a class="headerlink" href="#ad-priority-ranking" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>AD</th>
+<th>Name</th>
+<th>Value</th>
+<th>Cost</th>
+<th>Priority</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>AD-605</strong></td>
+<td>Enhanced Embedding</td>
+<td>HIGH</td>
+<td>LOW</td>
+<td><strong>1 — NEXT</strong></td>
+<td>Near-zero implementation cost, directly improves the semantic similarity channel that all retrieval depends on. Addresses Section 7.2 (elaborative encoding) from memory-retrieval-research.md</td>
+</tr>
+<tr>
+<td><strong>AD-606</strong></td>
+<td>Think-in-Memory</td>
+<td>HIGH</td>
+<td>MEDIUM</td>
+<td>2</td>
+<td>Requires dream pipeline extension but offers highest recall efficiency gain</td>
+</tr>
+<tr>
+<td><strong>AD-607</strong></td>
+<td>Memory Security</td>
+<td>HIGH</td>
+<td>MEDIUM-HIGH</td>
+<td>3 — strategic</td>
+<td>Not urgent now, critical for federation. Defer until multi-instance deployment</td>
+</tr>
+<tr>
+<td><strong>AD-608</strong></td>
+<td>Retroactive Memory Evolution</td>
+<td>MEDIUM</td>
+<td>MEDIUM</td>
+<td>4</td>
+<td>Interesting but adds per-store latency. Evaluate after AD-605 and AD-606</td>
+</tr>
+<tr>
+<td><strong>AD-609</strong></td>
+<td>Multi-Faceted Distillation</td>
+<td>MEDIUM</td>
+<td>MEDIUM</td>
+<td>5</td>
+<td>Dream pipeline extension, lower urgency</td>
+</tr>
+<tr>
+<td><strong>AD-610</strong></td>
+<td>Utility-Based Storage Gating</td>
+<td>MEDIUM</td>
+<td>LOW-MEDIUM</td>
+<td>6</td>
+<td>Complements AD-538/AD-593 but priority is retrieval quality (demand side) before storage quality (supply side)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="connection-to-existing-probos-architecture">Connection to Existing ProbOS Architecture<a class="headerlink" href="#connection-to-existing-probos-architecture" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Survey Concept</th>
+<th>ProbOS Equivalent</th>
+<th>Gap</th>
+<th>AD</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Enhanced embedding</td>
+<td>Episode stores <code>user_input</code> only</td>
+<td>Anchor metadata not in embedding</td>
+<td>AD-605</td>
+</tr>
+<tr>
+<td>Evolved thought storage</td>
+<td>Dream consolidation → notebooks</td>
+<td>Conclusions not in recall pipeline</td>
+<td>AD-606</td>
+</tr>
+<tr>
+<td>Memory security</td>
+<td>Source governance + qualification probes</td>
+<td>No extraction/poisoning defense</td>
+<td>AD-607</td>
+</tr>
+<tr>
+<td>Retroactive evolution</td>
+<td>Static episodes until dream</td>
+<td>No store-time metadata propagation</td>
+<td>AD-608</td>
+</tr>
+<tr>
+<td>Failure distillation</td>
+<td>Cognitive JIT captures success</td>
+<td>No structured failure extraction</td>
+<td>AD-609</td>
+</tr>
+<tr>
+<td>Storage gating</td>
+<td>Ebbinghaus decay + pruning (post-hoc)</td>
+<td>No write-time utility validation</td>
+<td>AD-610</td>
+</tr>
+<tr>
+<td>Multi-channel retrieval</td>
+<td>6-channel composite scoring</td>
+<td>Already ahead of survey baseline</td>
+<td>N/A</td>
+</tr>
+<tr>
+<td>Temporal context model</td>
+<td>TCM deferred to AD-601</td>
+<td>Already scoped</td>
+<td>AD-601</td>
+</tr>
+<tr>
+<td>Spreading activation</td>
+<td>Deferred to AD-604</td>
+<td>Already scoped</td>
+<td>AD-604</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

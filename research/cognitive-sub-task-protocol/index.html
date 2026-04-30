@@ -1,0 +1,2407 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/cognitive-sub-task-protocol/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Cognitive Sub-Task Protocol — Research Synthesis - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cognitive-sub-task-protocol-research-synthesis" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Cognitive Sub-Task Protocol — Research Synthesis
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-problem-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Problem Statement
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Problem Statement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-this-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What This Is NOT
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-prior-art-survey" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Prior Art Survey
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Prior Art Survey">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-claude-code-context-forking-anthropic-2025" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Claude Code — Context Forking (Anthropic, 2025)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-react-reasoning-acting-yao-et-al-iclr-2023" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 ReAct — Reasoning + Acting (Yao et al., ICLR 2023)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-decomposed-prompting-khot-et-al-iclr-2023" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Decomposed Prompting (Khot et al., ICLR 2023)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-inner-monologue-huang-et-al-corl-2022" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Inner Monologue (Huang et al., CoRL 2022)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-tree-of-thoughts-yao-et-al-neurips-2023" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 Tree of Thoughts (Yao et al., NeurIPS 2023)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#26-reflexion-shinn-et-al-neurips-2023" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.6 Reflexion (Shinn et al., NeurIPS 2023)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#27-lats-language-agent-tree-search-zhou-et-al-2023" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.7 LATS — Language Agent Tree Search (Zhou et al., 2023)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#28-soar-impasse-driven-subgoaling-laird-et-al-1987present" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.8 SOAR — Impasse-Driven Subgoaling (Laird et al., 1987–present)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#29-act-r-goal-buffer-and-sub-goal-stacking-anderson-2007" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.9 ACT-R — Goal Buffer and Sub-Goal Stacking (Anderson, 2007)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#210-mrkl-modular-reasoning-knowledge-and-language-karpas-et-al-2022" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.10 MRKL — Modular Reasoning, Knowledge and Language (Karpas et al., 2022)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-synthesis-what-probos-should-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Synthesis: What ProbOS Should Build
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Synthesis: What ProbOS Should Build">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-design-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Design Principles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-probos-specific-considerations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 ProbOS-Specific Considerations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-proposed-sub-task-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Proposed Sub-Task Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-use-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Use Cases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Use Cases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-ward-room-thread-response-primary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Ward Room Thread Response (Primary)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-proactive-think-cycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Proactive Think Cycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-complex-duty-execution-future-ad-618-bills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Complex Duty Execution (Future — AD-618 Bills)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-skill-driven-decomposition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 Skill-Driven Decomposition
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-architectural-position-in-probos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Architectural Position in ProbOS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Architectural Position in ProbOS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-relationship-to-existing-systems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Relationship to Existing Systems
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-relationship-to-multi-agent-collaboration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 Relationship to Multi-Agent Collaboration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-relationship-to-skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 Relationship to Skills
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-relationship-to-cognitive-jit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.4 Relationship to Cognitive JIT
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Open Questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="cognitive-sub-task-protocol-research-synthesis">Cognitive Sub-Task Protocol — Research Synthesis<a class="headerlink" href="#cognitive-sub-task-protocol-research-synthesis" title="Permanent link">&para;</a></h1>
+<p><strong>Date:</strong> 2026-04-15
+<strong>Author:</strong> Sean Galliher (Architect)
+<strong>Status:</strong> Research complete, AD scoped
+<strong>Related ADs:</strong> AD-632 (umbrella), AD-531–539 (Cognitive JIT), AD-596 (Skill Catalog),
+AD-625–631 (Communication Discipline lineage), AD-618 (Bill System SOPs)</p>
+<hr />
+<h2 id="1-problem-statement">1. Problem Statement<a class="headerlink" href="#1-problem-statement" title="Permanent link">&para;</a></h2>
+<p>ProbOS crew agents currently handle every task — Ward Room thread analysis, DM
+response composition, proactive situation review, duty execution — in a <strong>single
+LLM call</strong>. The entire cognitive pipeline is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>perceive() → recall() → decide() [ONE LLM call] → act() → store()
+</code></pre></div>
+<p>The <code>_decide_via_llm()</code> method assembles a massive prompt (standing orders +
+personality + temporal context + working memory + episodic memories + oracle
+knowledge + thread content + augmentation skill + self-monitoring) and asks the
+model to <strong>simultaneously</strong> analyze input, reason about it, compose a response,
+and emit structured actions (ENDORSE, REPLY, DM, NOTEBOOK, PROPOSAL) — all in
+one generation pass.</p>
+<p>This architecture has two failure modes:</p>
+<p><strong>A. Cognitive Overload</strong>: When the combined prompt exceeds the model's effective
+attention window, instruction compliance degrades. AD-631's observation — agents
+ignoring skill instructions, using banned openers, failing to endorse — is
+partially attributable to asking the model to attend to too many concerns
+simultaneously.</p>
+<p><strong>B. No Iterative Refinement</strong>: If the LLM output is malformed, partially
+correct, or misses information, there is no retry or correction loop. The
+regex-based post-processing either extracts valid structured actions or silently
+drops them. An agent cannot "think again" about a thread after its initial
+analysis reveals something unexpected.</p>
+<h3 id="what-this-is-not">What This Is NOT<a class="headerlink" href="#what-this-is-not" title="Permanent link">&para;</a></h3>
+<p>This research does not propose replacing the ship's existing multi-agent
+architecture. ProbOS uses 55+ sovereign agents with distinct identities — that's
+inter-agent collaboration. This research addresses <strong>intra-agent task
+decomposition</strong> — a single crew agent breaking its own reasoning into focused
+sub-steps before producing its final output.</p>
+<p>The deterministic utility agents (Ship's Computer services) are not candidates
+for this pattern. They are Python scripts with defined I/O — they don't use LLMs
+and don't need decomposed reasoning. This protocol applies exclusively to
+cognitive crew agents that call <code>_decide_via_llm()</code>.</p>
+<hr />
+<h2 id="2-prior-art-survey">2. Prior Art Survey<a class="headerlink" href="#2-prior-art-survey" title="Permanent link">&para;</a></h2>
+<h3 id="21-claude-code-context-forking-anthropic-2025">2.1 Claude Code — Context Forking (Anthropic, 2025)<a class="headerlink" href="#21-claude-code-context-forking-anthropic-2025" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> Anthropic Claude Code documentation; Mei 2025 analysis</p>
+<p>Claude Code's <code>context: fork</code> mechanism spawns an isolated sub-agent with a fresh
+context window. The sub-agent receives only its task + instructions (no
+conversation history), works independently, and returns <strong>only the final
+summary</strong> to the parent. All intermediate artifacts (file reads, search results,
+reasoning chains) are discarded from the main thread.</p>
+<p><strong>Key architectural properties:</strong>
+- Sub-agents cannot spawn sub-agents (no infinite nesting)
+- Sub-agents inherit tools/permissions but NOT conversation history
+- Different agent types optimize for different roles (Explore = fast/read-only,
+  Plan = architecture, general-purpose = full access)
+- <code>context: fork</code> is a declarative frontmatter field — the skill author decides
+  at definition time whether isolation is warranted
+- The parent's context stays clean — only the synthesized result comes back</p>
+<p><strong>Relevance to ProbOS:</strong> Claude Code forks primarily to protect context window
+budget (a developer's interactive session accumulates many tool results). ProbOS
+agents don't have this problem — each <code>handle_intent()</code> starts with fresh prompt
+assembly. The ProbOS value is different: <strong>focused reasoning</strong> on sub-problems
+that benefit from narrower attention, and <strong>iterative refinement</strong> where analysis
+informs composition.</p>
+<h3 id="22-react-reasoning-acting-yao-et-al-iclr-2023">2.2 ReAct — Reasoning + Acting (Yao et al., ICLR 2023)<a class="headerlink" href="#22-react-reasoning-acting-yao-et-al-iclr-2023" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> arXiv:2210.03629</p>
+<p>ReAct interleaves reasoning traces and task-specific actions in a thought-action-
+observation loop:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>THOUGHT → ACTION → OBSERVATION → THOUGHT → ACTION → ...
+</code></pre></div>
+<p>Key findings:
+- Reasoning without grounding leads to hallucination and error compounding
+- Acting without reasoning leads to brittle, non-adaptive behavior
+- Interleaving addresses both — produces agents that are more accurate, more
+  interpretable, and more robust
+- On HotpotQA: "overcomes issues of hallucination and error propagation
+  prevalent in chain-of-thought reasoning"
+- On ALFWorld/WebShop: surpassed imitation and reinforcement learning by 34%
+  and 10% absolute success rate respectively</p>
+<p><strong>Relevance to ProbOS:</strong> ProbOS agents currently do THOUGHT + ACTION in one
+pass — they reason and act simultaneously. The ReAct insight suggests separating
+the reasoning phase (analyze thread, check what's covered, evaluate novelty)
+from the action phase (compose response, select structured actions). The
+observation step maps to grounding analysis in actual thread content and episodic
+memory before composing.</p>
+<h3 id="23-decomposed-prompting-khot-et-al-iclr-2023">2.3 Decomposed Prompting (Khot et al., ICLR 2023)<a class="headerlink" href="#23-decomposed-prompting-khot-et-al-iclr-2023" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> arXiv:2210.02406</p>
+<p>DECOMP breaks complex tasks into simpler sub-tasks delegated to specialized
+handlers. Key insight: individual reasoning steps embedded in complex contexts
+are harder to learn than the same steps in isolation.</p>
+<p><strong>Architecture:</strong>
+1. A decomposer prompt identifies needed sub-steps
+2. Each sub-step routes to a specialized handler
+3. Handlers can be LLM prompts, trained models, or symbolic functions
+4. Sub-tasks can themselves be further decomposed recursively</p>
+<p><strong>Relevance to ProbOS:</strong> This directly validates the principle that a Ward Room
+thread analysis is better handled as decomposed sub-tasks (what's been said? →
+what's novel? → what's my contribution? → compose response) than as a monolithic
+"analyze and respond" prompt. The handler flexibility maps to ProbOS's hybrid
+model — some sub-tasks could be deterministic (check reply count, verify
+endorsement targets) while others require LLM reasoning (evaluate novelty,
+compose analysis).</p>
+<h3 id="24-inner-monologue-huang-et-al-corl-2022">2.4 Inner Monologue (Huang et al., CoRL 2022)<a class="headerlink" href="#24-inner-monologue-huang-et-al-corl-2022" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> arXiv:2207.05608</p>
+<p>Inner Monologue creates a closed-loop framework where an LLM planner receives
+continuous natural language feedback from the environment, forming an internal
+dialogue that grounds each planning step in actual world state.</p>
+<p><strong>Loop:</strong> Plan step → Execute → Textualize feedback (success? scene state?
+corrections?) → Replan with feedback</p>
+<p>Key finding: "Closed-loop language feedback significantly improves high-level
+instruction completion" — without any additional training.</p>
+<p><strong>Relevance to ProbOS:</strong> The "inner monologue" concept maps to a crew agent
+maintaining a private reasoning trace as it processes a Ward Room thread. Step 1:
+analyze what's been said (observation). Step 2: check if I have something novel
+(self-evaluation). Step 3: compose response grounded in steps 1-2 (action). The
+feedback loop enables the agent to catch itself before posting redundant content.</p>
+<h3 id="25-tree-of-thoughts-yao-et-al-neurips-2023">2.5 Tree of Thoughts (Yao et al., NeurIPS 2023)<a class="headerlink" href="#25-tree-of-thoughts-yao-et-al-neurips-2023" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> arXiv:2305.10601</p>
+<p>ToT generalizes chain-of-thought by structuring reasoning around "coherent units
+of text (thoughts)" that branch into a tree. The model considers multiple
+reasoning paths, self-evaluates choices, and can backtrack when necessary.</p>
+<p>Key result: Game of 24 — CoT with GPT-4 solved 4% of tasks; ToT achieved 74%
+(~19x improvement).</p>
+<p><strong>Relevance to ProbOS:</strong> ToT is likely too expensive for standard Ward Room
+interactions (exploring multiple reasoning branches per response is token-
+heavy). However, the principle of <strong>deliberate evaluation of alternatives</strong> maps
+to high-stakes decisions: Proposal composition, cross-department analysis, duty
+execution. A lightweight variant — consider 2-3 response approaches, self-
+evaluate, select best — could improve output quality for important tasks without
+full tree search cost.</p>
+<h3 id="26-reflexion-shinn-et-al-neurips-2023">2.6 Reflexion (Shinn et al., NeurIPS 2023)<a class="headerlink" href="#26-reflexion-shinn-et-al-neurips-2023" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> arXiv:2303.11366</p>
+<p>Reflexion improves LLM agents through verbal self-reflection after task
+execution. The agent generates a natural-language self-critique, stores it in
+episodic memory, and uses stored reflections to guide future attempts.</p>
+<p>Key result: 91% pass@1 on HumanEval coding benchmark (vs GPT-4 baseline of 80%).</p>
+<p><strong>Relevance to ProbOS:</strong> ProbOS already has episodic memory + dream
+consolidation. The Reflexion insight is that <strong>same-session self-reflection
+before finalizing</strong> (not just between sessions via dreams) catches errors. This
+validates AD-631's self-verification gate approach and extends it: a sub-task
+could analyze the agent's draft response and provide feedback before it posts.</p>
+<h3 id="27-lats-language-agent-tree-search-zhou-et-al-2023">2.7 LATS — Language Agent Tree Search (Zhou et al., 2023)<a class="headerlink" href="#27-lats-language-agent-tree-search-zhou-et-al-2023" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> arXiv:2310.04406</p>
+<p>LATS unifies reasoning, acting, and planning by wrapping ReAct-style loops
+within Monte Carlo tree search. The LM serves simultaneously as policy, value
+function, and self-critic. Environmental feedback provides ground-truth signals.</p>
+<p>Key result: 92.7% pass@1 on HumanEval (GPT-4); WebShop performance "comparable
+to gradient-based fine-tuning" without any weight updates.</p>
+<p><strong>Relevance to ProbOS:</strong> LATS represents the ceiling of what's possible with
+inference-time decomposition. For ProbOS, the key takeaway is the <strong>self-critic
+role</strong> — using the LLM to evaluate its own candidate responses against criteria
+before committing. This is cheaper than full tree search and maps to the self-
+verification gate pattern.</p>
+<h3 id="28-soar-impasse-driven-subgoaling-laird-et-al-1987present">2.8 SOAR — Impasse-Driven Subgoaling (Laird et al., 1987–present)<a class="headerlink" href="#28-soar-impasse-driven-subgoaling-laird-et-al-1987present" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> Soar cognitive architecture (Laird 2012)</p>
+<p>SOAR's Universal Subgoaling is the most directly relevant cognitive architecture
+pattern. When SOAR's decision procedure cannot move forward (an "impasse"), it
+automatically creates a <strong>substate</strong> with its own goal: resolving the block.</p>
+<p><strong>Key properties:</strong>
+- Substates stack recursively — if a substate impasses, another is created
+- Processing in the substate resolves the parent impasse
+- Once resolved, substate structures are removed <strong>except results</strong>
+- <strong>Chunking</strong>: reasoning that produced results in a substate is compiled into
+  production rules that fire automatically in similar future situations — 
+  "converting complex reasoning into automatic/reactive processing"</p>
+<p><strong>Three-level processing model:</strong>
+1. Automatic/reactive (compiled productions — analogous to ProbOS's Cognitive
+   JIT procedural replay)
+2. Deliberate operator selection (standard reasoning — analogous to single
+   LLM call <code>decide()</code>)
+3. Impasse-driven substate reasoning (deliberate decomposition — what this
+   AD proposes)</p>
+<p><strong>Relevance to ProbOS:</strong> SOAR's model is the intellectual ancestor of this
+proposal. The three processing levels map almost exactly:</p>
+<table>
+<thead>
+<tr>
+<th>SOAR Level</th>
+<th>ProbOS Analog</th>
+<th>When Used</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Automatic</td>
+<td>Cognitive JIT procedural replay</td>
+<td>Known repeatable tasks</td>
+</tr>
+<tr>
+<td>Deliberate</td>
+<td>Single <code>_decide_via_llm()</code> call</td>
+<td>Standard reasoning</td>
+</tr>
+<tr>
+<td>Subgoaling</td>
+<td>Cognitive Sub-Task Protocol</td>
+<td>Complex multi-faceted tasks</td>
+</tr>
+</tbody>
+</table>
+<p>SOAR's chunking → production compilation maps to an important future capability:
+if a sub-task decomposition pattern repeatedly produces good results, Cognitive
+JIT should learn it as a reusable procedure (AD-531–539 pipeline).</p>
+<h3 id="29-act-r-goal-buffer-and-sub-goal-stacking-anderson-2007">2.9 ACT-R — Goal Buffer and Sub-Goal Stacking (Anderson, 2007)<a class="headerlink" href="#29-act-r-goal-buffer-and-sub-goal-stacking-anderson-2007" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> ACT-R cognitive architecture</p>
+<p>ACT-R maintains a goal buffer that holds the current goal. When a task requires
+sub-steps, the current goal is pushed onto a stack and a sub-goal is set as
+active. Productions fire based on buffer state, and when the sub-goal completes,
+the parent goal is restored.</p>
+<p><strong>Relevance to ProbOS:</strong> The goal-stack model suggests sub-tasks should be LIFO —
+a parent task suspends while a sub-task runs, then resumes with the sub-task's
+result. This is simpler than tree-structured alternatives and maps naturally to
+ProbOS's sequential <code>handle_intent()</code> pipeline.</p>
+<h3 id="210-mrkl-modular-reasoning-knowledge-and-language-karpas-et-al-2022">2.10 MRKL — Modular Reasoning, Knowledge and Language (Karpas et al., 2022)<a class="headerlink" href="#210-mrkl-modular-reasoning-knowledge-and-language-karpas-et-al-2022" title="Permanent link">&para;</a></h3>
+<p><strong>Source:</strong> AI21 Labs, previously cited in AD-631</p>
+<p>MRKL validates mixing LLM reasoning with deterministic "expert modules." A
+router decides which module handles each sub-task. Already cited in ProbOS's
+architecture as validation for the hybrid deterministic + LLM model.</p>
+<p><strong>Relevance to ProbOS:</strong> Sub-tasks in the Cognitive Sub-Task Protocol should not
+all require LLM calls. Some sub-tasks are deterministic: "count how many replies
+exist in this thread" is a database query, not an LLM judgment. The MRKL
+principle — route each sub-task to the cheapest capable handler — should govern
+sub-task dispatch.</p>
+<hr />
+<h2 id="3-synthesis-what-probos-should-build">3. Synthesis: What ProbOS Should Build<a class="headerlink" href="#3-synthesis-what-probos-should-build" title="Permanent link">&para;</a></h2>
+<h3 id="31-design-principles">3.1 Design Principles<a class="headerlink" href="#31-design-principles" title="Permanent link">&para;</a></h3>
+<p>From the research survey, five principles emerge:</p>
+<p><strong>P1. Selective Decomposition (SOAR impasse model):</strong>
+Not every task needs decomposition. The cost of sub-task forking (additional LLM
+calls, latency) is only justified when the task complexity exceeds what a single
+call handles well. The system should decompose <strong>on demand</strong>, not by default.
+Triggers: skill activation (augmentation skills benefit from focused sub-tasks),
+task complexity heuristics (thread length, action vocabulary size), or explicit
+skill annotation.</p>
+<p><strong>P2. Focused Attention per Sub-Task (DECOMP + Inner Monologue):</strong>
+Each sub-task should receive only the context relevant to its narrow purpose.
+An analysis sub-task gets the thread content + episodic memories. A composition
+sub-task gets the analysis result + skill instructions + response format. Neither
+needs the other's full context.</p>
+<p><strong>P3. Hybrid Dispatch (MRKL):</strong>
+Sub-tasks should route to the cheapest capable handler. Thread reply counting is
+a SQL query. Novelty assessment is an LLM judgment. Endorsement target lookup is
+a dictionary check. Only sub-tasks requiring genuine reasoning should invoke
+the LLM.</p>
+<p><strong>P4. Result-Only Return (Claude Code fork model):</strong>
+The parent task receives only the sub-task's structured result, not its reasoning
+traces. This keeps the composition step's context clean and focused.</p>
+<p><strong>P5. Learning from Decomposition (SOAR chunking + Cognitive JIT):</strong>
+When a decomposition pattern repeatedly produces good outcomes, the system
+should learn it. This connects to the existing Cognitive JIT pipeline — a sub-
+task decomposition can be extracted as a procedure, replayed without LLM calls
+in future similar situations.</p>
+<h3 id="32-probos-specific-considerations">3.2 ProbOS-Specific Considerations<a class="headerlink" href="#32-probos-specific-considerations" title="Permanent link">&para;</a></h3>
+<p><strong>Token Budget:</strong>
+Sub-task forking is NOT a constant cost multiplier. It activates only when
+warranted — when a crew agent is performing a task that benefits from focused
+reasoning. The decision of whether to fork is itself a lightweight check, not
+an LLM call. Possible triggers:
+- Skill annotation (<code>probos-subtask-mode: analyze-then-compose</code>)
+- Thread complexity threshold (&gt;5 posts, &gt;3 unique contributors)
+- Task type heuristics (proactive_think with Ward Room activity → fork;
+  simple DM response → no fork)
+- Dynamic: if the single-call response fails quality checks (AD-631's self-
+  verification gate), retry with decomposition</p>
+<p><strong>Cognitive Journal Accounting:</strong>
+Sub-task LLM calls must be attributed to the parent agent for token budget
+tracking (AD-617b). A sub-task is not a separate agent — it's the parent agent's
+inner reasoning. The CognitiveJournal should record sub-task calls as part of
+the parent's session usage.</p>
+<p><strong>Episodic Memory:</strong>
+Sub-task reasoning should NOT create separate episodic memories. Only the parent
+task's final output becomes an episode. The sub-task analysis is intermediate
+working state — it informs the response but isn't independently memorable. This
+maps to SOAR: "substate structures are removed except for results."</p>
+<p><strong>Trust Attribution:</strong>
+Trust outcomes from the final response accrue to the parent agent. Sub-tasks
+have no independent trust identity. A sub-task is the agent's private cognitive
+process, not a separate entity in the social fabric.</p>
+<p><strong>Circuit Breaker:</strong>
+Sub-task failures should not trip the parent's circuit breaker. If an analysis
+sub-task times out, the parent agent should degrade gracefully to single-call
+mode (the current behavior). This is defense in depth — the sub-task protocol
+is an enhancement, not a requirement.</p>
+<p><strong>Cancellation/Timeout:</strong>
+Sub-tasks need bounded execution time. If a sub-task exceeds a configurable
+timeout, the parent cancels it and proceeds with single-call fallback. The
+proactive loop's per-agent timing budget applies to the total (parent + sub-
+tasks), not per sub-task.</p>
+<p><strong>Observability:</strong>
+Sub-task chains need trace IDs linking them to the parent decision. The
+CognitiveJournal should record: parent intent → sub-task 1 (type, duration,
+token count) → sub-task 2 → ... → final decision. This enables debugging
+without polluting episodic memory.</p>
+<p><strong>Skill Activation in Sub-Tasks:</strong>
+Augmentation skills should inject into the <strong>composition</strong> sub-task (where the
+agent formulates its response), not the analysis sub-task (where it evaluates
+the thread). This is the entire point — focused attention. The analysis sub-task
+gets: "What has been said? What's novel? What's covered?" The composition sub-
+task gets: "Given this analysis, compose your response following this skill."</p>
+<p><strong>Concurrent Sub-Tasks:</strong>
+Some analysis steps are independent and could run in parallel (check thread
+content AND query episodic memory). This is a future optimization — start with
+sequential for simplicity, add parallel dispatch when the pattern is proven.</p>
+<h3 id="33-proposed-sub-task-types">3.3 Proposed Sub-Task Types<a class="headerlink" href="#33-proposed-sub-task-types" title="Permanent link">&para;</a></h3>
+<p>Drawing from Claude Code's agent types and ProbOS's specific needs:</p>
+<table>
+<thead>
+<tr>
+<th>Sub-Task Type</th>
+<th>Handler</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Analyze</strong></td>
+<td>LLM (focused prompt)</td>
+<td>Read input, produce structured analysis</td>
+<td>"Summarize thread: topics covered, contributors, gaps"</td>
+</tr>
+<tr>
+<td><strong>Evaluate</strong></td>
+<td>LLM (criteria-based)</td>
+<td>Score/judge against criteria</td>
+<td>"Does this draft contain novel information?" (self-check)</td>
+</tr>
+<tr>
+<td><strong>Query</strong></td>
+<td>Deterministic</td>
+<td>Retrieve data from ProbOS services</td>
+<td>Thread reply count, endorsement targets, agent stats</td>
+</tr>
+<tr>
+<td><strong>Compose</strong></td>
+<td>LLM (with skill)</td>
+<td>Generate final output from analysis</td>
+<td>"Given this analysis, compose your Ward Room post"</td>
+</tr>
+<tr>
+<td><strong>Reflect</strong></td>
+<td>LLM (self-critic)</td>
+<td>Review draft output before committing</td>
+<td>"Does this response comply with communication skill?"</td>
+</tr>
+</tbody>
+</table>
+<p>Not all types are needed for every task. A simple DM response might need only
+Compose. A Ward Room thread response might need Analyze → Compose → Reflect.
+A proactive think cycle might need Query → Analyze → Compose.</p>
+<hr />
+<h2 id="4-use-cases">4. Use Cases<a class="headerlink" href="#4-use-cases" title="Permanent link">&para;</a></h2>
+<h3 id="41-ward-room-thread-response-primary">4.1 Ward Room Thread Response (Primary)<a class="headerlink" href="#41-ward-room-thread-response-primary" title="Permanent link">&para;</a></h3>
+<p>Current: Agent receives thread + all context → single LLM call → REPLY/ENDORSE</p>
+<p>Proposed:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>1. Query (deterministic): thread metadata — reply count, department spread,
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>   post IDs, endorsement targets
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>2. Analyze (LLM, focused): &quot;Given this thread, what topics are covered?
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>   What information is missing? Is there a gap your department can fill?&quot;
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>   → structured analysis: {topics_covered, gaps, my_contribution_potential}
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>3. Compose (LLM, with skill): &quot;Given this analysis and your communication
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>   skill, produce your response or choose ENDORSE/NO_RESPONSE.&quot;
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>   → final output with structured actions
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>4. Reflect (optional, LLM): &quot;Does your response pass the Pre-Submit Check?&quot;
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>   → approve or replace with ENDORSE/NO_RESPONSE
+</code></pre></div></p>
+<p><strong>Why this helps:</strong> The Analyze step runs with a narrow prompt focused entirely
+on thread comprehension — no response formatting instructions, no action
+vocabulary, no skill behavioral rules. The Compose step runs with the analysis
+result + skill instructions — no raw thread content to re-parse. Each step has
+focused attention.</p>
+<h3 id="42-proactive-think-cycle">4.2 Proactive Think Cycle<a class="headerlink" href="#42-proactive-think-cycle" title="Permanent link">&para;</a></h3>
+<p>Current: Agent receives all departmental context → single LLM call → multiple
+possible actions (REPLY, DM, NOTEBOOK, PROPOSAL, ENDORSE, CHALLENGE)</p>
+<p>Proposed:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>1. Query (deterministic): Ward Room activity, unread DMs, duty status,
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>   active engagements
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>2. Analyze (LLM, focused): &quot;Review your department&#39;s Ward Room activity.
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>   Identify threads needing your input and topics for new posts.&quot;
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>   → structured analysis: {threads_to_respond, topics_for_new_post, dm_needs}
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>3. Compose (LLM, with skill): &quot;Based on your analysis, produce your actions.&quot;
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>   → structured output with appropriate action tags
+</code></pre></div></p>
+<h3 id="43-complex-duty-execution-future-ad-618-bills">4.3 Complex Duty Execution (Future — AD-618 Bills)<a class="headerlink" href="#43-complex-duty-execution-future-ad-618-bills" title="Permanent link">&para;</a></h3>
+<p>When Bills (SOPs) define multi-step procedures, sub-tasks enable step-by-step
+execution with intermediate evaluation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>1. Query: Current step in Bill, required inputs
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>2. Compose: Execute current step
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>3. Evaluate: Did the step succeed? Move to next or remediate?
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>4. Loop until Bill complete
+</code></pre></div>
+<h3 id="44-skill-driven-decomposition">4.4 Skill-Driven Decomposition<a class="headerlink" href="#44-skill-driven-decomposition" title="Permanent link">&para;</a></h3>
+<p>Augmentation skills could declaratively specify their preferred decomposition:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">probos-subtask-mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analyze-then-compose</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nt">probos-analysis-prompt</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="no">Review the Ward Room thread. For each post, identify:</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="no">- The core claim or recommendation</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="no">- Whether it adds new information or restates previous posts</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span><span class="no">- Endorsement-worthy posts (strong, novel contribution)</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span><span class="no">Report your analysis as a structured summary.</span>
+</code></pre></div>
+<p>This makes the decomposition skill-specific — different skills can define
+different analysis prompts tailored to their domain. The protocol provides the
+plumbing; the skill provides the cognitive strategy.</p>
+<hr />
+<h2 id="5-architectural-position-in-probos">5. Architectural Position in ProbOS<a class="headerlink" href="#5-architectural-position-in-probos" title="Permanent link">&para;</a></h2>
+<h3 id="51-relationship-to-existing-systems">5.1 Relationship to Existing Systems<a class="headerlink" href="#51-relationship-to-existing-systems" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>                    ┌─────────────────────────────┐
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>                    │ Cognitive JIT Replay (T3)    │  ← &quot;Automatic&quot; (SOAR L1)
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>                    │ (AD-531–539)                 │     Zero LLM calls
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>                    └──────────┬──────────────────┘
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>                               │ cache miss / no procedure
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>                    ┌──────────▼──────────────────┐
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>                    │ Single-Call Reasoning        │  ← &quot;Deliberate&quot; (SOAR L2)
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>                    │ (_decide_via_llm, current)   │     One LLM call
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>                    └──────────┬──────────────────┘
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>                               │ complexity trigger / skill annotation
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>                    ┌──────────▼──────────────────┐
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>                    │ Cognitive Sub-Task Protocol  │  ← &quot;Subgoaling&quot; (SOAR L3)
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>                    │ (AD-632, this proposal)      │     2-4 focused LLM calls
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>                    └─────────────────────────────┘
+</code></pre></div>
+<p>The three levels form a <strong>cognitive escalation ladder</strong> — the system starts with
+the cheapest option and escalates only when needed. This is analogous to SOAR's
+three processing levels and Kahneman's System 1 / System 2 distinction.</p>
+<h3 id="52-relationship-to-multi-agent-collaboration">5.2 Relationship to Multi-Agent Collaboration<a class="headerlink" href="#52-relationship-to-multi-agent-collaboration" title="Permanent link">&para;</a></h3>
+<p>Sub-tasks are INTRA-agent, not INTER-agent. A sub-task does not have:
+- Its own identity (no callsign, no DID, no trust profile)
+- Its own episodic memory shard
+- Its own standing orders or personality
+- Social visibility (other agents cannot see sub-task reasoning)</p>
+<p>A sub-task is a private cognitive process — the crew agent's inner monologue.
+Other agents see only the final output, just as in human conversation — you
+see someone's statement, not their internal deliberation.</p>
+<h3 id="53-relationship-to-skills">5.3 Relationship to Skills<a class="headerlink" href="#53-relationship-to-skills" title="Permanent link">&para;</a></h3>
+<p>Skills become more effective with sub-tasks because:
+- The skill's behavioral instructions land in the <strong>Compose</strong> sub-task where
+  they have focused attention (not competing with thread parsing)
+- The skill's self-verification gate (AD-631) maps to a <strong>Reflect</strong> sub-task
+- Skill-specific analysis prompts enable domain-tailored thread evaluation
+- Skills can declaratively opt into decomposition via frontmatter</p>
+<h3 id="54-relationship-to-cognitive-jit">5.4 Relationship to Cognitive JIT<a class="headerlink" href="#54-relationship-to-cognitive-jit" title="Permanent link">&para;</a></h3>
+<p>If a decomposition pattern (Analyze → Compose) consistently produces good
+outcomes for a specific intent type, Cognitive JIT can learn it:
+- The analysis prompt becomes a cached template
+- The composition prompt becomes a cached template
+- The decomposition decision itself becomes a learned production rule
+- Eventually, the pattern replays without LLM calls (SOAR chunking analog)</p>
+<p>This is the ultimate efficiency play: what starts as an expensive multi-call
+decomposition gradually compiles into a deterministic procedure.</p>
+<hr />
+<h2 id="6-open-questions">6. Open Questions<a class="headerlink" href="#6-open-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Decomposition trigger heuristics</strong>: What signals should trigger sub-task
+   decomposition vs. single-call? Thread length? Skill annotation? Historical
+   quality scores? Dynamic based on self-verification failure?</p>
+</li>
+<li>
+<p><strong>Model routing for sub-tasks</strong>: Should analysis sub-tasks use a cheaper/
+   faster model (analogous to Claude Code's Explore using Haiku)? Or does
+   consistency require the same model throughout?</p>
+</li>
+<li>
+<p><strong>Context carry-forward</strong>: How much of the analysis result should the
+   composition step receive? Full structured analysis? Summary? Both with
+   priority framing?</p>
+</li>
+<li>
+<p><strong>Sub-task observability</strong>: How should sub-task execution appear in logs,
+   HXI, and the Cognitive Journal? Hidden by default with drill-down? Always
+   visible?</p>
+</li>
+<li>
+<p><strong>Parallel vs. sequential</strong>: Independent sub-tasks (thread analysis +
+   episodic recall) could run concurrently. When should parallelism be used?</p>
+</li>
+<li>
+<p><strong>Failure modes</strong>: What happens when a sub-task returns unexpected/empty
+   results? Retry? Skip? Fall back to single-call?</p>
+</li>
+</ol>
+<hr />
+<h2 id="7-references">7. References<a class="headerlink" href="#7-references" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Yao, S. et al. (2023). "ReAct: Synergizing Reasoning and Acting in
+   Language Models." ICLR 2023. arXiv:2210.03629.</li>
+<li>Khot, T. et al. (2023). "Decomposed Prompting: A Modular Approach for
+   Solving Complex Tasks." ICLR 2023. arXiv:2210.02406.</li>
+<li>Huang, W. et al. (2022). "Inner Monologue: Embodied Reasoning through
+   Planning with Language Models." CoRL 2022. arXiv:2207.05608.</li>
+<li>Yao, S. et al. (2023). "Tree of Thoughts: Deliberate Problem Solving
+   with Large Language Models." NeurIPS 2023. arXiv:2305.10601.</li>
+<li>Shinn, N. et al. (2023). "Reflexion: Language Agents with Verbal
+   Reinforcement Learning." NeurIPS 2023. arXiv:2303.11366.</li>
+<li>Zhou, A. et al. (2023). "Language Agent Tree Search Unifies Reasoning
+   Acting and Planning in Language Models." arXiv:2310.04406.</li>
+<li>Laird, J. (2012). "The Soar Cognitive Architecture." MIT Press.</li>
+<li>Anderson, J. R. (2007). "How Can the Human Mind Occur in the Physical
+   Universe?" Oxford University Press. (ACT-R)</li>
+<li>Karpas, E. et al. (2022). "MRKL Systems: A Modular, Neuro-Symbolic
+   Architecture that Combines Large Language Models, External Knowledge
+   Sources and Discrete Reasoning." AI21 Labs.</li>
+<li>Lipenkova, J. (2023). "Overcoming the Limitations of Large Language
+    Models." Towards Data Science.</li>
+<li>Mei, S. (2025). "Claude Code's Context Forking and Sub-Agent
+    Architecture." Analysis. (shiqimei.github.io)</li>
+<li>Anthropic (2025). Claude Code Documentation: Skills, Sub-agents,
+    Agent Tool. (code.claude.com/docs/en/)</li>
+<li>Kahneman, D. (2011). "Thinking, Fast and Slow." — System 1/System 2
+    framework informing the three-level processing model.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

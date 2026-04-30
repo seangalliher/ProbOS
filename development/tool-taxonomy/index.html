@@ -1,0 +1,3045 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/tool-taxonomy/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>ProbOS Tool Taxonomy (AD-422) - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#probos-tool-taxonomy-ad-422" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ProbOS Tool Taxonomy (AD-422)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-principle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Principle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-categories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Categories
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool Categories">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-onboard-utility-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Onboard Utility Agents
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-onboard-infrastructure-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Onboard Infrastructure Services
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-mcp-servers-model-context-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. MCP Servers (Model Context Protocol)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-remote-apis-llm-gateways" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Remote APIs / LLM Gateways
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-computer-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Computer Use
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-browser-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Browser Automation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-communication-channels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Communication Channels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-federation-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Federation Services
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-properties-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Properties Matrix
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool Properties Matrix">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#exclusive-access-loto-lock-out-tag-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exclusive Access (LOTO — Lock Out / Tag Out)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#department-tool-scoping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Department Tool Scoping
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Department Tool Scoping">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#scope-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope Levels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#department-tool-assignments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Department Tool Assignments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ship-wide-tools-available-to-all-crew" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ship-Wide Tools (Available to All Crew)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-department-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-Department Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-this-maps-to-the-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How This Maps to the Registry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#permission-resolution-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Permission Resolution Chain
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Principles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relationship-to-entity-classification-ad-398" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Entity Classification (AD-398)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-registry-ad-423" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Registry (AD-423)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool Registry (AD-423)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#registry-responsibilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registry Responsibilities
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#access-control-model-crud-observe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access Control Model (CRUD + Observe)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Access Control Model (CRUD + Observe)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#permission-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Permission Levels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#default-permission-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default Permission Matrix
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#captain-overrides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Captain Overrides
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-registration-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Registration Schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discovery-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discovery Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integration-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration Points
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-this-replaces-evolves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What This Replaces / Evolves
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="probos-tool-taxonomy-ad-422">ProbOS Tool Taxonomy (AD-422)<a class="headerlink" href="#probos-tool-taxonomy-ad-422" title="Permanent link">&para;</a></h1>
+<p><em>"The microwave doesn't get a name tag, but the chef who uses it does."</em></p>
+<h2 id="core-principle">Core Principle<a class="headerlink" href="#core-principle" title="Permanent link">&para;</a></h2>
+<p>In ProbOS, only sovereign individuals have identity. Everything else is a tool. The delivery mechanism — whether it's a local function call, an MCP server, a cloud API, or a desktop automation session — is irrelevant to the nature of the thing. What matters is the sovereignty test:</p>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th style="text-align: center;">Has Identity?</th>
+<th style="text-align: center;">Earns Trust?</th>
+<th style="text-align: center;">Ward Room?</th>
+<th>Classification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scotty (SWE crew)</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+<td><strong>Crew</strong></td>
+</tr>
+<tr>
+<td>Visiting engineer from USS Reliant</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+<td><strong>Visiting Officer</strong></td>
+</tr>
+<tr>
+<td>BuilderAgent</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">No</td>
+<td><strong>Tool</strong> (onboard)</td>
+</tr>
+<tr>
+<td>Claude Code</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">No</td>
+<td><strong>Tool</strong> (remote)</td>
+</tr>
+<tr>
+<td>MCP filesystem server</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">No</td>
+<td><strong>Tool</strong> (protocol)</td>
+</tr>
+<tr>
+<td>Desktop automation</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">No</td>
+<td><strong>Tool</strong> (computer use)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tool-categories">Tool Categories<a class="headerlink" href="#tool-categories" title="Permanent link">&para;</a></h2>
+<h3 id="1-onboard-utility-agents">1. Onboard Utility Agents<a class="headerlink" href="#1-onboard-utility-agents" title="Permanent link">&para;</a></h3>
+<p>ProbOS agents that provide capabilities as tools. No sovereign identity — they execute when invoked, not when they choose.</p>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Capability</th>
+<th>Used By</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BuilderAgent</td>
+<td>Code generation from build specs</td>
+<td>SWE crew, build pipeline</td>
+</tr>
+<tr>
+<td>CodeReviewerAgent</td>
+<td>Code quality analysis, review</td>
+<td>SWE crew, build pipeline</td>
+</tr>
+<tr>
+<td>SkillEngine</td>
+<td>Skill validation and execution</td>
+<td>Any crew</td>
+</tr>
+<tr>
+<td>IndexerAgent</td>
+<td>Codebase indexing</td>
+<td>Ship's Computer</td>
+</tr>
+<tr>
+<td>FormatterAgent</td>
+<td>Code formatting</td>
+<td>Build pipeline</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Characteristics:</strong>
+- Run in ProbOS process space
+- Access ship's resources directly (filesystem, databases)
+- No personality, no episodic memory, no callsign
+- Invoked via intent routing or direct function call
+- Analogous to: built-in IDE tools, compiler, linter</p>
+<h3 id="2-onboard-infrastructure-services">2. Onboard Infrastructure Services<a class="headerlink" href="#2-onboard-infrastructure-services" title="Permanent link">&para;</a></h3>
+<p>Ship's Computer services that provide foundational capabilities. Shared infrastructure, not tools owned by any single crew member.</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Capability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CodebaseIndex</td>
+<td>Semantic code search, symbol resolution, import graphs</td>
+</tr>
+<tr>
+<td>KnowledgeStore</td>
+<td>Shared knowledge persistence and retrieval</td>
+</tr>
+<tr>
+<td>EpisodicMemory</td>
+<td>Sovereign memory shards per agent</td>
+</tr>
+<tr>
+<td>TrustNetwork</td>
+<td>Trust scoring and consensus</td>
+</tr>
+<tr>
+<td>CognitiveJournal</td>
+<td>Decision recording</td>
+</tr>
+<tr>
+<td>ModelRegistry</td>
+<td>LLM routing and cost awareness</td>
+</tr>
+<tr>
+<td>HebbianRouter</td>
+<td>Learned routing weights</td>
+</tr>
+<tr>
+<td>ChromaDB</td>
+<td>Vector storage and similarity search</td>
+</tr>
+<tr>
+<td>WardRoom</td>
+<td>Communication fabric (infrastructure, not tool)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Characteristics:</strong>
+- Always available while ship is running
+- Shared across all crew and tools
+- Captain manages via HXI
+- Not invoked like tools — they're the substrate everything runs on</p>
+<h3 id="3-mcp-servers-model-context-protocol">3. MCP Servers (Model Context Protocol)<a class="headerlink" href="#3-mcp-servers-model-context-protocol" title="Permanent link">&para;</a></h3>
+<p>Standardized tool interfaces that expose capabilities through the MCP protocol. The protocol is the delivery mechanism; the capability is the tool.</p>
+<table>
+<thead>
+<tr>
+<th>Server Type</th>
+<th>Examples</th>
+<th>Capability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Filesystem</td>
+<td><code>@modelcontextprotocol/server-filesystem</code></td>
+<td>File read/write, directory listing</td>
+</tr>
+<tr>
+<td>Database</td>
+<td><code>@modelcontextprotocol/server-postgres</code>, SQLite</td>
+<td>Query, schema inspection</td>
+</tr>
+<tr>
+<td>Communication</td>
+<td>Slack MCP, email MCP</td>
+<td>Send/receive messages</td>
+</tr>
+<tr>
+<td>Code Intelligence</td>
+<td>Serena (LSP MCP)</td>
+<td>Symbol resolution, definitions, references</td>
+</tr>
+<tr>
+<td>Search</td>
+<td>Web search MCP</td>
+<td>Internet search</td>
+</tr>
+<tr>
+<td>Version Control</td>
+<td>Git MCP</td>
+<td>Commits, diffs, branches</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Characteristics:</strong>
+- Standardized JSON-RPC protocol
+- Hot-pluggable — add/remove without restart (future: Extension-First, Phase 30)
+- Auth handled per-server configuration
+- Crew doesn't know or care that it's MCP — they just use the capability
+- Analogous to: USB peripherals (plug in, works, doesn't matter who made it)</p>
+<h3 id="4-remote-apis-llm-gateways">4. Remote APIs / LLM Gateways<a class="headerlink" href="#4-remote-apis-llm-gateways" title="Permanent link">&para;</a></h3>
+<p>Cloud services accessed over HTTP/SDK. Includes LLM providers and third-party SaaS.</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Protocol</th>
+<th>Capability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Copilot SDK</td>
+<td>HTTP (proxy)</td>
+<td>LLM inference (Claude, GPT)</td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td>HTTP (local)</td>
+<td>Local LLM inference</td>
+</tr>
+<tr>
+<td>OpenAI API</td>
+<td>HTTP</td>
+<td>LLM inference</td>
+</tr>
+<tr>
+<td>Anthropic API</td>
+<td>HTTP</td>
+<td>LLM inference, computer use</td>
+</tr>
+<tr>
+<td>GitHub API</td>
+<td>HTTP (gh CLI)</td>
+<td>Repository operations, issues, PRs</td>
+</tr>
+<tr>
+<td>Stripe API</td>
+<td>HTTP</td>
+<td>Payment processing</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Characteristics:</strong>
+- Network-dependent (latency, availability)
+- Token-metered (cost per call)
+- Auth via API keys, OAuth, or SDK tokens
+- ModelRegistry manages LLM routing across providers
+- Analogous to: cloud services a developer uses (AWS, GitHub, CI/CD)</p>
+<h3 id="5-computer-use">5. Computer Use<a class="headerlink" href="#5-computer-use" title="Permanent link">&para;</a></h3>
+<p>Desktop and GUI automation. Crew members interact with applications the same way a human would — through screens, keyboards, and mice.</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Technology</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Desktop control</td>
+<td>Anthropic Computer Use, PyAutoGUI</td>
+<td>Launch apps, navigate OS</td>
+</tr>
+<tr>
+<td>Screen reading</td>
+<td>Vision models, OCR</td>
+<td>Understand what's on screen</td>
+</tr>
+<tr>
+<td>Keyboard/mouse</td>
+<td>Input simulation</td>
+<td>Type, click, drag</td>
+</tr>
+<tr>
+<td>Window management</td>
+<td>OS APIs</td>
+<td>Arrange, focus, resize windows</td>
+</tr>
+<tr>
+<td>Application interaction</td>
+<td>App-specific automation</td>
+<td>Fill forms, extract data, configure settings</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Characteristics:</strong>
+- Highest-risk tool category (can affect anything on the machine)
+- Requires strongest Earned Agency gates (Commander+ recommended)
+- Side effects are potentially irreversible
+- Must operate within sandbox/permission boundaries
+- Slower than API calls (visual processing, animation waits)
+- Analogous to: remote desktop / VNC, but the operator is an agent</p>
+<p><strong>Earned Agency gates for computer use:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Allowed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ensign</td>
+<td>No computer use</td>
+</tr>
+<tr>
+<td>Lieutenant</td>
+<td>Read-only screen observation</td>
+</tr>
+<tr>
+<td>Commander</td>
+<td>Controlled interaction within approved applications</td>
+</tr>
+<tr>
+<td>Senior</td>
+<td>Full desktop autonomy within Captain-defined boundaries</td>
+</tr>
+</tbody>
+</table>
+<h3 id="6-browser-automation">6. Browser Automation<a class="headerlink" href="#6-browser-automation" title="Permanent link">&para;</a></h3>
+<p>Web-based interaction through browser primitives. A specialized subset of computer use focused on web applications.</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Technology</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DOM interaction</td>
+<td>Playwright, Puppeteer</td>
+<td>Click, fill, navigate web pages</td>
+</tr>
+<tr>
+<td>Accessibility tree</td>
+<td>DOM a11y APIs</td>
+<td>Structured page understanding</td>
+</tr>
+<tr>
+<td>Vision mode</td>
+<td>Screenshot + vision model</td>
+<td>Visual page understanding</td>
+</tr>
+<tr>
+<td>Network interception</td>
+<td>Browser DevTools protocol</td>
+<td>API response capture</td>
+</tr>
+<tr>
+<td>Form automation</td>
+<td>CSS selectors, XPath</td>
+<td>Data entry, submission</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Characteristics:</strong>
+- More structured than desktop computer use (DOM provides semantics)
+- Dual-mode: accessibility tree (fast, structured) + vision (fallback, visual)
+- Sandboxable via browser profile isolation
+- Absorbed patterns from Browser Use evaluation (visiting-officers.md)
+- Analogous to: Selenium/Playwright test automation, but purpose-driven by crew</p>
+<h3 id="7-communication-channels">7. Communication Channels<a class="headerlink" href="#7-communication-channels" title="Permanent link">&para;</a></h3>
+<p>Tools that let crew reach the external world. The Ward Room is internal infrastructure; these are outbound channels.</p>
+<table>
+<thead>
+<tr>
+<th>Channel</th>
+<th>Protocol</th>
+<th>Capability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Discord</td>
+<td>discord.py adapter</td>
+<td>Post to Discord channels, respond to commands</td>
+</tr>
+<tr>
+<td>Slack</td>
+<td>MCP or API</td>
+<td>Post messages, read channels</td>
+</tr>
+<tr>
+<td>Email</td>
+<td>SMTP/IMAP</td>
+<td>Send/receive email</td>
+</tr>
+<tr>
+<td>Webhooks</td>
+<td>HTTP POST</td>
+<td>Event notifications to external systems</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Characteristics:</strong>
+- Externally visible — messages go to real humans
+- Requires Captain approval for new channel configuration
+- Earned Agency gates apply (Ensigns can't send external messages)
+- Audit logged (who said what, when, to whom)
+- Analogous to: ship's radio — crew uses it, but the Captain controls who can transmit</p>
+<h3 id="8-federation-services">8. Federation Services<a class="headerlink" href="#8-federation-services" title="Permanent link">&para;</a></h3>
+<p>Tools accessed from other ProbOS ships or Nooplex nodes. Same capabilities as local tools, but sourced from the network.</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Source</th>
+<th>Capability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Remote build API</td>
+<td>Another ProbOS ship</td>
+<td>Code generation</td>
+</tr>
+<tr>
+<td>Shared knowledge query</td>
+<td>Nooplex knowledge mesh</td>
+<td>Cross-ship knowledge</td>
+</tr>
+<tr>
+<td>Federation gossip</td>
+<td>Fleet protocol</td>
+<td>Hebbian weights, trust signals</td>
+</tr>
+<tr>
+<td>Specialist skill</td>
+<td>Remote ship with domain expertise</td>
+<td>Domain-specific capabilities</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Characteristics:</strong>
+- Network-dependent (latency, trust)
+- Cross-ship trust negotiation required
+- Metered (token exchange or reciprocal service)
+- Data sovereignty respected (each ship controls what it shares)
+- Not yet implemented — future federation architecture
+- Analogous to: allied navy sharing intelligence (trust protocols, classification levels)</p>
+<h2 id="tool-properties-matrix">Tool Properties Matrix<a class="headerlink" href="#tool-properties-matrix" title="Permanent link">&para;</a></h2>
+<p>Every tool, regardless of category, has these measurable properties:</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Description</th>
+<th>Values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Location</strong></td>
+<td>Where the tool runs</td>
+<td>onboard, local-network, cloud, federation</td>
+</tr>
+<tr>
+<td><strong>Protocol</strong></td>
+<td>How crew accesses it</td>
+<td>native, MCP, HTTP, WebSocket, computer-use</td>
+</tr>
+<tr>
+<td><strong>Side Effects</strong></td>
+<td>What it can change</td>
+<td>read-only, write, destructive</td>
+</tr>
+<tr>
+<td><strong>Cost</strong></td>
+<td>Resource consumption</td>
+<td>free (local compute), metered (API tokens), reciprocal (federation)</td>
+</tr>
+<tr>
+<td><strong>Latency</strong></td>
+<td>Response time profile</td>
+<td>instant (&lt;100ms), fast (&lt;1s), slow (&lt;30s), interactive (&gt;30s)</td>
+</tr>
+<tr>
+<td><strong>Sandboxing</strong></td>
+<td>Isolation level</td>
+<td>none, process, container, VM, remote</td>
+</tr>
+<tr>
+<td><strong>Auth</strong></td>
+<td>Authentication method</td>
+<td>none, API key, OAuth, federation token, Captain approval</td>
+</tr>
+<tr>
+<td><strong>Agency Gate</strong></td>
+<td>Minimum Earned Agency tier</td>
+<td>none, ensign, lieutenant, commander, senior</td>
+</tr>
+<tr>
+<td><strong>Reversibility</strong></td>
+<td>Can effects be undone?</td>
+<td>fully reversible, partially, irreversible</td>
+</tr>
+<tr>
+<td><strong>Audit</strong></td>
+<td>Logging requirements</td>
+<td>none, internal log, audit trail, Captain notification</td>
+</tr>
+<tr>
+<td><strong>Scope</strong></td>
+<td>Availability</td>
+<td>ship-wide, department, individual</td>
+</tr>
+<tr>
+<td><strong>Concurrency</strong></td>
+<td>Access mode</td>
+<td>concurrent (multiple agents), exclusive (LOTO — one at a time)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="exclusive-access-loto-lock-out-tag-out">Exclusive Access (LOTO — Lock Out / Tag Out)<a class="headerlink" href="#exclusive-access-loto-lock-out-tag-out" title="Permanent link">&para;</a></h3>
+<p>Some tools are <strong>exclusive</strong> — only one agent can hold the lock at a time. This is the software equivalent of industrial LOTO: when an agent checks out an exclusive tool, others are blocked until it's released.</p>
+<p><strong>Which tools need LOTO:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Why Exclusive</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Computer Use (desktop)</td>
+<td>One mouse, one keyboard — concurrent control is chaos</td>
+</tr>
+<tr>
+<td>Deployment pipeline</td>
+<td>Only one deployment at a time prevents conflicts</td>
+</tr>
+<tr>
+<td>Database migrations</td>
+<td>Concurrent migrations corrupt schema state</td>
+</tr>
+<tr>
+<td>Git force push</td>
+<td>Concurrent force pushes create race conditions</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Which tools do NOT need LOTO:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Why Concurrent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CodebaseIndex</td>
+<td>Read-only queries, no contention</td>
+</tr>
+<tr>
+<td>MCP Servers</td>
+<td>Stateless queries, server handles concurrency</td>
+</tr>
+<tr>
+<td>LLM Gateway</td>
+<td>API handles parallel requests</td>
+</tr>
+<tr>
+<td>BuilderAgent</td>
+<td>Multiple agents can generate code simultaneously</td>
+</tr>
+<tr>
+<td>Ward Room</td>
+<td>Communication is inherently concurrent</td>
+</tr>
+</tbody>
+</table>
+<p><strong>LOTO mechanics:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>1. Agent requests exclusive tool    → Registry.acquire(&quot;desktop-control&quot;, agent=&quot;scotty&quot;)
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>2. Registry checks: is tool locked? → No → grant lock, record holder + timestamp
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>3. Tool is now locked to Scotty     → Other agents get &quot;tool locked by Scotty&quot; on attempt
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>4. Scotty completes work            → Registry.release(&quot;desktop-control&quot;, agent=&quot;scotty&quot;)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>5. Tool available again             → Next queued agent (if any) gets the lock
+</code></pre></div>
+<ul>
+<li><strong>Timeout:</strong> Locks auto-expire after a configurable duration (prevents zombie locks)</li>
+<li><strong>Captain break-lock:</strong> Captain can force-release any lock from HXI (<code>/tool-release</code>)</li>
+<li><strong>Queue:</strong> Agents waiting for an exclusive tool are queued by priority (Earned Agency tier)</li>
+<li><strong>Audit:</strong> Lock acquire/release events logged with agent, tool, duration, outcome</li>
+</ul>
+<p>The registration schema gains:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ToolRegistration:
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  ...
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  concurrency: concurrent | exclusive
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  lock_timeout_seconds: float | None     # Auto-release after this duration (exclusive only)
+</code></pre></div></p>
+<h2 id="department-tool-scoping">Department Tool Scoping<a class="headerlink" href="#department-tool-scoping" title="Permanent link">&para;</a></h2>
+<p>Tools are scoped by availability — some are ship-wide utilities, some are department-specific, and some are individual assignments.</p>
+<h3 id="scope-levels">Scope Levels<a class="headerlink" href="#scope-levels" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>Description</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Ship-wide</strong></td>
+<td>Available to all crew regardless of department</td>
+<td>CodebaseIndex, KnowledgeStore, Ward Room, LLM gateway</td>
+</tr>
+<tr>
+<td><strong>Department</strong></td>
+<td>Available to members of a specific department</td>
+<td>BuilderAgent (Engineering), diagnostic scanner (Medical)</td>
+</tr>
+<tr>
+<td><strong>Individual</strong></td>
+<td>Assigned to a specific crew member by Captain or Standing Orders</td>
+<td>Scotty's direct BuilderAgent access, Worf's security scanner</td>
+</tr>
+</tbody>
+</table>
+<h3 id="department-tool-assignments">Department Tool Assignments<a class="headerlink" href="#department-tool-assignments" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Department</th>
+<th>Department-Specific Tools</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Engineering</strong></td>
+<td>BuilderAgent, CodeReviewerAgent, Git MCP, CI/CD pipelines, debugger, profiler</td>
+<td>Build, review, deploy, optimize code</td>
+</tr>
+<tr>
+<td><strong>Science</strong></td>
+<td>Research APIs, web scraper (Firecrawl), data analysis tools, documentation generators</td>
+<td>Research, analyze, document, explore</td>
+</tr>
+<tr>
+<td><strong>Security</strong></td>
+<td>Vulnerability scanners, access auditor, penetration tools, security MCP</td>
+<td>Audit, scan, assess, report threats</td>
+</tr>
+<tr>
+<td><strong>Medical</strong></td>
+<td>Cognitive diagnostics, personality assessors, trust analyzers, fitness evaluators</td>
+<td>Assess crew health, personality drift, cognitive fitness</td>
+</tr>
+<tr>
+<td><strong>Operations</strong></td>
+<td>System monitors, resource trackers, pool managers, scheduling tools</td>
+<td>Monitor, allocate, schedule, optimize resources</td>
+</tr>
+<tr>
+<td><strong>Communications</strong></td>
+<td>Discord adapter, Slack MCP, email gateway, webhook manager</td>
+<td>External messaging, channel management</td>
+</tr>
+<tr>
+<td><strong>Bridge</strong></td>
+<td>All ship-wide tools + cross-department override access</td>
+<td>Command and control</td>
+</tr>
+</tbody>
+</table>
+<h3 id="ship-wide-tools-available-to-all-crew">Ship-Wide Tools (Available to All Crew)<a class="headerlink" href="#ship-wide-tools-available-to-all-crew" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Category</th>
+<th>Why Ship-Wide</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CodebaseIndex</td>
+<td>Infrastructure</td>
+<td>Everyone needs to search the codebase</td>
+</tr>
+<tr>
+<td>KnowledgeStore</td>
+<td>Infrastructure</td>
+<td>Shared knowledge is shared</td>
+</tr>
+<tr>
+<td>EpisodicMemory</td>
+<td>Infrastructure</td>
+<td>Every agent has a sovereign memory shard</td>
+</tr>
+<tr>
+<td>Ward Room</td>
+<td>Infrastructure</td>
+<td>Communication fabric for all crew</td>
+</tr>
+<tr>
+<td>LLM Gateway (ModelRegistry)</td>
+<td>Remote API</td>
+<td>Every crew member needs to think</td>
+</tr>
+<tr>
+<td>MCP Servers (read-only)</td>
+<td>MCP</td>
+<td>Information retrieval is universal</td>
+</tr>
+<tr>
+<td>Browser Automation (read-only)</td>
+<td>Browser</td>
+<td>Observation available to all (write gates by rank)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="cross-department-access">Cross-Department Access<a class="headerlink" href="#cross-department-access" title="Permanent link">&para;</a></h3>
+<p>Crew members can request access to another department's tools:
+- <strong>Standing Orders grant:</strong> Department-level Standing Orders can pre-authorize cross-department access (e.g., "Security has OR- on Engineering's CI/CD logs")
+- <strong>Captain grant:</strong> Explicit per-agent override for specific tools
+- <strong>Temporary elevation:</strong> Time-scoped access for a specific mission ("LaForge needs Medical diagnostics for the next hour to investigate a crew performance issue")
+- <strong>Earned Agency unlock:</strong> Commander+ rank unlocks broader cross-department read access by default</p>
+<h3 id="how-this-maps-to-the-registry">How This Maps to the Registry<a class="headerlink" href="#how-this-maps-to-the-registry" title="Permanent link">&para;</a></h3>
+<p>The Tool Registration Schema gains scope and access fields:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ToolRegistration:
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  ...
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  scope: ship-wide | department               # Visibility — who can see this tool
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  department: str | None                       # If department-scoped, which department
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  restricted_to: list[str] | None             # If set, only these agents can invoke (within scope)
+</code></pre></div>
+<h3 id="permission-resolution-chain">Permission Resolution Chain<a class="headerlink" href="#permission-resolution-chain" title="Permanent link">&para;</a></h3>
+<p>Permissions resolve through a layered chain. Each layer narrows access — never widens it.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>1. Scope Filter        → Can this agent SEE the tool? (ship-wide or agent&#39;s department)
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>2. Restriction Filter  → Is the agent in the restricted_to list? (if set)
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>3. Rank Gate           → Does the agent&#39;s Earned Agency tier meet the minimum?
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>4. Permission Level    → What CRUD+O level does this agent get?
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>5. Captain Override    → Any per-agent grants or restrictions?
+</code></pre></div>
+<p><strong>Layer interaction:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>restricted_to</th>
+<th>Who Can Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ship-wide</td>
+<td>None</td>
+<td>All crew (gated by rank)</td>
+</tr>
+<tr>
+<td>ship-wide</td>
+<td>["scotty"]</td>
+<td>All crew can see, only Scotty can invoke</td>
+</tr>
+<tr>
+<td>department: medical</td>
+<td>None</td>
+<td>All medical crew (gated by rank)</td>
+</tr>
+<tr>
+<td>department: medical</td>
+<td>["diagnostician"]</td>
+<td>Only Bones — medical-scoped, individually restricted</td>
+</tr>
+<tr>
+<td>department: security</td>
+<td>["security_officer"]</td>
+<td>Only Worf — security-scoped, individually restricted</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Example: Medical diagnostic tool</strong></p>
+<p>A sensitive cognitive assessment scanner. Medical department only, Bones only:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>tool_id: &quot;cognitive-deep-scan&quot;
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>scope: department
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>department: medical
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>restricted_to: [&quot;diagnostician&quot;]    # Only Bones
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>side_effects: read-only
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>default_permissions:
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  ensign: ---
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  lieutenant: OR-
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  commander: ORW
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  senior: ORWD
+</code></pre></div></p>
+<p>Chapel (Medical Ensign) can see the tool exists in her department but gets <code>---</code>. A future Medical Lieutenant could see <code>OR-</code> but is blocked by <code>restricted_to</code>. Only Bones passes all layers.</p>
+<p><strong>Example: Vulnerability scanner</strong></p>
+<p>Security department only, Worf only, destructive capability:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>tool_id: &quot;vuln-scanner-active&quot;
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>scope: department
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>department: security
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>restricted_to: [&quot;security_officer&quot;]    # Only Worf
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>side_effects: destructive              # Active scanning can affect targets
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>default_permissions:
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>  commander: ORW
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>  senior: ORWD
+</code></pre></div></p>
+<p><strong>Captain override still trumps everything.</strong> The Captain can:
+- Add an agent to <code>restricted_to</code> at runtime
+- Remove restrictions temporarily (time-scoped)
+- Grant cross-department + individual access in a single override</p>
+<p>Standing Orders (Tier 3, Department) define the default tool set per department. The Tool Registry enforces the full resolution chain at runtime.</p>
+<h2 id="design-principles">Design Principles<a class="headerlink" href="#design-principles" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Crew uses tools; tools don't use crew.</strong> The sovereign agent decides what to do and why. The tool handles how.</p>
+</li>
+<li>
+<p><strong>Protocol is plumbing, not identity.</strong> Whether a capability arrives via native call, MCP, HTTP, or screen automation doesn't change its nature as a tool.</p>
+</li>
+<li>
+<p><strong>Earned Agency gates scale with risk.</strong> Read-only tools need minimal trust. Destructive or externally-visible tools require Commander+ trust. Computer use requires the highest gates.</p>
+</li>
+<li>
+<p><strong>Tools are composable.</strong> A crew member can chain tools — use CodebaseIndex to find the problem, BuilderAgent to write the fix, browser automation to verify in staging, and Discord to report the result.</p>
+</li>
+<li>
+<p><strong>New tools don't require new architecture.</strong> Adding a tool (MCP server, API integration, computer use provider) is configuration, not code change. The crew member doesn't need to know the internals.</p>
+</li>
+<li>
+<p><strong>The Captain always has the stick.</strong> Every tool can be disabled, restricted, or audited from the HXI. No tool operates without the Captain's knowledge.</p>
+</li>
+<li>
+<p><strong>Department scoping is a performance optimization.</strong> When a crew member queries the registry, they see their department's tools + ship-wide tools — not the full catalog. Bones doesn't evaluate BuilderAgent. Scotty doesn't evaluate cognitive diagnostics. Smaller tool set = faster discovery, fewer irrelevant options in the LLM context window, lower token cost per decision. The right tools for the right crew.</p>
+</li>
+</ol>
+<h2 id="relationship-to-entity-classification-ad-398">Relationship to Entity Classification (AD-398)<a class="headerlink" href="#relationship-to-entity-classification-ad-398" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>AD-398 Tier</th>
+<th style="text-align: center;">Identity?</th>
+<th>Examples</th>
+<th>Tool Taxonomy Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Core Infrastructure</td>
+<td style="text-align: center;">No</td>
+<td>CodebaseIndex, KnowledgeStore</td>
+<td>Infrastructure services (Category 2)</td>
+</tr>
+<tr>
+<td>Utility Agents</td>
+<td style="text-align: center;">No</td>
+<td>BuilderAgent, CodeReviewerAgent</td>
+<td>Onboard utility tools (Category 1)</td>
+</tr>
+<tr>
+<td>Crew</td>
+<td style="text-align: center;"><strong>Yes</strong></td>
+<td>Scotty, LaForge, Worf</td>
+<td><strong>Tool consumers</strong> — they use tools</td>
+</tr>
+</tbody>
+</table>
+<p>The tool taxonomy extends AD-398 by classifying <em>all</em> non-sovereign capabilities, not just ProbOS agents. MCP servers, cloud APIs, computer use, and federation services are all tools — they just weren't part of AD-398's scope because they lived outside the agent classification.</p>
+<h2 id="tool-registry-ad-423">Tool Registry (AD-423)<a class="headerlink" href="#tool-registry-ad-423" title="Permanent link">&para;</a></h2>
+<p>As the tool ecosystem grows, ProbOS needs a <strong>Tool Registry</strong> — a runtime catalog of all available tools across all categories. This is the natural evolution of ModelRegistry (which already does this for LLM providers) generalized to all tool types.</p>
+<h3 id="registry-responsibilities">Registry Responsibilities<a class="headerlink" href="#registry-responsibilities" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Catalog</strong></td>
+<td>What tools are registered, their category, location, capabilities</td>
+</tr>
+<tr>
+<td><strong>Discovery</strong></td>
+<td>"What tools can do X?" — crew queries registry by capability, not by name</td>
+</tr>
+<tr>
+<td><strong>Health</strong></td>
+<td>Is this tool responding? Latency? Error rate? Last successful call?</td>
+</tr>
+<tr>
+<td><strong>Cost</strong></td>
+<td>Token/API consumption per tool, per agent, per time period</td>
+</tr>
+<tr>
+<td><strong>Access Control</strong></td>
+<td>Who can use what, at what permission level (see below)</td>
+</tr>
+<tr>
+<td><strong>Audit</strong></td>
+<td>Full log of tool invocations — who called what, when, with what result</td>
+</tr>
+<tr>
+<td><strong>Lifecycle</strong></td>
+<td>Register, deregister, enable/disable tools at runtime</td>
+</tr>
+</tbody>
+</table>
+<h3 id="access-control-model-crud-observe">Access Control Model (CRUD + Observe)<a class="headerlink" href="#access-control-model-crud-observe" title="Permanent link">&para;</a></h3>
+<p>Tools support fine-grained permission levels. Each crew member gets a permission set per tool, gated by Earned Agency tier and Captain overrides.</p>
+<h4 id="permission-levels">Permission Levels<a class="headerlink" href="#permission-levels" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Code</th>
+<th>Description</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>None</strong></td>
+<td><code>---</code></td>
+<td>Tool not accessible</td>
+<td>Ensign can't use computer use</td>
+</tr>
+<tr>
+<td><strong>Observe</strong></td>
+<td><code>O--</code></td>
+<td>Read-only, passive monitoring</td>
+<td>Watch screen activity, read browser DOM</td>
+</tr>
+<tr>
+<td><strong>Read</strong></td>
+<td><code>OR-</code></td>
+<td>Query/retrieve data, no mutations</td>
+<td>Search codebase, read database, view files</td>
+</tr>
+<tr>
+<td><strong>Write</strong></td>
+<td><code>ORW</code></td>
+<td>Create and modify</td>
+<td>Write files, send messages, fill forms</td>
+</tr>
+<tr>
+<td><strong>Full</strong></td>
+<td><code>ORWD</code></td>
+<td>Delete, destructive operations</td>
+<td>Drop tables, delete files, force push</td>
+</tr>
+</tbody>
+</table>
+<h4 id="default-permission-matrix">Default Permission Matrix<a class="headerlink" href="#default-permission-matrix" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Tool Category</th>
+<th>Ensign</th>
+<th>Lieutenant</th>
+<th>Commander</th>
+<th>Senior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Onboard infrastructure</td>
+<td><code>OR-</code></td>
+<td><code>OR-</code></td>
+<td><code>ORW</code></td>
+<td><code>ORWD</code></td>
+</tr>
+<tr>
+<td>Onboard utility agents</td>
+<td><code>OR-</code></td>
+<td><code>ORW</code></td>
+<td><code>ORW</code></td>
+<td><code>ORWD</code></td>
+</tr>
+<tr>
+<td>MCP Servers (read-only)</td>
+<td><code>OR-</code></td>
+<td><code>OR-</code></td>
+<td><code>OR-</code></td>
+<td><code>OR-</code></td>
+</tr>
+<tr>
+<td>MCP Servers (read-write)</td>
+<td><code>---</code></td>
+<td><code>OR-</code></td>
+<td><code>ORW</code></td>
+<td><code>ORWD</code></td>
+</tr>
+<tr>
+<td>Remote APIs / LLM</td>
+<td><code>OR-</code></td>
+<td><code>ORW</code></td>
+<td><code>ORW</code></td>
+<td><code>ORWD</code></td>
+</tr>
+<tr>
+<td>Computer Use</td>
+<td><code>---</code></td>
+<td><code>O--</code></td>
+<td><code>ORW</code></td>
+<td><code>ORWD</code></td>
+</tr>
+<tr>
+<td>Browser Automation</td>
+<td><code>---</code></td>
+<td><code>OR-</code></td>
+<td><code>ORW</code></td>
+<td><code>ORWD</code></td>
+</tr>
+<tr>
+<td>Communication Channels</td>
+<td><code>---</code></td>
+<td><code>OR-</code></td>
+<td><code>ORW</code></td>
+<td><code>ORW</code></td>
+</tr>
+<tr>
+<td>Federation Services</td>
+<td><code>---</code></td>
+<td><code>OR-</code></td>
+<td><code>ORW</code></td>
+<td><code>ORW</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="captain-overrides">Captain Overrides<a class="headerlink" href="#captain-overrides" title="Permanent link">&para;</a></h4>
+<p>The Captain can override any default:
+- <strong>Grant up:</strong> Give Wesley (Ensign) <code>ORW</code> on BuilderAgent for a specific task
+- <strong>Restrict down:</strong> Lock Worf (Commander) to <code>OR-</code> on communication channels during an investigation
+- <strong>Blanket disable:</strong> Turn off all computer use ship-wide
+- <strong>time-scoped:</strong> Grant elevated access for a window ("Wesley can use browser automation for the next 2 hours")</p>
+<p>Overrides are managed via HXI (Tool Registry panel) or <code>/tool-access</code> command.</p>
+<h3 id="tool-registration-schema">Tool Registration Schema<a class="headerlink" href="#tool-registration-schema" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ToolRegistration:
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  tool_id: str                    # Unique identifier (e.g., &quot;builder&quot;, &quot;mcp-filesystem&quot;, &quot;copilot-sdk&quot;)
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  display_name: str               # Human-readable name
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  category: ToolCategory          # One of the 8 taxonomy categories
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  location: onboard | local | cloud | federation
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  protocol: native | mcp | http | websocket | computer-use | browser
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>  capabilities: list[str]         # Semantic tags: [&quot;code-generation&quot;, &quot;file-write&quot;, &quot;llm-inference&quot;]
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>  side_effects: read-only | write | destructive
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>  cost_model: free | metered | reciprocal
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>  scope: ship-wide | department   # Visibility level
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>  department: str | None          # If department-scoped, which department
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>  restricted_to: list[str] | None # If set, only these agents can invoke (within scope)
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>  default_permissions: dict[Rank, PermissionLevel]
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>  health_check: HealthCheckConfig | None
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>  sandbox: SandboxConfig | None
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>  enabled: bool                   # Captain kill switch
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>  concurrency: concurrent | exclusive  # LOTO — exclusive tools need lock acquisition
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>  lock_timeout_seconds: float | None   # Auto-release for exclusive tools (prevents zombie locks)
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>  registered_at: float            # When this tool was added
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>  last_healthy: float | None      # Last successful health check
+</code></pre></div>
+<h3 id="discovery-flow">Discovery Flow<a class="headerlink" href="#discovery-flow" title="Permanent link">&para;</a></h3>
+<p>When a crew member needs a capability:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>1. Crew member: &quot;I need to read database records&quot;
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>2. Registry.discover(capability=&quot;database-read&quot;) →
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>   [
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>     {tool: &quot;mcp-postgres&quot;, permission: &quot;OR-&quot;, status: &quot;healthy&quot;},
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>     {tool: &quot;mcp-sqlite&quot;, permission: &quot;ORW&quot;, status: &quot;healthy&quot;},
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>     {tool: &quot;codebase-index&quot;, permission: &quot;OR-&quot;, status: &quot;healthy&quot;},
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>   ]
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>3. Agent selects appropriate tool based on context
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>4. Registry checks permission → allow/deny
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>5. Tool invoked, result returned
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>6. Audit log records: agent, tool, operation, result, tokens, duration
+</code></pre></div>
+<h3 id="integration-points">Integration Points<a class="headerlink" href="#integration-points" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>System</th>
+<th>Integration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ModelRegistry</strong></td>
+<td>Absorb into Tool Registry — LLM providers are just another tool category</td>
+</tr>
+<tr>
+<td><strong>Earned Agency</strong></td>
+<td>Permission levels derived from trust tier + Captain overrides</td>
+</tr>
+<tr>
+<td><strong>HebbianRouter</strong></td>
+<td>Tool selection can be Hebbian-weighted — agents learn which tools work best</td>
+</tr>
+<tr>
+<td><strong>Event Log</strong></td>
+<td>Tool invocations emit events for monitoring and dream consolidation</td>
+</tr>
+<tr>
+<td><strong>HXI</strong></td>
+<td>Tool Registry panel — view all tools, health, permissions, cost; Captain management</td>
+</tr>
+<tr>
+<td><strong>Standing Orders</strong></td>
+<td>Department-level tool access rules (e.g., "Engineering has ORW on all build tools")</td>
+</tr>
+<tr>
+<td><strong>Extension-First (Phase 30)</strong></td>
+<td>Extensions register their tools through this registry</td>
+</tr>
+<tr>
+<td><strong>MCP Protocol</strong></td>
+<td>MCP servers auto-register on connection, deregister on disconnect</td>
+</tr>
+</tbody>
+</table>
+<h3 id="what-this-replaces-evolves">What This Replaces / Evolves<a class="headerlink" href="#what-this-replaces-evolves" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>ModelRegistry</strong> (current) → becomes the LLM subset of Tool Registry</li>
+<li><strong>Implicit tool access</strong> (current) → explicit, audited, permission-gated access</li>
+<li><strong>Ad-hoc MCP wiring</strong> (future) → standardized registration and discovery</li>
+<li><strong>Extension config</strong> (Phase 30) → extensions declare tools, registry manages access</li>
+</ul>
+<p><em>Connects to: AD-357 (Earned Agency), AD-398 (three-tier classification), AD-421 (Scotty as SWE crew), AD-422 (tool taxonomy), Phase 30 (Extension-First), ModelRegistry.</em></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
