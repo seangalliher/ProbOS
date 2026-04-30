@@ -569,6 +569,15 @@ async def finalize_startup(
             runtime.dispatcher = dispatcher
             logger.info("Startup [finalize]: AD-654c Dispatcher created")
 
+            # AD-438: Ontology-Based Task Routing
+            from probos.activation.task_router import TaskRouter
+            task_router = TaskRouter(ontology=runtime.ontology)
+            runtime._task_router = task_router
+            logger.info(
+                "AD-438: TaskRouter initialized with %d mappings",
+                len(task_router.list_mappings()),
+            )
+
             # AD-654d: Wire dispatcher into internal emitters
             if runtime.work_item_store:
                 runtime.work_item_store.attach_dispatcher(runtime.dispatcher)

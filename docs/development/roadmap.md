@@ -4078,7 +4078,7 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 
 
-**AD-438: Ontology-Based Task Routing** *(planned)* — Move from broadcast-and-claim (blackboard architecture) to directed assignment (contract net protocol) using the Vessel Ontology. When a goal enters the system, the ontology maps it to the right agent based on post responsibilities, role skills, current workload, and chain of command. Broadcast remains as fallback for novel/unclassifiable tasks. Dual routing: directed for routine, broadcast for novel. *Connects to: AD-429 (Ontology), AD-428 (Skills), AD-419 (Duty Schedule), AD-357 (Earned Agency).*
+**AD-438: Ontology-Based Task Routing** *(Complete, OSS)* — Added `TaskRouter` to map intent types to departments and resolve directed agent targets through ontology posts and assignments, with broadcast fallback for unmapped or unwired departments. Includes runtime mapping registration, `EventType.TASK_ROUTED`, finalize-time `_task_router` wiring, and `/api/task-router` visibility. *Connects to: AD-429 (Ontology), AD-428 (Skills), AD-419 (Duty Schedule), AD-357 (Earned Agency).*
 
 **AD-439: Emergent Leadership Detection** *(planned)* — Monitor Hebbian weight patterns for emergent vs. designed hierarchy alignment. When agents naturally defer to someone other than their designated superior (measurable via endorsement patterns, Ward Room influence, Hebbian routing weights), flag the divergence for Captain review. Healthy organizations show alignment; divergence signals either a miscast role or emergent talent. Dashboard visualization: designed org chart overlaid with Hebbian influence graph. *Connects to: AD-429 (Ontology — designed structure), Ward Room (emergent patterns), Hebbian network.*
 

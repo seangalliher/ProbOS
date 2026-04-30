@@ -97,6 +97,18 @@ async def resume_decision_queue(runtime: Any = Depends(get_runtime)) -> dict[str
     return {"status": "resumed"}
 
 
+@router.get("/task-router")
+async def get_task_router(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """Return task routing configuration (AD-438)."""
+    task_router = getattr(runtime, "_task_router", None)
+    if not task_router:
+        return {"status": "disabled", "mappings": {}}
+    return {
+        "status": "active",
+        "mappings": task_router.list_mappings(),
+    }
+
+
 @router.get("/system/services")
 async def system_services(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """AD-436: Service status for Bridge System panel."""

@@ -209,6 +209,7 @@ class EventType(str, Enum):
     QUEUE_OVERFLOW = "queue_overflow"
 
     # ── TaskEvent Dispatcher (AD-654c) ─────────────────────────────
+    TASK_ROUTED = "task_routed"  # AD-438
     TASK_EVENT_DISPATCHED = "task_event_dispatched"
     TASK_EVENT_UNROUTABLE = "task_event_unroutable"
 
