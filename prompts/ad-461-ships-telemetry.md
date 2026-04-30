@@ -213,8 +213,28 @@ grep -n "records:" src/probos/config.py
 
 **File:** `src/probos/startup/cognitive_services.py`
 
-Add telemetry service initialization. Find the module's initialization
-section and add before the Oracle Service block:
+`init_cognitive_services()` does NOT receive `runtime` directly. It takes
+`emit_event_fn` and returns a `CognitiveServicesResult` that `runtime.py`
+unpacks onto `self`. AD-461 follows the same pattern.
+
+#### 4a. Add `telemetry_service` field to `CognitiveServicesResult`
+
+**File:** `src/probos/startup/results.py`
+
+Find the `CognitiveServicesResult` dataclass (around line 89) and add a new
+field at the end of the optional-fields block (after `expertise_directory`):
+
+```python
+    telemetry_service: Any = None  # AD-461
+```
+
+#### 4b. Initialize TelemetryService inside `init_cognitive_services`
+
+**File:** `src/probos/startup/cognitive_services.py`
+
+Add the construction block before the function's `return CognitiveServicesResult(...)`
+statement. Use the already-available `emit_event_fn` parameter — do NOT
+introduce a new `runtime` parameter.
 
 ```python
     # AD-461: Ship's Telemetry
@@ -223,19 +243,33 @@ section and add before the Oracle Service block:
         try:
             from probos.substrate.telemetry import TelemetryService
             telemetry_service = TelemetryService(
-                emit_fn=runtime.emit_event,
+                emit_fn=emit_event_fn,
                 report_interval_seconds=config.telemetry.report_interval_seconds,
                 max_samples_per_bucket=config.telemetry.max_samples_per_bucket,
             )
-            runtime._telemetry_service = telemetry_service
             logger.info("AD-461: TelemetryService initialized")
         except Exception as e:
             logger.warning("TelemetryService failed to start: %s — continuing without", e)
 ```
 
-Store on runtime so cognitive agents can access it for timing their
-operations. Future ADs will add `telemetry.measure()` wrappers around
-LLM calls, trust updates, etc.
+Add `telemetry_service=telemetry_service` to the `return CognitiveServicesResult(...)`
+call alongside the other named fields.
+
+#### 4c. Assign onto runtime
+
+**File:** `src/probos/runtime.py`
+
+After the existing block that unpacks `cog.*` onto `self.*` (around line 1270,
+the section that already does `self.self_mod_pipeline = cog.self_mod_pipeline`,
+etc.), add:
+
+```python
+        self._telemetry_service = cog.telemetry_service  # AD-461
+```
+
+Cognitive agents and the API endpoint (Section 5) read it as
+`runtime._telemetry_service`. Future ADs that wrap LLM/trust calls in
+`telemetry.measure()` will reach for it through this attribute.
 
 ### Section 5: Add telemetry API endpoint
 
