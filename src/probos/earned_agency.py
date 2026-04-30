@@ -36,6 +36,20 @@ class InitiativeLevel(int, Enum):
     STRATEGIC = 4
 
 
+@dataclass(frozen=True)
+class UncertaintyContext:
+    """Captures confidence factors for initiative calibration (AD-675)."""
+
+    oracle_confidence: float = 1.0
+    health_confidence: float = 1.0
+    data_freshness: float = 1.0
+
+    @property
+    def aggregate_confidence(self) -> float:
+        """Minimum confidence across all factors."""
+        return min(self.oracle_confidence, self.health_confidence, self.data_freshness)
+
+
 class RecallTier(str, Enum):
     """Memory recall capability tier — mapped from Earned Agency rank (AD-462c)."""
     BASIC = "basic"            # Vector similarity only, small budget
@@ -220,6 +234,42 @@ def resolve_initiative_level(
     if trust_score >= t_responsive:
         return InitiativeLevel.RESPONSIVE
     return InitiativeLevel.DIRECTED
+
+
+def calibrate_initiative(
+    base_level: "InitiativeLevel",
+    confidence: float,
+    *,
+    low_confidence_threshold: float = 0.4,
+    critical_confidence_threshold: float = 0.2,
+) -> "InitiativeLevel":
+    """Calibrate initiative level by confidence (AD-675).
+
+    When confidence is low, clamp initiative downward:
+    - confidence >= low_threshold: no change
+    - low_threshold > confidence >= critical_threshold: clamp down 1 level
+    - confidence < critical_threshold: clamp down 2 levels (min DIRECTED)
+
+    This prevents agents from acting autonomously when the information
+    driving their decisions is uncertain.
+
+    Args:
+        base_level: Initiative level from resolve_initiative_level()
+        confidence: 0.0-1.0 confidence in current observations
+        low_confidence_threshold: Below this, clamp down 1 level
+        critical_confidence_threshold: Below this, clamp down 2 levels
+    """
+    if confidence >= low_confidence_threshold:
+        return base_level
+
+    current = base_level.value
+
+    if confidence < critical_confidence_threshold:
+        clamped = max(0, current - 2)
+    else:
+        clamped = max(0, current - 1)
+
+    return InitiativeLevel(clamped)
 
 
 def can_respond_ambient(
