@@ -14,6 +14,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -117,6 +118,29 @@ class CounselorAssessment:
             if k in cls.__dataclass_fields__:
                 setattr(result, k, v)
         return result
+
+
+class InterventionType(str, Enum):
+    """Classification of Counselor interventions (AD-561)."""
+
+    THERAPEUTIC_DM = "therapeutic_dm"
+    COOLDOWN_EXTENSION = "cooldown_extension"
+    FORCED_DREAM = "forced_dream"
+    GUIDANCE_DIRECTIVE = "guidance_directive"
+    TRUST_ADJUSTMENT = "trust_adjustment"
+
+
+@dataclass
+class InterventionRecord:
+    """Structured record of a Counselor intervention (AD-561)."""
+
+    intervention_type: InterventionType
+    agent_id: str
+    callsign: str
+    trigger: str
+    severity: str
+    detail: str
+    timestamp: float = field(default_factory=time.time)
 
 
 @dataclass
@@ -523,12 +547,78 @@ class CounselorAgent(CognitiveAgent):
         self._proactive_loop: Any = None      # AD-505: for cooldown adjustment
         self._dm_cooldowns: dict[str, float] = {}  # AD-505: agent_id -> monotonic timestamp of last DM
         self._intervention_targets: set[str] = set()  # AD-506a: agents with forced dream pending
+        # AD-561: Intervention tracking
+        self._intervention_history: list[InterventionRecord] = []
         # AD-541d: Guided Reminiscence
         self._reminiscence_engine: Any = None  # Set via set_reminiscence_engine()
         self._reminiscence_cooldowns: dict[str, float] = {}
         self._REMINISCENCE_COOLDOWN_SECONDS: int = 7200  # 2 hours default
         self._reminiscence_concern_threshold: int = 3
         self._confabulation_alert_threshold: float = 0.3
+
+    def _record_intervention(
+        self,
+        intervention_type: InterventionType,
+        agent_id: str,
+        callsign: str,
+        trigger: str,
+        severity: str,
+        detail: str,
+    ) -> InterventionRecord:
+        """Record and emit a classified intervention (AD-561)."""
+        record = InterventionRecord(
+            intervention_type=intervention_type,
+            agent_id=agent_id,
+            callsign=callsign,
+            trigger=trigger,
+            severity=severity,
+            detail=detail,
+        )
+        if not hasattr(self, "_intervention_history"):
+            self._intervention_history = []
+        self._intervention_history.append(record)
+        if self._emit_event_fn:
+            try:
+                self._emit_event_fn(EventType.COUNSELOR_INTERVENTION, {
+                    "intervention_type": intervention_type.value,
+                    "agent_id": agent_id,
+                    "callsign": callsign,
+                    "trigger": trigger,
+                    "severity": severity,
+                    "detail": detail,
+                    "timestamp": record.timestamp,
+                })
+            except Exception:
+                logger.warning(
+                    "AD-561: Failed to emit Counselor intervention event for agent_id=%s intervention_type=%s; history record retained",
+                    agent_id,
+                    intervention_type.value,
+                    exc_info=True,
+                )
+        return record
+
+    def get_intervention_history(
+        self,
+        *,
+        agent_id: str = "",
+        intervention_type: InterventionType | None = None,
+        limit: int = 50,
+    ) -> list[InterventionRecord]:
+        """Query intervention history with optional filters (AD-561)."""
+        results = self._intervention_history
+        if agent_id:
+            results = [r for r in results if r.agent_id == agent_id]
+        if intervention_type:
+            results = [r for r in results if r.intervention_type == intervention_type]
+        return results[-limit:]
+
+    def get_intervention_summary(self) -> dict[str, int]:
+        """Return counts by intervention type (AD-561)."""
+        counts: dict[str, int] = {}
+        for record in self._intervention_history:
+            key = record.intervention_type.value
+            counts[key] = counts.get(key, 0) + 1
+        return counts
 
     # -- AD-503: Initialization and event wiring --
 
@@ -2148,6 +2238,14 @@ class CounselorAgent(CognitiveAgent):
 
             self._dm_cooldowns[agent_id] = now
             logger.info("AD-505: Sent therapeutic DM to %s", callsign)
+            self._record_intervention(
+                InterventionType.THERAPEUTIC_DM,
+                agent_id=agent_id,
+                callsign=callsign,
+                trigger="",
+                severity="concern",
+                detail=f"Therapeutic DM sent: {message[:100]}...",
+            )
             return True
 
         except Exception:
@@ -2459,6 +2557,14 @@ class CounselorAgent(CognitiveAgent):
                 actions_taken.append(
                     f"Extended cooldown to {new_cooldown:.0f}s ({multiplier}x) — {reason}"
                 )
+                self._record_intervention(
+                    InterventionType.COOLDOWN_EXTENSION,
+                    agent_id=agent_id,
+                    callsign=callsign,
+                    trigger=assessment.trigger,
+                    severity=severity,
+                    detail=f"Cooldown extended to {new_cooldown:.0f}s (multiplier {multiplier}x)",
+                )
             except Exception:
                 logger.warning("AD-505: Failed to extend cooldown", exc_info=True)
 
@@ -2469,6 +2575,14 @@ class CounselorAgent(CognitiveAgent):
                     await self._dream_scheduler.force_dream()
                     actions_taken.append("Triggered system dream cycle for consolidation")
                     self._intervention_targets.add(agent_id)  # AD-506a: track for post-dream re-assessment
+                    self._record_intervention(
+                        InterventionType.FORCED_DREAM,
+                        agent_id=agent_id,
+                        callsign=callsign,
+                        trigger=assessment.trigger,
+                        severity=severity,
+                        detail="Forced dream cycle initiated",
+                    )
                 else:
                     actions_taken.append("Dream cycle already in progress — skipped")
             except Exception:
@@ -2488,6 +2602,14 @@ class CounselorAgent(CognitiveAgent):
             )
             if self._issue_guidance_directive(agent_type, directive_content):
                 actions_taken.append(f"Issued COUNSELOR_GUIDANCE directive: {concern_summary}")
+                self._record_intervention(
+                    InterventionType.GUIDANCE_DIRECTIVE,
+                    agent_id=agent_id,
+                    callsign=callsign,
+                    trigger=assessment.trigger,
+                    severity=severity,
+                    detail=f"Directive issued: {directive_content[:100]}...",
+                )
 
         # 4. Post recommendation BridgeAlert for Captain visibility
         if actions_taken:

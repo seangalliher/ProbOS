@@ -74,6 +74,29 @@ async def crew_summary(runtime: Any = Depends(get_runtime)) -> Any:
     }
 
 
+@router.get("/interventions")
+async def get_interventions(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """Return Counselor intervention summary (AD-561)."""
+    counselor = _get_counselor_agent(runtime)
+    if not counselor:
+        return {"status": "no_counselor", "summary": {}, "recent": []}
+    return {
+        "summary": counselor.get_intervention_summary(),
+        "recent": [
+            {
+                "type": r.intervention_type.value,
+                "agent_id": r.agent_id,
+                "callsign": r.callsign,
+                "trigger": r.trigger,
+                "severity": r.severity,
+                "detail": r.detail,
+                "timestamp": r.timestamp,
+            }
+            for r in counselor.get_intervention_history(limit=20)
+        ],
+    }
+
+
 @router.post("/assess/{agent_id}")
 async def assess_agent(agent_id: str, runtime: Any = Depends(get_runtime)) -> Any:
     """Trigger an on-demand assessment for a specific agent."""

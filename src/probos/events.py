@@ -123,6 +123,7 @@ class EventType(str, Enum):
     CIRCUIT_BREAKER_TRIP = "circuit_breaker_trip"
     DREAM_COMPLETE = "dream_complete"
     COUNSELOR_ASSESSMENT = "counselor_assessment"
+    COUNSELOR_INTERVENTION = "counselor_intervention"  # AD-561
     SELF_MONITORING_CONCERN = "self_monitoring_concern"  # AD-506a: amber zone
     ZONE_RECOVERY = "zone_recovery"  # AD-506b: agent zone improved
     PEER_REPETITION_DETECTED = "peer_repetition_detected"  # AD-506b
