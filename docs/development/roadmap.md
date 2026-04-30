@@ -4106,7 +4106,7 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 **AD-447: Phase Gates for Pool Orchestration** *(Complete, OSS)* — Formal phase gates for PoolGroup orchestration. Phase N must complete + validate before Phase N+1 starts. Phases define participating agents, dependency ordering, completion criteria, and validation steps. *Connects to: PoolGroup orchestration, AD-438 (Ontology-Based Task Routing), AD-419 (Duty Schedule).*
 
-**AD-448: Wrapped Tool Executor — Security Intercept Layer** *(planned, OSS)* — Transparent tool call interception: logging, rate limiting, policy enforcement, selective local/remote routing. Every outbound tool call passes through security middleware. Agent sees unified interface. *Connects to: AD-398 (Agent Classification), Earned Agency, SIF.*
+**AD-448: Wrapped Tool Executor — Security Intercept Layer** *(Complete, OSS)* — Added `ToolExecutor` as a wrapper above `ToolRegistry.check_and_invoke()` with pre-hook aborts, fail-open pre-hook exception handling, post-hook result observation, centralized timing, `make_audit_hook()` emission of `EventType.TOOL_INVOKED`, and finalize-time `_tool_executor` wiring. Permission resolution and LOTO remain delegated to `ToolRegistry`. *Connects to: AD-398 (Agent Classification), Earned Agency, SIF.*
 
 **AD-449: MCP Bridge — External System Integration** *(planned, Commercial)* — Session-managed MCP bridge for ProbOS agents to interact with external systems (ERPs, CRMs, databases). JSON-RPC over Streamable HTTP, session management, tool routing. Bridge infrastructure is OSS; pre-built MCP server packs for specific systems are commercial. *Connects to: Phase 25 (Tool Layer), Extension Architecture (Phase 30), AD-448 (Security Intercept).*
 

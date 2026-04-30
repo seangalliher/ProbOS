@@ -166,6 +166,7 @@ class EventType(str, Enum):
     DM_CONVERGENCE_DETECTED = "dm_convergence_detected"  # AD-623: DM thread converged
     SENSORIUM_BUDGET_EXCEEDED = "sensorium_budget_exceeded"  # AD-666: sensorium injection over char threshold
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
+    TOOL_INVOKED = "tool_invoked"  # AD-448
     ACTION_RISK_DENIED = "action_risk_denied"  # AD-676
     DECISION_QUEUE_PAUSED = "decision_queue_paused"  # AD-445
     COMPENSATION_TRIGGERED = "compensation_triggered"  # AD-446

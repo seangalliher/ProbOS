@@ -620,6 +620,16 @@ async def finalize_startup(
     if runtime.tool_registry:
         runtime.onboarding.set_tool_registry(runtime.tool_registry)
 
+        # AD-448: Wrapped Tool Executor
+        from probos.tools.executor import ToolExecutor, make_audit_hook
+        tool_executor = ToolExecutor(registry=runtime.tool_registry)
+        audit_hook = make_audit_hook(
+            emit_fn=runtime.emit_event,
+        )
+        tool_executor.add_post_hook(audit_hook)
+        runtime._tool_executor = tool_executor
+        logger.info("AD-448: ToolExecutor initialized with %d hooks", tool_executor.hook_count)
+
     # AD-596b: Wire cognitive skill catalog into onboarding service
     if runtime.cognitive_skill_catalog:
         runtime.onboarding.set_cognitive_skill_catalog(runtime.cognitive_skill_catalog)
