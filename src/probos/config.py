@@ -1115,6 +1115,12 @@ class NoveltyGateConfig(BaseModel):
 class EarnedAgencyConfig(BaseModel):
     """Earned Agency — trust-tiered behavioral gating (AD-357)."""
     enabled: bool = False
+    # AD-674: Graduated initiative thresholds
+    initiative_trust_thresholds: dict[str, float] = {
+        "responsive": 0.3,    # Ensign threshold
+        "contributory": 0.5,  # Lieutenant threshold
+        "proactive": 0.7,     # Commander threshold
+    }
 
 
 class RiskTierConfig(BaseModel):

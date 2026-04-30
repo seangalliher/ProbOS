@@ -3617,16 +3617,28 @@ class CognitiveAgent(BaseAgent):
             _trust_val = 0.5
             _rank_val = "ensign"
             _agency_val = "ensign"
+            _initiative_val = 0
             if _rt and hasattr(_rt, 'trust_network'):
                 from probos.crew_profile import Rank
-                from probos.earned_agency import agency_from_rank
+                from probos.earned_agency import agency_from_rank, resolve_initiative_level
                 from probos.config import format_trust
                 _trust_val = _rt.trust_network.get_score(self.id)
                 _rank_val = Rank.from_trust(_trust_val).value
                 _agency_val = agency_from_rank(Rank.from_trust(_trust_val)).value
+                _runtime_ref = _rt
+                _initiative_thresholds = (
+                    _runtime_ref.config.earned_agency.initiative_trust_thresholds
+                    if _runtime_ref is not None and getattr(_runtime_ref, 'config', None) is not None
+                    else None
+                )
+                _initiative_val = resolve_initiative_level(
+                    Rank.from_trust(_trust_val),
+                    _trust_val,
+                    thresholds=_initiative_thresholds,
+                ).value
                 _trust_val = format_trust(_trust_val)
             state["_agent_metrics"] = (
-                f"Your trust: {_trust_val} | "
+                f"Your trust: {_trust_val} | Initiative: {_initiative_val} | "
                 f"Agency: {_agency_val} | "
                 f"Rank: {_rank_val}"
             )

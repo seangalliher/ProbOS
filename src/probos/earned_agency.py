@@ -16,6 +16,26 @@ class AgencyLevel(str, Enum):
     UNRESTRICTED = "unrestricted"   # Senior: cross-department, mentoring (future)
 
 
+class InitiativeLevel(int, Enum):
+    """Graduated initiative scale (AD-674).
+
+    Combines rank-based gates with trust-based graduation.
+    Higher levels = more autonomous behavior.
+
+    Level 0: DIRECTED     — Only acts on explicit instructions
+    Level 1: RESPONSIVE   — Responds to @mentions and direct assignments
+    Level 2: CONTRIBUTORY — Participates in department discussions
+    Level 3: PROACTIVE    — Self-initiates within department scope
+    Level 4: STRATEGIC    — Cross-department coordination, mentoring
+    """
+
+    DIRECTED = 0
+    RESPONSIVE = 1
+    CONTRIBUTORY = 2
+    PROACTIVE = 3
+    STRATEGIC = 4
+
+
 class RecallTier(str, Enum):
     """Memory recall capability tier — mapped from Earned Agency rank (AD-462c)."""
     BASIC = "basic"            # Vector similarity only, small budget
@@ -140,6 +160,66 @@ def agency_from_rank(rank: Rank) -> AgencyLevel:
         Rank.COMMANDER: AgencyLevel.AUTONOMOUS,
         Rank.SENIOR: AgencyLevel.UNRESTRICTED,
     }[rank]
+
+
+def resolve_initiative_level(
+    rank: "Rank",
+    trust_score: float,
+    *,
+    thresholds: dict[str, float] | None = None,
+) -> InitiativeLevel:
+    """Resolve graduated initiative level from rank and trust (AD-674).
+
+    Maps:
+      Rank.ENSIGN + trust < 0.3       → DIRECTED (0)
+      Rank.ENSIGN + trust ≥ 0.3       → RESPONSIVE (1)
+      Rank.LIEUTENANT + trust < 0.5   → RESPONSIVE (1)
+      Rank.LIEUTENANT + trust ≥ 0.5   → CONTRIBUTORY (2)
+      Rank.COMMANDER + trust < 0.7    → CONTRIBUTORY (2)
+      Rank.COMMANDER + trust ≥ 0.7    → PROACTIVE (3)
+      Rank.SENIOR                     → STRATEGIC (4)
+
+    The three existing gates remain authoritative for specific permissions.
+    This function provides a unified scalar for initiative decisions.
+
+    Args:
+        rank: Agent's current rank
+        trust_score: Agent's current trust score (0.0-1.0)
+        thresholds: Optional override thresholds from config. Keys:
+            "responsive" (default 0.3), "contributory" (default 0.5),
+            "proactive" (default 0.7).
+
+    Note: Rank is already imported at module level from probos.crew_profile —
+    do NOT re-import from probos.config.
+    """
+    t = thresholds if isinstance(thresholds, dict) else {}
+    t_responsive = t.get("responsive", 0.3)
+    t_contributory = t.get("contributory", 0.5)
+    t_proactive = t.get("proactive", 0.7)
+
+    rank_ordinal = {
+        Rank.ENSIGN: 0,
+        Rank.LIEUTENANT: 1,
+        Rank.COMMANDER: 2,
+        Rank.SENIOR: 3,
+    }.get(rank, 0)
+
+    if rank_ordinal >= 3:
+        return InitiativeLevel.STRATEGIC
+
+    if rank_ordinal >= 2:
+        if trust_score >= t_proactive:
+            return InitiativeLevel.PROACTIVE
+        return InitiativeLevel.CONTRIBUTORY
+
+    if rank_ordinal >= 1:
+        if trust_score >= t_contributory:
+            return InitiativeLevel.CONTRIBUTORY
+        return InitiativeLevel.RESPONSIVE
+
+    if trust_score >= t_responsive:
+        return InitiativeLevel.RESPONSIVE
+    return InitiativeLevel.DIRECTED
 
 
 def can_respond_ambient(
