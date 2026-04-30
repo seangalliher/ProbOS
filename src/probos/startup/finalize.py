@@ -933,6 +933,14 @@ async def finalize_startup(
                 except Exception:
                     logger.debug("AD-541d: Failed to wire Guided Reminiscence", exc_info=True)
 
+    # AD-445: Decision Queue
+    from probos.governance.decision_queue import DecisionQueue
+    decision_queue = DecisionQueue(
+        emit_fn=runtime.emit_event,
+    )
+    runtime._decision_queue = decision_queue
+    logger.info("AD-445: DecisionQueue initialized")
+
     # AD-503: Wire InitiativeEngine counselor_fn
     if runtime.initiative and counselor_agent:
         def _counselor_alert_fn() -> list:

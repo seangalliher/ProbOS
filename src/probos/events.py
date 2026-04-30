@@ -167,6 +167,7 @@ class EventType(str, Enum):
     SENSORIUM_BUDGET_EXCEEDED = "sensorium_budget_exceeded"  # AD-666: sensorium injection over char threshold
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
     ACTION_RISK_DENIED = "action_risk_denied"  # AD-676
+    DECISION_QUEUE_PAUSED = "decision_queue_paused"  # AD-445
     TOOL_LOCKED = "tool_locked"  # AD-423b: LOTO lock acquired
     TOOL_UNLOCKED = "tool_unlocked"  # AD-423b: LOTO lock released
     TOOL_CONTEXT_CREATED = "tool_context_created"  # AD-423c: fired during onboarding

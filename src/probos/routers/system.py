@@ -61,6 +61,42 @@ async def get_disclosure_clearances(runtime: Any = Depends(get_runtime)) -> dict
     }
 
 
+@router.get("/decision-queue")
+async def get_decision_queue(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """Return decision queue status (AD-445)."""
+    queue = getattr(runtime, "_decision_queue", None)
+    if not queue:
+        return {"status": "disabled"}
+    return {
+        **queue.get_summary(),
+        "decisions": [d.to_dict() for d in queue.get_all()],
+    }
+
+
+@router.post("/decision-queue/pause")
+async def pause_decision_queue(
+    body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Pause the decision queue (AD-445)."""
+    queue = getattr(runtime, "_decision_queue", None)
+    if not queue:
+        return {"status": "disabled"}
+    reason = body.get("reason", "")
+    queue.pause(reason)
+    return {"status": "paused", "reason": reason}
+
+
+@router.post("/decision-queue/resume")
+async def resume_decision_queue(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """Resume the decision queue (AD-445)."""
+    queue = getattr(runtime, "_decision_queue", None)
+    if not queue:
+        return {"status": "disabled"}
+    queue.resume()
+    return {"status": "resumed"}
+
+
 @router.get("/system/services")
 async def system_services(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """AD-436: Service status for Bridge System panel."""
