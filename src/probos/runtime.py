@@ -1142,6 +1142,7 @@ class ProbOSRuntime:
                 agent_id=agent.id,
                 agent_type=agent.agent_type,
                 pool="red_team",
+                data={"department": "security"},  # AD-490: enriched wiring log
             )
 
         logger.info("Spawned %d red team agents", count)

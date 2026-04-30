@@ -188,13 +188,7 @@ class AgentOnboardingService:
             "trust": format_trust(self._trust_network.get_score(agent.id)),
         })
 
-        await self._event_log.log(
-            category="lifecycle",
-            event="agent_wired",
-            agent_id=agent.id,
-            agent_type=agent.agent_type,
-            pool=agent.pool,
-        )
+        # AD-490: agent_wired emission moved after identity resolution (see below)
 
         # AD-442: Self-naming ceremony for crew agents
         # BF-057: Check for existing identity FIRST — skip ceremony on warm boot
@@ -349,6 +343,32 @@ class AgentOnboardingService:
             if _post:
                 _callsign = getattr(agent, 'callsign', '') or ""
                 self._billet_registry.assign(_post.id, agent.agent_type, callsign=_callsign)
+
+        # AD-490: Enriched agent_wired log — emitted AFTER identity resolution
+        _wired_data: dict[str, Any] = {}
+        if hasattr(agent, 'did') and agent.did:
+            _wired_data["did"] = agent.did
+        if hasattr(agent, 'sovereign_id') and agent.sovereign_id:
+            _wired_data["sovereign_id"] = agent.sovereign_id
+        if hasattr(agent, 'callsign') and agent.callsign:
+            _wired_data["callsign"] = agent.callsign
+        _dept = ""
+        if self._ontology:
+            _dept = self._ontology.get_agent_department(agent.agent_type) or ""
+        if not _dept:
+            from probos.cognitive.standing_orders import get_department as _get_dept
+            _dept = _get_dept(agent.agent_type) or "unassigned"
+        if _dept:
+            _wired_data["department"] = _dept
+
+        await self._event_log.log(
+            category="lifecycle",
+            event="agent_wired",
+            agent_id=agent.id,
+            agent_type=agent.agent_type,
+            pool=agent.pool,
+            data=_wired_data if _wired_data else None,
+        )
 
         # AD-427: ACM onboarding for crew agents
         if self._acm and is_crew_agent(agent, self._ontology):
