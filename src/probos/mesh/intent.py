@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import time
 import logging
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
 
@@ -18,6 +20,53 @@ logger = logging.getLogger(__name__)
 
 # Type for subscriber callbacks
 IntentHandler = Callable[[IntentMessage], Awaitable[IntentResult | None]]
+
+
+@dataclass
+class IntentMetrics:
+    """Tracks intent broadcast statistics (AD-470)."""
+
+    broadcast_count: int = 0
+    send_count: int = 0
+    total_results: int = 0
+    type_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    type_durations_ms: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
+
+    def record_broadcast(self, intent_type: str, result_count: int, duration_ms: float) -> None:
+        """Record a broadcast completion."""
+        self.broadcast_count += 1
+        self.total_results += result_count
+        self.type_counts[intent_type] += 1
+        durations = self.type_durations_ms[intent_type]
+        durations.append(duration_ms)
+        if len(durations) > 200:
+            self.type_durations_ms[intent_type] = durations[-200:]
+
+    def record_send(self, intent_type: str, duration_ms: float) -> None:
+        """Record a directed send completion."""
+        self.send_count += 1
+        self.type_counts[intent_type] += 1
+        durations = self.type_durations_ms[intent_type]
+        durations.append(duration_ms)
+        if len(durations) > 200:
+            self.type_durations_ms[intent_type] = durations[-200:]
+
+    def get_summary(self) -> dict[str, Any]:
+        """Return a summary of intent metrics."""
+        type_stats: dict[str, dict[str, Any]] = {}
+        for intent_type, durations in self.type_durations_ms.items():
+            if durations:
+                type_stats[intent_type] = {
+                    "count": self.type_counts[intent_type],
+                    "mean_ms": round(sum(durations) / len(durations), 2),
+                    "max_ms": round(max(durations), 2),
+                }
+        return {
+            "broadcast_count": self.broadcast_count,
+            "send_count": self.send_count,
+            "total_results": self.total_results,
+            "types": type_stats,
+        }
 
 
 class IntentBus:
@@ -60,6 +109,8 @@ class IntentBus:
         # BF-234: Injected event emitter for duplicate-suppressed telemetry.
         # Wired from finalize.py via set_emit_event().
         self._emit_event_fn: Callable[[str, dict[str, Any]], None] | None = None
+        # AD-470: Intent metrics
+        self._metrics = IntentMetrics()
 
     def subscribe(self, agent_id: str, handler: IntentHandler, intent_names: list[str] | None = None) -> None:
         """Register an agent's intent handler.
@@ -318,25 +369,30 @@ class IntentBus:
         if not intent.target_agent_id:
             raise ValueError("send() requires target_agent_id")
 
-        # NATS path when connected
-        if self._nats_bus and self._nats_bus.connected:
-            return await self._nats_send(intent)
-
-        # Direct-call fallback when NATS disconnected
-        handler = self._subscribers.get(intent.target_agent_id)
-        if handler is None:
-            return None
+        _send_start = time.monotonic()  # AD-470: timing
         try:
-            result = await asyncio.wait_for(handler(intent), timeout=intent.ttl_seconds)
-            return result
-        except asyncio.TimeoutError:
-            return IntentResult(
-                intent_id=intent.id,
-                agent_id=intent.target_agent_id,
-                success=False,
-                error="Agent did not respond in time.",
-                confidence=0.0,
-            )
+            # NATS path when connected
+            if self._nats_bus and self._nats_bus.connected:
+                return await self._nats_send(intent)
+
+            # Direct-call fallback when NATS disconnected
+            handler = self._subscribers.get(intent.target_agent_id)
+            if handler is None:
+                return None
+            try:
+                result = await asyncio.wait_for(handler(intent), timeout=intent.ttl_seconds)
+                return result
+            except asyncio.TimeoutError:
+                return IntentResult(
+                    intent_id=intent.id,
+                    agent_id=intent.target_agent_id,
+                    success=False,
+                    error="Agent did not respond in time.",
+                    confidence=0.0,
+                )
+        finally:
+            _elapsed_ms = (time.monotonic() - _send_start) * 1000
+            self._metrics.record_send(intent.intent, _elapsed_ms)
 
     async def _nats_send(self, intent: IntentMessage) -> IntentResult | None:
         """Send intent via NATS request/reply to target agent."""
@@ -387,6 +443,7 @@ class IntentBus:
             return [result] if result else []
 
         timeout = timeout if timeout is not None else intent.ttl_seconds
+        _broadcast_start = time.monotonic()  # AD-470: timing
 
         self.record_broadcast(intent.intent)
         self._signal_manager.track(intent)
@@ -436,6 +493,10 @@ class IntentBus:
 
         results = self._pending_results.pop(intent.id, [])
         self._signal_manager.untrack(intent.id)
+
+        # AD-470: Record metrics
+        elapsed_ms = (time.monotonic() - _broadcast_start) * 1000
+        self._metrics.record_broadcast(intent.intent, len(results), elapsed_ms)
 
         # Federation: forward to peers if enabled and not an inbound federated intent
         if federated and self._federation_fn:
@@ -561,6 +622,33 @@ class IntentBus:
     def _get_agent_queue(self, agent_id: str) -> Any | None:
         """Get the cognitive queue for an agent (AD-654b)."""
         return self._agent_queues.get(agent_id)
+
+    def get_subscriber_map(self) -> dict[str, list[str]]:
+        """Return intent_name → [agent_ids] mapping (AD-470).
+
+        Shows which agents are indexed for which intent types.
+        Agents not in any index (fallback subscribers) are listed
+        under the key "__fallback__".
+        """
+        result: dict[str, list[str]] = {}
+        all_indexed: set[str] = set()
+
+        for intent_name, agent_ids in self._intent_index.items():
+            result[intent_name] = sorted(agent_ids)
+            all_indexed.update(agent_ids)
+
+        fallback = [
+            aid for aid in self._subscribers
+            if aid not in all_indexed
+        ]
+        if fallback:
+            result["__fallback__"] = sorted(fallback)
+
+        return result
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Return intent bus metrics summary (AD-470)."""
+        return self._metrics.get_summary()
 
     def record_broadcast(self, intent_name: str) -> None:
         """Record a broadcast event with its intent name."""

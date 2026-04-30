@@ -109,6 +109,19 @@ async def get_task_router(runtime: Any = Depends(get_runtime)) -> dict[str, Any]
     }
 
 
+@router.get("/intent-metrics")
+async def get_intent_metrics(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """Return IntentBus metrics (AD-470)."""
+    intent_bus = getattr(runtime, "intent_bus", None)
+    if not intent_bus:
+        return {"status": "disabled"}
+    return {
+        "metrics": intent_bus.get_metrics(),
+        "subscribers": intent_bus.get_subscriber_map(),
+        "subscriber_count": intent_bus.subscriber_count,
+    }
+
+
 @router.get("/system/services")
 async def system_services(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """AD-436: Service status for Bridge System panel."""
