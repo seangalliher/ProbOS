@@ -24,8 +24,9 @@ Read these in full **before** writing any code:
 ## Standing Rules (carry forward from prior sweep)
 
 - **Working tree:** if you encounter tracked-file modifications you didn't make, surface them. Do NOT `git stash` / `git reset --hard`. If they are clearly architect-authored prompt/review/doc artifacts, commit them on the architect's behalf with a descriptive message and continue.
-- **Test gate:** use `pytest tests/ -q -n 0` (serial). The `-n auto` xdist run on Windows exhibits worker-crash loops on this codebase. Serial baseline is the verified-stable mode. Per-prompt test files run in seconds even serially.
-- **Per-commit gate failure interpretation:** the only failures that block are real, reproducible-on-`-n 0` failures *in files you changed*. xdist-only `TestScoutDataDirectory` failures and similar concurrency-driven flakes are environmental and accepted.
+- **Test gate:** the **full gate** uses `pytest tests/ -q -n 4 --dist=loadfile` (4 workers, file-level distribution). The **focused per-prompt gate** uses `pytest tests/test_<adNNN>_*.py -v -n 0` (serial, deterministic). `-n auto` is forbidden — it exhibits worker-crash loops on this codebase.
+- **Per-commit gate failure interpretation:** failures under the parallel full gate that do NOT reproduce under `-n 0` are environmental (heavy concurrent fixture boots) and accepted — document them and continue. The only blockers are real failures that reproduce serially in files you changed.
+- **Triage step on full-gate red:** rerun the failing files at `-n 0`. If they pass, mark environmental, continue. If they fail, stop.
 - **Quarantine threshold:** if you hit a pre-existing serial failure unrelated to your changes, file a BF, quarantine, and continue. Surface only if more than 3 quarantines accumulate during a single sweep.
 - **Pre-build SEARCH/REPLACE:** every prompt is its own delta. Do not assume `events.py`, `governance/`, or any file matches what the prompt asserts will exist *after* its SEARCH/REPLACE. The prompt IS the migration.
 
@@ -35,7 +36,7 @@ Read these in full **before** writing any code:
 
 ```pwsh
 git status --short                                         # must be empty (or only untracked runtime artifacts)
-d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 0         # green baseline; record test count
+d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 4 --dist=loadfile   # parallel full gate; ~5-8 min
 ```
 
 Record the baseline. After each prompt, expect the test count to grow by the prompt's documented test count.
@@ -93,7 +94,7 @@ For each prompt, repeat:
 3. **Implement section by section** in the order the prompt specifies. Some prompts (notably AD-674, AD-470) have inter-section dependencies (the Section 2 enum/import must land before Section 3 code references it).
 4. **Run the prompt's own tests** in serial: `pytest tests/test_<adNNN>_*.py -v -n 0`. All must pass before continuing.
 5. **Run the focused gate** for nearby files (the prompt's adjacent test areas) in serial.
-6. **Run the full gate** at `pytest tests/ -q -n 0`. Test count must be non-decreasing vs baseline + previously-added tests in this sweep.
+6. **Run the full gate** at `pytest tests/ -q -n 4 --dist=loadfile`. Test count must be non-decreasing vs baseline + previously-added tests in this sweep. If a file fails, rerun that file with `-n 0`; if it passes serially, classify as environmental and continue.
 7. **Update trackers** as the prompt's Tracking section specifies (PROGRESS.md, roadmap.md, DECISIONS.md where called out).
 8. **Write a build report** at `prompts/build-reports/<ad-NNN>-build.md` matching the format in `prompts/build-reports/archive/`.
 9. **Commit** with format: `AD-NNN: <one-line summary>`.
@@ -106,7 +107,7 @@ After a Group completes, run the full gate one extra time as a Group integration
 
 Every commit must pass:
 
-- `pytest tests/ -q -n 0` exits 0 (or only environmental flakes — judge per the standing rule).
+- `pytest tests/ -q -n 4 --dist=loadfile` exits 0 (or only environmental flakes that pass serially — judge per the standing rule).
 - Test count is non-decreasing vs the running baseline.
 - No new files outside what the prompt specifies (especially: no test scaffolding committed under `data/` or `tools/`).
 - No `print()` calls added (use `logger`).
@@ -123,7 +124,7 @@ Stop and surface to the architect immediately if any of these occur:
 
 1. **Phantom API in implementation** — a method/attribute the prompt references doesn't exist AND isn't introduced by the prompt itself. Do not invent it.
 2. **Architectural change required** — work cannot proceed without modifying `BaseAgent`, `IntentMessage`, `RuntimeProtocol`, or any public protocol contract beyond what the prompt specifies.
-3. **Test gate persistently red** on a file you didn't change, reproducible under `-n 0`. Re-run once; if it persists, stop.
+3. **Test gate persistently red** on a file you didn't change, reproducible under `-n 0`. Re-run once at `-n 0`; if it still fails serially, stop.
 4. **Working tree contains tracked-file modifications you didn't make and can't identify as architect artifacts.** Do not destroy.
 5. **Existing test assertions need changes the prompt's "What This Does NOT Change" section didn't anticipate.** Spec gap — stop.
 6. **More than 3 pre-existing test quarantines accumulate during the sweep.** That's a baseline hygiene issue; surface for triage.
@@ -161,7 +162,7 @@ Match the existing format in `prompts/build-reports/archive/`.
 
 After the 19 prompts are committed:
 
-1. Run the full gate one final time: `pytest tests/ -q -n 0`.
+1. Run the full gate one final time: `pytest tests/ -q -n 4 --dist=loadfile`. If any file fails under parallel, rerun it with `-n 0` to confirm environmental.
 2. Confirm the test count grew by the documented total.
 3. Move all 19 completed prompts to `prompts/archive/` (matches prior sweep convention).
 4. Move per-prompt review files to `prompts/Reviews/archive/`.
@@ -174,7 +175,7 @@ After the 19 prompts are committed:
 
 - One prompt = one commit. No batched commits.
 - Continuous-build mode works for batches up to ~20.
-- xdist on Windows is unreliable for this codebase; use `-n 0` for the gate.
+- xdist on Windows is fragile at high concurrency; use `-n 4 --dist=loadfile` for the full gate, `-n 0` for focused per-prompt verification, and `-n 0` to triage suspected flakes.
 - The "Verified Against Codebase" section in each prompt is binding — trust it for the post-build state.
 - Minor architect-authored modifications under `prompts/` are routine; commit on the architect's behalf and continue.
 - Do not re-litigate the false-positive items listed in `README-wave-1-4-fourth-pass.md` § "Final Status."
