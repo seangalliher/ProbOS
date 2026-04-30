@@ -941,6 +941,14 @@ async def finalize_startup(
     runtime._decision_queue = decision_queue
     logger.info("AD-445: DecisionQueue initialized")
 
+    # AD-446: Compensation & Recovery
+    from probos.governance.compensation import CompensationHandler
+    compensation_handler = CompensationHandler(
+        emit_fn=runtime.emit_event,
+    )
+    runtime._compensation_handler = compensation_handler
+    logger.info("AD-446: CompensationHandler initialized")
+
     # AD-503: Wire InitiativeEngine counselor_fn
     if runtime.initiative and counselor_agent:
         def _counselor_alert_fn() -> list:
