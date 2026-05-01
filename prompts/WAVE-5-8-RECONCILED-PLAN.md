@@ -51,11 +51,11 @@ A combined hygiene prompt is queued at [`prompts/hygiene-wave5-prereq.md`](hygie
 |---|---|---|---|---|---|
 | 1 | AD-439 | Emergent Leadership Detection | 3 | medium | ✅ Buildable |
 | 2 | AD-440 | Chain of Command Delegation | 3 | high | ✅ Buildable. Audit flags trust/safety risk; full review pass before approval. |
-| 3 | AD-443 | Agent Mobility Protocol | 4 | high | ⚠️ Audit puts in Group 4 (sequenced); wave-5-8 plan puts in Wave 5. Architect decision: build in Wave 5 only if AD-479 (Federation Hardening) is NOT a hard prerequisite. Audit suggests it is. **Defer to Wave 8 or block on AD-479.** |
+| 3 | AD-499 | Ship & Crew Naming Conventions | 1A | low | ✅ Buildable. Replaces AD-443 (deferred to Wave 8+ pending AD-479 federation infrastructure). All deps closed (AD-441/441b/442). |
 | 4 | AD-455 | Security Team — Threat Detection & Trust Integrity | 2 | high | ✅ Buildable. Owns `security/__init__.py`. |
 | 5 | AD-468 | Runtime Configuration Service | 3 | medium | ✅ Buildable |
 
-**Reconciliation:** drop AD-443 from Wave 5 (audit dependency on AD-479 makes it unsafe in Wave 5). Replace with **AD-499 (Ship & Crew Naming Conventions)** — audit Group 1A, trivial, all deps closed (AD-441/441b/442). Keeps the wave size at 5.
+**Reconciliation:** AD-443 deferred to Wave 8+ on 2026-04-30 — mobility protocol's consume half (`verify_remote_chain`, slot reassignment) requires AD-479 federation infrastructure that hasn't shipped. Wave 5 fifth slot is **AD-499 (Ship & Crew Naming Conventions)** — audit Group 1A, trivial, all deps closed (AD-441/441b/442).
 
 **Updated Wave 5:** AD-439, AD-440, AD-455, AD-468, **AD-499**.
 
@@ -123,16 +123,16 @@ HYGIENE PRE-WAVE (1 commit, ~2h):
   AD-460 status check / flip
   AD-654 collision resolution
   AD-557b body fill OR drop
-  copilot-instructions.md path fix
   47 stale GitHub issue closures
+  AD-455 directory-ownership note
 
 WAVE 5 (5 prompts, parallel-safe):
   AD-439, AD-440, AD-455, AD-468, AD-499
 
 WAVE 6 (5 prompts, mostly parallel):
-  AD-451, AD-457, AD-458, AD-459, [AD-460 OR AD-491]
+  AD-451, AD-457, AD-458, AD-459, AD-491
 
-WAVE 7 (5 prompts, sequenced on AD-460):
+WAVE 7 (5 prompts, sequenced):
   AD-456 ← AD-455
   AD-463 (gate: ModelRegistry foundation review)
   AD-466
@@ -140,12 +140,21 @@ WAVE 7 (5 prompts, sequenced on AD-460):
   AD-528
 
 WAVE 8 (5 prompts, dependency-ordered) + COMBO A in parallel:
-  AD-469 ← AD-460/467
+  AD-469 ← AD-467
   AD-449
   AD-472
   AD-484
   AD-475
   -- parallel: COMBO A (8 trivial extensions)
+
+WAVE 8.5 (1 meta-prompt, ~1h):
+  AD-641 umbrella split into 6 sub-AD prompts (641a-f)
+
+WAVE 9 (3 sub-waves on the AD-641 children):
+  9A (parallel-safe): AD-641a, AD-641b, AD-641f
+  9B (cross-cutting):  AD-641c, AD-641e
+  9C (high-risk):      AD-641d
+  -- AD-443 enters here once AD-479 + AD-480 land
 ```
 
 ---
@@ -156,14 +165,16 @@ Calibrated against wave 1-4 actuals (19 prompts in ~24h, with 4 architect interv
 
 | Wave | Prompts | Sequential est | Fleet est (3-way) | Notes |
 |---|---|---|---|---|
-| Hygiene | 1 | 2h | 2h (single Builder) | Blocking; do first |
+| Hygiene | 1 | ~30 min | ~30 min (single Builder) | Slimmed after architect-resolved items; only 47 stale issues + AD-455 plan note remain |
 | Wave 5 | 5 | ~5h | ~2h | Fully parallel |
 | Wave 6 | 5 | ~6h | ~2.5h | Mostly parallel, AD-459 serialized |
-| Wave 7 | 5 | ~8h | ~5h | Sequenced on AD-460/AD-455 |
+| Wave 7 | 5 | ~8h | ~5h | Sequenced on AD-455 |
 | Wave 8 + Combo A | 5 + 1 combo | ~8h | ~4h | Wave 8 dependency-ordered, Combo A parallel |
-| **Total** | **21 + Combo A** | **~29h** | **~16h** |
+| Wave 8.5 | 1 meta-prompt | ~1h | ~1h | Splits AD-641 umbrella into 641a-f children |
+| Wave 9 (A/B/C) | 6 | ~9h | ~4h | Three sub-waves; AD-443 may join 9C if AD-479 lands |
+| **Total** | **22 + Combo A + 6 (Wave 9)** | **~38h** | **~19h** |
 
-This is for the next wave only. The remaining ~70 ADs (audit's "buildable but not in wave-5-8 selection") are a 3-month cadence at this pace.
+This covers the next ~28 ADs (Wave 5–9). The remaining ~60 audit-buildable ADs are 2–3 months cadence.
 
 ---
 
@@ -176,8 +187,10 @@ This is for the next wave only. The remaining ~70 ADs (audit's "buildable but no
 - AD-460 status (partial-complete; replay deferred; AD-464 takes the token-savings mantle; Wave 6 slot replaced with AD-491). See DECISIONS.md.
 - AD-654 collision (#313 renumbered to AD-683; #322 keeps AD-654).
 - AD-557b/c (#11 closed as won't-fix-now).
+- **AD-443 deferral** (2026-04-30): defer from Wave 5 to Wave 8+ — mobility protocol's `verify_remote_chain` and slot-reassignment paths require AD-479 federation infrastructure that hasn't shipped. Building in Wave 5 would land a half-feature (VCs no other instance can verify). Wave 5 fifth slot replaced with **AD-499 (Ship & Crew Naming Conventions)** — audit Group 1A, all deps closed, no federation requirement.
+- **AD-641 split** (2026-04-30): schedule the 6 sub-AD split as **Wave 8.5 meta-prompt** before Wave 9. Umbrella ADs (AD-450, AD-462, AD-641) consistently produce poor build prompts when absorbed directly. AD-641's design doc already enumerates 641a-641f scopes; a ~1-hour meta-prompt produces 6 children that enter Wave 9 with proper risk/dependency tiering: Wave 9A (641a, 641b, 641f — parallel-safe), Wave 9B (641c, 641e — cross-cutting), Wave 9C (641d — crew deliberation, high-risk). Convention adopted: **umbrella ADs must be split into sub-AD prompts before scheduling, never built directly.**
 
-Architect should answer the remaining 2 before the hygiene commit lands.
+All decisions resolved.
 
 ---
 
