@@ -230,6 +230,17 @@ class AgentOnboardingService:
                         if self._ontology:
                             self._ontology.update_assignment_callsign(agent.agent_type, chosen_callsign)
                         logger.info("AD-442: %s renamed from '%s' to '%s'", agent.agent_type, old_callsign, chosen_callsign)
+                        # AD-499: emit self-naming event
+                        if self._event_log:
+                            try:
+                                await self._event_log.log(
+                                    category="naming",
+                                    event="agent_self_named",
+                                    agent_type=agent.agent_type,
+                                    data={"agent_id": agent.id, "callsign": chosen_callsign},
+                                )
+                            except Exception:
+                                logger.warning("AD-499: AGENT_SELF_NAMED log failed", exc_info=True)
                     # BF-101/102 Enhancement: Flag as newly commissioned for auto-welcome
                     agent._newly_commissioned = True
                 except Exception as e:
@@ -531,6 +542,22 @@ class AgentOnboardingService:
                 lines = response.content.strip().split('\n')
                 chosen = lines[0].strip().strip('"').strip("'")
                 reason = lines[1].strip() if len(lines) > 1 else ""
+
+                # AD-499: validate self-chosen callsign against naming policy
+                if self._config.naming.enabled:
+                    from probos.naming import AgentNamingPolicy
+                    extra = frozenset(self._config.naming.extra_banned_words)
+                    policy = AgentNamingPolicy(banned=extra)
+                    validation = policy.validate(chosen)
+                    if validation.accepted:
+                        chosen = validation.normalized
+                    else:
+                        logger.warning(
+                            "AD-499: callsign '%s' rejected (%s); using seed",
+                            chosen, validation.reason,
+                        )
+                        chosen = seed_callsign
+                        reason = f"AD-499: rejected ({validation.reason}); seed accepted."
 
                 # Validate: not empty, not too long, not a duplicate
                 if not chosen or len(chosen) > 30:

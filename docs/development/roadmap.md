@@ -6964,7 +6964,7 @@ Foundation for ProbOS workforce management — how work gets defined, scheduled,
 
 Formal naming system for ProbOS instances, crew agents, and federated identity disambiguation. Ships get named on commissioning (Ship's Computer selects). Crew agents self-name (distinct from role callsign). Federation display uses `Name [ShipName]` format for cross-instance disambiguation.
 
-**AD-499: Ship & Crew Naming Conventions** *(planned, OSS)* — Three-layer naming system building on AD-441 (DIDs), AD-441b (Ship Commissioning), and AD-442 (Self-Naming Ceremony):
+**AD-499: Ship & Crew Naming Conventions** *(complete, OSS)* — Three-layer naming system building on AD-441 (DIDs), AD-441b (Ship Commissioning), and AD-442 (Self-Naming Ceremony):
 
 **(1) Ship Naming** — Ship's Computer selects a name from a curated **Ship Name Registry** on commissioning (reset = new ship, new name). Name categories: exploration vessels (Discovery, Challenger, Endeavour, Fram), virtues/qualities (Resolute, Invincible, Valiant, Dauntless), celestial bodies (Polaris, Sirius, Vega, Orion), naval heritage (Constitution, Defiant, Intrepid, Yorktown). Name stored in the `ShipBirthCertificate` (AD-441b genesis block) `vessel_name` field. Within a Nooplex fleet, ship names must be unique — the global registry (commercial) enforces this; OSS validates locally. Ship naming ceremony = first Captain's Log entry, giving it narrative weight. If decommissioned, name enters a cooling period before reuse (naval tradition). `ShipNameRegistry` class: curated pool, category-based selection, uniqueness validation, name reservation for federation sync.
 

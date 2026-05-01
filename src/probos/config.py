@@ -1026,6 +1026,14 @@ class OnboardingConfig(BaseModel):
     naming_ceremony: bool = True  # If False, agents keep seed callsigns
 
 
+class NamingConfig(BaseModel):
+    """Ship & crew naming conventions (AD-499)."""
+
+    enabled: bool = True
+    captain_ship_override: str = ""  # If non-empty, overrides seed selection
+    extra_banned_words: list[str] = Field(default_factory=list)
+
+
 class UtilityAgentsConfig(BaseModel):
     """Utility agent suite configuration (AD-252)."""
 
@@ -1524,6 +1532,7 @@ class SystemConfig(BaseModel):
     quality_trigger: QualityTriggerConfig = QualityTriggerConfig()  # AD-564
     quality_router: QualityRouterConfig = QualityRouterConfig()  # AD-565
     onboarding: OnboardingConfig = OnboardingConfig()
+    naming: NamingConfig = NamingConfig()  # AD-499
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
     ward_room: WardRoomConfig = WardRoomConfig()
     assignments: AssignmentConfig = AssignmentConfig()

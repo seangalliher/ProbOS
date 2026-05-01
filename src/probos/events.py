@@ -177,6 +177,8 @@ class EventType(str, Enum):
     KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
     CONTEXT_PROVENANCE_INJECTED = "context_provenance_injected"  # AD-677
     DISCLOSURE_FILTERED = "disclosure_filtered"  # AD-679
+    SHIP_NAMED = "ship_named"  # AD-499
+    AGENT_SELF_NAMED = "agent_self_named"  # AD-499
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

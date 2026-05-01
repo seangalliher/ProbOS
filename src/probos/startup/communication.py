@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from probos.events import EventType
 from probos.startup.results import CommunicationResult
 from probos.types import Priority
 
@@ -398,9 +399,27 @@ async def init_communication(
     # --- Ship Commissioning (AD-441b) ---
     if ontology and identity_registry:
         vi = ontology.get_vessel_identity()
+        # AD-499: route ontology-supplied vessel name through ShipNamingPolicy
+        chosen_vessel_name = vi.name
+        if config.naming.enabled:
+            from probos.naming import ShipNamingPolicy
+            ship_policy = ShipNamingPolicy()
+            decision = ship_policy.select(
+                instance_id=vi.instance_id,
+                override_name=config.naming.captain_ship_override or vi.name,
+            )
+            chosen_vessel_name = decision.name
+            try:
+                emit_event_fn(EventType.SHIP_NAMED, {
+                    "vessel_name": decision.name,
+                    "source": decision.source,
+                    "instance_id": vi.instance_id,
+                })
+            except Exception:
+                logger.warning("AD-499: SHIP_NAMED emit failed", exc_info=True)
         await identity_registry.start(
             instance_id=vi.instance_id,
-            vessel_name=vi.name,
+            vessel_name=chosen_vessel_name,
             version=config.system.version,
         )
 
