@@ -126,8 +126,50 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
             MagicMock(id="ch2", channel_type="ship", department="", name="All Hands"),
         ])
         rt.ward_room.create_thread = AsyncMock()
+        # BF-250/251: prevent Windows IOCP hang when _run_cycle awaits these
+        # methods. MagicMock(spec=...) does NOT auto-wrap async methods as
+        # AsyncMock; the unwrapped MagicMock yields to the event loop on await
+        # and never resolves on Windows ProactorEventLoop. Defaulting to empty
+        # collections keeps the test surface minimal -- individual tests can
+        # override return_value as needed.
+        rt.ward_room.get_unread_dms = AsyncMock(return_value=[])
+        rt.ward_room.post_to_channel = AsyncMock()
+        rt.ward_room.archive_thread = AsyncMock()
+        rt.ward_room.get_or_create_dm_channel = AsyncMock()
+        rt.ward_room.create_post = AsyncMock()
     else:
         rt.ward_room = None
+
+    # BF-250/251 (extended): MagicMock auto-attribute access bypasses production
+    # `if not X: return` guards because every auto-attribute is truthy. Tests
+    # that drive _run_cycle must explicitly set absent dependencies to None so
+    # the guards short-circuit before reaching unwrapped coroutine awaits.
+    rt.cognitive_journal = None       # _is_over_token_budget guard
+    rt.skill_service = None           # _gather_context skill profile lookup
+    rt.ward_room_service = None       # _gather_context comm stats lookup
+    rt._social_memory_service = None  # _think_for_agent social memory check
+    rt._knowledge_store = None        # cooldown persistence
+    rt.behavioral_monitor = None
+    rt.duty_tracker = None
+    # Disable LLM rate config so token budget gate exits early
+    rt.config = MagicMock()
+    rt.config.llm_rate = None
+    rt.config.ward_room = MagicMock()
+    rt.config.ward_room.dm_exchange_limit = 6
+    rt.config.proactive_cognitive = MagicMock()
+    rt.config.proactive_cognitive.stagger_enabled = False
+    rt.config.proactive_cognitive.min_stagger_seconds = 0
+    rt.config.memory = None
+    rt.config.temporal = MagicMock()
+    rt.config.temporal.include_episode_timestamps = True
+    rt.config.communications = MagicMock()
+    rt.config.communications.dm_min_rank = "ensign"
+    rt.config.communications.recreation_min_rank = "ensign"
+    rt.config.records = MagicMock()
+    rt.config.records.notebook_repetition_threshold_count = 3
+    rt.config.records.notebook_repetition_window_hours = 48.0
+    rt.config.orientation = None
+    rt.config.onboarding = None       # AD-442 acm check guard
 
     # Callsign registry
     rt.callsign_registry.get_callsign = MagicMock(return_value="Number One")
@@ -149,9 +191,38 @@ def _make_mock_runtime(agents=None, trust_scores=None, ward_room=True):
     # AD-437: Endorsement extraction (default: no endorsements found)
     rt.ward_room_router = MagicMock(spec=WardRoomRouter)
     rt.ward_room_router.extract_endorsements = MagicMock(side_effect=lambda text: (text, []))
+    rt.ward_room_router.route_event = AsyncMock()
     rt.ward_room_router.process_endorsements = AsyncMock()
 
     return rt
+
+
+def _assert_no_unawaitable_async_paths(rt) -> None:
+    """BF-250/251: Sanity check that all async runtime entry points are AsyncMock.
+
+    On Windows ProactorEventLoop, awaiting a regular MagicMock blocks IOCP
+    polling indefinitely. This helper enforces the invariant for tests that
+    drive _run_cycle through ward_room and episodic_memory paths.
+    """
+    from unittest.mock import AsyncMock
+
+    if rt.ward_room is None:
+        return
+    for name in (
+        "get_unread_dms", "list_channels", "create_thread",
+        "post_to_channel", "archive_thread",
+    ):
+        attr = getattr(rt.ward_room, name, None)
+        assert isinstance(attr, AsyncMock), (
+            f"BF-250/251: rt.ward_room.{name} must be AsyncMock to avoid "
+            f"Windows IOCP hang; got {type(attr).__name__}"
+        )
+    for name in ("route_event", "process_endorsements"):
+        attr = getattr(rt.ward_room_router, name, None)
+        assert isinstance(attr, AsyncMock), (
+            f"BF-250/251: rt.ward_room_router.{name} must be AsyncMock to avoid "
+            f"Windows IOCP hang; got {type(attr).__name__}"
+        )
 
 
 class TestProactiveCognitiveLoopCycle:
@@ -498,7 +569,6 @@ class TestPerAgentCooldown:
         loop.set_agent_cooldown("agent1", 5000.0)
         assert loop.get_agent_cooldown("agent1") == 1800.0
 
-    @pytest.mark.skip(reason="BF-250: Hangs under pytest-timeout on Windows; under investigation")
     @pytest.mark.asyncio
     async def test_per_agent_cooldown_used_in_cycle(self):
         """Agent with short cooldown thinks, agent with long cooldown skipped."""
@@ -511,6 +581,7 @@ class TestPerAgentCooldown:
             intent_id="x", agent_id="slow", success=True, result="[NO_RESPONSE]"
         )
         rt = _make_mock_runtime(agents=[agent_fast, agent_slow])
+        _assert_no_unawaitable_async_paths(rt)
 
         loop = ProactiveCognitiveLoop(cooldown=300.0)
         loop.set_runtime(rt)
@@ -1027,7 +1098,6 @@ class TestProactiveExceptionConfidence:
 
         agent.update_confidence.assert_called_once_with(False)
 
-    @pytest.mark.skip(reason="BF-251: Hangs under pytest-timeout on Windows; under investigation")
     @pytest.mark.asyncio
     async def test_exception_does_not_crash_loop(self):
         """Exception is caught -- loop continues to next agent."""
@@ -1043,6 +1113,7 @@ class TestProactiveExceptionConfidence:
         agent2.update_confidence = MagicMock()
 
         rt = _make_mock_runtime(agents=[agent1, agent2])
+        _assert_no_unawaitable_async_paths(rt)
 
         loop = _make_loop()
         loop.set_runtime(rt)

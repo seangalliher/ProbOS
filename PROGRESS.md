@@ -82,9 +82,9 @@ BF-247 CLOSED. TieredKnowledgeLoader dag_summary dict regression coverage added 
 
 BF-249 CLOSED. Update AD-666 sensorium tests for 10K threshold after BF-247 raised SensoriumConfig.token_budget_warning from 6000 to 10000. Follow-up to 8be47d5. 2 assertions updated; 14 Sensorium tests passed.
 
-BF-250 OPEN. `TestPerAgentCooldown.test_per_agent_cooldown_used_in_cycle` hangs under pytest-timeout on Windows. Diagnosed (2026-04-30): `MagicMock(spec=WardRoomService)` does not auto-wrap async methods as AsyncMock; `await rt.ward_room.get_unread_dms()` blocks Windows IOCP. Hang occurs in `_check_unread_dms` before the cooldown logic. Fix queued in `prompts/bf-250-251-proactive-test-windows-iocp-hang.md`.
+BF-250 CLOSED. Resolved by `_make_mock_runtime` AsyncMock hardening for ward_room methods. Root cause: `MagicMock(spec=WardRoomService)` does not auto-wrap async methods as AsyncMock; `rt.ward_room.get_unread_dms()` was awaited as a regular MagicMock, which on Windows ProactorEventLoop yields to the event loop and blocks indefinitely on `_overlapped.GetQueuedCompletionStatus`. Test now passes under `-n 16 --dist=loadfile` and `-n 0`.
 
-BF-251 OPEN. `TestProactiveExceptionConfidence.test_exception_does_not_crash_loop` hangs under pytest-timeout on Windows. Same root cause as BF-250 — hang occurs in `_check_unread_dms` BEFORE the BF-023 try/except, so the RuntimeError side_effect is never reached. Fix queued in `prompts/bf-250-251-proactive-test-windows-iocp-hang.md`.
+BF-251 CLOSED. Same root cause as BF-250 — `_run_cycle` calls `_check_unread_dms` BEFORE the BF-023 try/except around `_think_for_agent`, so the unawaitable MagicMock hung before the RuntimeError side_effect was reached. Resolved by the same mock hardening.
 
 BF-252 CLOSED. AD-571 test mocks (`test_startup_population`, `test_all_agents_classified`) used `SimpleNamespace` with only the private `_emergence_metrics_engine` attribute. After AD-680 promoted `emergence_metrics_engine` to a public property on `ProbOSRuntime`, `finalize._populate_agent_tiers` reads the public name; `SimpleNamespace` does not expose `@property` descriptors, so the wiring was silently skipped and the assertion `emergence.registry is runtime._tier_registry` failed. Both mocks now set both names. 15/15 AD-571 tests pass.
 
