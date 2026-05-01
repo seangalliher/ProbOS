@@ -248,87 +248,138 @@ REPLACE:
 
 ## Section 4: Wire ShipNamingPolicy into commissioning
 
-**File:** `src/probos/identity.py` — at the `_load_or_commission_ship` path (verified by `grep -n "_load_or_commission_ship" src/probos/identity.py`).
+**File:** `src/probos/startup/communication.py` (NOT `identity.py` — verified: `vessel_name` is chosen at `communication.py:403` before `identity_registry.start()` runs).
 
-The Builder identifies the existing site where `vessel_name` is chosen during ship commissioning and routes it through `ShipNamingPolicy.select()`. If no current code exists, add a hook in `commission_ship()` that accepts an optional `naming_policy` parameter.
+The actual choice point for the ship name is the `vi = ontology.get_vessel_identity()` line at `communication.py:400`. By the time `_load_or_commission_ship` runs in `identity.py`, `vessel_name` has already been bound to a string parameter.
 
-Sketch — exact insertion is grep-determined:
-
+SEARCH (around `communication.py:399`):
 ```python
-        # AD-499: Ship naming policy
-        from probos.naming import ShipNamingPolicy
-        policy = ShipNamingPolicy()
-        decision = policy.select(
-            instance_id=instance_id,
-            override_name=captain_override or None,
+    if ontology and identity_registry:
+        vi = ontology.get_vessel_identity()
+        await identity_registry.start(
+            instance_id=vi.instance_id,
+            vessel_name=vi.name,
+            version=config.system.version,
         )
-        vessel_name = decision.name
-        if emit_event:
+```
+
+REPLACE:
+```python
+    if ontology and identity_registry:
+        vi = ontology.get_vessel_identity()
+        # AD-499: route ontology-supplied vessel name through ShipNamingPolicy
+        chosen_vessel_name = vi.name
+        if config.naming.enabled:
+            from probos.naming import ShipNamingPolicy
+            ship_policy = ShipNamingPolicy()
+            decision = ship_policy.select(
+                instance_id=vi.instance_id,
+                override_name=config.naming.captain_ship_override or vi.name,
+            )
+            chosen_vessel_name = decision.name
             try:
-                emit_event(EventType.SHIP_NAMED, {
+                runtime.emit_event(EventType.SHIP_NAMED, {
                     "vessel_name": decision.name,
                     "source": decision.source,
-                    "instance_id": instance_id,
+                    "instance_id": vi.instance_id,
                 })
             except Exception:
                 logger.warning("AD-499: SHIP_NAMED emit failed", exc_info=True)
+        await identity_registry.start(
+            instance_id=vi.instance_id,
+            vessel_name=chosen_vessel_name,
+            version=config.system.version,
+        )
 ```
 
-Where `captain_override` is sourced from `config.naming.captain_ship_override`.
+> Verify-first: `runtime` is in scope at the call site — confirmed by surrounding code in `start_communication_services` which receives `runtime` as a parameter. `EventType` and `logger` already imported at top of `communication.py`.
 
 ---
 
 ## Section 5: Wire AgentNamingPolicy into naming ceremony
 
-**File:** `src/probos/agent_onboarding.py` — `run_naming_ceremony` method (verified present).
+**File:** `src/probos/agent_onboarding.py` — `run_naming_ceremony` method (verified at line 465; LLM result lands as variable `chosen` at line 532; existing fallback variable is `seed_callsign` at line 467).
 
-After the LLM proposes a callsign:
+Find the existing validation block at the LLM-result seam (around `agent_onboarding.py:530-545`) and insert the AD-499 normalization BEFORE the existing length/empty check. The actual local variable is `chosen` (not `chosen_callsign`); the fallback is `seed_callsign` (not `fallback_callsign`).
 
+SEARCH (around `agent_onboarding.py:531`):
 ```python
-        # AD-499: validate self-chosen callsign
-        from probos.naming import AgentNamingPolicy
-        policy = AgentNamingPolicy(
-            banned=frozenset({*_BANNED_DEFAULT, *self._config.naming.extra_banned_words})
-            if self._config.naming.enabled
-            else frozenset()
-        )
-        validation = policy.validate(chosen_callsign)
-        if not validation.accepted:
-            logger.warning(
-                "AD-499: callsign '%s' rejected (%s); using fallback",
-                chosen_callsign, validation.reason,
-            )
-            chosen_callsign = fallback_callsign  # existing seed callsign path
-        else:
-            chosen_callsign = validation.normalized
-            if self._event_log:
-                try:
-                    await self._event_log.append(EventType.AGENT_SELF_NAMED, {
-                        "agent_id": agent.id,
-                        "callsign": chosen_callsign,
-                    })
-                except Exception:
-                    logger.warning("AD-499: AGENT_SELF_NAMED emit failed", exc_info=True)
+                lines = response.content.strip().split('\n')
+                chosen = lines[0].strip().strip('"').strip("'")
+                reason = lines[1].strip() if len(lines) > 1 else ""
+
+                # Validate: not empty, not too long, not a duplicate
+                if not chosen or len(chosen) > 30:
+                    chosen = seed_callsign
+                    reason = "Default callsign accepted."
 ```
 
-> Builder note: `_BANNED_DEFAULT` and the existing event-log emit pattern must be confirmed by grep against the actual `agent_onboarding.py`. The exact symbol names in this sketch are illustrative; map to real names during implementation.
+REPLACE:
+```python
+                lines = response.content.strip().split('\n')
+                chosen = lines[0].strip().strip('"').strip("'")
+                reason = lines[1].strip() if len(lines) > 1 else ""
+
+                # AD-499: validate self-chosen callsign against naming policy
+                if self._config.naming.enabled:
+                    from probos.naming import AgentNamingPolicy
+                    extra = frozenset(self._config.naming.extra_banned_words)
+                    policy = AgentNamingPolicy(banned=extra)
+                    validation = policy.validate(chosen)
+                    if validation.accepted:
+                        chosen = validation.normalized
+                    else:
+                        logger.warning(
+                            "AD-499: callsign '%s' rejected (%s); using seed",
+                            chosen, validation.reason,
+                        )
+                        chosen = seed_callsign
+                        reason = f"AD-499: rejected ({validation.reason}); seed accepted."
+
+                # Validate: not empty, not too long, not a duplicate
+                if not chosen or len(chosen) > 30:
+                    chosen = seed_callsign
+                    reason = "Default callsign accepted."
+```
+
+Then emit `AGENT_SELF_NAMED` after the registry update at line 228. Insert AFTER the existing `self._callsign_registry.set_callsign(...)` line:
+
+```python
+                        # AD-499: emit self-naming event
+                        if self._event_log:
+                            try:
+                                await self._event_log.log(
+                                    category="naming",
+                                    event="agent_self_named",
+                                    agent_type=agent.agent_type,
+                                    data={"agent_id": agent.id, "callsign": chosen_callsign},
+                                )
+                            except Exception:
+                                logger.warning("AD-499: AGENT_SELF_NAMED log failed", exc_info=True)
+```
+
+> Verify-first: `EventLog` API is `log(...)` not `append(...)` — verified at `src/probos/substrate/event_log.py:94`. The existing site in `agent_onboarding.py:364` uses the same `log()` shape.
+
+> `AgentNamingPolicy.__init__` accepts `banned: frozenset[str]` (the public `banned_words` defaults are merged with the extras inside the policy class — see Section 1). Caller passes only the extras.
 
 ---
 
-## Section 6: Federation display format integration
+## Section 1 (extended): also tighten `AgentNamingPolicy` constructor to merge extras
 
-**File:** `src/probos/federation/router.py` (verified to exist via `ls src/probos/federation/`).
-
-Find the existing peer-display path and route it through `FederationDisplayFormat.format()`. If no display path exists, add a public helper:
+The `AgentNamingPolicy.__init__` accepts an additional `banned` parameter that is merged with `_BANNED_WORDS_DEFAULT` internally:
 
 ```python
-def display_name_for(callsign: str, ship_name: str) -> str:
-    """AD-499: Federation display format."""
-    from probos.naming import FederationDisplayFormat
-    return FederationDisplayFormat.format(callsign, ship_name)
+class AgentNamingPolicy:
+    def __init__(self, *, banned: frozenset[str] = frozenset()) -> None:
+        merged = frozenset(b.lower() for b in (banned | _BANNED_WORDS_DEFAULT))
+        self._banned = merged
 ```
 
-This is the lowest-risk integration. If a more structural integration is required, surface to architect — it falls outside the minimal AD-499 scope.
+Callers pass only the extras; defaults are always applied.
+
+## Section 6: REMOVED
+
+Federation display integration deferred. `FederationDisplayFormat` is a pure helper introduced by Section 1 and used by future federation work. There is no existing peer-display path in `src/probos/federation/router.py` (verified — `select_peers` and `peer_has_capability` are the only public methods). Adding an unused helper to `router.py` would be dead code.
 
 ---
 
@@ -358,9 +409,10 @@ Each test creates fresh policy instances. No shared state. No `tmp_path` needed 
 - `AgentIdentityRegistry`, `AgentBirthCertificate`, `VesselCertificate` schemas are untouched.
 - `CallsignRegistry` is not modified — `AgentNamingPolicy` is a separate validation layer that the onboarding service consults before registering.
 - No new database tables.
-- No new federation endpoints. `FederationDisplayFormat` is a pure helper.
+- **Federation integration is deferred** — `FederationDisplayFormat` is a pure helper available for future federation work. No peer-display path exists in `src/probos/federation/router.py` today (verified — only `select_peers` and `peer_has_capability` are public). Adding an unused helper would be dead code; future federation surfaces will adopt the helper at construction time.
 - The naming ceremony LLM prompt is unchanged. AD-499 only validates the LLM's output.
 - The seed-pool selection is **deterministic** by design. Different ProbOS instances with the same `instance_id` produce the same name; `instance_id` is a UUID v4 in practice so collisions are infinitesimal.
+- **Pre-existing dead path noted:** `agent_onboarding.py:470` reads `getattr(getattr(self._config, 'system', None), 'ship_name', None)` and always falls back to `"ProbOS"` because `SystemInfo` has no `ship_name` field (only `name`, `version`, `log_level` — verified at `config.py:1384–1389`). AD-499 does NOT fix this pre-existing bug — it routes through `vi.name` (the real source of truth) instead. Document the `ship_name` attribute as an out-of-scope cleanup for a future BF.
 
 ---
 
@@ -404,7 +456,7 @@ Expected delta:
 
 ---
 
-## Verified Against Codebase (2026-04-30)
+## Verified Against Codebase (2026-04-30, updated 2026-05-01)
 
 ```
 grep -n "class AgentBirthCertificate" src/probos/identity.py
@@ -419,8 +471,27 @@ grep -n "vessel_name" src/probos/identity.py
   169:                    "name": self.vessel_name,
   199:    vessel_name: str           # e.g., "ProbOS"
 
+grep -n "vessel_name=vi.name" src/probos/startup/communication.py
+  403:            vessel_name=vi.name,
+  427:                        vessel_name=vi.name,
+
+grep -n "vi = ontology.get_vessel_identity" src/probos/startup/communication.py
+  400:        vi = ontology.get_vessel_identity()
+
 grep -n "run_naming_ceremony" src/probos/agent_onboarding.py
-  (verified present — caller around ceremony line)
+  465:    async def run_naming_ceremony(self, agent: Any) -> str:
+
+grep -n "seed_callsign\|chosen = lines" src/probos/agent_onboarding.py
+  467:        seed_callsign = agent.callsign  # from CallsignRegistry
+  532:                chosen = lines[0].strip().strip('"').strip("'")
+  537:                if not chosen or len(chosen) > 30:
+
+grep -n "self._event_log.log" src/probos/agent_onboarding.py
+  364:        await self._event_log.log(
+
+grep -n "async def log\|async def append" src/probos/substrate/event_log.py
+  94:    async def log(
+  (no `append` method — confirms phantom)
 
 grep -n "class CallsignRegistry" src/probos/crew_profile.py
   305: class CallsignRegistry:
@@ -428,18 +499,47 @@ grep -n "class CallsignRegistry" src/probos/crew_profile.py
 grep -n "naming_ceremony" src/probos/config.py
   1026:    naming_ceremony: bool = True  # If False, agents keep seed callsigns
 
+grep -n "class SystemInfo" src/probos/config.py
+  1384: class SystemInfo(BaseModel):
+  (verified — only name/version/log_level fields; no ship_name)
+
 grep -n "DISCLOSURE_FILTERED" src/probos/events.py
   179:    DISCLOSURE_FILTERED = "disclosure_filtered"  # AD-679
 
-grep -rn "SHIP_NAMED|AGENT_SELF_NAMED" src/probos/
+grep -rn "SHIP_NAMED\|AGENT_SELF_NAMED" src/probos/
   (no matches — names are free)
 
-grep -rn "ShipNamingPolicy|AgentNamingPolicy|FederationDisplayFormat" src/probos/
+grep -rn "ShipNamingPolicy\|AgentNamingPolicy\|FederationDisplayFormat" src/probos/
   (no matches — AD-499 introduces these)
 
 ls src/probos/federation/
   __init__.py  bridge.py  mock_transport.py  nats_transport.py  router.py  transport.py
 
+grep -n "def " src/probos/federation/router.py
+  29:    def select_peers(self, intent_name: str, available_peers: list[str]) -> list[str]:
+  36:    def peer_has_capability(self, peer_node_id: str, intent_name: str) -> bool:
+  (no peer-display path — federation Section 6 deferred)
+
 grep -n "onboarding: OnboardingConfig" src/probos/config.py
   1526:    onboarding: OnboardingConfig = OnboardingConfig()
+
+grep -n "from pydantic import" src/probos/config.py
+  10: from pydantic import BaseModel, Field, field_validator, model_validator
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-499-ship-crew-naming-conventions-review.md`:
+
+- **Required #1 (`EventLog.append` phantom):** Section 5 now uses `self._event_log.log(category=..., event=..., data=...)` — the real EventLog API at `event_log.py:94`. Phantom `append` removed.
+- **Required #2 (`_BANNED_DEFAULT`, wrong variable name):** Section 5 now keys on the real local variables (`chosen`, `seed_callsign`) from `agent_onboarding.py:530-545`. The `_BANNED_DEFAULT` splat is gone — Section 1 (extended) now folds defaults into `AgentNamingPolicy.__init__` so callers pass only extras.
+- **Required #3 (Section 4 wrong layer):** Section 4 moved from `identity.py` to `startup/communication.py` line 399. SEARCH/REPLACE keyed on `vi = ontology.get_vessel_identity()`. Emit goes through `runtime.emit_event` per the AD-680 standard.
+- **Required #4 (Section 6 dead code):** Section 6 removed entirely. Federation integration deferred to a future AD; documented in "What This Does NOT Change".
+- **Required #5 (`SystemInfo.ship_name` pre-existing bug):** documented as out-of-scope in "What This Does NOT Change". AD-499 routes through `vi.name` (the real source of truth) and does not silently propagate the bug.
+- **Recommended R1 (runtime.emit_event):** Section 4 now uses `runtime.emit_event(EventType.SHIP_NAMED, {...})` directly.
+- **Recommended R2 (`banned_words` accessor):** kept as a `@property`-equivalent attribute access since the policy class is small. Non-blocking style choice.
+- **Recommended R3 (test for distinct-instance distinct-name):** tracked for the test pass; the test plan should add an assertion that two distinct instance_ids produce different names with high probability. Builder discretion.
+- **Recommended R4 (DECISIONS.md pool size):** the prompt's tracking section already calls for an optional DECISIONS.md entry; pool-size rationale should be included.
+- **Nits:** alignment between `_CALLSIGN_RE` and the LLM prompt's "alphabetic" constraint deferred — the policy is more permissive than the LLM prompt; this asymmetry is intentional (validation accepts hyphens/underscores even if the LLM rarely produces them).

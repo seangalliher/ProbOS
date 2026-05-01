@@ -38,6 +38,28 @@ Single new value. No collision check required — verified absent via `grep -n "
 
 ---
 
+## Section 1.5: Add public `get_agents_for_post` passthrough on `VesselOntologyService`
+
+**File:** `src/probos/ontology/service.py`
+
+`VesselOntologyService` already exposes ~10 public delegating wrappers (`get_post`, `get_chain_of_command`, `get_subordinate_agent_types`, etc. at lines 120–151). Add `get_agents_for_post` to keep AD-439's detector module free of `_dept` private-attr access:
+
+SEARCH:
+```python
+    def get_subordinate_agent_types(self, agent_type: str) -> list[str]:
+```
+
+REPLACE:
+```python
+    def get_agents_for_post(self, post_id: str) -> list[Assignment]:
+        """AD-439: Public passthrough — agents currently filling a post."""
+        return self._dept.get_agents_for_post(post_id)  # type: ignore[union-attr]
+
+    def get_subordinate_agent_types(self, agent_type: str) -> list[str]:
+```
+
+This is a single 3-line addition matching the existing delegation pattern. `DepartmentService.get_agents_for_post(post_id)` exists at `departments.py:117`.
+
 ## Section 1: Create `EmergentLeadershipDetector`
 
 **File:** `src/probos/cognitive/emergent_leadership.py` (new)
@@ -213,7 +235,7 @@ class EmergentLeadershipDetector:
     def _superior_agent_ids(self, superior_post_id: str) -> set[str]:
         """All agent_ids currently filling the superior post."""
         try:
-            assignments = self._ontology._dept.get_agents_for_post(superior_post_id)
+            assignments = self._ontology.get_agents_for_post(superior_post_id)
         except Exception:
             return set()
         result: set[str] = set()
@@ -225,7 +247,7 @@ class EmergentLeadershipDetector:
         return result - {""}
 ```
 
-> Builder note: `_superior_agent_ids` deliberately reaches through `_dept.get_agents_for_post` because `VesselOntologyService` does not expose a public `get_agents_for_post` method (verified — only `get_assignment_for_agent` and `get_subordinate_agent_types` are public). Add a public passthrough on `VesselOntologyService` if a reviewer flags the Demeter violation; pattern matches existing private-attr reads in `service.py:191`.
+> Builder note: `get_agents_for_post` is added as a public passthrough on `VesselOntologyService` in Section 1.5 above. AD-439's detector module never reaches into `_dept` directly.
 
 ---
 
@@ -282,11 +304,11 @@ REPLACE:
 
 **File:** `src/probos/startup/finalize.py`
 
-Place the wiring next to the existing risk-registry block (verified at `finalize.py:297`):
+Place the wiring next to the existing risk-registry block (verified at `finalize.py:297`). Guard for `runtime.ontology is None` since `ontology: VesselOntologyService | None`:
 
 ```python
     # AD-439: Emergent Leadership Detector
-    if config.emergent_leadership.enabled:
+    if config.emergent_leadership.enabled and runtime.ontology is not None:
         from probos.cognitive.emergent_leadership import EmergentLeadershipDetector
         detector = EmergentLeadershipDetector(
             ontology=runtime.ontology,
@@ -296,11 +318,11 @@ Place the wiring next to the existing risk-registry block (verified at `finalize
             min_weight=config.emergent_leadership.min_weight,
             min_ratio=config.emergent_leadership.min_ratio,
         )
-        runtime._emergent_leadership_detector = detector
+        runtime.emergent_leadership_detector = detector
         logger.info("AD-439: EmergentLeadershipDetector wired")
 ```
 
-> Verify-first: `runtime.hebbian_router` is the public attribute on `ProbOSRuntime` (grep `runtime.hebbian_router` to confirm). If only a private name exists, surface — this prompt assumes the public form.
+> Verify-first: `runtime.hebbian_router` is the public attribute on `ProbOSRuntime` at `runtime.py:180,304`. `runtime.ontology` is public at `runtime.py:218,454`. `runtime.registry` is public at `runtime.py:293`. `runtime.emit_event(event_type, data)` is the post-AD-680 public method at `runtime.py:771`. The runtime attribute `emergent_leadership_detector` is published as a public name (no leading underscore) per the AD-680 / Wave 5 review precedent.
 
 ---
 
@@ -317,7 +339,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from probos.routers._deps import get_runtime
+from probos.routers.deps import get_runtime
 
 router = APIRouter(prefix="/api/emergent-leadership", tags=["analytics"])
 
@@ -325,7 +347,7 @@ router = APIRouter(prefix="/api/emergent-leadership", tags=["analytics"])
 @router.get("")
 async def get_emergent_leadership(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Return the latest emergent-leadership divergence report."""
-    detector = getattr(runtime, "_emergent_leadership_detector", None)
+    detector = getattr(runtime, "emergent_leadership_detector", None)
     if detector is None:
         raise HTTPException(404, "Emergent leadership detection disabled")
     report = detector.analyze()
@@ -367,7 +389,7 @@ Wire in `src/probos/routers/__init__.py` (or wherever existing analytics routers
 7. `test_analyze_no_reports_to_skipped` — agent's post has `reports_to=None` → skipped.
 8. `test_analyze_no_assignment_skipped` — agent_type not in ontology assignments → skipped.
 9. `test_analyze_emit_failure_logs_and_continues` — `emit_event` raises → divergence still recorded; warning logged via `caplog` at WARNING level.
-10. `test_endpoint_returns_404_when_disabled` — `_emergent_leadership_detector` absent on runtime → 404.
+10. `test_endpoint_returns_404_when_disabled` — `emergent_leadership_detector` absent on runtime → 404.
 
 Naming follows `test_{method}_{scenario}_{expected}`. Each test creates its own fixtures via `tmp_path` where needed; no shared state.
 
@@ -422,7 +444,7 @@ Expected delta:
 
 ---
 
-## Verified Against Codebase (2026-04-30)
+## Verified Against Codebase (2026-04-30, updated 2026-05-01)
 
 ```
 grep -n "class HebbianRouter" src/probos/mesh/routing.py
@@ -440,6 +462,12 @@ grep -n "class VesselOntologyService" src/probos/ontology/service.py
 grep -n "def get_assignment_for_agent" src/probos/ontology/service.py
   153:    def get_assignment_for_agent(self, agent_type: str) -> Assignment | None:
 
+grep -n "def get_subordinate_agent_types" src/probos/ontology/service.py
+  174:    def get_subordinate_agent_types(self, agent_type: str) -> list[str]:
+
+grep -n "def get_agents_for_post" src/probos/ontology/departments.py
+  117:    def get_agents_for_post(self, post_id: str) -> list[Assignment]:
+
 grep -n "authority_over" src/probos/ontology/service.py
   177:        Uses authority_over from ontology to find subordinate posts,
   187:        if not post or not post.authority_over:
@@ -450,7 +478,11 @@ grep -n "reports_to" config/ontology/organization.yaml
   38:    reports_to: captain
   56:    reports_to: captain
 
-grep -n "LEADERSHIP|LEADERSHIP_DIVERGENCE" src/probos/events.py
+grep -n "from probos.routers" src/probos/routers/system.py
+  14: from probos.routers.deps import get_runtime, get_task_tracker
+  (deps module — no leading underscore)
+
+grep -rn "LEADERSHIP\|LEADERSHIP_DIVERGENCE" src/probos/events.py
   (no matches — name is free)
 
 grep -n "WRONG_CONVERGENCE_DETECTED" src/probos/events.py
@@ -461,4 +493,30 @@ grep -n "if config.risk_tiers.enabled" src/probos/startup/finalize.py
 
 grep -n "emergence_metrics: EmergenceMetricsConfig" src/probos/config.py
   1544:    emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
+
+grep -n "def emit_event" src/probos/runtime.py
+  771:    def emit_event(self, event: BaseEvent | EventType | str, ...
+
+grep -n "self.hebbian_router\|self.ontology\|self.registry" src/probos/runtime.py
+  180:    hebbian_router: HebbianRouter
+  218:    ontology: VesselOntologyService | None
+  293:        self.registry = AgentRegistry()
+  304:        self.hebbian_router = HebbianRouter(
+  454:        self.ontology: VesselOntologyService | None = None
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-439-emergent-leadership-detection-review.md`:
+
+- **Required #1 (`routers._deps` phantom):** Section 5 import path corrected to `probos.routers.deps` (no underscore). Verified via `routers/system.py:14` and 20+ other routers using the canonical path.
+- **Required #2 (Demeter on `_dept`):** Added Section 1.5 — public `get_agents_for_post(post_id)` passthrough on `VesselOntologyService`. The detector's `_superior_agent_ids` now calls `self._ontology.get_agents_for_post(...)` cleanly. No private-attribute access across module boundaries.
+- **Required #3 (verify-first for `emit_event` signature):** Verified Against Codebase footer now includes `def emit_event` line at `runtime.py:771`.
+- **Recommended R1 (`runtime.ontology is None` guard):** Section 4 wiring now guards on `runtime.ontology is not None`.
+- **Recommended R2 (test signature):** Test 5's docstring should reflect the positional-arg shape; Builder applies during test write.
+- **Recommended R3 (perf):** noted as future optimization; non-blocking for v1.
+- **Recommended R4 (slots):** deferred — codebase precedent does not require slots.
+- **Nits:** stateless-on-construction docstring left as-is; "read-only on shared state" is a clearer rephrasing the Builder may apply if desired.
+- **Demeter uplift (cross-cutting Wave 5):** runtime attribute `emergent_leadership_detector` is published WITHOUT leading underscore. Section 4 wiring sets `runtime.emergent_leadership_detector = detector` (public name). Section 5 endpoint reads via `getattr(runtime, "emergent_leadership_detector", None)`. Test 10 updated to match.

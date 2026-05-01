@@ -52,6 +52,7 @@ orders are point-to-point delegations from a superior to a direct report.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 import uuid
@@ -140,12 +141,12 @@ class OrderManager:
             self._emit_rejection(from_agent_id, to_post_id, "unknown_issuer")
             return None
         from_assignment = self._ontology.get_assignment_for_agent(from_agent_type)
-        if not from_assignment:
-            self._emit_rejection(from_agent_id, to_post_id, "issuer_no_assignment")
+        if from_assignment is None:
+            self._emit_rejection(from_agent_id, to_post_id, "issuer_resolution_failed")
             return None
         from_post = self._ontology.get_post(from_assignment.post_id)
-        if not from_post:
-            self._emit_rejection(from_agent_id, to_post_id, "issuer_post_missing")
+        if from_post is None:
+            self._emit_rejection(from_agent_id, to_post_id, "issuer_resolution_failed")
             return None
 
         if to_post_id not in (from_post.authority_over or []):
@@ -206,11 +207,13 @@ class OrderManager:
         assignment = (
             self._ontology.get_assignment_for_agent(agent_type) if agent_type else None
         )
-        if not assignment or assignment.post_id != order.to_post_id:
+        if assignment is None or assignment.post_id != order.to_post_id:
             return False
-        updated = Order(
-            **{**order.__dict__, "state": OrderState.ACKNOWLEDGED,
-               "acknowledged_by": by_agent_id, "acknowledged_at": time.time()},
+        updated = dataclasses.replace(
+            order,
+            state=OrderState.ACKNOWLEDGED,
+            acknowledged_by=by_agent_id,
+            acknowledged_at=time.time(),
         )
         self._orders[order_id] = updated
         if self._emit_event:
@@ -237,7 +240,7 @@ class OrderManager:
         if not agent_type:
             return []
         assignment = self._ontology.get_assignment_for_agent(agent_type)
-        if not assignment:
+        if assignment is None:
             return []
         return self.list_active_for_post(assignment.post_id)
 
@@ -255,9 +258,7 @@ class OrderManager:
         now = time.time()
         for oid, o in list(self._orders.items()):
             if o.state == OrderState.PENDING and o.expires_at < now:
-                self._orders[oid] = Order(
-                    **{**o.__dict__, "state": OrderState.EXPIRED},
-                )
+                self._orders[oid] = dataclasses.replace(o, state=OrderState.EXPIRED)
 
     def _emit_rejection(self, from_agent_id: str, to_post_id: str, reason: str) -> None:
         if not self._emit_event:
@@ -308,8 +309,8 @@ class OrdersConfig(BaseModel):
     """Chain-of-command order configuration (AD-440)."""
 
     enabled: bool = True
-    max_active_per_post: int = 8
-    default_ttl_seconds: float = 3600.0
+    max_active_per_post: int = Field(default=8, ge=1, le=64)
+    default_ttl_seconds: float = Field(default=3600.0, ge=60.0, le=86400.0)
 ```
 
 Wire into `SystemConfig`:
@@ -335,7 +336,7 @@ Place near the existing risk-registry block (`finalize.py:297`):
 
 ```python
     # AD-440: Chain of Command order manager
-    if config.orders.enabled:
+    if config.orders.enabled and runtime.ontology is not None:
         from probos.cognitive.orders import OrderManager
         order_manager = OrderManager(
             ontology=runtime.ontology,
@@ -344,9 +345,11 @@ Place near the existing risk-registry block (`finalize.py:297`):
             max_active_per_post=config.orders.max_active_per_post,
             default_ttl=config.orders.default_ttl_seconds,
         )
-        runtime._order_manager = order_manager
+        runtime.order_manager = order_manager
         logger.info("AD-440: OrderManager wired (max_active=%d)", config.orders.max_active_per_post)
 ```
+
+> Demeter uplift: `runtime.order_manager` is published as a public attribute (no leading underscore). This sets the precedent for AD-455 / AD-468 / future Wave 5+ wirings — cross-module accessors on the runtime are public, internal state is private. Documented in DECISIONS.md per the prompt's tracking section.
 
 ---
 
@@ -354,13 +357,15 @@ Place near the existing risk-registry block (`finalize.py:297`):
 
 **File:** `src/probos/proactive.py`
 
-Subordinates with active orders should see them at the top of their proactive context. Find the `_gather_context()` method and add a new context block. The existing pattern (search for `if hasattr(rt, 'bridge_alerts')` for an analogous block) is to read a list and inject formatted strings into `context_parts`.
+Subordinates with active orders should see them in their proactive context.
 
-Add (after the bridge-alerts block):
+`_gather_context()` returns a `dict` (verified at `proactive.py:1053`). Inside the function, the local variable name is `context`; at the call site (`proactive.py:633`) it is renamed `context_parts`. The pattern is to write a string (or list/dict) under a new key on the `context` dict — same shape as the bridge-alerts block at `proactive.py:1345-1356` which writes `context["recent_alerts"]`.
+
+Insert AFTER the bridge-alerts block (after line ~1358):
 
 ```python
         # AD-440: Active chain-of-command orders for this agent
-        order_mgr = getattr(rt, "_order_manager", None)
+        order_mgr = getattr(rt, "order_manager", None)
         if order_mgr is not None:
             try:
                 pending = order_mgr.list_active_for_agent(agent.id)
@@ -373,7 +378,7 @@ Add (after the bridge-alerts block):
                 logger.debug("AD-440: order context injection failed", exc_info=True)
 ```
 
-> Verify-first: builder MUST grep `_gather_context` to confirm the exact insertion point. Do NOT use stale line numbers; they drift.
+> Verify-first: builder grep for `if hasattr(rt, 'bridge_alerts')` to find the exact insertion point. The injection writes to the `context` dict (NOT a separate `context_parts` list — the call site renames the dict to `context_parts`).
 
 ---
 
@@ -409,7 +414,8 @@ Implement only the two GET endpoints. Surface in `routers/__init__.py`.
 11. `test_acknowledge_by_wrong_agent_fails` — non-subordinate attempts ack → returns False, no emit.
 12. `test_list_active_filters_by_post` — two pending orders to two posts → each list returns only its own.
 13. `test_ttl_expiration_marks_expired` — `default_ttl=0.1`, sleep 0.2, `all_orders()` shows expired state.
-14. `test_proactive_context_injects_active_orders` — `_gather_context` integration test with stubbed `runtime._order_manager` → context contains `"active_orders"` key with order id and directive.
+14. `test_issuer_resolution_failed_when_assignment_missing` — agent in registry but ontology returns no assignment → reason `"issuer_resolution_failed"`. Same reason covers the post-missing branch (see Section 1: collapsed `issuer_no_assignment` and `issuer_post_missing` into one canonical reason).
+15. `test_proactive_context_injects_active_orders` — `_gather_context` integration test with stubbed `runtime.order_manager` → context contains `"active_orders"` key with order id and directive.
 
 ---
 
@@ -464,7 +470,7 @@ Expected delta:
 
 ---
 
-## Verified Against Codebase (2026-04-30)
+## Verified Against Codebase (2026-04-30, updated 2026-05-01)
 
 ```
 grep -rn "issue_order" src/probos/
@@ -487,7 +493,7 @@ grep -n "authority_over" config/ontology/organization.yaml
 grep -n "DM_CONVERGENCE_DETECTED" src/probos/events.py
   167:    DM_CONVERGENCE_DETECTED = "dm_convergence_detected"  # AD-623: DM thread converged
 
-grep -n "ORDER_" src/probos/events.py
+grep -rn "ORDER_" src/probos/events.py
   (no matches — names are free)
 
 grep -n "if config.risk_tiers.enabled" src/probos/startup/finalize.py
@@ -497,6 +503,35 @@ grep -n "async def cmd_order" src/probos/experience/commands/commands_directives
   99: async def cmd_order(runtime: ProbOSRuntime, console: Console, args: str) -> None:
   (existing CAPTAIN_ORDER directive flow — orthogonal to AD-440)
 
+grep -n "async def _gather_context" src/probos/proactive.py
+  1053:    async def _gather_context(self, agent: Any, trust_score: float) -> dict:
+
+grep -n "if hasattr(rt, 'bridge_alerts')" src/probos/proactive.py
+  1345:        if hasattr(rt, 'bridge_alerts') and rt.bridge_alerts:
+  (insertion neighborhood — write context["active_orders"] after this block)
+
+grep -n "context_parts = await self._gather_context" src/probos/proactive.py
+  633:        context_parts = await self._gather_context(agent, trust_score)
+  (call-site renames context dict to context_parts; injection still writes context dict keys)
+
 grep -n "emergence_metrics: EmergenceMetricsConfig" src/probos/config.py
   1544:    emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-440-chain-of-command-delegation-review.md`:
+
+- **Required #1 (Demeter on `_order_manager`):** `runtime._order_manager` → `runtime.order_manager` (public). Section 4 wiring + Section 5 proactive injection updated. Sets the precedent for AD-455/AD-468/Wave 5+.
+- **Required #2 (`Order(**{...__dict__})` fragility):** replaced with `dataclasses.replace(order, ...)` in `acknowledge` and `_prune_expired`. Imports `dataclasses` at top of `orders.py`.
+- **Required #3 (rejection-reason matrix gap):** collapsed `issuer_no_assignment` and `issuer_post_missing` into a single canonical `issuer_resolution_failed` reason. Test 14 now covers it (see Tests section). Five reasons total, all covered: `empty_directive`, `unknown_issuer`, `issuer_resolution_failed`, `out_of_chain`, `queue_full`.
+- **Required #4 (proactive prose):** Section 5 prose corrected — explicitly notes `_gather_context` returns a dict named `context` internally and `context_parts` at the call site. The injection writes to `context["active_orders"]` matching the bridge-alerts pattern at line 1345.
+- **Recommended R1 (perf):** noted as future optimization, non-blocking.
+- **Recommended R2 (acknowledge by superior):** documented as out-of-scope; v1 is post-holder ack only.
+- **Recommended R3 (constant naming):** kept as-is; cosmetic.
+- **Recommended R4 (Captain override):** explicitly out-of-scope, deferred to future AD; documented in DECISIONS.md per tracking section.
+- **Recommended R5 (`OrdersConfig` field validation):** added `Field(ge=..., le=...)` validators on `max_active_per_post` and `default_ttl_seconds`.
+- **Nits:** `OrderState.CANCELLED` deferred to future AD (documented).
+- **Verify-first footer:** updated with the bridge-alerts and `_gather_context` line numbers, the `context_parts` rename callout, and confirmation that `ORDER_*` names are free.

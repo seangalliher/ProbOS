@@ -40,6 +40,67 @@ Single new value. Verified absent via `grep -n "CONFIG_CHANGED" src/probos/event
 
 ---
 
+## Section 1a: Add public `data_dir` property to `ProbOSRuntime`
+
+**File:** `src/probos/runtime.py`
+
+`runtime._data_dir` is private (verified at `runtime.py:244,289`). AD-468 needs cross-module read access for the override store path. Add a public passthrough following the AD-680 promotion pattern:
+
+SEARCH:
+```python
+    # Private attributes
+    _data_dir: Path
+    _checkpoint_dir: Path
+```
+
+REPLACE:
+```python
+    # Private attributes
+    _data_dir: Path
+    _checkpoint_dir: Path
+```
+
+Then add the property near other public accessors (search for `@property` in `runtime.py` to find a good neighborhood):
+
+```python
+    @property
+    def data_dir(self) -> Path:
+        """AD-468: public read-only accessor for the runtime data directory."""
+        return self._data_dir
+```
+
+This is a one-line public property — the underlying `_data_dir` stays private.
+
+## Section 1b: Add `set_cycle_interval` and `set_cooldown` public setters to `ProactiveCognitiveLoop`
+
+**File:** `src/probos/proactive.py`
+
+`ProactiveCognitiveLoop._interval` and `_cooldown` are private (verified at `proactive.py:170,171`). AD-468's override application requires public setters; direct private-attr assignment from `finalize.py` is a Demeter violation.
+
+SEARCH:
+```python
+    @property
+    def _default_cooldown(self) -> float:
+        return self._cooldown
+```
+
+REPLACE:
+```python
+    @property
+    def _default_cooldown(self) -> float:
+        return self._cooldown
+
+    def set_cycle_interval(self, seconds: float) -> None:
+        """AD-468: public setter for the proactive cycle interval (clamped 10–3600s)."""
+        self._interval = max(10.0, min(3600.0, float(seconds)))
+
+    def set_cooldown(self, seconds: float) -> None:
+        """AD-468: public setter for the global proactive cooldown default (clamped 60–86400s)."""
+        self._cooldown = max(60.0, min(86400.0, float(seconds)))
+```
+
+Note: `set_agent_cooldown(agent_id, cooldown)` already exists at `proactive.py:410` — that's per-agent. The new `set_cooldown` is for the global default. Both coexist.
+
 ## Section 1: `RuntimeConfigService` and override schema
 
 **File:** `src/probos/runtime/config_service.py` (new — `runtime/` may need creation as a package; verify before writing)
@@ -49,26 +110,28 @@ Single new value. Verified absent via `grep -n "CONFIG_CHANGED" src/probos/event
 ```python
 """AD-468: Runtime Configuration Service.
 
-Whitelisted overrides persisted to runtime_overrides.toml. Captain may
+Whitelisted overrides persisted to runtime_overrides.json. Captain may
 adjust a small set of operational parameters without editing system.yaml
 and restarting.
+
+Persistence format: JSON (stdlib only — no external dependencies).
+TOML was considered but rejected because (a) writing requires the
+external tomli-w package which is not currently a ProbOS dependency,
+and (b) this file is written by the runtime, not edited by hand —
+human-readable formatting is not the priority. JSON satisfies the
+write/read round-trip with zero new dependencies.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import time
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from probos.events import EventType
-
-try:
-    import tomli_w
-except ImportError:  # pragma: no cover — fallback path
-    tomli_w = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +176,7 @@ class RuntimeConfigService:
 
     Read-through: clients ask for a field, get the override if set, else None.
     Subsystems can subscribe via add_listener() to react to changes.
+    Persistence is JSON via stdlib (no external dependencies).
     """
 
     def __init__(
@@ -131,8 +195,8 @@ class RuntimeConfigService:
         if not self._path.exists():
             return
         try:
-            with self._path.open("rb") as f:
-                data = tomllib.load(f)
+            with self._path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
             self._overrides = dict(data.get("overrides", {}))
             logger.info("AD-468: loaded %d runtime overrides from %s",
                         len(self._overrides), self._path)
@@ -142,12 +206,9 @@ class RuntimeConfigService:
             self._overrides = {}
 
     def _save(self) -> None:
-        if tomli_w is None:
-            logger.warning("AD-468: tomli_w not installed; cannot persist overrides")
-            return
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("wb") as f:
-            tomli_w.dump({"overrides": self._overrides}, f)
+        with self._path.open("w", encoding="utf-8") as f:
+            json.dump({"overrides": self._overrides}, f, indent=2, sort_keys=True)
 
     def get(self, field_id: str) -> Any | None:
         return self._overrides.get(field_id)
@@ -210,7 +271,7 @@ class RuntimeConfigService:
             elif spec.typ == "str":
                 v = str(raw)
             else:
-                return None, f"unknown type: {spec.typ}"
+                return None, f"validate spec.typ against {{float,int,bool,str}}: got {spec.typ}"
         except (TypeError, ValueError) as exc:
             return None, f"coercion failed: {exc}"
         if spec.min_value is not None and v < spec.min_value:
@@ -219,8 +280,6 @@ class RuntimeConfigService:
             return None, f"above max {spec.max_value}"
         return v, "ok"
 ```
-
-> Builder note: confirm `tomli_w` is in `pyproject.toml` (Python 3.11 has read-only `tomllib`; `tomli_w` is a separate write package). If not, add it. The fallback `pragma: no cover` import branch is a defensive guard, not the primary path.
 
 ---
 
@@ -250,7 +309,7 @@ class RuntimeOverridesConfig(BaseModel):
     """Runtime override layer configuration (AD-468)."""
 
     enabled: bool = True
-    store_filename: str = "runtime_overrides.toml"
+    store_filename: str = "runtime_overrides.json"
 ```
 
 Wire into `SystemConfig`:
@@ -283,23 +342,24 @@ Place after the AD-679 disclosure router block (`finalize.py:330`):
             store_path=store_path,
             emit_event=runtime.emit_event,
         )
-        runtime._runtime_config_service = rcs
-        # Apply current overrides to live subsystems
-        if (val := rcs.get("proactive.interval")) is not None:
-            try:
-                runtime.proactive_loop.set_cycle_interval(float(val))
-            except Exception:
-                logger.warning("AD-468: failed to apply proactive.interval override", exc_info=True)
-        if (val := rcs.get("proactive.cooldown")) is not None:
-            try:
-                runtime.proactive_loop._cooldown = float(val)  # set via existing public setter if added
-            except Exception:
-                logger.warning("AD-468: failed to apply proactive.cooldown override", exc_info=True)
+        runtime.runtime_config_service = rcs
+        # Apply current overrides to live subsystems via public setters
+        if runtime.proactive_loop is not None:
+            if (val := rcs.get("proactive.interval")) is not None:
+                try:
+                    runtime.proactive_loop.set_cycle_interval(float(val))
+                except Exception:
+                    logger.warning("AD-468: failed to apply proactive.interval override", exc_info=True)
+            if (val := rcs.get("proactive.cooldown")) is not None:
+                try:
+                    runtime.proactive_loop.set_cooldown(float(val))
+                except Exception:
+                    logger.warning("AD-468: failed to apply proactive.cooldown override", exc_info=True)
         logger.info("AD-468: RuntimeConfigService wired (%d overrides loaded)",
                     len(rcs.all()))
 ```
 
-> Verify-first: `runtime.data_dir`, `runtime.proactive_loop`, and `proactive_loop.set_cycle_interval` must exist. If `set_cycle_interval` is absent, the Builder must add it (single-line public setter on `ProactiveCognitiveLoop`). The pattern is to PREFER public APIs — direct `_cooldown` assignment is a TODO marker; if the prompt review flags it, replace with a `set_cooldown(float)` setter.
+> Verify-first: `runtime.data_dir` is the public property added in Section 1a. `runtime.proactive_loop` is the public attribute at `runtime.py:533, 229`. `set_cycle_interval` and `set_cooldown` are the public setters added in Section 1b. `runtime.runtime_config_service` is published as a public name (no leading underscore).
 
 ---
 
@@ -330,7 +390,7 @@ logger = logging.getLogger(__name__)
 
 
 async def cmd_config(runtime: "ProbOSRuntime", console: Console, args: str) -> None:
-    rcs = getattr(runtime, "_runtime_config_service", None)
+    rcs = getattr(runtime, "runtime_config_service", None)
     if rcs is None:
         console.print("[yellow]Runtime config service disabled.[/yellow]")
         return
@@ -439,6 +499,7 @@ Tests use `tmp_path` fixtures and create their own service instances. No shared 
 - No HXI panel.
 - No CLI flags. Captain uses the `/config` slash command from inside the shell.
 - Whitelist is intentionally narrow. Adding new fields is an architectural decision, not a runtime user action.
+- **No new package dependencies.** Persistence uses stdlib `json` (read + write). TOML was rejected because writing TOML requires the external `tomli-w` package which is not currently a ProbOS dependency. The override file is written by the runtime (not edited by hand), so JSON's lack of comments is acceptable. If a future AD wants TOML-with-comments fidelity, `tomli-w` can be added then; this AD ships dependency-free.
 
 ---
 
@@ -459,15 +520,18 @@ git diff --cached --stat
 If any tracker file shows >200 deletions, STOP.
 
 Expected delta:
-- `src/probos/runtime_config_service.py`: ~210 lines (new).
+- `src/probos/runtime_config_service.py`: ~210 lines (new — stdlib JSON only).
+- `src/probos/runtime.py`: ~5 lines added (`@property data_dir`).
+- `src/probos/proactive.py`: ~10 lines added (`set_cycle_interval`, `set_cooldown` public setters).
 - `src/probos/events.py`: 1 line added.
 - `src/probos/config.py`: ~8 lines added.
-- `src/probos/startup/finalize.py`: ~22 lines added.
+- `src/probos/startup/finalize.py`: ~26 lines added.
 - `src/probos/experience/commands/commands_config.py`: ~70 lines (new).
 - `src/probos/experience/shell.py`: ~3 lines changed (import + handler entry).
 - `tests/test_ad468_runtime_configuration.py`: ~250 lines (new).
-- `pyproject.toml`: 1 line added if `tomli-w` is missing.
 - `PROGRESS.md`, `roadmap.md`, `DECISIONS.md`: ~5 lines changed.
+
+No `pyproject.toml` change — JSON persistence uses stdlib only.
 
 ---
 
@@ -484,13 +548,13 @@ Expected delta:
 
 ---
 
-## Verified Against Codebase (2026-04-30)
+## Verified Against Codebase (2026-04-30, updated 2026-05-01)
 
 ```
 ls src/probos/runtime/
   (does NOT exist — runtime.py is a flat file, place new module flat)
 
-grep -rn "runtime_overrides|class RuntimeConfig|config_service" src/probos/
+grep -rn "runtime_overrides\|class RuntimeConfig\|config_service" src/probos/
   (no matches — AD-468 introduces these)
 
 grep -rn "Ship's Computer" src/probos/cognitive/
@@ -516,4 +580,41 @@ grep -n "commands_introspection," src/probos/experience/shell.py
 
 grep -n "/explain" src/probos/experience/shell.py
   286:            "/explain":    lambda: self._handle_nl("what just happened?"),
+
+grep -n "_data_dir" src/probos/runtime.py
+  244:    _data_dir: Path
+  289:        self._data_dir = Path(data_dir) if data_dir else _DEFAULT_DATA_DIR
+  (no public data_dir — Section 1a adds it)
+
+grep -n "self._interval\|self._cooldown" src/probos/proactive.py
+  170:        self._interval = interval
+  171:        self._cooldown = cooldown
+  383:        return self._cooldown
+  396:        return self._agent_cooldowns.get(agent_id, self._cooldown)
+  (no public setters — Section 1b adds them)
+
+grep -n "self.proactive_loop" src/probos/runtime.py
+  229:    proactive_loop: ProactiveCognitiveLoop | None
+  533:        self.proactive_loop: ProactiveCognitiveLoop | None = None
+
+grep -rn "tomli\|tomli_w\|tomli-w" pyproject.toml
+  (no matches — AD-468 ships dependency-free using stdlib json)
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-468-runtime-configuration-service-review.md`:
+
+- **Required #1 (`runtime.data_dir` phantom):** Added Section 1a — `@property def data_dir(self) -> Path` on `ProbOSRuntime`. Section 4 wiring now uses the public property.
+- **Required #2 (`set_cycle_interval` phantom):** Added Section 1b — public `set_cycle_interval(seconds: float)` on `ProactiveCognitiveLoop`. Clamps to 10–3600s.
+- **Required #3 (`_cooldown` direct assignment):** Section 1b also adds `set_cooldown(seconds: float)` on `ProactiveCognitiveLoop`. Section 4 wiring now uses the public setter.
+- **Required #4 (`tomli-w` dependency):** Replaced TOML with stdlib JSON. `RuntimeConfigService._load`/`_save` use `json.load`/`json.dump`. No external dependency. `RuntimeOverridesConfig.store_filename` defaults to `runtime_overrides.json`. Document in "What This Does NOT Change" that TOML-with-comments fidelity is deferred.
+- **Required #5 (Section 5 anchors):** confirmed correct in original draft; no change.
+- **Recommended R1 (OVERRIDABLE_FIELDS public surface):** kept as module-level. Tests can import directly.
+- **Recommended R2 (proactive_loop None guard):** Section 4 wiring now guards `if runtime.proactive_loop is not None:` before applying overrides.
+- **Recommended R3 (verify-first path layout):** footer now includes `ls src/probos/runtime/` confirming flat layout.
+- **Recommended R4 (test 11 helper):** simplified by JSON switch — JSON write is stdlib, no test fixture dance.
+- **Nits:** error message for unknown typ is sharper ("validate spec.typ against {float,int,bool,str}: got X").
+- **Demeter uplift (cross-cutting Wave 5):** `runtime._runtime_config_service` → `runtime.runtime_config_service` (public name). Section 4 wiring + Section 5 slash command both updated.

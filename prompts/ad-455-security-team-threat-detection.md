@@ -46,6 +46,57 @@ Four new values. Verified absent via `grep -n "THREAT_|TRUST_INTEGRITY|SECURITY_
 
 ---
 
+## Section 0a: Promote `_red_team_agents` to public on `ProbOSRuntime`
+
+**File:** `src/probos/runtime.py`
+
+`_red_team_agents` is private (verified at `runtime.py:246, 343`). AD-455's `RedTeamLead` reads it from a different module — that's the cross-module Demeter violation. Promote to public `red_team_agents` following the AD-680 pattern.
+
+SEARCH:
+```python
+    # Private attributes
+    _data_dir: Path
+    _checkpoint_dir: Path
+    _red_team_agents: list[RedTeamAgent]
+```
+
+REPLACE:
+```python
+    # Private attributes
+    _data_dir: Path
+    _checkpoint_dir: Path
+```
+
+Then add `red_team_agents` to the public attribute block (search for `proactive_loop:` to find the deferred-init block):
+
+```python
+    red_team_agents: list[RedTeamAgent]
+```
+
+Update `__init__` and `spawn_red_team` accordingly:
+
+SEARCH:
+```python
+        self._red_team_agents: list[RedTeamAgent] = []
+```
+
+REPLACE:
+```python
+        self.red_team_agents: list[RedTeamAgent] = []
+```
+
+SEARCH (around `runtime.py:1128`):
+```python
+            self._red_team_agents.append(agent)
+```
+
+REPLACE:
+```python
+            self.red_team_agents.append(agent)
+```
+
+> Verify-first: this is a one-shot rename, no deprecation period (AD-680 precedent). Builder also greps for any other `_red_team_agents` reference in src/ and updates. Expected: 3 sites total.
+
 ## Section 1: Create `src/probos/security/` package
 
 **IMPORTANT:** `src/probos/security/` does NOT exist. Create `src/probos/security/__init__.py` (empty file) before any other security module — same pattern AD-676 used for `src/probos/governance/__init__.py`.
@@ -280,12 +331,27 @@ class InputValidator:
 
 ---
 
-## Section 5: `RedTeamLead`
+## Section 5: `RedTeamLead` — health-monitor coordinator (revised)
 
 **File:** `src/probos/security/red_team_lead.py` (new)
 
+`RedTeamAgent` exposes `verify(target_agent_id, intent, claimed_result) -> VerificationResult` (verified at `agents/red_team.py:66`). That signature requires a triple — synthesizing it for a campaign would either pollute the trust network with synthetic intents or require an entirely new probe scheduler outside the AD's scope.
+
+**Decision (architect, 2026-05-01):** v1 RedTeamLead is a **health-monitor coordinator**, not an adversarial scheduler. It:
+- Inventories `runtime.red_team_agents` periodically.
+- Counts `is_alive` agents vs total.
+- Emits `EventType.RED_TEAM_CAMPAIGN_COMPLETE` with the rollup.
+
+Adversarial dispatch — synthesizing intents for `verify()` and recording outcomes — is **deferred to AD-455b** (queued separately). This v1 ships a real, useful surface (operator visibility into red team availability) without phantom APIs and without `run_probe` theater.
+
 ```python
-"""AD-455: Red team lead — coordinates existing RedTeamAgent instances."""
+"""AD-455: Red team lead — health-monitor coordinator over RedTeamAgent pool.
+
+Periodically inventories the red team pool and reports availability.
+Does NOT synthesize new probes — that is AD-455b's scope. v1 surfaces
+operator visibility into red team readiness without polluting the
+trust network.
+"""
 
 from __future__ import annotations
 
@@ -302,19 +368,24 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CampaignReport:
+    """One health-monitor cycle outcome."""
+
     started_at: float
     completed_at: float
-    probes_run: int
-    findings: int
+    agents_total: int
+    agents_alive: int
+    consecutive_failures: int
     summary: str
 
 
 class RedTeamLead:
-    """Schedules adversarial campaigns across existing RedTeamAgents.
+    """Coordinates existing RedTeamAgents — health monitor only.
 
-    `runtime.red_team_agents` is populated by agent_fleet.spawn_red_team_fn
-    (verified at agent_fleet.py:232).
+    `runtime.red_team_agents` is the public list populated by
+    agent_fleet.spawn_red_team_fn (verified at agent_fleet.py:232).
     """
+
+    MAX_CONSECUTIVE_FAILURES = 5
 
     def __init__(
         self,
@@ -329,6 +400,7 @@ class RedTeamLead:
         self._task: asyncio.Task | None = None
         self._stopping = asyncio.Event()
         self._last_report: CampaignReport | None = None
+        self._consecutive_failures = 0
 
     async def start(self) -> None:
         if self._task is not None:
@@ -342,7 +414,7 @@ class RedTeamLead:
             try:
                 await self._task
             except (asyncio.CancelledError, Exception):
-                pass
+                logger.debug("AD-455: red team lead task cancelled cleanly")
             self._task = None
 
     @property
@@ -357,8 +429,20 @@ class RedTeamLead:
             while not self._stopping.is_set():
                 try:
                     await self._run_campaign()
+                    self._consecutive_failures = 0
                 except Exception:
-                    logger.exception("AD-455: campaign run failed")
+                    self._consecutive_failures += 1
+                    logger.exception(
+                        "AD-455: campaign run failed (%d/%d)",
+                        self._consecutive_failures, self.MAX_CONSECUTIVE_FAILURES,
+                    )
+                    if self._consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
+                        logger.error(
+                            "AD-455: campaign disabled after %d consecutive failures; "
+                            "operator must restart to resume",
+                            self.MAX_CONSECUTIVE_FAILURES,
+                        )
+                        return
                 try:
                     await asyncio.wait_for(self._stopping.wait(), timeout=self._interval)
                 except asyncio.TimeoutError:
@@ -369,24 +453,14 @@ class RedTeamLead:
     async def _run_campaign(self) -> CampaignReport:
         started = time.time()
         agents = list(getattr(self._runtime, "red_team_agents", []) or [])
-        probes = 0
-        findings = 0
-        for agent in agents:
-            run_probe = getattr(agent, "run_probe", None)
-            if run_probe is None:
-                continue
-            try:
-                result = await run_probe()
-                probes += 1
-                if getattr(result, "found_issue", False):
-                    findings += 1
-            except Exception:
-                logger.warning("AD-455: probe failed for %s", getattr(agent, "id", "?"), exc_info=True)
+        total = len(agents)
+        alive = sum(1 for a in agents if getattr(a, "is_alive", True))
         completed = time.time()
         report = CampaignReport(
             started_at=started, completed_at=completed,
-            probes_run=probes, findings=findings,
-            summary=f"{probes} probes, {findings} findings",
+            agents_total=total, agents_alive=alive,
+            consecutive_failures=self._consecutive_failures,
+            summary=f"red_team_pool: {alive}/{total} alive",
         )
         self._last_report = report
         if self._emit_event:
@@ -394,8 +468,8 @@ class RedTeamLead:
                 self._emit_event(
                     EventType.RED_TEAM_CAMPAIGN_COMPLETE,
                     {
-                        "probes_run": probes,
-                        "findings": findings,
+                        "agents_total": total,
+                        "agents_alive": alive,
                         "duration_seconds": completed - started,
                     },
                 )
@@ -404,7 +478,7 @@ class RedTeamLead:
         return report
 ```
 
-> Builder note: `RedTeamAgent.run_probe` is referenced as a planned interface. Verify-first via `grep "def run_probe\b" src/probos/agents/red_team.py`. If absent, the Builder must add a minimal `async def run_probe(self) -> ProbeResult` to `RedTeamAgent` that returns `ProbeResult(found_issue=False)` as a no-op default. This is the only source-code change outside the new security/ package.
+> Verify-first: `RedTeamAgent.is_alive` is inherited from `BaseAgent`. `runtime.red_team_agents` is the public attribute introduced in Section 0a. No new method is added to `RedTeamAgent` — its `verify()` API is untouched.
 
 ---
 
@@ -437,13 +511,13 @@ class SecurityConfig(BaseModel):
     """Security Team configuration (AD-455)."""
 
     enabled: bool = True
-    max_payload_bytes: int = 65536
-    rate_window_seconds: float = 60.0
-    rate_max_requests: int = 60
-    max_threat_severity: float = 0.80
-    burst_window_seconds: float = 60.0
-    burst_threshold: int = 20
-    campaign_interval_seconds: float = 3600.0
+    max_payload_bytes: int = Field(default=65536, ge=1024)
+    rate_window_seconds: float = Field(default=60.0, ge=1.0)
+    rate_max_requests: int = Field(default=60, ge=1)
+    max_threat_severity: float = Field(default=0.80, ge=0.0, le=1.0)
+    burst_window_seconds: float = Field(default=60.0, ge=1.0)
+    burst_threshold: int = Field(default=20, ge=2)
+    campaign_interval_seconds: float = Field(default=3600.0, ge=60.0)
 ```
 
 Wire into `SystemConfig`:
@@ -496,15 +570,31 @@ Place after the AD-679 disclosure router (verified at `finalize.py:330`):
             emit_event=runtime.emit_event,
             campaign_interval_seconds=config.security.campaign_interval_seconds,
         )
-        runtime._threat_detector = threat_detector
-        runtime._trust_integrity_monitor = trust_integrity
-        runtime._input_validator = input_validator
-        runtime._red_team_lead = red_team_lead
+        runtime.threat_detector = threat_detector
+        runtime.trust_integrity_monitor = trust_integrity
+        runtime.input_validator = input_validator
+        runtime.red_team_lead = red_team_lead
         await red_team_lead.start()
         logger.info("AD-455: Security Team wired (4 services)")
 ```
 
-Add a `stop_security_team()` invocation in `src/probos/startup/shutdown.py` that awaits `runtime._red_team_lead.stop()` if present. Mirror the pattern used by other start/stop services in shutdown.py.
+Add to `src/probos/startup/shutdown.py`. Existing pattern is direct line-by-line awaits (verified — `runtime.episodic_memory.stop()` at `shutdown.py:128`, `runtime.identity_registry.stop()` at line 148). Insert SEARCH/REPLACE:
+
+SEARCH (around `shutdown.py:128`):
+```python
+        await runtime.episodic_memory.stop()
+```
+
+REPLACE:
+```python
+        await runtime.episodic_memory.stop()
+
+    # AD-455: stop red team campaign loop
+    if hasattr(runtime, "red_team_lead") and runtime.red_team_lead is not None:
+        await runtime.red_team_lead.stop()
+```
+
+> Demeter uplift: all four security services published as public attributes (no leading underscore): `runtime.threat_detector`, `runtime.trust_integrity_monitor`, `runtime.input_validator`, `runtime.red_team_lead`. Mirrors the AD-440 / AD-468 pattern.
 
 ---
 
@@ -524,8 +614,9 @@ Add a `stop_security_team()` invocation in `src/probos/startup/shutdown.py` that
 8. `test_input_validator_payload_too_large_rejected` — 100KB payload with 64KB cap → reason `"payload_too_large"`, emit fires.
 9. `test_input_validator_rate_limit_rejected` — 61 calls in 60s with cap 60 → 61st rejected with `"rate_limit"`.
 10. `test_input_validator_content_policy_rejected` — payload with prompt injection → rejected with `"content_policy:..."`.
-11. `test_red_team_lead_campaign_runs` — `runtime.red_team_agents` with 2 fake agents → `run_campaign_now()` returns report `probes_run=2`, emit fires.
+11. `test_red_team_lead_campaign_health_inventory` — `runtime.red_team_agents` with 2 fake agents (1 alive, 1 dead) → `run_campaign_now()` returns `CampaignReport(agents_total=2, agents_alive=1)`, emit fires with `EventType.RED_TEAM_CAMPAIGN_COMPLETE`.
 12. `test_security_config_defaults` — `SecurityConfig()` defaults match the documented values.
+13. `test_red_team_lead_consecutive_failure_disables_loop` — runtime that raises on every campaign access → after `MAX_CONSECUTIVE_FAILURES` (5) loop logs ERROR and returns; subsequent ticks do not fire.
 
 > `TrustIntegrityMonitor` tests will live in a separate file `tests/test_ad455_trust_integrity.py` if its API expands beyond what fits in this AD; for this AD, include 1 happy-path test for burst detection inside the main test file.
 
@@ -585,7 +676,7 @@ Expected delta:
 
 ---
 
-## Verified Against Codebase (2026-04-30)
+## Verified Against Codebase (2026-04-30, updated 2026-05-01)
 
 ```
 ls src/probos/security/
@@ -594,6 +685,16 @@ ls src/probos/security/
 grep -n "class RedTeamAgent" src/probos/agents/red_team.py
   25: class RedTeamAgent(BaseAgent):
 
+grep -n "async def" src/probos/agents/red_team.py
+  66:    async def verify(
+  101:    async def _verify_read(
+  187:    async def _verify_stat(
+  279:    async def _verify_run_command(
+  397:    async def _verify_http_fetch(
+  491:    async def _verify_write(
+  557:    async def perceive(self, intent: dict[str, Any]) -> Any:
+  (no run_probe — AD-455 does NOT add one; v1 RedTeamLead is a health monitor)
+
 grep -n "class SystemQAAgent" src/probos/agents/system_qa.py
   69: class SystemQAAgent(BaseAgent):
 
@@ -601,7 +702,13 @@ grep -n "spawn_red_team_fn" src/probos/startup/agent_fleet.py
   38:    spawn_red_team_fn: Callable[..., Any],
   232:    await spawn_red_team_fn(config.consensus.red_team_pool_size)
 
-grep -rn "prompt_injection|input_validator|trust_integrity|sybil" src/probos/
+grep -n "_red_team_agents\|red_team_agents" src/probos/runtime.py
+  246:    _red_team_agents: list[RedTeamAgent]
+  343:        self._red_team_agents: list[RedTeamAgent] = []
+  1128:            self._red_team_agents.append(agent)
+  (Section 0a renames all 3 sites to public red_team_agents)
+
+grep -rn "prompt_injection\|input_validator\|trust_integrity\|sybil" src/probos/
   (no matches — AD-455 introduces these names)
 
 grep -n "DISCLOSURE_FILTERED" src/probos/events.py
@@ -612,4 +719,30 @@ grep -n "firewall: FirewallConfig" src/probos/config.py
 
 grep -n "_disclosure_router = disclosure_router" src/probos/startup/finalize.py
   330:    runtime._disclosure_router = disclosure_router
+
+grep -n "await runtime.episodic_memory.stop" src/probos/startup/shutdown.py
+  128:        await runtime.episodic_memory.stop()
+  (insertion neighborhood for shutdown integration)
+
+grep -n "from pydantic import" src/probos/config.py
+  10: from pydantic import BaseModel, Field, field_validator, model_validator
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-455-security-team-threat-detection-review.md`:
+
+- **Required #1 (`RedTeamAgent.run_probe` phantom):** Section 5 redesigned. `RedTeamLead` is now a **health-monitor coordinator** that inventories `runtime.red_team_agents` and reports `agents_total` / `agents_alive`. No new method on `RedTeamAgent`. Adversarial dispatch (synthesizing intents for `verify()`) deferred to AD-455b. Documented in DECISIONS.md per the prompt's tracking section.
+- **Required #2 (`runtime.red_team_agents` private):** Added Section 0a — promote `_red_team_agents` to public `red_team_agents` on `ProbOSRuntime` (3 call sites updated, AD-680 one-shot rename pattern).
+- **Required #3 (Demeter uplift on 4 security services):** all 4 services published as public attributes (`runtime.threat_detector`, `runtime.trust_integrity_monitor`, `runtime.input_validator`, `runtime.red_team_lead`). Mirrors AD-440 / AD-468.
+- **Required #4 (shutdown.py prose → SEARCH/REPLACE):** Section 8 now has a concrete SEARCH/REPLACE keyed on `await runtime.episodic_memory.stop()` at `shutdown.py:128`.
+- **Required #5 (consecutive failure backoff):** added `MAX_CONSECUTIVE_FAILURES = 5` and a counter on `RedTeamLead._loop`. After 5 consecutive failures, the loop logs ERROR and returns (operator must restart to resume). Test 13 added.
+- **Recommended R1 (ThreatDetector pattern tuning):** non-blocking; static patterns acceptable for v1. Future config-driven patterns can be added later.
+- **Recommended R2 (rate-limit history bound):** non-blocking; documented as "trusted-source IDs only" in v1.
+- **Recommended R3 (TrustIntegrityMonitor body):** acknowledged. The Builder will sketch the three detection algorithms (burst voting, mutual loops, anomalous velocity) using the listed dataclasses. If complexity expands, split to AD-455b. Non-blocking for the Required gate.
+- **Recommended R4 (`SecurityConfig` `Field` validation):** added `Field(ge=..., le=...)` validators on all numeric config fields.
+- **Recommended R5 (create_task reference):** confirmed `self._task` is held — non-issue.
+- **Nits:** `_ABNORMAL_TOKEN_RATIO` left as module-level (cosmetic).
+- **Verify-first footer:** updated with confirmation that `run_probe` is absent, `red_team_agents` rename sites, and `episodic_memory.stop` shutdown anchor.
