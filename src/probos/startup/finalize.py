@@ -357,6 +357,17 @@ async def finalize_startup(
         runtime.order_manager = order_manager
         logger.info("AD-440: OrderManager wired (max_active=%d)", config.orders.max_active_per_post)
 
+    # AD-451: Validation Framework
+    if config.validation_framework.enabled:
+        from probos.cognitive.validation_framework import ReconciliationEscalator
+        runtime.reconciliation_escalator = ReconciliationEscalator(
+            runtime=runtime,
+            emit_event=runtime.emit_event,
+            min_confidence_delta=config.validation_framework.min_confidence_delta,
+            metadata_threshold=config.validation_framework.metadata_threshold,
+        )
+        logger.info("AD-451: ValidationFramework wired (ReconciliationEscalator)")
+
     # AD-491: Infodynamic Telemetry probe
     if config.infodynamic.enabled:
         from probos.cognitive.infodynamic import InfodynamicProbe

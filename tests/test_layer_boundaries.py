@@ -63,6 +63,9 @@ ALLOWED_EXCEPTIONS = {
     ("experience/qa_panel.py", "probos.agents.system_qa"),
     # BF-085: cognitive → consensus.escalation — TYPE_CHECKING-only type annotation
     ("cognitive/decomposer.py", "probos.consensus.escalation"),
+    # AD-451: cognitive → agents.red_team — TYPE_CHECKING-only type annotation
+    # for TwoStageVerifier wrapper; runtime dependency injected via constructor.
+    ("cognitive/validation_framework.py", "probos.agents.red_team"),
     # AD-583: knowledge → cognitive.social_verification — pure function import for independence scoring
     ("knowledge/records_store.py", "probos.cognitive.social_verification"),
 }

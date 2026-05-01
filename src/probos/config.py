@@ -1033,6 +1033,14 @@ class OrdersConfig(BaseModel):
     default_ttl_seconds: float = Field(default=3600.0, ge=60.0, le=86400.0)
 
 
+class ValidationFrameworkConfig(BaseModel):
+    """Validation framework configuration (AD-451)."""
+
+    enabled: bool = True
+    metadata_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    min_confidence_delta: float = Field(default=0.20, ge=0.0, le=1.0)
+
+
 class InfodynamicConfig(BaseModel):
     """Infodynamic telemetry configuration (AD-491)."""
 
@@ -1599,6 +1607,7 @@ class SystemConfig(BaseModel):
     emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
     emergent_leadership: EmergentLeadershipConfig = EmergentLeadershipConfig()  # AD-439
     orders: OrdersConfig = OrdersConfig()  # AD-440
+    validation_framework: ValidationFrameworkConfig = ValidationFrameworkConfig()  # AD-451
     infodynamic: InfodynamicConfig = InfodynamicConfig()  # AD-491
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
