@@ -190,6 +190,7 @@ class EventType(str, Enum):
     AGENT_SELF_NAMED = "agent_self_named"  # AD-499
     VALIDATION_RECONCILIATION_REQUESTED = "validation_reconciliation_requested"  # AD-451
     VALIDATION_OUTCOME_VERIFIED = "validation_outcome_verified"  # AD-451
+    PREFLIGHT_FAILED = "preflight_failed"  # AD-458
     INFODYNAMIC_REPORT = "infodynamic_report"  # AD-491
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased

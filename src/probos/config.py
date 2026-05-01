@@ -1041,6 +1041,14 @@ class ValidationFrameworkConfig(BaseModel):
     min_confidence_delta: float = Field(default=0.20, ge=0.0, le=1.0)
 
 
+class PreFlightConfig(BaseModel):
+    """Pre-flight validation configuration (AD-458)."""
+
+    enabled: bool = True
+    # AD-458b will add token-budget configuration when LLMTierReachableCheck
+    # and TokenBudgetCheck join v2.
+
+
 class InfodynamicConfig(BaseModel):
     """Infodynamic telemetry configuration (AD-491)."""
 
@@ -1608,6 +1616,7 @@ class SystemConfig(BaseModel):
     emergent_leadership: EmergentLeadershipConfig = EmergentLeadershipConfig()  # AD-439
     orders: OrdersConfig = OrdersConfig()  # AD-440
     validation_framework: ValidationFrameworkConfig = ValidationFrameworkConfig()  # AD-451
+    pre_flight: PreFlightConfig = PreFlightConfig()  # AD-458
     infodynamic: InfodynamicConfig = InfodynamicConfig()  # AD-491
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()

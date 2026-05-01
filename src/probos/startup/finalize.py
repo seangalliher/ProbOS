@@ -368,6 +368,32 @@ async def finalize_startup(
         )
         logger.info("AD-451: ValidationFramework wired (ReconciliationEscalator)")
 
+    # AD-458: Pre-flight validation runner (v1: 2 checks; LLMTier + TokenBudget deferred to AD-458b)
+    if config.pre_flight.enabled:
+        from pathlib import Path
+        from probos.cognitive.pre_flight import (
+            PreFlightRunner,
+            TargetFilesExistCheck,
+            TargetFilesWritableCheck,
+        )
+        # finalize.py is at src/probos/startup/finalize.py — four levels deep
+        # from the repo root, so parents[3] resolves to the repo root:
+        #   parents[0] = src/probos/startup/
+        #   parents[1] = src/probos/
+        #   parents[2] = src/
+        #   parents[3] = repo root  <- target
+        repo_root = Path(__file__).resolve().parents[3]
+        runtime.pre_flight_runner = PreFlightRunner(
+            checks=[
+                TargetFilesExistCheck(repo_root=repo_root),
+                TargetFilesWritableCheck(repo_root=repo_root),
+            ],
+        )
+        logger.info(
+            "AD-458: PreFlightRunner wired (%d checks; LLMTier + TokenBudget deferred to AD-458b)",
+            len(runtime.pre_flight_runner.checks),
+        )
+
     # AD-491: Infodynamic Telemetry probe
     if config.infodynamic.enabled:
         from probos.cognitive.infodynamic import InfodynamicProbe

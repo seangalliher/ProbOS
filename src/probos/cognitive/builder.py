@@ -2514,6 +2514,20 @@ async def execute_approved_build(
         )
         return result
 
+    # 1b. AD-458: Pre-flight validation (after clean-tree check, before branch creation)
+    pre_flight = getattr(runtime, "pre_flight_runner", None) if runtime is not None else None
+    if pre_flight is not None:
+        emit = runtime.emit_event if runtime is not None else None
+        report = await pre_flight.run(spec, emit_event=emit)
+        if not report.passed:
+            blocking_failures = [
+                r for r in report.results if not r.passed and r.blocking
+            ]
+            result.error = "pre-flight validation failed: " + ", ".join(
+                f"{r.check_name}: {r.detail}" for r in blocking_failures
+            )
+            return result
+
     # 2. Generate branch name
     branch = spec.branch_name
     if not branch:
