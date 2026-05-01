@@ -127,6 +127,10 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     if runtime.episodic_memory:
         await runtime.episodic_memory.stop()
 
+    # AD-455: stop red team campaign loop
+    if hasattr(runtime, "red_team_lead") and runtime.red_team_lead is not None:
+        await runtime.red_team_lead.stop()
+
     # AD-541f: Stop eviction audit log (companion to episodic memory)
     _eviction_audit = getattr(runtime, "_eviction_audit", None)
     if _eviction_audit is not None:
@@ -297,10 +301,10 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         runtime.assignment_service = None
 
     # Stop red team agents
-    for agent in runtime._red_team_agents:
+    for agent in runtime.red_team_agents:
         await agent.stop()
         await runtime.registry.unregister(agent.id)
-    runtime._red_team_agents.clear()
+    runtime.red_team_agents.clear()
 
     # Stop pool scaler before stopping pools
     if runtime.pool_scaler:

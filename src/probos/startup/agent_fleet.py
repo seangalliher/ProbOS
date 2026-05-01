@@ -228,7 +228,7 @@ async def create_agent_fleet(
                 if isinstance(agent, _CA) and hasattr(agent, "set_strategy_advisor"):
                     agent.set_strategy_advisor(strategy_advisor)
 
-    # Spawn red team agents (populates runtime._red_team_agents in-place)
+    # Spawn red team agents (populates runtime.red_team_agents in-place)
     await spawn_red_team_fn(config.consensus.red_team_pool_size)
 
     logger.info("Startup [agent_fleet]: complete")

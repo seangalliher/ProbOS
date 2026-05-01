@@ -1025,6 +1025,19 @@ class RuntimeOverridesConfig(BaseModel):
     store_filename: str = "runtime_overrides.json"
 
 
+class SecurityConfig(BaseModel):
+    """Security Team configuration (AD-455)."""
+
+    enabled: bool = True
+    max_payload_bytes: int = Field(default=65536, ge=1024)
+    rate_window_seconds: float = Field(default=60.0, ge=1.0)
+    rate_max_requests: int = Field(default=60, ge=1)
+    max_threat_severity: float = Field(default=0.80, ge=0.0, le=1.0)
+    burst_window_seconds: float = Field(default=60.0, ge=1.0)
+    burst_threshold: int = Field(default=20, ge=2)
+    campaign_interval_seconds: float = Field(default=3600.0, ge=60.0)
+
+
 class OnboardingConfig(BaseModel):
     """AD-442: Onboarding ceremony configuration."""
 
@@ -1554,6 +1567,7 @@ class SystemConfig(BaseModel):
     assignments: AssignmentConfig = AssignmentConfig()
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
     firewall: FirewallConfig = FirewallConfig()
+    security: SecurityConfig = SecurityConfig()  # AD-455
     emergent_detector: EmergentDetectorConfig = EmergentDetectorConfig()
     novelty_gate: NoveltyGateConfig = NoveltyGateConfig()
     earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()

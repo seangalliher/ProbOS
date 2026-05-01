@@ -178,6 +178,10 @@ class EventType(str, Enum):
     KNOWLEDGE_TIER_LOADED = "knowledge_tier_loaded"  # AD-585: tiered knowledge load
     CONTEXT_PROVENANCE_INJECTED = "context_provenance_injected"  # AD-677
     DISCLOSURE_FILTERED = "disclosure_filtered"  # AD-679
+    THREAT_DETECTED = "threat_detected"  # AD-455
+    TRUST_INTEGRITY_VIOLATION = "trust_integrity_violation"  # AD-455
+    SECURITY_INPUT_REJECTED = "security_input_rejected"  # AD-455
+    RED_TEAM_CAMPAIGN_COMPLETE = "red_team_campaign_complete"  # AD-455
     CONFIG_CHANGED = "config_changed"  # AD-468
     SHIP_NAMED = "ship_named"  # AD-499
     AGENT_SELF_NAMED = "agent_self_named"  # AD-499

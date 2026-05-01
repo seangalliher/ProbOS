@@ -375,6 +375,41 @@ async def finalize_startup(
             len(rcs.all()),
         )
 
+    # AD-455: Security Team
+    if config.security.enabled:
+        from probos.security.threat_detector import ThreatDetector
+        from probos.security.trust_integrity import TrustIntegrityMonitor
+        from probos.security.input_validator import InputValidator
+        from probos.security.red_team_lead import RedTeamLead
+
+        threat_detector = ThreatDetector(emit_event=runtime.emit_event)
+        trust_integrity = TrustIntegrityMonitor(
+            trust_network=runtime.trust_network,
+            event_log=runtime.event_log,
+            emit_event=runtime.emit_event,
+            burst_window_seconds=config.security.burst_window_seconds,
+            burst_threshold=config.security.burst_threshold,
+        )
+        input_validator = InputValidator(
+            threat_detector=threat_detector,
+            emit_event=runtime.emit_event,
+            max_payload_bytes=config.security.max_payload_bytes,
+            rate_window_seconds=config.security.rate_window_seconds,
+            rate_max_requests=config.security.rate_max_requests,
+            max_threat_severity=config.security.max_threat_severity,
+        )
+        red_team_lead = RedTeamLead(
+            runtime=runtime,
+            emit_event=runtime.emit_event,
+            campaign_interval_seconds=config.security.campaign_interval_seconds,
+        )
+        runtime.threat_detector = threat_detector
+        runtime.trust_integrity_monitor = trust_integrity
+        runtime.input_validator = input_validator
+        runtime.red_team_lead = red_team_lead
+        await red_team_lead.start()
+        logger.info("AD-455: Security Team wired (4 services)")
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:
@@ -1026,7 +1061,7 @@ async def finalize_startup(
         "ProbOS started: %d agents across %d pools + %d red team",
         runtime.registry.count,
         len(runtime.pools),
-        len(runtime._red_team_agents),
+        len(runtime.red_team_agents),
     )
 
     # AD-435 + AD-502: Announce startup to Ward Room (lifecycle-aware)

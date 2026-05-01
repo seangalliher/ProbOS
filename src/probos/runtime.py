@@ -243,7 +243,7 @@ class ProbOSRuntime:
     # Private attributes
     _data_dir: Path
     _checkpoint_dir: Path
-    _red_team_agents: list[RedTeamAgent]
+    red_team_agents: list[RedTeamAgent]
     _cold_start: bool
     _start_time: float
     _recent_errors: list[str]
@@ -340,7 +340,7 @@ class ProbOSRuntime:
             dampening_config=self.config.trust_dampening,
         )
         # Red team agents are stored separately — not on the intent bus
-        self._red_team_agents: list[RedTeamAgent] = []
+        self.red_team_agents: list[RedTeamAgent] = []
 
         # --- Cognitive ---
         cog_cfg = self.config.cognitive
@@ -1130,7 +1130,7 @@ class ProbOSRuntime:
             agent = RedTeamAgent(pool="red_team", agent_id=agent_id)
             await self.registry.register(agent)
             await agent.start()
-            self._red_team_agents.append(agent)
+            self.red_team_agents.append(agent)
 
             # Register capabilities and gossip, but NOT intent bus
             if agent.capabilities:
@@ -1890,7 +1890,7 @@ class ProbOSRuntime:
         # Step 3: Red team verification (verify a sample of results)
         # Parallelized to avoid serial O(results × agents × timeout) blocking.
         verification_results = []
-        if results and self._red_team_agents:
+        if results and self.red_team_agents:
             verification_timeout = self.config.consensus.verification_timeout_seconds
 
             async def _verify_one(
@@ -1962,7 +1962,7 @@ class ProbOSRuntime:
             verify_tasks = [
                 _verify_one(rt_agent, result)
                 for result in results if result.success
-                for rt_agent in self._red_team_agents
+                for rt_agent in self.red_team_agents
             ]
             if verify_tasks:
                 await asyncio.gather(*verify_tasks)
@@ -2824,7 +2824,7 @@ class ProbOSRuntime:
             },
             "consensus": {
                 "trust_network_agents": self.trust_network.agent_count,
-                "red_team_agents": len(self._red_team_agents),
+                "red_team_agents": len(self.red_team_agents),
                 "quorum_policy": {
                     "min_votes": self.quorum_engine.policy.min_votes,
                     "approval_threshold": self.quorum_engine.policy.approval_threshold,
@@ -3068,7 +3068,7 @@ class ProbOSRuntime:
                     "tier": tier,
                 }
                 manifest.append(entry)
-        for idx, agent in enumerate(self._red_team_agents):
+        for idx, agent in enumerate(self.red_team_agents):
             manifest.append({
                 "agent_id": agent.id,
                 "agent_type": agent.agent_type,
