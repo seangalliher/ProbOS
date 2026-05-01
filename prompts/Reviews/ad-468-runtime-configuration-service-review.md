@@ -180,3 +180,49 @@ If switching to JSON per finding #4, this test simplifies. If staying with TOML,
 ❌ **Not Ready.** Four Required findings, two of which (data_dir, tomli_w dependency) introduce architectural decisions the prompt currently glosses over. Build prompts must NOT defer architectural decisions to the Builder. Estimated rework: ~30 minutes architect time.
 
 After fixes, re-pass review; expected verdict ⚠️ Conditional (then ✅ on re-review). The wiring sections require the most care here — Sections 0, 1, 2, 3 are clean.
+
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved (with one Nit).** All 5 pass-1 Required findings cleanly resolved. JSON over TOML executed cleanly with no live `tomli/tomli_w/tomllib` imports. Public `data_dir` property + `set_cycle_interval`/`set_cooldown` setters all added correctly.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| #1 `runtime.data_dir` phantom | ✅ Resolved | Section 1a (lines 43-72) adds `@property def data_dir(self) -> Path`. Section 4 line 340 uses public property. |
+| #2 `set_cycle_interval` phantom | ✅ Resolved | Section 1b (lines 74-104) adds `def set_cycle_interval(self, seconds: float) -> None`. Clamps to 10–3600s. |
+| #3 `_cooldown` direct assignment | ✅ Resolved | Section 1b also adds `def set_cooldown(self, seconds: float) -> None` with 60–86400s clamp. Section 4 line 355 uses public setter. |
+| #4 `tomli-w` dependency | ✅ Resolved | Section 1 imports `import json` only. `_load` uses `json.load`, `_save` uses `json.dump`. Default filename `runtime_overrides.json`. Verify-first footer line 600 confirms no `tomli` references in `pyproject.toml`. All `tomli/tomli-w` strings remaining in the prompt are in rationale/Revision text only. |
+| #5 Section 5 anchors | ✅ Resolved | Anchors confirmed in footer; no change required. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| R1 `OVERRIDABLE_FIELDS` public | ✅ Applied — module-level, accessible to tests |
+| R2 `proactive_loop is not None` guard | ✅ Applied at Section 4 line 348 |
+| R3 verify-first path layout | ✅ Applied — `ls src/probos/runtime/` line 583 confirms flat layout |
+| R4 test 11 helper | ✅ Simplified by JSON — no fixture dance needed |
+
+### Cross-cutting Demeter uplift verified
+
+- `runtime.runtime_config_service` (public) at line 345 — ✓
+- `/config` slash command reads `getattr(runtime, "runtime_config_service", None)` — ✓
+- No collision with existing `runtime.py` attributes — verified
+
+### New Findings (introduced during revision)
+
+1. **Nit (doc only): line 544 acceptance criterion still says `runtime_overrides.toml`.** The actual config default at line 312 is `runtime_overrides.json` and the revision section at line 613 documents the JSON switch. The acceptance criterion is the only stale `.toml` reference outside rationale text. Fix: change `"runtime_overrides.toml"` to `"runtime_overrides.json"` at line 544. Single-character-substring edit; non-blocking for Builder.
+
+### Verified Against Revised Codebase Claims
+
+- `runtime._data_dir` private at `runtime.py:244,289` — confirmed via footer ✓
+- `ProactiveCognitiveLoop._interval`/`_cooldown` private at `proactive.py:170,171` — confirmed via footer ✓
+- `runtime.proactive_loop` public at `runtime.py:229,533` — confirmed via footer ✓
+- `runtime_config_service` absent from `runtime.py` today — verified ✓
+- No `tomli` in `pyproject.toml` — confirmed via footer ✓
+
+### Recommended Next Step
+
+Ship to Builder. AD-468 establishes the `data_dir` and proactive-loop-setter pattern that AD-455 / AD-440 / AD-499 mirror — recommended second-build candidate after AD-499's fix lands and AD-439 ships.

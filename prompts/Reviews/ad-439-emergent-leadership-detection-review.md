@@ -139,3 +139,51 @@ Minor: matches the recent codebase trend (governance/risk_tiers.py uses `@datacl
 ## Required Disposition
 
 ⚠️ **Conditional approval.** Two surgical fixes (import path + Demeter passthrough) and one verify-first addition. Estimated rework: ~10 minutes architect time. After fixes, this is a clean Group 3 prompt suitable for Builder dispatch.
+
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved.** All 3 pass-1 Required findings cleanly resolved. Recommended findings applied or appropriately deferred. No new phantom APIs.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| #1 `routers._deps` phantom | ✅ Resolved | Section 5 line 342: `from probos.routers.deps import get_runtime` (no underscore). Verify-first footer line 482 cites `routers/system.py:14` and 20+ canonical sites. |
+| #2 Demeter on `_dept` | ✅ Resolved | Section 1.5 (lines 41-61) adds public `get_agents_for_post(post_id)` passthrough on `VesselOntologyService` matching the `service.py:120-151` delegation pattern. Detector now calls `self._ontology.get_agents_for_post(...)` cleanly (line 238). |
+| #3 verify-first for `emit_event` signature | ✅ Resolved | Footer line 498 includes `def emit_event` at `runtime.py:771`. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| R1 `runtime.ontology is None` guard | ✅ Applied | Section 4 line 311: `if config.emergent_leadership.enabled and runtime.ontology is not None` |
+| R2 test signature shape | ✅ Tracked for Builder |
+| R3 perf O(N) scan | 📦 Deferred — non-blocking |
+| R4 dataclass slots | 📦 Deferred — codebase precedent doesn't require |
+
+### Cross-cutting Demeter uplift verified
+
+- `runtime.emergent_leadership_detector` (public, no underscore) at line 321 — ✓
+- Endpoint reads via `getattr(runtime, "emergent_leadership_detector", None)` at line 350 — ✓
+- Test 10 references public name — ✓
+- No collision with existing `runtime.py` attributes — verified via `grep -n emergent_leadership_detector src/probos/runtime.py` (no matches today)
+
+### New Findings (introduced during revision)
+
+None.
+
+### Verified Against Revised Codebase Claims
+
+- Section 1.5 SEARCH anchor `def get_subordinate_agent_types` at `service.py:174` — confirmed ✓
+- `DepartmentService.get_agents_for_post` at `departments.py:117` — confirmed ✓
+- `Assignment` import in `service.py` — confirmed via existing `Assignment | None` return type at line 153 ✓
+- `runtime.hebbian_router` at `runtime.py:180,304` — confirmed ✓
+- `runtime.ontology` at `runtime.py:218,454` — confirmed ✓
+- `runtime.registry` at `runtime.py:293` — confirmed ✓
+- `runtime.emit_event` at `runtime.py:771` — confirmed ✓
+- `LEADERSHIP_DIVERGENCE` absent from `events.py` — confirmed via existing grep ✓
+
+### Recommended Next Step
+
+Ship to Builder. AD-439 is the cleanest of the Wave 5 batch and the smallest blast radius after AD-499. Suggested first-build candidate once AD-499 lands its single-edit fix.

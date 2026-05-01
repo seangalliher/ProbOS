@@ -142,3 +142,52 @@ The Pydantic model field has no `Field(ge=60.0, le=86400.0)` validator. AD-440's
 ⚠️ **Conditional approval.** Three Required findings (Demeter on `_order_manager`, frozen-dataclass reconstruction, test coverage gap) and one prose fix. None require redesign — all are surgical edits. Estimated rework: ~25 minutes architect time.
 
 After fixes, this should pass re-review at ✅ Approved. Of the 5 Wave 5 prompts, AD-440 is the highest-risk (trust/authority surface) and should land sequenced **after** AD-455 and AD-468 — both of which establish wiring patterns AD-440 should mirror.
+
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved (with two Nits).** All 4 pass-1 Required findings cleanly resolved. `dataclasses.replace` migration clean, rejection-reason matrix collapsed to 5 fully-tested reasons, public `order_manager` attribute set the cross-cutting precedent.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| #1 Demeter on `_order_manager` | ✅ Resolved | Section 4 line 348: `runtime.order_manager = order_manager` (public). Section 5 line 368: `getattr(rt, "order_manager", None)`. Verify-first paragraph at line 352 documents this as the Wave 5+ precedent. |
+| #2 `Order(**{...__dict__})` fragility | ✅ Resolved | Section 1 line 212: `dataclasses.replace(order, state=..., acknowledged_by=..., acknowledged_at=...)`. Line 261: `dataclasses.replace(o, state=OrderState.EXPIRED)`. `import dataclasses` added at top of file. |
+| #3 rejection-reason matrix gap | ✅ Resolved | Two reasons collapsed into `"issuer_resolution_failed"` (lines 145, 149). Test 14 (line 417) covers this single canonical reason. Five total reasons all tested: `empty_directive`, `unknown_issuer`, `issuer_resolution_failed`, `out_of_chain`, `queue_full`. |
+| #4 proactive prose misleading | ✅ Resolved | Section 5 (lines 365-373) now explicitly notes `_gather_context` returns a dict named `context` internally and `context_parts` at the call site. The injection writes `context["active_orders"]` matching the `proactive.py:1345` pattern. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| R1 perf O(N) | 📦 Deferred — non-blocking |
+| R2 acknowledge by superior | 📦 Deferred — out-of-scope |
+| R3 constant naming | 📦 Deferred — cosmetic |
+| R4 Captain override | 📦 Out-of-scope, documented |
+| R5 `OrdersConfig` `Field` validation | ✅ Applied — `Field(ge=..., le=...)` on both numeric fields |
+
+### Cross-cutting Demeter uplift verified
+
+- `runtime.order_manager` (public) at line 348 — ✓
+- Section 5 reads via `getattr(rt, "order_manager", None)` — ✓
+- Test 15 references `runtime.order_manager` — ✓
+- No collision with other Wave 5 names — verified
+
+### New Findings (introduced during revision)
+
+1. **Nit: stale `_order_manager` reference at line 467.** Acceptance Criteria reads "Proactive context injection does not crash when `_order_manager` is None (graceful degradation tested)." Should be `order_manager` (public). One-character edit; non-blocking.
+2. **Nit: test count off-by-one.** Tests header at line 411 says `"14 tests"` but list has 15 entries (1-15). Either bump header to `"15 tests"` or renumber to drop one. The natural fix is to bump the header — every entry is independently useful.
+
+### Verified Against Revised Codebase Claims
+
+- `async def _gather_context` at `proactive.py:1053` — confirmed via footer ✓
+- `if hasattr(rt, 'bridge_alerts')` at `proactive.py:1345` — confirmed via footer ✓
+- `context_parts = await self._gather_context` at `proactive.py:633` — confirmed via footer ✓
+- `order_manager` absent from `runtime.py` today — verified ✓
+- `ORDER_*` EventTypes absent from `events.py` today — verified ✓
+- `cmd_order` (existing CAPTAIN_ORDER) at `commands_directives.py:99` — confirmed orthogonal ✓
+
+### Recommended Next Step
+
+Ship to Builder. AD-440 is the highest-risk semantically (authority/trust surface) but the lowest-risk technically of the four ⚠️/✅ revisions — clean code path, well-tested rejection matrix, proper public-attr precedent. Both Nits are 1-line doc fixes; Builder can include in the same commit.

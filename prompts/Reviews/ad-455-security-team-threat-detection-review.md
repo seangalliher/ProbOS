@@ -200,3 +200,63 @@ The line `self._task = asyncio.create_task(...)` does store the reference correc
 ❌ **Not Ready.** Five Required findings, two of which (`run_probe` phantom, `red_team_agents` private-name silent failure) cause the AD's primary deliverable to no-op in production. Estimated rework: ~45 minutes architect time — this is the heaviest revision in Wave 5.
 
 After fixes, re-pass review. AD-455 should land **after** AD-468 (which establishes the Demeter pattern for new public attributes) and before AD-440 (which mirrors that pattern). Recommended Wave 5 build order: AD-499 → AD-439 → AD-468 → AD-455 → AD-440.
+
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved (with two Nits).** All 5 pass-1 Required findings cleanly resolved. The Section 5 health-monitor redesign is genuinely a real, useful surface — no phantom API, no theater, no synthetic-intent trust pollution. Section 0a (`_red_team_agents` → `red_team_agents` rename) executed cleanly with all 3 call sites called out.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| #1 `RedTeamAgent.run_probe` phantom | ✅ Resolved | Section 5 redesigned (lines 334-481). Decision rationale at line 339 explicitly documents the choice: v1 health monitor coordinator, NOT adversarial scheduler. `_run_campaign` at line 452 reads `runtime.red_team_agents`, counts `is_alive`, emits `RED_TEAM_CAMPAIGN_COMPLETE`. No method added to `RedTeamAgent`. AD-455b deferral note at line 345 keeps the option open without forcing premature design. |
+| #2 `runtime.red_team_agents` private | ✅ Resolved | Section 0a (lines 49-99) promotes `_red_team_agents` to public `red_team_agents`. SEARCH/REPLACE blocks for `runtime.py:246` (class attribute), line 343 (init), and line 1128 (append). 3 sites identified explicitly. AD-680 one-shot rename pattern. |
+| #3 Demeter uplift on 4 services | ✅ Resolved | Section 8 (lines 573-576) sets all 4 as public: `runtime.threat_detector`, `runtime.trust_integrity_monitor`, `runtime.input_validator`, `runtime.red_team_lead`. No leading underscores. |
+| #4 `shutdown.py` SEARCH/REPLACE | ✅ Resolved | Section 8 (lines 583-595) provides concrete SEARCH on `await runtime.episodic_memory.stop()` (verified at `shutdown.py:128`) and REPLACE inserting the AD-455 stop block. `hasattr` + None guard included. |
+| #5 consecutive failure backoff | ✅ Resolved | Section 5 line 388 declares `MAX_CONSECUTIVE_FAILURES = 5`. `_loop` at lines 422-446 increments counter on exception, returns after 5 with ERROR log. Test 13 (line 619) exercises the disable path. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| R1 ThreatDetector pattern tuning | 📦 Deferred — static patterns acceptable for v1 |
+| R2 rate-limit history bound | 📦 Deferred — "trusted-source IDs only" v1 documented |
+| R3 TrustIntegrityMonitor body | 📦 Tracked for Builder; AD-455b split possible if complexity grows |
+| R4 `SecurityConfig` `Field` validation | ✅ Applied — `Field(ge=..., le=...)` on all numeric fields |
+| R5 create_task reference | ✅ Already correct — `self._task` held |
+
+### Cross-cutting Demeter uplift verified
+
+- 4 public security service attributes — ✓
+- `red_team_agents` rename touches 3 sites — ✓
+- `shutdown.py` integration uses `hasattr(runtime, "red_team_lead")` (public name) — ✓
+- No collisions with AD-440 / AD-468 / AD-439 / AD-499 names — verified
+
+### Section 5 health-monitor design verified clean
+
+- `CampaignReport(agents_total, agents_alive, consecutive_failures, summary)` — all fields correspond to actual computed values
+- `_run_campaign` does NOT call `run_probe`, `verify`, or any phantom method on `RedTeamAgent` — confirmed via grep `run_probe|verify` in revised Section 5 (only mentions are in Decision rationale text)
+- `RedTeamAgent.is_alive` is inherited from `BaseAgent` (verify-first note line 481) — actually verifiable via `grep is_alive src/probos/substrate/agent.py`
+- `runtime.red_team_agents` (the new public name) read via `getattr(self._runtime, "red_team_agents", []) or []` — ✓
+- AD-455b deferral note documents the future adversarial dispatch path — operator visibility preserved
+
+### New Findings (introduced during revision)
+
+1. **Nit: Solution Overview line 28 prose stale.** Reads "**`RedTeamLead`** — coordinates existing `RedTeamAgent` instances ... Schedules adversarial verification campaigns; produces a periodic security report." The "schedules adversarial verification campaigns" half contradicts Section 5's revised health-monitor design. Replace with "Inventories the red team pool and reports availability." Single-sentence rewrite.
+2. **Nit: test count off-by-one.** Tests header at line 605 says `"12 tests"` but list has 13 entries (1-13). Bump header to `"13 tests"`.
+
+### Verified Against Revised Codebase Claims
+
+- `RedTeamAgent.verify` at `agents/red_team.py:66` — confirmed via footer; signature `(target_agent_id, intent, claimed_result)` is the explicit reason for the v1 deferral choice ✓
+- No `run_probe` in `agents/red_team.py` — confirmed via footer line 696 ✓
+- `runtime._red_team_agents` private at `runtime.py:246, 343, 1128` — confirmed via footer ✓
+- `runtime.episodic_memory.stop()` at `shutdown.py:128` — confirmed via footer ✓
+- `DISCLOSURE_FILTERED` insertion neighborhood at `events.py:179` — confirmed via footer ✓
+- `firewall: FirewallConfig` insertion neighborhood at `config.py:1531` — confirmed via footer ✓
+- `_disclosure_router = disclosure_router` at `finalize.py:330` — confirmed via footer ✓
+- `Field` import at `config.py:10` — confirmed via footer ✓
+
+### Recommended Next Step
+
+Ship to Builder. AD-455 was the heaviest revision and is now the cleanest of the cross-cutting Wave 5 prompts thanks to the Section 5 redesign. Both Nits are doc-only edits the Builder can fold into the build commit. Recommended last-build position in Wave 5 (validates the public-attr pattern across 4 simultaneous service additions).

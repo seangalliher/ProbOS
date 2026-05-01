@@ -167,3 +167,53 @@ For testability and federation, document the pool-size choice in DECISIONS.md. T
 ⚠️ **Conditional approval.** The three policy classes (Sections 1, 7-test) are clean and ship-ready. Sections 4, 5, 6 need targeted rewrites against the real code anchors before Builder picks this up. Estimated rework: ~30 minutes architect time.
 
 After fixes, the prompt should re-pass review and become ✅ Approved.
+
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ⚠️ **Conditional** — 4 of 5 pass-1 Required findings cleanly resolved; pass-1 #3 (Section 4 layer move) introduced a NEW Required-class phantom: `runtime` is not in scope inside `startup/communication.py`.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| #1 `EventLog.append` phantom | ✅ Resolved | Section 5 line 351 now uses `self._event_log.log(category=..., event=..., data=...)`. Verify-first footer line 489 confirms `log()` is the real API. |
+| #2 `_BANNED_DEFAULT` & wrong variable names | ✅ Resolved | Section 5 (line 303-342) now keys on `chosen` and `seed_callsign` (the real local variables at `agent_onboarding.py:467,532`). `_BANNED_DEFAULT` splat removed; defaults folded into `AgentNamingPolicy.__init__` extension. |
+| #3 Section 4 wrong layer | ⚠️ **Partial — new Required introduced** | Section moved to `startup/communication.py` line 399 (correct seam). BUT the SEARCH/REPLACE block (line 270-294) calls `runtime.emit_event(EventType.SHIP_NAMED, ...)` and the verify-first note (line 295) claims `runtime` is in scope. **Verified false:** `init_communication` (the actual function at `communication.py:37`) takes `emit_event_fn: Callable[..., Any]` at line 46, not `runtime`. Building this prompt as written produces `NameError: name 'runtime' is not defined`. |
+| #4 Section 6 federation dead code | ✅ Resolved | Section 6 explicitly removed (line 380-382). "What This Does NOT Change" documents the deferral (line 412). |
+| #5 `SystemInfo.ship_name` pre-existing bug | ✅ Resolved | Documented in "What This Does NOT Change" line 415; AD-499 routes through `vi.name` (the real source). |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| R1 (`runtime.emit_event` per AD-680) | ⚠️ **Compromised by Required #3** — the intent was right, but the call site doesn't have `runtime` available |
+| R2 (`banned_words` accessor style) | 📦 Deferred — kept as-is; cosmetic |
+| R3 (distinct-instance distinct-name test) | ✅ Tracked for Builder; Test plan unchanged |
+| R4 (DECISIONS.md pool size) | ✅ Tracking section calls for optional entry |
+
+### New Findings (introduced during revision)
+
+1. **⚠️ Required (NEW): `runtime` is not a parameter of `init_communication`.** Verify-first contradicts the live signature. Fix: replace `runtime.emit_event(...)` with `emit_event_fn(...)` in Section 4's REPLACE block. Update the verify-first note. Single-line fix, ~5-minute architect rework.
+2. **Nit: variable name regression at line 355.** The `data={"agent_id": agent.id, "callsign": chosen_callsign}` dict still uses `chosen_callsign` — should be `chosen` to match the rest of Section 5's revision.
+3. **Nit: stale Pre-Commit Sanity Check delta (line 439, 441).** `identity.py: ~12 lines` is stale (Section 4 moved to `communication.py`). `federation/router.py: ~5 lines` is stale (Section 6 removed). Update the expected-delta list.
+
+### Verified Against Revised Codebase Claims
+
+- `init_communication` signature at `communication.py:37`:
+  `
+  grep -n "^async def init_communication" src/probos/startup/communication.py
+    37: async def init_communication(
+  grep -n "emit_event_fn" src/probos/startup/communication.py
+    46:    emit_event_fn: Callable[..., Any],
+  `
+  No `runtime` parameter.
+- `communication.py:399-405` SEARCH anchor: confirmed verbatim ✓.
+- `EventLog.log` at `event_log.py:94`: confirmed ✓.
+- `agent_onboarding.py:467,532`: confirmed ✓.
+- `Field` import at `config.py:10`: confirmed ✓.
+- No federation peer-display path: confirmed; only `select_peers`, `peer_has_capability` ✓.
+
+### Recommended Next Step
+
+One-edit fix to Section 4: replace `runtime.emit_event(EventType.SHIP_NAMED, ...)` with `emit_event_fn(EventType.SHIP_NAMED, ...)`, update the verify-first note, fix the two stale Pre-Commit estimates, and align the line-355 variable name. ~5 minutes architect rework. Then re-pass review; expected verdict ✅ Approved.
