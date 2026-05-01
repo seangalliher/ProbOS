@@ -10,6 +10,43 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### Wave 5 Retrospective — Conventions Adopted
+
+**Date:** 2026-05-01
+**Status:** Conventions consolidated from the Wave 5 sweep (AD-499, AD-439, AD-468, AD-455, AD-440). 5/5 prompts shipped on first build pass; ~2.5h wall time; zero new BFs; zero quarantines.
+
+**Why a retrospective entry.** Wave 5 was the first wave under the audit-driven, batch-of-5, two-pass-review pipeline. The drafting + revision + build cadence converged in a single cycle (vs Wave 1-4's four review passes). Several conventions emerged or were reaffirmed during the wave; capturing them here so Wave 6+ doesn't re-derive them.
+
+**1. Public-attribute wiring for cross-module runtime accessors.** Established by AD-440, mirrored by AD-455 / AD-468 / AD-439. Any service wired onto `ProbOSRuntime` that is read by code outside `runtime.py` itself must be a public attribute (`runtime.order_manager`, not `runtime._order_manager`). Leading underscores are reserved for runtime-internal state. The previous private-name convention is now legacy; older sites (`runtime._risk_registry`, `runtime._disclosure_router`, `runtime._tier_registry`) are tracked for a future hygiene AD but not blocking.
+
+**2. stdlib-only for runtime-written persistence.** AD-468 chose `import json` and `runtime_overrides.json` over `tomli-w` and `runtime_overrides.toml`. Pattern: when ProbOS writes a config file *for itself* (not human-edited), prefer stdlib over new pyproject dependencies. Comment-preservation and TOML fidelity are deferred until a use case demands them. This applies to any future "ProbOS persists state" AD.
+
+**3. RedTeam v1 = health-monitor coordinator; adversarial dispatch deferred.** AD-455's Section 5 originally proposed a `run_probe()` API that would have synthesized adversarial intents into the live trust network. Risk: trust-network pollution from synthetic intents. Resolution: v1 RedTeamLead reads `runtime.red_team_agents`, reports total/alive, emits `RED_TEAM_CAMPAIGN_COMPLETE`. Adversarial dispatch is deferred to AD-455b. Future architects evaluating "have agent X test agent Y" should follow this pattern: deliver the coordinator first, defer the dispatch mechanism until the coordinator is exercised in production.
+
+**4. AD-499 onboarding-hook superset-filter discipline.** When inserting a new validation hook into existing onboarding flow, the new hook must be a *strict superset filter* — it must not intercept cases the existing tests already cover. AD-499's first build attempt broke 3 onboarding tests because its `not chosen or len(chosen) > 30` cases overlapped with the existing length/empty check. Fix: AD-499 now skips those cases entirely and only intercepts the AD-499-specific banned-word and policy paths. Pattern for future onboarding additions: gate the new check on conditions the existing checks do NOT already handle, then run the existing tests as the contract surface.
+
+**5. `init_communication` uses `emit_event_fn`, not `runtime.emit_event`.** AD-499's second-pass review caught a verify-first slip: `init_communication` is a startup phase that receives `emit_event_fn: Callable[..., Any]` as a parameter; `runtime` is not in scope. Pattern: when wiring inside `src/probos/startup/*.py` modules, grep the module's signature first — most startup phases use parameter callbacks, not the runtime object directly. This is distinct from cross-cutting modules (`runtime.py`, `proactive.py`) which DO use `runtime.emit_event`.
+
+**6. PowerShell `\b` rename idiom.** AD-455 needed to rename `_red_team_agents` → `red_team_agents` across 8+ sites. PowerShell's `\b` word-boundary regex correctly preserves function names containing the substring (treats `_` as a word character). The rename idiom for this codebase:
+
+```pwsh
+Get-ChildItem -Recurse -Include "*.py" | ForEach-Object {
+    (Get-Content $_.FullName -Raw) -replace '\b_old_name\b', 'new_name' |
+        Set-Content -NoNewline -Encoding UTF8 $_.FullName
+}
+```
+
+Run a focused gate on each touched test file after the rename to catch fixture references, then a full gate. AD-455 caught 3 fixture references in unrelated test files this way (`test_consensus_integration.py`, `test_ad490_agent_wiring_security_logs.py`, `test_new_crew_auto_welcome.py`).
+
+**7. Two-pass review converges fresh batches.** Wave 5 drafted 5 prompts in one subagent run, reviewed in pass-1 with 22 Required findings, applied all in one revision pass, second-pass converged with 4 ✅ + 1 ⚠️ (mechanical fix). Wave 1-4 took 4 review passes for 19 prompts. The smaller batch + structured Required/Recommended/Nits format enables one-pass convergence. Pattern for future waves: don't drift back to large batches.
+
+**Outstanding tracked items (NOT in scope for Wave 5).**
+
+- Future hygiene AD (candidate AD-684) to sweep older private wiring (`runtime._risk_registry`, `runtime._disclosure_router`, `runtime._tier_registry`, etc.) to match convention 1 above. Wait until ~3 such cases create real friction, then bundle into one prompt.
+- Two environmental parallel-only flakes surfaced during Wave 5 full gate: `test_ad566d_domain_tests.py::test_runtime_registers_tier2_tests` and `test_ad617b_per_agent_token_budget.py::test_budget_gate_ordering_after_circuit_breaker`. Both pass at `-n 0`. Track for the AD-682 follow-up; do NOT quarantine yet.
+
+**Cross-links.** AD-440 (public-attribute precedent), AD-455/455b (RedTeam coordinator-then-dispatch), AD-468 (stdlib JSON), AD-499 (superset-filter discipline), AD-680 (the AD-680 public API promotion that established the pattern AD-440 now formalizes for downstream services), AD-682 (test fixture isolation; flakes context).
+
 ### AD-440: Chain of Command Delegation — Public-Attribute Wiring Precedent
 
 **Date:** 2026-05-01
