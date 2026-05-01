@@ -28,7 +28,7 @@ ProbOS Era V (Phases 31-36). All 20 ADs from Waves 1-4 are COMPLETE (AD-438, 445
 - AD-439: Analytics-only feature, monitors Hebbian weights for emergent hierarchy — LOW risk
 - AD-440: Adds `issue_order()` with chain-of-command validation — extends existing ontology
 - AD-443: W3C VC transfer certificates, memory portability hooks — builds on complete DID stack
-- AD-455: Formalizes Security Team pool (Threat Detector, Trust Integrity Monitor, Input Validator, Red Team Lead)
+- AD-455: Formalizes Security Team pool (Threat Detector, Trust Integrity Monitor, Input Validator, Red Team Lead). Owns `src/probos/security/__init__.py` creation (mirroring AD-676's `governance/` precedent).
 - AD-468: NL-driven config with runtime_overrides.toml — enables Captain to configure startup tasks via Ward Room
 
 ### Wave 6: Core Infrastructure (5 ADs, mostly parallel)
