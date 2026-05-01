@@ -278,7 +278,7 @@ REPLACE:
             )
             chosen_vessel_name = decision.name
             try:
-                runtime.emit_event(EventType.SHIP_NAMED, {
+                emit_event_fn(EventType.SHIP_NAMED, {
                     "vessel_name": decision.name,
                     "source": decision.source,
                     "instance_id": vi.instance_id,
@@ -292,7 +292,7 @@ REPLACE:
         )
 ```
 
-> Verify-first: `runtime` is in scope at the call site — confirmed by surrounding code in `start_communication_services` which receives `runtime` as a parameter. `EventType` and `logger` already imported at top of `communication.py`.
+> Verify-first: `init_communication` receives `emit_event_fn: Callable[..., Any]` as a parameter — confirmed at `src/probos/startup/communication.py:46`. `runtime` is NOT a parameter of `init_communication`; the function's existing emission pattern (lines 65, 100, 131, 267) all use `emit_event_fn` directly. `EventType` and `logger` already imported at top of `communication.py`.
 
 ---
 
@@ -352,7 +352,7 @@ Then emit `AGENT_SELF_NAMED` after the registry update at line 228. Insert AFTER
                                     category="naming",
                                     event="agent_self_named",
                                     agent_type=agent.agent_type,
-                                    data={"agent_id": agent.id, "callsign": chosen_callsign},
+                                    data={"agent_id": agent.id, "callsign": chosen},
                                 )
                             except Exception:
                                 logger.warning("AD-499: AGENT_SELF_NAMED log failed", exc_info=True)
@@ -436,9 +436,8 @@ Expected delta:
 - `src/probos/naming.py`: ~140 lines (new).
 - `src/probos/events.py`: 2 lines added.
 - `src/probos/config.py`: ~6 lines added.
-- `src/probos/identity.py`: ~12 lines added (commissioning hook).
-- `src/probos/agent_onboarding.py`: ~18 lines added (validation hook).
-- `src/probos/federation/router.py`: ~5 lines added.
+- `src/probos/startup/communication.py`: ~22 lines added (Section 4 ShipNamingPolicy + SHIP_NAMED emit at the existing `vi = ontology.get_vessel_identity()` seam, line ~399).
+- `src/probos/agent_onboarding.py`: ~22 lines added (Section 5: AgentNamingPolicy validation + AGENT_SELF_NAMED log).
 - `tests/test_ad499_naming_conventions.py`: ~180 lines (new).
 - `PROGRESS.md`, `roadmap.md`: ~3 lines changed.
 
@@ -543,3 +542,15 @@ Applied review findings from `prompts/Reviews/ad-499-ship-crew-naming-convention
 - **Recommended R3 (test for distinct-instance distinct-name):** tracked for the test pass; the test plan should add an assertion that two distinct instance_ids produce different names with high probability. Builder discretion.
 - **Recommended R4 (DECISIONS.md pool size):** the prompt's tracking section already calls for an optional DECISIONS.md entry; pool-size rationale should be included.
 - **Nits:** alignment between `_CALLSIGN_RE` and the LLM prompt's "alphabetic" constraint deferred — the policy is more permissive than the LLM prompt; this asymmetry is intentional (validation accepts hyphens/underscores even if the LLM rarely produces them).
+
+---
+
+## Revision 2 (2026-05-01, after second-pass review)
+
+Applied second-pass findings from `prompts/Reviews/ad-499-ship-crew-naming-conventions-review.md` (Second-Pass Review section):
+
+- **New Required #1 (`runtime.emit_event` is wrong — `init_communication` takes `emit_event_fn`):** Section 4's emit call switched from `runtime.emit_event(...)` to `emit_event_fn(...)`. The verify-first note now correctly cites `emit_event_fn` at `communication.py:46`. The Revision-1 note above said "Emit goes through `runtime.emit_event`" — that was the slip; `init_communication`'s actual signature uses the `emit_event_fn` parameter.
+- **New Nit #1 (`chosen_callsign` variable-name regression):** the AGENT_SELF_NAMED emit block in Section 5 referenced `chosen_callsign` instead of the real local `chosen`. Fixed.
+- **New Nit #2 (Pre-Commit Sanity Check stale file list):** the expected-delta list still mentioned `identity.py` and `federation/router.py` from the original (pre-Revision-1) layer-relocation. Replaced with `startup/communication.py` (the real Section 4 site) and updated line counts.
+
+No source-side rework. All 4 edits are documentation/spec corrections to make the prompt match the actual function signatures the Builder will encounter.
