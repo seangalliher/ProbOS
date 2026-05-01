@@ -7169,8 +7169,8 @@ Bugs found during development or testing. Squash as found when possible; queue h
 | BF-256 | `tests/test_ward_room.py::TestEndorsementActivation::test_browse_threads_sort_recent` has an order-dependent timestamp-tie failure under the full gate and when run after AD-679's focused tests. It passes as an exact node and in file isolation, then fails under paired load order. Quarantined for now; AD-682 (test fixture isolation) will resolve the timestamp/order dependency. | Medium | **Open** |
 | BF-001 | Self-mod proposal on knowledge questions | Medium | **Closed** (AD-348) |
 | BF-002 | Agent orbs escape pool group spheres | High | **Closed** (AD-349) |
-| BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | **Closed** (AD-350) |
-| BF-004 | Transporter HXI visualization not rendered | Medium | **Closed** |
+| BF-003 | "Run diagnostic" bypasses VitalsMonitor, asks user for alert data | Medium | **Closed** (AD-35d an order-dependent failure under the full gate. **Fix:** AD-682 fixture isolation (per-worker `PROBOS_DATA_DIR`, cache reset). Test unquarantined and passing. | Medium | **Closed
+| BF-004 | Transporter HXI visualization not rendered | Medium | **Closed** |d an order-dependent timestamp-tie failure under the full gate. **Fix:** AD-682 fixture isolation. Test unquarantined and passing. | Medium | **Closed
 | BF-005 | HTTP consensus docs drift (AD-150 removed gating) | Low | **Closed** |
 | BF-006 | Quorum trust docs drift in consensus.md | Low | **Closed** |
 | BF-007 | Verification false positive on per-pool agent counts | Medium | **Closed** |

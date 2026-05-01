@@ -80,6 +80,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 **Rationale:** External runtime private access violated Demeter and made service extraction brittle. The migration is intentionally one-shot with no deprecation warning: private runtime attributes were never supported extension points, and maintaining compatibility shims would preserve the coupling this AD removes. Future private-to-public promotions should follow the same precedent when the old surface is internal-only and all in-repo callers can be migrated atomically.
 **Status:** Implemented
 
+### AD-682: Test Fixture Isolation
+
+**Date:** 2026-05-01
+**Decision:** Environment-variable redirects are the standard precedent for test isolation when subsystems derive runtime paths from configuration. AD-682 applies this by setting a per-xdist-worker `PROBOS_DATA_DIR` in `tests/conftest.py`, wiring `_default_data_dir()` to honor that override, and guarding ChromaDB writes so tests use worker-private data directories.
+**Rationale:** BF-245 already established `PROBOS_NATS_ENABLED` as the safe pattern for test-only runtime redirection without changing production defaults. Reusing that pattern for data directories isolates ChromaDB/filesystem state under high xdist parallelism while keeping production path resolution unchanged unless the operator explicitly sets the override.
+**Status:** Implemented
+
 ### AD-444: Knowledge Confidence Scoring
 
 **Date:** 2026-04-28

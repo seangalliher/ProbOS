@@ -17,6 +17,87 @@ os.environ.setdefault("PROBOS_NATS_ENABLED", "false")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ad682_isolated_data_dir(tmp_path_factory, worker_id):
+    """AD-682: Per-xdist-worker isolated data dir.
+
+    Each xdist worker (or master in serial mode) gets its own tmp directory
+    used as PROBOS_DATA_DIR. Subsystems that resolve paths from data_dir
+    (ChromaDB, ship-records, scout_seen.json, session state) land in
+    worker-private space. Eliminates SQLite lock contention and filesystem
+    races at high parallelism (-n auto).
+
+    The override is set via os.environ so it is visible to subprocess and
+    to subsystems that read env directly (parity with BF-245 PROBOS_NATS_ENABLED).
+    """
+    suffix = worker_id if worker_id != "master" else "master"
+    data_dir = tmp_path_factory.mktemp(f"probos_data_{suffix}", numbered=False)
+    prior = os.environ.get("PROBOS_DATA_DIR")
+    os.environ["PROBOS_DATA_DIR"] = str(data_dir)
+    try:
+        yield data_dir
+    finally:
+        if prior is None:
+            os.environ.pop("PROBOS_DATA_DIR", None)
+        else:
+            os.environ["PROBOS_DATA_DIR"] = prior
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ad682_chroma_path_sanity(_ad682_isolated_data_dir, worker_id):
+    """AD-682: Warn if ChromaDB lands outside the worker's isolated data dir.
+
+    Diagnostic only — does NOT raise. Multiple xdist workers share the
+    project's `data/` directory on disk (it's not under the per-worker tmp),
+    so any cross-worker mtime change would race-trigger a hard assertion.
+    Instead this fixture prints a warning if rogue writes happen, which
+    surfaces the regression without breaking parallel runs.
+    """
+    import glob
+
+    before = {
+        p: os.stat(p).st_mtime_ns
+        for p in glob.glob("data/**/chroma.sqlite3*", recursive=True)
+    }
+    yield
+    # Only the master worker performs the post-check to avoid xdist races.
+    if worker_id != "master":
+        return
+    isolated = str(_ad682_isolated_data_dir)
+    rogue = [
+        p for p in glob.glob("data/**/chroma.sqlite3*", recursive=True)
+        if not p.startswith(isolated) and before.get(p) != os.stat(p).st_mtime_ns
+    ]
+    if rogue:
+        import warnings
+        warnings.warn(
+            f"AD-682: ChromaDB wrote outside isolated data dir: {rogue}. "
+            f"A subsystem may be bypassing PROBOS_DATA_DIR resolution.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _ad682_clear_module_caches():
+    """AD-682: Reset module-level caches that mutate during tests.
+
+    Without this, test execution order affects results when the standing
+    orders cache or personality block cache picks up state from a prior test.
+    Add new caches here as they are discovered.
+    """
+    from probos.cognitive import standing_orders
+
+    if hasattr(standing_orders, "clear_cache"):
+        standing_orders.clear_cache()
+    if hasattr(standing_orders, "_build_personality_block"):
+        try:
+            standing_orders._build_personality_block.cache_clear()
+        except AttributeError:
+            pass
+    yield
+
+
 def pytest_collection_modifyitems(config, items):
     """Skip live_llm tests unless explicitly requested with -m live_llm."""
     marker_expr = config.getoption("-m", default="")

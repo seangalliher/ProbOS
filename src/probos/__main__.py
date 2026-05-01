@@ -37,6 +37,9 @@ from probos.experience.shell import ProbOSShell
 
 def _default_data_dir() -> Path:
     """Return a stable, platform-appropriate data directory."""
+    override = os.environ.get("PROBOS_DATA_DIR")
+    if override:
+        return Path(override)
     import sys
     if sys.platform == "win32":
         base = Path.home() / "AppData" / "Local" / "ProbOS"
@@ -44,7 +47,6 @@ def _default_data_dir() -> Path:
         base = Path.home() / "Library" / "Application Support" / "ProbOS"
     else:
         # XDG_DATA_HOME or ~/.local/share
-        import os
         xdg = os.environ.get("XDG_DATA_HOME")
         base = Path(xdg) / "ProbOS" if xdg else Path.home() / ".local" / "share" / "ProbOS"
     return base / "data"
