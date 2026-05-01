@@ -191,3 +191,51 @@ Footer says line 771 (off by 4). Approximate line numbers per review-criteria #6
 **Build-readiness after fix:** ~5 minutes architect time. Re-review of Section 1 only.
 
 Build readiness order: AD-491 first in Wave 6 (lowest blast radius, no dependencies).
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved** — phantom kwarg cleanly resolved; no new issues introduced; revision discipline intact.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: phantom `since=` kwarg on `event_log.query()` | ✅ Resolved | Section 1 line 158: `events = await log.query(limit=10_000)`. Post-filter at lines 167-168: `cutoff = time.time() - self._event_window; windowed = [e for e in events if float(e.get("timestamp", 0) or 0) >= cutoff]`. Inline comment at line 155-157 documents the live signature. Footer extended with `event_log.py:132` grep showing actual signature. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1 (api.py line range cosmetic) | 📦 Deferred | Harmless drift; explicitly skipped in Revision section. |
+| rec#2 (Section 5 trailing comma) | ✅ Already correct | No edit needed — verified during revision. |
+| rec#3 (defensive trust-score clamp) | ✅ Applied | Section 1 line 207: `s = max(0.0, min(1.0, s))` before bucket-index calculation. |
+| rec#4 (`state.value` not `str(state)`) | ✅ Applied | Section 1 line 231: `states[state.value if state is not None and hasattr(state, "value") else "unknown"] += 1`. Defensive `hasattr` guard preserves legacy behavior. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| nit#1 (DECISIONS.md placement entry) | ✅ Applied | Tracking section recommends (not "optional") the placement entry. |
+| nit#2 (cross-prompt context) | 📦 Deferred | Cosmetic — no edit. |
+| nit#3 (field order) | 📦 Deferred | Cosmetic — frozen dataclass, no positional construction. |
+| nit#4 (async test decoration) | ✅ Verified | Tests use `@pytest.mark.asyncio` per ProbOS convention. |
+
+### New Findings (introduced during revision)
+
+None. The revision touched only the three lines flagged + footer additions. No collateral damage.
+
+### Verified Against Revised Codebase Claims
+
+- `EventLog.query()` signature at `event_log.py:132` accepts `category, agent_id, limit` only — confirmed; post-filter approach is the correct fix.
+- `AgentState.value` canonical wire format at `substrate/agent.py:166` — confirmed; matches `.value` usage in revised Section 1.
+- `TrustNetwork.get_score()` at `consensus/trust.py:397` returns Beta mean ∈ [0,1] — defensive clamp justified.
+
+### Cross-Cutting Convention Audit
+
+| Cross-cutting fix | Applied? | Evidence |
+|---|---|---|
+| #1 No-theater discipline | ✅ N/A — read-only observability | All signals do real work today (event log entropy, trust distribution, agent state). No deferred-to-v2 stubs. |
+| #2 Verify-first defensive-read | ✅ Applied | `event_log.query()` signature in footer; post-filter explicitly documented. |
+| #3 Anchor-chain fallback | ✅ Sufficient | Section 2 anchor chain: `SERVICE_TIER_RESTORED` (AD-459) → `AGENT_SELF_NAMED` (AD-499) terminal. AD-491's 1-line insertion does not need the deeper AD-440 fallback applied to AD-457/458/459 config-section chains. |
+
+### Verdict
+
+**✅ Approved.** Build-ready. No further architect rework required.

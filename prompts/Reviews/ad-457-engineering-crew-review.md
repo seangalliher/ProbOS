@@ -297,3 +297,69 @@ Boundary coverage: happy path + error/edge case + empty input. Tests 1-3 verify 
 **Wave-5 conventions:** 4 of 6 fully applied. Conventions #5 and #6 partial — Required #1 fix brings them to full.
 
 **Build-readiness after fix:** ~25 minutes architect time. Section 7 is the major rewrite (concrete SEARCH/REPLACE blocks for runtime.py and agent_fleet.py); other fixes are 1-line each.
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved** — Section 7 fully concrete with two SEARCH/REPLACE blocks; pool naming follows medical convention; dead method removed; anchor chain complete. No new issues introduced.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: Section 7 deferral is unwarranted | ✅ Resolved | Section 7 split into concrete 7a (lines 440-466) registering 3 templates in `runtime.py:622` and 7b (lines 470-510) spawning 3 pools in `agent_fleet.py` after the engineering_officer block. SEARCH anchors verified against live code (`runtime.py:622`, `agent_fleet.py:140-146`). Deferral language fully removed — no "v1 ships agent classes only" or "defer to AD-457b" remnants. |
+| R#2: Pool naming collision | ✅ Resolved | All three constructor defaults updated to `engineering_<role>`: `engineering_performance` (line 116), `engineering_maintenance` (line 224), `engineering_damage_control` (line 328). Section 7b uses the same names in `_engineering_heartbeat` tuple. Tests 5, 7, 10 verify the defaults. |
+| R#3: Section 6 missing fallback anchor | ✅ Resolved | Section 6 anchor chain (lines 425-432): `validation_framework` (AD-451) → `orders: OrdersConfig` (AD-440 line 1593) terminal. |
+| R#4: Dead `evaluate_thresholds()` method | ✅ Resolved | Method removed from `PerformanceMonitorAgent`. Replaced with inline comment in `collect_metrics` (lines 145-148) documenting AD-466 as the real evaluator. Builder note at line 167 documents the removal. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1 (`_pulse_count` Demeter slip) | ✅ Documented | "What This Does NOT Change" line 553 — intentional cross-class contract for v1; AD-457b may publish `pulse_count` if more subclasses need it. |
+| rec#2 (v1 event-only theater note) | ✅ Documented | "What This Does NOT Change" lines 558-559 explicitly note that v1 fires `MAINTENANCE_SCHEDULED` and `DAMAGE_CONTROL_ACTIVATED` with no current consumers; AD-457b adds handlers. |
+| rec#3 (recovery action names aspirational) | ✅ Documented | Line 559 — handlers ship in AD-457b or per-failure sub-AD. |
+| rec#4 (`@pytest.mark.asyncio` decoration) | ✅ Verified | Test plan annotates async tests. |
+| rec#5 (`pool_size` field unused) | ✅ Applied | Field dropped from `EngineeringConfig` in Section 6 (line 412 onwards). Three agents spawn at `target_size=1` per medical convention. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| nit#1 (cosmetic comment) | 📦 Deferred | No edit. |
+| nit#2 (`_RECOVERY_TABLE` constant) | ✅ Verified | Module-level constant with leading underscore — matches `_BANNED_DEFAULT` precedent. |
+| nit#3 (`interval` parameter docs) | ✅ Applied | Constructor docstring documents heartbeat-pulse rationale. |
+| nit#4 (footer pathologist completeness) | ✅ Applied | Footer extended with `pathologist` import reference. |
+
+### New Findings (introduced during revision)
+
+1. **Minor: Section 7b passes `interval=interval` to `create_pool_fn` — verify the kwarg flows through.** `create_pool` at `runtime.py:1086-1109` accepts `**spawn_kwargs` and passes them through to `ResourcePool` and ultimately to each agent's `__init__`. The `HeartbeatAgent.__init__(pool, interval=5.0, **kwargs)` at `substrate/heartbeat.py:37` accepts `interval`. So the kwarg should flow correctly.
+
+   **Severity:** Implementation-detail check, not architectural. Builder will catch if the spawner doesn't forward `interval` to the agent constructor.
+
+   **Resolution:** No revision needed — flagging for Builder awareness.
+
+2. **Minor: Test count revised from 12 → 14 in revision section, but acceptance criteria still says "All 14 tests pass".** Acceptance criteria line 593 says `pytest tests/test_ad457_engineering_crew.py -v -n 0` with "All 14 tests pass". The test plan (lines 519-541) lists 14 tests including the new pool-default-name tests. Internally consistent.
+
+   **Severity:** Verified consistent. No issue.
+
+### Verified Against Revised Codebase Claims
+
+- `runtime.py:622 self.spawner.register_template("engineering_officer", EngineeringAgent)` — confirmed via grep; SEARCH anchor unique.
+- `agent_fleet.py:140-146` engineering_officer block — confirmed via direct read; SEARCH anchor matches verbatim.
+- `agent_fleet.py:154-198` medical-pool block — confirmed via direct read; structural precedent for AD-457 Section 7b.
+- `runtime.py:601-605` medical-template registration — confirmed via grep; precedent for Section 7a placement.
+- `substrate/spawner.py:25 register_template` — confirmed public API.
+- `runtime.create_pool` at `runtime.py:1086` accepts `**spawn_kwargs` — confirmed; allows `interval=` forwarding.
+- `orders: OrdersConfig` at `config.py:1593` — confirmed terminal anchor.
+
+### Cross-Cutting Convention Audit
+
+| Cross-cutting fix | Applied? | Evidence |
+|---|---|---|
+| #1 No-theater discipline | ✅ Applied | v1 ships REAL pool spawning + REAL agent classes + REAL event emission. The "no consumer for MAINTENANCE_SCHEDULED / DAMAGE_CONTROL_ACTIVATED" caveat is documented up-front; v1 emits real signals from real conditions even before AD-457b adds consumers. |
+| #2 Verify-first defensive-read | ✅ Applied | All 3 agent constructors verified-against-`HeartbeatAgent.__init__` signature; all SEARCH anchors verified-against-runtime.py and agent_fleet.py. |
+| #3 Anchor-chain fallback | ✅ Applied | Section 6 chain: `validation_framework` (AD-451) → `orders: OrdersConfig` (AD-440) terminal. Sufficient for AD-457's single insertion. |
+| #4 Section 7 concrete pool wiring | ✅ Applied (cross-cutting fix #4 = R#1) | Two SEARCH/REPLACE blocks. Pattern matches medical pool exactly. |
+
+### Verdict
+
+**✅ Approved.** Build-ready. The two new findings are implementation-detail checks (interval kwarg flow, test count consistency) — both verified during this review. No further architect rework required.
+

@@ -323,3 +323,62 @@ Other anchors (Section 5 EventType anchors on AD-457's `PERFORMANCE_THRESHOLD_BR
 **Build-readiness after fix:** ~25 minutes architect time. Required #1 is the largest (touches Section 2, Test 4, Test 13, the seed list); others are 1-line fixes.
 
 **Wave 6 highest blast radius — recommend AD-459 ships LAST in build order** (its read-only contract benefits from observing how AD-457's engineering events fire, AD-451's reconciliation events fire, AD-491's entropy events fire). The dispatch summary's recommendation (AD-491 → AD-451 → AD-458 → AD-457 → AD-459) is correct.
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved** — registry seed list purged of phantoms; always-wired contract honored; 4-level anchor chain to AD-440 terminal; HIGH/CRITICAL deferral documented. Read-only v1 design intact; no theater.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: Registry seed names don't match runtime | ✅ Resolved | Section 2 `_DEFAULT_CLASSIFICATIONS` (lines 92-108) ships 11 verified-against-runtime names. Removed: `cognitive_agent`, `dreaming`, `introspection_agent`. Added: `dream_scheduler` (matches `runtime.py:411`). Docstring rewritten (lines 86-89) to say "Each `service_name` matches an actual public attribute on `ProbOSRuntime` (verified via grep at draft time)" — aligns with reality. Logical-only names explicitly deferred to AD-459b in Sectioncomment lines 91-95. |
+| R#2: Section 6 missing AD-440 fallback | ✅ Resolved | Section 6 anchor chain (lines 382-386) — 4 levels: `pre_flight` (AD-458) → `engineering` (AD-457) → `validation_framework` (AD-451) → `orders: OrdersConfig` (AD-440 line 1593) terminal. |
+| R#3: `enabled=False` leaves manager unset | ✅ Resolved | Section 6 `DegradationConfig` (lines 354-366) has no fields — placeholder for AD-459b. Section 7 finalize wiring (lines 394-407) is unconditional — no `if config.degradation.enabled:` branch. Comment at lines 396-398 explicitly documents the always-wired contract. Default state is `StressLevel.NORMAL`. |
+| R#4: HIGH/CRITICAL identical | ✅ Documented | Section 3 `SheddingPolicy.shed_tiers()` (lines 175-200) explicitly returns the same shed mask for HIGH and CRITICAL, with docstring (lines 184-188) and inline comment (lines 197-199) documenting that AD-459b will add CRITICAL-only active-shedding (cancel tasks, pause queues). 4-level enum preserved for AD-459b extensibility. Builder note at line 202 reinforces. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1 (Test 13 references real seed) | ✅ Applied | Test 13 at line 432: `is_shed("dream_scheduler")` (real seed name) instead of phantom `dreaming`. |
+| rec#2 (`@dataclass(frozen=True)` decorator noise) | ✅ Applied | Decorator dropped from `SheddingPolicy` at line 175. Stateless class with no fields. |
+| rec#3 (`set_stress_level` no-capability-gate) | ✅ Documented | "What This Does NOT Change" line 449: explicit note that AD-459b adds the gate. |
+| rec#4 (`_emit_tier_change` log context) | ✅ Applied | Section 4 `_emit_tier_change` warning (lines 297-301) now includes tier, level, shed flag in the message. |
+| rec#5 (Test 5 preserves seeds) | ✅ Applied | Test 5 at line 425 renamed: `test_service_tier_registry_register_extends_and_preserves_seeds`. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| nit#1 (`_DEFAULT_CLASSIFICATIONS` constant convention) | ✅ Verified | Module-level constant with leading underscore. |
+| nit#2 (tier-level granularity) | ✅ Documented | "What This Does NOT Change" line 447: per-service emits deferred to AD-459b. |
+| nit#3 (test ordering) | ✅ Applied | Test 11 description at line 430 now asserts on the SET of emitted EventType payloads, not order. `services_in_tier()` now returns `sorted(...)` at line 132 for deterministic output. |
+| nit#4 (ESSENTIAL safety invariant) | ✅ Documented | "What This Does NOT Change" line 444: ESSENTIAL never shed by default policy; manager respects policy verbatim. |
+
+### New Findings (introduced during revision)
+
+None of consequence. Spot-checks:
+
+- The 11 v1 seed names verified once more in this review against live runtime.py — all 11 are real public attributes/properties.
+- `services_in_tier()` returns `sorted(...)` list (line 132) — Test 6 at line 426 asserts on sorted output. Deterministic across CPython versions.
+- `_DEFAULT_CLASSIFICATIONS` is a `tuple` (immutable) at line 96; per-instance copy in `__post_init__` (lines 119-121) protects from accidental shared-state mutation.
+- The empty `DegradationConfig` body has only docstrings — Pydantic v2 BaseModel accepts this (no fields, just descriptive text). Verified valid Pydantic.
+
+### Verified Against Revised Codebase Claims
+
+- All 11 seed names verified against `src/probos/runtime.py`:
+  - `event_log` (line 314), `trust_network` (line 335), `registry` (line 293), `intent_bus` (line 300), `hebbian_router` (line 304), `decomposer` (line 352), `dream_scheduler` (line 411), `proactive_loop` (line 533), `emergence_metrics_engine` (line 951 property), `emergent_leadership_detector` (post-AD-439 at finalize.py:344), `red_team_lead` (post-AD-455 at finalize.py:422). All confirmed.
+- `bridge_alerts.AlertSeverity` orthogonality at `bridge_alerts.py:24` — confirmed via grep; no overlap with AD-459 service tiers.
+- `orders: OrdersConfig` at `config.py:1593` — confirmed terminal anchor.
+
+### Cross-Cutting Convention Audit
+
+| Cross-cutting fix | Applied? | Evidence |
+|---|---|---|
+| #1 No-theater discipline | ✅ Applied | v1 read-only coordinator with REAL signal (`is_shed(name)` returns real answer based on real registry seeds). The "no consumer in cognitive/" caveat is intentional per Wave 5 retrospective convention #3 (coordinator-then-dispatch). AD-459b deferral note explicit for: active-shedding hooks, capability gate, logical-name aliases, per-service emits, CRITICAL-vs-HIGH differentiation. |
+| #2 Verify-first defensive-read | ✅ Applied wholesale | All seed names verified-against-runtime.py at draft time and re-verified in second-pass review. |
+| #3 Anchor-chain fallback | ✅ Applied (4 levels) | Section 6 chain: `pre_flight` → `engineering` → `validation_framework` → `orders: OrdersConfig` (AD-440 terminal). |
+
+### Verdict
+
+**✅ Approved.** Build-ready. v1 is the canonical Wave 6 application of Wave 5 retrospective convention #3 (coordinator-then-dispatch) — read-only manager today, dispatch hooks in AD-459b. No architect rework required.
+

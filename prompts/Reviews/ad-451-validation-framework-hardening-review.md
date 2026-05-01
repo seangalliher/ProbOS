@@ -393,3 +393,82 @@ All accesses (`primary.verified`, `primary.confidence`, `primary.discrepancy`) m
 **Build-readiness after fix:** ~30 minutes architect time. Required #2-4 are interconnected (TwoStageVerifier scope decision affects test plan + finalize wiring). Required #1 is one-line.
 
 **Highest-risk Wave 6 prompt by blast radius (cross-cuts consensus paths and destructive-intent gating).** Recommend the second-pass review explicitly verify the Required #3 resolution doesn't introduce new theater.
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved** — `TwoStageVerifier` wired as real consumer in `_invoke_third`; `_MetadataCheck` flattened; `@runtime_checkable` decorated; exclude_ids + random selection both implemented. v1 is substantive; no theater. Highest semantic risk in the wave but converges cleanly.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: `@runtime_checkable` on `SelfVerificationHook` | ✅ Resolved | Section 2 line 222: `@runtime_checkable` decorator above `class SelfVerificationHook(Protocol)`. `runtime_checkable` imported at line 70 (`typing` import). Test #14 (renumbered from #13) explicitly verifies `isinstance(impl, SelfVerificationHook)`. |
+| R#2: `_MetadataCheck` flatten | ✅ Resolved | Module-level dataclass at lines 80-89 (`@dataclass(frozen=True)\nclass _MetadataCheck`). Leading underscore marks it private. Removed from inside `TwoStageVerifier` body. `_metadata_check()` returns `_MetadataCheck` (no quoted forward ref) at line 144. |
+| R#3: TwoStageVerifier wired as real consumer | ✅ Resolved | Section 3 line 388-398: `_invoke_third` constructs a `TwoStageVerifier(red_team=third, emit_event=..., metadata_threshold=...)` and calls `verify()`. Returned `TwoStageOutcome` is consumed at line 356 for the majority vote: `votes = sum([primary.verified, secondary.verified, third.verified])`. **Real consumer — `third.verified` boolean drives the verdict.** Not invoked-and-discarded. |
+| R#4: `_invoke_third` exclude_ids + random selection | ✅ Resolved | New signature at line 370-377: `async def _invoke_third(self, *, target_agent_id, intent, claimed, exclude_ids: set[str])`. Filter at line 381-384: `agents = [a for a in (...) if getattr(a, "id", None) not in exclude_ids]`. Random selection at line 387: `third = random.choice(agents)`. Caller at line 334: `exclude = {primary.verifier_id, secondary.verifier_id}`. `random` imported at line 67. |
+| R#5: kwargs form (lift) | ✅ Resolved | Section 1 line 105 calls `await self._red_team.verify(target_agent_id, intent, claimed,)` in positional form (matches `red_team.py:66-71` signature). No edit was strictly required; updated for consistency. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1 (discrete confidence buckets) | ✅ Documented | Class docstring lines 60-64 documents v1 discrete buckets; AD-451b deferral note. |
+| rec#2 (`metadata_threshold` config-bound) | ✅ Applied | `ReconciliationEscalator.__init__` (line 252-260) takes `metadata_threshold` parameter; finalize.py (lines 477-484) passes `config.validation_framework.metadata_threshold`. |
+| rec#3 (test count update 14→15) | ✅ Applied | Tests renumbered. New test #11 `test_reconciliation_third_excludes_primary_secondary_ids` added. |
+| rec#4 (log context) | ✅ Applied | All `logger.warning` calls include `target_agent_id`, `intent_id` context (lines 195-198, 401-403, 433-437). |
+| rec#5 (redundant string forward refs) | ✅ Applied | Type annotations now use bare `IntentMessage`, `IntentResult`, `VerificationResult` without quotes (Section 1 line 92, 99, Section 3 lines 271-272). `from __future__ import annotations` at line 64 supports this. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| nit#1 (dead `resolved` field) | ✅ Applied | Removed from `ReconciliationOutcome` dataclass. The "always True" field is gone. |
+| nit#2 (field-existence grep in footer) | ✅ Applied | Footer extended with `verifier_id`, `IntentMessage`, `IntentResult` field grep at types.py:201, 50, 64 etc. |
+| nit#3 (line number drift 771→775) | ✅ Applied | Footer corrected to 775. |
+| nit#4 (Section 0 comment style) | ✅ Verified | Style preserved. |
+
+### New Findings (introduced during revision)
+
+None of consequence. Spot-checks:
+
+- `_MetadataCheck` no longer referenced as `TwoStageVerifier._MetadataCheck` anywhere — verified via grep against revised prompt.
+- `random.choice(agents)` against an empty list would raise `IndexError`; the prompt guards correctly with `if not agents: return None` at line 385-386. ✅
+- `random` import added at line 67. ✅
+- `metadata_threshold` constructor parameter on `ReconciliationEscalator` defaults to `TwoStageVerifier.DEFAULT_METADATA_THRESHOLD` — class-level constant access works because `TwoStageVerifier` is defined earlier in the same module. ✅
+
+### Verified Against Revised Codebase Claims
+
+- `RedTeamAgent.verify(target_agent_id, intent, claimed_result)` positional signature at `agents/red_team.py:66-71` — confirmed; positional form in `TwoStageVerifier.verify()` matches.
+- `VerificationResult.verifier_id` at `types.py:201` — confirmed; `exclude = {primary.verifier_id, secondary.verifier_id}` is well-typed.
+- `VerificationResult.verified, confidence, discrepancy` at `types.py:205, 208, 209` — confirmed; majority vote uses `.verified` from both `VerificationResult` (primary, secondary) and `TwoStageOutcome` (third).
+- `IntentMessage.id` at `types.py:58` — confirmed; emit payloads use `intent.id`.
+- `IntentResult.error, success` at `types.py:69, 71` — confirmed; `_metadata_check` reads both fields.
+- `runtime.red_team_agents` (public, post-AD-455) at `runtime.py:246, 343` — confirmed.
+- `runtime.emit_event` at `runtime.py:775` — confirmed.
+- `@runtime_checkable` convention at `protocols.py` — confirmed across 10 protocols.
+
+### Cross-Cutting Convention Audit
+
+| Cross-cutting fix | Applied? | Evidence |
+|---|---|---|
+| #1 No-theater discipline | ✅ Applied — TwoStageVerifier has REAL consumer | `_invoke_third` constructs TwoStageVerifier per call, runs metadata-fast-path, returns `TwoStageOutcome`; majority vote consumes `third.verified`. Not a dead class. SelfVerificationHook is shipped as Protocol declaration only (deferred to AD-451b for CognitiveAgent.act() wiring) — explicitly documented in "What This Does NOT Change" line 463-464; legitimate coordinator-then-dispatch pattern. |
+| #2 Verify-first defensive-read | ✅ Applied | `red_team_agents` (post-AD-455 public) verified at `runtime.py:246, 343`. `verifier_id` verified at `types.py:201`. No phantom defensive reads. |
+| #3 Anchor-chain fallback | ✅ Applied | Section 5 anchor on `orders: OrdersConfig = OrdersConfig()  # AD-440` (line 411) — already at the terminal AD-440 anchor. AD-451 is the FIRST Wave 6 prompt in build order to insert into `SystemConfig`, so it owns the AD-440-adjacent slot. |
+| #5 `_MetadataCheck` flatten | ✅ Applied (cross-cutting fix #5 = R#2) | Module-level dataclass; matches ProbOS convention (no nested dataclasses elsewhere in `src/probos`). |
+
+### v1 Scope Audit (Hard-Stop Check)
+
+The dispatch's hard-stop: "If AD-451 v1 scope reduction would gut value, the prompt may need restructuring."
+
+**Not triggered.** AD-451 v1 ships:
+- `TwoStageVerifier` — REAL consumer in `_invoke_third`; metadata-fast-path used in production reconciliation flow.
+- `ReconciliationEscalator` — wires onto `runtime.reconciliation_escalator`; resolves disagreements between two verifiers via confidence-delta or majority-vote-with-third.
+- `SelfVerificationHook` Protocol — shipped declaration; CognitiveAgent.act() wiring deferred to AD-451b. **Legitimate coordinator-then-dispatch** (Wave 5 retrospective convention #3) — Protocol provides the contract surface; concrete consumers land in AD-451b.
+- 15 tests covering happy/error/edge paths.
+
+The TwoStageVerifier wiring is the architectural payoff — it converts the "third opinion in reconciliation" path from a phantom `agents[2]` access to a real metadata-fast-path verification with random selection from the eligible pool. Substantive architectural value.
+
+### Verdict
+
+**✅ Approved.** Build-ready.
+
+The dispatch allowed up to 1 ⚠️ Conditional on AD-451 (highest semantic risk). The revision converged cleanly without that tolerance being needed. No architectural pivots required.
+
