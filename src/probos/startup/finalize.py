@@ -344,6 +344,19 @@ async def finalize_startup(
         runtime.emergent_leadership_detector = detector
         logger.info("AD-439: EmergentLeadershipDetector wired")
 
+    # AD-440: Chain of Command order manager
+    if config.orders.enabled and runtime.ontology is not None:
+        from probos.cognitive.orders import OrderManager
+        order_manager = OrderManager(
+            ontology=runtime.ontology,
+            registry=runtime.registry,
+            emit_event=runtime.emit_event,
+            max_active_per_post=config.orders.max_active_per_post,
+            default_ttl=config.orders.default_ttl_seconds,
+        )
+        runtime.order_manager = order_manager
+        logger.info("AD-440: OrderManager wired (max_active=%d)", config.orders.max_active_per_post)
+
     # AD-468: Runtime Configuration Service
     if config.runtime_overrides.enabled:
         from probos.runtime_config_service import RuntimeConfigService

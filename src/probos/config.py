@@ -1025,6 +1025,14 @@ class RuntimeOverridesConfig(BaseModel):
     store_filename: str = "runtime_overrides.json"
 
 
+class OrdersConfig(BaseModel):
+    """Chain-of-command order configuration (AD-440)."""
+
+    enabled: bool = True
+    max_active_per_post: int = Field(default=8, ge=1, le=64)
+    default_ttl_seconds: float = Field(default=3600.0, ge=60.0, le=86400.0)
+
+
 class SecurityConfig(BaseModel):
     """Security Team configuration (AD-455)."""
 
@@ -1582,6 +1590,7 @@ class SystemConfig(BaseModel):
     trust_dampening: TrustDampeningConfig = TrustDampeningConfig()
     emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
     emergent_leadership: EmergentLeadershipConfig = EmergentLeadershipConfig()  # AD-439
+    orders: OrdersConfig = OrdersConfig()  # AD-440
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

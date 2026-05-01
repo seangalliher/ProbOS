@@ -10,6 +10,23 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-440: Chain of Command Delegation — Public-Attribute Wiring Precedent
+
+**Date:** 2026-05-01
+**Status:** Implemented
+
+**Decision.** Three architectural choices for AD-440 (Wave 5 build):
+
+1. **Orthogonality with `cmd_order` Captain directives.** The existing `experience/commands/commands_directives.py:99 cmd_order` issues `DirectiveType.CAPTAIN_ORDER` broadcast standing-orders with `Rank.SENIOR` issuer. AD-440's `OrderManager.issue_order` is point-to-point delegation along `authority_over`, advisory not destructive, with TTL-based pending state. The two systems coexist without overlap. Captain directives remain the authoritative broadcast channel; Chief-to-Officer orders use the AD-440 channel.
+
+2. **In-memory storage with TTL over disk persistence.** `OrderManager` keeps orders in a `dict[str, Order]` with `default_ttl=3600s`. Reset clears them. Future AD may add SQLite persistence if operator history retention is required; v1 ships in-memory because (a) orders are short-lived advisory deliverables, (b) the SQLite migration cost would dominate the AD's total work, and (c) episodic memory already records issued orders via `EventType.ORDER_ISSUED`.
+
+3. **No consensus gating on order issuance itself.** `issue_order` does not require quorum vote. The semantics are: order is advisory; subordinate executes through their normal capabilities; those capabilities retain their own consensus rules (e.g., destructive intents still require quorum). Order issuance is a low-risk recommendation, not a destructive operation. `requires_consensus=True` is reserved for capability-side gating.
+
+**Wave 5 cross-cutting precedent.** AD-440 published `runtime.order_manager` as a **public** attribute (no leading underscore), establishing the post-AD-680 standard for cross-module wiring of Wave 5+ services. AD-455 (`runtime.threat_detector`, `trust_integrity_monitor`, `input_validator`, `red_team_lead`), AD-468 (`runtime.runtime_config_service`, `runtime.data_dir`), and AD-439 (`runtime.emergent_leadership_detector`) all mirror this pattern. Future waves should follow: cross-module accessors on the runtime are public attributes; only runtime-internal state retains the leading underscore. A future BF/AD may sweep older private wiring (`runtime._risk_registry`, `runtime._disclosure_router`) to public names — out of scope for Wave 5 but tracked as a hygiene candidate.
+
+**Rationale.** Wave 1-4 produced inconsistent wiring patterns; pass-1 review of Wave 5 revealed three prompts repeating the private-attr Demeter violation. Codifying the public-attribute convention here prevents drift across Wave 6+ and provides a single authority for future review enforcement.
+
 ### AD-460: Cognitive Journal — Token Ledger Kept, Reasoning Replay Deferred
 
 **Date:** 2026-04-30

@@ -1365,6 +1365,19 @@ class ProactiveCognitiveLoop:
             except Exception:
                 logger.debug("Bridge alerts fetch failed", exc_info=True)
 
+        # AD-440: Active chain-of-command orders for this agent
+        order_mgr = getattr(rt, "order_manager", None)
+        if order_mgr is not None:
+            try:
+                pending = order_mgr.list_active_for_agent(agent.id)
+                if pending:
+                    lines = ["ACTIVE ORDERS (act on these in priority order):"]
+                    for o in pending:
+                        lines.append(f"  - [{o.id}] from {o.from_post_id}: {o.directive}")
+                    context["active_orders"] = "\n".join(lines)
+            except Exception:
+                logger.debug("AD-440: order context injection failed", exc_info=True)
+
         # 3. Recent system events
         if hasattr(rt, 'event_log') and rt.event_log:
             try:

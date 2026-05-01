@@ -166,6 +166,9 @@ class EventType(str, Enum):
     OBSERVABLE_STATE_MISMATCH = "observable_state_mismatch"  # AD-583f
     SELF_MODEL_DRIFT = "self_model_drift"  # AD-589: introspective confabulation detected
     DM_CONVERGENCE_DETECTED = "dm_convergence_detected"  # AD-623: DM thread converged
+    ORDER_ISSUED = "order_issued"  # AD-440
+    ORDER_REJECTED = "order_rejected"  # AD-440
+    ORDER_ACKNOWLEDGED = "order_acknowledged"  # AD-440
     SENSORIUM_BUDGET_EXCEEDED = "sensorium_budget_exceeded"  # AD-666: sensorium injection over char threshold
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
     TOOL_INVOKED = "tool_invoked"  # AD-448
