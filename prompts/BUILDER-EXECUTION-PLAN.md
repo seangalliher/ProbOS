@@ -116,6 +116,25 @@ Every commit must pass:
 - New `EventType` enum values are present in `events.py` exactly where the prompt's SEARCH/REPLACE places them — not duplicated, not in a different position.
 - `git status` shows only the files the prompt's "Files Changed" anticipates (modulo PROGRESS.md / roadmap.md / DECISIONS.md updates).
 
+### Pre-commit deletion sanity check (HARD RULE)
+
+After `git add` and **before** every `git commit`:
+
+```pwsh
+git diff --cached --stat
+```
+
+Inspect the deletion column. If any single file shows **more than 200 deletions** that the prompt did not anticipate, **STOP**:
+
+1. Do NOT commit.
+2. Run `git diff --cached <file>` to see the actual deletion.
+3. If the deletion is unintended (a file was truncated, an editor save-while-empty wiped content, a fixture cleared a tracker), restore via `git checkout HEAD -- <file>` and re-apply your intended edits.
+4. Surface to architect if the deletion is intentional but unusual (>1000 lines).
+
+This rule exists because of the AD-682 commit incident: `docs/development/roadmap.md` was silently emptied to 0 bytes during the build session and a blind `git add -A` staged the empty file. The commit had to be force-amended to restore the 7401-line file. **Always verify the diff stat before committing.**
+
+The threshold (200 lines) is deliberately low — most legitimate deletions in this codebase are smaller. ProbOS's tracker files (`PROGRESS.md`, `roadmap.md`, `DECISIONS.md`) are append-mostly; large deletions there are almost always wrong.
+
 ---
 
 ## Hard-Stop Conditions
