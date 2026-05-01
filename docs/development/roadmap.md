@@ -5992,7 +5992,7 @@ state), AD-632a (sub-task journal entries — future diagnostic data source via 
 
 ### Infodynamic Telemetry (AD-491)
 
-**AD-491: Infodynamic Telemetry — Information Entropy Instrumentation** *(planned, OSS)* — Instrument ProbOS to measure information entropy over time, testing whether the Second Law of Infodynamics (Vopson, 2023) applies to artificial multi-agent systems. Vopson's law states that information entropy in organized systems tends to decrease or remain constant — the inverse of thermodynamic entropy. ProbOS is a fully-observable simulation where every cognitive event is recorded, making it a uniquely suited test environment.
+**AD-491: Infodynamic Telemetry — Information Entropy Instrumentation** *(complete)* — Instrument ProbOS to measure information entropy over time, testing whether the Second Law of Infodynamics (Vopson, 2023) applies to artificial multi-agent systems. Vopson's law states that information entropy in organized systems tends to decrease or remain constant — the inverse of thermodynamic entropy. ProbOS is a fully-observable simulation where every cognitive event is recorded, making it a uniquely suited test environment.
 
 **Metrics to capture (per proactive cycle or configurable interval):**
 

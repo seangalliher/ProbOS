@@ -188,6 +188,7 @@ class EventType(str, Enum):
     CONFIG_CHANGED = "config_changed"  # AD-468
     SHIP_NAMED = "ship_named"  # AD-499
     AGENT_SELF_NAMED = "agent_self_named"  # AD-499
+    INFODYNAMIC_REPORT = "infodynamic_report"  # AD-491
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

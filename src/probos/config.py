@@ -1033,6 +1033,14 @@ class OrdersConfig(BaseModel):
     default_ttl_seconds: float = Field(default=3600.0, ge=60.0, le=86400.0)
 
 
+class InfodynamicConfig(BaseModel):
+    """Infodynamic telemetry configuration (AD-491)."""
+
+    enabled: bool = True
+    event_window_seconds: float = Field(default=3600.0, ge=60.0)
+    trust_buckets: int = Field(default=10, ge=2, le=100)
+
+
 class SecurityConfig(BaseModel):
     """Security Team configuration (AD-455)."""
 
@@ -1591,6 +1599,7 @@ class SystemConfig(BaseModel):
     emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
     emergent_leadership: EmergentLeadershipConfig = EmergentLeadershipConfig()  # AD-439
     orders: OrdersConfig = OrdersConfig()  # AD-440
+    infodynamic: InfodynamicConfig = InfodynamicConfig()  # AD-491
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

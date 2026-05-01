@@ -357,6 +357,17 @@ async def finalize_startup(
         runtime.order_manager = order_manager
         logger.info("AD-440: OrderManager wired (max_active=%d)", config.orders.max_active_per_post)
 
+    # AD-491: Infodynamic Telemetry probe
+    if config.infodynamic.enabled:
+        from probos.cognitive.infodynamic import InfodynamicProbe
+        runtime.infodynamic_probe = InfodynamicProbe(
+            runtime=runtime,
+            emit_event=runtime.emit_event,
+            event_window_seconds=config.infodynamic.event_window_seconds,
+            trust_buckets=config.infodynamic.trust_buckets,
+        )
+        logger.info("AD-491: InfodynamicProbe wired")
+
     # AD-468: Runtime Configuration Service
     if config.runtime_overrides.enabled:
         from probos.runtime_config_service import RuntimeConfigService
