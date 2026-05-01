@@ -9,11 +9,18 @@
 
 ## Why This Exists
 
-The 2026-04-30 AD backlog audit ([`prompts/AD-BACKLOG-AUDIT.md`](AD-BACKLOG-AUDIT.md)) and the wave-5-8 selection plan ([`prompts/wave-5-8-ad-selection-plan.md`](wave-5-8-ad-selection-plan.md)) both flagged tracker drift and one numbering collision that need resolution before any Wave 5 prompt can be drafted. Letting those drift items through into Wave 5 risks duplicate work, a numbering collision corrupting the AD ledger (AD-654), and an unbuildable prompt (AD-557b/c).
+The 2026-04-30 AD backlog audit ([`prompts/AD-BACKLOG-AUDIT.md`](AD-BACKLOG-AUDIT.md)) and the wave-5-8 selection plan ([`prompts/wave-5-8-ad-selection-plan.md`](wave-5-8-ad-selection-plan.md)) both flagged tracker drift before any Wave 5 prompt can be drafted.
+
+**Architect-resolved on 2026-04-30 (no Builder action needed):**
+- AD-460 marked partial-complete; reasoning-replay scope closed (DECISIONS.md entry; Wave 6 slot swapped to AD-491).
+- AD-654 numbering collision: #313 renumbered to AD-683; #322 keeps AD-654.
+- AD-557b/c (#11) closed as won't-fix-now.
+
+**Remaining for Builder:**
+- ~47 stale GitHub issues for already-closed ADs need batch-closure.
+- `prompts/wave-5-8-ad-selection-plan.md` needs AD-455 directory-ownership note.
 
 The reconciled plan is at [`prompts/WAVE-5-8-RECONCILED-PLAN.md`](WAVE-5-8-RECONCILED-PLAN.md).
-
-**AD-460 was already resolved by architect on 2026-04-30** — marked partial-complete in roadmap, full DECISIONS.md entry recorded, Wave 6 swapped to AD-491. This prompt now resolves the four remaining hygiene items.
 
 ## What This Does NOT Change
 
@@ -50,36 +57,17 @@ grep -rn "AD-68[0-9]\|AD-69[0-9]" PROGRESS.md DECISIONS.md
 
 **Builder action:** none. Verify by `grep -n "AD-460" docs/development/roadmap.md DECISIONS.md PROGRESS.md` and confirm the new entries are present.
 
-### Section 2 — AD-654 Numbering Collision
+### Section 2 — AD-654 Numbering Collision (RESOLVED — skip)
 
-**Files:** GitHub issues #313 and #322 (via `gh CLI`).
+**Status:** Already applied by architect on 2026-04-30. Issue #313 renumbered to AD-683 (title + body updated). Roadmap header (line 7082) and entry updated. Issue #322 keeps AD-654.
 
-**Architect decision (must happen before Builder runs this section):**
+**Builder action:** none. Verify by `grep -n "AD-683" docs/development/roadmap.md` and `gh issue view 313 --json title` (expect `AD-683:` prefix).
 
-- Audit recommendation: keep AD-654 = #313 (Ship State Snapshot — has roadmap detail). Renumber #322 (UAAA) to next-available.
-- Architect confirms or counters this recommendation by reading both issue titles and any associated roadmap entries.
+### Section 3 — AD-557b/c (#11) Description (RESOLVED — skip)
 
-**Builder action (after architect decision):**
+**Status:** Already closed by architect on 2026-04-30 with won't-fix-now reasoning. AD-557 closed parent preserves the deferral history.
 
-1. Find the next-available AD number. Run:
-   ```pwsh
-   d:/ProbOS/.venv/Scripts/python.exe -c "import re,pathlib; nums = sorted({int(m.group(1)) for f in [pathlib.Path('PROGRESS.md'), pathlib.Path('DECISIONS.md')] for m in re.finditer(r'AD-(\d{3,4})', f.read_text(encoding='utf-8'))}); print('next:', max(nums)+1)"
-   ```
-2. Use the architect's chosen issue (loser of the AD-654 collision). Rename its title via `gh issue edit <issue-number> --title "AD-NNN: <new-title>"` where NNN is the next-available number.
-3. Update any references to that issue's old AD-654 designation in `docs/development/roadmap.md`.
-
-If `gh CLI` is not authenticated, surface to architect and skip the GitHub edit; the renumbering can land in a follow-up.
-
-### Section 3 — AD-557b/c (#11) Description Decision
-
-**File:** GitHub issue #11.
-
-**Architect decision (must happen before Builder runs):**
-
-- Option A: write a 1-paragraph description grounded in the issue title + adjacent ADs (AD-557 closed parent), commit it as the issue body via `gh issue edit 11 --body "<text>"`.
-- Option B: drop AD-557b/c from the buildable set, close issue #11 as "won't fix — superseded by AD-557 closed parent."
-
-**Builder action:** apply whichever the architect chose. If Option A, paste the architect-provided text into the issue body. If Option B, close the issue with the architect's stated reason.
+**Builder action:** none. Verify by `gh issue view 11 --json state` (expect `CLOSED`).
 
 ### Section 4 — Stale GitHub Issue Cleanup (47 issues)
 
@@ -165,11 +153,4 @@ Hygiene wave-5 prereq: AD-460 status verified, AD-654 renumbered, AD-557b/c reso
 
 ## Architect Pre-Decisions Required
 
-Builder cannot fully execute Sections 2 and 3 without architect input. The architect must answer these before Builder begins:
-
-1. **Section 2 outcome:** which issue keeps AD-654, which renumbers? (Recommendation: #313 keeps; #322 renumbers.)
-2. **Section 3 outcome:** Option A (fill body) or Option B (close issue)? If A, what's the description text?
-
-Section 1 (AD-460) is already resolved — no architect input needed there.
-
-Builder should refuse to start until both answers are recorded in this prompt's "Architect Pre-Decisions" comments OR in a follow-up message.
+All architect pre-decisions are resolved as of 2026-04-30. Builder can execute Sections 4 and 5 immediately. Sections 1-3 are documentation-only verification.

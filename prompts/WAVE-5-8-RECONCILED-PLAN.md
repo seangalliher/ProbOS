@@ -30,8 +30,8 @@ These must be resolved before drafting the next wave's prompts. They are tracker
 | Item | Action | Effort |
 |---|---|---|
 | **AD-460 status** | **RESOLVED 2026-04-30:** marked partial in roadmap; DECISIONS.md entry recorded the "reasoning replay does not save tokens; procedural learning (AD-464) is the actual path" decision. Wave 6 fifth slot swapped to AD-491. No further hygiene action needed. | Done |
-| **AD-654 numbering collision** | Issues #322 (UAAA) and #313 (Ship State Snapshot) both claim AD-654. Architect picks one to renumber to next available (likely AD-683 or higher; verify highest current AD first). | 15 min architect decision + 15 min issue update |
-| **AD-557b/c (#11) empty body** | No description, no roadmap entry. Cannot classify or build. Architect drafts a 1-paragraph description from title context, OR removes from buildable set. | 30 min |
+| **AD-654 numbering collision** | **RESOLVED 2026-04-30:** issue #313 (Ship State Snapshot) renumbered to AD-683; #322 (UAAA) keeps AD-654. Roadmap header (line 7082) updated. GitHub issue title + body updated to reflect AD-683 with renumber rationale. | Done |
+| **AD-557b/c (#11) empty body** | **RESOLVED 2026-04-30:** closed as won't-fix-now. Both sub-items are speculative deferrals; AD-557 parent preserves the history. If HXI dashboard or higher-order PID become urgent, file a fresh AD with current scope. | Done |
 | **`src/probos/security/` doesn't exist** | AD-455 must own `__init__.py` creation (mirroring AD-676's `governance/` precedent). Annotation in the wave-5-8 plan. | 5 min plan note |
 | **47 stale GitHub issues** | Trackers correctly mark these CLOSED but issue tracker is stuck open. Not blocking but worth a batch-close. | 15 min via `gh CLI` |
 
@@ -169,14 +169,15 @@ This is for the next wave only. The remaining ~70 ADs (audit's "buildable but no
 
 ## Open Decisions for Architect
 
-1. **AD-654 collision** — which issue keeps 654? (My recommendation: #313 Ship State Snapshot keeps 654 because it has more roadmap detail; #322 UAAA renumbers.)
-2. **AD-557b/c clarification** — write a description, or drop from buildable set? (Drop unless author has clear scope.)
-3. **AD-443 deferral** — confirm AD-479 is a hard prerequisite, or can AD-443 build standalone? (Audit says hard; wave-5-8 plan says deps-met. Verify by reading AD-443 body.)
-4. **AD-641 split** — schedule the 6 sub-AD split as a meta-prompt before Wave 9, or absorb into Wave 9 prompts directly?
+1. **AD-443 deferral** — confirm AD-479 is a hard prerequisite, or can AD-443 build standalone? (Audit says hard; wave-5-8 plan says deps-met. Verify by reading AD-443 body.)
+2. **AD-641 split** — schedule the 6 sub-AD split as a meta-prompt before Wave 9, or absorb into Wave 9 prompts directly?
 
-**Resolved:** AD-460 status (partial-complete; replay deferred; AD-464 takes the token-savings mantle; Wave 6 slot replaced with AD-491). See DECISIONS.md.
+**Resolved:**
+- AD-460 status (partial-complete; replay deferred; AD-464 takes the token-savings mantle; Wave 6 slot replaced with AD-491). See DECISIONS.md.
+- AD-654 collision (#313 renumbered to AD-683; #322 keeps AD-654).
+- AD-557b/c (#11 closed as won't-fix-now).
 
-Architect should answer the remaining 4 before the hygiene commit lands.
+Architect should answer the remaining 2 before the hygiene commit lands.
 
 ---
 
