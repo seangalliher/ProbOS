@@ -10,6 +10,38 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-460: Cognitive Journal — Token Ledger Kept, Reasoning Replay Deferred
+
+**Date:** 2026-04-30
+**Status:** Partial — token ledger and trace linkage complete (AD-431, AD-432, AD-492, AD-534 lineage in `src/probos/cognitive/journal.py`); replay-UI scope closed without further work.
+
+**Context.** AD-460 originally scoped two distinct deliverables under one heading:
+
+1. **Token ledger / trace linkage** — append-only SQLite recording every LLM call with agent / tier / model / tokens / latency / intent_id / dag_node_id / procedure_id / correlation_id / prompt_hash / response_hash / success / cached.
+2. **Reasoning replay** — UI and tooling to replay agent reasoning step by step, summarize/fast-forward through traces, navigate to attention decision points, mine recurring prompt patterns, annotate reverts.
+
+The token-ledger half landed early as `CognitiveJournal` (AD-431/AD-432 lineage) and has been quietly used by AD-492 (correlation IDs), AD-534 (procedure replay), the existing ID-linkage features, and the 14-day pruning policy. The replay half was never built.
+
+**Decision.** Mark AD-460 partial-complete and close the replay-UI scope without building it. Adjust the roadmap status from `*(planned)*` to `*(partial — token ledger + linkage complete; reasoning-replay UI features deferred / superseded by AD-464)*`.
+
+**Reasoning.**
+
+- **Reasoning replay does not save tokens.** Replay operates on stored *output*. To "reuse reasoning" on a fresh problem, a system must retrieve the past trace and inject it into a new LLM call as context. That still costs LLM tokens, adds context-window cost, and is fragile because problem similarity is hard to detect.
+- **Procedural learning (AD-464) is the actual token-savings path.** When an LLM solves a problem, AD-464 extracts the *deterministic procedure* (call sequence, decision rules), stores it, and replays the procedure on similar problems WITHOUT calling the LLM. That is real savings — the LLM is skipped entirely. The journal's existing `procedure_id` column is the linkage that makes this work. AD-464's value subsumes the "reuse reasoning" framing the original AD-460 carried.
+- **The other replay-adjacent ideas have better homes.** Pattern mining and contrastive trace analysis are absorbed by AD-633 (Predictive Branching) and AD-655 (Contrastive Memory). A reasoning-replay HXI viewer would be Captain-facing debug tooling, not a token-savings mechanism — defer until the HXI surface needs it.
+- **The journal foundation is the high-value piece.** It is already wired into 7+ subsystems (workflow cache, procedure store, correlation propagation, dream consolidation, observability) and supports any future analytics work without further changes.
+
+**What this changes.**
+
+- Roadmap status updated.
+- Wave 6 fifth slot (originally AD-460 in [`prompts/wave-5-8-ad-selection-plan.md`](prompts/wave-5-8-ad-selection-plan.md)) is now **AD-491 (Infodynamic Reporting)** per the reconciled plan.
+- AD-464 (Procedural Learning / Cognitive JIT) is reaffirmed as the priority near-term token-savings AD; the journal column it depends on already exists.
+- No code changes; this is a documentation and planning correction.
+
+**Pattern to memorialize.** Reasoning replay does not save tokens — procedural learning does. The journal stores both — keep the infrastructure, skip the UI. Future architects evaluating "store reasoning to save tokens" should redirect the work to AD-464's procedure store rather than reviving AD-460's replay UI.
+
+**Cross-links.** AD-431 (original journal landing), AD-432 (column migration), AD-464 (procedural learning — actual token-savings path), AD-492 (correlation IDs), AD-534 (procedure replay), AD-633 (predictive branching), AD-655 (contrastive memory).
+
 ### AD-465: Containerized Deployment
 
 **Date:** 2026-04-30

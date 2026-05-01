@@ -9,11 +9,11 @@
 
 ## Why This Exists
 
-The 2026-04-30 AD backlog audit ([`prompts/AD-BACKLOG-AUDIT.md`](AD-BACKLOG-AUDIT.md)) and the wave-5-8 selection plan ([`prompts/wave-5-8-ad-selection-plan.md`](wave-5-8-ad-selection-plan.md)) both flagged tracker drift and one numbering collision that need resolution before any Wave 5 prompt can be drafted. Letting those drift items through into Wave 5 risks duplicate work (AD-460), a numbering collision corrupting the AD ledger (AD-654), and an unbuildable prompt (AD-557b/c).
+The 2026-04-30 AD backlog audit ([`prompts/AD-BACKLOG-AUDIT.md`](AD-BACKLOG-AUDIT.md)) and the wave-5-8 selection plan ([`prompts/wave-5-8-ad-selection-plan.md`](wave-5-8-ad-selection-plan.md)) both flagged tracker drift and one numbering collision that need resolution before any Wave 5 prompt can be drafted. Letting those drift items through into Wave 5 risks duplicate work, a numbering collision corrupting the AD ledger (AD-654), and an unbuildable prompt (AD-557b/c).
 
 The reconciled plan is at [`prompts/WAVE-5-8-RECONCILED-PLAN.md`](WAVE-5-8-RECONCILED-PLAN.md).
 
-This prompt resolves the 5 hygiene items identified there. Once committed, Wave 5 prompt drafting can begin.
+**AD-460 was already resolved by architect on 2026-04-30** — marked partial-complete in roadmap, full DECISIONS.md entry recorded, Wave 6 swapped to AD-491. This prompt now resolves the four remaining hygiene items.
 
 ## What This Does NOT Change
 
@@ -44,24 +44,11 @@ grep -rn "AD-68[0-9]\|AD-69[0-9]" PROGRESS.md DECISIONS.md
 
 ## Implementation
 
-### Section 1 — AD-460 Status Verification
+### Section 1 — AD-460 Status (RESOLVED — skip)
 
-**Files:** `src/probos/cognitive/journal.py`, `docs/development/roadmap.md`, `PROGRESS.md`
+**Status:** Already applied by architect on 2026-04-30. Roadmap status flipped to `*(partial)*`, DECISIONS.md AD-460 entry added, PROGRESS.md updated, Wave 6 fifth slot swapped to AD-491.
 
-**Action:**
-
-1. Read `src/probos/cognitive/journal.py` end-to-end. Identify which AD-460 sub-features are present:
-   - Append-only SQLite schema (timestamp, agent, tier, model, tokens, latency, intent_id, success, cached)?
-   - Token accounting per agent / model / DAG?
-   - Reasoning-chain replay API?
-   - Pattern-extraction queries?
-   - Revert-annotation support?
-2. Cross-reference with the AD-460 spec at `docs/development/roadmap.md:4154`.
-3. **If 100% scope match:** flip `*(planned)*` → `*(complete)*` on line 4154, add a closure entry to PROGRESS.md following the existing AD-NNN CLOSED template, and update [`prompts/WAVE-5-8-RECONCILED-PLAN.md`](WAVE-5-8-RECONCILED-PLAN.md) Wave 6 row to drop AD-460 in favor of AD-491.
-4. **If partial match:** annotate roadmap line 4154 with `*(partial — implemented portions: <list>)*` and adjust the AD-460 prompt scope to cover only the missing portions before drafting in Wave 6.
-5. **If no match (existing journal.py is unrelated work):** leave AD-460 in Wave 6 as drafted; add a roadmap note that journal.py exists for an unrelated purpose.
-
-Builder note: do NOT make code changes to `journal.py` in this hygiene pass. Source changes belong to AD-460's own build prompt.
+**Builder action:** none. Verify by `grep -n "AD-460" docs/development/roadmap.md DECISIONS.md PROGRESS.md` and confirm the new entries are present.
 
 ### Section 2 — AD-654 Numbering Collision
 
@@ -178,10 +165,11 @@ Hygiene wave-5 prereq: AD-460 status verified, AD-654 renumbered, AD-557b/c reso
 
 ## Architect Pre-Decisions Required
 
-Builder cannot fully execute Sections 1, 2, 3 without architect input. The architect must answer these before Builder begins:
+Builder cannot fully execute Sections 2 and 3 without architect input. The architect must answer these before Builder begins:
 
-1. **Section 1 outcome:** if AD-460 is partial or unrelated, what's the new Wave 6 fifth slot? (Recommendation: AD-491 if AD-460 is CLOSED.)
-2. **Section 2 outcome:** which issue keeps AD-654, which renumbers? (Recommendation: #313 keeps; #322 renumbers.)
-3. **Section 3 outcome:** Option A (fill body) or Option B (close issue)? If A, what's the description text?
+1. **Section 2 outcome:** which issue keeps AD-654, which renumbers? (Recommendation: #313 keeps; #322 renumbers.)
+2. **Section 3 outcome:** Option A (fill body) or Option B (close issue)? If A, what's the description text?
 
-Builder should refuse to start until all three answers are recorded in this prompt's "Architect Pre-Decisions" comments OR in a follow-up message.
+Section 1 (AD-460) is already resolved — no architect input needed there.
+
+Builder should refuse to start until both answers are recorded in this prompt's "Architect Pre-Decisions" comments OR in a follow-up message.

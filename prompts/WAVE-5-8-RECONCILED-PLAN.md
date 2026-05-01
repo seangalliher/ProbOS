@@ -29,7 +29,7 @@ These must be resolved before drafting the next wave's prompts. They are tracker
 
 | Item | Action | Effort |
 |---|---|---|
-| **AD-460 status** | Roadmap says PLANNED; `src/probos/cognitive/journal.py` already exists and is wired. Verify scope match; if complete, flip roadmap to CLOSED and pull AD-460 OUT of Wave 6. | 30 min |
+| **AD-460 status** | **RESOLVED 2026-04-30:** marked partial in roadmap; DECISIONS.md entry recorded the "reasoning replay does not save tokens; procedural learning (AD-464) is the actual path" decision. Wave 6 fifth slot swapped to AD-491. No further hygiene action needed. | Done |
 | **AD-654 numbering collision** | Issues #322 (UAAA) and #313 (Ship State Snapshot) both claim AD-654. Architect picks one to renumber to next available (likely AD-683 or higher; verify highest current AD first). | 15 min architect decision + 15 min issue update |
 | **AD-557b/c (#11) empty body** | No description, no roadmap entry. Cannot classify or build. Architect drafts a 1-paragraph description from title context, OR removes from buildable set. | 30 min |
 | **`src/probos/security/` doesn't exist** | AD-455 must own `__init__.py` creation (mirroring AD-676's `governance/` precedent). Annotation in the wave-5-8 plan. | 5 min plan note |
@@ -67,11 +67,11 @@ A combined hygiene prompt is queued at [`prompts/hygiene-wave5-prereq.md`](hygie
 | 7 | AD-457 | Engineering Crew | 3 | medium | ✅ Buildable |
 | 8 | AD-458 | Navigational Deflector — Pre-Flight | 3 | medium | ✅ Buildable |
 | 9 | AD-459 | Saucer Separation — Graceful Degradation | 2 | high | ✅ Buildable. Cross-cutting; serialize within wave. |
-| 10 | AD-460 | Cognitive Journal | — | — | ⚠️ **DRIFT** — pending hygiene resolution. Likely already complete. |
+| 10 | AD-491 | Infodynamic Reporting | 3 | low | ✅ Buildable. Replaces AD-460 (resolved partial-complete on 2026-04-30; see DECISIONS.md). |
 
-**Reconciliation:** if AD-460 hygiene confirms complete, replace with **AD-491 (Infodynamic Reporting)** — audit Group 3, low risk, pure observability, no deps. Wave-5-8 plan didn't pick it but the audit places it as a clean fit.
+**Reconciliation:** AD-460 was resolved on 2026-04-30 — marked partial-complete (token ledger landed, replay-UI scope closed, AD-464 designated as the actual token-savings path). Wave 6 fifth slot is **AD-491 (Infodynamic Reporting)** — audit Group 3, low risk, pure observability, no deps.
 
-**Updated Wave 6:** AD-451, AD-457, AD-458, AD-459, AD-460-OR-AD-491.
+**Updated Wave 6:** AD-451, AD-457, AD-458, AD-459, AD-491.
 
 ### Wave 7: Infrastructure & Integration (5 ADs, dependency-ordered)
 
@@ -172,10 +172,11 @@ This is for the next wave only. The remaining ~70 ADs (audit's "buildable but no
 1. **AD-654 collision** — which issue keeps 654? (My recommendation: #313 Ship State Snapshot keeps 654 because it has more roadmap detail; #322 UAAA renumbers.)
 2. **AD-557b/c clarification** — write a description, or drop from buildable set? (Drop unless author has clear scope.)
 3. **AD-443 deferral** — confirm AD-479 is a hard prerequisite, or can AD-443 build standalone? (Audit says hard; wave-5-8 plan says deps-met. Verify by reading AD-443 body.)
-4. **AD-460 verification** — read `cognitive/journal.py` and confirm scope match against the original AD-460 spec. If complete, flip and pull from Wave 6.
-5. **AD-641 split** — schedule the 6 sub-AD split as a meta-prompt before Wave 9, or absorb into Wave 9 prompts directly?
+4. **AD-641 split** — schedule the 6 sub-AD split as a meta-prompt before Wave 9, or absorb into Wave 9 prompts directly?
 
-Architect should answer these before the hygiene commit lands.
+**Resolved:** AD-460 status (partial-complete; replay deferred; AD-464 takes the token-savings mantle; Wave 6 slot replaced with AD-491). See DECISIONS.md.
+
+Architect should answer the remaining 4 before the hygiene commit lands.
 
 ---
 
