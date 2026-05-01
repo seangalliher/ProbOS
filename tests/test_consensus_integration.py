@@ -20,12 +20,12 @@ class TestRuntimeConsensus:
     @pytest.mark.asyncio
     async def test_red_team_agents_spawned(self, runtime):
         """Red team agents should exist after boot."""
-        assert len(runtime._red_team_agents) == 2
+        assert len(runtime.red_team_agents) == 2
 
     @pytest.mark.asyncio
     async def test_red_team_agents_are_active(self, runtime):
         from probos.types import AgentState
-        for agent in runtime._red_team_agents:
+        for agent in runtime.red_team_agents:
             assert agent.state == AgentState.ACTIVE
             assert agent.agent_type == "red_team"
 

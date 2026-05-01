@@ -186,7 +186,7 @@ class TestAutoWelcome:
         runtime._previous_session = None
         runtime.event_log = AsyncMock()
         runtime.pools = {}
-        runtime._red_team_agents = []
+        runtime.red_team_agents = []
         runtime.ontology = None
         runtime.trust_network = MagicMock()
         runtime.trust_network.set_department_lookup = MagicMock()
@@ -255,7 +255,7 @@ class TestAutoWelcome:
         runtime._previous_session = None
         runtime.event_log = AsyncMock()
         runtime.pools = {}
-        runtime._red_team_agents = []
+        runtime.red_team_agents = []
         runtime.ontology = None
         runtime.trust_network = MagicMock()
         runtime.trust_network.set_department_lookup = MagicMock()
@@ -314,7 +314,7 @@ class TestAutoWelcome:
         runtime._previous_session = None
         runtime.event_log = AsyncMock()
         runtime.pools = {}
-        runtime._red_team_agents = []
+        runtime.red_team_agents = []
         runtime.ontology = None
         runtime.trust_network = MagicMock()
         runtime.trust_network.set_department_lookup = MagicMock()
@@ -372,7 +372,7 @@ class TestAutoWelcome:
         runtime._previous_session = None
         runtime.event_log = AsyncMock()
         runtime.pools = {}
-        runtime._red_team_agents = []
+        runtime.red_team_agents = []
         runtime.ontology = None
         runtime.trust_network = MagicMock()
         runtime.trust_network.set_department_lookup = MagicMock()

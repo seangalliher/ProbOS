@@ -218,7 +218,7 @@ async def test_red_team_agent_wired_has_department() -> None:
     runtime.gossip = MagicMock()
     runtime.trust_network = MagicMock()
     runtime.event_log = MagicMock(log=AsyncMock())
-    runtime._red_team_agents = []
+    runtime.red_team_agents = []
 
     with patch("probos.runtime.RedTeamAgent", _FakeRedTeamAgent):
         await runtime._spawn_red_team(1)
