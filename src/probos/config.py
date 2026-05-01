@@ -1049,6 +1049,15 @@ class PreFlightConfig(BaseModel):
     # and TokenBudgetCheck join v2.
 
 
+class EngineeringConfig(BaseModel):
+    """Engineering crew configuration (AD-457)."""
+
+    enabled: bool = True
+    performance_interval_seconds: float = Field(default=10.0, ge=1.0)
+    maintenance_interval_seconds: float = Field(default=300.0, ge=60.0)
+    damage_control_cooldown_seconds: float = Field(default=60.0, ge=1.0)
+
+
 class InfodynamicConfig(BaseModel):
     """Infodynamic telemetry configuration (AD-491)."""
 
@@ -1617,6 +1626,7 @@ class SystemConfig(BaseModel):
     orders: OrdersConfig = OrdersConfig()  # AD-440
     validation_framework: ValidationFrameworkConfig = ValidationFrameworkConfig()  # AD-451
     pre_flight: PreFlightConfig = PreFlightConfig()  # AD-458
+    engineering: EngineeringConfig = EngineeringConfig()  # AD-457
     infodynamic: InfodynamicConfig = InfodynamicConfig()  # AD-491
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()

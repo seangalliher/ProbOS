@@ -621,6 +621,16 @@ class ProbOSRuntime:
         # Engineering team (AD-398)
         self.spawner.register_template("engineering_officer", EngineeringAgent)
 
+        # AD-457: Engineering crew templates
+        from probos.agents.engineering import (
+            DamageControlAgent,
+            MaintenanceAgent,
+            PerformanceMonitorAgent,
+        )
+        self.spawner.register_template("performance_monitor", PerformanceMonitorAgent)
+        self.spawner.register_template("maintenance", MaintenanceAgent)
+        self.spawner.register_template("damage_control", DamageControlAgent)
+
         # --- CodebaseIndex (AD-290) ---
         self.codebase_index: CodebaseIndex | None = None
         self.nats_bus: NATSBus | None = None

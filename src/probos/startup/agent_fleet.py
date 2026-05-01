@@ -145,6 +145,24 @@ async def create_agent_fleet(
             agent_ids=ids, llm_client=llm_client, runtime=runtime,
         )
 
+    # AD-457: Engineering crew — Performance / Maintenance / Damage Control
+    if config.engineering.enabled:
+        eng_cfg = config.engineering
+        _engineering_heartbeat: list[tuple[str, str, float]] = [
+            ("performance_monitor", "engineering_performance",
+             eng_cfg.performance_interval_seconds),
+            ("maintenance", "engineering_maintenance",
+             eng_cfg.maintenance_interval_seconds),
+            ("damage_control", "engineering_damage_control",
+             30.0),
+        ]
+        for agent_type_name, pool_name, interval in _engineering_heartbeat:
+            ids = generate_pool_ids(agent_type_name, pool_name, 1)
+            await create_pool_fn(
+                pool_name, agent_type_name, target_size=1,
+                agent_ids=ids, runtime=runtime, interval=interval,
+            )
+
     # Build CodebaseIndex — ship's library, available to all agents (AD-297)
     from probos.cognitive.codebase_index import CodebaseIndex
 
