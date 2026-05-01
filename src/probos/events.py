@@ -193,6 +193,8 @@ class EventType(str, Enum):
     DAMAGE_CONTROL_ACTIVATED = "damage_control_activated"  # AD-457
     MAINTENANCE_SCHEDULED = "maintenance_scheduled"  # AD-457
     PERFORMANCE_THRESHOLD_BREACHED = "performance_threshold_breached"  # AD-457
+    SERVICE_TIER_DEGRADED = "service_tier_degraded"  # AD-459
+    SERVICE_TIER_RESTORED = "service_tier_restored"  # AD-459
     PREFLIGHT_FAILED = "preflight_failed"  # AD-458
     INFODYNAMIC_REPORT = "infodynamic_report"  # AD-491
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode

@@ -405,6 +405,20 @@ async def finalize_startup(
         )
         logger.info("AD-491: InfodynamicProbe wired")
 
+    # AD-459: Saucer separation -- graceful degradation
+    # v1 always wires the manager (no enabled flag) so consumers can call
+    # `runtime.degradation_manager.is_shed(name)` without a None check.
+    # Default state is StressLevel.NORMAL (no shedding).
+    from probos.degradation.manager import DegradationManager
+    from probos.degradation.policy import SheddingPolicy
+    from probos.degradation.registry import ServiceTierRegistry
+    runtime.degradation_manager = DegradationManager(
+        registry=ServiceTierRegistry(),
+        policy=SheddingPolicy(),
+        emit_event=runtime.emit_event,
+    )
+    logger.info("AD-459: DegradationManager wired (stress=normal)")
+
     # AD-468: Runtime Configuration Service
     if config.runtime_overrides.enabled:
         from probos.runtime_config_service import RuntimeConfigService

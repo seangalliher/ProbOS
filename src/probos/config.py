@@ -1058,6 +1058,16 @@ class EngineeringConfig(BaseModel):
     damage_control_cooldown_seconds: float = Field(default=60.0, ge=1.0)
 
 
+class DegradationConfig(BaseModel):
+    """Saucer separation / graceful degradation (AD-459).
+
+    v1 has no operator-tunable fields — the manager is always wired and
+    the default policy is the only policy. AD-459b will add fields for
+    custom policies, stress-level transition thresholds, and operator
+    override (e.g., shed-ESSENTIAL emergency override).
+    """
+
+
 class InfodynamicConfig(BaseModel):
     """Infodynamic telemetry configuration (AD-491)."""
 
@@ -1627,6 +1637,7 @@ class SystemConfig(BaseModel):
     validation_framework: ValidationFrameworkConfig = ValidationFrameworkConfig()  # AD-451
     pre_flight: PreFlightConfig = PreFlightConfig()  # AD-458
     engineering: EngineeringConfig = EngineeringConfig()  # AD-457
+    degradation: DegradationConfig = DegradationConfig()  # AD-459
     infodynamic: InfodynamicConfig = InfodynamicConfig()  # AD-491
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
