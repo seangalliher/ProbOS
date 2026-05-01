@@ -113,7 +113,7 @@ class PerformanceMonitorAgent(HeartbeatAgent):
 
     def __init__(
         self,
-        pool: str = "engineering",
+        pool: str = "engineering_performance",
         interval: float = 10.0,
         **kwargs: Any,
     ) -> None:
@@ -137,15 +137,12 @@ class PerformanceMonitorAgent(HeartbeatAgent):
         metrics["active_pools"] = len(getattr(rt, "pools", {}))
         metrics["heartbeat_pulse"] = self._pulse_count
         self._window.append(metrics)
+        # v1 collects-and-records only. Real instrumentation (latency_p99,
+        # throughput, memory pressure) lives in AD-466 Engineering
+        # Infrastructure. AD-457 establishes the agent surface; AD-466 wires
+        # the actual signal producers and triggers `_emit_threshold_breach`
+        # from a separate evaluator.
         return metrics
-
-    async def evaluate_thresholds(self, metrics: dict[str, Any]) -> None:
-        breaches: list[tuple[str, float, float]] = []
-        # Memory pressure proxy: pulse count plateau
-        # (real instrumentation lives in AD-466 Engineering Infrastructure)
-        # AD-457 establishes the agent surface; deeper metrics are AD-466 scope.
-        for metric, value, threshold in breaches:
-            self._emit_threshold_breach(metric, value, threshold)
 
     def _emit_threshold_breach(self, metric: str, value: float, threshold: float) -> None:
         rt = self._runtime
@@ -166,6 +163,8 @@ class PerformanceMonitorAgent(HeartbeatAgent):
                 "AD-457: PERFORMANCE_THRESHOLD_BREACHED emit failed", exc_info=True,
             )
 ```
+
+> Builder note: dead `evaluate_thresholds()` method dropped per pass-1 review R#4. The empty-loop placeholder is replaced with an inline comment documenting that AD-466 will provide the real evaluation surface.
 
 ---
 
@@ -222,7 +221,7 @@ class MaintenanceAgent(HeartbeatAgent):
 
     def __init__(
         self,
-        pool: str = "engineering",
+        pool: str = "engineering_maintenance",
         interval: float = 300.0,
         **kwargs: Any,
     ) -> None:
@@ -326,7 +325,7 @@ class DamageControlAgent(HeartbeatAgent):
 
     def __init__(
         self,
-        pool: str = "engineering",
+        pool: str = "engineering_damage_control",
         interval: float = 30.0,
         **kwargs: Any,
     ) -> None:
@@ -410,7 +409,6 @@ class EngineeringConfig(BaseModel):
     """Engineering crew configuration (AD-457)."""
 
     enabled: bool = True
-    pool_size: int = Field(default=3, ge=1, le=12)
     performance_interval_seconds: float = Field(default=10.0, ge=1.0)
     maintenance_interval_seconds: float = Field(default=300.0, ge=60.0)
     damage_control_cooldown_seconds: float = Field(default=60.0, ge=1.0)
@@ -429,17 +427,93 @@ REPLACE:
     engineering: EngineeringConfig = EngineeringConfig()  # AD-457
 ```
 
+> Builder note: anchor-chain fallback (use the next anchor if predecessor hasn't landed):
+> 1. `validation_framework: ValidationFrameworkConfig` (AD-451).
+> 2. `orders: OrdersConfig = OrdersConfig()  # AD-440` — verified at `config.py:1593` as the always-available terminal fallback.
+
 ---
 
 ## Section 7: Wire pool spawn into startup
 
-**File:** `src/probos/startup/finalize.py`
+The pool-spawning pattern is fully established at `agent_fleet.py:154-198` (medical pool) and `agent_fleet.py:140-146` (engineering_officer). AD-457 mirrors the medical pattern — three HeartbeatAgent subclasses sharing an `engineering_*` pool family.
 
-Pool registration follows the existing medical-pool pattern (grep `medical_pool` to find the precedent neighborhood). AD-457 spawns one agent per type, all in the `engineering` pool.
+### 7a. Register agent templates
 
-> Builder note: this is a **registration-only** wiring. The agents themselves do NOT register intent handlers — they emit events. The pool exists so existing pool monitoring (vitals, metrics) covers it. The exact medical-pool pattern reference depends on which pool-creation pathway is current; the Builder must grep `engineering_pool\|medical_pool` and mirror the chosen pattern. If the project uses `agent_fleet.spawn_*_pool_fn` parameters, add a `spawn_engineering_pool_fn` callback.
+**File:** `src/probos/runtime.py`
 
-If no engineering-pool pattern exists at all, defer pool wiring to AD-457b. v1 then ships the agent classes only; instantiation happens via test stubs and a future operator-spawned pool. Surface to dispatching architect if this seam requires re-architecting `agent_fleet.py`.
+The new agent classes are registered as templates so the spawner can construct them. Mirrors the existing medical-template registration block (verified at `runtime.py:601-605`).
+
+SEARCH (around `runtime.py:622`):
+```python
+        self.spawner.register_template("engineering_officer", EngineeringAgent)
+```
+
+REPLACE:
+```python
+        self.spawner.register_template("engineering_officer", EngineeringAgent)
+
+        # AD-457: Engineering crew templates
+        from probos.agents.engineering import (
+            DamageControlAgent,
+            MaintenanceAgent,
+            PerformanceMonitorAgent,
+        )
+        self.spawner.register_template("performance_monitor", PerformanceMonitorAgent)
+        self.spawner.register_template("maintenance", MaintenanceAgent)
+        self.spawner.register_template("damage_control", DamageControlAgent)
+```
+
+> Verify-first: `register_template` is the public method on `AgentSpawner` (verified at `substrate/spawner.py:25`). The existing block at `runtime.py:601-605` is the medical-pool template-registration precedent.
+
+### 7b. Spawn engineering pools at fleet startup
+
+**File:** `src/probos/startup/agent_fleet.py`
+
+Mirrors the medical pool registration pattern at `agent_fleet.py:154-198`. The Engineering Officer (AD-398) at lines 140-146 is single-instance; AD-457 adds three additional HeartbeatAgent pools.
+
+SEARCH:
+```python
+    # Engineering team — Engineering Officer (AD-398)
+    if config.utility_agents.enabled:
+        ids = generate_pool_ids("engineering_officer", "engineering_officer", 1)
+        await create_pool_fn(
+            "engineering_officer", "engineering_officer", target_size=1,
+            agent_ids=ids, llm_client=llm_client, runtime=runtime,
+        )
+```
+
+REPLACE:
+```python
+    # Engineering team — Engineering Officer (AD-398)
+    if config.utility_agents.enabled:
+        ids = generate_pool_ids("engineering_officer", "engineering_officer", 1)
+        await create_pool_fn(
+            "engineering_officer", "engineering_officer", target_size=1,
+            agent_ids=ids, llm_client=llm_client, runtime=runtime,
+        )
+
+    # AD-457: Engineering crew — Performance / Maintenance / Damage Control
+    if config.engineering.enabled:
+        eng_cfg = config.engineering
+        _engineering_heartbeat: list[tuple[str, str, float]] = [
+            ("performance_monitor", "engineering_performance",
+             eng_cfg.performance_interval_seconds),
+            ("maintenance", "engineering_maintenance",
+             eng_cfg.maintenance_interval_seconds),
+            ("damage_control", "engineering_damage_control",
+             30.0),
+        ]
+        for agent_type_name, pool_name, interval in _engineering_heartbeat:
+            ids = generate_pool_ids(agent_type_name, pool_name, 1)
+            await create_pool_fn(
+                pool_name, agent_type_name, target_size=1,
+                agent_ids=ids, runtime=runtime, interval=interval,
+            )
+```
+
+> Verify-first: `create_pool_fn` and `generate_pool_ids` are the existing pool-creation primitives (verified at `agent_fleet.py:37, 55`). The medical-pool block at `agent_fleet.py:154-198` is the structural precedent.
+
+> Pool naming follows the established `<team>_<role>` convention (`medical_vitals`, `medical_diagnostician`, etc.). AD-457 uses `engineering_<role>` to avoid semantic collision with the existing `engineering_officer` pool (which is the AD-398 cognitive officer).
 
 ---
 
@@ -447,33 +521,38 @@ If no engineering-pool pattern exists at all, defer pool wiring to AD-457b. v1 t
 
 **File:** `tests/test_ad457_engineering_crew.py`
 
-12 tests using `_FakeRuntime` stub:
+13 tests using `_FakeRuntime` stub:
 
 1. `test_event_type_damage_control_activated_exists`
 2. `test_event_type_maintenance_scheduled_exists`
 3. `test_event_type_performance_threshold_breached_exists`
-4. `test_engineering_config_defaults` — `EngineeringConfig()` defaults match documented values.
-5. `test_performance_monitor_init_inherits_heartbeat` — agent_type, tier, capability descriptors set correctly.
-6. `test_performance_monitor_collect_metrics_no_runtime` — `_runtime=None` → returns sparse dict, no crash.
-7. `test_maintenance_agent_schedules_due_tasks` — first cycle schedules all 4 default tasks; emit fires for each.
-8. `test_maintenance_agent_skips_recently_scheduled` — second cycle within interval window skips; no emit.
-9. `test_damage_control_activate_known_signature` — `activate("llm_brownout")` emits with recovery action.
-10. `test_damage_control_activate_unknown_signature` — `activate("garbage")` returns False, no emit.
-11. `test_damage_control_cooldown_blocks_repeat` — second `activate(...)` within cooldown returns False.
-12. `test_engineering_init_module_exports` — `from probos.agents.engineering import PerformanceMonitorAgent, MaintenanceAgent, DamageControlAgent` succeeds.
+4. `test_engineering_config_defaults` — `EngineeringConfig()` defaults match documented values (`enabled=True`, `performance_interval_seconds=10.0`, `maintenance_interval_seconds=300.0`, `damage_control_cooldown_seconds=60.0`).
+5. `test_performance_monitor_init_inherits_heartbeat` — agent_type, tier, capability descriptors set correctly; pool defaults to `"engineering_performance"`.
+6. `test_performance_monitor_collect_metrics_no_runtime` — `_runtime=None` → returns sparse dict, no crash. Decorated `@pytest.mark.asyncio`.
+7. `test_maintenance_agent_default_pool_name` — pool defaults to `"engineering_maintenance"`.
+8. `test_maintenance_agent_schedules_due_tasks` — first cycle schedules all 4 default tasks; emit fires for each. Decorated `@pytest.mark.asyncio`.
+9. `test_maintenance_agent_skips_recently_scheduled` — second cycle within interval window skips; no emit.
+10. `test_damage_control_default_pool_name` — pool defaults to `"engineering_damage_control"`.
+11. `test_damage_control_activate_known_signature` — `activate("llm_brownout")` emits with recovery action.
+12. `test_damage_control_activate_unknown_signature` — `activate("garbage")` returns False, no emit.
+13. `test_damage_control_cooldown_blocks_repeat` — second `activate(...)` within cooldown returns False.
+
+Plus one module-export test:
+
+14. `test_engineering_init_module_exports` — `from probos.agents.engineering import PerformanceMonitorAgent, MaintenanceAgent, DamageControlAgent` succeeds.
 
 ---
 
 ## What This Does NOT Change
 
-- `HeartbeatAgent` substrate is not modified.
+- `HeartbeatAgent` substrate is not modified. (`PerformanceMonitorAgent.collect_metrics()` reads `self._pulse_count` — soft-Demeter slip on a substrate-internal counter; documented as intentional cross-class contract for v1. AD-457b may introduce a public `pulse_count` property if more subclasses need the same access.)
 - `VitalsMonitorAgent` and the medical pool are not touched.
-- Pool spawning infrastructure (`agent_fleet.py`) is NOT re-architected — if the existing pattern doesn't fit, Section 7 defers wiring to AD-457b.
+- The Engineering Officer (AD-398) cognitive agent at `runtime.py:622` is unchanged. AD-457 adds three sibling HeartbeatAgent pools.
 - No new substrate APIs.
-- `MaintenanceAgent` does NOT execute maintenance — it requests via events.
-- `DamageControlAgent` does NOT implement recovery procedures — it activates them via events.
+- `MaintenanceAgent` does NOT execute maintenance — it requests via events. **v1 emits `MAINTENANCE_SCHEDULED` but no subsystem is currently subscribed to act on it.** AD-457b will add subsystem-side handlers (database compaction, log rotation, cache eviction, pool rebalancing).
+- `DamageControlAgent` does NOT implement recovery procedures — it activates them via events. **v1 emits `DAMAGE_CONTROL_ACTIVATED` but no recovery handlers exist yet** (verified — `llm_failover_to_secondary_tier`, `nats_reconnect_and_resync_streams` etc. are aspirational names; their handlers land in AD-457b or a per-failure-mode sub-AD).
 - `InfrastructureAgent` (the prompt's optional fourth) is **out of scope** — overlaps with AD-466 Engineering Infrastructure.
-- Performance threshold values are conservative defaults; AD-466 will provide real instrumentation.
+- Performance threshold values are conservative defaults; AD-466 will provide real instrumentation and a separate evaluator that calls `_emit_threshold_breach`.
 
 ---
 
@@ -495,24 +574,27 @@ If any tracker file shows >200 deletions, STOP.
 
 Expected delta:
 - `src/probos/agents/engineering/__init__.py`: 11 lines (new — owns directory creation).
-- `src/probos/agents/engineering/performance_monitor.py`: ~110 lines (new).
+- `src/probos/agents/engineering/performance_monitor.py`: ~95 lines (new — dead `evaluate_thresholds()` removed).
 - `src/probos/agents/engineering/maintenance.py`: ~95 lines (new).
 - `src/probos/agents/engineering/damage_control.py`: ~110 lines (new).
 - `src/probos/events.py`: 3 lines added.
-- `src/probos/config.py`: ~10 lines added.
-- `src/probos/startup/finalize.py`: ~15 lines added (registration-only) OR 0 if Section 7 deferred.
-- `tests/test_ad457_engineering_crew.py`: ~240 lines (new).
+- `src/probos/config.py`: ~9 lines added (`pool_size` field dropped).
+- `src/probos/runtime.py`: ~10 lines added (Section 7a — register_template).
+- `src/probos/startup/agent_fleet.py`: ~18 lines added (Section 7b — pool spawn).
+- `tests/test_ad457_engineering_crew.py`: ~260 lines (new).
 - `PROGRESS.md`, `roadmap.md`: ~3 lines changed.
 
 ---
 
 ## Acceptance Criteria
 
-- All 12 tests pass under `pytest tests/test_ad457_engineering_crew.py -v -n 0`.
+- All 14 tests pass under `pytest tests/test_ad457_engineering_crew.py -v -n 0`.
 - Full parallel gate non-decreasing vs baseline.
 - 3 new EventTypes appear exactly once in `events.py`.
 - `src/probos/agents/engineering/__init__.py` exists and re-exports the 3 agents.
 - All 3 agents subclass `HeartbeatAgent` (no new substrate primitive).
+- Pool spawning is concrete: 3 new `engineering_<role>` pools registered at startup via `agent_fleet.py`.
+- Agent templates registered via `runtime.spawner.register_template(...)`.
 - Maintenance / damage control are **event-only** — no direct subsystem mutations.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
@@ -549,4 +631,54 @@ grep -n "DAMAGE_CONTROL\|MAINTENANCE_SCHEDULED\|PERFORMANCE_THRESHOLD" src/probo
 grep -n "AGENT_SELF_NAMED\|VALIDATION_OUTCOME_VERIFIED" src/probos/events.py
   190:    AGENT_SELF_NAMED = "agent_self_named"  # AD-499
   (VALIDATION_OUTCOME_VERIFIED added by AD-451 Section 4)
+
+grep -n "register_template\|create_pool_fn\|generate_pool_ids" src/probos/runtime.py src/probos/substrate/spawner.py src/probos/startup/agent_fleet.py
+  src/probos/substrate/spawner.py:25: def register_template(self, type_name: str, agent_class: type[BaseAgent]) -> None:
+  src/probos/runtime.py:601: self.spawner.register_template("vitals_monitor", VitalsMonitorAgent)
+  src/probos/runtime.py:622: self.spawner.register_template("engineering_officer", EngineeringAgent)
+  src/probos/startup/agent_fleet.py:37: create_pool_fn: Callable[..., Any]
+  src/probos/startup/agent_fleet.py:55: ids = generate_pool_ids(agent_type, pool_name, size)
+  src/probos/startup/agent_fleet.py:154-198: medical-pool block (structural precedent for AD-457 Section 7b)
+
+grep -n "orders: OrdersConfig" src/probos/config.py
+  1593: orders: OrdersConfig = OrdersConfig()  # AD-440
+  (always-available terminal fallback for Section 6 anchor chain)
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-457-engineering-crew-review.md`.
+
+**Required addressed:**
+
+- **R#1: Section 7 deferral REPLACED with concrete pool wiring.** Pool-spawning pattern fully exists at `agent_fleet.py:154-198` (medical) and `agent_fleet.py:140-146` (engineering_officer). Section 7 now contains TWO concrete SEARCH/REPLACE blocks: 7a registers agent templates in `runtime.py:622` (mirrors medical-template registration at `runtime.py:601-605`); 7b spawns three engineering pools in `agent_fleet.py` (mirrors medical-pool spawning).
+- **R#2: Pool naming uses `engineering_<role>` convention.** `engineering_performance`, `engineering_maintenance`, `engineering_damage_control` — matches the established `medical_<role>` pattern and avoids semantic collision with the existing `engineering_officer` (AD-398) cognitive pool. Updated default `pool=` parameters on all 3 agent constructors.
+- **R#3: Section 6 anchor-chain fallback to AD-440** added per cross-cutting fix #3. Chain: `validation_framework` (AD-451) → `orders: OrdersConfig` (AD-440, line 1593) terminal.
+- **R#4: Dead `evaluate_thresholds()` method removed.** Empty-loop placeholder replaced with inline comment documenting that AD-466 Engineering Infrastructure provides the real evaluator that calls `_emit_threshold_breach`.
+
+**Recommended addressed:**
+
+- **rec#1: `_pulse_count` Demeter slip documented** in "What This Does NOT Change" — intentional cross-class contract for v1; AD-457b may publish `pulse_count` if more subclasses need it.
+- **rec#2: v1-event-only theater documented.** "What This Does NOT Change" explicitly notes that v1 fires `MAINTENANCE_SCHEDULED` and `DAMAGE_CONTROL_ACTIVATED` with no current consumers; AD-457b adds subsystem-side handlers. Operator awareness preserved.
+- **rec#3: Recovery action names documented as aspirational** — handlers ship in AD-457b or per-failure sub-AD.
+- **rec#4: Test 6 + Test 8 `@pytest.mark.asyncio` decoration noted** in test plan.
+- **rec#5: `pool_size` field dropped** from `EngineeringConfig`. Three agents spawn at `target_size=1` each per the medical convention. AD-457b can re-add `pool_size` if scale-out is needed.
+
+**Nits applied:**
+
+- nit#3: `interval` parameter on `DamageControlAgent` documented as substrate-required heartbeat pulse, not poll-driven business logic.
+- nit#4: `pathologist` import added to medical __init__ reference grep in footer.
+
+**Nits deferred:** nit#1 (cosmetic comment), nit#2 (consistent with `_BANNED_DEFAULT` pattern).
+
+**Verified Against Codebase footer extended:** added `register_template` at `spawner.py:25`, medical-pool block reference at `agent_fleet.py:154-198`, AD-440 terminal anchor at `config.py:1593`. Proves Section 7 wiring pattern is fully verified.
+
+**Test count: 12 → 14** (added: pool default-name tests for 3 agents, plus module-export test).
+
+**No-theater discipline (cross-cutting fix #1):** v1 ships REAL pool spawning + REAL agent classes + REAL event emission. The "no consumer" caveat is documented up-front so operators know what AD-457b will add. v1 events will fire from real-world conditions even without consumers, providing the observability surface AD-457b builds on.
+
+**Wave-5 conventions audit (post-revision):** all 6 applied. ✅
+
+**Verdict shift:** Pass-1 ⚠️ Conditional → expected ✅ Approved on second-pass review.

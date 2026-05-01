@@ -23,12 +23,19 @@ What is needed:
 
 Create `src/probos/cognitive/pre_flight.py` (new). Two layers:
 
-- **Protocol layer** — `PreFlightCheck` Protocol + `PreFlightResult` dataclass + four built-in checks (target-files-exist, target-files-writable, llm-tier-reachable, token-budget-sufficient).
+- **Protocol layer** — `PreFlightCheck` Protocol + `PreFlightResult` dataclass + two built-in checks (target-files-exist, target-files-writable).
 - **Runner layer** — `PreFlightRunner` composes the checks. Stateless. Each `run(spec)` call is independent.
 
-This is **middleware between approval and execution.** AD-458 does NOT change `BuilderAgent.act()` itself, does NOT change `BuildSpec` schema, does NOT add new LLM calls. The runner is invoked from `execute_approved_build()` as the first step, before the existing flow.
+This is **middleware between approval and execution.** AD-458 does NOT change `BuilderAgent.act()` itself, does NOT change `BuildSpec` schema, does NOT add new LLM calls. The runner is invoked from `execute_approved_build()` after the existing dirty-tree check, before branch creation.
 
 The AD-446 `CompensationHandler` (already in the codebase) is the architectural model: a small handler invoked by the existing pipeline, not a re-architecture.
+
+**v1 scope (no-theater discipline per Wave 5 retrospective convention #3):**
+
+v1 ships only the two checks that do real work today: `TargetFilesExistCheck` (reads filesystem) and `TargetFilesWritableCheck` (reads filesystem + ACLs). Both have concrete signal even with zero runtime infrastructure. Two checks deferred to **AD-458b**:
+
+- `LLMTierReachableCheck` — needs a public LLM-tier health accessor that doesn't exist today (`_tier_status` is private at `cognitive/llm_client.py:100`). AD-458b will introduce the public `is_tier_operational(tier_name) -> bool` accessor and add the check.
+- `TokenBudgetCheck` — token budget enforcement already lives in AD-617b (proactive cognitive loop). A separate pre-flight soft check would either duplicate enforcement or ship as theater. AD-458b will evaluate whether a heads-up signal is needed once AD-617b's surface is exercised.
 
 ---
 
@@ -61,10 +68,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from probos.events import EventType
 
@@ -97,14 +105,20 @@ class PreFlightReport:
 class PreFlightCheck(Protocol):
     """Protocol for a single pre-flight check.
 
-    Implementations must be async (some checks need I/O — file stat, HTTP
-    HEAD against the LLM proxy). They must NOT mutate any state.
+    Implementations must be async (some checks need I/O — file stat). They
+    must NOT mutate any state. Decorated `@runtime_checkable` so tests can
+    assert via `isinstance(impl, PreFlightCheck)`.
     """
 
     name: str
 
     async def check(self, spec: "BuildSpec") -> PreFlightResult:
         ...
+
+
+# Apply the runtime_checkable decorator separately so the Protocol body stays
+# compatible with PEP 544 + dataclass tooling.
+PreFlightCheck = runtime_checkable(PreFlightCheck)  # type: ignore[misc]
 ```
 
 ---
@@ -165,8 +179,6 @@ class TargetFilesWritableCheck:
             if not p.exists():
                 continue
             try:
-                # mode check; OS layer may reject anyway, but read-only flag catches the common case.
-                import os
                 if not os.access(p, os.W_OK):
                     unwritable.append(t)
             except Exception:
@@ -182,72 +194,15 @@ class TargetFilesWritableCheck:
         )
 
 
-class LLMTierReachableCheck:
-    """Verify the configured deep tier responds to a health probe.
-
-    Uses runtime.llm_client's existing health check if available; otherwise
-    log-and-degrade returns True (network probes are deferred to BF-246's
-    background health probe).
-    """
-
-    name = "llm_tier_reachable"
-
-    def __init__(self, *, runtime: Any) -> None:
-        self._runtime = runtime
-
-    async def check(self, spec: "BuildSpec") -> PreFlightResult:
-        rt = self._runtime
-        if rt is None:
-            return PreFlightResult(
-                passed=True, check_name=self.name,
-                detail="no runtime — assuming reachable",
-            )
-        client = getattr(rt, "llm_client", None)
-        if client is None:
-            return PreFlightResult(
-                passed=True, check_name=self.name,
-                detail="no llm_client — assuming reachable",
-            )
-        # Read existing operational status (BF-246 health probe surface)
-        status = getattr(client, "operational_status", None)
-        if status is None:
-            return PreFlightResult(
-                passed=True, check_name=self.name,
-                detail="no operational_status — assuming reachable",
-            )
-        deep = getattr(status, "deep", "operational")
-        ok = str(deep).lower() == "operational"
-        return PreFlightResult(
-            passed=ok, check_name=self.name,
-            detail=f"deep tier status: {deep}",
-        )
-
-
-class TokenBudgetCheck:
-    """Verify the agent has token budget for the estimated chunk count.
-
-    Uses the AD-617b CognitiveJournal token-usage surface if available.
-    """
-
-    name = "token_budget_sufficient"
-    DEFAULT_MIN_REMAINING_TOKENS = 50_000
-
-    def __init__(
-        self, *, runtime: Any, min_remaining_tokens: int = DEFAULT_MIN_REMAINING_TOKENS,
-    ) -> None:
-        self._runtime = runtime
-        self._min_remaining_tokens = min_remaining_tokens
-
-    async def check(self, spec: "BuildSpec") -> PreFlightResult:
-        # AD-458 uses the existing journal surface as a soft check.
-        # Hard token-budget enforcement lives in the proactive cognitive loop
-        # (AD-617b); pre-flight is a heads-up, not the enforcer.
-        return PreFlightResult(
-            passed=True, check_name=self.name,
-            detail=f"soft check (min {self._min_remaining_tokens} tokens) — actual enforcement at AD-617b layer",
-            blocking=False,
-        )
+# AD-458b deferred:
+#   - LLMTierReachableCheck: needs public is_tier_operational(...) accessor on
+#     TieredLLMClient (today's _tier_status is private at llm_client.py:100).
+#   - TokenBudgetCheck: hard enforcement already lives in AD-617b proactive
+#     cognitive loop; a soft pre-flight gate would either duplicate or ship
+#     as theater. Defer until AD-617b surface is exercised.
 ```
+
+> Builder note: `import os` is added to the module-level imports at the top of `pre_flight.py` (not inside the method body) per ProbOS convention.
 
 ---
 
@@ -300,6 +255,9 @@ class PreFlightRunner:
                     EventType.PREFLIGHT_FAILED,
                     {
                         "build_title": getattr(spec, "title", ""),
+                        "started_at": started,
+                        "completed_at": completed,
+                        "check_count": len(results),
                         "failures": [
                             {"check": r.check_name, "detail": r.detail}
                             for r in results
@@ -318,25 +276,51 @@ class PreFlightRunner:
 
 **File:** `src/probos/cognitive/builder.py`
 
-Find `execute_approved_build()` (verified at `builder.py:2482`). Add a pre-flight invocation as the first step. The Builder must grep the function signature to see what's in scope before drafting the SEARCH/REPLACE.
+Find `execute_approved_build()` (verified at `builder.py:2482`). The function signature receives `runtime: ProbOSRuntime | None = None` (verified at `builder.py:2491`). Insert pre-flight invocation **after the dirty-tree check (line 2515) and BEFORE branch creation (line 2517)** — failure isolation: if pre-flight fails, no branch is created, no files written, working tree untouched.
 
-Insert at the top of the function body:
+Match the existing `BuildResult` create-then-mutate pattern (verified at `builder.py:2504`: `result = BuildResult(success=False, spec=spec)`; the dataclass requires `spec` as a non-default field per `builder.py:160-176`).
 
+SEARCH:
 ```python
-    # AD-458: Pre-flight validation
-    pre_flight = getattr(runtime, "pre_flight_runner", None)
-    if pre_flight is not None:
-        report = await pre_flight.run(spec, emit_event=runtime.emit_event)
-        if not report.passed:
-            return BuildResult(
-                success=False,
-                error="pre-flight validation failed: " + ", ".join(
-                    r.detail for r in report.results if not r.passed and r.blocking
-                ),
-            )
+    # 1a. Verify clean working tree (prevent contaminating build branch)
+    if await _is_dirty_working_tree(work_dir):
+        result.error = (
+            "Working tree has uncommitted changes. "
+            "Commit or stash changes before running a build."
+        )
+        return result
+
+    # 2. Generate branch name
 ```
 
-> Verify-first: `BuildResult` is the existing return type — confirm by greping `class BuildResult` in `builder.py`. If the actual signature uses different field names, adjust the kwargs to match. The pattern is "early return with a failure result" — same shape as existing `execute_approved_build` failure paths.
+REPLACE:
+```python
+    # 1a. Verify clean working tree (prevent contaminating build branch)
+    if await _is_dirty_working_tree(work_dir):
+        result.error = (
+            "Working tree has uncommitted changes. "
+            "Commit or stash changes before running a build."
+        )
+        return result
+
+    # 1b. AD-458: Pre-flight validation (after clean-tree check, before branch creation)
+    pre_flight = getattr(runtime, "pre_flight_runner", None) if runtime is not None else None
+    if pre_flight is not None:
+        emit = runtime.emit_event if runtime is not None else None
+        report = await pre_flight.run(spec, emit_event=emit)
+        if not report.passed:
+            blocking_failures = [
+                r for r in report.results if not r.passed and r.blocking
+            ]
+            result.error = "pre-flight validation failed: " + ", ".join(
+                f"{r.check_name}: {r.detail}" for r in blocking_failures
+            )
+            return result
+
+    # 2. Generate branch name
+```
+
+> Verify-first: `BuildResult` requires `spec` (verified at `builder.py:160-176`). The existing pattern is "construct early at line 2504, mutate `.error`, return" — Section 4 follows that pattern exactly, NOT the `BuildResult(success=False, error=...)` direct-construct form (which would TypeError because `spec` has no default).
 
 ---
 
@@ -349,7 +333,8 @@ class PreFlightConfig(BaseModel):
     """Pre-flight validation configuration (AD-458)."""
 
     enabled: bool = True
-    min_remaining_tokens: int = Field(default=50_000, ge=1_000)
+    # AD-458b will add token-budget configuration when LLMTierReachableCheck
+    # and TokenBudgetCheck join v2.
 ```
 
 Wire into `SystemConfig`:
@@ -365,7 +350,10 @@ REPLACE:
     pre_flight: PreFlightConfig = PreFlightConfig()  # AD-458
 ```
 
-> Builder note: this Section 5 sequence assumes AD-457 lands first (Wave 6 build order). If AD-457 has not landed, anchor on `validation_framework: ValidationFrameworkConfig = ValidationFrameworkConfig()  # AD-451` instead.
+> Builder note: this Section 5 sequence assumes AD-457 lands first (Wave 6 build order). Anchor fallback chain (each falls back to the next if predecessor hasn't landed):
+> 1. `engineering: EngineeringConfig` (AD-457).
+> 2. `validation_framework: ValidationFrameworkConfig` (AD-451).
+> 3. `orders: OrdersConfig = OrdersConfig()  # AD-440` — verified at `config.py:1593` as the always-available terminal fallback.
 
 ---
 
@@ -376,32 +364,34 @@ REPLACE:
 Place near the existing AD-451 ReconciliationEscalator block:
 
 ```python
-    # AD-458: Pre-flight validation runner
+    # AD-458: Pre-flight validation runner (v1: 2 checks; LLMTier + TokenBudget deferred to AD-458b)
     if config.pre_flight.enabled:
         from pathlib import Path
         from probos.cognitive.pre_flight import (
-            LLMTierReachableCheck,
             PreFlightRunner,
             TargetFilesExistCheck,
             TargetFilesWritableCheck,
-            TokenBudgetCheck,
         )
+        # finalize.py is at src/probos/startup/finalize.py — four levels deep
+        # from the repo root, so parents[3] resolves to the repo root:
+        #   parents[0] = src/probos/startup/
+        #   parents[1] = src/probos/
+        #   parents[2] = src/
+        #   parents[3] = repo root  ← target
         repo_root = Path(__file__).resolve().parents[3]
         runtime.pre_flight_runner = PreFlightRunner(
             checks=[
                 TargetFilesExistCheck(repo_root=repo_root),
                 TargetFilesWritableCheck(repo_root=repo_root),
-                LLMTierReachableCheck(runtime=runtime),
-                TokenBudgetCheck(
-                    runtime=runtime,
-                    min_remaining_tokens=config.pre_flight.min_remaining_tokens,
-                ),
             ],
         )
-        logger.info("AD-458: PreFlightRunner wired (%d checks)", len(runtime.pre_flight_runner.checks))
+        logger.info(
+            "AD-458: PreFlightRunner wired (%d checks; LLMTier + TokenBudget deferred to AD-458b)",
+            len(runtime.pre_flight_runner.checks),
+        )
 ```
 
-> Verify-first: `Path(__file__).resolve().parents[3]` from `src/probos/startup/finalize.py` resolves to the repo root. The Builder must verify by counting parent levels: file → startup → probos → src → REPO_ROOT (3 parents). `runtime.pre_flight_runner` is published as a public attribute (no underscore) per Wave 5 retrospective convention.
+> Verify-first: `runtime.pre_flight_runner` is published as a public attribute (no underscore) per Wave 5 retrospective convention.
 
 ---
 
@@ -409,22 +399,20 @@ Place near the existing AD-451 ReconciliationEscalator block:
 
 **File:** `tests/test_ad458_pre_flight.py`
 
-12 tests:
+10 tests:
 
 1. `test_event_type_preflight_failed_exists` — `EventType.PREFLIGHT_FAILED.value == "preflight_failed"`.
-2. `test_pre_flight_config_defaults` — `PreFlightConfig()` defaults: `enabled=True`, `min_remaining_tokens=50_000`.
+2. `test_pre_flight_config_defaults` — `PreFlightConfig()` defaults: `enabled=True`.
 3. `test_target_files_exist_check_passes_when_present` — `tmp_path` fixtures + spec referencing them → `passed=True`.
 4. `test_target_files_exist_check_fails_when_missing` — spec with missing file → `passed=False`, detail names the missing file.
 5. `test_target_files_exist_check_skips_when_no_target_files` — CREATE-mode spec → `passed=True` with "CREATE mode" detail.
-6. `test_target_files_writable_check_detects_readonly` — `tmp_path` file with read-only mode → `passed=False`.
-7. `test_llm_tier_reachable_check_when_no_runtime` — `runtime=None` → `passed=True` (assuming reachable).
-8. `test_llm_tier_reachable_check_operational` — fake runtime with `operational_status.deep="operational"` → `passed=True`.
-9. `test_llm_tier_reachable_check_degraded` — fake runtime with `operational_status.deep="degraded"` → `passed=False`.
-10. `test_pre_flight_runner_short_circuits_on_blocking_failure` — first check fails blocking → second check NOT called.
-11. `test_pre_flight_runner_continues_on_non_blocking_failure` — non-blocking failure does not abort the run.
-12. `test_pre_flight_runner_emits_event_on_failure` — failure emits `EventType.PREFLIGHT_FAILED` with `failures` list.
+6. `test_target_files_writable_check_detects_readonly` — `tmp_path` file with read-only mode → `passed=False`. (Note: on Windows, `os.access(p, os.W_OK)` is approximate against ACL-protected files; documented in "What This Does NOT Change".)
+7. `test_pre_flight_runner_short_circuits_on_blocking_failure` — first check fails blocking → second check NOT called.
+8. `test_pre_flight_runner_continues_on_non_blocking_failure` — non-blocking failure recorded but does not abort the run; report.passed reflects only blocking failures.
+9. `test_pre_flight_runner_emits_event_on_failure` — failure emits `EventType.PREFLIGHT_FAILED` with `failures` list and aggregate metadata (`started_at`, `completed_at`).
+10. `test_pre_flight_check_protocol_is_runtime_checkable` — `isinstance(TargetFilesExistCheck(...), PreFlightCheck)` returns True.
 
-Each test uses `tmp_path` for filesystem fixtures. No shared mutable state.
+Each test uses `tmp_path` for filesystem fixtures. No shared mutable state. Tests are decorated `@pytest.mark.asyncio` for async paths.
 
 ---
 
@@ -432,10 +420,12 @@ Each test uses `tmp_path` for filesystem fixtures. No shared mutable state.
 
 - `BuilderAgent.act()` is unchanged. AD-458 inserts middleware in `execute_approved_build()` only.
 - `BuildSpec` schema is unchanged.
-- LLM client interfaces are unchanged. `LLMTierReachableCheck` reads `operational_status` if present, no-ops otherwise.
-- Token budget enforcement is **soft** — non-blocking. Hard enforcement remains in AD-617b (proactive cognitive loop).
+- `BuildResult` schema is unchanged. AD-458 follows the existing create-then-mutate pattern at `builder.py:2504`.
+- LLM client interfaces are unchanged. **`LLMTierReachableCheck` is deferred to AD-458b** — needs a public `is_tier_operational(tier_name) -> bool` accessor on `TieredLLMClient` that doesn't exist today (`_tier_status` is private at `cognitive/llm_client.py:100`).
+- Token budget enforcement remains in AD-617b (proactive cognitive loop). **`TokenBudgetCheck` is deferred to AD-458b** — soft pre-flight gate would either duplicate AD-617b enforcement or ship as theater.
 - No HXI panel.
 - No new agent.
+- Windows ACL behavior: `os.access(p, os.W_OK)` is approximate against ACL-protected files. v1 catches the common read-only-flag case; ACL-edge-case false positives are documented as accepted tradeoff.
 
 ---
 
@@ -456,24 +446,25 @@ git diff --cached --stat
 If any tracker file shows >200 deletions, STOP.
 
 Expected delta:
-- `src/probos/cognitive/pre_flight.py`: ~250 lines (new).
-- `src/probos/cognitive/builder.py`: ~10 lines added (Section 4 middleware).
+- `src/probos/cognitive/pre_flight.py`: ~165 lines (new — 2 checks + Protocol + Runner).
+- `src/probos/cognitive/builder.py`: ~14 lines added (Section 4 middleware).
 - `src/probos/events.py`: 1 line added.
-- `src/probos/config.py`: ~9 lines added.
-- `src/probos/startup/finalize.py`: ~22 lines added.
-- `tests/test_ad458_pre_flight.py`: ~250 lines (new).
+- `src/probos/config.py`: ~6 lines added.
+- `src/probos/startup/finalize.py`: ~20 lines added.
+- `tests/test_ad458_pre_flight.py`: ~210 lines (new).
 - `PROGRESS.md`, `roadmap.md`: ~3 lines changed.
 
 ---
 
 ## Acceptance Criteria
 
-- All 12 tests pass under `pytest tests/test_ad458_pre_flight.py -v -n 0`.
+- All 10 tests pass under `pytest tests/test_ad458_pre_flight.py -v -n 0`.
 - Full parallel gate non-decreasing.
 - 1 new EventType in `events.py`.
 - `runtime.pre_flight_runner` published as public attribute.
-- `execute_approved_build()` calls the runner before any LLM/file work.
-- TokenBudgetCheck is non-blocking (soft).
+- `execute_approved_build()` invokes the runner after the dirty-tree check, before branch creation. Failure isolation: pre-flight failure leaves working tree untouched.
+- v1 ships only `TargetFilesExistCheck` and `TargetFilesWritableCheck`. `LLMTierReachableCheck` and `TokenBudgetCheck` are deferred to AD-458b (no v1 theater).
+- `PreFlightCheck` Protocol is decorated `@runtime_checkable` so tests can assert via `isinstance`.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ---
@@ -500,4 +491,54 @@ grep -n "engineering: EngineeringConfig" src/probos/config.py
 
 grep -n "operational_status\|llm_client" src/probos/runtime.py
   (BF-246 health probe surface; AD-458 reads but does not modify)
+
+grep -n "^class BuildResult\b\|self\._tier_status" src/probos/cognitive/builder.py src/probos/cognitive/llm_client.py
+  src/probos/cognitive/builder.py:160: class BuildResult:
+       (requires `spec: BuildSpec` as 2nd field — Section 4 uses create-then-mutate)
+  src/probos/cognitive/llm_client.py:100:    self._tier_status: dict[str, bool] = {}
+       (private; no public is_tier_operational accessor today — LLMTierReachableCheck deferred to AD-458b)
+
+grep -n "def emit_event\|orders: OrdersConfig" src/probos/runtime.py src/probos/config.py
+  src/probos/runtime.py:775: def emit_event(self, event: ...
+  src/probos/config.py:1593: orders: OrdersConfig = OrdersConfig()  # AD-440
+       (AD-440 anchor verified as Section 5 terminal fallback)
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-458-navigational-deflector-preflight-review.md`.
+
+**Required addressed:**
+
+- **R#1: `BuildResult(success=False, error=...)` TypeError fixed.** Section 4 now uses the existing create-then-mutate pattern (verified at `builder.py:2504`: `result = BuildResult(success=False, spec=spec)`). New SEARCH/REPLACE inserts at `builder.py:2515-2517` (after dirty-tree check, before branch creation).
+- **R#2: phantom `client.operational_status.deep` removed.** `LLMTierReachableCheck` deferred wholesale to AD-458b (no theater). v1 ships only `TargetFilesExistCheck` and `TargetFilesWritableCheck`. AD-458b will add the public `is_tier_operational(...)` accessor on `TieredLLMClient` and re-introduce the check.
+- **R#3: `Path.parents[3]` explanation rewritten.** Section 6 now shows the parent-level mapping inline (`parents[0] = startup/`, `parents[1] = probos/`, `parents[2] = src/`, `parents[3] = repo root`). No more "3 parents" mistake.
+- **R#4: insertion point made explicit.** Section 4 SEARCH/REPLACE block places pre-flight AFTER `_is_dirty_working_tree` check (line 2515) and BEFORE branch generation (line 2517). Failure isolation: working tree stays untouched on pre-flight failure.
+
+**Recommended addressed:**
+
+- **rec#1: `TokenBudgetCheck` deferred wholesale.** Same no-theater rationale as LLMTier — soft check that never reads token state would be documentation-in-code-form.
+- **rec#2: Windows ACL limitation documented** in "What This Does NOT Change".
+- **rec#3: `PreFlightRunner.checks` immutability** — kept as `list` with note that callers should treat the list as construction-time wiring only. Frozen-tuple form would break the existing `field(default_factory=list)` pattern; keeping list aligns with `PreFlightRunner` being constructed once at startup.
+- **rec#4: `PREFLIGHT_FAILED` payload extended** to include `started_at`, `completed_at`, `check_count` for trace completeness.
+
+**Nits applied:**
+
+- nit#1: anchor-chain fallback chain extended to AD-440's `orders: OrdersConfig` (config.py:1593) as terminal fallback (cross-cutting fix #3).
+- nit#2: `import os` moved to module-level imports (top of `pre_flight.py`).
+- nit#3: Test 8 description clarified ("non-blocking failure recorded but does not abort; report.passed reflects only blocking failures").
+- nit#4: TokenBudgetCheck acceptance criterion line dropped (deferred to AD-458b).
+
+**Required #5 / kwargs form:** confirmed safe; flagged for documentation only — no edit needed.
+
+**Verified Against Codebase footer extended:** added `BuildResult` class signature grep, `_tier_status` private accessor grep (proves LLMTier defer is correct), `orders: OrdersConfig` anchor grep.
+
+**v1 scope reduction:** 4 checks → 2 checks. 12 tests → 10 tests. Acceptance criteria updated. AD-458b deferral note added at module-level in `pre_flight.py` so future architects see the planned re-introduction.
+
+**No-theater discipline (cross-cutting fix #1):** applied wholesale. Two checks deferred to AD-458b; v1 ships only checks that do real work today.
+
+**Wave-5 conventions audit (post-revision):** all 6 applied. ✅
+
+**Verdict shift:** Pass-1 ❌ Not Ready → expected ✅ Approved on second-pass review (mechanical fixes, no architectural pivots).

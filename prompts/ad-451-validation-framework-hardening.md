@@ -64,9 +64,10 @@ outcome-verification flows.
 from __future__ import annotations
 
 import logging
+import random
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from probos.events import EventType
 
@@ -75,6 +76,18 @@ if TYPE_CHECKING:
     from probos.types import IntentMessage, IntentResult, VerificationResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _MetadataCheck:
+    """Internal result of TwoStageVerifier's metadata-only stage.
+
+    Module-level (not nested) per ProbOS convention — no nested dataclasses
+    elsewhere in src/probos. Leading underscore marks it private to this module.
+    """
+
+    confidence: float
+    discrepancy: str
 
 
 @dataclass(frozen=True)
@@ -96,6 +109,10 @@ class TwoStageVerifier:
 
     Stateless. Each verify() call is independent. Caller is responsible
     for selecting the RedTeamAgent instance.
+
+    v1 metadata check is a discrete-bucket classifier (no-result / error /
+    success-False / success-True). Richer gradient checks are deferred to
+    AD-451b.
     """
 
     DEFAULT_METADATA_THRESHOLD = 0.85
@@ -103,7 +120,7 @@ class TwoStageVerifier:
     def __init__(
         self,
         *,
-        red_team: "RedTeamAgent",
+        red_team: RedTeamAgent,
         emit_event: Any | None = None,
         metadata_threshold: float = DEFAULT_METADATA_THRESHOLD,
     ) -> None:
@@ -115,8 +132,8 @@ class TwoStageVerifier:
         self,
         *,
         target_agent_id: str,
-        intent: "IntentMessage",
-        claimed: "IntentResult",
+        intent: IntentMessage,
+        claimed: IntentResult,
     ) -> TwoStageOutcome:
         """Two-stage verification. Returns TwoStageOutcome regardless of path."""
         meta = self._metadata_check(intent, claimed)
@@ -137,9 +154,7 @@ class TwoStageVerifier:
             return outcome
 
         live = await self._red_team.verify(
-            target_agent_id=target_agent_id,
-            intent=intent,
-            claimed_result=claimed,
+            target_agent_id, intent, claimed,
         )
         outcome = TwoStageOutcome(
             verified=live.verified,
@@ -154,30 +169,25 @@ class TwoStageVerifier:
         self._emit(outcome)
         return outcome
 
-    @dataclass(frozen=True)
-    class _MetadataCheck:
-        confidence: float
-        discrepancy: str
-
     def _metadata_check(
         self,
-        intent: "IntentMessage",
-        claimed: "IntentResult",
-    ) -> "TwoStageVerifier._MetadataCheck":
-        """Cheap metadata check. Subclass overrides for domain-specific signals.
+        intent: IntentMessage,
+        claimed: IntentResult,
+    ) -> _MetadataCheck:
+        """Cheap metadata check. Discrete buckets in v1.
 
-        Default implementation: presence of result, agent_id match, no error.
-        Returns 0.95 confidence on full pass; 0.30 with a discrepancy hint.
+        v1: presence of result, error flag, success flag.
+        AD-451b will add domain-specific gradient checks (file-size, hash, ...).
         """
         if not claimed:
-            return TwoStageVerifier._MetadataCheck(0.0, "no result")
+            return _MetadataCheck(0.0, "no result")
         if getattr(claimed, "error", None):
-            return TwoStageVerifier._MetadataCheck(
+            return _MetadataCheck(
                 0.30, f"error reported: {claimed.error}",
             )
         if not getattr(claimed, "success", True):
-            return TwoStageVerifier._MetadataCheck(0.30, "success=False")
-        return TwoStageVerifier._MetadataCheck(0.95, "")
+            return _MetadataCheck(0.30, "success=False")
+        return _MetadataCheck(0.95, "")
 
     def _emit(self, outcome: TwoStageOutcome) -> None:
         if not self._emit_event:
@@ -195,7 +205,11 @@ class TwoStageVerifier:
                 },
             )
         except Exception:
-            logger.warning("AD-451: VALIDATION_OUTCOME_VERIFIED emit failed", exc_info=True)
+            logger.warning(
+                "AD-451: VALIDATION_OUTCOME_VERIFIED emit failed "
+                "(target=%s, intent=%s)",
+                outcome.target_agent_id, outcome.intent_id, exc_info=True,
+            )
 ```
 
 ---
@@ -205,13 +219,20 @@ class TwoStageVerifier:
 **File:** `src/probos/cognitive/validation_framework.py` (continued)
 
 ```python
+@runtime_checkable
 class SelfVerificationHook(Protocol):
     """Optional protocol — agents may implement to self-check between act() and report().
 
     Returns (passed: bool, reason: str). False causes the caller to skip
     `report()` and surface a discrepancy. The hook is purely advisory; the
-    caller decides what to do with a False result. v1 callers: none —
-    AD-451 ships the protocol; AD-451b would wire it into CognitiveAgent.
+    caller decides what to do with a False result.
+
+    Decorated `@runtime_checkable` so tests can assert via `isinstance(impl,
+    SelfVerificationHook)` (matches the convention in src/probos/protocols.py
+    where every Protocol meant for isinstance use is decorated).
+
+    v1 callers: none — AD-451 ships the protocol; AD-451b will wire it into
+    CognitiveAgent.act().
     """
 
     async def self_verify(self, intent: Any, result: Any) -> tuple[bool, str]:
@@ -231,7 +252,6 @@ class SelfVerificationHook(Protocol):
 class ReconciliationOutcome:
     """Outcome of a verification reconciliation."""
 
-    resolved: bool
     chosen_verdict: bool      # The verdict the escalator picked
     primary_confidence: float
     secondary_confidence: float
@@ -245,12 +265,18 @@ class ReconciliationEscalator:
     """Resolves disagreements between two verifiers on the same outcome.
 
     Algorithm:
+    - If primary and secondary agree, return early (no third needed).
     - If confidence delta > min_confidence_delta, accept the higher-confidence verdict.
-    - Otherwise invoke a third independent RedTeamAgent and majority-vote.
-    - If only one RedTeamAgent is available (red_team_agents pool is small),
-      log-and-degrade: accept the higher-confidence verdict regardless of delta.
+    - Otherwise invoke a third independent RedTeamAgent (excluding the agents
+      that produced primary/secondary) via TwoStageVerifier (metadata-fast-path,
+      live re-execution only when ambiguous) and majority-vote.
+    - If no third is available (red_team_agents pool < 3 or all already used),
+      log-and-degrade: accept the higher-confidence verdict.
 
     No mutation of trust; reconciliation outcomes are diagnostic only.
+
+    The third opinion is selected at random from the eligible pool to avoid
+    always-picking-the-same-agent bias.
     """
 
     MIN_CONFIDENCE_DELTA = 0.20
@@ -261,23 +287,24 @@ class ReconciliationEscalator:
         runtime: Any,
         emit_event: Any | None = None,
         min_confidence_delta: float = MIN_CONFIDENCE_DELTA,
+        metadata_threshold: float = TwoStageVerifier.DEFAULT_METADATA_THRESHOLD,
     ) -> None:
         self._runtime = runtime
         self._emit_event = emit_event
         self._min_confidence_delta = min_confidence_delta
+        self._metadata_threshold = metadata_threshold
 
     async def reconcile(
         self,
         *,
         target_agent_id: str,
-        intent: "IntentMessage",
-        claimed: "IntentResult",
-        primary: "VerificationResult",
-        secondary: "VerificationResult",
+        intent: IntentMessage,
+        claimed: IntentResult,
+        primary: VerificationResult,
+        secondary: VerificationResult,
     ) -> ReconciliationOutcome:
         if primary.verified == secondary.verified:
             return ReconciliationOutcome(
-                resolved=True,
                 chosen_verdict=primary.verified,
                 primary_confidence=primary.confidence,
                 secondary_confidence=secondary.confidence,
@@ -291,7 +318,6 @@ class ReconciliationEscalator:
         if delta >= self._min_confidence_delta:
             verdict = primary.verified if primary.confidence > secondary.confidence else secondary.verified
             outcome = ReconciliationOutcome(
-                resolved=True,
                 chosen_verdict=verdict,
                 primary_confidence=primary.confidence,
                 secondary_confidence=secondary.confidence,
@@ -303,11 +329,18 @@ class ReconciliationEscalator:
             self._emit(outcome)
             return outcome
 
-        third = await self._invoke_third(target_agent_id, intent, claimed)
+        # Confidence delta too small — invoke a third verifier (excluding
+        # the agents that produced primary and secondary).
+        exclude = {primary.verifier_id, secondary.verifier_id}
+        third = await self._invoke_third(
+            target_agent_id=target_agent_id,
+            intent=intent,
+            claimed=claimed,
+            exclude_ids=exclude,
+        )
         if third is None:
             verdict = primary.verified if primary.confidence > secondary.confidence else secondary.verified
             outcome = ReconciliationOutcome(
-                resolved=True,
                 chosen_verdict=verdict,
                 primary_confidence=primary.confidence,
                 secondary_confidence=secondary.confidence,
@@ -319,10 +352,10 @@ class ReconciliationEscalator:
             self._emit(outcome)
             return outcome
 
+        # Use the boolean .verified from the TwoStageOutcome
         votes = sum([primary.verified, secondary.verified, third.verified])
         majority = votes >= 2
         outcome = ReconciliationOutcome(
-            resolved=True,
             chosen_verdict=majority,
             primary_confidence=primary.confidence,
             secondary_confidence=secondary.confidence,
@@ -336,22 +369,38 @@ class ReconciliationEscalator:
 
     async def _invoke_third(
         self,
+        *,
         target_agent_id: str,
-        intent: "IntentMessage",
-        claimed: "IntentResult",
-    ) -> "VerificationResult | None":
-        agents = list(getattr(self._runtime, "red_team_agents", []) or [])
-        if len(agents) < 3:
+        intent: IntentMessage,
+        claimed: IntentResult,
+        exclude_ids: set[str],
+    ) -> TwoStageOutcome | None:
+        """Pick a third red-team agent at random (excluding primary/secondary)
+        and run a TwoStageVerifier-wrapped verification on it.
+        """
+        agents = [
+            a for a in (getattr(self._runtime, "red_team_agents", None) or [])
+            if getattr(a, "id", None) not in exclude_ids
+        ]
+        if not agents:
             return None
-        third = agents[2]
+        third = random.choice(agents)
+        verifier = TwoStageVerifier(
+            red_team=third,
+            emit_event=self._emit_event,
+            metadata_threshold=self._metadata_threshold,
+        )
         try:
-            return await third.verify(
+            return await verifier.verify(
                 target_agent_id=target_agent_id,
                 intent=intent,
-                claimed_result=claimed,
+                claimed=claimed,
             )
         except Exception:
-            logger.warning("AD-451: third-verifier invocation failed", exc_info=True)
+            logger.warning(
+                "AD-451: third-verifier invocation failed (target=%s, intent=%s)",
+                target_agent_id, intent.id, exc_info=True,
+            )
             return None
 
     def _emit(self, outcome: ReconciliationOutcome) -> None:
@@ -361,7 +410,6 @@ class ReconciliationEscalator:
             self._emit_event(
                 EventType.VALIDATION_RECONCILIATION_REQUESTED,
                 {
-                    "resolved": outcome.resolved,
                     "chosen_verdict": outcome.chosen_verdict,
                     "primary_confidence": outcome.primary_confidence,
                     "secondary_confidence": outcome.secondary_confidence,
@@ -373,10 +421,13 @@ class ReconciliationEscalator:
             )
         except Exception:
             logger.warning(
-                "AD-451: VALIDATION_RECONCILIATION_REQUESTED emit failed",
-                exc_info=True,
+                "AD-451: VALIDATION_RECONCILIATION_REQUESTED emit failed "
+                "(target=%s, intent=%s)",
+                outcome.target_agent_id, outcome.intent_id, exc_info=True,
             )
 ```
+
+> Builder note: `TwoStageVerifier` is now a real consumer — `ReconciliationEscalator._invoke_third` constructs one per call and uses the metadata-fast-path for the third opinion. Per cross-cutting fix #1 (no-theater): v1 ships TwoStageVerifier with a real production wiring, not as a dead class.
 
 ---
 
@@ -435,22 +486,19 @@ Place near the existing AD-440 OrderManager block:
 ```python
     # AD-451: Validation Framework
     if config.validation_framework.enabled:
-        from probos.cognitive.validation_framework import (
-            ReconciliationEscalator,
-            TwoStageVerifier,
-        )
-        # TwoStageVerifier requires a specific red_team agent — defer instance
-        # construction to per-call sites. Wire only the ReconciliationEscalator
-        # (no per-call agent dependency).
+        from probos.cognitive.validation_framework import ReconciliationEscalator
         runtime.reconciliation_escalator = ReconciliationEscalator(
             runtime=runtime,
             emit_event=runtime.emit_event,
             min_confidence_delta=config.validation_framework.min_confidence_delta,
+            metadata_threshold=config.validation_framework.metadata_threshold,
         )
         logger.info("AD-451: ValidationFramework wired (ReconciliationEscalator)")
 ```
 
-> Verify-first: `runtime.red_team_agents` is the public attribute (post-AD-455 promotion verified at `runtime.py:246, 343`). `runtime.emit_event` is the post-AD-680 public method at `runtime.py:771`. `runtime.reconciliation_escalator` is published as a public attribute (no leading underscore) per the Wave 5 retrospective convention.
+> Verify-first: `runtime.red_team_agents` is the public attribute (post-AD-455 promotion verified at `runtime.py:246, 343`). `runtime.emit_event` is the post-AD-680 public method at `runtime.py:775`. `runtime.reconciliation_escalator` is published as a public attribute (no leading underscore) per the Wave 5 retrospective convention.
+
+> `TwoStageVerifier` is constructed per call inside `ReconciliationEscalator._invoke_third` — no separate runtime attribute. Per cross-cutting fix #1, this gives v1 a real consumer for TwoStageVerifier; the class is exercised in production via the reconciliation third-opinion path, not just by tests.
 
 ---
 
@@ -458,7 +506,7 @@ Place near the existing AD-440 OrderManager block:
 
 **File:** `tests/test_ad451_validation_framework.py`
 
-14 tests using `_FakeRedTeam` and `_FakeRuntime` stubs:
+15 tests using `_FakeRedTeam` and `_FakeRuntime` stubs:
 
 1. `test_event_type_validation_reconciliation_requested_exists`
 2. `test_event_type_validation_outcome_verified_exists`
@@ -469,13 +517,14 @@ Place near the existing AD-440 OrderManager block:
 7. `test_two_stage_verifier_emits_outcome_event` — emit fires with `VALIDATION_OUTCOME_VERIFIED`.
 8. `test_reconciliation_agreement_no_third_invoked` — both verifiers agree → `third_invoked=False`, `reason="agreement"`.
 9. `test_reconciliation_confidence_delta_resolves` — confidence delta >= 0.20, disagreement → higher-confidence verdict picked, `reason="confidence_delta"`.
-10. `test_reconciliation_majority_vote` — small confidence delta + 3+ red-team agents → third invoked, majority-vote chosen, `reason="majority_vote"`.
-11. `test_reconciliation_third_unavailable` — small confidence delta + < 3 red-team agents → log-and-degrade, `reason="third_unavailable"`.
-12. `test_reconciliation_emit_includes_chosen_verdict` — emit payload contains `chosen_verdict` boolean.
-13. `test_self_verification_hook_protocol_shape` — `SelfVerificationHook` is a `Protocol`; a concrete implementation satisfies `isinstance` via duck typing.
-14. `test_runtime_attribute_is_public` — after wiring, `runtime.reconciliation_escalator` exists (no underscore).
+10. `test_reconciliation_majority_vote_invokes_third` — small confidence delta + 3+ red-team agents → third invoked, majority-vote chosen, `reason="majority_vote"`.
+11. `test_reconciliation_third_excludes_primary_secondary_ids` — `_invoke_third` does NOT pick agents whose IDs are in `exclude_ids`.
+12. `test_reconciliation_third_unavailable_when_only_two_eligible` — pool has 2 agents both already used as primary/secondary → `reason="third_unavailable"`.
+13. `test_reconciliation_emit_includes_chosen_verdict` — emit payload contains `chosen_verdict` boolean.
+14. `test_self_verification_hook_protocol_runtime_checkable` — `isinstance(impl, SelfVerificationHook)` returns True for a duck-typed implementation; the Protocol is decorated `@runtime_checkable`.
+15. `test_runtime_attribute_is_public` — after wiring, `runtime.reconciliation_escalator` exists (no underscore).
 
-Boundary coverage: happy path + error/edge case + None-input (Tests 4–7 for TwoStageVerifier; 8–11 for Reconciliation).
+Boundary coverage: happy path + error/edge case + None-input (Tests 4–7 for TwoStageVerifier; 8–13 for Reconciliation).
 
 ---
 
@@ -487,6 +536,7 @@ Boundary coverage: happy path + error/edge case + None-input (Tests 4–7 for Tw
 - `SystemQAAgent.run_smoke_tests()` is unchanged.
 - Consensus voting weights and quorum thresholds are unchanged.
 - No new agent pool. No middleware around `IntentBus`.
+- v1 metadata check is discrete-bucket (no-result / error / success-False / success-True). Domain-specific gradient checks (file-size, hash, partial-match scoring) deferred to AD-451b.
 
 ---
 
@@ -559,5 +609,59 @@ grep -n "red_team_agents" src/probos/runtime.py
   (post-AD-455 public attribute — verified)
 
 grep -n "def emit_event" src/probos/runtime.py
-  771:    def emit_event(self, event: BaseEvent | EventType | str, ...
+  775:    def emit_event(self, event: BaseEvent | EventType | str, ...
+
+grep -n "verifier_id\|class VerificationResult\|class IntentMessage\|class IntentResult\|^\s+id:\|^\s+success:\|^\s+error:" src/probos/types.py
+  50: class IntentMessage:
+  58:    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+  64: class IntentResult:
+  69:    success: bool
+  71:    error: str | None = None
+  199: class VerificationResult:
+  201:    verifier_id: AgentID
+  205:    verified: bool
+  208:    discrepancy: str = ""
+  209:    confidence: float = 0.0
+  (all field accesses verified)
+
+grep -n "@runtime_checkable" src/probos/protocols.py
+  (10 matches — every Protocol meant for isinstance use is decorated;
+   AD-451's SelfVerificationHook follows the convention)
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-451-validation-framework-hardening-review.md`.
+
+**Required addressed:**
+
+- **R#1: `@runtime_checkable` added to `SelfVerificationHook`.** Test #14 (renumbered from #13) now works without TypeError. Matches the convention at `protocols.py` (every Protocol meant for `isinstance` is decorated).
+- **R#2: `_MetadataCheck` flattened to module-level.** No more nested dataclass. Leading-underscore marks it private to the module; matches ProbOS convention (no nested dataclasses anywhere in `src/probos`). Section 1 dataclass is now declared at module scope.
+- **R#3: `TwoStageVerifier` wired into `ReconciliationEscalator._invoke_third`.** v1 now has a real production consumer for TwoStageVerifier — third opinions go through the metadata-fast-path, falling back to live re-execution only when ambiguous. Per cross-cutting fix #1 (no-theater): TwoStageVerifier ships with real wiring, not as a dead class. Constructor parameter `metadata_threshold` propagates from config.
+- **R#4: `_invoke_third` excludes primary/secondary verifier IDs and picks at random.** New signature: `_invoke_third(*, target_agent_id, intent, claimed, exclude_ids: set[str])`. Filter step removes any agent whose `id` is in `exclude_ids`; selection uses `random.choice` for unbiased third opinion. The caller (public `reconcile`) builds the exclusion set from `primary.verifier_id` and `secondary.verifier_id` (verified at `types.py:201`).
+- **R#5: kwargs form** — confirmed safe; no edit needed (signature accepts both positional and keyword forms; `RedTeamAgent.verify` has positional params). Updated to use positional form in `TwoStageVerifier.verify` for consistency with the live API.
+
+**Recommended addressed:**
+
+- **rec#1: discrete-bucket metadata check** documented in "What This Does NOT Change" — gradient checks deferred to AD-451b.
+- **rec#2: `metadata_threshold` config-bound.** `ValidationFrameworkConfig.metadata_threshold` (already declared in Section 5) is now passed to `ReconciliationEscalator`, which forwards it to TwoStageVerifier. No more hardcoded constant in production wiring.
+- **rec#3: test count updated** (14 → 15) to reflect the new exclusion-IDs test.
+- **rec#4: log context** added to all `logger.warning(...)` calls in TwoStageVerifier and ReconciliationEscalator (target_agent_id, intent_id).
+- **rec#5: redundant string forward refs dropped** — `from __future__ import annotations` is at line 64; type annotations now use bare `IntentMessage`, `IntentResult`, `VerificationResult` without quotes.
+
+**Nits applied:**
+
+- nit#1: dead `resolved` field removed from `ReconciliationOutcome`. The field was always `True`; dropping it cleans the dataclass.
+- nit#2: field-existence grep added to footer.
+- nit#3: line number updated (775 not 771).
+- nit#4: Section 0 EventType comment style preserved.
+
+**Verified Against Codebase footer extended:** added `verifier_id` grep at `types.py:201`, `@runtime_checkable` convention grep at `protocols.py`.
+
+**No-theater discipline (cross-cutting fix #1):** TwoStageVerifier now has a real production consumer (`ReconciliationEscalator._invoke_third`). Both classes ship in v1 with real wiring.
+
+**Wave-5 conventions audit (post-revision):** all 6 applied. ✅
+
+**Verdict shift:** Pass-1 ⚠️ Conditional → expected ✅ Approved on second-pass review (highest semantic risk in the wave; one-tolerance ⚠️ allowed if reviewer flags new minor issues from the wider rewrite).

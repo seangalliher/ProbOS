@@ -152,15 +152,19 @@ class InfodynamicProbe:
                 entropy=0.0, sample_size=0, bucket_count=0,
             )
         try:
-            since = time.time() - self._event_window
-            events = await log.query(limit=10_000, since=since)
+            # AD-491: EventLog.query() does NOT accept `since=` (verified at
+            # event_log.py:132 — signature is category/agent_id/limit only).
+            # We pull the latest 10K rows and post-filter by timestamp.
+            events = await log.query(limit=10_000)
         except Exception:
             logger.debug("AD-491: event_log query failed; entropy=0", exc_info=True)
             return EntropySignal(
                 name="event_log_category",
                 entropy=0.0, sample_size=0, bucket_count=0,
             )
-        categories = Counter(e.get("category", "") for e in events)
+        cutoff = time.time() - self._event_window
+        windowed = [e for e in events if float(e.get("timestamp", 0) or 0) >= cutoff]
+        categories = Counter(e.get("category", "") for e in windowed)
         h = _shannon_entropy(list(categories.values()))
         return EntropySignal(
             name="event_log_category",
@@ -198,6 +202,9 @@ class InfodynamicProbe:
             )
         bucket_counts = [0] * self._trust_buckets
         for s in scores:
+            # Defensive clamp to [0, 1] in case a future trust subclass returns
+            # a different range (current TrustNetwork.get_score returns Beta mean ∈ [0,1]).
+            s = max(0.0, min(1.0, s))
             idx = min(self._trust_buckets - 1, int(s * self._trust_buckets))
             bucket_counts[idx] += 1
         h = _shannon_entropy(bucket_counts)
@@ -219,7 +226,9 @@ class InfodynamicProbe:
         states = Counter()
         for agent in registry.all():
             state = getattr(agent, "state", None)
-            states[str(state)] += 1
+            # AD-491: AgentState is an enum; use .value to match the canonical
+            # wire format used elsewhere (e.g., substrate/agent.py:166).
+            states[state.value if state is not None and hasattr(state, "value") else "unknown"] += 1
         h = _shannon_entropy(list(states.values()))
         return EntropySignal(
             name="agent_state_distribution",
@@ -489,4 +498,50 @@ grep -n "AGENT_SELF_NAMED" src/probos/events.py
 
 grep -n "include_router(r.router)" src/probos/api.py
   204:        app.include_router(r.router)
+
+grep -n "async def query" src/probos/substrate/event_log.py
+  132: async def query(
+       (signature: category, agent_id, limit — no `since` parameter; AD-491
+        post-filters by timestamp in Python after pulling 10K rows)
+
+grep -n "AgentState\|self.state" src/probos/substrate/agent.py
+  43:    self.state = AgentState.SPAWNING
+  166:    "state": self.state.value
+       (canonical wire format uses state.value, not str(state))
+
+grep -n "def get_score" src/probos/consensus/trust.py
+  397: def get_score(self, agent_id: AgentID) -> float:
+       (returns Beta(alpha,beta) mean ∈ [0,1]; AD-491 clamps defensively)
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-491-infodynamic-telemetry-review.md`.
+
+**Required addressed:**
+
+- **R#1: phantom `since=` kwarg dropped.** `EventLog.query()` accepts only `category, agent_id, limit` (verified at `event_log.py:132`). `_event_log_entropy()` now pulls `limit=10_000` and post-filters by timestamp in Python. Behavior matches the documented event-window semantic without expanding substrate API.
+
+**Recommended addressed:**
+
+- **rec#3: defensive clamp on trust score.** Added `s = max(0.0, min(1.0, s))` before bucket-index calculation. Survives future trust subclasses that may return out-of-range values.
+- **rec#4: `state.value` not `str(state)`.** `_agent_state_entropy()` now reads `state.value` (matches `substrate/agent.py:166` canonical wire format). Falls back to `"unknown"` if state lacks `.value`.
+
+**Recommended deferred:**
+
+- rec#1 (line range cosmetic) — harmless drift, not actioned.
+- rec#2 (Section 5 trailing-comma) — already correct in prompt body.
+
+**Nits applied:**
+
+- nit#1 (DECISIONS.md placement entry) — promoted from "optional" to "recommended"; added note in Tracking section that future architects evaluating cognitive-vs-substrate-vs-telemetry layer choice should look at the AD-491 placement decision.
+
+**Nits deferred:** nit#3 (field order), nit#2 (cross-prompt context) — cosmetic.
+
+**Verified Against Codebase footer extended:** added `EventLog.query()` signature grep, `AgentState.value` grep, `TrustNetwork.get_score` grep — proves no phantom APIs remain after revision.
+
+**Wave-5 conventions audit (post-revision):** all 6 applied. ✅
+
+**No-theater discipline (cross-cutting fix #1):** N/A — AD-491 is read-only observability; every signal does real work today.

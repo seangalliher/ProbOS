@@ -87,29 +87,39 @@ class ServiceClassification:
     description: str = ""
 
 
-# Default classifications. The registry seeds with these and accepts
-# runtime additions. Names match attribute names on ProbOSRuntime where
-# possible to make grep-confirmation easy for operators.
+# Default classifications. Each `service_name` matches an actual public
+# attribute on `ProbOSRuntime` (verified via grep at draft time). Subsystems
+# pass the same name when consulting `manager.is_shed("name")`.
+#
+# v1 seeds 10 services that ARE runtime attributes today. Logical-only names
+# (e.g. "cognitive_agent" for the agent class, "dreaming" as a logical group)
+# are deferred to AD-459b along with the active-shedding hooks.
 _DEFAULT_CLASSIFICATIONS: tuple[ServiceClassification, ...] = (
+    # ESSENTIAL — always survive
     ServiceClassification("event_log", ServiceTier.ESSENTIAL, "audit log"),
     ServiceClassification("trust_network", ServiceTier.ESSENTIAL, "trust reads"),
     ServiceClassification("registry", ServiceTier.ESSENTIAL, "agent registry"),
     ServiceClassification("intent_bus", ServiceTier.ESSENTIAL, "intent dispatch"),
     ServiceClassification("hebbian_router", ServiceTier.ESSENTIAL, "routing weights"),
-    ServiceClassification("cognitive_agent", ServiceTier.COGNITIVE, "LLM-driven agents"),
-    ServiceClassification("dreaming", ServiceTier.COGNITIVE, "dream consolidation"),
+    # COGNITIVE — gracefully degrade
     ServiceClassification("decomposer", ServiceTier.COGNITIVE, "intent decomposition"),
+    ServiceClassification("dream_scheduler", ServiceTier.COGNITIVE, "dream consolidation scheduler"),
     ServiceClassification("proactive_loop", ServiceTier.COGNITIVE, "proactive cognition"),
+    # NON_ESSENTIAL — first to shed
     ServiceClassification("emergence_metrics_engine", ServiceTier.NON_ESSENTIAL, "emergence analytics"),
     ServiceClassification("emergent_leadership_detector", ServiceTier.NON_ESSENTIAL, "AD-439 analytics"),
-    ServiceClassification("introspection_agent", ServiceTier.NON_ESSENTIAL, "diagnostic introspection"),
     ServiceClassification("red_team_lead", ServiceTier.NON_ESSENTIAL, "red team campaigns"),
 )
 
 
 @dataclass
 class ServiceTierRegistry:
-    """Maps service names to ServiceTier. Seed + runtime extensions."""
+    """Maps service names to ServiceTier. Seed + runtime extensions.
+
+    `register(...)` adds new classifications and overwrites existing ones
+    by service_name (last-write-wins). The default seed is loaded on
+    construction; subsequent `register(...)` calls extend the seed.
+    """
 
     _classifications: dict[str, ServiceClassification] = field(default_factory=dict)
 
@@ -125,13 +135,17 @@ class ServiceTierRegistry:
         return c.tier if c else None
 
     def services_in_tier(self, tier: ServiceTier) -> list[str]:
-        return [
+        return sorted([
             c.service_name for c in self._classifications.values() if c.tier == tier
-        ]
+        ])
 
     def all_classifications(self) -> list[ServiceClassification]:
         return list(self._classifications.values())
 ```
+
+> Verify-first: every seeded `service_name` matches an actual ProbOSRuntime attribute or property (verified via grep at draft time):
+> - `event_log` (runtime.py:314), `trust_network` (runtime.py:335), `registry` (runtime.py:293), `intent_bus` (runtime.py:300), `hebbian_router` (runtime.py:304), `decomposer` (runtime.py:352), `dream_scheduler` (runtime.py:411), `proactive_loop` (runtime.py:533), `emergence_metrics_engine` (runtime.py:951 property), `emergent_leadership_detector` (post-AD-439 at finalize.py:344), `red_team_lead` (post-AD-455 at finalize.py:422).
+> - Pass-1 review caught three mismatches in the original draft (`cognitive_agent`, `dreaming`, `introspection_agent`) — those are removed from the v1 seed list. AD-459b will introduce logical-name aliases when subsystems hook in actively.
 
 ---
 
@@ -144,7 +158,6 @@ class ServiceTierRegistry:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import Enum
 
 from probos.degradation.registry import ServiceTier
@@ -159,15 +172,20 @@ class StressLevel(str, Enum):
     CRITICAL = "critical"
 
 
-@dataclass(frozen=True)
 class SheddingPolicy:
     """Maps stress level to the set of tiers that should be shed.
 
-    Default policy:
+    Default policy (v1 — read-only coordinator; ESSENTIAL is hardcoded
+    never-shed at every level):
+
         NORMAL    -> shed nothing
         ELEVATED  -> shed NON_ESSENTIAL
         HIGH      -> shed NON_ESSENTIAL + COGNITIVE
-        CRITICAL  -> shed NON_ESSENTIAL + COGNITIVE (ESSENTIAL never shed)
+        CRITICAL  -> shed NON_ESSENTIAL + COGNITIVE
+                     (same shed mask as HIGH; AD-459b will add
+                     active-shedding hooks that differentiate CRITICAL —
+                     e.g. cancel long-running cognitive tasks, pause
+                     async queues — beyond the read-only is_shed signal)
     """
 
     def shed_tiers(self, level: StressLevel) -> frozenset[ServiceTier]:
@@ -175,15 +193,14 @@ class SheddingPolicy:
             return frozenset()
         if level == StressLevel.ELEVATED:
             return frozenset({ServiceTier.NON_ESSENTIAL})
-        if level == StressLevel.HIGH:
-            return frozenset(
-                {ServiceTier.NON_ESSENTIAL, ServiceTier.COGNITIVE},
-            )
-        # CRITICAL — same as HIGH; ESSENTIAL never shed
+        # HIGH or CRITICAL — same read-only shed mask in v1; CRITICAL adds
+        # active-shedding hooks in AD-459b
         return frozenset(
             {ServiceTier.NON_ESSENTIAL, ServiceTier.COGNITIVE},
         )
 ```
+
+> Builder note: HIGH and CRITICAL share the same read-only shed mask in v1 by design. The 4-level enum is preserved so AD-459b can add CRITICAL-only active-shedding behavior (cancel tasks, pause queues) without an enum migration.
 
 ---
 
@@ -299,7 +316,9 @@ class DegradationManager:
             )
         except Exception:
             logger.warning(
-                "AD-459: %s emit failed", et.value, exc_info=True,
+                "AD-459: %s emit failed (tier=%s, level=%s, shed=%s)",
+                et.value, tier.value, self._level.value, shed,
+                exc_info=True,
             )
         logger.info(
             "AD-459: tier %s %s (stress=%s)",
@@ -335,9 +354,16 @@ REPLACE:
 
 ```python
 class DegradationConfig(BaseModel):
-    """Saucer separation / graceful degradation (AD-459)."""
+    """Saucer separation / graceful degradation (AD-459).
 
-    enabled: bool = True
+    v1 has no operator-tunable fields — the manager is always wired and
+    the default policy is the only policy. AD-459b will add fields for
+    custom policies, stress-level transition thresholds, and operator
+    override (e.g., shed-ESSENTIAL emergency override).
+
+    The empty `model_config = ConfigDict(extra="forbid")` is documented in
+    the future to make AD-459b's additions explicit.
+    """
 ```
 
 Wire into `SystemConfig`:
@@ -353,7 +379,11 @@ REPLACE:
     degradation: DegradationConfig = DegradationConfig()  # AD-459
 ```
 
-> Builder note: anchor depends on AD-458 landing first. If not, anchor on the AD-457 `engineering:` line.
+> Builder note: anchor-chain fallback (use the next anchor if predecessor hasn't landed):
+> 1. `pre_flight: PreFlightConfig` (AD-458).
+> 2. `engineering: EngineeringConfig` (AD-457).
+> 3. `validation_framework: ValidationFrameworkConfig` (AD-451).
+> 4. `orders: OrdersConfig = OrdersConfig()  # AD-440` — verified at `config.py:1593` as the always-available terminal fallback.
 
 ---
 
@@ -363,19 +393,21 @@ REPLACE:
 
 ```python
     # AD-459: Saucer separation — graceful degradation
-    if config.degradation.enabled:
-        from probos.degradation.manager import DegradationManager
-        from probos.degradation.policy import SheddingPolicy
-        from probos.degradation.registry import ServiceTierRegistry
-        runtime.degradation_manager = DegradationManager(
-            registry=ServiceTierRegistry(),
-            policy=SheddingPolicy(),
-            emit_event=runtime.emit_event,
-        )
-        logger.info("AD-459: DegradationManager wired (stress=normal)")
+    # v1 always wires the manager (no enabled flag) so consumers can call
+    # `runtime.degradation_manager.is_shed(name)` without a None check.
+    # Default state is StressLevel.NORMAL (no shedding).
+    from probos.degradation.manager import DegradationManager
+    from probos.degradation.policy import SheddingPolicy
+    from probos.degradation.registry import ServiceTierRegistry
+    runtime.degradation_manager = DegradationManager(
+        registry=ServiceTierRegistry(),
+        policy=SheddingPolicy(),
+        emit_event=runtime.emit_event,
+    )
+    logger.info("AD-459: DegradationManager wired (stress=normal)")
 ```
 
-> Verify-first: `runtime.degradation_manager` is published as a public attribute (no underscore) per Wave 5 retrospective convention.
+> Verify-first: `runtime.degradation_manager` is published as a public attribute (no underscore) per Wave 5 retrospective convention. Always-wired contract: subsystems consulting `runtime.degradation_manager.is_shed(...)` will always get an answer; default level is NORMAL so `is_shed(...)` returns False until an operator/AD-459b transitions the level.
 
 ---
 
@@ -387,17 +419,17 @@ REPLACE:
 
 1. `test_event_type_service_tier_degraded_exists`
 2. `test_event_type_service_tier_restored_exists`
-3. `test_degradation_config_defaults` — `DegradationConfig()` defaults to `enabled=True`.
-4. `test_service_tier_registry_default_classifications` — registry contains `event_log` (ESSENTIAL), `dreaming` (COGNITIVE), `red_team_lead` (NON_ESSENTIAL).
-5. `test_service_tier_registry_register_extends` — `register(...)` adds a new classification.
-6. `test_service_tier_registry_services_in_tier` — `services_in_tier(ESSENTIAL)` returns expected list.
+3. `test_degradation_config_defaults` — `DegradationConfig()` has no operator fields; `model_dump()` returns `{}`.
+4. `test_service_tier_registry_default_classifications` — registry contains `event_log` (ESSENTIAL), `dream_scheduler` (COGNITIVE), `red_team_lead` (NON_ESSENTIAL).
+5. `test_service_tier_registry_register_extends_and_preserves_seeds` — `register(...)` adds a new classification AND existing seed classifications remain present afterwards.
+6. `test_service_tier_registry_services_in_tier_sorted` — `services_in_tier(ESSENTIAL)` returns sorted list (deterministic ordering).
 7. `test_shedding_policy_normal_sheds_nothing` — `SheddingPolicy().shed_tiers(NORMAL) == frozenset()`.
 8. `test_shedding_policy_elevated_sheds_non_essential` — only NON_ESSENTIAL.
 9. `test_shedding_policy_high_sheds_cognitive_and_non_essential` — both.
-10. `test_shedding_policy_critical_never_sheds_essential` — ESSENTIAL never in shed set.
-11. `test_degradation_manager_set_stress_level_emits_tier_degraded` — transition NORMAL → HIGH emits two `SERVICE_TIER_DEGRADED` (NON_ESSENTIAL + COGNITIVE).
+10. `test_shedding_policy_critical_matches_high_in_v1` — CRITICAL returns same shed mask as HIGH (read-only v1; AD-459b differentiates).
+11. `test_degradation_manager_set_stress_level_emits_tier_degraded` — transition NORMAL → HIGH emits two `SERVICE_TIER_DEGRADED` (NON_ESSENTIAL + COGNITIVE). Test asserts on the SET of emitted EventType payloads, not their order.
 12. `test_degradation_manager_restore_emits_tier_restored` — transition HIGH → NORMAL emits `SERVICE_TIER_RESTORED` for both shed tiers.
-13. `test_degradation_manager_is_shed_returns_correct_state` — `is_shed("dreaming")` is True at HIGH, False at NORMAL.
+13. `test_degradation_manager_is_shed_returns_correct_state` — `is_shed("dream_scheduler")` is True at HIGH, False at NORMAL.
 
 ---
 
@@ -408,7 +440,12 @@ REPLACE:
 - **`bridge_alerts.AlertSeverity` is untouched.** Severity (incident reporting) and tier (service classification) are orthogonal.
 - **Active shedding hooks are deferred to AD-459b** — Wave 6 should NOT add `if degradation.is_shed(...)` checks throughout `cognitive/` modules; that's AD-459b scope.
 - **No HXI panel.**
-- **ESSENTIAL is hardcoded never-shed** — even in CRITICAL, ESSENTIAL services keep running. Operator override would require an AD.
+- **ESSENTIAL is never shed by the default `SheddingPolicy`** — even at CRITICAL. The manager respects the policy verbatim (no policy-override). Operator-emergency-override is deferred to AD-459b.
+- **`enabled` flag is removed.** v1 always wires `runtime.degradation_manager` so consumers can `is_shed(...)` without None-checks; default state is NORMAL (no shedding).
+- **HIGH and CRITICAL share the same v1 shed mask.** AD-459b will add CRITICAL-only active-shedding behavior (cancel long-running tasks, pause queues) without re-defining the enum.
+- **v1 emits at tier-level granularity** (not service-level). AD-459b will add per-service emits when subsystems hook into the manager directly.
+- **`set_stress_level` has no capability gate in v1.** Any code with a `runtime.degradation_manager` reference can trigger transitions. AD-459b will add a capability gate for production stress transitions.
+- **Logical-name aliases (`cognitive_agent`, `dreaming`, `introspection_agent`)** are deferred to AD-459b. v1 seed list contains only names that match real ProbOSRuntime attributes, verified at draft time.
 
 ---
 
@@ -430,13 +467,13 @@ If any tracker file shows >200 deletions, STOP.
 
 Expected delta:
 - `src/probos/degradation/__init__.py`: 2 lines (new — owns directory).
-- `src/probos/degradation/registry.py`: ~75 lines (new).
-- `src/probos/degradation/policy.py`: ~45 lines (new).
-- `src/probos/degradation/manager.py`: ~110 lines (new).
+- `src/probos/degradation/registry.py`: ~80 lines (new).
+- `src/probos/degradation/policy.py`: ~40 lines (new — frozen-no-fields decorator dropped).
+- `src/probos/degradation/manager.py`: ~115 lines (new).
 - `src/probos/events.py`: 2 lines added.
-- `src/probos/config.py`: ~6 lines added.
-- `src/probos/startup/finalize.py`: ~12 lines added.
-- `tests/test_ad459_saucer_separation.py`: ~250 lines (new).
+- `src/probos/config.py`: ~6 lines added (no `enabled` field — class is documentation in v1).
+- `src/probos/startup/finalize.py`: ~14 lines added (always-wired contract; no `if enabled:` branch).
+- `tests/test_ad459_saucer_separation.py`: ~260 lines (new).
 - `PROGRESS.md`, `roadmap.md`: ~3 lines changed.
 
 ---
@@ -447,9 +484,11 @@ Expected delta:
 - Full parallel gate non-decreasing.
 - 2 new EventTypes in `events.py` exactly once.
 - `src/probos/degradation/__init__.py` exists. AD-459 owns directory creation.
-- `runtime.degradation_manager` published as public attribute.
+- `runtime.degradation_manager` always-wired; published as public attribute.
 - `bridge_alerts.AlertSeverity` is unchanged.
 - No subsystem files in `src/probos/cognitive/` are modified — v1 is read-only coordinator.
+- All seed `service_name` values match real ProbOSRuntime attributes (verified at draft time).
+- HIGH and CRITICAL stress levels documented as sharing the v1 shed mask; AD-459b deferral note explicit.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ---
@@ -477,4 +516,60 @@ grep -n "AGENT_SELF_NAMED" src/probos/events.py
 
 ls src/probos/agents/medical/
   (precedent for new package layout — see AD-457 verification)
+
+grep -n "self\.event_log\|self\.trust_network\|self\.registry\b\|self\.intent_bus\|self\.hebbian_router\|self\.decomposer\|self\.dream_scheduler\|self\.proactive_loop\|self\.emergence_metrics_engine" src/probos/runtime.py
+  293: self.registry = AgentRegistry()
+  300: self.intent_bus = IntentBus(...)
+  304: self.hebbian_router = HebbianRouter(...)
+  314: self.event_log = EventLog(...)
+  335: self.trust_network = TrustNetwork(...)
+  352: self.decomposer = IntentDecomposer(...)
+  411: self.dream_scheduler: DreamScheduler | None = None
+  533: self.proactive_loop: ProactiveCognitiveLoop | None = None
+  951: def emergence_metrics_engine(self) -> Any:  (property accessor)
+  (all 9 v1 seed names verified as real runtime attributes)
+
+grep -n "runtime\.emergent_leadership_detector\|runtime\.red_team_lead" src/probos/startup/finalize.py
+  344: runtime.emergent_leadership_detector = detector  (post-AD-439)
+  422: runtime.red_team_lead = red_team_lead  (post-AD-455)
+
+grep -n "orders: OrdersConfig" src/probos/config.py
+  1593: orders: OrdersConfig = OrdersConfig()  # AD-440
+  (always-available terminal fallback for Section 6 anchor chain)
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-459-saucer-separation-graceful-degradation-review.md`.
+
+**Required addressed:**
+
+- **R#1: Registry seed names purged of phantoms.** v1 seed list now contains only 11 services that match real ProbOSRuntime attributes (verified via grep at draft time). Removed: `cognitive_agent` (class, not attribute), `dreaming` (actual is `dream_scheduler`), `introspection_agent` (no runtime attribute). The `dream_scheduler` rename preserves the COGNITIVE-tier coverage. Strategy chosen: option (a) "all seed names match runtime attributes" — verify-first standing order takes precedence over logical-name aliases. AD-459b will introduce logical aliases when subsystems hook in actively.
+- **R#2: Section 6 anchor-chain fallback to AD-440** added per cross-cutting fix #3. Chain: `pre_flight: PreFlightConfig` (AD-458) → `engineering: EngineeringConfig` (AD-457) → `validation_framework: ValidationFrameworkConfig` (AD-451) → `orders: OrdersConfig` (AD-440, line 1593) terminal.
+- **R#3: `enabled` flag removed; manager always wired.** v1 contract: `runtime.degradation_manager` is unconditionally created at startup so consumers can call `is_shed(...)` without a None-check. Default state is `StressLevel.NORMAL` (no shedding). `DegradationConfig` is now a placeholder for AD-459b operator fields.
+- **R#4: HIGH and CRITICAL behavior documented.** Both share the v1 read-only shed mask; explicit comment in `SheddingPolicy` and "What This Does NOT Change" note that AD-459b will add CRITICAL-only active-shedding (cancel tasks, pause queues) without changing the enum.
+
+**Recommended addressed:**
+
+- **rec#1: Test 13 references `dream_scheduler`** (real seed name) instead of phantom `dreaming`.
+- **rec#2: `SheddingPolicy` `@dataclass(frozen=True)` decorator dropped.** Stateless class with no fields; decorator was decorative noise.
+- **rec#3: `set_stress_level` no-capability-gate** documented in "What This Does NOT Change" — AD-459b adds the gate.
+- **rec#4: `_emit_tier_change` log context** extended (tier, level, shed flag included in the warning message).
+- **rec#5: Test 5 renamed** to `test_service_tier_registry_register_extends_and_preserves_seeds` — explicitly asserts existing seeds remain after `register(...)`.
+
+**Nits applied:**
+
+- nit#1: `_DEFAULT_CLASSIFICATIONS` module-level constant convention preserved.
+- nit#2: tier-level granularity documented as v1 limit; per-service emits deferred to AD-459b.
+- nit#3: `services_in_tier` returns sorted list (deterministic ordering); Test 11 asserts on the SET of emitted EventType payloads, not the order.
+- nit#4: ESSENTIAL never-shed is policy-controlled (manager respects policy verbatim) — documented in "What This Does NOT Change".
+
+**Verified Against Codebase footer extended:** added 9-attribute grep against `runtime.py` proving every v1 seed name maps to a real attribute, plus `emergent_leadership_detector` / `red_team_lead` finalize.py grep, plus `orders: OrdersConfig` terminal-anchor grep.
+
+**No-theater discipline (cross-cutting fix #1):** v1 is read-only coordinator with REAL signal — `is_shed(name)` returns a real answer based on real registry seeds. The "no consumer in cognitive/" caveat is intentional per Wave 5 retrospective convention #3 (coordinator-then-dispatch).
+
+**Wave-5 conventions audit (post-revision):** all 6 applied. ✅
+
+**Verdict shift:** Pass-1 ⚠️ Conditional → expected ✅ Approved on second-pass review.
