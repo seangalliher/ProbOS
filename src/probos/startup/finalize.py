@@ -330,6 +330,20 @@ async def finalize_startup(
     runtime._disclosure_router = disclosure_router
     logger.info("AD-679: DisclosureRouter initialized")
 
+    # AD-439: Emergent Leadership Detector
+    if config.emergent_leadership.enabled and runtime.ontology is not None:
+        from probos.cognitive.emergent_leadership import EmergentLeadershipDetector
+        detector = EmergentLeadershipDetector(
+            ontology=runtime.ontology,
+            hebbian=runtime.hebbian_router,
+            registry=runtime.registry,
+            emit_event=runtime.emit_event,
+            min_weight=config.emergent_leadership.min_weight,
+            min_ratio=config.emergent_leadership.min_ratio,
+        )
+        runtime.emergent_leadership_detector = detector
+        logger.info("AD-439: EmergentLeadershipDetector wired")
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

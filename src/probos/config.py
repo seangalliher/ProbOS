@@ -1318,6 +1318,14 @@ class EmergenceMetricsConfig(BaseModel):
     hebbian_synergy_min_interactions: int = 5  # Minimum Hebbian interactions to correlate
 
 
+class EmergentLeadershipConfig(BaseModel):
+    """Emergent leadership detection configuration (AD-439)."""
+
+    enabled: bool = True
+    min_weight: float = 0.10
+    min_ratio: float = 1.5
+
+
 class BehavioralMetricsConfig(BaseModel):
     """AD-569: Observation-Grounded Crew Intelligence Metrics."""
 
@@ -1551,6 +1559,7 @@ class SystemConfig(BaseModel):
     concurrency: ConcurrencyConfig = ConcurrencyConfig()  # AD-672
     trust_dampening: TrustDampeningConfig = TrustDampeningConfig()
     emergence_metrics: EmergenceMetricsConfig = EmergenceMetricsConfig()
+    emergent_leadership: EmergentLeadershipConfig = EmergentLeadershipConfig()  # AD-439
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

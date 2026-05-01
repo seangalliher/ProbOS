@@ -171,6 +171,10 @@ class VesselOntologyService:
     def get_assignment_for_agent_by_id(self, agent_id: str) -> Assignment | None:
         return self._dept.get_assignment_for_agent_by_id(agent_id)  # type: ignore[union-attr]
 
+    def get_agents_for_post(self, post_id: str) -> list[Assignment]:
+        """AD-439: Public passthrough — agents currently filling a post."""
+        return self._dept.get_agents_for_post(post_id)  # type: ignore[union-attr]
+
     def get_subordinate_agent_types(self, agent_type: str) -> list[str]:
         """AD-630: Return agent_types of all direct reports for the given agent.
 

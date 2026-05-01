@@ -161,6 +161,7 @@ class EventType(str, Enum):
     CORROBORATION_VERIFIED = "corroboration_verified"  # AD-567f
     CORROBORATION_PROVENANCE_VALIDATED = "corroboration_provenance_validated"  # AD-665
     WRONG_CONVERGENCE_DETECTED = "wrong_convergence_detected"  # AD-583
+    LEADERSHIP_DIVERGENCE = "leadership_divergence"  # AD-439
     WARD_ROOM_ECHO_DETECTED = "ward_room_echo_detected"  # AD-583g
     OBSERVABLE_STATE_MISMATCH = "observable_state_mismatch"  # AD-583f
     SELF_MODEL_DRIFT = "self_model_drift"  # AD-589: introspective confabulation detected
