@@ -1018,6 +1018,13 @@ class SensoriumConfig(BaseModel):
     token_budget_warning: int = 10000
 
 
+class RuntimeOverridesConfig(BaseModel):
+    """Runtime override layer configuration (AD-468)."""
+
+    enabled: bool = True
+    store_filename: str = "runtime_overrides.json"
+
+
 class OnboardingConfig(BaseModel):
     """AD-442: Onboarding ceremony configuration."""
 
@@ -1541,6 +1548,7 @@ class SystemConfig(BaseModel):
     quality_router: QualityRouterConfig = QualityRouterConfig()  # AD-565
     onboarding: OnboardingConfig = OnboardingConfig()
     naming: NamingConfig = NamingConfig()  # AD-499
+    runtime_overrides: RuntimeOverridesConfig = RuntimeOverridesConfig()  # AD-468
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
     ward_room: WardRoomConfig = WardRoomConfig()
     assignments: AssignmentConfig = AssignmentConfig()

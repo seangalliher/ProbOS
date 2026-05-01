@@ -921,6 +921,11 @@ class ProbOSRuntime:
         return self._records_store
 
     @property
+    def data_dir(self) -> Path:
+        """AD-468: public read-only accessor for the runtime data directory."""
+        return self._data_dir
+
+    @property
     def procedure_store(self):
         """AD-534: Procedure store for replay-first dispatch."""
         return self._procedure_store

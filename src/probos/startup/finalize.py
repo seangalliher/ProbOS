@@ -344,6 +344,37 @@ async def finalize_startup(
         runtime.emergent_leadership_detector = detector
         logger.info("AD-439: EmergentLeadershipDetector wired")
 
+    # AD-468: Runtime Configuration Service
+    if config.runtime_overrides.enabled:
+        from probos.runtime_config_service import RuntimeConfigService
+        store_path = runtime.data_dir / config.runtime_overrides.store_filename
+        rcs = RuntimeConfigService(
+            store_path=store_path,
+            emit_event=runtime.emit_event,
+        )
+        runtime.runtime_config_service = rcs
+        if runtime.proactive_loop is not None:
+            if (val := rcs.get("proactive.interval")) is not None:
+                try:
+                    runtime.proactive_loop.set_cycle_interval(float(val))
+                except Exception:
+                    logger.warning(
+                        "AD-468: failed to apply proactive.interval override",
+                        exc_info=True,
+                    )
+            if (val := rcs.get("proactive.cooldown")) is not None:
+                try:
+                    runtime.proactive_loop.set_cooldown(float(val))
+                except Exception:
+                    logger.warning(
+                        "AD-468: failed to apply proactive.cooldown override",
+                        exc_info=True,
+                    )
+        logger.info(
+            "AD-468: RuntimeConfigService wired (%d overrides loaded)",
+            len(rcs.all()),
+        )
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

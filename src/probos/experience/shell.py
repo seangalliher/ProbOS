@@ -22,6 +22,7 @@ from probos.experience.commands import (
     commands_introspection,
     commands_alert,
     commands_clearance,
+    commands_config,
     commands_tool_access,
     commands_skill,
 )
@@ -283,6 +284,7 @@ class ProbOSShell:
             "/tool-access": lambda: commands_tool_access.cmd_tool_access(rt, con, arg),
             "/skill":      lambda: commands_skill.cmd_skill(rt, con, arg),
 
+            "/config":     lambda: commands_config.cmd_config(rt, con, arg),
             "/explain":    lambda: self._handle_nl("what just happened?"),
             "/bridge":     lambda: self._cmd_bridge(),
             "/quit":       lambda: self._cmd_quit(arg),

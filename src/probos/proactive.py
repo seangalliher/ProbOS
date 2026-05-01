@@ -382,6 +382,14 @@ class ProactiveCognitiveLoop:
     def _default_cooldown(self) -> float:
         return self._cooldown
 
+    def set_cycle_interval(self, seconds: float) -> None:
+        """AD-468: public setter for the proactive cycle interval (clamped 10-3600s)."""
+        self._interval = max(10.0, min(3600.0, float(seconds)))
+
+    def set_cooldown(self, seconds: float) -> None:
+        """AD-468: public setter for the global proactive cooldown default (clamped 60-86400s)."""
+        self._cooldown = max(60.0, min(86400.0, float(seconds)))
+
     def set_duty_schedule(self, config: DutyScheduleConfig | None) -> None:
         """Initialize duty schedule tracker from DutyScheduleConfig."""
         if config and config.enabled and config.schedules:
