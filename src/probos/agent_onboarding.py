@@ -543,8 +543,11 @@ class AgentOnboardingService:
                 chosen = lines[0].strip().strip('"').strip("'")
                 reason = lines[1].strip() if len(lines) > 1 else ""
 
-                # AD-499: validate self-chosen callsign against naming policy
-                if self._config.naming.enabled:
+                # AD-499: validate self-chosen callsign against naming policy.
+                # Gated to skip empty / oversized inputs — those cases are
+                # already handled by the existing length/empty fallback below
+                # (preserves "empty/oversized" warning shape).
+                if self._config.naming.enabled and chosen and len(chosen) <= 30:
                     from probos.naming import AgentNamingPolicy
                     extra = frozenset(self._config.naming.extra_banned_words)
                     policy = AgentNamingPolicy(banned=extra)

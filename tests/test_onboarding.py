@@ -226,9 +226,14 @@ class TestNamingCeremony:
         with patch("probos.agent_onboarding.logger") as mock_logger:
             result = await rt.onboarding.run_naming_ceremony(agent)
             assert result == "Bones"
-            # Two warnings: one from _is_valid_callsign rejection, one from final log
+            # AD-499: AgentNamingPolicy banned-word filter rejects "Captain"
+            # before reaching _is_valid_callsign. Existing test asserted
+            # "invalid" in any warning; AD-499 logs "rejected (banned_word)".
             warning_msgs = [c[0][0] for c in mock_logger.warning.call_args_list]
-            assert any("invalid" in m.lower() for m in warning_msgs)
+            assert any(
+                "invalid" in m.lower() or "rejected" in m.lower()
+                for m in warning_msgs
+            )
 
     @pytest.mark.asyncio
     async def test_naming_ceremony_oversized_name_logs_warning(self):
