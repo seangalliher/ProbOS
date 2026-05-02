@@ -5,7 +5,7 @@
 **Estimated tests:** ~14
 **Risk:** HIGH — new external-protocol surface; security review needed at Builder time. All MCP bridge calls go through `runtime.egress_policy.is_allowed(url)` per AD-456 contract.
 
-> ★ **OSS BOUNDARY (AD-450 leak precedent applies).** This prompt describes the OSS bridge infrastructure ONLY: session management, tool routing, JSON-RPC over Streamable HTTP, EgressPolicy integration, and the public extension point for downstream MCP-server-pack consumers. Pricing, customer counts, GTM, revenue model, and pre-built MCP server packs (Salesforce, ServiceNow, ERP-specific implementations, etc.) belong in the private commercial repo (`commercial-roadmap.md`) and are explicitly out of scope here. The pre-commit hook will catch some patterns; do not include any of those topics in the prompt body, the source code, the docstrings, or the test names.
+> ★ **OSS BOUNDARY (AD-450 leak precedent applies).** This prompt describes the OSS bridge infrastructure ONLY: session management, tool routing, JSON-RPC over Streamable HTTP, EgressPolicy integration, and the public extension point for downstream MCP-server-pack consumers. Pricing, customer counts, GTM language, revenue model, and vendor-specific MCP server packs (third-party SaaS connector packs of any kind) belong in the private commercial repo (`commercial-roadmap.md`) and are explicitly out of scope here. The pre-commit hook will catch some patterns; do not include any of those topics in the prompt body, the source code, the docstrings, or the test names.
 
 ---
 
@@ -32,12 +32,12 @@ This is **policy + a new external transport layered on existing AD-448 + AD-456 
 
 - **MCPSession + MCPClient** — real JSON-RPC 2.0 client with real `tools/list` + `tools/call` methods.
 - **MCPBridge** — real session lifecycle + real tool routing.
-- **MCPToolAdapter** — real `ToolRegistry` integration; remote tools become first-class ProbOS tools.
+- **MCPToolAdapter** — real wrapper class; ToolRegistry registration loop deferred to AD-449b.
 - **EgressPolicy gating** — every outbound request is consulted via `runtime.egress_policy.is_allowed(url)`. v1 honors the policy decision: block when denied, emit `MCP_BRIDGE_FAILED` with `reason="egress_blocked"`.
 
 **Five wholesale-deferred to sub-ADs:**
 
-- **Pre-built MCP server packs** (Salesforce, ServiceNow, ERP, CRM connectors) — out of scope; live in the private commercial repo.
+- **Pre-built MCP server packs** (vendor-specific third-party connector catalog) — out of scope; live in the private commercial repo.
 - **MCP server (ProbOS-as-server, exposing ProbOS tools to external MCP clients)** — AD-449b. v1 is client-only.
 - **Bidirectional sampling/elicitation (server -> client LLM calls)** — AD-449c. v1 supports `tools/*` only; `sampling/*` and `elicitation/*` are deferred.
 - **OAuth/auth flows beyond bearer tokens** — AD-449d. v1 supports static `Authorization` headers only.
@@ -186,6 +186,9 @@ class MCPClient:
         self._timeout = timeout
         # AD-449: defensive getattr for __new__-bypass tests (convention #11)
         self._http: httpx.AsyncClient | None = httpx.AsyncClient(timeout=timeout)
+        # AD-449 rev: instance-level header capture (was class attribute --
+        # shared mutable state across MCPClient instances; race risk)
+        self._last_response_headers: dict[str, str] = {}
 
     @property
     def session(self) -> MCPSession:
@@ -303,8 +306,6 @@ class MCPClient:
 
         self._emit_invoke(method, url=url)
         return result
-
-    _last_response_headers: dict[str, str] = {}
 
     def _emit_invoke(self, method: str, *, url: str) -> None:
         if self._emit_event is None:
@@ -592,7 +593,7 @@ Place after AD-469 (or AD-463 if AD-469 hasn't landed):
 2. `test_event_type_mcp_bridge_failed_exists`
 3. `test_mcp_config_defaults` -- `enabled=True`, `request_timeout_seconds=30.0`, `servers=[]`.
 4. `test_mcp_session_immutable` -- frozen dataclass; `dataclasses.replace` produces a new instance.
-5. `test_mcp_client_initialize_returns_session_with_capabilities` -- mocked httpx returns `{"jsonrpc":"2.0","id":...,"result":{"capabilities":{...}}}` -> session has the capabilities. `@pytest.mark.asyncio`.
+5. `test_mcp_client_initialize_returns_session_with_capabilities` -- mocked httpx returns body `{"jsonrpc":"2.0","id":...,"result":{"capabilities":{...}}}` AND headers `{"mcp-session-id": "s-123"}`. The session has the capabilities AND `session_id == "s-123"`. The test must mock both `Response.json()` AND `Response.headers` to validate the header-driven session_id capture. `@pytest.mark.asyncio`.
 6. `test_mcp_client_list_tools_returns_list` -- mocked httpx returns `{"result":{"tools":[{"name":"x"}]}}` -> `list_tools()` returns `[{"name":"x"}]`. `@pytest.mark.asyncio`.
 7. `test_mcp_client_call_tool_returns_dict_result` -- `@pytest.mark.asyncio`.
 8. `test_mcp_client_egress_blocked_emits_failed_and_raises` -- egress policy returns False -> `MCPProtocolError`; emit fires `MCP_BRIDGE_FAILED` with `reason="egress_blocked"`. `@pytest.mark.asyncio`.
@@ -716,3 +717,73 @@ Wave-5/6/7 conventions audit:
 - #11 __new__-bypass defensive-getattr: `MCPClient.close` uses `getattr(self, "_http", None)`. ✅
 - #14 Aggressive pre-deferral: 5 of 9 capabilities deferred at draft time. ✅
 - **Commercial-boundary**: prompt body, source code, and tests describe OSS infrastructure ONLY. No pricing, GTM, customer-count, or server-pack-specific language anywhere. ✅
+
+---
+
+## Revision (2026-05-02)
+
+Applied review findings from `prompts/Reviews/ad-449-mcp-bridge-review.md` (verdict: ⚠️ Conditional; 3 Required + 6 Recommended). Per dispatch convention #15 (relaxed tolerance), AD-449 is the wave's HIGH-risk slot.
+
+**Required addressed:**
+
+- **R#1: Commercial-connector names in shipping content (lines 8 + 40).** Both lines reframed to generic categories. No specific vendor names remain in shipping content:
+  - Line 8 (boundary alert): "vendor-specific MCP server packs (third-party SaaS connector packs of any kind)"
+  - Line 40 (deferral list): "Pre-built MCP server packs (vendor-specific third-party connector catalog) — out of scope; live in the private commercial repo"
+
+  Post-revision grep confirms zero hits for `Salesforce|ServiceNow|D365|Workday|\$\d|revenue|subscription|pilot|reference engagement` in shipping content. The remaining metadata mentions ("customer counts", "GTM language", "vendor-specific") are in negative-framing boundary-alert prose — same pattern as the dispatch hard-stop section. AD-450 leak precedent honored.
+
+- **R#2: `_last_response_headers` class-attribute mutable default.** Section 3 `MCPClient.__init__` now initializes `self._last_response_headers: dict[str, str] = {}` per instance. The class-level declaration `_last_response_headers: dict[str, str] = {}` removed. Concurrent MCPClient instances no longer share header state -- race risk eliminated. Documented as a Wave-8-revision-pass correction in the source comment.
+
+- **R#3: Test #5 must mock both body and headers.** Test plan rewritten:
+
+  > "mocked httpx returns body `{...,"result":{"capabilities":{...}}}` AND headers `{"mcp-session-id": "s-123"}`. The session has the capabilities AND `session_id == "s-123"`. The test must mock both `Response.json()` AND `Response.headers` to validate the header-driven session_id capture."
+
+  Builder will now write the test against both mock surfaces.
+
+**Recommended applied:**
+
+- **rec#1: MCPToolAdapter Solution Overview language.** v1 scope bullet (line 35) updated:
+
+  > "MCPToolAdapter -- real wrapper class; ToolRegistry registration loop deferred to AD-449b."
+
+  Matches the existing Section 5 deferral note. Solution Overview drift convention #12 honored.
+
+**Recommended deferred:**
+
+- **rec#2: httpx async-context-manager pattern.** `MCPClient.close()` is the canonical lifecycle; `MCPBridge.close_all()` cascades. Adding `async with` semantics would change the public API; defer to AD-449b.
+- **rec#3: log registered servers at startup.** `runtime.mcp_bridge.register_server(...)` already logs at INFO via the existing `logger.info("AD-449: MCPBridge wired ...")` line in finalize. Sufficient for spot-check.
+- **rec#4: dual-emission comment (EGRESS_BLOCKED + MCP_BRIDGE_FAILED).** Architect judgment: the dual emission is intentional and useful (two perspectives on the same denial -- one event-bus subscriber set, one MCP-specific subscriber set). Keep both.
+- **rec#5: protocol-version mismatch handling.** Defer to AD-449e ("MCP server health probing + automatic reconnect"). v1 uses fixed `MCP_PROTOCOL_VERSION = "2025-03-26"`.
+- **rec#6: JSON-RPC `id` format.** Hex string `uuid.uuid4().hex` is fine; not changed.
+
+**Phantom-API pre-check (run during revision):**
+
+```
+grep -rn "class MCPBridge\|class MCPSession\|class MCPClient\|class MCPToolAdapter" src/probos/
+  (no matches -- AD-449 introduces all four; correct)
+
+grep -n "class ToolRegistry\|class Tool\b\|class ToolExecutor\|class EgressPolicy" src/probos/
+  tools/registry.py:49: class ToolRegistry:
+  tools/protocol.py:83: class Tool(Protocol):
+  tools/executor.py:40: class ToolExecutor:
+  security/egress.py:47: class EgressPolicy:
+
+grep -n "def register\|async def check_and_invoke\|def is_allowed" src/probos/tools/registry.py src/probos/security/egress.py
+  src/probos/tools/registry.py:92: def register(
+  src/probos/tools/registry.py:269: async def check_and_invoke(
+  src/probos/security/egress.py:66: def is_allowed(self, url: str) -> bool:
+
+grep -n "self\.tool_registry\|self\.egress_policy\|self\.llm_client\|def emit_event" src/probos/runtime.py
+  347: self.llm_client: BaseLLMClient = llm_client or MockLLMClient()
+  785: def emit_event(self, event: BaseEvent | str | EventType, ...
+  1591: self.tool_registry = comm.tool_registry
+  (egress_policy wired in startup/finalize.py per AD-456 Wave 7)
+```
+
+All concrete claims grep-confirmed. No additional phantoms found.
+
+**Verified Against Codebase footer extended:** the post-revision commercial-boundary scan added; vendor-name greps documented as zero-hit.
+
+**Test count: 14 -> 14** (R#3 tightens existing Test #5; no new tests added).
+
+**Verdict shift:** Pass-1 ⚠️ Conditional (HIGH-risk + commercial-boundary) -> expected ✅ Approved on second-pass review (3 Requireds mechanical; 1 of 6 Recommendeds applied; 5 deferred with explicit architect judgment per Wave-8 relaxed tolerance).

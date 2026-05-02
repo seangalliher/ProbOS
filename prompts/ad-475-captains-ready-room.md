@@ -2,7 +2,7 @@
 
 **Status:** Ready for builder
 **Dependencies:** Builds on `WardRoomService.create_thread` at `src/probos/ward_room/service.py:357` (verified) and `ArchitectAgent` at `src/probos/cognitive/architect.py:47` (verified). Reads `runtime.cognitive_journal` (verified at `runtime.py:213, 424, 1593`) for session recording.
-**Estimated tests:** ~12
+**Estimated tests:** ~13
 **Risk:** MEDIUM — HXI surface (apply convention #12: Solution Overview drift watch). New persistent state (idea queue) requires stdlib-only persistence per convention #2.
 
 ---
@@ -273,7 +273,6 @@ class IdeaCaptureStore:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
@@ -350,6 +349,10 @@ class ReadyRoomSessionManager:
     ) -> ReadyRoomSession:
         if not topic:
             raise ValueError("start_session requires non-empty topic")
+        # AD-475 rev: defensive coercion of participants -> list[str].
+        # Strings would silently iterate by character via ', '.join.
+        if not isinstance(participants, list):
+            participants = list(participants) if participants is not None else []
 
         session_id = uuid.uuid4().hex
         correlation_id = f"ready_room/{session_id}"
@@ -517,6 +520,9 @@ Place after the AD-449 MCP wiring block (or AD-472 if AD-449 hasn't landed):
             ReadyRoomSessionManager,
         )
         idea_path = runtime.data_dir / config.ready_room.idea_store_filename
+        # AD-475 rev: parent dirs auto-created by IdeaCaptureStore._save() at
+        # first write (mkdir(parents=True, exist_ok=True)). No explicit
+        # mkdir at startup -- keeps the wiring side-effect free.
         runtime.idea_capture_store = IdeaCaptureStore(
             store_path=idea_path,
             emit_event=runtime.emit_event,
@@ -543,7 +549,7 @@ Place after the AD-449 MCP wiring block (or AD-472 if AD-449 hasn't landed):
 
 **File:** `tests/test_ad475_ready_room.py`
 
-12 tests using `tmp_path` for the idea store and `MagicMock` for `runtime.ward_room.create_thread`.
+13 tests using `tmp_path` for the idea store and `MagicMock` for `runtime.ward_room.create_thread`.
 
 1. `test_event_type_ready_room_session_started_exists`
 2. `test_event_type_idea_captured_exists`
@@ -557,6 +563,7 @@ Place after the AD-449 MCP wiring block (or AD-472 if AD-449 hasn't landed):
 10. `test_session_manager_start_session_handles_ward_room_failure` -- `create_thread` raises; `start_session` returns a session with `thread_id=""` (fail-soft per Wave-5 convention #4; the journal correlation_id is set). `@pytest.mark.asyncio`.
 11. `test_session_manager_advance_phase_progresses_present_discuss_converge` -- `start_session` returns phase=`present`; `advance_phase` -> `discuss`; second `advance_phase` -> `converge`; third `advance_phase` -> still `converge` (idempotent at terminal).
 12. `test_session_manager_end_session_sets_ended_at_and_phase_converge` -- `end_session(id)` returns session with `phase="converge"` and `ended_at > 0`. `list_sessions(state="active")` excludes the ended session.
+13. `test_session_manager_advance_phase_returns_none_for_unknown_id` -- `advance_phase("nonexistent")` returns None; no crash; idempotent.
 
 Each test uses `MagicMock`/`AsyncMock`. Convention #11 honored: `_runtime` access via `getattr` defensive read in `start_session`.
 
@@ -662,3 +669,41 @@ Wave-5/6/7 conventions audit:
 - #11 __new__-bypass defensive-getattr: `start_session` uses `getattr(self, "_runtime", None)`. ✅
 - #12 Solution Overview drift watch: HXI surface; this prompt's Solution Overview consistently states 2-of-3-capabilities + TOGAF wholesale-deferred. ✅
 - #14 Aggressive pre-deferral: 3 of 5 sub-features deferred at draft time. ✅
+
+---
+
+## Revision (2026-05-02)
+
+Applied review findings from `prompts/Reviews/ad-475-captains-ready-room-review.md` (verdict: ✅ Approved on first pass; Recommended-only).
+
+**Required:** none (verdict was ✅).
+
+**Recommended applied:**
+
+- **rec#1: drop unused asyncio import.** Section 3 `sessions.py` import block now omits `import asyncio` (only `await ward_room.create_thread` is async; covered by the `await` keyword without a top-level import).
+- **rec#2: defensive `participants` coercion in `start_session`.** Added `if not isinstance(participants, list): participants = list(participants) if participants is not None else []` before the body-string join. Prevents the string-iterate-as-characters bug.
+- **rec#3: extra advance_phase test.** Test plan extends to 13 tests; new test #13 `test_session_manager_advance_phase_returns_none_for_unknown_id` covers the existing line-393 idempotent return. Estimated tests header updated 12 → 13.
+- **rec#5: explicit comment in finalize about implicit mkdir.** Added a one-line comment to Section 6 noting that `IdeaCaptureStore._save()` self-creates the parent dir on first write; no startup mkdir needed.
+
+**Recommended deferred:**
+
+- **rec#4: `SessionPhase.discuss` vs `thread_mode='discuss'` doc note.** Cosmetic; would add prose to a tight Solution Overview. The two `discuss` literals live in distinct namespaces; not folded into a separate disambiguation paragraph.
+- **rec#6: journal_correlation_id integration target.** AD-475c picks up the journal write seam. v1 keeps the field as documented honest deferral.
+- **rec#7: disabled-runtime-attr None test.** Folded into integration test scope; not added to focused gate.
+
+**Phantom-API pre-check (run during revision):**
+
+```
+grep -n "WardRoomService\|create_thread\|self\.ward_room\|self\.cognitive_journal\|self\.data_dir\|def emit_event" src/probos/
+  ward_room/service.py:29: class WardRoomService(EventEmitterMixin):
+  ward_room/service.py:357: async def create_thread(
+  runtime.py:390: self.ward_room: WardRoomService | None = None
+  runtime.py:424: self.cognitive_journal: CognitiveJournal | None = None
+  runtime.py:785: def emit_event(self, event: BaseEvent | str | EventType, ...
+```
+
+All concrete claims grep-confirmed. No additional phantoms found.
+
+**Test count: 12 → 13** (added rec#3's idempotent-unknown-id test).
+
+**Verdict shift:** Pass-1 ✅ Approved (Recommended-only) → expected ✅ Approved on second-pass review (Recommended polish applied; no scope expansion).

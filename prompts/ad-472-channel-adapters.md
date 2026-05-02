@@ -84,11 +84,16 @@ The current adapter's `on_message` handler runs `handle_message` regardless of `
 
 This block already exists in the adapter — confirm position. If absent, add immediately after the `message.author.bot` skip and before the `handle_message` call. Builder must grep `allowed_user_ids` in the file before editing; if found in the right position, leave it; if not, insert.
 
-### 1b. fetch_messages reconnection recovery
+### 1b. (deferred) fetch_messages reconnection recovery
 
-Wrap the `await self._http_client.fetch_messages(...)` (or whatever Discord-side fetch path the adapter uses for late delivery) in an exponential-backoff retry. v1 does NOT introduce new fetch paths; if no `fetch_messages` call exists, this section is a no-op for v1 and the entire 1b block is removed at Builder time. Builder MUST grep before adding.
+Live grep at revision time:
 
-> Verify-first per convention #6: if `grep -n "fetch_messages\|reconnection\|on_disconnect" src/probos/channels/discord_adapter.py` returns no matches, the v1 adapter has no fetch path that needs reconnection recovery. Skip 1b. Document the skip in the Build Report. The roadmap entry's "fetch_messages reconnection recovery" predates the current adapter code; the no-op decision is honest.
+```
+grep -n "fetch_messages\|reconnection\|on_disconnect" src/probos/channels/discord_adapter.py
+(no matches)
+```
+
+The current Discord adapter has no `fetch_messages` call, no reconnection-recovery surface, and no `on_disconnect` handler. The roadmap entry's "fetch_messages reconnection recovery" predates the current adapter code; there is no v1 work to do here. **Wholesale-deferred to AD-472b** alongside the deferred Telegram/WhatsApp/Matrix/Teams adapters. Per convention #7 (no-theater), this section is documented as deferred rather than shipped as a no-op.
 
 ### 1c. Message Content Intent verification at startup
 
@@ -136,21 +141,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from probos.channels.base import ChannelAdapter, ChannelConfig, ChannelMessage
+from probos.channels.base import ChannelAdapter, ChannelMessage
+from probos.config import SlackConfig
 from probos.events import EventType
 
 logger = logging.getLogger(__name__)
-
-
-class SlackConfig(ChannelConfig):
-    """Slack adapter configuration (AD-472)."""
-
-    enabled: bool = False
-    bot_token: str = ""           # xoxb-... (prefer env var PROBOS_SLACK_BOT_TOKEN)
-    signing_secret: str = ""      # for events-api verification
-    allowed_channel_ids: list[str] = []
-    allowed_user_ids: list[str] = []
-    default_thread_ts: bool = True
 
 
 class SlackAdapter(ChannelAdapter):
@@ -294,18 +289,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from probos.channels.base import ChannelAdapter, ChannelConfig, ChannelMessage
+from probos.channels.base import ChannelAdapter, ChannelMessage
+from probos.config import WebhookConfig
 from probos.events import EventType
 
 logger = logging.getLogger(__name__)
-
-
-class WebhookConfig(ChannelConfig):
-    """Webhook adapter configuration (AD-472)."""
-
-    enabled: bool = False
-    shared_secret: str = ""       # set via env var PROBOS_WEBHOOK_SECRET
-    allowed_channels: list[str] = []  # empty = accept any channel name
 
 
 class WebhookAdapter(ChannelAdapter):
@@ -426,33 +414,48 @@ REPLACE:
 
 **File:** `src/probos/config.py`
 
-SEARCH (`config.py:1318`):
+AD-472 defines `SlackConfig` and `WebhookConfig` ONCE in `config.py` (canonical Pydantic location, mirroring the existing `DiscordConfig` precedent at `config.py:1306`). Adapter modules in `src/probos/channels/` import these types -- they are NOT redefined in adapter source.
+
+SEARCH (`config.py:1306-1322`, the existing DiscordConfig + ChannelsConfig block):
 ```python
+class DiscordConfig(BaseModel):
+    """Discord bot adapter configuration."""
+
+    enabled: bool = False
+    token: str = ""                          # Bot token (prefer env var PROBOS_DISCORD_TOKEN)
+    allowed_channel_ids: list[int] = []      # Empty = respond in all channels
+    allowed_user_ids: list[int] = []         # Empty = respond to all users (SECURITY RISK)
+    command_prefix: str = "!"                # "!status" -> "/status"
+    mention_required: bool = False           # Only respond when @mentioned
+    scout_channel_id: int = 0                # Discord channel ID for scout reports (0 = disabled)
+
+
 class ChannelsConfig(BaseModel):
     """Channel adapter configurations."""
 
     discord: DiscordConfig = DiscordConfig()
 ```
 
-REPLACE:
+REPLACE (define SlackConfig + WebhookConfig BEFORE ChannelsConfig so direct defaults bind without forward refs):
 ```python
-class ChannelsConfig(BaseModel):
-    """Channel adapter configurations."""
+class DiscordConfig(BaseModel):
+    """Discord bot adapter configuration."""
 
-    discord: DiscordConfig = DiscordConfig()
-    slack: "SlackConfig" = None  # set after class definition (forward ref)
-    webhook: "WebhookConfig" = None
-```
+    enabled: bool = False
+    token: str = ""                          # Bot token (prefer env var PROBOS_DISCORD_TOKEN)
+    allowed_channel_ids: list[int] = []      # Empty = respond in all channels
+    allowed_user_ids: list[int] = []         # Empty = respond to all users (SECURITY RISK)
+    command_prefix: str = "!"                # "!status" -> "/status"
+    mention_required: bool = False           # Only respond when @mentioned
+    scout_channel_id: int = 0                # Discord channel ID for scout reports (0 = disabled)
 
-Then immediately AFTER the existing `ChannelsConfig` class block (around `config.py:1322`), add:
 
-```python
 class SlackConfig(BaseModel):
     """Slack adapter configuration (AD-472)."""
 
     enabled: bool = False
-    bot_token: str = ""           # prefer env var PROBOS_SLACK_BOT_TOKEN
-    signing_secret: str = ""
+    bot_token: str = ""           # xoxb-... (prefer env var PROBOS_SLACK_BOT_TOKEN)
+    signing_secret: str = ""      # for events-api verification
     allowed_channel_ids: list[str] = []
     allowed_user_ids: list[str] = []
     default_thread_ts: bool = True
@@ -466,11 +469,15 @@ class WebhookConfig(BaseModel):
     allowed_channels: list[str] = []
 
 
-# Resolve forward references so default values bind at construction time.
-ChannelsConfig.model_rebuild()
+class ChannelsConfig(BaseModel):
+    """Channel adapter configurations."""
+
+    discord: DiscordConfig = DiscordConfig()
+    slack: SlackConfig = SlackConfig()
+    webhook: WebhookConfig = WebhookConfig()
 ```
 
-> Builder note: prefer `slack: SlackConfig = SlackConfig()` once the classes are reordered. The forward-ref / `model_rebuild()` form is shown to avoid a forward-reorder edit. Builder may instead reorder so `SlackConfig` and `WebhookConfig` precede `ChannelsConfig` and use direct defaults — that's preferred. The forward-ref form is the fallback.
+> Builder note: defining `SlackConfig` and `WebhookConfig` BEFORE `ChannelsConfig` lets us use direct `SlackConfig()` / `WebhookConfig()` defaults instead of forward-ref `None` defaults. This matches the existing `DiscordConfig` precedent and avoids `model_rebuild()`.
 
 ---
 
@@ -496,7 +503,7 @@ SEARCH (around `__main__.py:436-453`):
                 adapters.append(adapter)
                 console.print("  [green]\u2713[/green] Discord bot adapter started")
             else:
-                console.print("  [red]\u2717[/red] Discord adapter failed - run: uv sync --extra discord")
+                console.print("  [red]\u2717[/red] Discord adapter failed — run: uv sync --extra discord")
         else:
             console.print("  [yellow]![/yellow] Discord enabled but no token set (PROBOS_DISCORD_TOKEN)")
 ```
@@ -517,12 +524,12 @@ REPLACE:
                 adapters.append(adapter)
                 console.print("  [green]\u2713[/green] Discord bot adapter started")
             else:
-                console.print("  [red]\u2717[/red] Discord adapter failed - run: uv sync --extra discord")
+                console.print("  [red]\u2717[/red] Discord adapter failed — run: uv sync --extra discord")
         else:
             console.print("  [yellow]![/yellow] Discord enabled but no token set (PROBOS_DISCORD_TOKEN)")
 
     # AD-472: Slack adapter (opt-in via uv extras)
-    if config.channels.slack and config.channels.slack.enabled:
+    if config.channels.slack.enabled:
         from probos.channels.slack_adapter import SlackAdapter
         slack_cfg = config.channels.slack
         token = os.environ.get("PROBOS_SLACK_BOT_TOKEN", "") or slack_cfg.bot_token
@@ -534,10 +541,10 @@ REPLACE:
                 adapters.append(adapter)
                 console.print("  [green]\u2713[/green] Slack adapter started")
             else:
-                console.print("  [red]\u2717[/red] Slack adapter failed - run: uv sync --extra slack")
+                console.print("  [red]\u2717[/red] Slack adapter failed — run: uv sync --extra slack")
 
     # AD-472: Webhook adapter (no opt-in extra; uses existing FastAPI)
-    if config.channels.webhook and config.channels.webhook.enabled:
+    if config.channels.webhook.enabled:
         from probos.channels.webhook_adapter import WebhookAdapter
         webhook_cfg = config.channels.webhook
         secret = os.environ.get("PROBOS_WEBHOOK_SECRET", "") or webhook_cfg.shared_secret
@@ -549,6 +556,8 @@ REPLACE:
             adapters.append(adapter)
             console.print("  [green]\u2713[/green] Webhook adapter started")
 ```
+
+> Builder note: the SEARCH and REPLACE blocks above use **em-dash `—`** (U+2014) to match the live source character at `__main__.py:450`. ASCII `--` would cause a SEARCH miss. Convention #9 (ASCII-only source comments) does NOT apply here — we are matching pre-existing source, not adding a new comment.
 
 ---
 
@@ -574,7 +583,7 @@ discord = [
     "aiohttp>=3.9,<3.13",   # discord.py 2.x incompatible with aiohttp 3.13+ (ClientWebSocketResponse removed)
 ]
 slack = [
-    "slack-sdk>=3.27",
+    "slack-sdk>=3.21,<4",
 ]
 copilot = [
     "github-copilot-sdk>=0.1.30",
@@ -698,6 +707,10 @@ grep -n "discord = \|copilot = " pyproject.toml
 
 grep -n "MCP_BRIDGE_INVOKE\|MCP_BRIDGE_FAILED" src/probos/events.py
   (lands with AD-449; AD-472 anchor depends on AD-449 first)
+
+grep -n "Discord adapter failed" src/probos/__main__.py
+  450: console.print("  [red]\u2717[/red] Discord adapter failed — run: uv sync --extra discord")
+  (em-dash U+2014 confirmed; Section 6 SEARCH/REPLACE matches this character exactly)
 ```
 
 Wave-5/6/7 conventions audit:
@@ -709,3 +722,44 @@ Wave-5/6/7 conventions audit:
 - #6 Verify-first: footer above. ✅
 - #7 No-theater: real Slack auth_test, real shared-secret check, real emit. WebhookAdapter.send_response no-op is documented (not pretend). ✅
 - #14 Aggressive pre-deferral: 4 of 7 capabilities deferred at draft time. ✅
+
+---
+
+## Revision (2026-05-02)
+
+Applied review findings from `prompts/Reviews/ad-472-channel-adapters-review.md` (verdict: ⚠️ Conditional; 3 Required + 6 Recommended).
+
+**Required addressed:**
+
+- **R#1: `SlackConfig` and `WebhookConfig` defined twice.** Resolution: define ONCE in `config.py` (canonical Pydantic location, mirroring `DiscordConfig`). Section 2's `slack_adapter.py` and Section 3's `webhook_adapter.py` now import the configs (`from probos.config import SlackConfig` / `WebhookConfig`); the duplicate `class SlackConfig(ChannelConfig):` / `class WebhookConfig(ChannelConfig):` definitions are removed from the adapter modules. Section 5 reorganized: `SlackConfig` and `WebhookConfig` defined BEFORE `ChannelsConfig` so direct `SlackConfig()` / `WebhookConfig()` defaults bind without forward refs. `model_rebuild()` workaround dropped.
+- **R#2: SEARCH/REPLACE em-dash mismatch in Section 6.** SEARCH and REPLACE blocks now use the em-dash `—` (U+2014) matching the live source at `__main__.py:450`. Builder note added explaining that convention #9 (ASCII-only source comments) does NOT apply when matching pre-existing source. Verified-against-codebase footer extended with explicit grep showing the em-dash character.
+- **R#3: Pydantic forward-ref `= None` on non-Optional fields.** Resolution (a) chosen: configs defined BEFORE `ChannelsConfig`; direct defaults `slack: SlackConfig = SlackConfig()` and `webhook: WebhookConfig = WebhookConfig()`. Matches the existing `DiscordConfig` precedent. No `model_rebuild()` call needed. The Section 6 startup wiring simplifies from `if config.channels.slack and config.channels.slack.enabled` to just `if config.channels.slack.enabled` (configs are always-instantiated).
+
+**Recommended applied:**
+
+- **rec#1: drop Section 1b no-op.** Live grep confirmed no `fetch_messages` / `reconnection` / `on_disconnect` paths exist in `discord_adapter.py`. Section 1b rewritten as an explicit deferral to AD-472b (per convention #7, document the deferral instead of shipping a no-op). The Discord enhancements in v1 are now Section 1a (sender-allowlist confirmation) + Section 1c (intent-warning at startup).
+- **rec#4: pin `slack-sdk` minor version.** Section 7 `pyproject.toml` extras line changed from `"slack-sdk>=3.27"` to `"slack-sdk>=3.21,<4"`. The `AsyncWebClient` import path is stable from 3.21+ and the `<4` upper bound prevents accidental major-version drift.
+
+**Recommended deferred:**
+
+- **rec#2: WebhookAdapter docstring tightening.** Cosmetic; existing docstring documents the synchronous-return-value contract clearly. No change.
+- **rec#3: WebhookAdapter without FastAPI route is borderline-theater.** Architect judgment: keep WebhookAdapter in v1 because (a) the `receive(...)` method is fully testable today, (b) operator-driven test harnesses can call it directly, (c) AD-472b's FastAPI route is a 3-line addition that needs the adapter class to exist. The "bridge with no road" framing is honest deferral; convention #7 is honored because the inbound API surface is real even though the public HTTP route is pending. Documented in `What This Does NOT Change` already.
+- **rec#5: Test 12 mock at adapter level.** Folded into the test plan's existing `monkeypatch a fake discord.Client` framing; Builder will choose the mock site at test-write time.
+- **rec#6: footer adds `__main__.py:438-452` SEARCH anchor.** Folded into the rec#2 / R#2 em-dash grep entry above.
+
+**Phantom-API pre-check (run during revision):**
+
+```
+grep -n "class ChannelAdapter\|class DiscordAdapter\|class DiscordConfig\|channels: ChannelsConfig" src/probos/
+  channels/base.py:34: class ChannelAdapter(ABC):
+  channels/discord_adapter.py:52: class DiscordAdapter(ChannelAdapter):
+  config.py:1306: class DiscordConfig(BaseModel):
+  config.py:1318: class ChannelsConfig(BaseModel):
+  config.py:1674: channels: ChannelsConfig = ChannelsConfig()
+```
+
+All concrete claims grep-confirmed. No additional phantoms found.
+
+**Test count: 12 → 12** (no new tests added; rec#5 is folded into existing Test 12).
+
+**Verdict shift:** Pass-1 ⚠️ Conditional → expected ✅ Approved on second-pass review (3 Requireds mechanical; 4 of 6 Recommendeds applied; 2 deferred with explicit architect judgment).

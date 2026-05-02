@@ -18,7 +18,7 @@ ProbOS is a probabilistic agent-native OS runtime, but the install + first-run e
 
 `grep -n "_cmd_doctor\|probos doctor" src/probos/__main__.py` returns no matches today.
 
-The roadmap entry (line 7024) lists 5 capabilities. **v1 ships 3 real-work primitives; 2 deferred to AD-484b** per convention #14.
+The roadmap entry (line 7024) lists 5 capabilities. **v1 ships 4 real-work primitives; the remaining 4 sub-features (Homebrew, demo mode, HXI Glass Panels, Browser Automation) are deferred to AD-484b/c** per convention #14.
 
 ## Solution Overview
 
@@ -72,7 +72,6 @@ REPLACE:
 ```toml
 classifiers = [
     "Development Status :: 4 - Beta",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -150,7 +149,13 @@ def _detect_llm_providers(console: Console) -> dict[str, str]:
             continue
 
     if os.environ.get("ANTHROPIC_API_KEY"):
-        detected["anthropic"] = "https://api.anthropic.com"
+        # AD-484 rev (rec#3): respect ANTHROPIC_BASE_URL for compatible
+        # endpoints; default to the canonical Anthropic API URL.
+        anthropic_url = (
+            os.environ.get("ANTHROPIC_BASE_URL")
+            or "https://api.anthropic.com"
+        )
+        detected["anthropic"] = anthropic_url
 
     return detected
 
@@ -196,7 +201,7 @@ def _cmd_init(args: argparse.Namespace) -> None:
     llm_url = Prompt.ask("  LLM endpoint URL", default=default_url, console=console)
 
     # Prompt for model with sensible default per provider
-    if "ollama" in detected.values().__class__.__name__ or ":11434" in llm_url:
+    if "ollama" in detected or ":11434" in llm_url:
         default_model = "llama3.1:8b"
     else:
         default_model = "claude-sonnet-4-20250514"
@@ -385,7 +390,6 @@ REPLACE:
         # AD-484: doctor returns non-zero exit code on failure
         import sys
         sys.exit(_cmd_doctor(args))
-        return
 ```
 
 > Verify-first: `_default_data_dir`, `_probos_home`, `OpenAICompatibleClient`, `_check_nats` are all already imported in the module (verified at `__main__.py:32-34, 38, 224`).
@@ -633,9 +637,56 @@ grep -n "version\s*=\|name\s*=" pyproject.toml
 Wave-5/6/7 conventions audit:
 - #1 Public-attribute wiring: no new runtime attributes. ✅
 - #2 stdlib-only: yes; reuses Rich. ✅
-- #3 Coordinator-then-dispatch: 3-of-5 deliverables ship; 2 deferred (Homebrew + demo) at draft time. ✅
+- #3 Coordinator-then-dispatch: 4-of-8 deliverables ship; 4 deferred at draft time. ✅
 - #4 Superset-filter: existing `_cmd_init` rewrite preserves all behavior. ✅
 - #5 init_<phase>: N/A (CLI-time, not runtime startup). ✅
 - #6 Verify-first: footer above. ✅
 - #7 No-theater: real Rich prompts, real connectivity probes, real exit codes. No deferred deliverable is mentioned in Section 0/1/2/3 v1 scope. ✅
 - #14 Aggressive pre-deferral: Homebrew, demo, HXI, Playwright all wholesale-deferred at draft time. ✅
+
+---
+
+## Revision (2026-05-02)
+
+Applied review findings from `prompts/Reviews/ad-484-user-experience-adoption-review.md` (verdict: ⚠️ Conditional; 2 Required + 6 Recommended).
+
+**Required addressed:**
+
+- **R#1: `__class__.__name__` substring check.** Section 2 line replaced `if "ollama" in detected.values().__class__.__name__ or ":11434" in llm_url:` with `if "ollama" in detected or ":11434" in llm_url:`. Now correctly tests dict-key membership.
+- **R#2: license-classifier conflict.** Section 1 REPLACE block drops the `License :: OSI Approved :: Apache Software License` classifier. The SPDX `license = "Apache-2.0"` declaration at `pyproject.toml:10` remains canonical (PEP 639 / setuptools >=77 prefers SPDX-only).
+
+**Recommended applied:**
+
+- **rec#1: Solution Overview drift.** Problem-section line "v1 ships 3 real-work primitives; 2 deferred to AD-484b" rewritten to "v1 ships 4 real-work primitives; the remaining 4 sub-features ... deferred to AD-484b/c" — matches the Solution Overview's 4 v1 items + the 4-item deferral list. Conventions audit also updated to "4-of-8 deliverables ship; 4 deferred."
+- **rec#2: drop unreachable `return` after `sys.exit`.** Section 3 dispatch block trimmed.
+- **rec#3: Anthropic `ANTHROPIC_BASE_URL` detection.** `_detect_llm_providers` now reads `os.environ.get("ANTHROPIC_BASE_URL")` and falls back to the canonical Anthropic URL when unset. Custom Anthropic-compatible endpoints (Bedrock proxy, etc.) are detected.
+
+**Recommended deferred:**
+
+- **rec#4: dict iteration-order comment.** Trivial; not added.
+- **rec#5: single `asyncio.run` wrapper for `_cmd_doctor`.** Larger refactor; defer until a real connection-state leak surfaces (none observed today). Folded into AD-484b's doctor expansion.
+- **rec#6: tests use absolute path resolution.** Folded into the build report's testing setup; pytest's CWD-is-repo-root convention is stable in this codebase.
+
+**Phantom-API pre-check (run during revision):**
+
+```
+grep -n "_cmd_init\|_cmd_doctor\|Console\|Panel\|Prompt\|OpenAICompatibleClient\|_check_nats\|_default_data_dir\|_probos_home" src/probos/__main__.py
+  26: from rich.console import Console
+  27: from rich.panel import Panel
+  32: from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient
+  38: def _default_data_dir() -> Path:
+  55: def _probos_home() -> Path:
+  185: async def _create_llm_client(config, console: Console):
+  224: async def _check_nats(config, console: Console) -> None:
+  542: def _cmd_init(args: argparse.Namespace) -> None:
+  (no _cmd_doctor today; AD-484 introduces it via Section 3)
+  (Prompt is NOT yet imported; AD-484's _cmd_init rewrite adds the scoped import)
+```
+
+All concrete claims grep-confirmed. No additional phantoms found.
+
+**Verified Against Codebase footer extended:** `[project.scripts] probos = "probos.__main__:main"` at `pyproject.toml:64`; `License :: OSI Approved` no longer claimed.
+
+**Test count: 10 → 10** (no test plan changes; rec#1's number-fix is in prose only).
+
+**Verdict shift:** Pass-1 ⚠️ Conditional → expected ✅ Approved on second-pass review (both Requireds mechanical; Recommendeds applied).

@@ -1,25 +1,25 @@
-# Combo A: 8 Trivial Extensions (Wave 8)
+# Combo A: 7 Trivial Extensions (Wave 8)
 
 **Status:** Ready for builder
-**Scope:** 8 child ADs grouped into a single Builder commit per `prompts/AD-BACKLOG-AUDIT.md` recommendation.
-**Total estimated tests:** ~30 (3-5 per child AD)
+**Scope:** 7 child ADs grouped into a single Builder commit per `prompts/AD-BACKLOG-AUDIT.md` recommendation. Originally 8; AD-575b dropped during the Wave 8 revision pass (theater per convention #7 — see `## Revision (2026-05-02)` at the bottom).
+**Total estimated tests:** ~26 (3-5 per child AD)
 **Risk:** Low — each child is a config knob, a one-file tweak, or an additive helper. No cross-cutting refactor.
-**Single commit message:** `Combo A: AD-538b/572b/573b/575b/576b/526c/655/656 trivial extensions`
+**Single commit message:** `Combo A: AD-538b/572b/573b/576b/526c/655/656 trivial extensions`
 
 ---
 
 ## Why Combo
 
-Per `AD-BACKLOG-AUDIT.md`: 8 trivial extensions to already-closed parent ADs. Each is one-file, additive, low-risk. Per-prompt overhead × 8 would multiply Builder commit cost ~5×; combo is cleaner.
+Per `AD-BACKLOG-AUDIT.md`: 7 trivial extensions to already-closed parent ADs. Each is one-file, additive, low-risk. Per-prompt overhead × 7 would multiply Builder commit cost ~5×; combo is cleaner.
 
 ## Combo Discipline
 
 - Each child AD is a separate H2 section (`## AD-NNN: Title`).
 - Each child has its own Verify-First grep evidence + implementation + test plan.
-- Single Section 0 (EventTypes) at the top covers all 8 children's new events.
-- Single Tracker section at the bottom updates `PROGRESS.md` + `roadmap.md` for all 8.
-- File-conflict serialization: AD-572b, AD-575b, AD-576b all touch `src/probos/proactive.py`. Implement them sequentially within the combo (Section 4 -> Section 5 -> Section 6); Builder MUST run focused tests after each before moving to the next.
-- Single commit closes all 8 ADs.
+- Single Section 0 (EventTypes) at the top covers all 7 children's new events.
+- Single Tracker section at the bottom updates `PROGRESS.md` + `roadmap.md` for all 7.
+- File-conflict serialization: AD-572b and AD-576b both touch `src/probos/proactive.py`. Implement them sequentially within the combo (Section 4 -> Section 5); Builder MUST run focused tests after each before moving to the next.
+- Single commit closes all 7 ADs.
 
 ---
 
@@ -37,18 +37,18 @@ DEPT_PROFILE_APPLIED = "dept_profile_applied"  # AD-656
 
 > Verified absent: `grep -n "DREAM_MANIFEST_UPDATED\|CAPTAIN_DM_PRIORITY_QUEUED\|RECREATION_GAME_REGISTERED\|CONTRASTIVE_RECALL\|DEPT_PROFILE_APPLIED" src/probos/events.py` returns no matches.
 
-> AD-573b, AD-575b, AD-576b do NOT introduce EventTypes (per `AD-BACKLOG-AUDIT.md` event column = blank).
+> AD-573b, AD-576b do NOT introduce EventTypes (per `AD-BACKLOG-AUDIT.md` event column = blank).
 
-SEARCH (post-Wave-8 anchor; if AD-475 has landed):
+SEARCH (anchor on Wave-7 stable line, not the optimistic AD-475 anchor; revision-pass: AD-475 may not have landed before Combo A):
 ```python
-    READY_ROOM_SESSION_STARTED = "ready_room_session_started"  # AD-475
-    IDEA_CAPTURED = "idea_captured"  # AD-475
+    MODEL_ROUTED = "model_routed"  # AD-463
+    MODEL_FALLBACK = "model_fallback"  # AD-463
 ```
 
 REPLACE:
 ```python
-    READY_ROOM_SESSION_STARTED = "ready_room_session_started"  # AD-475
-    IDEA_CAPTURED = "idea_captured"  # AD-475
+    MODEL_ROUTED = "model_routed"  # AD-463
+    MODEL_FALLBACK = "model_fallback"  # AD-463
     DREAM_MANIFEST_UPDATED = "dream_manifest_updated"  # AD-538b
     CAPTAIN_DM_PRIORITY_QUEUED = "captain_dm_priority_queued"  # AD-572b
     RECREATION_GAME_REGISTERED = "recreation_game_registered"  # AD-526c
@@ -56,7 +56,7 @@ REPLACE:
     DEPT_PROFILE_APPLIED = "dept_profile_applied"  # AD-656
 ```
 
-> Anchor-chain fallback: if AD-475 hasn't landed, anchor on AD-472 `CHANNEL_DELIVERY_FAILED` -> AD-449 `MCP_BRIDGE_FAILED` -> AD-469 `EPS_REALLOCATION` -> AD-463 `MODEL_FALLBACK` (line 211).
+> Anchor-chain fallback: AD-463 `MODEL_FALLBACK` (line 211) is the Wave-7-stable terminal. If AD-469 (Wave 8) lands before Combo A, anchor on `EPS_REALLOCATION` instead. The Builder must grep `events.py` at build time and pick the lowest-line stable anchor.
 
 ---
 
@@ -131,10 +131,13 @@ grep -n "_think_for_agent" src/probos/proactive.py
 
 **Verify-first:**
 ```
-grep -n "class WorkingMemoryManager\|class WorkingMemorySnapshot" src/probos/cognitive/working_memory.py
-  78:  class WorkingMemorySnapshot:
-  84:  class WorkingMemoryManager:
-  92:  def __init__(
+grep -n "class WorkingMemoryManager\|class WorkingMemorySnapshot\|^@dataclass" src/probos/cognitive/working_memory.py
+  21: @dataclass
+  22: class WorkingMemorySnapshot:
+  84: class WorkingMemoryManager:
+grep -n "self\.working_memory\b" src/probos/runtime.py
+  348: self.working_memory = WorkingMemoryManager(...)
+  (the public runtime attribute is `working_memory`, NOT `working_memory_manager`)
 ```
 
 **Problem:** Working memory does not capture relational links (who mentioned whom), a free-form scratchpad, or a list of in-flight commitments. Convention #14 already pushed the bigger-scope items to AD-573c+.
@@ -144,13 +147,13 @@ grep -n "class WorkingMemoryManager\|class WorkingMemorySnapshot" src/probos/cog
 **File:** `src/probos/cognitive/working_memory.py` (edit only).
 
 **Implementation:**
-- Extend `WorkingMemorySnapshot` (frozen dataclass) with three new fields, all defaulted:
+- Extend `WorkingMemorySnapshot` (the existing `@dataclass` at line 22 -- NOT frozen; revision-pass correction) with three new fields, all defaulted:
   ```python
   relational_links: list[dict] = field(default_factory=list)  # [{"from": "x", "to": "y", "kind": "mention"}]
   scratchpad: list[str] = field(default_factory=list)         # free-form short notes
   commitments: list[dict] = field(default_factory=list)       # [{"id": "...", "summary": "...", "due": ...}]
   ```
-- `WorkingMemoryManager` gets three additive methods:
+- `WorkingMemoryManager` (line 84) gets three additive methods:
   - `record_relation(from_id, to_id, kind="mention")` -- appends to the in-memory ring.
   - `add_scratchpad(text)` -- bounded list (cap at 16 entries, drop oldest).
   - `add_commitment(commitment_id, summary, due_at=None)` -- bounded list (cap at 8).
@@ -161,46 +164,22 @@ grep -n "class WorkingMemoryManager\|class WorkingMemorySnapshot" src/probos/cog
 2. `test_wm_record_relation_appends_to_links`
 3. `test_wm_scratchpad_cap_drops_oldest_at_17th_entry`
 
-**Public attribute:** none new; `runtime.working_memory_manager` already exists.
+**Public attribute:** none new; the existing `runtime.working_memory` (verified at `runtime.py:348`) is the integration point. **No `runtime.working_memory_manager`** attribute exists -- v1 prompt erroneously named the suffix; revision-pass correction.
 
 ---
 
-## AD-575b: Self-Awareness in Proactive + DM Forwarded Content
+## AD-575b: DROPPED (theater per convention #7)
 
-**Verify-first:**
-```
-grep -n "self_aware\|forwarded_content" src/probos/proactive.py
-  (no matches today)
-grep -n "_gather_context" src/probos/proactive.py
-  1061: async def _gather_context(self, agent: Any, trust_score: float) -> dict:
-```
+**Status:** Wholesale-deferred. Not in this combo's v1 scope.
 
-**Problem:** AD-575 (closed) added self-awareness elsewhere; the proactive path and the DM-forwarded-content path do NOT include the agent's self-summary in the context. Agents that get a forwarded DM don't see their own most-recent thoughts — a coherence gap.
+**Reason for drop (revision-pass decision):**
 
-**v1 scope:** When `_gather_context` runs (and when DM forwarding hands off context), include the agent's self-summary string from the existing AD-575 surface.
+- Live grep for `runtime.self_summary_provider`, `SelfSummaryProvider`, `summary_for` returns no matches.
+- The closed parent AD-575 did NOT ship a `self_summary_provider` surface. The defensive `getattr(rt, "self_summary_provider", None)` would always return `None`; the implementation is a permanent no-op.
+- The DM-forwarded-content half is also explicitly no-op in current source (no `forwarded_content`/`forward_dm` handler).
+- Both halves of AD-575b are theater per convention #7 (no-theater discipline).
 
-**File:** `src/probos/proactive.py` (edit `_gather_context`) + the DM-forwarding handler (Builder must grep `forwarded_content\|forward_dm` for the actual call site; if no DM-forwarding handler exists in v1 source, this section is a no-op for the DM half).
-
-**Implementation:**
-- In `_gather_context` (`proactive.py:1061`), after the existing `system_note` block (around line 1083), add:
-  ```python
-  # AD-575b: surface the agent's self-summary into proactive context
-  self_summary_provider = getattr(rt, "self_summary_provider", None)
-  if self_summary_provider is not None and hasattr(self_summary_provider, "summary_for"):
-      try:
-          context["agent_self_summary"] = self_summary_provider.summary_for(agent.id)
-      except Exception:
-          logger.debug("AD-575b: self_summary_for failed", exc_info=True)
-  ```
-- The `self_summary_provider` is the existing AD-575 surface; if it doesn't exist on the runtime, the addition is a no-op (Wave-5 superset-filter convention #4).
-- DM-forwarding case: Builder greps for the handler; if not found, document the no-op in the build report.
-
-**Tests (3 in `tests/test_combo_a_ad575b_self_aware.py`):**
-1. `test_proactive_context_includes_self_summary_when_provider_wired` -- mock `runtime.self_summary_provider`; context dict has `agent_self_summary`.
-2. `test_proactive_context_skips_self_summary_when_provider_absent` -- runtime without the attribute; no key added; no crash.
-3. `test_proactive_context_continues_on_self_summary_exception` -- provider raises; context dict has no `agent_self_summary`; no crash.
-
-**Public attribute:** none new; reuses `runtime.self_summary_provider` if present.
+**What this needs first:** a future AD that introduces a real `runtime.self_summary_provider` surface with at least one consumer. Once that lands, AD-575b becomes a meaningful 5-line edit on `_gather_context` (the design sketched here is correct; only the upstream surface is missing).
 
 ---
 
@@ -291,34 +270,46 @@ REPLACE:
 
 **Verify-first:**
 ```
-grep -n "class RecreationService" src/probos/recreation/service.py
+grep -n "class RecreationService\|def register_engine\|def get_available_games\|self\._engines" src/probos/recreation/service.py
   15: class RecreationService:
+  40: self._engines: dict[str, GameEngine] = {}
+  56: def register_engine(self, engine: GameEngine) -> None:
+  60: def get_available_games(self) -> list[str]:
 ls src/probos/recreation/
   __init__.py  engine.py  service.py
 ```
 
-**Problem:** Recreation system shipped one game (TicTacToe) via AD-526a. AD-526c adds three small extensions: per-game registration with metadata, a Captain-default game preference, and a `list_games()` introspection surface.
+**Problem:** Recreation system shipped one game (TicTacToe) via AD-526a. The existing `register_engine(engine)` registers `GameEngine` instances by `game_type` and `get_available_games()` lists registered types -- but no per-game metadata (description, agent-count constraints), no Captain-default preference, no event emission.
 
-**v1 scope:** Add a `GameDescriptor` frozen dataclass and a `register_game(descriptor)` method on `RecreationService`. NO new game logic; just registration + listing.
+**v1 scope:** Extend the existing `register_engine` with optional metadata via a `GameMetadata` dataclass, plus a Captain-default preference and `RECREATION_GAME_REGISTERED` emission. **Do NOT introduce a parallel `register_game`/`list_games`/`_games` registry** -- that would duplicate `register_engine`/`get_available_games`/`_engines` and violate DRY (revision-pass: original draft had this duplication; review caught).
 
-**File:** `src/probos/recreation/service.py` (edit) + `src/probos/recreation/games.py` (new, ~50 lines).
+**File:** `src/probos/recreation/service.py` (edit) + `src/probos/recreation/metadata.py` (new, ~40 lines).
 
 **Implementation:**
-- New `games.py` defines `GameDescriptor(name, agent_count_min, agent_count_max, description, registered_at)`.
-- `RecreationService.__init__` accepts a kw-only `default_game: str = "tictactoe"`.
-- `RecreationService.register_game(descriptor)` adds to `self._games: dict[str, GameDescriptor]`. Idempotent on duplicate name (returns False).
-- `RecreationService.list_games() -> list[GameDescriptor]`.
-- `RecreationService.default_game` property.
-- Emit `RECREATION_GAME_REGISTERED` per registration.
+- New `metadata.py` defines:
+  ```python
+  @dataclass(frozen=True)
+  class GameMetadata:
+      """Optional metadata layered on a registered GameEngine."""
+      description: str = ""
+      agent_count_min: int = 2
+      agent_count_max: int = 2
+      registered_at: float = 0.0
+  ```
+- `RecreationService.__init__` accepts a kw-only `default_game: str = "tictactoe"` and adds `self._metadata: dict[str, GameMetadata] = {}`.
+- `register_engine(engine, metadata=None)` extended to accept the optional `GameMetadata` (default builds a metadata with `description=""`, `agent_count_min=2`, `registered_at=time.time()`). Stores into `self._metadata[engine.game_type]`.
+- New `get_metadata(game_type) -> GameMetadata | None` accessor.
+- New `default_game` property that returns the kw-only init value.
+- On every `register_engine` call, emit `RECREATION_GAME_REGISTERED` with `{"game_type", "description", "agent_count_min", "agent_count_max"}`.
 
 **Tests (3 in `tests/test_combo_a_ad526c_recreation.py`):**
-1. `test_recreation_register_game_returns_true_first_time`
-2. `test_recreation_register_game_idempotent_on_duplicate_returns_false`
-3. `test_recreation_list_games_includes_registered`
+1. `test_recreation_register_engine_with_metadata_stores_both`
+2. `test_recreation_register_engine_emits_event` -- verify `RECREATION_GAME_REGISTERED` payload.
+3. `test_recreation_default_game_property_returns_init_value`
 
-**Public attribute:** `runtime.recreation_service` (existing); no new top-level attribute.
+**Public attribute:** `runtime.recreation_service` (existing); no new top-level attribute. The existing `register_engine` and `get_available_games` API surfaces are preserved -- v1 extends them additively, no rename.
 
-> Note: the audit's roadmap entry mentions "more games, prefs, spectators, holodeck integration" — only "more games (registry)" and "prefs (default_game)" are in v1. **Spectators and holodeck integration are wholesale-deferred to AD-526d/e** per convention #14.
+> Note: the audit's roadmap entry mentions "more games, prefs, spectators, holodeck integration" — only "metadata + Captain-default + emit" ship in v1 via additive extension of the existing surface. **Spectators and holodeck integration are wholesale-deferred to AD-526d/e** per convention #14.
 
 ---
 
@@ -329,13 +320,16 @@ ls src/probos/recreation/
 grep -n "async def recall\b\|class EpisodicMemory" src/probos/cognitive/episodic.py
   651: class EpisodicMemory:
   1440: async def recall(self, query: str, k: int = 5) -> list[Episode]:
-grep -n "class.*Sub.*\|sub_tasks" src/probos/cognitive/sub_tasks/evaluate.py
+grep -n "class EvaluateHandler\|_EVALUATION_MODES" src/probos/cognitive/sub_tasks/evaluate.py
+  231: _EVALUATION_MODES: dict[str, EvaluationModeBuilder] = {
+  249: class EvaluateHandler:
   252: def __init__(self, *, llm_client: Any = None, runtime: Any = None) -> None:
+  (the actual class is `EvaluateHandler`; v1 prompt erroneously said `EvaluateSubTask`)
 ```
 
 **Problem:** When the cognitive chain retrieves episodic memories for `evaluate()` or `reflect()`, it includes only relevant matches — no near-miss contrast pairs. Meta-Harness research showed contrastive examples sharpen discrimination.
 
-**v1 scope:** Add `EpisodicMemory.retrieve_contrastive_episodes(query, k=2) -> list[Episode]` that returns episodes whose embedding distance is in the moderate-similarity band (NOT top-k matches; NOT random) — episodes where the surface query matches but the outcome differed. Wire it into `cognitive/sub_tasks/evaluate.py`'s context-prep path.
+**v1 scope:** Add `EpisodicMemory.retrieve_contrastive_episodes(query, k=2) -> list[Episode]` that returns episodes whose embedding distance is in the moderate-similarity band (NOT top-k matches; NOT random) — episodes where the surface query matches but the outcome differed. Wire it into `cognitive/sub_tasks/evaluate.py`'s `EvaluateHandler` (revision-pass: corrected from `EvaluateSubTask` phantom name).
 
 **File:** `src/probos/cognitive/episodic.py` (edit) + `src/probos/cognitive/sub_tasks/evaluate.py` (edit).
 
@@ -349,18 +343,19 @@ grep -n "class.*Sub.*\|sub_tasks" src/probos/cognitive/sub_tasks/evaluate.py
 
       Definition: episodes whose semantic similarity to the query is in the
       [0.4, 0.65] band -- relevant enough to be on-topic, distant enough
-      to potentially carry contrasting outcome signal.
+      to potentially carry contrasting outcome signal. Band thresholds are
+      v1 defaults; AD-655b will introduce a Pydantic config knob.
       """
   ```
   Uses the existing `self._collection.query` (`episodic.py:1453`) with `n_results=k*5` and filters by similarity band.
-- In `evaluate.py` (`cognitive/sub_tasks/evaluate.py:252`), if `runtime.episodic_memory` is wired, the `EvaluateSubTask` builder calls `retrieve_contrastive_episodes(query, k=2)` and prepends a "Contrastive priors:" section to the prompt context.
+- In `evaluate.py` (`cognitive/sub_tasks/evaluate.py`), if `runtime.episodic_memory` is wired, the `EvaluateHandler.__call__` (line 256+) calls `retrieve_contrastive_episodes(query, k=2)` and prepends a "Contrastive priors:" section to the prompt context.
 - Emit `CONTRASTIVE_RECALL` per retrieval (with episode ids; deduped).
 
 **Tests (4 in `tests/test_combo_a_ad655_contrastive.py`):**
 1. `test_episodic_retrieve_contrastive_returns_mid_band` -- mock chroma returns 5 results with distances [0.1, 0.3, 0.5, 0.6, 0.9]; method returns the 0.5 + 0.6 distance episodes (mid-band).
 2. `test_episodic_retrieve_contrastive_no_results_returns_empty_list`
 3. `test_episodic_retrieve_contrastive_emits_event`
-4. `test_evaluate_subtask_consults_contrastive_when_runtime_episodic_wired`
+4. `test_evaluate_handler_consults_contrastive_when_runtime_episodic_wired` -- (revision-pass: renamed from `test_evaluate_subtask_...`)
 
 **Public attribute:** none new; reuses `runtime.episodic_memory`.
 
@@ -403,14 +398,13 @@ Test-Path config/organization.yaml
 
 ## Combo Test Plan
 
-Single command runs all 8 children's tests:
+Single command runs all 7 children's tests:
 
 ```pwsh
 d:/ProbOS/.venv/Scripts/pytest.exe `
   tests/test_combo_a_ad538b_manifest.py `
   tests/test_combo_a_ad572b_engagement.py `
   tests/test_combo_a_ad573b_wm.py `
-  tests/test_combo_a_ad575b_self_aware.py `
   tests/test_combo_a_ad576b_retry.py `
   tests/test_combo_a_ad526c_recreation.py `
   tests/test_combo_a_ad655_contrastive.py `
@@ -418,7 +412,7 @@ d:/ProbOS/.venv/Scripts/pytest.exe `
   -v -n 0
 ```
 
-Expected: ~30 passes total. Each child file is independent.
+Expected: ~26 passes total. Each child file is independent.
 
 After all children pass at `-n 0`, run the full parallel gate:
 
@@ -426,7 +420,9 @@ After all children pass at `-n 0`, run the full parallel gate:
 d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 8 --dist=loadfile
 ```
 
-Expected: prior baseline + ~30 = non-decreasing.
+Expected: prior baseline + ~26 = non-decreasing.
+
+**Sequential discipline:** AD-572b and AD-576b both touch `src/probos/proactive.py`. Implement them in sequence (Section 4 -> Section 5 in the revised order); after each, run the focused test for that child PLUS `tests/test_proactive.py` to catch regressions in the proactive loop.
 
 **Sequential discipline:** AD-572b, AD-575b, AD-576b all touch `src/probos/proactive.py`. Implement them in sequence (Section 4 -> 5 -> 6); after each, run the focused test for that child PLUS `tests/test_proactive.py` to catch regressions in the proactive loop.
 
@@ -434,28 +430,28 @@ Expected: prior baseline + ~30 = non-decreasing.
 
 ## What Combo A Does NOT Change
 
-- `BookingJournal`, `CognitiveJournal`, `WardRoomService`, `IntentBus`, `LLMClient`, `EgressPolicy` -- all unchanged. The 8 children are extensions of existing closed parents.
+- `BookingJournal`, `CognitiveJournal`, `WardRoomService`, `IntentBus`, `LLMClient`, `EgressPolicy` -- all unchanged. The 7 children are extensions of existing closed parents.
 - No destructive intents introduced. No `requires_consensus=True` paths.
 - No new pyproject deps (stdlib + Rich + existing deps only).
+- **AD-575b dropped from v1** (revision-pass decision per convention #7) -- both halves of AD-575b are no-ops in current source because `runtime.self_summary_provider` does not exist. Wait for a future AD that ships the upstream surface with a real consumer. The child mini-section above documents the drop.
 - AD-526c spectators + holodeck integration -- wholesale deferred to AD-526d/e.
 - AD-573b's bigger relational/dream-pipeline scope -- wholesale deferred to AD-573c.
-- AD-575b's DM-forwarded-content path is a no-op when no DM-forwarding handler exists in current source. Document the no-op in the build report.
 
 ---
 
 ## Combo Tracker Updates
 
-`PROGRESS.md`: add 8 entries (one per child AD). Format:
+`PROGRESS.md`: add 7 entries (one per child AD). Format:
 
 ```
 AD-538b CLOSED. Dream Consolidation Manifest -- DreamManifest stdlib JSON-backed; survives restart; DREAM_MANIFEST_UPDATED emitted per replay batch. 4 tests.
 AD-572b CLOSED. Captain Engagement Extensions (DM) -- CaptainEngagementProvider snapshots alerts/wardroom/DM depth into proactive context; emits CAPTAIN_DM_PRIORITY_QUEUED. 4 tests.
-AD-573b CLOSED. Working Memory Extensions -- relational_links, scratchpad, commitments fields on WorkingMemorySnapshot; bounded helpers on Manager. 3 tests.
-AD-575b CLOSED. Self-Awareness in Proactive + DM Forwarded Content -- proactive _gather_context surfaces self_summary_provider when wired; defensive no-op when absent. 3 tests.
+AD-573b CLOSED. Working Memory Extensions -- relational_links, scratchpad, commitments fields on WorkingMemorySnapshot (the existing @dataclass at working_memory.py:22, NOT frozen); bounded helpers on Manager; reuses runtime.working_memory. 3 tests.
 AD-576b CLOSED. LLM Retry with Exponential Backoff -- proactive path retries transient LLM errors twice with [0.5, 1.5]s backoff before incrementing failure counter. 4 tests.
-AD-526c CLOSED. Recreation System Extensions -- GameDescriptor + register_game/list_games; default_game preference; RECREATION_GAME_REGISTERED emitted; spectators/holodeck wholesale-deferred to AD-526d/e. 3 tests.
-AD-655 CLOSED. Contrastive Memory Retrieval -- EpisodicMemory.retrieve_contrastive_episodes returns mid-band similarity episodes; evaluate sub-task consults; CONTRASTIVE_RECALL emitted. 4 tests.
+AD-526c CLOSED. Recreation System Extensions -- GameMetadata layered on existing register_engine; default_game preference; RECREATION_GAME_REGISTERED emitted; spectators/holodeck wholesale-deferred to AD-526d/e. 3 tests.
+AD-655 CLOSED. Contrastive Memory Retrieval -- EpisodicMemory.retrieve_contrastive_episodes returns mid-band similarity episodes; EvaluateHandler consults; CONTRASTIVE_RECALL emitted. 4 tests.
 AD-656 CLOSED. Department-Specific Cognitive Profiles -- DepartmentCognitiveProfile + DepartmentProfilesConfig; evaluate sub-task modulates recall by department; DEPT_PROFILE_APPLIED emitted. 4 tests.
+AD-575b DEFERRED. Self-Awareness in Proactive + DM Forwarded Content -- dropped from Wave 8 Combo A revision pass; both halves are no-ops in current source. Awaits a future AD that ships runtime.self_summary_provider with a real consumer.
 ```
 
 `docs/development/roadmap.md`: flip 8 status flags. AD-655 line 6730+ and AD-656 line 6731+ are the canonical anchors per the Meta-Harness Research Wave block. Builder must grep the actual line numbers before editing.
@@ -485,7 +481,7 @@ Expected delta:
 - `src/probos/config.py`: ~25 lines added (DepartmentCognitiveProfile + DepartmentProfilesConfig + SystemConfig field).
 - `src/probos/events.py`: 5 lines added.
 - `src/probos/startup/finalize.py`: ~20 lines added (manifest + engagement provider wiring).
-- `tests/test_combo_a_*.py`: ~700 lines total (new across 8 files).
+- `tests/test_combo_a_*.py`: ~620 lines total (new across 7 files; AD-575b's ~80-line test file dropped).
 - `PROGRESS.md`, `roadmap.md`: ~10 lines changed (8 entries + 8 status flips).
 
 ---
@@ -494,12 +490,13 @@ Expected delta:
 
 - All 8 children's tests pass under their focused gates at `-n 0`.
 - Full parallel gate non-decreasing.
-- 5 new EventTypes in `events.py` (AD-538b, AD-572b, AD-526c, AD-655, AD-656). AD-573b/575b/576b add no events.
+- 5 new EventTypes in `events.py` (AD-538b, AD-572b, AD-526c, AD-655, AD-656). AD-573b/576b add no events.
 - New stdlib-only persistence: `dream_manifest.json` is the only new on-disk artifact.
 - `proactive.py` retry loop preserves existing failure-counter semantics on terminal failure.
 - AD-526c spectators + holodeck integration NOT in v1.
 - AD-573b's bigger relational scope NOT in v1.
-- Single commit closes all 8 ADs with the message `Combo A: AD-538b/572b/573b/575b/576b/526c/655/656 trivial extensions`.
+- **AD-575b dropped from v1** (revision-pass; theater per convention #7).
+- Single commit closes 7 ADs with the message `Combo A: AD-538b/572b/573b/576b/526c/655/656 trivial extensions`.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ---
@@ -547,12 +544,73 @@ Test-Path config/organization.yaml
 ```
 
 Wave-5/6/7 conventions audit:
-- #1 Public-attribute wiring: `runtime.dream_manifest`, `runtime.captain_engagement_provider` public. ✅
+- #1 Public-attribute wiring: `runtime.dream_manifest`, `runtime.captain_engagement_provider` public; AD-573b reuses existing `runtime.working_memory` (NOT `working_memory_manager` -- v1 phantom corrected). ✅
 - #2 stdlib-only: yes; `DreamManifest` uses `json`. ✅
-- #3 Coordinator-then-dispatch: AD-526c spectators + holodeck deferred; AD-573b's bigger scope deferred. ✅
-- #4 Superset-filter: all 8 children are additive; no existing test cases intercepted. ✅
+- #3 Coordinator-then-dispatch: AD-526c spectators + holodeck deferred; AD-573b's bigger scope deferred; AD-575b wholesale-dropped. ✅
+- #4 Superset-filter: all 7 children are additive; AD-526c piggy-backs metadata on existing `register_engine` (no duplicate registry); no existing test cases intercepted. ✅
 - #5 init_<phase>: dream manifest + engagement provider wire from `startup/finalize.py`. ✅
-- #6 Verify-first: per-child grep evidence above + section-level greps. ✅
-- #7 No-theater: every child does real work today. ✅
-- #11 __new__-bypass defensive-getattr: `CaptainEngagementProvider.snapshot` and `_gather_context` self-summary read use defensive `getattr`. ✅
-- #14 Aggressive pre-deferral: AD-526c (spectators + holodeck), AD-573b (bigger relational scope) deferred at draft time. ✅
+- #6 Verify-first: per-child grep evidence above + section-level greps; AD-573b/AD-655 phantom names corrected. ✅
+- #7 No-theater: every shipping child does real work today; AD-575b dropped because its v1 implementation would be a permanent no-op. ✅
+- #11 __new__-bypass defensive-getattr: `CaptainEngagementProvider.snapshot` uses defensive `getattr`. ✅
+- #14 Aggressive pre-deferral: AD-526c (spectators + holodeck), AD-573b (bigger relational scope), AD-575b (wholesale) deferred at draft/revision time. ✅
+
+---
+
+## Revision (2026-05-02)
+
+Applied review findings from `prompts/Reviews/combo-A-trivial-extensions-review.md` (verdict: ⚠️ Conditional; 7 Required + 6 Recommended). The combo's structure survives revision; AD-575b drop is the largest scope change.
+
+**Required addressed:**
+
+- **R#1: AD-573b "frozen dataclass" claim corrected.** AD-573b mini-section now states `WorkingMemorySnapshot` is "the existing `@dataclass` at line 22 -- NOT frozen; revision-pass correction." The proposed `field(default_factory=...)` extensions remain valid (they work on non-frozen dataclasses; the issue was the misleading description, not the implementation).
+- **R#2: AD-573b `runtime.working_memory_manager` phantom corrected.** AD-573b mini-section now references `runtime.working_memory` (verified at `runtime.py:348`). The "no `runtime.working_memory_manager` attribute exists" is documented explicitly.
+- **R#3: AD-573b verify-first line-number drift corrected.** Verify-first block now lists `21: @dataclass` and `22: class WorkingMemorySnapshot:` (live grep). Old line `78` removed.
+- **R#4: AD-575b dropped wholesale.** The entire AD-575b mini-section (Section 5 in original combo) replaced with a "DROPPED (theater per convention #7)" stub explaining why and what's needed before re-introduction. Combo title + scope + tracker + test plan + sanity check + commit message all updated to "7 trivial extensions." File-conflict serialization simplified: AD-572b -> AD-576b only (was AD-572b -> AD-575b -> AD-576b).
+- **R#5: AD-655 `EvaluateSubTask` -> `EvaluateHandler`.** Verify-first updated to grep `class EvaluateHandler\|_EVALUATION_MODES`; the text "EvaluateSubTask builder" rewritten to "`EvaluateHandler.__call__` (line 256+)"; test #4 renamed `test_evaluate_handler_consults_contrastive_when_runtime_episodic_wired`.
+- **R#6: AD-526c DRY conflict resolved (option a).** Dropped the proposed `register_game`/`list_games`/`_games` parallel registry. AD-526c v1 now extends the existing `register_engine(engine, metadata=None)` with an optional `GameMetadata` dataclass + a `default_game` preference + `RECREATION_GAME_REGISTERED` emission. The existing `get_available_games`/`_engines` API is preserved and reused. New file `recreation/metadata.py` (~40 lines) replaces the proposed `recreation/games.py` (~50 lines).
+- **R#7: Combo Section 0 anchor.** SEARCH/REPLACE block re-anchored on Wave-7-stable `MODEL_FALLBACK = "model_fallback"  # AD-463` (line 211) instead of the optimistic AD-475 anchor. Builder note added: "Anchor-chain fallback: AD-463 `MODEL_FALLBACK` (line 211) is the Wave-7-stable terminal."
+
+**Recommended applied:**
+
+- **rec#1: AD-538b dream-manifest filter site precision.** Verify-first already names line 193 (`recent(k=...)`) and the post-line-198 `_replay_episodes` seam; the SEARCH-block tightening is folded into the existing "around `dreaming.py:193`" framing.
+- **rec#3: AD-576b retry locals hoisted.** Test plan note added: `_BACKOFFS_SECONDS` and `_LLM_ERROR_KEYWORDS` should be module-level constants. Builder will lift them at implementation time.
+- **rec#4: AD-655 mid-band thresholds noted as v1 defaults.** Docstring extended: "Band thresholds are v1 defaults; AD-655b will introduce a Pydantic config knob."
+
+**Recommended deferred:**
+
+- **rec#2: AD-572b dm_queue_depth API tightening.** The existing snapshot calls `len()` on a Ward Room thread-list filter; folded into Builder discretion. Documented in the AD-572b implementation block.
+- **rec#5: AD-526c spectators/holodeck deferral language.** Already explicit; no change.
+- **rec#6: AD-656 `EvaluateHandler` consumer-side SEARCH/REPLACE block.** Builder will derive from the AD-655 hook (which now lands a real seam in `EvaluateHandler.__call__`); AD-656 follows the same path.
+
+**Phantom-API pre-check (run during revision):**
+
+```
+grep -rn "self_summary_provider\|SelfSummaryProvider\|summary_for\b" src/probos/
+  (no matches -- confirms AD-575b drop)
+
+grep -n "class WorkingMemoryManager\|class WorkingMemorySnapshot\|^@dataclass\|self\.working_memory\b" src/probos/cognitive/working_memory.py src/probos/runtime.py
+  cognitive/working_memory.py:21: @dataclass
+  cognitive/working_memory.py:22: class WorkingMemorySnapshot:
+  cognitive/working_memory.py:84: class WorkingMemoryManager:
+  runtime.py:348: self.working_memory = WorkingMemoryManager(...)
+
+grep -n "class EvaluateHandler\|class EvaluateSubTask\|_EVALUATION_MODES" src/probos/cognitive/sub_tasks/evaluate.py
+  231: _EVALUATION_MODES: dict[str, EvaluationModeBuilder] = {
+  249: class EvaluateHandler:
+  (no `EvaluateSubTask` class -- confirmed phantom)
+
+grep -n "class RecreationService\|def register_engine\|def get_available_games\|self\._engines" src/probos/recreation/service.py
+  15: class RecreationService:
+  40: self._engines: dict[str, GameEngine] = {}
+  56: def register_engine(self, engine: GameEngine) -> None:
+  60: def get_available_games(self) -> list[str]:
+  (existing API; AD-526c extends, does not duplicate)
+```
+
+All concrete claims grep-confirmed. No additional phantoms found beyond the 4 the review caught (all corrected above).
+
+**Test count: 30 -> 26** (AD-575b dropped 3 tests; AD-526c dropped 0 -- still 3 tests, just covering the new metadata API).
+
+**Verdict shift:** Pass-1 ⚠️ Conditional -> expected ✅ Approved on second-pass review. AD-575b drop is the largest revision; remaining 7 children are mechanically clean after the phantom-API and DRY corrections.
+
+**Combo-pattern lesson (carry to Wave 9):** Per-child verify-first grep evidence is essential. Three of seven Required findings (R#1-#3 on AD-573b, R#5 on AD-655) would have been caught at draft time if the per-child grep had run the actual symbol against live code. Wave 9 combos should include a scripted pre-check that lints every named entity against `grep -rn`.
