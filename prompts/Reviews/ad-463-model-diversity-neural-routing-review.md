@@ -411,3 +411,83 @@ The Revision section correctly reframes v1 scope. But the Solution Overview head
 **⚠️ Conditional.** All 3 Required findings resolved in implementation code; Recommended findings applied. **One new Required-class finding** introduced during revision: Solution Overview lines 4, 27, 28, 45 contradict the Revision section. Mechanical 4-line edit fixes it. After fix, AD-463 verdict is ✅ Approved.
 
 Surface back to dispatching architect per the standing tolerance rule. Recommended remediation: 5-minute architect edit of the 4 lines, then re-pass review on AD-463 only.
+
+
+---
+
+## Third-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved** — all 4 pass-2-flagged lines aligned with the Revision section. One Nit-class residual (line 39 still says `.complete()` while line 28 says `_complete_inner()`) is acceptable shorthand and does not contradict the canonical Section 3c SEARCH/REPLACE block.
+
+Commit `37a9fd9` applied the 4 cosmetic edits cleanly. The dispatch's hard-stop conditions are not triggered; AD-463 joins the Builder dispatch queue.
+
+### New Finding #1 Resolution Audit
+
+| Pass-2 Required line | Status | Evidence |
+|---|---|---|
+| Line 4 (Dependencies HebbianRouter) | ✅ Resolved | `Builds on existing BaseLLMClient ABC ... and OpenAICompatibleClient ... **HebbianRouter integration deferred to AD-463d** (LLMRequest does not carry agent context today; see Revision section). Reads existing CognitiveJournal schema ... for cost-tracking columns.` Clean wholesale-defer language; no implication HebbianRouter is read in v1. |
+| Line 27 (Solution Overview ModelRouter) | ✅ Resolved | `ModelRouter consults the registry to pick a model for a given tier (cost-aware + availability-aware + cost-ceiling). Per-agent routing bias deferred to AD-463d. Stateless. Read-only over the registry. Emits MODEL_ROUTED per decision; MODEL_FALLBACK when the preferred model is unavailable and a backup is chosen.` No `agent_id` parameter; "Read-only over the registry" matches Section 2 implementation. |
+| Line 28 (Real consumer hook complete vs _complete_inner) | ✅ Resolved | `Registry hook in OpenAICompatibleClient -- one *real consumer* call site: _complete_inner() consults runtime.model_router.choose(tier=...) (when present) to override the default tier-to-model mapping.` Method name corrected to `_complete_inner()`; argument is `tier=...` (no `agent_id`). Matches Section 3c SEARCH/REPLACE anchor at `cognitive/llm_client.py:441-447`. |
+| Line 45 (Six deferred list HebbianRouter) | ✅ Resolved | `Brain diversity / per-agent model preference -- AD-463d. v1 routes by tier+cost only; HebbianRouter integration deferred to AD-463d once LLMRequest.agent_id (or equivalent) is established.` No "v1 reads HebbianRouter" claim; the second sentence correctly says "v1 routes by tier+cost only". |
+
+All 4 pass-2 contradictions resolved.
+
+### New Findings (introduced during this fix)
+
+1. **Nit:** Line 39 (still in the same Solution Overview section, in the "v1 deliverables" bullet list) reads:
+
+   `**One real consumer hook** in OpenAICompatibleClient.complete() -- routes the chosen model into the existing per-tier request path.`
+
+   While line 28 (just 11 lines above) was correctly updated to `_complete_inner()`, line 39 still says `.complete()`. Technically correct shorthand because `complete()` calls `_complete_inner()` and the hook lives in the latter's body — so the hook IS in `complete()`'s call tree. But the precision differs from line 28.
+
+   **Severity:** Nit-class. Acceptable because:
+   - `complete()` IS the public entry point on the `OpenAICompatibleClient` class; readers tracing call sites would correctly land on `_complete_inner()` via `complete()`.
+   - Section 3 (the canonical implementation reference) uses `_complete_inner` consistently in 3a/3b/3c plus the inline comments and Builder notes.
+   - The Section 3c SEARCH/REPLACE block at `cognitive/llm_client.py:441-447` anchors the actual edit; Builders read SEARCH blocks before bullet summaries.
+   - Test 13 (`test_llm_client_resolve_model_for_tier_when_router_absent_returns_none`) tests the helper method, agnostic of whether the public-API caller is `complete()` or `_complete_inner()`.
+
+   **Resolution:** No further edit required. Builder discretion at write-time. Flagged for documentation polish in a future AD-463 pass.
+
+### Verified Against Revised Codebase Claims
+
+- Line 4 Dependencies header — verified clean wholesale-defer wording.
+- Line 27 ModelRouter description — matches Section 2 implementation (`choose(tier=, cost_ceiling=)` only; no `agent_id`).
+- Line 28 method name — matches Section 3c anchor at `cognitive/llm_client.py:441-447` (verified verbatim).
+- Line 45 deferred list — matches "What This Does NOT Change" line 600: `v1 does NOT integrate HebbianRouter -- per-agent routing bias deferred to AD-463d once LLMRequest.agent_id (or equivalent context-passing) is established.`
+- Cross-section consistency between Solution Overview and "What This Does NOT Change" — confirmed clean.
+- Section 3a / 3b / 3c — `_complete_inner` reference consistent across implementation sections.
+- `agent_id` mentions in the prompt (verified via grep) — only appear in:
+  - Line 45 (correct: future-tense "once LLMRequest.agent_id is established")
+  - Lines 219, 222, 600, 606, 705, 720, 724, 749, 760 (all in deferral notes / Revision / Verified-against footer; all describing wholesale-defer to AD-463d)
+  - Zero remaining stale references implying v1 uses agent_id.
+
+### Cross-Section Consistency Audit
+
+| Section | HebbianRouter v1 status | _complete_inner reference |
+|---|---|---|
+| Dependencies (line 4) | ✅ Deferred to AD-463d | n/a |
+| Solution Overview (lines 22-49) | ✅ Deferred (line 45) | ⚠️ Line 28 says `_complete_inner()`; line 39 says `.complete()` — Nit |
+| Section 1 ModelDescriptor + ModelRegistry | n/a | n/a |
+| Section 2 ModelRouter | ✅ HebbianRouter dropped from API | n/a |
+| Section 3 (3a/3b/3c) | n/a | ✅ `_complete_inner` at line 411, anchor at 441-447 |
+| Section 6 finalize wiring | ✅ No `hebbian_router=` kwarg | ✅ Comment refs `_complete_inner()` |
+| Tests | ✅ Tests 13-14 deferred to AD-463d | ✅ Test 13 |
+| What This Does NOT Change | ✅ Explicit defer (line 600) | n/a |
+| Verified Against Codebase footer | ✅ `LLMRequest` proves no agent_id | ✅ `model = tc["model"]` at 445 |
+| Revision section | ✅ R#1 wholesale defer | ✅ Section 3c verified at 441-447 |
+
+11 of 12 sections fully clean; 1 minor sibling-line inconsistency (line 39 vs 28). Acceptable per Nit-class severity.
+
+### Hard-Stop Audit (per dispatch)
+
+- **"If any of the 4 lines is still stale, surface."** NOT TRIGGERED. All 4 lines (4, 27, 28, 45) are clean.
+- **"If the rewrite introduced a new contradiction with another part of the prompt body (e.g., Section 1, Tests), surface."** NOT TRIGGERED. Section 1, Section 2, Section 3, Section 6, Tests, "What This Does NOT Change", and Revision section are all consistent. Line 39 vs 28 is intra-section and is shorthand-vs-precise (acceptable per Nit severity).
+- **"If the fix introduced a new phantom-API claim (e.g., a method name that doesn't exist), surface."** NOT TRIGGERED. `complete()` exists at `cognitive/llm_client.py:385`; `_complete_inner` exists at line 411. Both are real methods.
+
+### Verdict
+
+**✅ Approved.** AD-463 joins the Builder dispatch queue. Wave 7 batch is now 5 ✅ + 0 ⚠️ + 0 ❌.
+
+The Nit on line 39 is documented for future polish but does not block the build. Builder reads Sections 1-7 and SEARCH/REPLACE blocks for canonical method-name references; the Solution Overview bullet summary on line 39 is high-level scope description.
+
+Build readiness order (post-fix): all 5 Wave 7 prompts ready for Builder dispatch in the order recommended by README-wave-7-pass-2.md (AD-466 → AD-456 → AD-528 → AD-467 → AD-463).
