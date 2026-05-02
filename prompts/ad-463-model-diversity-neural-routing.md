@@ -1,7 +1,7 @@
 # AD-463: Model Diversity & Neural Routing -- Foundation (v1)
 
 **Status:** Ready for builder
-**Dependencies:** Builds on existing `BaseLLMClient` ABC (`cognitive/llm_client.py:22`) and `OpenAICompatibleClient` (`cognitive/llm_client.py:44`). Reads `HebbianRouter.get_weight()` (`mesh/routing.py:142`) for routing-bias. Reads existing `CognitiveJournal` schema (`cognitive/journal.py:25-43`) for cost-tracking columns.
+**Dependencies:** Builds on existing `BaseLLMClient` ABC (`cognitive/llm_client.py:22`) and `OpenAICompatibleClient` (`cognitive/llm_client.py:44`). **HebbianRouter integration deferred to AD-463d** (LLMRequest does not carry agent context today; see Revision section). Reads existing `CognitiveJournal` schema (`cognitive/journal.py:25-43`) for cost-tracking columns.
 **Estimated tests:** ~15
 **Risk:** High -- foundation work that future ADs (AD-428b, AD-462f, AD-469) will depend on. **v1 scope is deliberately narrow per no-theater discipline.**
 
@@ -24,8 +24,8 @@ The roadmap entry (line 4169) lists 10 capabilities. **v1 ships 4 real-work prim
 Create three new modules:
 
 1. **`src/probos/cognitive/model_registry.py`** -- `ModelDescriptor` dataclass + `ModelRegistry` (in-memory catalog, seeded from config). Public lookup API.
-2. **`src/probos/cognitive/model_router.py`** -- `ModelRouter` consults the registry + (optionally) `HebbianRouter.get_weight()` to pick a model for a given `(tier, agent_id)` request. Stateless. Read-only over both inputs. Emits `MODEL_ROUTED` per decision; `MODEL_FALLBACK` when the preferred model is unavailable and a backup is chosen.
-3. **Registry hook in `OpenAICompatibleClient`** -- one *real consumer* call site: `complete()` consults `runtime.model_router.choose(tier, agent_id)` (when present) to override the default tier-to-model mapping. Falls back to existing tier->model logic when registry is absent. (Real consumer per Wave 5 retrospective convention #7 -- not theater.)
+2. **`src/probos/cognitive/model_router.py`** -- `ModelRouter` consults the registry to pick a model for a given tier (cost-aware + availability-aware + cost-ceiling). Per-agent routing bias deferred to AD-463d. Stateless. Read-only over the registry. Emits `MODEL_ROUTED` per decision; `MODEL_FALLBACK` when the preferred model is unavailable and a backup is chosen.
+3. **Registry hook in `OpenAICompatibleClient`** -- one *real consumer* call site: `_complete_inner()` consults `runtime.model_router.choose(tier=...)` (when present) to override the default tier-to-model mapping. Falls back to existing tier->model logic when registry is absent. (Real consumer per Wave 5 retrospective convention #7 -- not theater.)
 
 This is **policy + diagnostics layered on existing surfaces.** AD-463 does NOT replace `BaseLLMClient`, does NOT introduce new providers, does NOT extend `HebbianRouter`. It composes existing primitives into a model-selection observability surface and prepares the seam for future provider expansion.
 
@@ -42,7 +42,7 @@ The roadmap's 10 capabilities reduce to 4 v1 deliverables that do real work toda
 
 - **`ProviderABC` + non-OpenAI providers** (Anthropic native, Ollama native, Bedrock) -- AD-463b. v1's `ModelDescriptor` carries a `provider: str` field for future use; routing today still goes through the existing `OpenAICompatibleClient` regardless of provider.
 - **MAD (Multi-Agent Debate) confidence scoring** -- AD-463c. v1 picks a single model; multi-model comparison deferred.
-- **Brain diversity / per-agent model preference** -- AD-463d. v1 reads HebbianRouter for routing-bias hint only.
+- **Brain diversity / per-agent model preference** -- AD-463d. v1 routes by tier+cost only; HebbianRouter integration deferred to AD-463d once `LLMRequest.agent_id` (or equivalent) is established.
 - **Hot-swap (live model swap without restart)** -- AD-463e. v1 routes; swap requires runtime restart.
 - **Per-model edit-format selection** (e.g., diff vs full-rewrite preference) -- AD-463f. v1's ModelDescriptor has no edit-format field.
 - **Cost-aware selection** -- partial. v1's `ModelDescriptor` carries `cost_per_million_input_tokens` and `cost_per_million_output_tokens` fields; ModelRouter accepts a `cost_ceiling: float | None` parameter. **Cost tracking integration with CognitiveJournal is shipped as a public-attribute read** -- but no behavior changes are made to journal writes (existing `CognitiveJournal` schema at `journal.py:25-43` already has `model`, `prompt_tokens`, `completion_tokens` columns; they continue to be written by the existing path). Aggregation queries are AD-467d Cost Tracker scope.
