@@ -4110,7 +4110,7 @@ This AD gives agents a **structured action space** beyond text generation. Durin
 
 **AD-449: MCP Bridge — External System Integration** *(planned, Commercial)* — Session-managed MCP bridge for ProbOS agents to interact with external systems (ERPs, CRMs, databases). JSON-RPC over Streamable HTTP, session management, tool routing. Bridge infrastructure is OSS; pre-built MCP server packs for specific systems are commercial. *Connects to: Phase 25 (Tool Layer), Extension Architecture (Phase 30), AD-448 (Security Intercept).*
 
-**AD-450: ERP Implementation Ship Class** *(planned, Commercial)* — Reimplement the D365 ERP Company Designer as a ProbOS Ship Class. 21 domain agents become ProbOS crew. First Nooplex professional services reference engagement. Revenue: per-entity configuration ($5K-25K), managed service ($2K-5K/month), Ship Class license ($10K/year). *Full details in commercial-roadmap.md.*
+**AD-450: ERP Implementation Ship Class** *(planned, Commercial)* — Reimplement the D365 ERP Company Designer as a ProbOS Ship Class. 21 domain agents become ProbOS crew. Builds on AD-449 (MCP Bridge) and the Ship Class extension architecture. *Full design, scope, and pricing in commercial-roadmap.md.*
 
 ### Absorbed from ERP Company Designer + Nooplex POC Validator Analysis (AD-451)
 
