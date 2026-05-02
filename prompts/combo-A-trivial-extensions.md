@@ -424,8 +424,6 @@ Expected: prior baseline + ~26 = non-decreasing.
 
 **Sequential discipline:** AD-572b and AD-576b both touch `src/probos/proactive.py`. Implement them in sequence (Section 4 -> Section 5 in the revised order); after each, run the focused test for that child PLUS `tests/test_proactive.py` to catch regressions in the proactive loop.
 
-**Sequential discipline:** AD-572b, AD-575b, AD-576b all touch `src/probos/proactive.py`. Implement them in sequence (Section 4 -> 5 -> 6); after each, run the focused test for that child PLUS `tests/test_proactive.py` to catch regressions in the proactive loop.
-
 ---
 
 ## What Combo A Does NOT Change

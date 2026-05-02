@@ -132,3 +132,52 @@ The combo prompt converges if and only if every child's verify-first is real. Pe
 - **AD-575b is the canonical "phantom interface" failure** — drafted on the assumption that AD-575 (closed parent) shipped a `SelfSummaryProvider`, which it didn't. Future combo drafts should grep the asserted parent-AD interface before extending.
 
 This is the first combo prompt; the lessons here justify the pattern (5 of 8 children are clean) but flag 3 children needing rework before Builder dispatch. The combo pattern survives this review with revisions.
+
+---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved (post-architect-cleanup)
+
+**Headline:** All 7 Required findings genuinely addressed in the revision; AD-575b dropped wholesale; one minor stale-line regression caught at second-pass and fixed inline by architect during this review.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: AD-573b "frozen dataclass" claim | ✅ Resolved | Line 167 says `WorkingMemorySnapshot` is "the existing `@dataclass` at line 22 -- NOT frozen; revision-pass correction." Live grep confirms `cognitive/working_memory.py:21 @dataclass` (not frozen). |
+| R#2: AD-573b `working_memory_manager` phantom | ✅ Resolved | Line 167 explicitly states "**No `runtime.working_memory_manager`** attribute exists -- v1 prompt erroneously named the suffix; revision-pass correction." Live grep `runtime.py:348 self.working_memory = WorkingMemoryManager(...)` confirms `runtime.working_memory` is the real attribute. |
+| R#3: AD-573b verify-first line-number drift | ✅ Resolved | Verify-first block (line 134-140) now lists `21: @dataclass`, `22: class WorkingMemorySnapshot:`. Old line 78 removed. |
+| R#4: AD-575b drop wholesale | ✅ Resolved | Line 4 ("7 child ADs ... AD-575b dropped"); line 171 "## AD-575b: DROPPED (theater per convention #7)" stub; line 454 tracker entry "AD-575b DEFERRED"; line 484 test-file count reduced to 7; commit message updated. |
+| R#5: AD-655 `EvaluateSubTask` phantom | ✅ Resolved | Line 327 explicitly says "the actual class is `EvaluateHandler`; v1 prompt erroneously said `EvaluateSubTask`". Verify-first grep `cognitive/sub_tasks/evaluate.py:249 class EvaluateHandler:` confirms. Test #4 renamed to `test_evaluate_handler_consults_contrastive_when_runtime_episodic_wired`. |
+| R#6: AD-526c DRY conflict (option a) | ✅ Resolved | Line 282-310: `register_engine(engine, metadata=None)` extension; new `recreation/metadata.py` (~40 lines); existing `_engines` / `register_engine` / `get_available_games` API preserved. Tests renamed `test_recreation_register_engine_with_metadata_*`. |
+| R#7: Combo Section 0 anchor | ✅ Resolved | SEARCH/REPLACE re-anchored on `MODEL_FALLBACK = "model_fallback"  # AD-463` (line 211 — Wave-7-stable). Builder note added documenting the fallback chain. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: AD-538b filter-site precision | ✅ Applied | Verify-first names line 193 + 198 seam. |
+| rec#2: AD-572b dm_queue_depth API tightening | 📦 Deferred | Folded into Builder discretion; documented in AD-572b implementation block. |
+| rec#3: AD-576b retry locals hoisted | ✅ Applied | Builder will lift constants to module level at implementation. |
+| rec#4: AD-655 mid-band thresholds note | ✅ Applied | Docstring extended: "Band thresholds are v1 defaults; AD-655b will introduce a Pydantic config knob." |
+| rec#5: AD-526c spectators/holodeck deferral language | ✅ Applied | Already explicit; convention #14 honored. |
+| rec#6: AD-656 EvaluateHandler consumer hook block | 📦 Deferred | Builder derives from AD-655 hook; same path. |
+
+### New Findings (introduced during revision)
+
+1. **Stale "Sequential discipline" line referencing AD-575b** — Required-tier (mechanical regression). The revision added a corrected Sequential-discipline line at 425 ("AD-572b and AD-576b") but did NOT remove the original at 427 ("AD-572b, AD-575b, AD-576b"). Caught at second-pass review and **fixed inline by the architect** during this review (Hard-Stop Triage Rule #1: architect-authored prompt artifacts cleaned up in place). The line at 427 is now removed; line 425 is the only "Sequential discipline" instance.
+
+### Verified Against Revised Codebase Claims
+
+- `WorkingMemorySnapshot` is plain `@dataclass` (not frozen): `cognitive/working_memory.py:21-22` ✅
+- `runtime.working_memory` is the public attribute: `runtime.py:348` ✅
+- `EvaluateHandler` (not `EvaluateSubTask`) at `cognitive/sub_tasks/evaluate.py:249` ✅
+- `runtime.recreation_service` exists: `runtime.py:445` ✅
+- `register_engine` and `get_available_games` are the existing public API: `recreation/service.py:56, 60` ✅
+- `runtime.bridge_alerts` exists for AD-572b: `runtime.py` ✅
+- `runtime.episodic_memory.recall` exists for AD-655: `cognitive/episodic.py:1440` ✅
+- `MODEL_FALLBACK = "model_fallback"  # AD-463` at `events.py:211` is the anchor ✅
+- `runtime.self_summary_provider` does NOT exist (justifies AD-575b drop): `grep -rn "self_summary_provider" src/probos/` returns no matches ✅
+
+### Tolerance Assessment (convention #15: relaxed)
+
+Combo A is the wave's largest revision (7-of-8 children retained, AD-575b wholesale-dropped). Verdict ✅ Approved post-architect-cleanup of the one stale line. The combo pattern survives Wave 8 as a viable structure for Wave 9+ trivial-cluster ADs.

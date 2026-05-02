@@ -121,3 +121,44 @@
 ## Bottom Line
 
 AD-484 is the lowest-risk Wave 8 prompt and ships clean docs + CLI work. Two Required findings are mechanical (one-line bug, one-line license-conflict drop). Six Recommended items are tightening; none block Builder dispatch. **Ready for revision pass; expected to converge in one round.**
+
+---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved
+
+**Headline:** Both Required findings genuinely resolved; 3 of 6 Recommendeds applied. No regressions; converges as predicted.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: `__class__.__name__` substring check | ✅ Resolved | Line 204: `if "ollama" in detected or ":11434" in llm_url:` — correct dict-key membership test. The `.values().__class__.__name__` accidental functional path is gone. |
+| R#2: license-classifier conflict | ✅ Resolved | Section 1 REPLACE block no longer contains `License :: OSI Approved :: Apache Software License`. SPDX `license = "Apache-2.0"` at `pyproject.toml:10` remains canonical. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: Solution Overview drift (3→4) | ✅ Applied | Line 21: "v1 ships 4 real-work primitives; the remaining 4 sub-features ... deferred to AD-484b/c". Conventions audit also updated to "4-of-8 deliverables ship; 4 deferred." |
+| rec#2: drop unreachable `return` after sys.exit | ✅ Applied | Section 3 dispatch block trimmed. |
+| rec#3: ANTHROPIC_BASE_URL detection | ✅ Applied | Lines 152-159: `os.environ.get("ANTHROPIC_BASE_URL")` with fallback to canonical Anthropic URL. |
+| rec#4: dict iteration-order comment | 📦 Deferred | Trivial; not added. |
+| rec#5: single asyncio.run wrapper for _cmd_doctor | 📦 Deferred | Folded into AD-484b's doctor expansion. |
+| rec#6: tests use absolute path resolution | 📦 Deferred | Folded into build report's testing setup. |
+
+### New Findings (introduced during revision)
+
+None. The revision touched only the four locations called out by R#1, R#2, rec#1, rec#2, rec#3.
+
+### Verified Against Revised Codebase Claims
+
+- `_cmd_init` exists at `__main__.py:542` ✅
+- `Console`, `Panel`, `Table`, `Text` already imported (`__main__.py:26-29`) ✅
+- `rich>=13.0` already a hard dep (`pyproject.toml:25`) ✅
+- `_default_data_dir`, `_probos_home`, `OpenAICompatibleClient`, `_check_nats` available for reuse ✅
+- `[project.scripts] probos = "probos.__main__:main"` at `pyproject.toml:64` ✅
+- `License :: OSI Approved` no longer claimed in the REPLACE block ✅
+
+### Tolerance Assessment
+
+AD-484 cleared second-pass cleanly. Mechanical Requireds applied; no scope expansion. Ready for Builder dispatch.

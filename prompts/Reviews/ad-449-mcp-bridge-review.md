@@ -124,3 +124,59 @@
 The MCP Bridge design is solid. v1 ships a real JSON-RPC client with EgressPolicy gating; deferrals are explicit and honest. The Required findings are: (1) tighten boundary language to drop specific connector names, (2) fix the class-attribute mutable-default race, (3) tighten Test #5 to mock both body and headers. After revision, this prompt should converge to ✅ Approved.
 
 Per convention #15 (relaxed tolerance), this is the wave's HIGH-risk slot where ⚠️ is acceptable. The boundary-language Required is mechanical and doesn't expand scope. Revisable in one pass.
+
+---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved
+
+**Headline:** All 3 Required findings genuinely resolved; commercial-boundary scrub passes; class-attribute race eliminated; test #5 mocks both body and headers. AD-449 clears second-pass without needing the convention #15 ⚠️ tolerance reservation.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: Vendor names in shipping content | ✅ Resolved | Lines 8 + 40 reframed: line 8 "vendor-specific MCP server packs (third-party SaaS connector packs of any kind)"; line 40 "vendor-specific third-party connector catalog". **Post-revision grep on the entire prompt body for `Salesforce\|ServiceNow\|D365\|Workday\|SAP\|HubSpot\|Marketo\|Oracle` returns zero hits in shipping content.** Remaining mentions of "Salesforce/ServiceNow" appear ONLY in the Revision section's audit-trail documenting what was removed (meta-content). |
+| R#2: `_last_response_headers` class-attribute mutable default | ✅ Resolved | Line 191: `self._last_response_headers: dict[str, str] = {}` — instance attribute in `__init__`. The class-level declaration `_last_response_headers: dict[str, str] = {}` is gone (was at line 307 in pass-1; verified absent post-revision). Race risk across MCPClient instances eliminated. |
+| R#3: Test #5 mock both body + headers | ✅ Resolved | Test plan #5 rewritten: "mocked httpx returns body `{...,"result":{"capabilities":{...}}}` AND headers `{"mcp-session-id": "s-123"}`. The session has the capabilities AND `session_id == "s-123"`. The test must mock both `Response.json()` AND `Response.headers` to validate the header-driven session_id capture." |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: MCPToolAdapter Solution Overview language | ✅ Applied | Line 35: "MCPToolAdapter — real wrapper class; ToolRegistry registration loop deferred to AD-449b." Convention #12 honored. |
+| rec#2: httpx async-context-manager | 📦 Deferred | `MCPClient.close()` + `MCPBridge.close_all()` cascade is sufficient; deferring to AD-449b. |
+| rec#3: log registered servers at startup | 📦 Deferred | Existing `logger.info("AD-449: MCPBridge wired ...")` is sufficient. |
+| rec#4: dual-emission comment | 📦 Deferred | Architect judgment: dual emission intentional (event-bus + MCP-specific subscribers). |
+| rec#5: protocol-version mismatch handling | 📦 Deferred | AD-449e scope. v1 uses fixed `MCP_PROTOCOL_VERSION = "2025-03-26"`. |
+| rec#6: JSON-RPC `id` format | 📦 Deferred | Hex string is fine; no change. |
+
+### New Findings (introduced during revision)
+
+None. The revision touched only the four locations called out by R#1 (lines 8 + 40 reframing), R#2 (`_last_response_headers` instance attribute), R#3 (test #5 spec), and rec#1 (Solution Overview line 35). All targeted; no collateral drift.
+
+### Verified Against Revised Codebase Claims (commercial boundary)
+
+```
+grep -in "salesforce\|servicenow\|d365\|workday\|sap \|hubspot\|marketo\|oracle\b" prompts/ad-449-mcp-bridge.md
+  (zero hits in shipping content; only historical mentions in the Revision section
+   audit trail at line 733 -- meta-content explaining what was removed)
+
+grep -in "\$\d\|revenue\|subscription\|license fee\|customer count\|pilot\b\|reference engagement\|gtm" prompts/ad-449-mcp-bridge.md
+  (only matches in negative-framing boundary alerts: "do not include",
+   "no source/test/doc string mentions", and Revision-section audit trail.
+   No positive shipping claims about pricing or commercial topics.)
+```
+
+### Verified Against Revised Codebase Claims (technical)
+
+- `Test-Path src/probos/integrations` returns False — AD-449 owns directory creation ✅
+- `class ToolRegistry` at `tools/registry.py:49`, `class Tool(Protocol)` at `tools/protocol.py:83`, `class ToolExecutor` at `tools/executor.py:40` ✅
+- `class EgressPolicy` at `security/egress.py:47`; `def is_allowed` at `security/egress.py:66` ✅
+- `runtime.tool_registry` wired at `runtime.py:1591` ✅
+- `runtime.egress_policy` wired in `startup/finalize.py` per AD-456 Wave 7 ✅
+
+### Tolerance Assessment (convention #15: relaxed)
+
+AD-449 was the wave's HIGH-risk + commercial-boundary slot — the convention #15 ⚠️ tolerance was reserved for it. The revision pass cleared all 3 Requireds mechanically; ⚠️ tolerance is **not consumed**. Verdict ✅ Approved without needing the slack.
+
+**Build-time reminder for Builder:** the test #5 mock spec requires both `Response.json()` and `Response.headers` to be mocked. Builder should use `MagicMock(spec=httpx.Response)` with both attributes set explicitly, rather than the simpler `AsyncMock(return_value={"result": ...})` pattern.

@@ -9,7 +9,7 @@
 
 ## Problem
 
-ProbOS has no first-class capacity manager for LLM throughput. `CognitiveJournal.tokens_grouped_by(...)` (`journal.py:298-337`, verified) reports historical usage by `model`/`tier`/`agent_id`/`agent_type`/`intent`, and `get_agent_tokens_since` (`journal.py:278`) supports per-agent windowed reads, but there is no:
+ProbOS has no first-class capacity manager for LLM throughput. `CognitiveJournal.get_token_usage_by(...)` (`journal.py:299-344`, verified) reports historical usage by `model`/`tier`/`agent_id`/`agent_type`/`intent`, and `get_agent_tokens_since` (`journal.py:278`) supports per-agent windowed reads, but there is no:
 
 1. **Capacity tracker** — no rolling-window aggregator that summarizes total ProbOS LLM throughput (tokens/min, calls/min, queue depth) across departments.
 2. **Department budgets** — no priority-weighted allocation surface (e.g., Engineering 60% during builds; Medical priority during Red Alert).
@@ -23,7 +23,7 @@ The roadmap entry (line 4185) lists 7 capabilities. **v1 ships 3 real-work primi
 
 Create three modules under `src/probos/cognitive/eps/` (new package; AD-469 OWNS `__init__.py` creation, mirroring AD-457/459/466/467 precedents):
 
-1. **`CapacityTracker`** (`capacity.py`) — rolling-window aggregator over `runtime.cognitive_journal.tokens_grouped_by("agent_id"|"model"|"tier")`. Computes tokens/min, calls/min over a configurable window. Read-only over the journal. Public API: `summary()` returns a `CapacitySummary` frozen dataclass. No journal-schema mutation.
+1. **`CapacityTracker`** (`capacity.py`) — rolling-window aggregator over `runtime.cognitive_journal.get_token_usage_by("agent_id"|"model"|"tier")`. Computes tokens/min, calls/min over a configurable window. Read-only over the journal. Public API: `summary()` returns a `CapacitySummary` frozen dataclass. No journal-schema mutation.
 2. **`DepartmentBudgetTable`** (`budgets.py`) — in-memory priority allocation table. Frozen dataclass `DepartmentBudget(name, percent, priority)`. Constructed from `EPSConfig.departments`. Public API: `allocations()` returns a `dict[str, float]` summing to 1.0 (renormalized when overridden). Captain-override hook: `set_override(name, percent)` triggers renormalization of remaining departments.
 3. **`EPSCoordinator`** (`coordinator.py`) — composes tracker + budget table. Public methods: `report() -> EPSReport` (summary + budget allocations + saturation flag); `override(department, percent)` (Captain-side); `consult(department) -> float` (current allocation share for the consultation-only consumer surface; used by future AD-469b atomic enforcement). Emits `EPS_BUDGET_EXCEEDED` when a department's tokens-in-window exceeds its allocated share by `over_budget_threshold`; emits `EPS_REALLOCATION` per Captain override.
 
@@ -554,7 +554,7 @@ Each test uses `MagicMock`/`SimpleNamespace` stubs. No shared mutable state.
 
 ## What This Does NOT Change
 
-- `CognitiveJournal` schema (`journal.py:25-43`) is unchanged. AD-469 reads `tokens_grouped_by(group_by=...)` only.
+- `CognitiveJournal` schema (`journal.py:25-43`) is unchanged. AD-469 reads `get_token_usage_by(group_by=...)` only.
 - `LLMClient._complete_inner` (`llm_client.py:411`) is unchanged. EPS does NOT gate LLM calls in v1.
 - `IntentBus` (`mesh/intent.py`) is unchanged. Atomic budget enforcement is AD-469d.
 - `bridge_alerts.py` is unchanged. Alert-aware reallocation is AD-469b.

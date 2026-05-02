@@ -159,3 +159,44 @@
 ## Bottom Line
 
 Three mechanical Required fixes (config-class duplication, em-dash SEARCH miss, forward-ref defaults). One borderline-theater concern (WebhookAdapter without route). Revisable in one pass; expected to converge.
+
+---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved
+
+**Headline:** All 3 Required findings genuinely resolved; configs single-defined in config.py, em-dash SEARCH literal matches live source, forward-ref typing eliminated via reorder. No regressions.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: SlackConfig/WebhookConfig defined twice | ✅ Resolved | Adapter modules now import: `from probos.config import SlackConfig` (line 145), `from probos.config import WebhookConfig` (line 293). Section 5 REPLACE block defines configs ONCE in config.py. The local `class SlackConfig(ChannelConfig):` and `class WebhookConfig(ChannelConfig):` definitions are removed from adapter source. |
+| R#2: SEARCH em-dash mismatch | ✅ Resolved | Lines 506, 527, 544 all use em-dash `—` (U+2014) matching live source at `__main__.py:450` (verified: line 712 of the prompt cites `console.print("  [red]\u2717[/red] Discord adapter failed — run: uv sync --extra discord")`). Builder note explicitly explains convention #9 does NOT apply when matching pre-existing source. |
+| R#3: forward-ref `= None` typing | ✅ Resolved | Section 5 REPLACE block reorders: `class SlackConfig(BaseModel)` and `class WebhookConfig(BaseModel)` defined BEFORE `class ChannelsConfig(BaseModel)`; direct defaults `slack: SlackConfig = SlackConfig()` and `webhook: WebhookConfig = WebhookConfig()` bind without `model_rebuild()`. Forward-ref `= None` workaround dropped. Section 6 startup wiring simplified to `if config.channels.slack.enabled:` (configs always-instantiated). |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: drop Section 1b no-op | ✅ Applied | Section 1b rewritten as explicit deferral to AD-472b. The Discord enhancements in v1 are now Section 1a (sender allowlist) + Section 1c (intent warning). |
+| rec#2: WebhookAdapter docstring tightening | 📦 Deferred | Cosmetic; existing docstring is clear. |
+| rec#3: WebhookAdapter without FastAPI route | 📦 Deferred | Architect judgment: keep WebhookAdapter in v1; `receive(...)` is testable today; AD-472b adds the route. Documented in `What This Does NOT Change`. |
+| rec#4: pin slack-sdk minor version | ✅ Applied | `slack-sdk>=3.21,<4` in pyproject extras. |
+| rec#5: Test 12 mock at adapter level | 📦 Deferred | Folded into existing test framing. |
+| rec#6: footer add __main__.py SEARCH anchor | ✅ Applied | Footer line 711-712 has the explicit em-dash grep evidence. |
+
+### New Findings (introduced during revision)
+
+None. Revisions to Section 5 / Section 6 / Section 1b / pyproject extras / verify-first footer are all targeted; no collateral drift.
+
+### Verified Against Revised Codebase Claims
+
+- Live source `__main__.py:450` uses em-dash `—`: confirmed by direct grep ✅
+- `class ChannelAdapter(ABC)` at `channels/base.py:34` ✅
+- `class DiscordConfig(BaseModel)` at `config.py:1306` (precedent for SlackConfig/WebhookConfig single-definition) ✅
+- `class ChannelsConfig(BaseModel)` at `config.py:1318` (anchor for Section 5) ✅
+- `runtime.task_scheduler._channel_adapters` integration site at `__main__.py:456` ✅
+
+### Tolerance Assessment
+
+AD-472 cleared second-pass cleanly. The R#1 R#2 R#3 trio (config consolidation + em-dash + forward-ref typing) was a tight cluster of mechanical fixes; revision applied each surgically without regressions. Ready for Builder dispatch.

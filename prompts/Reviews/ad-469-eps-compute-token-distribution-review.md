@@ -164,3 +164,48 @@
 The phantom-`tokens_grouped_by` issue is exactly the failure shape Wave 5-7 retrospective addendum #6 ("phantom APIs in defensive-read paths") warned about, and the dispatch's pre-check guidance was supposed to prevent. Mechanical fix: replace `tokens_grouped_by` with `get_token_usage_by` and `row.get("calls", ...)` with `row.get("total_calls", ...)`. After revision, this prompt should converge cleanly. **Verdict will flip to ✅ Approved on second-pass review when the phantom is gone.**
 
 The Required is mechanical, not architectural — but it's a "would not work on first run" bug, not a polish item. Hence ❌ Not Ready.
+
+---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved (post-architect-cleanup)
+
+**Headline:** Phantom-API correction propagates through Section 2 implementation + verify-first footer; revision missed 3 stale references in Problem/Solution/NOT-Change sections — caught at second-pass and fixed inline by architect during this review.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: Phantom `tokens_grouped_by` -> real `get_token_usage_by` | ⚠️→✅ Resolved (post-cleanup) | Section 2 implementation lines 156-158: `await journal.get_token_usage_by(group_by=...)`. Verify-first footer line 631: `299: async def get_token_usage_by(`. **Second-pass caught 3 stale references in Problem (line 12), Solution Overview (line 26), and "What This Does NOT Change" (line 557 → now corrected) — fixed inline by architect during this review** (Hard-Stop Triage Rule #1). All four occurrences in shipping content now reference `get_token_usage_by`. The revision-pass historical references in Section 2 inline comment + Revision section are preserved as audit trail. |
+| R#2: Footer hallucinated grep result | ✅ Resolved | Verify-first footer line 631 corrected: `299: async def get_token_usage_by(`. Live grep confirms exact match. |
+| R#3: `row.get("calls")` -> `row.get("total_calls")` | ✅ Resolved | Section 2 line 165: `total_calls = sum(int(row.get("total_calls", 0) or 0) for row in by_agent)`. Live grep `journal.py:334` confirms `"total_calls"` is the real key. |
+| R#4: Group-key fragility (clarified as fragile-but-correct) | ✅ Resolved | Builder note in Section 2 documents the dynamic `group_by` -> dict-key dependency. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: `check_budgets()` returns `[]` always | 📦 Deferred | Architect judgment: keep with v1-empty-list contract; AD-469b consumes. Convention #7 honored via docstring. |
+| rec#2: drop unused `since` variable | ✅ Applied | Removed from Section 2's `summary()`. |
+| rec#3: tokens_per_minute overstates rate | ✅ Applied | Solution Overview note added; AD-469b will introduce `since=` filter. Documented honest deferral. |
+| rec#5: DepartmentBudgetTable allocation comment | 📦 Deferred | Docstring already documents renormalization. |
+| rec#6: test #7 default-allocations sum-to-one | ✅ Already in test plan | Defaults sum to exactly 1.00. |
+
+### New Findings (introduced during revision)
+
+1. **Stale `tokens_grouped_by` references in Problem (line 12), Solution Overview (line 26), and "What This Does NOT Change" (line 557)** — Required-tier (partial-resolution-of-existing-Required, not a new Required-class issue per dispatch tolerance). The revision corrected Section 2 implementation + verify-first footer but missed the prose sections. Caught at second-pass review and **fixed inline by the architect** during this review (3 mechanical search-replace edits). Post-fix grep confirms zero remaining `tokens_grouped_by` references in shipping content; only historical mentions in Section 2 inline comment + Revision section remain (preserved as audit trail).
+
+### Verified Against Revised Codebase Claims
+
+- `async def get_token_usage_by` at `journal.py:299` ✅
+- Live row shape `{group_by: ..., "total_calls", "total_tokens", ...}` at `journal.py:333-338` ✅
+- `runtime.cognitive_journal` at `runtime.py:213, 424, 1593` ✅
+- `runtime.llm_client` at `runtime.py:347` ✅
+- `runtime.emit_event` at `runtime.py:785` ✅
+- `model_routing: ModelRoutingConfig = ModelRoutingConfig()  # AD-463` at `config.py:1693` (Section 6 anchor) ✅
+- No `CognitiveJournal` schema modifications ✅
+
+### Tolerance Assessment (convention #15: relaxed)
+
+AD-469 cleared second-pass post-architect-cleanup. The pass-1 ❌ verdict-driver (phantom API) is now genuinely fully resolved (Section 2 + footer + Problem + Solution + NOT-Change). The single architect-driven cleanup at second-pass time is documented in this review and the prompt's Revision section preserves the audit trail.
+
+**Lesson for Wave 9:** revisions that touch implementation must also grep the prose sections (Problem, Solution Overview, What This Does NOT Change) for the same stale name. The revision subagent corrected the implementation but missed the prose — a recurring pattern worth scripting into the revision-pass dispatch.

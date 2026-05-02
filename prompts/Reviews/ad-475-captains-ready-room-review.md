@@ -99,3 +99,44 @@
 ## Bottom Line
 
 AD-475 is the cleanest Wave 8 prompt. Recommended items are tightening only — Builder can dispatch this prompt as-is and the Recommendeds can be folded into the build report. Closest match to a first-pass-pass under relaxed tolerance.
+
+---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved (re-confirmed)
+
+**Headline:** Recommended items folded in cleanly during revision; no regressions; first-pass ✅ verdict holds.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| (none — pass-1 verdict was ✅) | n/a | n/a |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: drop unused asyncio import | ✅ Applied | Section 3 import block now omits `import asyncio`; only `await` keyword needed. |
+| rec#2: defensive `participants` coercion | ✅ Applied | Line 354: `if not isinstance(participants, list): participants = list(participants) if participants is not None else []`. Prevents string-iterate-as-characters. |
+| rec#3: extra advance_phase test (#13) | ✅ Applied | Test #13 `test_session_manager_advance_phase_returns_none_for_unknown_id` added. Test count 12 → 13. |
+| rec#4: SessionPhase / thread_mode disambiguation | 📦 Deferred | Cosmetic; two `discuss` literals live in distinct namespaces. |
+| rec#5: explicit comment in finalize about implicit mkdir | ✅ Applied | Section 6 now has the comment. |
+| rec#6: journal_correlation_id integration target | 📦 Deferred | AD-475c picks up the journal write seam. |
+| rec#7: disabled-runtime-attr None test | 📦 Deferred | Folded into integration test scope. |
+
+### New Findings (introduced during revision)
+
+None. The revision touched 3 spots (asyncio import, participants coercion, test #13, plus a comment in Section 6) — all safe additive changes.
+
+### Verified Against Revised Codebase Claims
+
+- `WardRoomService.create_thread` signature unchanged: `ward_room/service.py:357` ✅
+- `runtime.ward_room` exists: `runtime.py:390, 1550` ✅
+- `runtime.cognitive_journal` exists: `runtime.py:213, 424, 1593` ✅
+- `runtime.emit_event` is the public method at `runtime.py:785` ✅
+- TOGAF Architecture Hierarchy / 5-phase / Idea→Spec pipeline still wholesale-deferred — convention #14 + #7 honored.
+- New test #13 spec is consistent with the existing line-393 `advance_phase` idempotent contract.
+
+### Tolerance Assessment
+
+AD-475 is the wave's "✅-on-first-pass + ✅-on-second-pass" reference prompt. No further review required pre-Builder.
