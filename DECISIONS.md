@@ -10,6 +10,39 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### Wave 5-7 Retrospective Addendum — Additional Conventions
+
+**Date:** 2026-05-02
+**Status:** Conventions accumulated across Waves 6 and 7. Read alongside the original Wave 5 Retrospective entry below; the 7 standing conventions there remain in force, and these 8 supplement them.
+
+**Why a second entry rather than amending Wave 5.** The Wave 5 entry was written when only one wave's worth of evidence existed. Waves 6 and 7 surfaced new patterns (some confirming Wave 5, some new) that deserve their own crystallization. Future architects reading DECISIONS.md should treat both entries together as the running rule set for prompt drafting and review.
+
+**Convergence trend.** Pass-1 Required findings: Wave 5 = 22, Wave 6 = 18, Wave 7 = 11. Wave-over-wave drop ~30%. Conventions are compounding. Builder-pass first-time-✅ rate: Wave 5 = 5/5, Wave 6 = 5/5, Wave 7 = 5/5. Three waves at 100% Builder convergence; the gating cost is now in the drafting+review loop, not the build loop.
+
+**8. TYPE_CHECKING cross-layer imports + ALLOWED_EXCEPTIONS.** When a lower layer needs to type-hint a higher-layer class for static analysis only, use `from __future__ import annotations` + a `TYPE_CHECKING`-guarded import, then add the file pair to `tests/test_layer_boundaries.py` ALLOWED_EXCEPTIONS. Pattern from BF-085, AD-451 (Wave 6), AD-528 (Wave 7). Drafting prompts must include the ALLOWED_EXCEPTIONS edit as an explicit step — Builder shouldn't have to rediscover the pattern.
+
+**9. ASCII-only source comments.** Use `<-`, `->`, `--` instead of `←`, `→`, `—` in source-file comments. Windows `cp1252`-default `Path(...).read_text()` calls in tests that read source files break on Unicode. Pattern from AD-458 (Wave 6) — caused a 4-test failure; mechanically fixed.
+
+**10. `runtime.work_item_store` vs `runtime.workforce` clarity.** The runtime carries both `work_item_store` (the persistence layer) and `workforce` (the WorkforceSchedulingEngine). Most prompts that say "wire to the workforce" mean `work_item_store`. Pattern from AD-528 (Wave 7) — Builder caught at build time, no escalation needed.
+
+**11. `__new__`-bypass defensive-`getattr` convention.** Some test patterns (BF-069 lineage) construct objects via `__new__`, skipping `__init__`. Any code path that may be reached by such a test must read instance attributes via `getattr(self, name, None)`, not direct attribute access. Pattern from AD-463 (Wave 7) — `_resolve_model_for_tier` needed `getattr(self, "model_router", None)` for BF-069 test compatibility.
+
+**12. Solution Overview drift after Revision section reframe.** When a Revision section materially reframes v1 scope (wholesale-deferring a sub-feature, dropping a class, changing an integration point), the prompt's Solution Overview / Dependencies header / "v1 deliverables" bullets at the top of the prompt MUST be re-read and aligned. Pattern from AD-463 (Wave 7) — caught at second-pass review as a Required-class finding (Builder reading top-to-bottom would see contradictions before reaching the Revision section). Mechanical fix; documents the lesson rather than absorbing it silently.
+
+**13. Pool template name collision pre-check.** When a prompt creates a new agent pool, grep `src/probos/runtime.py` and `src/probos/startup/agent_fleet.py` for the proposed template names BEFORE drafting. Pattern from AD-467 (Wave 7) — `scheduler` collided with bundled cognitive `SchedulerAgent`; resolved by `operations_<role>` prefix and `Ops*` import aliases. Worth scripting as part of dispatch pre-check (~30 min architect investment).
+
+**14. Aggressive pre-deferral over post-review carve-out.** Wave 7 demonstrated that drafting prompts with explicit v1/sub-AD scope split BEFORE the review pass is materially cheaper than drafting "the whole AD" and letting review carve out deferrals. AD-463 deferred 6 of 10 capabilities at draft time; AD-466 deferred 3 of 5; AD-456 deferred 1 of 4. The no-theater discipline (Wave 5 convention #7) is now the default drafting posture, not a review-time correction.
+
+**15. 3-pass review with strict tolerance vs 2-pass with relaxed tolerance.** Wave 5 and 6 hit 5/5 ✅ in 2 review iterations with relaxed tolerance ("1 ⚠️ allowed on highest-risk prompt"). Wave 7 dispatched with strict zero-tolerance and required a 3rd pass for a documentation-drift Nit on AD-463. **Decision: revert to relaxed tolerance for Wave 8+.** The strict tolerance caught a real but cosmetic issue at the cost of one extra dispatch cycle; relaxed tolerance ships equivalent quality with fewer round-trips. Reserve strict tolerance for foundation/Northstar prompts where misalignment between Solution Overview and Revision could mislead the Builder materially.
+
+**Cross-cutting failure modes still recurring.** Despite three waves of conventions, the same shape of failure surfaces in the first review pass:
+
+- **Phantom attributes / phantom APIs in defensive-read paths** (Wave 5: AD-455 `run_probe`; Wave 6: AD-458 `client.operational_status.deep`; Wave 7: AD-463 `LLMRequest.agent_id`, AD-528 `Episode.store(dict)`, AD-467 `ResourcePool.active_count`). Verify-first discipline catches these in review but not yet in drafting. Worth a one-time scripted pre-check that the dispatching architect runs before subagent invocation: grep every `runtime.X.Y` and `<class>.<method>` triplet referenced in the dispatch's AD-specific guidance against the live code. ~20 min investment, would have caught all three Wave 7 phantoms.
+
+- **Solution Overview ↔ Revision section drift** (new in Wave 7). Worth adding a closing self-check step to the revision-pass dispatch: "After applying revisions, re-read the prompt top-to-bottom and confirm the Solution Overview, Dependencies header, and v1-deliverables bullets are consistent with the Revision section." Catches the AD-463-shape failure at revision time, not at second-pass review.
+
+**Cross-links.** AD-440 (public attribute precedent), AD-455 (RedTeam coordinator-then-dispatch), AD-457 (engineering pool registration; utility-tier classification), AD-459 (degradation-tier classification), AD-468 (stdlib JSON), AD-499 (superset-filter discipline), AD-680 (public API promotion that established the pattern), AD-682 (test fixture isolation; flake context).
+
 ### Wave 5 Retrospective — Conventions Adopted
 
 **Date:** 2026-05-01
