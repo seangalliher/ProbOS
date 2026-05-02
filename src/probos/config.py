@@ -1083,6 +1083,20 @@ class InfodynamicConfig(BaseModel):
     trust_buckets: int = Field(default=10, ge=2, le=100)
 
 
+class SecurityInfraConfig(BaseModel):
+    """Security infrastructure configuration (AD-456).
+
+    Distinct from ``SecurityConfig`` (AD-455) which configures threat detection,
+    input validation, trust integrity, and red-team coordination.
+    """
+
+    secrets_persistence_enabled: bool = True
+    secrets_store_filename: str = "secrets.json"
+    egress_enabled: bool = True
+    egress_deny_by_default: bool = True  # v1: real-signal default per no-theater
+    audit_enabled: bool = True
+
+
 class SecurityConfig(BaseModel):
     """Security Team configuration (AD-455)."""
 
@@ -1647,6 +1661,7 @@ class SystemConfig(BaseModel):
     degradation: DegradationConfig = DegradationConfig()  # AD-459
     infodynamic: InfodynamicConfig = InfodynamicConfig()  # AD-491
     infrastructure: InfrastructureConfig = InfrastructureConfig()  # AD-466
+    security_infra: SecurityInfraConfig = SecurityInfraConfig()  # AD-456
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

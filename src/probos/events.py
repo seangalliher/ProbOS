@@ -199,6 +199,9 @@ class EventType(str, Enum):
     INFODYNAMIC_REPORT = "infodynamic_report"  # AD-491
     BACKUP_COMPLETE = "backup_complete"  # AD-466
     BACKUP_FAILED = "backup_failed"  # AD-466
+    SECRET_ROTATED = "secret_rotated"  # AD-456
+    EGRESS_BLOCKED = "egress_blocked"  # AD-456
+    AUDIT_RECORDED = "audit_recorded"  # AD-456
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

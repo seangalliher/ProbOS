@@ -516,6 +516,45 @@ async def finalize_startup(
         await red_team_lead.start()
         logger.info("AD-455: Security Team wired (4 services)")
 
+    # AD-456: Security Infrastructure
+    # Reconfigure existing CredentialStore (AD-395) with AD-456 rotation extension
+    credential_store = getattr(runtime, "credential_store", None)
+    if credential_store is not None and config.security_infra.secrets_persistence_enabled:
+        try:
+            credential_store._store_path = (
+                runtime.data_dir / config.security_infra.secrets_store_filename
+            )
+            credential_store._emit_event = runtime.emit_event
+            logger.info(
+                "AD-456: CredentialStore extended with secrets store (path=%s)",
+                credential_store._store_path,
+            )
+        except Exception:
+            logger.warning(
+                "AD-456: CredentialStore secrets-store extension failed",
+                exc_info=True,
+            )
+
+    if config.security_infra.egress_enabled:
+        from probos.security.egress import EgressPolicy
+        runtime.egress_policy = EgressPolicy(
+            emit_event=runtime.emit_event,
+            deny_by_default=config.security_infra.egress_deny_by_default,
+        )
+        logger.info(
+            "AD-456: EgressPolicy wired (deny_by_default=%s)",
+            config.security_infra.egress_deny_by_default,
+        )
+    else:
+        runtime.egress_policy = None
+
+    if config.security_infra.audit_enabled:
+        from probos.security.audit import AuditLog
+        runtime.audit_log = AuditLog(emit_event=runtime.emit_event)
+        logger.info("AD-456: AuditLog wired (in-memory hash chain)")
+    else:
+        runtime.audit_log = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:
