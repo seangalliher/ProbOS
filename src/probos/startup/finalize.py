@@ -613,6 +613,33 @@ async def finalize_startup(
         runtime.model_registry = None
         runtime.model_router = None
 
+    # AD-475: Captain's Ready Room (Idea Capture + Session Manager)
+    if config.ready_room.enabled:
+        from probos.cognitive.ready_room import (
+            IdeaCaptureStore,
+            ReadyRoomSessionManager,
+        )
+        idea_path = runtime.data_dir / config.ready_room.idea_store_filename
+        # AD-475 rev: parent dirs auto-created by IdeaCaptureStore._save() at
+        # first write (mkdir(parents=True, exist_ok=True)). No explicit
+        # mkdir at startup -- keeps the wiring side-effect free.
+        runtime.idea_capture_store = IdeaCaptureStore(
+            store_path=idea_path,
+            emit_event=runtime.emit_event,
+        )
+        runtime.ready_room_session_manager = ReadyRoomSessionManager(
+            runtime=runtime,
+            emit_event=runtime.emit_event,
+            wardroom_channel_id=config.ready_room.wardroom_channel_id,
+        )
+        logger.info(
+            "AD-475: Ready Room wired (idea store=%s, channel=%s)",
+            idea_path, config.ready_room.wardroom_channel_id,
+        )
+    else:
+        runtime.idea_capture_store = None
+        runtime.ready_room_session_manager = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

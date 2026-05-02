@@ -209,6 +209,8 @@ class EventType(str, Enum):
     WORKFLOW_STARTED = "workflow_started"  # AD-467
     MODEL_ROUTED = "model_routed"  # AD-463
     MODEL_FALLBACK = "model_fallback"  # AD-463
+    READY_ROOM_SESSION_STARTED = "ready_room_session_started"  # AD-475
+    IDEA_CAPTURED = "idea_captured"  # AD-475
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

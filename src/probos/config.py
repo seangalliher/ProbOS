@@ -1109,6 +1109,14 @@ class ModelRoutingConfig(BaseModel):
     cost_ceiling_per_million_output_tokens: float | None = None  # USD; None disables
 
 
+class ReadyRoomConfig(BaseModel):
+    """Captain's Ready Room configuration (AD-475)."""
+
+    enabled: bool = True
+    idea_store_filename: str = "ready_room/ideas.json"
+    wardroom_channel_id: str = "ready_room"
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1691,6 +1699,7 @@ class SystemConfig(BaseModel):
     ground_truth: GroundTruthConfig = GroundTruthConfig()  # AD-528
     operations: OperationsConfig = OperationsConfig()  # AD-467
     model_routing: ModelRoutingConfig = ModelRoutingConfig()  # AD-463
+    ready_room: ReadyRoomConfig = ReadyRoomConfig()  # AD-475
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
