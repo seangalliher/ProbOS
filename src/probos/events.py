@@ -197,6 +197,8 @@ class EventType(str, Enum):
     SERVICE_TIER_RESTORED = "service_tier_restored"  # AD-459
     PREFLIGHT_FAILED = "preflight_failed"  # AD-458
     INFODYNAMIC_REPORT = "infodynamic_report"  # AD-491
+    BACKUP_COMPLETE = "backup_complete"  # AD-466
+    BACKUP_FAILED = "backup_failed"  # AD-466
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

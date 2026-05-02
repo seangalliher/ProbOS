@@ -1058,6 +1058,13 @@ class EngineeringConfig(BaseModel):
     damage_control_cooldown_seconds: float = Field(default=60.0, ge=1.0)
 
 
+class InfrastructureConfig(BaseModel):
+    """Engineering infrastructure configuration (AD-466)."""
+
+    enabled: bool = True
+    backup_enabled: bool = True
+    backup_subdir: str = "backups"
+
 class DegradationConfig(BaseModel):
     """Saucer separation / graceful degradation (AD-459).
 
@@ -1639,6 +1646,7 @@ class SystemConfig(BaseModel):
     engineering: EngineeringConfig = EngineeringConfig()  # AD-457
     degradation: DegradationConfig = DegradationConfig()  # AD-459
     infodynamic: InfodynamicConfig = InfodynamicConfig()  # AD-491
+    infrastructure: InfrastructureConfig = InfrastructureConfig()  # AD-466
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

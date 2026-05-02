@@ -405,6 +405,37 @@ async def finalize_startup(
         )
         logger.info("AD-491: InfodynamicProbe wired")
 
+    # AD-466: Engineering Infrastructure (BackupService + StorageBackend)
+    if config.infrastructure.enabled:
+        from probos.infrastructure import (
+            BackupService,
+            SQLiteStorageBackend,
+        )
+        runtime.storage_backend = SQLiteStorageBackend()
+        if config.infrastructure.backup_enabled:
+            backup_root = runtime.data_dir / config.infrastructure.backup_subdir
+            try:
+                backup_root.mkdir(parents=True, exist_ok=True)
+                runtime.backup_service = BackupService(
+                    data_dir=runtime.data_dir,
+                    backup_root=backup_root,
+                    emit_event=runtime.emit_event,
+                )
+                logger.info(
+                    "AD-466: BackupService wired (backup_root=%s)",
+                    backup_root,
+                )
+            except OSError:
+                logger.warning(
+                    "AD-466: BackupService mkdir failed (backup_root=%s); "
+                    "service disabled for this session",
+                    backup_root, exc_info=True,
+                )
+                runtime.backup_service = None
+        else:
+            runtime.backup_service = None
+        logger.info("AD-466: StorageBackend wired (sqlite)")
+
     # AD-459: Saucer separation -- graceful degradation
     # v1 always wires the manager (no enabled flag) so consumers can call
     # `runtime.degradation_manager.is_shed(name)` without a None check.
