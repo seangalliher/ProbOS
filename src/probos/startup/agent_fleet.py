@@ -163,6 +163,24 @@ async def create_agent_fleet(
                 agent_ids=ids, runtime=runtime, interval=interval,
             )
 
+    # AD-467: Operations crew -- Resource Allocator / Scheduler / Coordinator
+    if config.operations.enabled:
+        ops_cfg = config.operations
+        _operations_heartbeat: list[tuple[str, str, float]] = [
+            ("operations_resource_allocator", "operations_resource_allocator",
+             ops_cfg.resource_interval_seconds),
+            ("operations_scheduler", "operations_scheduler",
+             ops_cfg.scheduler_interval_seconds),
+            ("operations_coordinator", "operations_coordinator",
+             ops_cfg.coordinator_interval_seconds),
+        ]
+        for agent_type_name, pool_name, interval in _operations_heartbeat:
+            ids = generate_pool_ids(agent_type_name, pool_name, 1)
+            await create_pool_fn(
+                pool_name, agent_type_name, target_size=1,
+                agent_ids=ids, runtime=runtime, interval=interval,
+            )
+
     # Build CodebaseIndex — ship's library, available to all agents (AD-297)
     from probos.cognitive.codebase_index import CodebaseIndex
 

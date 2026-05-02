@@ -1092,6 +1092,16 @@ class GroundTruthConfig(BaseModel):
     write_episode: bool = True
 
 
+class OperationsConfig(BaseModel):
+    """Operations crew configuration (AD-467)."""
+
+    enabled: bool = True
+    resource_interval_seconds: float = Field(default=30.0, ge=1.0)
+    resource_emit_interval_seconds: float = Field(default=60.0, ge=10.0)
+    scheduler_interval_seconds: float = Field(default=60.0, ge=10.0)
+    coordinator_interval_seconds: float = Field(default=60.0, ge=10.0)
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1672,6 +1682,7 @@ class SystemConfig(BaseModel):
     infrastructure: InfrastructureConfig = InfrastructureConfig()  # AD-466
     security_infra: SecurityInfraConfig = SecurityInfraConfig()  # AD-456
     ground_truth: GroundTruthConfig = GroundTruthConfig()  # AD-528
+    operations: OperationsConfig = OperationsConfig()  # AD-467
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

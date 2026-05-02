@@ -204,6 +204,9 @@ class EventType(str, Enum):
     AUDIT_RECORDED = "audit_recorded"  # AD-456
     VERIFICATION_PASSED = "verification_passed"  # AD-528
     VERIFICATION_FAILED = "verification_failed"  # AD-528
+    RESOURCE_ALLOCATED = "resource_allocated"  # AD-467
+    TASK_SCHEDULED = "task_scheduled"  # AD-467
+    WORKFLOW_STARTED = "workflow_started"  # AD-467
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

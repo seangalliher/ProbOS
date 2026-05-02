@@ -631,6 +631,23 @@ class ProbOSRuntime:
         self.spawner.register_template("maintenance", MaintenanceAgent)
         self.spawner.register_template("damage_control", DamageControlAgent)
 
+        # AD-467: Operations crew templates (operations_-prefixed to avoid
+        # collision with the bundled cognitive SchedulerAgent at line 599)
+        from probos.agents.operations import (
+            CoordinatorAgent as OpsCoordinatorAgent,
+            ResourceAllocatorAgent as OpsResourceAllocatorAgent,
+            SchedulerAgent as OpsSchedulerAgent,
+        )
+        self.spawner.register_template(
+            "operations_resource_allocator", OpsResourceAllocatorAgent,
+        )
+        self.spawner.register_template(
+            "operations_scheduler", OpsSchedulerAgent,
+        )
+        self.spawner.register_template(
+            "operations_coordinator", OpsCoordinatorAgent,
+        )
+
         # --- CodebaseIndex (AD-290) ---
         self.codebase_index: CodebaseIndex | None = None
         self.nats_bus: NATSBus | None = None
