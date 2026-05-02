@@ -200,6 +200,10 @@ This is the **public open-source repo** (Apache 2.0). A separate private repo (`
 
 **Never add to this repo:** pricing, revenue projections, competitive analysis tables, "Great Artists Steal" patterns, enterprise tier specs, demo scripts with sales positioning, business strategy.
 
+**Commercial-tagged AD entries (HARD RULE).** Any `*(Commercial)*` AD entry in the public roadmap (`docs/development/roadmap.md`) describes the **extension point only** — what the feature is, what it connects to, what OSS infrastructure it builds on. Pricing, revenue model, customer counts, professional-services positioning, and go-to-market language all belong in the private `commercial-roadmap.md`. The `*(Commercial)*` tag means "see commercial repo for full scope" — it is NOT permission to include commercial details inline.
+
+Architect-drafted prompts and roadmap edits must be audited for this leak class before commit. The pre-commit deletion sanity check (per BUILDER-EXECUTION-PLAN.md) does not catch additions; this rule covers the gap. AD-450 (2026-05-01) was the canonical failure of this rule — pricing tiers leaked publicly for ~3 weeks before redaction.
+
 ---
 
 ## ProbOS Architecture Reference
