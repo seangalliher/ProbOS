@@ -555,6 +555,34 @@ async def finalize_startup(
     else:
         runtime.audit_log = None
 
+    # AD-528: Ground-Truth Task Verification (v1: read-only scoring + emit;
+    # active rejection deferred to AD-528b)
+    if config.ground_truth.enabled:
+        from probos.cognitive.ground_truth import (
+            GroundTruthVerifier,
+            VerificationEpisodeWriter,
+        )
+        runtime.ground_truth_verifier = GroundTruthVerifier(
+            runtime=runtime,
+            emit_event=runtime.emit_event,
+            threshold=config.ground_truth.threshold,
+            event_window_seconds=config.ground_truth.event_window_seconds,
+        )
+        if config.ground_truth.write_episode:
+            runtime.verification_episode_writer = VerificationEpisodeWriter(
+                runtime=runtime,
+            )
+        else:
+            runtime.verification_episode_writer = None
+        logger.info(
+            "AD-528: GroundTruthVerifier wired (threshold=%.2f, window=%.0fs)",
+            config.ground_truth.threshold,
+            config.ground_truth.event_window_seconds,
+        )
+    else:
+        runtime.ground_truth_verifier = None
+        runtime.verification_episode_writer = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

@@ -6486,7 +6486,7 @@ Closes all remaining findings from the 2026-03-29 comprehensive code review. Wav
 
 Motivated by findings in ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (2026) — a red-team study of autonomous LLM agents deployed with persistent memory, communication channels, and tool access. The study documents eleven failure modes in a setup nearly identical to ProbOS's operational surface. Three gaps apply to ProbOS and are not covered by existing Phase 31 plans.
 
-**AD-528: Ground-Truth Task Verification** *(planned, OSS)* — The study found agents reporting "task complete" while system state contradicted the claim. ProbOS has no mechanism to verify agent claims against actual outcomes. Agents self-report via BookingJournal entries and Ward Room messages, but nothing checks whether the work was actually done correctly.
+**AD-528: Ground-Truth Task Verification** *(complete, OSS)* — The study found agents reporting "task complete" while system state contradicted the claim. ProbOS has no mechanism to verify agent claims against actual outcomes. Agents self-report via BookingJournal entries and Ward Room messages, but nothing checks whether the work was actually done correctly.
 
 **(1) Problem:** An agent says "I fixed the bug" or "analysis complete" — the Captain and crew take it at face value. In adversarial or degraded conditions, this creates a deceptive reporting vector.
 

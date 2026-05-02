@@ -66,6 +66,10 @@ ALLOWED_EXCEPTIONS = {
     # AD-451: cognitive → agents.red_team — TYPE_CHECKING-only type annotation
     # for TwoStageVerifier wrapper; runtime dependency injected via constructor.
     ("cognitive/validation_framework.py", "probos.agents.red_team"),
+    # AD-528: cognitive → workforce — TYPE_CHECKING-only type annotation for
+    # BookingJournal; runtime read goes through `runtime.work_item_store` public
+    # attribute injection. Mirrors BF-085 / AD-451 precedent.
+    ("cognitive/ground_truth.py", "probos.workforce"),
     # AD-583: knowledge → cognitive.social_verification — pure function import for independence scoring
     ("knowledge/records_store.py", "probos.cognitive.social_verification"),
 }

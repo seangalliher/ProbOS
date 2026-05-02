@@ -1083,6 +1083,15 @@ class InfodynamicConfig(BaseModel):
     trust_buckets: int = Field(default=10, ge=2, le=100)
 
 
+class GroundTruthConfig(BaseModel):
+    """Ground-truth task verification configuration (AD-528)."""
+
+    enabled: bool = True
+    threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    event_window_seconds: float = Field(default=600.0, ge=10.0)
+    write_episode: bool = True
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1662,6 +1671,7 @@ class SystemConfig(BaseModel):
     infodynamic: InfodynamicConfig = InfodynamicConfig()  # AD-491
     infrastructure: InfrastructureConfig = InfrastructureConfig()  # AD-466
     security_infra: SecurityInfraConfig = SecurityInfraConfig()  # AD-456
+    ground_truth: GroundTruthConfig = GroundTruthConfig()  # AD-528
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
