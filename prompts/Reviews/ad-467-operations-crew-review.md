@@ -277,3 +277,53 @@ After Required #1 fix, Test 7 must reflect the new attribute name (`current_size
 **Build-readiness after fix:** ~10 minutes architect time. Single-line change in Section 2 (or 4-line change for the `to_dict()` alternative).
 
 **Recommended build order:** AD-467 fourth in Wave 7 (after AD-466, AD-456, AD-528). Owns `agents/operations/` directory creation; anchors on Wave-6 AD-457 blocks.
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved** — phantom `active_count` replaced with real `current_size` (`@property` at `pool.py:53`); defensive `getattr(..., 0)` preserved per superset-filter discipline; no new issues introduced.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: ResourcePool.active_count phantom | ✅ Resolved | Section 2 line 144: `active = int(getattr(pool_obj, "current_size", 0) or 0)`. Inline comment cites verification: "ResourcePool.current_size is a @property at pool.py:53; ResourcePool.target_size is an instance attribute at pool.py:42." Verified at `substrate/pool.py:53`. |
+| R#2: defensive getattr anti-pattern | ✅ Resolved | The `getattr(..., 0)` is now correct usage — `current_size` exists as a `@property` on real ResourcePool instances; the defensive default handles test stubs that may not include the attribute. NOT a phantom mask. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: emit-throttle interval rationale | ✅ Applied | Section 2 docstring documents the two-interval design. |
+| rec#2: _task_cadences default names | 📦 Deferred | Naming acceptable for v1; AD-467b consumers may rename. |
+| rec#3: WORKFLOW_REJECTED EventType | 📦 Deferred | Scope expansion; AD-467b can add. |
+| rec#4: to_dict() alternative | ✅ Applied | Documented in Builder note as alternative. |
+| rec#5: Test 7 update | ✅ Applied | Test 7 description rewritten: "fake runtime with 2 pools; each pool exposes `current_size` and `target_size` attributes -> `capacity` dict populated with real `{active, target}` integers (e.g., `{"active": 3, "target": 5}`)." |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| nit#1: footer line drift | ✅ Applied | `runtime.emit_event` line corrected. |
+| nit#2, #3, #4 | ✅ N/A | Cosmetic. |
+
+### New Findings (introduced during revision)
+
+None.
+
+### Verified Against Revised Codebase Claims
+
+- `ResourcePool.current_size` `@property` at `substrate/pool.py:53` — confirmed.
+- `ResourcePool.target_size` instance attribute at `substrate/pool.py:42` — confirmed.
+- `ResourcePool.to_dict()` at `substrate/pool.py:244` — confirmed; documented as alternative path in Section 2 Builder note.
+- All references in revised prompt body use `current_size` (zero `active_count` references in Section 2 code).
+- Defensive `getattr(..., 0)` is preserved (handles test-stub edge cases per Wave 5 superset-filter discipline #4).
+- Section 7a SEARCH/REPLACE anchor (`runtime.py:630-632`) verified post-Wave 6.
+- Section 7b SEARCH/REPLACE anchor (`agent_fleet.py:148-164`) verified post-Wave 6.
+
+### Cross-Cutting Convention Audit
+
+| Cross-cutting fix | Applied? | Evidence |
+|---|---|---|
+| Phantom-API fix: AD-467 active_count | ✅ Applied | `current_size` substituted; defensive guard preserved. |
+
+### Verdict
+
+**✅ Approved.** Build-ready as AD-467 fourth in Wave 7. Single-line mechanical fix applied cleanly.

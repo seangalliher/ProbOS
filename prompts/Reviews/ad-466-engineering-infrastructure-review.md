@@ -168,3 +168,44 @@ The dispatch's high-priority verification check ("v1 actually justifies a separa
 **Build-readiness:** ~5 minutes architect time for footer line-drift cleanup; otherwise ready to ship.
 
 **Recommended build order:** AD-466 first in Wave 7 (smallest blast radius, owns directory creation, no cross-AD dependencies).
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved** — all Recommended polish applied; no Required findings to begin with; no new issues introduced.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| (none) | N/A | Pass-1 verdict was ✅ Approved |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: footer line drift | ✅ Applied | Footer line corrected: `runtime.emit_event` 775 → 785 (verified at `runtime.py:785`). |
+| rec#2: backup_root mkdir defensive guard | ✅ Applied | Revision Section 6 update wraps `backup_root.mkdir(...)` in `try/except OSError` with `runtime.backup_service = None` fallback and `logger.warning`. Three-tier exception handling (tier-2 log-and-degrade) correctly applied. |
+| rec#3: BackupService partial-progress | 📦 Deferred | Documented; AD-466b polish. Acceptable. |
+| rec#4: SQLiteStorageBackend singleton test note | 📦 Deferred | Documentation polish; Builder will document at write-time. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| nit#1, #2, #3, #4 | ✅ N/A or applied | Cosmetic; no edits needed. |
+
+### New Findings (introduced during revision)
+
+None.
+
+### Verified Against Revised Codebase Claims
+
+- `runtime.emit_event` at `runtime.py:785` — confirmed.
+- Three-tier exception handling (tier-2 log-and-degrade for non-critical backup failure) consistent with copilot-instructions.md.
+- `runtime.data_dir` public property at `runtime.py:934` (verified).
+
+### Verdict
+
+**✅ Approved.** No further architect rework required. Build-ready as AD-466 first in Wave 7.
+
+---
+
+## Second-Pass Review (2026-05-01)

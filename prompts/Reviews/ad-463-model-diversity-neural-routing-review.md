@@ -334,3 +334,80 @@ After Required #1 (b), test count is 13. Tests 13 and 14 (Hebbian) become tests 
 **This is the highest-risk Wave 7 prompt.** The dispatch reserved 1 ⚠️ tolerance for AD-463; this review consumes that tolerance.
 
 **Recommended build order:** AD-463 last in Wave 7 (after AD-466, AD-456, AD-528, AD-467). Foundation hook touches `OpenAICompatibleClient.complete()` — best to land last so the LLM client surface is stable across the rest of the wave.
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ⚠️ **Conditional** — all 3 Required findings resolved in code (Sections 1-6) and Revision section, BUT the original Solution Overview (lines 22-49) was not updated and still describes HebbianRouter integration as v1 work. This contradicts the Revision section's wholesale defer. Mechanical 4-line fix.
+
+The dispatch's tolerance criterion ("Verdicts target: 5 ✅. Tolerance: none") means this surfaces back per the standing rule.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: LLMRequest.agent_id phantom; HebbianRouter dead code | ✅ Resolved in code, ⚠️ stale in overview | Section 2 (lines 191-368): `ModelRouter.choose()` no longer accepts `agent_id`; `__init__` drops `hebbian_router`; `RoutingDecision.agent_id` field dropped. Section 6 (line 547+) drops `hebbian_router=...` ctor kwarg. Section 7 / "What This Does NOT Change" (line 600) explicitly defers HebbianRouter to AD-463d. **BUT:** Solution Overview lines 27, 28, 45 still describe HebbianRouter integration as v1 work. See New Finding #1 below. |
+| R#2: Section 3 SEARCH/REPLACE hand-waved | ✅ Resolved | Section 3 split into 3a/3b/3c (lines 370-473). Section 3c has verbatim SEARCH/REPLACE block at `cognitive/llm_client.py:441-447` (verified). |
+| R#3: _resolve_model_for_tier empty-string semantics | ✅ Resolved | Section 3b docstring (lines 416-431) covers all three return paths. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: dead mark_unavailable methods | 📦 Deferred | Kept in v1 as deferred-consumer seam for AD-463b. Acceptable. |
+| rec#2: cost sentinel ambiguity | 📦 Deferred | Documentation-only refinement; AD-463b. Acceptable. |
+| rec#3: filter ordering (HebbianRouter) | ✅ N/A | HebbianRouter dropped per R#1. |
+| rec#4: post-construction wiring → public attribute | ✅ Applied | `OpenAICompatibleClient.model_router` is now public (no underscore); Section 3a line 408. Section 6 wiring (line 553) writes to public attribute. |
+| rec#5: test count update | ✅ Applied | Test count 15 → 13; tests 13-14 (Hebbian) deferred to AD-463d. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| nit#1: footer line drift | ✅ Applied | `runtime.emit_event` line corrected to 785. |
+| nit#2, #3, #4 | ✅ Applied or preserved | Cosmetic. |
+
+### New Findings (introduced during revision)
+
+1. **Solution Overview (lines 4, 27, 28, 45) still describes HebbianRouter integration as v1 work.** The Revision section explicitly says HebbianRouter is wholesale deferred to AD-463d, but the Solution Overview at the top of the prompt was not updated. Specific contradictions:
+
+   - **Line 4** (Dependencies header): `Reads HebbianRouter.get_weight() (mesh/routing.py:142) for routing-bias.` — this dependency claim is now false; v1 does NOT read HebbianRouter.
+   - **Line 27** (Solution Overview module list): `ModelRouter consults the registry + (optionally) HebbianRouter.get_weight() to pick a model for a given (tier, agent_id) request. Stateless. Read-only over both inputs.` — both the HebbianRouter integration and the `agent_id` parameter are dropped per R#1.
+   - **Line 28** (Real consumer hook description): `complete() consults runtime.model_router.choose(tier, agent_id)` — this misstates two things post-revision: the call site is `_complete_inner` (not `complete`), and `agent_id` is dropped.
+   - **Line 45** (Six deferred list): `Brain diversity / per-agent model preference -- AD-463d. v1 reads HebbianRouter for routing-bias hint only.` — the second sentence ("v1 reads HebbianRouter") is now false; v1 does NOT read HebbianRouter.
+
+   **Severity:** Required-class. A Builder reading the prompt top-to-bottom encounters contradictions before reaching the Revision section. The implementation sections (1-7) and Tests are correct; "What This Does NOT Change" is correct; the Revision section is correct. But the Solution Overview header is misleading.
+
+   **Action:** mechanical 4-line fix:
+   - Line 4: change `Reads HebbianRouter.get_weight() ... for routing-bias.` to `**HebbianRouter integration deferred to AD-463d** (LLMRequest does not carry agent context today; see Revision section).`
+   - Line 27: change `ModelRouter consults the registry + (optionally) HebbianRouter.get_weight() to pick a model for a given (tier, agent_id) request.` to `ModelRouter consults the registry to pick a model for a given tier (cost-aware + availability-aware + cost-ceiling). Per-agent routing bias deferred to AD-463d.`
+   - Line 28: change `complete() consults runtime.model_router.choose(tier, agent_id)` to `_complete_inner() consults runtime.model_router.choose(tier=...)`.
+   - Line 45: change `v1 reads HebbianRouter for routing-bias hint only.` to `v1 routes by tier+cost only; HebbianRouter integration deferred to AD-463d once LLMRequest.agent_id (or equivalent) is established.`
+
+   **Time to fix:** ~5 minutes architect time. After this fix, AD-463 lands at ✅ Approved.
+
+### Verified Against Revised Codebase Claims
+
+- Section 3c SEARCH block matches `cognitive/llm_client.py:441-447` verbatim — confirmed.
+- `_complete_inner` exists at `cognitive/llm_client.py:411` (verified pass-1).
+- `LLMRequest` at `types.py:227` has NO `agent_id` field — confirmed (proves the wholesale defer is correct).
+- `OpenAICompatibleClient.__init__` keyword-only `model_router` parameter via `*` separator — confirmed in Section 3a line 406-408.
+- `self.model_router` (public, no underscore) at line 408 — confirmed.
+- Section 6 finalize wires `llm_client.model_router = runtime.model_router` to a public attribute — confirmed.
+- Test count 15 → 13 with rationale documented — confirmed.
+
+### Cross-Cutting Convention Audit
+
+| Cross-cutting fix | Applied? | Evidence |
+|---|---|---|
+| Phantom-API fix: AD-463 HebbianRouter | ✅ Applied in code | But ⚠️ Solution Overview text not updated — see New Finding #1. |
+| AD-463 SEARCH/REPLACE concretization | ✅ Applied | Section 3c verbatim block. |
+
+### Hard-Stop Audit
+
+The dispatch flagged: "If AD-463 wholesale-defer-HebbianRouter would gut the prompt's Section title or scope claims — surface to architect; v1 should re-frame to focus on ModelRegistry + Router + consumer hook only."
+
+The Revision section correctly reframes v1 scope. But the Solution Overview header was not reframed in the same pass. The Builder may execute the prompt correctly (Sections 1-7 are clean) but the prompt's stated scope is contradictory across sections. New Finding #1 captures this; ⚠️ Conditional verdict reflects it.
+
+### Verdict
+
+**⚠️ Conditional.** All 3 Required findings resolved in implementation code; Recommended findings applied. **One new Required-class finding** introduced during revision: Solution Overview lines 4, 27, 28, 45 contradict the Revision section. Mechanical 4-line edit fixes it. After fix, AD-463 verdict is ✅ Approved.
+
+Surface back to dispatching architect per the standing tolerance rule. Recommended remediation: 5-minute architect edit of the 4 lines, then re-pass review on AD-463 only.

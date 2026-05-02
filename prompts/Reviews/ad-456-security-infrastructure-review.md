@@ -247,3 +247,65 @@ Boundary coverage: env-var precedence, store-fallback, allowlist/denylist matchi
 **Build-readiness after fix:** ~30 minutes architect time. Required #1 is the substantial rework. Recommended (a) extends `CredentialStore` — preserves AD-395's department access control + caching, adds rotation + persistence + `SECRET_ROTATED` emit. v1 ships 2 net-new security primitives (EgressPolicy, AuditLog) plus a CredentialStore extension. Cleaner narrative, no DRY violation.
 
 **Recommended build order:** AD-456 second in Wave 7 (after AD-466), but only after Required #1 is resolved. If unresolved, defer AD-456 entirely until the duplication is settled.
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved** — all 3 Required findings resolved cleanly; CredentialStore extension is non-breaking (additive keyword-only kwargs); EgressPolicy theater check resolved real-today (`deny_by_default=True` + EGRESS_BLOCKED emits to event_log).
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: SecretsManager duplicates CredentialStore | ✅ Resolved | Section 1+2 rewritten: extends `credential_store.py:32` CredentialStore. New ctor kwargs `store_path`, `emit_event` are keyword-only with defaults (verified non-breaking against existing `runtime.py:317` callsite). New methods `_load_store`, `_resolve_from_store`, `rotate`, `_emit_rotated` are additive. `_resolve` modification inserts the JSON-store step between env-aliases and CLI; existing return paths preserved. SecretsManager class dropped wholesale; no `runtime.secrets_manager` attribute. |
+| R#2: ENV_PREFIX = "PROBOS_" collision | ✅ Resolved | Resolved by R#1: env-var resolution remains via existing `CredentialSpec.env_var` per-spec configuration. No global prefix introduced. The mixed live convention (`PROBOS_*` for Docker/NATS overrides; bespoke names for legacy keys) is preserved unchanged. |
+| R#3: EgressPolicy / HttpFetchAgent integration not documented | ✅ Applied | "What This Does NOT Change" line 707 explicitly notes "AD-456b will wire `EgressPolicy.is_allowed(url)` as a pre-check in `HttpFetchAgent`'s request path." |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: deny_by_default default to True | ✅ Applied | Section 3 line 351 default flipped to `True`; Section 5 config `egress_deny_by_default: bool = True`; Test #11 asserts `mock_emit.call_count == 1` under default. |
+| rec#2: AuditLog scaling note | ✅ Applied | Documented in "What This Does NOT Change". |
+| rec#3: rotate() naming clarity | ✅ Applied | `_emit_rotated` payload includes a `persisted: bool` field; callers can distinguish persisted-rotation from rotation-requested-but-not-persisted (env-sourced or no-store-configured). |
+| rec#4: AuditLog.verify_chain genesis-tamper test | ✅ Applied | Added as Test #14 (`test_audit_log_verify_chain_detects_genesis_tamper`). |
+| rec#5: Section 6 always-wired uniformity | ✅ Applied | `runtime.credential_store` is always-wired (existing AD-395). EgressPolicy and AuditLog use always-wired `runtime.X = None` when disabled. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| nit#1: footer line drift | ✅ Applied | `runtime.emit_event` line corrected to 785. |
+| nit#2: AuditLog hash float-precision note | ✅ Applied | Documented. |
+| nit#3: SecretsManager._load reload | ✅ N/A | SecretsManager dropped; CredentialStore `_load_store()` is idempotent with `_store_loaded` flag. |
+| nit#4: Test 11 emit assertion | ✅ Applied | Test #11 description explicitly asserts `mock_emit.call_count == 1`. |
+
+### New Findings (introduced during revision)
+
+None.
+
+### Verified Against Revised Codebase Claims
+
+- `class CredentialStore` at `credential_store.py:32` — confirmed.
+- `__init__` signature accepts only existing positional args (`config`, `event_log`, `cache_ttl`); revision adds keyword-only `*, store_path, emit_event` — non-breaking. Verified by inspection of existing `runtime.py:317` call: `self.credential_store = CredentialStore(...)` with positional `config, event_log` only — works under the new signature.
+- `runtime.credential_store` referenced ONLY in `runtime.py:61, 185, 317` (verified via grep). No other consumers; no breaking-change risk.
+- `_resolve` method exists at `credential_store.py:119` (verified).
+- EgressPolicy `EGRESS_BLOCKED` events emit via `runtime.emit_event` → routed to `event_log` (the standing audit consumer) plus IntentBus subscribers. Real consumer in v1 — events are logged to SQLite immediately. Not theater.
+- `::1` IPv6 localhost addition to `_DEFAULT_ALLOWLIST` at line 319 — confirmed.
+- `deny_by_default = True` at Section 3 line 351 and Section 5 line 594 — confirmed.
+
+### Cross-Cutting Convention Audit
+
+| Cross-cutting fix | Applied? | Evidence |
+|---|---|---|
+| AD-456 R#1 (extend CredentialStore option a) | ✅ Applied wholesale | No new SecretsManager class; CredentialStore extension is additive non-breaking. |
+| EgressPolicy theater check | ✅ Applied | `deny_by_default=True` + `::1` allowlist + EGRESS_BLOCKED → event_log. Real signal today. |
+
+### Hard-Stop Audit
+
+The dispatch flagged: "If AD-456 EgressPolicy events still have no consumer in v1, surface — even with deny_by_default=True and events firing, theater can persist if no one reads the output."
+
+Verified: `runtime.emit_event` routes events to `event_log` (SQLite append-only audit log). The event_log is the standing audit consumer — operators query it for security review. EGRESS_BLOCKED events flowing to event_log = real consumer. ✅ Not theater.
+
+The dispatch also flagged: "AD-456 CredentialStore extension introduced any breaking change to AD-395 existing consumers — surface immediately." Verified: only positional args (`config`, `event_log`, `cache_ttl`) are preserved; new kwargs are keyword-only with defaults. Existing call at `runtime.py:317` continues to work. ✅ No breaking change.
+
+### Verdict
+
+**✅ Approved.** Build-ready as AD-456 second in Wave 7 (after AD-466). The R#1 architectural decision (extend CredentialStore) was the substantial rework; all mechanical fixes applied cleanly.

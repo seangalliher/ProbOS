@@ -307,3 +307,64 @@ Test #12 (`test_episode_writer_stores_episode`) currently asserts the dict is pa
 **Build-readiness after fix:** ~15 minutes architect time. Required #1 + #2 are concrete edits. Required #3 is a Builder grep step.
 
 **Recommended build order:** AD-528 third in Wave 7 (after AD-466 and AD-456). No cross-AD dependencies; reads existing surfaces only.
+
+---
+
+## Second-Pass Review (2026-05-01)
+
+**Verdict:** ✅ **Approved** — all 3 Required findings resolved; Episode dataclass usage matches `types.py:411` field-by-field; ALLOWED_EXCEPTIONS Section 6 documented.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R#1: EpisodicMemory.store(dict) phantom | ✅ Resolved | Section 2 line 277 imports `Episode`, `MemorySource` from `probos.types`; constructs typed `Episode(timestamp=, user_input=, agent_ids=, dag_summary={...}, source=MemorySource.DIRECT.value, importance=7\|4, correlation_id="")`. All field names verified against `types.py:411-435`. Dict approach removed. |
+| R#2: ALLOWED_EXCEPTIONS entry | ✅ Resolved | New Section 6 (lines 402-426) explicitly instructs Builder to add `("cognitive/ground_truth.py", "probos.workforce")` to `tests/test_layer_boundaries.py` ALLOWED_EXCEPTIONS with full SEARCH/REPLACE block and justification comment. Mirrors AD-451 / BF-085 precedent. |
+| R#3: MemorySource enum value | ✅ Resolved | `MemorySource.DIRECT.value` ("direct") used; verified at `types.py:344`. Builder note documents the AD-541 semantic alignment. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| rec#1: _fetch_journal fallback doc | ✅ Applied | Docstring updated. |
+| rec#2: window tightening note | ✅ Applied | Documented in "What This Does NOT Change". |
+| rec#3: threshold boundary semantics | ✅ Applied | Test #10 description clarified: "boundary is inclusive; >= comparison." |
+| rec#4: claimed_summary truncation rationale | ✅ Applied | Section 2 docstring documents 1000-char truncation rationale. |
+| rec#5: AD-451 orthogonality | ✅ Already addressed | Pass-1 prompt body already correct; preserved in revision. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| nit#1: confabulation framing | 📦 Deferred | Cosmetic; AD-528b polish. |
+| nit#2: footer line drift | ✅ Applied | `runtime.emit_event` line corrected to 785. |
+| nit#3: _emit() exception swallow | ✅ Preserved | Tier-2 log-and-degrade. |
+| nit#4: completed_at vs timestamp distinction | ✅ Applied | `dag_summary["completed_at"]` (verifier moment) + `Episode.timestamp` (storage moment) both populated. |
+
+### New Findings (introduced during revision)
+
+None.
+
+### Verified Against Revised Codebase Claims
+
+- `Episode` dataclass at `types.py:411` — confirmed all field names match revision usage:
+  - `timestamp: float = 0.0` ✅
+  - `user_input: str = ""` ✅
+  - `agent_ids: list[str]` ✅
+  - `dag_summary: dict[str, Any]` ✅
+  - `source: str = "direct"` (default value) ✅ — matches `MemorySource.DIRECT.value`
+  - `importance: int = 5` (default; revision uses 7|4) ✅
+  - `correlation_id: str = ""` ✅
+- `MemorySource.DIRECT = "direct"` at `types.py:344` — confirmed.
+- `EpisodicMemory.store(episode: Episode)` at `cognitive/episodic.py:942` — confirmed signature.
+- `tests/test_layer_boundaries.py` ALLOWED_EXCEPTIONS at line 53 — confirmed.
+- AD-451's `validation_framework.py → agents.red_team` exception entry verified post-Wave 6 commit `4ed9ab2`.
+- `dag_summary` structure (dict with verification metadata under "kind", "booking_id", "verified", "score", "signals", "completed_at") is consistent with how other ADs use the field for typed payloads.
+- `importance=7 if not result.verified else 4` — failed verifications biased toward retention per AD-598 importance scoring (default 5 = neutral; 7 = above-neutral retention; 4 = below-neutral).
+
+### Cross-Cutting Convention Audit
+
+| Cross-cutting fix | Applied? | Evidence |
+|---|---|---|
+| Phantom-API fix: AD-528 Episode | ✅ Applied | Episode constructed correctly with verified field names. |
+| AD-528 ALLOWED_EXCEPTIONS section | ✅ Applied | Section 6 documents the addition. |
+
+### Verdict
+
+**✅ Approved.** Build-ready as AD-528 third in Wave 7. Mechanical fixes applied cleanly; no scope expansion needed.
