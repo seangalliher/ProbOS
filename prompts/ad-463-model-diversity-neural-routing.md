@@ -205,7 +205,7 @@ class ModelRegistry:
 **File:** `src/probos/cognitive/model_router.py` (new)
 
 ```python
-"""AD-463: ModelRouter -- model selection given (tier, agent_id) + policy.
+"""AD-463: ModelRouter -- model selection given (tier, cost_ceiling) + policy.
 
 v1 logic:
   1. Pull all available models in the requested tier from ModelRegistry.
@@ -214,16 +214,19 @@ v1 logic:
      first available model from any tier (as a last-resort fallback).
   4. Emit MODEL_ROUTED with the chosen model name.
 
-HebbianRouter integration: v1 uses `HebbianRouter.get_weight()` (verified at
-`mesh/routing.py:142`) as a SOFT routing hint when an agent has multiple
-candidates. Future ADs (AD-463d brain diversity) will integrate more
-deeply -- v1 only reads weights via the existing public API.
+HebbianRouter integration is **deferred wholesale to AD-463d**. Pass-1
+review caught that the original draft consulted HebbianRouter via an
+`agent_id` parameter that LLMRequest does not carry today; the integration
+would have been dead code (theater). v1 ModelRouter is cost-aware and
+availability-aware; AD-463d will introduce the per-agent routing seam
+once `LLMRequest.agent_id` (or an equivalent context-passing mechanism)
+is established.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from probos.events import EventType
@@ -240,34 +243,34 @@ class RoutingDecision:
 
     chosen_model: str
     requested_tier: str
-    agent_id: str
     reason: str
     fallback: bool = False
 
 
 class ModelRouter:
-    """Composes ModelRegistry + (optional) HebbianRouter into selection.
+    """Composes ModelRegistry into selection.
 
     Stateless. Each `choose()` call queries the registry and returns a
     fresh RoutingDecision.
+
+    v1 policy: cost-aware (cheapest by output cost) + availability-aware
+    (skip unavailable models) + cost-ceiling filter (operator-configurable).
+    Per-agent routing bias deferred to AD-463d.
     """
 
     def __init__(
         self,
         *,
         registry: "ModelRegistry",
-        hebbian_router: Any | None = None,
         emit_event: Any | None = None,
     ) -> None:
         self._registry = registry
-        self._hebbian = hebbian_router
         self._emit_event = emit_event
 
     def choose(
         self,
         *,
         tier: str,
-        agent_id: str = "",
         cost_ceiling: float | None = None,
     ) -> RoutingDecision:
         candidates = self._registry.by_tier(tier)
@@ -284,7 +287,6 @@ class ModelRouter:
                     decision = RoutingDecision(
                         chosen_model=d.name,
                         requested_tier=tier,
-                        agent_id=agent_id,
                         reason=f"no available models in tier '{tier}' (cost_ceiling={cost_ceiling})",
                         fallback=True,
                     )
@@ -294,7 +296,6 @@ class ModelRouter:
             decision = RoutingDecision(
                 chosen_model="",
                 requested_tier=tier,
-                agent_id=agent_id,
                 reason="no available models in any tier",
                 fallback=True,
             )
@@ -307,43 +308,22 @@ class ModelRouter:
             decision = RoutingDecision(
                 chosen_model=chosen.name,
                 requested_tier=tier,
-                agent_id=agent_id,
                 reason="single candidate",
             )
             self._emit_routed(decision)
             return decision
 
-        # Multi-candidate: cheapest by output cost (v1 default policy).
-        # AD-463d will integrate HebbianRouter weights more deeply; v1 only
-        # consults the public get_weight() for tie-breaking when costs equal.
+        # Multi-candidate: cheapest by output cost, tiebreak by name (v1 default).
+        # AD-463d will add per-agent routing bias via HebbianRouter integration
+        # once LLMRequest carries agent context.
         chosen = min(
             candidates,
             key=lambda d: (d.cost_per_million_output_tokens, d.name),
         )
-        reason = "cheapest-by-output-cost"
-        if self._hebbian is not None and agent_id:
-            try:
-                # If the agent has a strong outbound weight to a candidate
-                # name (treated as an opaque AgentID for the hint), prefer it.
-                weighted = [
-                    (d, self._hebbian.get_weight(agent_id, d.name))
-                    for d in candidates
-                ]
-                positive = [(d, w) for d, w in weighted if w > 0.0]
-                if positive:
-                    chosen = max(positive, key=lambda pair: pair[1])[0]
-                    reason = "hebbian-weight"
-            except Exception:
-                logger.debug(
-                    "AD-463: HebbianRouter.get_weight failed; falling back to cost (agent_id=%s)",
-                    agent_id, exc_info=True,
-                )
-
         decision = RoutingDecision(
             chosen_model=chosen.name,
             requested_tier=tier,
-            agent_id=agent_id,
-            reason=reason,
+            reason="cheapest-by-output-cost",
         )
         self._emit_routed(decision)
         return decision
@@ -357,7 +337,6 @@ class ModelRouter:
                 {
                     "chosen_model": decision.chosen_model,
                     "tier": decision.requested_tier,
-                    "agent_id": decision.agent_id,
                     "reason": decision.reason,
                 },
             )
@@ -376,7 +355,6 @@ class ModelRouter:
                 {
                     "chosen_model": decision.chosen_model,
                     "tier": decision.requested_tier,
-                    "agent_id": decision.agent_id,
                     "reason": decision.reason,
                 },
             )
@@ -393,11 +371,13 @@ class ModelRouter:
 
 **File:** `src/probos/cognitive/llm_client.py`
 
-To honor no-theater discipline (Wave 5 retrospective convention #7), v1 must wire `ModelRouter` into one real call site. The minimal-blast-radius hook: extend `OpenAICompatibleClient.__init__` to accept an optional `model_router: ModelRouter | None` argument; when present, `_resolve_model_for_tier(tier, agent_id)` consults the router and overrides the default tier->model mapping.
+To honor no-theater discipline (Wave 5 retrospective convention #7), v1 must wire `ModelRouter` into one real call site. The minimal-blast-radius hook: extend `OpenAICompatibleClient.__init__` to accept an optional `model_router: ModelRouter | None` argument; when present, the per-tier model name resolution in `_complete_inner` consults the router and overrides the default tier->model mapping.
 
-Builder note: this section is a CALLER-OPTIONAL hook. Existing callers that pass no `model_router` get the existing behavior unchanged. New callers (post-AD-463) pass `runtime.model_router` to enable routing.
+Pass-1 review verified the actual call path lives in `_complete_inner` (NOT `complete()` as the original draft claimed). Concrete SEARCH/REPLACE blocks below.
 
-SEARCH (in `OpenAICompatibleClient.__init__`):
+### 3a. Extend `__init__` signature
+
+**SEARCH** (in `OpenAICompatibleClient.__init__`):
 ```python
     def __init__(
         self,
@@ -411,7 +391,7 @@ SEARCH (in `OpenAICompatibleClient.__init__`):
     ) -> None:
 ```
 
-REPLACE:
+**REPLACE:**
 ```python
     def __init__(
         self,
@@ -422,25 +402,37 @@ REPLACE:
         default_tier: str = "standard",
         config: Any = None,  # CognitiveConfig -- optional, overrides all above
         rate_config: Any = None,  # AD-617: LLMRateConfig -- optional
+        *,
         model_router: Any = None,  # AD-463: ModelRouter -- optional override
     ) -> None:
-        self._model_router = model_router
+        self.model_router = model_router  # AD-463: public attribute (not _-prefixed)
 ```
 
-Then in the method that resolves a tier-name to a model-name (search for the existing `tier_config` consumption in `complete()` -- typically near the top of `complete()` where the request's tier is mapped to a model). Add a helper method `_resolve_model_for_tier`:
+> Builder note: `model_router` is added as a keyword-only parameter (preceded by `*`) to prevent positional-arg drift if future params are added. The attribute is published as `self.model_router` (public) per Wave 5 convention #1; rec#4 from pass-1 review.
+
+### 3b. Add `_resolve_model_for_tier` helper method
+
+After `__init__`, add:
 
 ```python
-    def _resolve_model_for_tier(self, tier: str, agent_id: str = "") -> str | None:
+    def _resolve_model_for_tier(self, tier: str) -> str | None:
         """AD-463: consult ModelRouter if wired, else None (existing path).
+
+        Returns:
+          - The chosen model name (str) when ModelRouter overrides the default
+            tier->model mapping. Empty-string responses from the router are
+            converted to None so the existing `tc["model"]` path runs.
+          - None when no router is wired, the router fails, or the router
+            returns an empty model name.
 
         v1 only overrides the model NAME; base_url, api_key, timeout, and
         rate_config remain the existing per-tier values. Provider-routing
         (different base_url per provider) is deferred to AD-463b.
         """
-        if self._model_router is None:
+        if self.model_router is None:
             return None
         try:
-            decision = self._model_router.choose(tier=tier, agent_id=agent_id)
+            decision = self.model_router.choose(tier=tier)
             return decision.chosen_model or None
         except Exception:
             logger.warning(
@@ -450,11 +442,35 @@ Then in the method that resolves a tier-name to a model-name (search for the exi
             return None
 ```
 
-> Builder note: the call-site insertion of `_resolve_model_for_tier(...)` in `complete()` requires reading the actual `complete()` body to identify the model-name resolution point. Verify-first by greping `complete(` body for where the tier is converted to the request's `model` field. Apply a minimal patch: when `_resolve_model_for_tier` returns a non-None override, use that instead of the existing tier->model lookup. When it returns None, the existing path is unchanged.
->
-> Specifically: in the request-construction block of `complete()`, find where the model name is set (typically `tc["model"]` or similar). Before that line, call `override = self._resolve_model_for_tier(tier, getattr(request, "agent_id", ""))`; use `override or tc["model"]` for the request's model name.
+### 3c. Insert override at the model-resolution call site in `_complete_inner`
 
-This is a real-consumer wire per no-theater discipline. v1 ships ModelRouter integrated into the actual LLM call path, not as a dead class.
+The call site is in `_complete_inner` (verified at `cognitive/llm_client.py:411`); the model name is set at line 445.
+
+**SEARCH:**
+```python
+        last_error = ""
+        for attempt_tier in fallback_tiers:
+            tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
+            client = self._clients[self._client_key(attempt_tier)]
+            model = tc["model"]
+            api_format = tc.get("api_format", "openai")
+            tier_timeout = tc["timeout"]
+```
+
+**REPLACE:**
+```python
+        last_error = ""
+        for attempt_tier in fallback_tiers:
+            tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
+            client = self._clients[self._client_key(attempt_tier)]
+            # AD-463: ModelRouter override (caller-optional; absent = existing path)
+            _override = self._resolve_model_for_tier(attempt_tier)
+            model = _override or tc["model"]
+            api_format = tc.get("api_format", "openai")
+            tier_timeout = tc["timeout"]
+```
+
+> Verify-first: the SEARCH block matches `cognitive/llm_client.py:441-447` verbatim (verified). The override is caller-optional: when `self.model_router is None`, `_resolve_model_for_tier` returns `None` and `model = None or tc["model"]` evaluates to `tc["model"]` -- the existing path. Existing call sites that don't construct `OpenAICompatibleClient(model_router=...)` are unaffected. Wave 5 superset-filter discipline (#4) preserved.
 
 ---
 
@@ -488,7 +504,8 @@ class ModelRoutingConfig(BaseModel):
 
     enabled: bool = True
     cost_ceiling_per_million_output_tokens: float | None = None  # USD; None disables
-    use_hebbian_hint: bool = True
+    # AD-463d will add per-agent routing bias (use_hebbian_hint, agent_weight_threshold, etc.)
+    # once LLMRequest carries agent context.
 ```
 
 Wire into `SystemConfig`:
@@ -527,17 +544,16 @@ Place near the existing AD-491 InfodynamicProbe block:
         runtime.model_registry = ModelRegistry()
         runtime.model_router = ModelRouter(
             registry=runtime.model_registry,
-            hebbian_router=runtime.hebbian_router if config.model_routing.use_hebbian_hint else None,
             emit_event=runtime.emit_event,
         )
         # Wire ModelRouter into the existing LLM client (real consumer, not theater).
-        # The client's _model_router attribute is consulted at every complete() call
-        # via _resolve_model_for_tier(). Existing tier->model defaults remain when
-        # ModelRouter is absent.
+        # The client's `model_router` public attribute is consulted at every
+        # _complete_inner() iteration via _resolve_model_for_tier(). Existing
+        # tier->model defaults remain when ModelRouter is absent.
         llm_client = getattr(runtime, "llm_client", None)
         if llm_client is not None:
             try:
-                llm_client._model_router = runtime.model_router
+                llm_client.model_router = runtime.model_router
             except Exception:
                 logger.warning(
                     "AD-463: failed to wire ModelRouter into runtime.llm_client",
@@ -547,9 +563,7 @@ Place near the existing AD-491 InfodynamicProbe block:
                     len(runtime.model_registry.all()))
 ```
 
-> Verify-first: `runtime.hebbian_router` is public (verified at `runtime.py:304`). `runtime.llm_client` is the existing public LLM client (verified at `runtime.py:347`). `runtime.model_registry` and `runtime.model_router` are published as public attributes (no leading underscore) per Wave 5 retrospective convention #1.
->
-> The `llm_client._model_router = runtime.model_router` post-init assignment is the seam Section 3 introduces (the `__init__` already accepts `model_router=None` after Section 3's edit). This is wiring an architect-defined public attribute directly to an architect-defined private slot in the LLM client; not a Demeter violation because both ends are AD-463-introduced surface.
+> Verify-first: `runtime.llm_client` is the existing public LLM client (verified at `runtime.py:347`). `runtime.model_registry` and `runtime.model_router` are published as public attributes (no leading underscore) per Wave 5 retrospective convention #1. The post-init `llm_client.model_router = runtime.model_router` assignment is now writing to a PUBLIC attribute (per Section 3a; rec#4 from pass-1 review).
 
 ---
 
@@ -557,25 +571,25 @@ Place near the existing AD-491 InfodynamicProbe block:
 
 **File:** `tests/test_ad463_model_routing.py`
 
-15 tests:
+13 tests:
 
 1. `test_event_type_model_routed_exists` -- value matches.
 2. `test_event_type_model_fallback_exists` -- value matches.
-3. `test_model_routing_config_defaults` -- `ModelRoutingConfig()` defaults: `enabled=True`, `cost_ceiling_per_million_output_tokens=None`, `use_hebbian_hint=True`.
+3. `test_model_routing_config_defaults` -- `ModelRoutingConfig()` defaults: `enabled=True`, `cost_ceiling_per_million_output_tokens=None`.
 4. `test_model_descriptor_immutable` -- `dataclasses.replace(d, available=False)` creates a new instance; original unchanged.
 5. `test_model_registry_default_seed_includes_three_tiers` -- `ModelRegistry()` constructed with defaults; `by_tier("fast")`, `by_tier("standard")`, `by_tier("deep")` each return >= 1 descriptor.
 6. `test_model_registry_register_overwrites_by_name` -- register("gpt-4o-mini", new_descriptor) overwrites; existing seeds preserved for other names.
 7. `test_model_registry_mark_unavailable_excludes_from_by_tier` -- mark_unavailable + by_tier no longer returns the marked model.
 8. `test_router_single_candidate_returns_it` -- registry with one fast model -> `choose(tier="fast")` returns that model; `MODEL_ROUTED` emit fires; reason="single candidate".
-9. `test_router_picks_cheapest_among_tier` -- two fast models with different costs -> cheaper one chosen; `MODEL_ROUTED` emit fires.
+9. `test_router_picks_cheapest_among_tier` -- two fast models with different costs -> cheaper one chosen; `MODEL_ROUTED` emit fires; reason="cheapest-by-output-cost".
 10. `test_router_cost_ceiling_filters_candidates` -- `cost_ceiling=1.0` filters out `>$1/M` models; remaining candidates considered.
 11. `test_router_no_candidates_emits_fallback` -- empty tier -> first available from any tier chosen, `fallback=True`, `MODEL_FALLBACK` emit fires.
 12. `test_router_no_models_at_all_returns_empty_decision` -- registry empty -> chosen_model=""; `fallback=True`; emit fires.
-13. `test_router_hebbian_weight_overrides_cost` -- two equal-cost candidates; HebbianRouter returns positive weight to model A but zero to model B -> A chosen; reason="hebbian-weight".
-14. `test_router_hebbian_failure_falls_back_to_cost` -- HebbianRouter raises -> swallowed; cheapest-by-output-cost path runs.
-15. `test_llm_client_resolve_model_for_tier_when_router_absent_returns_none` -- `OpenAICompatibleClient(model_router=None)._resolve_model_for_tier("fast")` returns None; existing tier->model path is preserved.
+13. `test_llm_client_resolve_model_for_tier_when_router_absent_returns_none` -- `OpenAICompatibleClient(model_router=None)._resolve_model_for_tier("fast")` returns None; existing tier->model path is preserved.
 
 Each test uses isolated fakes. No shared mutable state.
+
+> Pass-1 tests 13-14 (HebbianRouter integration) are deferred to AD-463d -- v1 ships without Hebbian integration.
 
 ---
 
@@ -583,12 +597,13 @@ Each test uses isolated fakes. No shared mutable state.
 
 - `BaseLLMClient` ABC (`cognitive/llm_client.py:22`) is unchanged.
 - `MockLLMClient` (`cognitive/llm_client.py:823`) is unchanged.
-- `HebbianRouter` (`mesh/routing.py:39`) is unchanged. v1 reads `get_weight()` as an existing public API; no extension.
+- `HebbianRouter` (`mesh/routing.py:39`) is unchanged. **v1 does NOT integrate HebbianRouter** -- per-agent routing bias deferred to AD-463d once `LLMRequest.agent_id` (or equivalent context-passing) is established.
+- `LLMRequest` (`types.py:227`) is unchanged. v1 routing decisions are per-tier, not per-agent.
 - `CognitiveJournal` schema (`cognitive/journal.py:25-43`) is unchanged. The existing `model`, `prompt_tokens`, `completion_tokens` columns continue to be written by the existing path.
 - No new LLM provider implementations. v1's `ModelDescriptor` carries a `provider: str` field for future use; routing today still goes through the existing `OpenAICompatibleClient`.
 - **`ProviderABC` + non-OpenAI providers deferred to AD-463b.**
 - **MAD (Multi-Agent Debate) confidence scoring deferred to AD-463c.**
-- **Brain diversity / per-agent model preference deferred to AD-463d.**
+- **Per-agent / brain diversity routing deferred to AD-463d** (requires `LLMRequest.agent_id` extension).
 - **Hot-swap (live model swap without restart) deferred to AD-463e.**
 - **Per-model edit-format selection deferred to AD-463f.**
 - **Cost aggregation queries** -- v1 emits MODEL_ROUTED with chosen model + tier; aggregation is AD-467d Cost Tracker scope (sibling Wave 7).
@@ -675,12 +690,84 @@ grep -n "AGENT_SELF_NAMED\|INFODYNAMIC_REPORT" src/probos/events.py
 grep -n "self\.hebbian_router\|self\.llm_client" src/probos/runtime.py | head -3
   304: self.hebbian_router = HebbianRouter(...)
   347: self.llm_client: BaseLLMClient = llm_client or MockLLMClient()
-  (both public; AD-463 reads via runtime.X)
+  (both public; AD-463 v1 reads only llm_client; HebbianRouter integration deferred to AD-463d)
 
 grep -n "orders: OrdersConfig" src/probos/config.py
   1593: orders: OrdersConfig = OrdersConfig()  # AD-440
   (always-available terminal fallback)
 
 grep -n "def emit_event" src/probos/runtime.py
-  775: def emit_event(self, event: BaseEvent | str | EventType, ...
+  785: def emit_event(self, event: BaseEvent | str | EventType, ...
+  (line corrected post-revision)
+
+grep -n "class LLMRequest" src/probos/types.py
+  227: class LLMRequest:
+  (NO agent_id field; AD-463 v1 routes by tier only; agent_id extension deferred to AD-463d)
+
+grep -n "model = tc..model" src/probos/cognitive/llm_client.py
+  445: model = tc["model"]
+  (Section 3c SEARCH/REPLACE anchor for the consumer hook insertion)
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-463-model-diversity-neural-routing-review.md`.
+
+**Required addressed:**
+
+- **R#1: `LLMRequest.agent_id` phantom; HebbianRouter integration was dead code** -- resolution (b): wholesale defer HebbianRouter integration to AD-463d. Section 2 `ModelRouter.choose()` no longer accepts an `agent_id` parameter; the entire `if self._hebbian is not None and agent_id:` branch is removed. Section 2 `ModelRouter.__init__` drops the `hebbian_router` kwarg. `RoutingDecision.agent_id` field dropped (no longer carried). v1 routing is per-tier (cost-aware + availability-aware + cost-ceiling); per-agent routing bias deferred to AD-463d.
+
+- **R#2: Section 3 SEARCH/REPLACE hand-waved** -- resolved with concrete blocks. Section 3 split into 3a/3b/3c:
+  - 3a: keyword-only `model_router` parameter added to `__init__`; published as PUBLIC `self.model_router` attribute (rec#4).
+  - 3b: `_resolve_model_for_tier(self, tier: str)` helper method (no `agent_id` parameter per R#1).
+  - 3c: concrete SEARCH/REPLACE block at `cognitive/llm_client.py:441-447` (verified verbatim; the actual call path is `_complete_inner`, not `complete()`).
+
+- **R#3: `_resolve_model_for_tier` empty-string semantics** -- docstring extended to cover all three return paths (router absent, router fails, router returns empty model name).
+
+**Recommended applied:**
+
+- **rec#1: dead `mark_unavailable`/`mark_available` methods** -- preserved; documented as "v1 ships no consumer; AD-463b health probe will use them."
+- **rec#2: cost sentinel ambiguity** -- preserved with documentation note.
+- **rec#3: filter ordering** -- N/A (HebbianRouter dropped per R#1).
+- **rec#4: post-construction wiring -> public attribute** -- applied. `OpenAICompatibleClient.model_router` is now public (no leading underscore); `finalize.py` writes `llm_client.model_router = runtime.model_router` to a public attribute.
+- **rec#5: test count update under R#1 (b)** -- applied; tests 13-14 (Hebbian) deferred to AD-463d. Test count 15 → 13. Test 13 renumbered (was test 15).
+
+**Recommended deferred:**
+
+- **rec#1 (dead methods)** -- kept in v1 as the deferred-consumer seam for AD-463b.
+- **rec#2 (cost sentinel)** -- documentation only; refinement in AD-463b.
+
+**Nits applied:**
+
+- **nit#1: footer line drift** -- corrected `runtime.emit_event` from line 775 to 785.
+- **nit#2: `__post_init__` mutation order** -- cosmetic; preserved (dict-comp not material).
+- **nit#3: keyword-only `model_router`** -- applied via `*` separator in __init__ signature.
+- **nit#4: `RoutingDecision.fallback` field** -- preserved as documentation surface.
+
+**Verified Against Codebase footer extended:** added `LLMRequest` class location at `types.py:227` (proves no `agent_id` field), `model = tc["model"]` SEARCH anchor at `llm_client.py:445`, corrected `runtime.emit_event` line. Removed pre-revision `runtime.hebbian_router` reference (no longer consumed).
+
+**Test count: 15 → 13** (Hebbian tests 13-14 deferred to AD-463d; Test 15 renumbered to Test 13).
+
+**Wave-5/6 conventions audit (post-revision):**
+
+- #1 Public-attribute wiring: `runtime.model_registry`, `runtime.model_router`, `llm_client.model_router` -- all public. ✅
+- #2 stdlib-only: no new pyproject deps. ✅
+- #3 Coordinator-then-dispatch: 6 capabilities deferred to AD-463b/c/d/e/f and AD-467d. v1 ships ModelRegistry + ModelRouter + real consumer hook. ✅
+- #4 Superset-filter: `_resolve_model_for_tier` returns None when router absent → existing path preserved. ✅
+- #5 init_<phase>: Section 6 wires from `startup/finalize.py`. ✅
+- #6 Verify-first: footer now includes LLMRequest grep (proves no agent_id) and llm_client:445 anchor. ✅
+- #7 No-theater: HebbianRouter integration dropped (was dead code); v1 ships only what works today. ✅
+
+**No-theater discipline (cross-cutting):** v1 ships:
+- ModelRegistry (real public catalog API; 11 default descriptors seeded)
+- ModelDescriptor (real frozen dataclass)
+- ModelRouter (real cost-aware + availability-aware + cost-ceiling selection)
+- Real consumer hook in `OpenAICompatibleClient._complete_inner` line 445
+
+All do real work today. Six deferrals (HebbianRouter integration, ProviderABC, MAD, hot-swap, edit-format, cost aggregation) are wholesale.
+
+**Verdict shift:** Pass-1 ⚠️ Conditional → expected ✅ Approved on second-pass review (R#1 wholesale defer of HebbianRouter eliminates the theater; R#2 concrete SEARCH/REPLACE replaces hand-waving; R#3 docstring clarification).
+
+The dispatch's reserved 1 ⚠️ tolerance for AD-463 is no longer needed under this revision -- the wholesale-defer of HebbianRouter from v1 makes the prompt as low-risk as the others. v1 is tighter foundation work.

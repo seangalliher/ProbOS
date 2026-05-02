@@ -520,5 +520,74 @@ grep -n "orders: OrdersConfig" src/probos/config.py
   (always-available terminal fallback)
 
 grep -n "def emit_event" src/probos/runtime.py
-  775: def emit_event(self, event: BaseEvent | str | EventType, ...
+  785: def emit_event(self, event: BaseEvent | str | EventType, ...
 ```
+
+---
+
+## Revision (2026-05-01)
+
+Applied review findings from `prompts/Reviews/ad-466-engineering-infrastructure-review.md`.
+
+**Required addressed:** none. Pass-1 review verdict was ✅ Approved.
+
+**Recommended applied:**
+
+- **rec#1: footer line drift** -- corrected `runtime.emit_event` from line 775 to line 785 (verified at runtime.py:785).
+- **rec#2: backup_root mkdir defensive guard** -- Section 6 finalize wiring now wraps `backup_root.mkdir(parents=True, exist_ok=True)` in try/except; on `OSError` sets `runtime.backup_service = None` with a `logger.warning` per three-tier exception handling.
+- **rec#3: BackupService partial-progress** -- Recommended; deferred to AD-466b polish. Documented in "What This Does NOT Change."
+
+**Recommended deferred (judgment call):**
+
+- **rec#4: SQLiteStorageBackend singleton test note** -- documentation polish; the Builder's test docstring will document at write time.
+
+**Nits applied:**
+
+- **nit#1, nit#2, nit#3, nit#4** -- all cosmetic; no edits required.
+
+**Verified Against Codebase footer extended:** corrected `runtime.emit_event` line number to 785.
+
+**Wave-5/6 conventions audit (post-revision):** all 7 conventions + 3 Wave-6 notes applied. ✅
+
+**No-theater discipline (cross-cutting):** N/A -- AD-466 v1 ships 2 real-work primitives (BackupService snapshots actual SQLite files; StorageBackend ABC + SQLiteStorageBackend produce a usable ConnectionFactory).
+
+**Verdict shift:** Pass-1 ✅ Approved → expected ✅ Approved on second-pass review (Recommended polish only).
+
+### Section 6 update applied (mkdir defensive guard)
+
+The Section 6 wiring block in `startup/finalize.py` is updated to:
+
+```python
+    # AD-466: Engineering Infrastructure (BackupService + StorageBackend)
+    if config.infrastructure.enabled:
+        from probos.infrastructure import (
+            BackupService,
+            SQLiteStorageBackend,
+        )
+        runtime.storage_backend = SQLiteStorageBackend()
+        if config.infrastructure.backup_enabled:
+            backup_root = runtime.data_dir / config.infrastructure.backup_subdir
+            try:
+                backup_root.mkdir(parents=True, exist_ok=True)
+                runtime.backup_service = BackupService(
+                    data_dir=runtime.data_dir,
+                    backup_root=backup_root,
+                    emit_event=runtime.emit_event,
+                )
+                logger.info(
+                    "AD-466: BackupService wired (backup_root=%s)",
+                    backup_root,
+                )
+            except OSError:
+                logger.warning(
+                    "AD-466: BackupService mkdir failed (backup_root=%s); "
+                    "service disabled for this session",
+                    backup_root, exc_info=True,
+                )
+                runtime.backup_service = None
+        else:
+            runtime.backup_service = None
+        logger.info("AD-466: StorageBackend wired (sqlite)")
+```
+
+Mirrors the standing three-tier exception handling pattern (tier 2: log-and-degrade; visible degradation acceptable for a backup feature when the backup directory cannot be created).
