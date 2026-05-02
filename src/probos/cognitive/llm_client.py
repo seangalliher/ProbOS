@@ -67,7 +67,12 @@ class OpenAICompatibleClient(BaseLLMClient):
         default_tier: str = "standard",
         config: Any = None,  # CognitiveConfig — optional, overrides all above
         rate_config: Any = None,  # AD-617: LLMRateConfig — optional
+        *,
+        model_router: Any = None,  # AD-463: ModelRouter — optional override
     ) -> None:
+        # AD-463: public attribute (not _-prefixed) so finalize.py can rewire
+        # post-construction without touching protected internals.
+        self.model_router = model_router
         from probos.config import CognitiveConfig
 
         if config is not None and isinstance(config, CognitiveConfig):
@@ -194,6 +199,36 @@ class OpenAICompatibleClient(BaseLLMClient):
         """Return the client lookup key for a tier."""
         tc = self._tier_configs[tier]
         return f"{tc['base_url']}|{tc.get('api_format', 'openai')}"
+
+    def _resolve_model_for_tier(self, tier: str) -> str | None:
+        """AD-463: consult ModelRouter if wired, else None (existing path).
+
+        Returns:
+          - The chosen model name (str) when ModelRouter overrides the default
+            tier->model mapping. Empty-string responses from the router are
+            converted to None so the existing ``tc["model"]`` path runs.
+          - None when no router is wired, the router fails, or the router
+            returns an empty model name.
+
+        v1 only overrides the model NAME; ``base_url``, ``api_key``, ``timeout``,
+        and ``rate_config`` remain the existing per-tier values.
+        Provider-routing (different base_url per provider) is deferred to AD-463b.
+        """
+        # Defensive: tests that construct via __new__ (bypassing __init__) won't
+        # have the model_router attribute. Treat that the same as not wired.
+        router = getattr(self, "model_router", None)
+        if router is None:
+            return None
+        try:
+            decision = router.choose(tier=tier)
+            return decision.chosen_model or None
+        except Exception:
+            logger.warning(
+                "AD-463: ModelRouter.choose failed; falling back to default "
+                "tier mapping (tier=%s)",
+                tier, exc_info=True,
+            )
+            return None
 
     def _cache_key(self, tier: str, prompt: str) -> str:
         return f"{tier}:{hash(prompt)}"
@@ -442,7 +477,9 @@ class OpenAICompatibleClient(BaseLLMClient):
         for attempt_tier in fallback_tiers:
             tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
             client = self._clients[self._client_key(attempt_tier)]
-            model = tc["model"]
+            # AD-463: ModelRouter override (caller-optional; absent = existing path)
+            _override = self._resolve_model_for_tier(attempt_tier)
+            model = _override or tc["model"]
             api_format = tc.get("api_format", "openai")
             tier_timeout = tc["timeout"]
 

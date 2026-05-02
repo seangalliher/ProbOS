@@ -583,6 +583,36 @@ async def finalize_startup(
         runtime.ground_truth_verifier = None
         runtime.verification_episode_writer = None
 
+    # AD-463: Model Diversity & Neural Routing (v1 foundation)
+    if config.model_routing.enabled:
+        from probos.cognitive.model_registry import ModelRegistry
+        from probos.cognitive.model_router import ModelRouter
+        runtime.model_registry = ModelRegistry()
+        runtime.model_router = ModelRouter(
+            registry=runtime.model_registry,
+            emit_event=runtime.emit_event,
+        )
+        # Wire ModelRouter into the existing LLM client (real consumer, not theater).
+        # The client's `model_router` public attribute is consulted at every
+        # _complete_inner() iteration via _resolve_model_for_tier(). Existing
+        # tier->model defaults remain when ModelRouter is absent.
+        llm_client = getattr(runtime, "llm_client", None)
+        if llm_client is not None:
+            try:
+                llm_client.model_router = runtime.model_router
+            except Exception:
+                logger.warning(
+                    "AD-463: failed to wire ModelRouter into runtime.llm_client",
+                    exc_info=True,
+                )
+        logger.info(
+            "AD-463: ModelRegistry + ModelRouter wired (%d models)",
+            len(runtime.model_registry.all()),
+        )
+    else:
+        runtime.model_registry = None
+        runtime.model_router = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

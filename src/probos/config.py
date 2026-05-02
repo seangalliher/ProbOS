@@ -1102,6 +1102,13 @@ class OperationsConfig(BaseModel):
     coordinator_interval_seconds: float = Field(default=60.0, ge=10.0)
 
 
+class ModelRoutingConfig(BaseModel):
+    """Model routing configuration (AD-463)."""
+
+    enabled: bool = True
+    cost_ceiling_per_million_output_tokens: float | None = None  # USD; None disables
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1683,6 +1690,7 @@ class SystemConfig(BaseModel):
     security_infra: SecurityInfraConfig = SecurityInfraConfig()  # AD-456
     ground_truth: GroundTruthConfig = GroundTruthConfig()  # AD-528
     operations: OperationsConfig = OperationsConfig()  # AD-467
+    model_routing: ModelRoutingConfig = ModelRoutingConfig()  # AD-463
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

@@ -207,6 +207,8 @@ class EventType(str, Enum):
     RESOURCE_ALLOCATED = "resource_allocated"  # AD-467
     TASK_SCHEDULED = "task_scheduled"  # AD-467
     WORKFLOW_STARTED = "workflow_started"  # AD-467
+    MODEL_ROUTED = "model_routed"  # AD-463
+    MODEL_FALLBACK = "model_fallback"  # AD-463
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased
