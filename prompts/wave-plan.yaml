@@ -75,3 +75,15 @@ waves:
     builder_required: true
     issues_to_close: [88, 87]
     status: done
+
+  - id: "11"
+    title: "Tooling hygiene — phantom-API pre-check kwarg validation (AD-685)"
+    kind: main
+    depends_on: ["10"]
+    dispatch_prompt: "prompts/WAVE-11-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-685-phantom-precheck-kwarg-validation.md"
+    builder_required: true
+    issues_to_close: []
+    status: pending
