@@ -707,6 +707,23 @@ async def finalize_startup(
     else:
         runtime.eps_coordinator = None
 
+    # AD-449: MCP Bridge (v1 OSS infrastructure)
+    if config.mcp.enabled:
+        from probos.integrations.mcp_bridge import MCPBridge
+        runtime.mcp_bridge = MCPBridge(
+            egress_policy=getattr(runtime, "egress_policy", None),
+            emit_event=runtime.emit_event,
+            request_timeout=config.mcp.request_timeout_seconds,
+        )
+        for srv in config.mcp.servers:
+            runtime.mcp_bridge.register_server(srv.url, headers=dict(srv.headers))
+        logger.info(
+            "AD-449: MCPBridge wired (%d server(s) preregistered)",
+            len(config.mcp.servers),
+        )
+    else:
+        runtime.mcp_bridge = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

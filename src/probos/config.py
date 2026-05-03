@@ -1161,6 +1161,21 @@ class EPSConfig(BaseModel):
     )
 
 
+class MCPServerConfig(BaseModel):
+    """One MCP server registration entry (AD-449)."""
+
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
+class MCPConfig(BaseModel):
+    """MCP Bridge configuration (AD-449)."""
+
+    enabled: bool = True
+    request_timeout_seconds: float = Field(default=30.0, ge=1.0)
+    servers: list[MCPServerConfig] = Field(default_factory=list)
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1767,6 +1782,7 @@ class SystemConfig(BaseModel):
     ready_room: ReadyRoomConfig = ReadyRoomConfig()  # AD-475
     dept_profiles: DepartmentProfilesConfig = DepartmentProfilesConfig()  # AD-656
     eps: EPSConfig = EPSConfig()  # AD-469
+    mcp: MCPConfig = MCPConfig()  # AD-449
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
