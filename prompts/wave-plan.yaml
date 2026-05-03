@@ -110,4 +110,4 @@ waves:
       - "prompts/combo-C-trivial-extensions.md"
     builder_required: true
     issues_to_close: [7]
-    status: pending
+    status: done
