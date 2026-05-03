@@ -783,6 +783,27 @@ async def finalize_startup(
     else:
         runtime.engineering_sensor_service = None
 
+    # AD-641e: LearnedShortcut Registry
+    ls_cfg = getattr(getattr(runtime, "config", None), "learned_shortcuts", None)
+    if ls_cfg is not None and ls_cfg.enabled:
+        from probos.cognitive.learned_shortcuts import (
+            LearnedShortcutRegistry,
+            WorkflowCacheBackend,
+        )
+        runtime.learned_shortcut_registry = LearnedShortcutRegistry(
+            emit_event=runtime.emit_event,
+        )
+        if ls_cfg.register_workflow_cache:
+            wf = getattr(runtime, "workflow_cache", None)
+            if wf is not None:
+                runtime.learned_shortcut_registry.register(
+                    WorkflowCacheBackend(workflow_cache=wf),
+                )
+        logger.info("AD-641e: LearnedShortcutRegistry wired (kinds=%s)",
+                    runtime.learned_shortcut_registry.kinds)
+    else:
+        runtime.learned_shortcut_registry = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

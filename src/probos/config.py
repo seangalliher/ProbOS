@@ -1200,6 +1200,13 @@ class EngineeringSensorsConfig(BaseModel):
     auto_start_periodic_report: bool = False
 
 
+class LearnedShortcutsConfig(BaseModel):
+    """AD-641e: LearnedShortcut Registry configuration."""
+
+    enabled: bool = True
+    register_workflow_cache: bool = True
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1813,6 +1820,7 @@ class SystemConfig(BaseModel):
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
     ward_room_hebbian: WardRoomHebbianConfig = Field(default_factory=WardRoomHebbianConfig)  # AD-641b
     engineering_sensors: EngineeringSensorsConfig = Field(default_factory=EngineeringSensorsConfig)  # AD-641f
+    learned_shortcuts: LearnedShortcutsConfig = Field(default_factory=LearnedShortcutsConfig)  # AD-641e
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

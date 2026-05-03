@@ -227,6 +227,8 @@ class EventType(str, Enum):
     WARD_ROOM_HEBBIAN_UPDATED = "ward_room_hebbian_updated"  # AD-641b
     WARD_ROOM_HEBBIAN_DECAYED = "ward_room_hebbian_decayed"  # AD-641b
     ENGINEERING_SENSOR_REPORT = "engineering_sensor_report"  # AD-641f
+    LEARNED_SHORTCUT_REGISTERED = "learned_shortcut_registered"  # AD-641e
+    LEARNED_SHORTCUT_HIT = "learned_shortcut_hit"  # AD-641e
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

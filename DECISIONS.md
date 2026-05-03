@@ -10,7 +10,23 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
-### AD-641f: Engineering Chief Ship's Systems Observability — Sensor Bundle for LaForge (2026-05-02)
+### AD-641e: LearnedShortcut Shared Abstraction — Protocol over WorkflowCache (2026-05-02)
+
+**Problem:** AD-641 design doc Category C names `WorkflowCache` (session-scoped LRU; AD-274 preexisting) and the future Cognitive JIT (AD-531-539; not yet built — `grep -rn "cognitive_jit\|CognitiveJITService" src/probos/` returns zero matches) as parallel "learned shortcut" systems at different timescales. The doc says: "Could share a common storage abstraction without merging logic." Today, no shared abstraction exists.
+
+**Decision:** Ship a `typing.Protocol` (`LearnedShortcutBackend`, `@runtime_checkable`) plus a `LearnedShortcutRegistry` coordinator and a `WorkflowCacheBackend` adapter — without modifying `WorkflowCache` itself. Backends keep separate storage; the registry is observation-only (read-side fan-out via `lookup_first`, no merging across stores).
+
+**Why no JIT adapter in v1 (genuine deferral, not theater):** The JIT service does not exist. Shipping `CognitiveJITBackend` now would be a permanent no-op until the JIT lands. Convention #7 (no-theater) prohibits it. AD-641e-i adds the adapter the same week the JIT service lands.
+
+**Why `evict()` returns `False` in the WorkflowCache adapter:** `WorkflowCache` lacks a public `evict()` method. v1 documents the deferral on the adapter rather than mutating `WorkflowCache`'s public surface (Open/Closed). AD-641e-ii adds both the WorkflowCache method and a cross-backend eviction policy.
+
+**Why fan-out only on reads, not writes:** Multicasting `store()` across backends would violate the design doc's "separate stores" principle and create coupling between unrelated lifecycles (session vs forever). Read-side fan-out is observation; write-side stays per-backend.
+
+**Trackers:** PROGRESS.md prepended; roadmap.md AD-641 row updated to add 641e to the complete list. 14 focused tests pass.
+
+---
+
+
 
 **Problem:** The Engineering Officer (LaForge) needs read access to **Category D** brain internals (pool scaling events, capability registry summary, gossip state count) to perform Chief Moderation duties. Category D is "brain-only" by default per AD-641 design doc, but LaForge is the documented exception: "Engineering Chief may eventually need observability into Category D systems as part of the Chief Moderation / Ship's Engineer role. This would be Category B (read-only) exposure, not Category C or integration."
 
