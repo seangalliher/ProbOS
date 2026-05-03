@@ -50,3 +50,67 @@
 - **Verify-first footer is grounded.** All grep claims verified against live codebase.
 - **Performance estimate plausible.** 409 files × per-class AST walk with caching is in the same order as v1's warm baseline; <10s target is reasonable given v1 hit <5s on 403 files. (See Recommended #2 for explicit baseline-drift checkpoint.)
 - **No v1 scope creep.** No type-shape or field-name validation smuggled into Section 1 implementation; both deferred.
+
+---
+
+## Second-Pass Review (2026-05-03)
+
+**Verdict:** ✅ Approved
+**All 2 Required + 4 Recommended + 3 Nits resolved. Recursive-validity gate clean (2 documented FPs only). Historical-phantom catch coverage validated against all 4 wave recurrences. Ready for Builder dispatch.**
+
+### Resolution Audit — Required
+
+| Pass-1 Required | Status | Evidence |
+|---|---|---|
+| R1 (output schema unresolved field) | ✅ | Section 1 step 4 specifies `"unresolved"` JSON field with structured `{call_site, obj, reason}` entries; reasons enumerated (`no_class_resolution`, `pattern_a_conflict`, `pattern_b_reassignment`). Section 2 wrapper documents separate `Skipped (unresolved class)` display, NO exit-code/phantom-count impact. Verified footer grep shows wrapper `2>$null` (stderr discard) + `ConvertFrom-Json` (stdout-only JSON), confirming schema choice prevents wrapper corruption. |
+| R2 (Pattern A priority + tie-breaking) | ✅ | Section 1 step 1 enumerates 4-level priority: (1) `AnnAssign` in runtime.py [highest], (2) `Assign+Call` in finalize.py, (3) `Assign+Call` in runtime.py `__init__`, (4) bare `Assign` → unresolved. `Optional[X]` and `X \| None` resolve to `X`. Same-priority conflict → `git blame` most-recent commit; still tied → `unresolved` with `pattern_a_conflict`. First-hit-wins prevents priority-level conflict. |
+
+### Resolution Audit — Recommended
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| Rec #1 (test #5 split) | ✅ | Tests 5a/5b in Test Plan: `via_annassign_in_runtime_py` (priority 1) + `via_finalize_py_assignment` (priority 2). Total 11 tests. AC updated. |
+| Rec #2 (perf baseline drift) | ✅ | AC bullet: "Builder reports actual warm-pass timing on at least 1 representative prompt; if >10s, extend `_INDEX_CACHE` to also cache per-class method sets before merge." Explicit checkpoint per recommendation. |
+| Rec #3 (FP definition) | ✅ | Section 3 adds binding definition: `method_phantom` flag on existing method OR wrong-class resolution = FP; `unresolved` entries explicitly NOT FPs. |
+| Rec #4 (Pattern B multi-assign) | ✅ | Section 1 Pattern B: first-assignment-wins in document order; later reassignment to different class → `unresolved` with reason `pattern_b_reassignment`. Mirrors Pattern A conservative posture. |
+
+### Resolution Audit — Nits
+
+| Pass-1 Nit | Status | Notes |
+|---|---|---|
+| Nit #1 (test #4 rename) | ✅ | Renamed to `test_helper_skips_unresolvable_class_no_false_positive`. |
+| Nit #2 (AC cold/warm overpromise) | ✅ | AC #5 now warm-only with Builder timing checkpoint. |
+| Nit #3 (Hard-Stop FP threshold) | ✅ | Tightened from `>5 false positives per prompt` to `≥1 false positive` — aligns with Section 3 `0 expected`. |
+
+### Pre-check Output (recursive validity)
+
+```
+./scripts/phantom-api-precheck.ps1 prompts/ad-685b-method-call-validation.md
+=== prompts/ad-685b-method-call-validation.md ===
+  2 phantom symbol(s):
+    - [runtime.X] runtime.duty_schedule_tracker   (documented FP: prose context, retrospective table)
+    - [<Class>(...)] class:SomeClass              (documented FP: illustrative placeholder in Pattern B)
+```
+
+**No new phantoms beyond the 2 documented FPs.** Verify-first regression check passes.
+
+### Historical-Phantom Catch Coverage
+
+| Wave | Phantom | Pattern | Test | Covered |
+|---|---|---|---|---|
+| 9B | `event_log.query(event_type=...)` | A (runtime.event_log → EventLog) | Test #3 | ✅ (real: `query_structured`) |
+| 10 | `WorkItemStore.add(work_item)` | A (runtime.work_item_store → WorkItemStore) | Test #2 | ✅ (real: `create_work_item`) |
+| 12 | `runtime.duty_schedule_tracker` | (AD-685 v1 territory — runtime-attribute existence) | covered by v1 | ✅ |
+| 14 | `LLMClient.chat(...)` | B (bare `client = LLMClient(...)` in prompt body) | Test #1 | ✅ (real: `complete`) |
+
+**All 4 method-shape recurrences covered.** Pattern A handles 3 of 4 (runtime-attribute-shape); Pattern B handles 1 of 4 (bare-constructor-shape); Pattern C (parameter type hints) provides defense-in-depth for future recurrences in delegated methods. Wave 14 retrospective gap-closing verified.
+
+### New Findings
+
+None. No regressions introduced; no new Required-class issues; no new phantoms in shipping content.
+
+### Closing Note
+
+Revision adheres to convention #14 (aggressive pre-deferral): v1 ships method-name only; AD-685c (type-shape) and AD-685d (field-name) explicitly deferred in Solution Overview, "What This Does NOT Change", and DECISIONS.md entry. Recursive-validity gate is the canonical Builder-side acceptance check; framing matches AD-685 v1 precedent.
+
+**Recommended Builder dispatch:** single commit, no further architect cycles required.
