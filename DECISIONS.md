@@ -78,6 +78,26 @@ Both are read-only consumers of existing runtime surfaces. No writes. Public att
 
 **Cross-links:** AD-566 (Crew Qualification Battery), AD-539 (Gap → Qualification Pipeline), AD-471 (Watch Bill), Earned Agency, episodic memory, dreaming engine, WorkItemStore.
 
+### AD-685b: Phantom-API Pre-Check — Method-Call AST Validation (2026-05-03)
+
+**Problem:** AD-685 v1 catches kwarg-name phantoms but NOT method-name phantoms. 4 documented recurrences across Waves 9B, 10, 12, 14 of the pattern: prompt asserts `<obj>.<method>(...)` where `<method>` doesn't exist on the resolved class. 3 of 4 caught at review time (LLMClient.chat → complete being the most recent in Wave 14); only 1 caught by AD-685 v1 (runtime.duty_schedule_tracker via runtime.X check). Architect's 4th-recurrence forcing function.
+
+**Decision:** Extend `scripts/phantom_api_ast_helper.py` with method-name validation:
+- Resolve `<obj>` to its class via runtime attribute lookup (Pattern A), constructor assignment in prompt (Pattern B), or type hint (Pattern C).
+- Walk class source file AST to collect method names (sync + async, exclude dunders).
+- Flag call sites where `<method>` is NOT in the class's method set as `method_phantom`.
+- Conservative: skip when class resolution fails — never false-flag.
+
+PowerShell wrapper changes: minimal (display new category prefix). Exit semantics unchanged.
+
+**Why:** 4 recurrences across 6 waves means the architect-discretion sweep posture has expired. One scripted convention beats N drafting-time conventions. Recursive-validity gate (AD-685 v1 precedent) ensures AD-685b's own prompt validates clean.
+
+**Deferred:**
+- AD-685c: Type-shape validation (dict vs list kwarg values).
+- AD-685d: Field-name validation for dataclass/Pydantic constructor kwargs (e.g., WorkItem field `payload` vs `metadata`).
+
+**Cross-links:** AD-685 v1 (Wave 11; symbol-existence + kwarg-name), Wave 14 retrospective (4th method-shape recurrence trigger), `phantom_api_ast_helper.py` (extended in-place).
+
 ### AD-685: Phantom-API Pre-Check Kwarg Shape Validation (2026-05-03)
 
 **Problem:** The phantom-API pre-check (Wave 8 Addendum convention #16) catches symbol-existence phantoms but NOT method-kwarg phantoms. Three documented misses across Waves 9B, 10:

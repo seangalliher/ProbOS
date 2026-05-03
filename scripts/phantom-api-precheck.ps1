@@ -253,20 +253,35 @@ foreach ($promptPath in $PromptPaths) {
     }
 
     # AD-685: Kwarg-mismatch check via Python AST helper.
+    # AD-685b: Method-name validation also via the same helper. Helper
+    # output is a JSON object with `phantoms` (kwarg + method-name) and
+    # `unresolved` (informational; no exit-code impact).
     $helperPath = Join-Path $PSScriptRoot 'phantom_api_ast_helper.py'
     $pythonExe = Join-Path $repoRoot '.venv/Scripts/python.exe'
     if (-not (Test-Path $pythonExe)) { $pythonExe = 'python' }
+    $unresolvedHere = @()
     if (Test-Path $helperPath) {
         try {
             $helperJson = $filteredBody | & $pythonExe $helperPath --src-root $srcRoot 2>$null
             if ($LASTEXITCODE -eq 0 -and $helperJson) {
                 $parsed = $helperJson | ConvertFrom-Json
                 foreach ($p in $parsed.phantoms) {
-                    [void]$phantomsHere.Add(@{
-                        Symbol = "$($p.method)($($p.kwarg)=...)"
-                        Category = 'kwarg_mismatch'
-                        CallSite = $p.call_site
-                    })
+                    if ($p.category -eq 'method_phantom') {
+                        [void]$phantomsHere.Add(@{
+                            Symbol = "$($p.resolved_class).$($p.method)(...)"
+                            Category = 'method_phantom'
+                            CallSite = $p.call_site
+                        })
+                    } else {
+                        [void]$phantomsHere.Add(@{
+                            Symbol = "$($p.method)($($p.kwarg)=...)"
+                            Category = 'kwarg_mismatch'
+                            CallSite = $p.call_site
+                        })
+                    }
+                }
+                if ($parsed.PSObject.Properties.Name -contains 'unresolved' -and $parsed.unresolved) {
+                    $unresolvedHere = @($parsed.unresolved)
                 }
             }
         } catch {
@@ -283,6 +298,15 @@ foreach ($promptPath in $PromptPaths) {
         }
         $totalPhantoms += $phantomsHere.Count
         [void]$report.Add(@{ Path = $promptPath; Phantoms = @($phantomsHere) })
+    }
+
+    # AD-685b: Display unresolved (skipped) entries informationally; these
+    # do NOT contribute to phantom count and do NOT affect exit code.
+    if ($unresolvedHere.Count -gt 0) {
+        Write-Host "  Skipped (unresolved class):" -ForegroundColor DarkGray
+        foreach ($u in $unresolvedHere) {
+            Write-Host "    ~ [$($u.reason)] $($u.call_site) (obj=$($u.obj))" -ForegroundColor DarkGray
+        }
     }
 }
 

@@ -66,7 +66,11 @@ def test_helper_runs_on_clean_prompt_returns_empty_phantoms() -> None:
         """
     )
     out = _run_helper(body)
-    assert out == {"phantoms": []}
+    # AD-685b: helper now also emits an `unresolved` list (empty when no
+    # call sites trigger conservative skips). `phantoms` stays empty on a
+    # clean prompt.
+    assert out.get("phantoms") == []
+    assert out.get("unresolved", []) == []
 
 
 # Test 2: Wave 9B regression — `event_log.query(event_type=...)` flagged.
