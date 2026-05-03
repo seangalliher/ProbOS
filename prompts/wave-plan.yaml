@@ -87,3 +87,15 @@ waves:
     builder_required: true
     issues_to_close: []
     status: done
+
+  - id: "12"
+    title: "AD-477 Naval Organization v1 (Captain's Log + Plan of the Day)"
+    kind: main
+    depends_on: ["11"]
+    dispatch_prompt: "prompts/WAVE-12-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-477-naval-organization-v1.md"
+    builder_required: true
+    issues_to_close: [71]
+    status: pending
