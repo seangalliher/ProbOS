@@ -91,3 +91,46 @@ Tolerance reservation: convention #15 allows 1 ⚠️ on the highest-risk prompt
 641f is the cleanest of the three Wave 9A prompts. The sensor bundle is honest (3 real sensors, no fakes), `getattr` defensive against `__new__`-bypass test instances (#11), task-handle named (`engineering_sensor_report`) and instance-held (Wave 5 convention), and 3 grandchildren are explicitly listed for deferral. The two Recommended items (`get_all_capabilities` shape check, `_engineering_sensor_start_task` underscore inconsistency) are polish, not correctness. Approve for build pass.
 
 ---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved
+
+Convergence reached. All 3 Recommended (R1/R2/R3) and both Nits (N1/N2) genuinely applied; one architect-discretion verify-first repair (`get_all_capabilities` return shape) caught and fixed during revision.
+
+### Resolution Audit
+
+| Pass-1 Recommended | Status | Evidence in revised prompt |
+|---|---|---|
+| R1 — `get_all_capabilities` return shape | ✅ Applied | Section 3 `_collect_capabilities` now flattens via `for caps in all_caps.values(): for cap in caps: seen.add(str(cap.can))` with `isinstance(all_caps, dict)` shape check; verified against live `src/probos/mesh/capability.py:32` (`dict[AgentID, list[CapabilityDescriptor]]`). Test 6 description updated. |
+| R2 — public attribute consistency | ✅ Applied | Section 5 wires `runtime.engineering_sensor_start_task` (no leading underscore); matches Wave 5 convention #1 and sibling 641a. |
+| R3 — `auto_start_periodic_report=False` honesty | ✅ Applied | Solution Overview v1-scope bullet 4 explicitly states: "v1 ships the periodic-emit machinery dormant; operators flip the flag once they want the cadence. Single-shot `report()` works regardless." |
+
+| Pass-1 Nit | Status | Notes |
+|---|---|---|
+| N1 — negative-input clamp test | ✅ Applied | Test 12 expanded: "`report_interval_seconds=-5.0` → also clamps to 1.0 (negative-input boundary)". |
+| N2 — richer payload deferral | ✅ Applied | Added `AD-641f-iv` (richer report payload) to deferred grandchildren. v1-deliverables now reads "3 of 7 capabilities; 4 deferred". |
+
+### New Findings
+
+None.
+
+### Verified Against Revised Codebase Claims
+
+- `get_all_capabilities` return shape: `grep -n "self\._capabilities:" src/probos/mesh/capability.py:32` confirms `dict[AgentID, list[CapabilityDescriptor]]`. Revision flattens via `cap.can` correctly. ✅
+- `agent_count` property (`capability.py:98`), `view_size` property (`gossip.py:119`), `get_view()` method (`gossip.py:99`), pool `current_size`/`target_size` (`pool.py:53`): all confirmed live. ✅
+- `ENGINEERING_SENSOR_REPORT` absent from `events.py`: confirmed (introduced by this prompt, not phantom). ✅
+
+### Convention Audit (delta from pass-1)
+
+| # | Convention | Pass-1 | Pass-2 |
+|---|---|---|---|
+| 1 | Public-attribute wiring | ⚠️ partial (R2 underscore) | ✅ resolved (`engineering_sensor_start_task` public) |
+| 7 | No theater | ✅ | ✅ (4 deferred grandchildren explicit) |
+| 14 | Aggressive pre-deferral | ✅ (3/3) | ✅ (3 v1 / 4 deferred) |
+
+All 19 conventions ✅.
+
+### Disposition
+
+641f converges cleanly. The bonus verify-first repair (`get_all_capabilities` flattening) prevented a runtime bug — the previous draft would have surfaced sorted agent IDs labeled as "intents". This is the kind of architect-discretion improvement the revision pass is for. Approve for build.

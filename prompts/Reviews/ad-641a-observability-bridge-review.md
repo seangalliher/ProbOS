@@ -100,3 +100,62 @@ Cross-prompt dependency check — verified:
 641a is structurally correct and verify-first compliant on the major load-bearing claims (`runtime.attention`, `WardRoomService.create_post` signature, `current_size`/`target_size`, EventType absences). The single Required is mechanical — Section 4 needs a python code block matching the sibling-prompt house pattern so Builder doesn't have to reinvent the cfg-lookup and task-naming idioms. The three Recommended items are verify-first gap-closers (`event_log.query` signature, `mcp` field placement) and a smell-flag (private `_queue` read with explicit grandchild ticket). Verdict ⚠️ Conditional, using Wave 9A's tolerance reservation (convention #15) — the prompt is approvable once Section 4 has a real code block. Suggest pass-2 reviewer auto-promote to ✅ once Section 4 is rewritten with a python block.
 
 ---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved
+
+Convergence reached. The Required Section-4 prose-only gap is closed with a complete python wiring block matching the sibling-prompt house pattern; all 3 Recommended and all 3 Nits applied; three architect-discretion verify-first repairs caught critical live-API mismatches that pass-1 review missed (`query_structured` async signature, `event=` parameter name, dict row shape with `data` key).
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| #1 — Section 4 prose-only → python block | ✅ Resolved | Section 4 now ships a complete python block: `cfg = getattr(getattr(runtime, "config", None), "observability_bridge", None)` lookup pattern, `runtime.observability_bridge` assignment, `runtime.observability_bridge_start_task = asyncio.create_task(...)` public task attribute, named task `observability_bridge_start`. Mirrors AD-641f Section 5 house pattern exactly. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| R1 — `event_log.query` signature grep | ✅ Applied (and exceeded) | Footer revision pass adds `grep -n "async def query" src/probos/substrate/event_log.py` showing live signatures `132: async def query(category=, agent_id=, limit=)` (no `event_type=`) and `170: async def query_structured(...event=...)`. Architect-discretion repair: rewrote `_collect_vitals` to use the correct async `query_structured(event=...)` API. |
+| R2 — private `_queue` read tagged | ✅ Applied | Section 2 `_collect_attention` carries inline `# AD-641a-iv: replace with attn.snapshot() once exposed` comment. Grandchild AD-641a-iv added; deferred-grandchildren count rises to 4 as recommended. |
+| R3 — `mcp` field placement grep | ✅ Applied | Footer revision pass shows `config.py:1727 class SystemConfig` and `config.py:1788 mcp: MCPConfig = MCPConfig()  # AD-449`, confirming `mcp` is top-level field; placement instruction grounded. |
+
+| Pass-1 Nit | Status | Notes |
+|---|---|---|
+| N1 — `attention_manager` → `attention` in test 5 | ✅ Applied | Test 5 description corrected to read `runtime.attention` (not `attention_manager`); aligns with live `runtime.py:359`. |
+| N2 — richer post body deferred | ✅ Applied | Mentioned in deferred-grandchildren list (AD-641a-ii HXI surfaces). |
+| N3 — test 11 rewritten as direct call | ✅ Applied | Test 11 renamed `test_publish_once_emits_failed_on_exception`; description: "call `bridge._publish_once()` directly with `ward_room.create_post.side_effect = RuntimeError`; expect `OBSERVABILITY_BRIDGE_FAILED` emit. Direct call avoids the asyncio-flake landmine in exercising the loop." |
+
+### Architect-Discretion Verify-First Repairs (caught during revision; pass-1 missed)
+
+These three are **critical correctness fixes**, not polish:
+
+1. **`take_snapshot` is async** — was sync in original draft. Required because `_collect_vitals` calls `await event_log.query_structured(...)` (verified async at `event_log.py:170`). Sync caller would have raised `TypeError: object coroutine ... can't be awaited` at first invocation. Public-API docstring + Solution Overview + test 5 description all updated.
+2. **`query_structured(event=...)` parameter** — original draft used `query(event_type=...)`. Live `query()` signature is `async def query(category=, agent_id=, limit=)` — there is NO `event_type=` parameter. `query_structured()` is the right method; parameter is `event=` (string event name). Fix prevents a `TypeError: unexpected keyword argument` at first call.
+3. **Rows are dicts with `data` key** — original draft walked `entry.payload`. Live `_row_to_dict` (`event_log.py:249`) returns `dict` with keys `id, timestamp, category, event, agent_id, agent_type, pool, detail, correlation_id, parent_event_id, data`. Fix prevents `AttributeError: 'dict' object has no attribute 'payload'` on first vitals read.
+
+### New Findings
+
+None. The three critical repairs above were caught and fixed *during* revision, not introduced by it.
+
+### Verified Against Revised Codebase Claims
+
+- `query_structured` is async with `event=` keyword, returns `list[dict]`: `src/probos/substrate/event_log.py:170` confirmed via direct read. ✅
+- `_row_to_dict` returns dict with `data` key: `event_log.py:249` confirmed. ✅
+- `mcp: MCPConfig` is top-level on `SystemConfig`: `config.py:1788` confirmed in revision footer. ✅
+- `runtime.attention` (not `attention_manager`): `runtime.py:359` confirmed. ✅
+
+### Convention Audit (delta from pass-1)
+
+| # | Convention | Pass-1 | Pass-2 |
+|---|---|---|---|
+| 5 | startup `emit_event_fn` | ⚠️ (Section 4 prose-only) | ✅ resolved (full python block) |
+| 6 | verify-first | ⚠️ (R1, R3 gaps) | ✅ resolved (footer revision pass + 3 architect-discretion repairs) |
+| 7 | No theater | ✅ | ✅ (4 deferred grandchildren) |
+| 14 | Aggressive pre-deferral | ✅ (3/3) | ✅ (3 v1 / 4 deferred) |
+| 15 | Relaxed tolerance | ⚠️ used | ✅ released — verdict ✅ Approved without tolerance |
+
+All 19 conventions ✅. **Tolerance reservation released back unused** — revision exceeded pass-1 expectations by catching 3 latent correctness bugs.
+
+### Disposition
+
+641a converges to ✅ with the tolerance reservation released. The pass-1 Required (Section 4 code block) is resolved structurally. The three architect-discretion verify-first repairs are the kind of revision-pass value-add the wave process is designed for: a live-API mismatch caught in spec is one not caught in Builder cycles. Approve for build.
