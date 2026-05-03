@@ -25,6 +25,7 @@ AD-477 in roadmap.md (line 4207) lists 6 naval organization capabilities. Heavy 
 - AD-477c: 3M System (planned preventive maintenance). Forcing function: when fleet operational scale demands it.
 - AD-477d: Damage Control Organization (5-phase protocol). Forcing function: when alert-condition response needs structured procedure.
 - AD-477e: SORM (Ship's Organization and Regulations Manual). Forcing function: governance evolution AD.
+- AD-477f: Plan of the Day scheduled-duty integration. Forcing function: either runtime exposes a public DutyScheduleTracker accessor, OR AD-500a-1 ships and `WorkItem(work_type="duty")` becomes the canonical query path.
 
 ## Dependencies
 
@@ -33,7 +34,8 @@ AD-477 in roadmap.md (line 4207) lists 6 naval organization capabilities. Heavy 
 - `runtime.work_item_store` — read-only consumer (`list_work_items` for active WorkItems; verified at workforce.py:1066).
 - `runtime.ward_room` — read-only consumer (recent threads).
 - `runtime.config.alerts` (or equivalent) — read-only for alert conditions.
-- `runtime.duty_schedule_tracker` — read-only for upcoming scheduled duties.
+
+**NOTE on scheduled duties:** `DutyScheduleTracker` is currently private to `ProactiveCognitiveLoop` (`self._duty_tracker` at `proactive.py:181`); there is no `runtime.duty_schedule_tracker` public accessor. AD-477f deferred grandchild covers "include scheduled duties in Plan of the Day" via either (a) public accessor on runtime (scope expansion) or (b) AD-500a-1's `WorkItem(work_type="duty")` query path once that ships. v1 PlanOfDay omits scheduled duties.
 
 All reads; no writes to existing surfaces.
 
@@ -105,8 +107,10 @@ class PlanOfDayService:
         - Active WorkItems via runtime.work_item_store.list_work_items(status="pending")
         - Ward Room thread queue depth
         - Current alert conditions
-        - Scheduled duties for the day
         Returns Markdown content. Caller writes to disk.
+
+        Note: scheduled duties not included in v1 (DutyScheduleTracker is private to
+        ProactiveCognitiveLoop). Deferred to AD-477f.
         """
 
     async def write_to_disk(self, date: datetime.date) -> Path:
