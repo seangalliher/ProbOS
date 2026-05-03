@@ -144,7 +144,10 @@ class TestProactiveCycleUnreadDms:
         rt = MagicMock(spec=ProbOSRuntime)
         rt.config = MagicMock()
         rt.config.ward_room = MagicMock()
-        rt.config.ward_room.dm_exchange_limit = 40
+        rt.config.ward_room.dm_exchange_limit = 15
+        rt.config.ward_room.dm_response_budget = 6
+        rt.config.ward_room.dm_response_window_seconds = 600.0
+        rt.config.ward_room.dm_pair_exchange_budget = 8
         rt.ward_room = AsyncMock(spec=WardRoomService)
         rt.ward_room.get_unread_dms = AsyncMock(return_value=[
             {
@@ -163,7 +166,7 @@ class TestProactiveCycleUnreadDms:
         await loop._check_unread_dms(agent, rt)
 
         # Should have called get_unread_dms for this agent
-        rt.ward_room.get_unread_dms.assert_awaited_once_with(agent.id, limit=2, exchange_limit=40)
+        rt.ward_room.get_unread_dms.assert_awaited_once_with(agent.id, limit=2, exchange_limit=15)
 
         # Should have routed the event through ward_room_router
         rt.ward_room_router.route_event.assert_awaited_once()

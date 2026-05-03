@@ -1239,10 +1239,13 @@ class WardRoomConfig(BaseModel):
     retention_days_captain: int = 0            # 0 = indefinite retention for Captain posts
     archive_enabled: bool = True               # Write pruned posts to JSONL archive before deletion
     prune_interval_seconds: float = 86400.0    # How often to run pruning (default: daily)
-    dm_exchange_limit: int = 40          # BF-200: raised from 5 — DMs need room for substantive conversation
+    dm_exchange_limit: int = 15          # BF-257: lowered from 40 (BF-200's value) — 15 still allows substantive DM conversations
     dm_similarity_threshold: float = 0.6  # AD-614: Jaccard threshold for DM self-similarity suppression
     router_concurrency_limit: int = 10     # AD-616: max concurrent route_event() tasks
     event_coalesce_ms: int = 200           # AD-616: coalesce window for rapid-fire post events (0 = disabled)
+    dm_response_budget: int = 6             # BF-257: max DM responses per agent per window
+    dm_response_window_seconds: float = 600.0  # BF-257: sliding window (10 minutes)
+    dm_pair_exchange_budget: int = 8        # BF-257: max exchanges per A<->B pair per window
 
 
 class AssignmentConfig(BaseModel):

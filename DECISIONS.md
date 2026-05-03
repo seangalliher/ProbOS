@@ -10,6 +10,30 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-257: DM Receive Rate Limiter (2026-05-02)
+
+**Problem:** Three Science agents (Atlas, Sage, Lyra) entered a DM ping-pong loop in a production incident: Agent A DMs B; B's `_check_unread_dms` routes the unread DM through the cognitive chain (auto-approved by BF-184/187 social obligation bypass); B replies with a DM to A; A receives the unread DM; cycle repeats indefinitely. The loop exhausted all LLM capacity, caused cascading JSON parse failures across the crew, collapsed routing entropy to 0.00, and triggered a false `greet_user` capability gap for the Captain.
+
+**Decision:** Add a two-layer sliding-window rate limiter at the proactive DM receive layer (`ProactiveCognitiveLoop._check_unread_dms`). Layer 1: per-agent global budget (default 6 DM responses per 10-minute window). Layer 2: per-pair bidirectional budget (default 8 exchanges per pair per window — pair key uses `sorted([a, b])` so A->B and B->A share one counter). Captain DMs are exempt. Throttled DMs are NOT added to the dedup set so they retry after the window expires (deferred-not-dropped). Default `dm_exchange_limit` lowered 40 -> 15.
+
+**Why receive-side, not send-side:** BF-163 send cooldown is unidirectional — A->B and B->A are tracked as independent keys, so a perfectly bidirectional ping-pong never triggers it. The receive gate catches the round-trip pattern that the send-side cannot see by construction.
+
+**Why not suppress in evaluate.py / reflect.py:** BF-184/187 social obligation bypass is correct — DMs should auto-approve when capacity exists. The rate limiter prevents capacity exhaustion; it does not change the cognitive chain's quality-gate semantics.
+
+**Why default 6/10min:** 6 responses per 10 minutes = ~1 every 100 seconds, which allows real conversation cadence. 10 minutes covers a typical multi-turn thread. Production-data-grounded tuning deferred to BF-257b (telemetry hook + observed-rate calibration).
+
+**Captain exemption mechanism (v1):** Callsign-based check (`author_callsign.lower() == "captain"`). The Captain's callsign is canonical at "Captain" per AD-499 ShipNamingPolicy and BF-244 ontology callsign sync. If a future AD introduces a canonical captain DID or `is_captain(rt, author_id)` helper, this check should switch to identity-based; until then, the callsign check is acceptable v1 with an explicit comment in the source.
+
+**Memory bound:** `_dm_response_counts` and `_dm_pair_counts` are lazy-pruned on each `_dm_response_budget_exceeded` call. Memory is bounded by num_agents × budget (max 6-8 timestamps per key). At <100-agent scale, periodic full-prune is unnecessary; defer to BF-257c if observed at scale.
+
+**Alternatives considered:** (1) Bidirectional BF-163 keys — would fix pair loops but not multi-agent fan-out (3-agent ring still loops). (2) AD-643b DM suppression in re-reflect — treats symptom (undeclared actions) not cause; the loop is already underway by then. (3) LLM-level circuit breaker — too coarse, would block all agents not just the looping ones.
+
+**Defense in depth:** Three layers of DM protection now exist: (1) BF-257 receive budget (this fix), (2) BF-163 send cooldown, (3) AD-614 self-similarity + AD-623 convergence content-based gates. Each independently prevents a different failure mode.
+
+**Deferred follow-ups:** BF-257b (telemetry / `DM_THROTTLED` EventType + observed-rate calibration), BF-257c (periodic full-prune + scale-aware eviction), BF-257d (identity-based captain check once a canonical captain DID exists).
+
+---
+
 ### Wave 5-7 Retrospective Addendum — Additional Conventions
 
 **Date:** 2026-05-02

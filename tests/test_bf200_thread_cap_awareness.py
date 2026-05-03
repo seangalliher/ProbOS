@@ -43,9 +43,9 @@ def _make_router(**overrides) -> WardRoomRouter:
 # ---------------------------------------------------------------------------
 
 class TestConfig:
-    def test_dm_exchange_limit_default_40(self):
-        """Test 1: DM exchange limit raised to 40."""
-        assert WardRoomConfig().dm_exchange_limit == 40
+    def test_dm_exchange_limit_default_15(self):
+        """Test 1: DM exchange limit default. BF-200 raised 5->40; BF-257 lowered 40->15."""
+        assert WardRoomConfig().dm_exchange_limit == 15
 
 
 # ---------------------------------------------------------------------------

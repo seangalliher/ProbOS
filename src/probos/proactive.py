@@ -38,7 +38,7 @@ from probos.utils import format_duration
 
 if TYPE_CHECKING:
     from probos.cognitive.novelty_gate import NoveltyGate
-    from probos.config import DutyScheduleConfig, ProactiveCognitiveConfig
+    from probos.config import DutyScheduleConfig, ProactiveCognitiveConfig, WardRoomConfig
     from probos.knowledge.store import KnowledgeStore
     from probos.runtime import ProbOSRuntime
     from probos.ward_room_pipeline import PostBudget
@@ -186,6 +186,8 @@ class ProactiveCognitiveLoop:
         self._reply_cooldowns: dict[str, float] = {}  # BF-171: per-agent per-channel reply cooldown
         self._last_dm_body: dict[str, str] = {}  # AD-614: self-similarity gate
         self._notified_dm_threads_reset: float = time.monotonic()  # hourly reset
+        self._dm_response_counts: dict[str, list[float]] = {}  # BF-257: agent_id -> [timestamps]
+        self._dm_pair_counts: dict[str, list[float]] = {}      # BF-257: "a_id:b_id" -> [timestamps]
         self._pending_notebook_reads: dict[str, str] = {}  # AD-504: agent_id -> topic_slug
         self._llm_failure_count: int = 0  # BF-069: consecutive proactive failures
         self._llm_status: str = "operational"  # AD-576: "operational" | "degraded" | "offline"
@@ -605,7 +607,42 @@ class ProactiveCognitiveLoop:
                 tid = dm["thread_id"]
                 if tid in self._notified_dm_threads:
                     continue
+
+                # BF-257: DM response budget check -- skip Captain DMs.
+                # v1: callsign-based check (case-insensitive). The Captain's
+                # callsign is canonical at "Captain" per AD-499 ShipNamingPolicy
+                # and BF-244 ontology callsign sync. If a future AD introduces a
+                # canonical captain DID or `is_captain(rt, author_id)` helper,
+                # this check should switch to identity-based.
+                author_callsign = (dm.get("author_callsign") or "").strip().lower()
+                if author_callsign != "captain":
+                    wr_config = getattr(
+                        getattr(rt, 'config', None), 'ward_room', None,
+                    )
+                    if wr_config:
+                        reason = self._dm_response_budget_exceeded(
+                            agent.id, dm["author_id"], wr_config,
+                        )
+                        if reason:
+                            logger.info(
+                                "BF-257: %s DM response to @%s throttled (%s)",
+                                getattr(agent, 'callsign', agent.agent_type),
+                                dm.get("author_callsign", dm["author_id"]),
+                                reason,
+                            )
+                            # Don't add to _notified_dm_threads -- allow retry
+                            # after window expires.
+                            continue
+
                 self._notified_dm_threads.add(tid)
+
+                # BF-257: Record this DM response in budget trackers.
+                now = time.monotonic()
+                self._dm_response_counts.setdefault(agent.id, []).append(now)
+                # Canonical pair key -- A->B and B->A share the same counter.
+                pair_key = ":".join(sorted([agent.id, dm["author_id"]]))
+                self._dm_pair_counts.setdefault(pair_key, []).append(now)
+
                 # Route through existing notification pipeline
                 event_data = {
                     "thread_id": tid,
@@ -630,6 +667,38 @@ class ProactiveCognitiveLoop:
                 "BF-082: Unread DM check failed for %s: %s",
                 agent.agent_type, exc,
             )
+
+    def _dm_response_budget_exceeded(
+        self, agent_id: str, partner_id: str, config: "WardRoomConfig",
+    ) -> str | None:
+        """BF-257: Check if agent has exceeded DM response budget.
+
+        Returns a reason string if budget is exceeded, None if allowed.
+        Uses a sliding window -- expired timestamps are pruned on each call.
+        Synchronous: pure in-memory check (no I/O).
+        """
+        now = time.monotonic()
+        window = config.dm_response_window_seconds
+        cutoff = now - window
+
+        # Layer 1: Per-agent global DM response budget
+        budget = config.dm_response_budget
+        agent_times = self._dm_response_counts.get(agent_id, [])
+        agent_times = [t for t in agent_times if t > cutoff]
+        self._dm_response_counts[agent_id] = agent_times
+        if len(agent_times) >= budget:
+            return f"agent_budget ({len(agent_times)}/{budget} in {window:.0f}s)"
+
+        # Layer 2: Per-pair exchange budget (bidirectional key)
+        pair_budget = config.dm_pair_exchange_budget
+        pair_key = ":".join(sorted([agent_id, partner_id]))
+        pair_times = self._dm_pair_counts.get(pair_key, [])
+        pair_times = [t for t in pair_times if t > cutoff]
+        self._dm_pair_counts[pair_key] = pair_times
+        if len(pair_times) >= pair_budget:
+            return f"pair_budget ({len(pair_times)}/{pair_budget} in {window:.0f}s)"
+
+        return None
 
     async def _think_for_agent(self, agent: Any, rank: Rank, trust_score: float) -> None:
         """Gather context, send proactive_think intent, post result if meaningful.

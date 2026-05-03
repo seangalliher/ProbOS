@@ -111,9 +111,9 @@ class TestDmExchangeLimit:
         assert hasattr(config, "dm_similarity_threshold")
 
     def test_exchange_limit_default_value(self):
-        """Default exchange limit is 40 (BF-200: raised from 5)."""
+        """Default exchange limit is 15 (BF-200 raised 5->40; BF-257 lowered 40->15)."""
         config = WardRoomConfig()
-        assert config.dm_exchange_limit == 40
+        assert config.dm_exchange_limit == 15
 
     def test_similarity_threshold_default_value(self):
         """Default similarity threshold is 0.6."""
