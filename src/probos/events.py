@@ -290,6 +290,11 @@ class EventType(str, Enum):
     CAPTAINS_LOG_GENERATED = "captains_log_generated"  # AD-477
     PLAN_OF_DAY_GENERATED = "plan_of_day_generated"  # AD-477
 
+    # Combo C (Wave 13) — additive read/write surface events
+    GAME_PREFERENCE_RECORDED = "game_preference_recorded"  # AD-526d
+    WORKING_MEMORY_NOTE_RECORDED = "working_memory_note_recorded"  # AD-573c
+    COMMITMENT_RECORDED = "commitment_recorded"  # AD-573f
+
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
     NODE_COMPLETE = "node_complete"

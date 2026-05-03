@@ -652,6 +652,15 @@ class ProactiveCognitiveLoop:
                     "title": dm["title"],
                     "body": dm["body"],
                 }
+                # AD-575c: flag DMs whose forwarded body mentions this agent
+                # (e.g. "Captain said about you: @<callsign>"). Read-only
+                # check; preserves upstream content.
+                agent_callsign = (getattr(agent, "callsign", "") or "").strip()
+                if agent_callsign:
+                    body_text = dm.get("body") or ""
+                    needle = f"@{agent_callsign}".lower()
+                    if needle in body_text.lower():
+                        event_data["self_referenced"] = True
                 await rt.ward_room_router.route_event(
                     "ward_room_thread_created", event_data,
                 )
@@ -1175,6 +1184,17 @@ class ProactiveCognitiveLoop:
                 context["captain_engagement"] = engagement_provider.snapshot()
             except Exception:
                 logger.debug("AD-572b: captain engagement snapshot failed", exc_info=True)
+
+            # AD-572c: ward room activity summary (per-channel aggregation)
+            if hasattr(engagement_provider, "wardroom_activity_summary"):
+                try:
+                    summary = await engagement_provider.wardroom_activity_summary()
+                    if isinstance(context.get("captain_engagement"), dict):
+                        context["captain_engagement"]["wardroom_activity_summary"] = summary
+                except Exception:
+                    logger.debug(
+                        "AD-572c: wardroom_activity_summary failed", exc_info=True,
+                    )
 
         # AD-567g: Proactive orientation supplement (diminishing)
         if getattr(self, '_orientation_service', None) and self._config:
@@ -2640,6 +2660,41 @@ class ProactiveCognitiveLoop:
             logger.debug("Queued notebook read for %s: %s",
                         getattr(agent, 'callsign', agent.agent_type), topic_slug)
         text = re.sub(read_nb_pattern, '', text).strip()
+
+        # --- AD-573c: Agent-writable scratchpad NOTE action tag ---
+        # Mirrors notebook_pattern shape: [NOTE tag]body[/NOTE].
+        # Pipes the body through working_memory.add_scratchpad() (Combo A
+        # AD-573b helper) and emits WORKING_MEMORY_NOTE_RECORDED.
+        note_pattern = r'\[NOTE\s+([\w-]+)\](.*?)\[/NOTE\]'
+        wm = getattr(self._runtime, "working_memory", None)
+        for tag, note_body in re.findall(note_pattern, text, re.DOTALL):
+            note_text = (note_body or "").strip()
+            if not note_text or wm is None:
+                continue
+            try:
+                wm.add_scratchpad(note_text)
+            except Exception:
+                logger.warning(
+                    "AD-573c: add_scratchpad failed for %s; note dropped",
+                    getattr(agent, "callsign", agent.agent_type),
+                    exc_info=True,
+                )
+                continue
+            try:
+                self._runtime.emit_event(
+                    EventType.WORKING_MEMORY_NOTE_RECORDED,
+                    {
+                        "agent_id": agent.id,
+                        "tag": tag,
+                        "text_len": len(note_text),
+                    },
+                )
+            except Exception:
+                logger.debug(
+                    "AD-573c: WORKING_MEMORY_NOTE_RECORDED emit failed",
+                    exc_info=True,
+                )
+        text = re.sub(note_pattern, '', text, flags=re.DOTALL).strip()
 
         # --- Proposals (AD-412) — all ranks ---
         proposal_pattern = r'\[PROPOSAL\]\s*\n(.*?)\n\s*\[/PROPOSAL\]'

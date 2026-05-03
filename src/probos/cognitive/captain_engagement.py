@@ -110,3 +110,49 @@ class CaptainEngagementProvider:
             logger.debug(
                 "AD-572b: CAPTAIN_DM_PRIORITY_QUEUED emit failed", exc_info=True,
             )
+
+    # ------------------------------------------------------------------
+    # AD-572c: Ward Room activity summary (async; aggregates per-channel)
+    # ------------------------------------------------------------------
+
+    async def wardroom_activity_summary(self) -> dict[str, Any]:
+        """AD-572c: aggregate per-channel thread counts into a single context blob.
+
+        ``WardRoomService.list_threads(channel_id)`` is per-channel, so a
+        global summary requires iterating channels first. Returns an empty
+        dict when ``ward_room`` is unavailable; degrades to partial results
+        on per-channel failures (best-effort per Wave-5 tier-2).
+        """
+        ward_room = getattr(self._runtime, "ward_room", None)
+        if ward_room is None:
+            return {}
+        try:
+            channels = await ward_room.list_channels()
+        except Exception:
+            logger.warning(
+                "AD-572c: ward_room.list_channels failed; "
+                "wardroom_activity_summary returns empty dict",
+                exc_info=True,
+            )
+            return {}
+        summary: dict[str, Any] = {"channels": {}, "total_threads": 0}
+        for channel in channels:
+            channel_id = (
+                getattr(channel, "id", None)
+                or getattr(channel, "channel_id", None)
+            )
+            if not channel_id:
+                continue
+            try:
+                threads = await ward_room.list_threads(channel_id, limit=10)
+            except Exception:
+                logger.warning(
+                    "AD-572c: list_threads(%s) failed; channel skipped",
+                    channel_id, exc_info=True,
+                )
+                continue
+            count = len(threads)
+            summary["channels"][channel_id] = count
+            summary["total_threads"] += count
+        return summary
+

@@ -108,6 +108,33 @@ class WorkingMemoryManager:
         self._max_relational = 32
         self._max_scratchpad = 16
         self._max_commitments = 8
+        # AD-573f: commitment lifecycle event emission (late-bind)
+        self._emit_event_fn: Any | None = None
+
+    # ------------------------------------------------------------------
+    # AD-573f: event-callback late-bind (mirror BilletRegistry pattern)
+    # ------------------------------------------------------------------
+
+    def set_event_callback(self, emit_fn: Any) -> None:
+        """Late-bind COMMITMENT_RECORDED emission target."""
+        self._emit_event_fn = emit_fn
+
+    def _emit_commitment_event(
+        self, action: str, commitment_id: str,
+    ) -> None:
+        if self._emit_event_fn is None:
+            return
+        try:
+            from probos.events import EventType  # local import: avoid cycle at module load
+            self._emit_event_fn(
+                EventType.COMMITMENT_RECORDED,
+                {"commitment_id": commitment_id, "action": action},
+            )
+        except Exception:
+            logger.warning(
+                "AD-573f: COMMITMENT_RECORDED emit failed (action=%s, id=%s)",
+                action, commitment_id, exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # AD-573b: extension helpers (best-effort; never raise per Wave-5 tier-2)
@@ -152,6 +179,47 @@ class WorkingMemoryManager:
                 self._commitments = self._commitments[-self._max_commitments:]
         except Exception:
             logger.warning("AD-573b: add_commitment failed", exc_info=True)
+            return
+        # AD-573f: emit AFTER successful add (best-effort)
+        self._emit_commitment_event("record", commitment_id)
+
+    # ------------------------------------------------------------------
+    # AD-573f: commitment lifecycle helpers
+    # ------------------------------------------------------------------
+
+    def mark_commitment_complete(self, commitment_id: str) -> None:
+        """Mutate matching dict's status key in-place; emit COMMITMENT_RECORDED.
+
+        No-op if ``commitment_id`` not found (best-effort per Wave-5 tier-2).
+        """
+        try:
+            for entry in self._commitments:
+                if entry.get("id") == commitment_id:
+                    entry["status"] = "done"
+                    self._emit_commitment_event("complete", commitment_id)
+                    return
+            # not found — silent no-op
+        except Exception:
+            logger.warning(
+                "AD-573f: mark_commitment_complete failed for id=%s",
+                commitment_id, exc_info=True,
+            )
+
+    def pending_commitments(self) -> list[dict[str, Any]]:
+        """Return commitments without a terminal status (done / expired)."""
+        return [
+            c for c in self._commitments
+            if c.get("status") not in ("done", "expired")
+        ]
+
+    def expired_commitments(self, now: float) -> list[dict[str, Any]]:
+        """Return commitments whose ``due`` is past ``now`` and not yet completed."""
+        return [
+            c for c in self._commitments
+            if c.get("due") is not None
+            and c["due"] < now
+            and c.get("status") != "done"
+        ]
 
     def record_intent(self, intent: str, params: dict[str, Any]) -> None:
         """Record an intent as active."""

@@ -347,6 +347,8 @@ class ProbOSRuntime:
         self.working_memory = WorkingMemoryManager(
             token_budget=cog_cfg.working_memory_token_budget,
         )
+        # AD-573f: late-bind COMMITMENT_RECORDED emission
+        self.working_memory.set_event_callback(self.emit_event)
         self.workflow_cache = WorkflowCache()
         self.decomposer = IntentDecomposer(
             llm_client=self.llm_client,
@@ -442,6 +444,13 @@ class ProbOSRuntime:
 
         # --- Recreation Service (AD-526a) ---
         self.recreation_service: Any = None
+
+        # --- Recreation Preference Tracker (AD-526d) ---
+        from probos.recreation.preferences import GamePreferenceTracker
+        self.recreation_preference_tracker: GamePreferenceTracker = (
+            GamePreferenceTracker()
+        )
+        self.recreation_preference_tracker.set_event_callback(self.emit_event)
 
         # --- TaskEvent Dispatcher (AD-654c) ---
         self.dispatcher: Any | None = None

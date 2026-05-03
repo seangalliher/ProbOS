@@ -1750,6 +1750,7 @@ class CognitiveAgent(BaseAgent):
             "proposal": re.compile(r'\[PROPOSAL\]', re.IGNORECASE),
             "dm": re.compile(r'\[DM\s', re.IGNORECASE),
             "ward_room_reply": re.compile(r'\[REPLY\s', re.IGNORECASE),
+            "note": re.compile(r'\[NOTE\s', re.IGNORECASE),  # AD-573c
         }
 
         for action_tag, pattern in markers.items():

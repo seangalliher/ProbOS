@@ -3038,7 +3038,7 @@ Each game type implements the `GameEngine` protocol: `new_game()`, `make_move()`
 > - **AD-526b: HXI Tic-Tac-Toe — Captain vs Crew Game Panel** *(complete)* — Graphical tic-tac-toe panel in HXI so Captain can challenge and play against crew agents. REST API router (challenge/move/active/forfeit), floating GamePanel component (CSS Grid board, piece-pop animations, win-line glow), WebSocket real-time updates via GAME_UPDATE event, game rehydration on refresh. forfeit_game() service method. Challenge button in agent profile panel. Captain moves instant via API; agent moves arrive on proactive cycle.
 > - **AD-526h: Chess Engine + Ratings** *(planned, depends: AD-526a)* — python-chess integration, Elo rating system, PGN game recording, chess-specific move validation and board rendering.
 > - **AD-526c: Additional Game Types** *(partial — v1 ships GameMetadata + default_game preference + RECREATION_GAME_REGISTERED emit; spectators + holodeck integration deferred to AD-526d/e)* — Checkers, Go, word games, trivia. Each implements GameEngine protocol. Progressive complexity validation.
-> - **AD-526d: Game Preference Tracking** *(planned, depends: AD-526a)* — Personality-correlated play style analysis. Game preference as Big Five signal. Ship's Records play frequency per agent per game type.
+> - **AD-526d: Game Preference Tracking** *(complete)* — `GamePreferenceTracker` (per-agent per-game-type play frequency map) wired as `runtime.recreation_preference_tracker`. `record_game`/`get_preferences`/`top_game_for` API; emits `GAME_PREFERENCE_RECORDED`. Read-side analytics surface for AD-526e/f/g/h.
 > - **AD-526e: Spectator Commentary** *(planned, depends: AD-526a)* — Agents watching games and posting commentary. Gallery reactions. Spectator behavior as social engagement signal.
 > - **AD-526f: Holodeck Recreation Integration** *(planned, depends: AD-526a, Holodeck)* — Simulated game scenarios, multiplayer environments, creative recreation beyond board games.
 > - **AD-526g: Creative Channel Content** *(planned, depends: AD-526a)* — Stories, poetry, essays, code-as-expression. Creative output as personality expression. Shared creative experiences.
@@ -4569,7 +4569,7 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 **AD-572 delivers:** (1) Active game state injection into DM `_build_user_message()`, reusing BF-110 context format. (2) `[MOVE pos]` parsing from DM responses in the agents router, with move execution against RecreationService. (3) `get_game_by_player()` DRY method on RecreationService (replaces 3 instances of iterate-and-match in proactive.py). (4) DM system prompt augmentation with `[MOVE]` instruction when game is active.
 
-**Deferred:** AD-572b (alert/event injection in DM), AD-572c (Ward Room activity in DM), AD-572d (Captain Priority Queue — immediate proactive trigger on Captain DM), AD-572e (task awareness in DM).
+**Deferred:** AD-572b (alert/event injection in DM — *complete via Combo A*), AD-572c (Ward Room activity in DM — *complete via Combo C: `CaptainEngagementProvider.wardroom_activity_summary()` async helper aggregates per-channel `list_threads` counts into `context["captain_engagement"]["wardroom_activity_summary"]`*), AD-572d (Captain Priority Queue — immediate proactive trigger on Captain DM — *deferred to AD-572d-i; forcing function: separate AD must introduce interruptible-wait pattern on `_think_loop` first; verified zero `asyncio.Event`/`wait_for` in `proactive.py`*), AD-572e (task awareness in DM).
 
 ---
 
@@ -4583,7 +4583,7 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 **Crew input (Echo):** "Right now I'm like a counselor who has perfect notes but no memory of actually being in the room with the client." Agents need: active situational awareness (what's happening now), relational continuity (where we left things), commitment tracking, collaborative thread continuity, emotional/professional tenor of relationships.
 
-**Deferred:** AD-573b (relational working memory — per-relationship state), AD-573c (agent-writable scratchpad — `[NOTE]` action tag), AD-573d (dream-to-working-memory pipeline), AD-573e (CognitiveJournal as WM source), AD-573f (commitment tracker).
+**Deferred:** AD-573b (relational working memory — per-relationship state — *complete via Combo A*), AD-573c (agent-writable scratchpad — `[NOTE]` action tag — *complete via Combo C: markers dict extended at `cognitive_agent.py:1747`; `notebook_pattern`-shaped extractor in `proactive.py:2668` calls `working_memory.add_scratchpad(body)` and emits `WORKING_MEMORY_NOTE_RECORDED`*), AD-573d (dream-to-working-memory pipeline), AD-573e (CognitiveJournal as WM source — *deferred to AD-573e-i; forcing function: `cognitive/journal.py` needs recency-ordered per-agent recall API; `get_decision_points` has wrong filter semantics*), AD-573f (commitment tracker — *complete via Combo C: `mark_commitment_complete`/`pending_commitments`/`expired_commitments` lifecycle helpers operate on existing `list[dict]` shape from AD-573b; emits `COMMITMENT_RECORDED` action="record"/"complete"*).
 
 ### Episodic Decay & Reconsolidation Scheduling (AD-574)
 
@@ -4599,7 +4599,7 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 **AD-575: Unified Self-Awareness — Cross-Context Identity Recognition** *(complete, OSS)* — Agents encountering references to their own callsign in Ward Room threads now recognize themselves as participants, not observers. `_detect_self_in_content()` on CognitiveAgent scans thread content for word-boundary callsign matches and injects grounding cue ("References to '{callsign}' refer to YOU"). Cross-context engagement binding: when self-mentioned AND has active game engagement in AgentWorkingMemory, injects participatory awareness ("Spectators are watching your game"). Generalizes BF-102 commissioning awareness pattern. 1 file modified, 10 tests.
 
-**Deferred:** AD-575b (proactive path self-mention detection — scan `context["ward_room_activity"]` for self-references), AD-575c (self-mention in DM forwarded content — edge case with quoted WR content).
+**Deferred:** AD-575b (proactive path self-mention detection — scan `context["ward_room_activity"]` for self-references — *wholesale-dropped in Combo A; awaits a future AD shipping the upstream `runtime.self_summary_provider`*), AD-575c (self-mention in DM forwarded content — edge case with quoted WR content — *complete via Combo C: `_check_unread_dms` scans `dm["body"]` case-insensitively for `@<agent_callsign>` and sets `event_data["self_referenced"] = True`*).
 
 ### LLM Unavailability Awareness (AD-576)
 
