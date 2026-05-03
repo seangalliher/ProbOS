@@ -10,7 +10,10 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from probos.workforce import WorkItemStore
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +105,31 @@ class DutyScheduleTracker:
                 last_executed=time.time(),
                 execution_count=1,
             )
+
+    async def emit_due_duties_as_work_items(
+        self,
+        agent_type: str,
+        work_item_store: "WorkItemStore",
+    ) -> list[str]:
+        """AD-500: Emit one duty WorkItem per due DutyDefinition. Producer side only.
+
+        Returns list of WorkItem IDs created. Does NOT call record_execution
+        (that remains on the legacy path until AD-500a-1).
+        """
+        due = self.get_due_duties(agent_type)
+        work_item_ids: list[str] = []
+        for duty in due:
+            item = await work_item_store.create_work_item(
+                work_type="duty",
+                assigned_to=agent_type,
+                title=getattr(duty, "description", duty.duty_id) or duty.duty_id,
+                metadata={
+                    "duty_id": duty.duty_id,
+                    "agent_type": agent_type,
+                },
+            )
+            work_item_ids.append(item.id)
+        return work_item_ids
 
     def get_status(self, agent_type: str) -> list[dict[str, Any]]:
         """Return status of all duties for an agent type (for state snapshot)."""

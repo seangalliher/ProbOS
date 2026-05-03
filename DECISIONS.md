@@ -10,6 +10,27 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-500: DutyScheduleTracker → WorkItem Producer (2026-05-03)
+
+**Problem:** DutyScheduleTracker fires duties via direct `_think_for_agent()` calls, bypassing the AD-496 WorkItemStore + AD-498 work-type-registry surface that all other scheduled work uses. Two parallel tracking surfaces lead to inconsistency in observability, booking lifecycle, and token cost attribution.
+
+**Decision:** Migrate DutyScheduleTracker to enqueue `WorkItem(work_type="duty")` items via `WorkItemStore.create_work_item(...)` — **producer side only in v1**. Add `DutyScheduleConfig.use_work_items: bool = False` flag (opt-in; default flips to `True` in AD-500a-1 after consumer migration). Constructor signature unchanged in v1 — dependency injected at call time per convention #5 (narrow injection). `TYPE_CHECKING` guard for `WorkItemStore` import to prevent circular import with `workforce.py`.
+
+**Why scope-reframe to producer-only:** Pass-1 review (2026-05-03) surfaced Hard-stop #5 (proactive loop entanglement) — 6 unaddressed `record_execution` call sites and `_think_for_agent` self-selecting the duty made the original consumer-side migration structurally under-specified. Per Wave 5 convention #3 (coordinator-then-dispatch) applied at the AD-scoping level, v1 ships the producer; AD-500a-1 ships the consumer once the surface is exercised by tests and the entanglement is mapped.
+
+**Why default `False`:** Convention #14 (aggressive pre-deferral) + transitional-flag discipline. Default `True` at first commit would be a breaking change in the same commit. Default `False` ships zero behavior change; flag flips in AD-500a-1.
+
+**Why no new EventType:** Existing `EventType.WORK_ITEM_CREATED` (events.py:87) carries `work_type` in payload. A duty-discriminated event was theater per pass-1 review Recommended #1.
+
+**Why `metadata=` not `payload=`:** Pass-2 review caught `payload=` as a phantom field name; verified at build time that `WorkItem.metadata: dict[str, Any]` is the actual field at `workforce.py:583`.
+
+**Deferred:**
+- AD-500a-1: Proactive loop consumer migration (forcing function: 6 `record_execution` sites mapped, double-select resolved, `use_work_items=False` validated).
+- AD-500b: AD-498 templates for common duty patterns.
+- AD-500c: 7 default duties migrated to AD-498 templates; `get_due_duties()` / flag removed.
+
+**Cross-links:** AD-419 (DutyScheduleTracker), AD-496 (WorkItemStore), AD-498 (Work Type Registry).
+
 ### AD-501: TaskTracker Deprecation & NotificationQueue Separation (2026-05-03)
 
 **Problem:** `task_tracker.py` carried two unrelated concerns. `NotificationQueue` is live and used by the proactive loop; `TaskTracker` is wired into runtime but no code path creates tasks through it. WorkItemStore (AD-496) is the canonical work-tracking surface now.

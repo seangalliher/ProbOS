@@ -1398,6 +1398,7 @@ class DutyScheduleConfig(BaseModel):
     """Duty schedule definitions per agent type (AD-419)."""
     enabled: bool = True
     schedules: dict[str, list[DutyDefinition]] = {}
+    use_work_items: bool = False  # AD-500: opt-in for duty WorkItem producer; flips to True in AD-500a-1
 
 
 class ProactiveCognitiveConfig(BaseModel):
