@@ -747,6 +747,20 @@ async def finalize_startup(
     else:
         runtime.observability_bridge = None
 
+    # AD-641b: Ward Room Hebbian Router (router only; listener deferred to AD-641b-iv)
+    wr_heb_cfg = getattr(getattr(runtime, "config", None), "ward_room_hebbian", None)
+    if wr_heb_cfg is not None and wr_heb_cfg.enabled:
+        from probos.cognitive.ward_room_hebbian import WardRoomHebbianRouter
+        runtime.ward_room_hebbian_router = WardRoomHebbianRouter(
+            emit_event=runtime.emit_event,
+            learning_rate=wr_heb_cfg.learning_rate,
+            decay_factor=wr_heb_cfg.decay_factor,
+        )
+        logger.info("AD-641b: WardRoomHebbianRouter wired (lr=%.2f, decay=%.2f)",
+                    wr_heb_cfg.learning_rate, wr_heb_cfg.decay_factor)
+    else:
+        runtime.ward_room_hebbian_router = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

@@ -1184,6 +1184,14 @@ class ObservabilityBridgeConfig(BaseModel):
     system_channel: str = "system_observability"
 
 
+class WardRoomHebbianConfig(BaseModel):
+    """AD-641b: Ward Room Hebbian Router configuration."""
+
+    enabled: bool = True
+    learning_rate: float = 0.10
+    decay_factor: float = 0.99
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1795,6 +1803,7 @@ class SystemConfig(BaseModel):
     eps: EPSConfig = EPSConfig()  # AD-469
     mcp: MCPConfig = MCPConfig()  # AD-449
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
+    ward_room_hebbian: WardRoomHebbianConfig = Field(default_factory=WardRoomHebbianConfig)  # AD-641b
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

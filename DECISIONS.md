@@ -10,6 +10,22 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-641b: Ward Room Hebbian Learning — Router Only (Listener Deferred) (2026-05-02)
+
+**Problem:** Ward Room conversations have a learning surface analogous-but-separate to mesh Hebbian: which crew contribute best to which topic / channel types. Today, Ward Room routing is static — endorsements feed trust but do not feed routing priority. Per the AD-641 design doc Category C, the Ward Room needs its own Hebbian instance, **not a merge** with the mesh router.
+
+**Decision:** Ship a new `src/probos/cognitive/ward_room_hebbian/` package with `WardRoomHebbianRouter` (in-memory `(topic, agent_id)` weight network). Math is conceptually parallel to mesh `HebbianRouter` (`mesh/routing.py:39`) but the API shape diverges deliberately: mesh routes `(source_agent → target_agent)` co-activation (`record_interaction`/`decay_all`) while Ward Room routes `(topic → agent)` contribution (`record_contribution`/`decay`). This is documented divergence, not duplication — the routing surface is fundamentally different.
+
+**Listener wholesale-deferred to AD-641b-iv (no-theater discipline):** The original draft introduced a `WardRoomEndorsementListener` to map `WARD_ROOM_ENDORSEMENT` events into `record_contribution` calls. Pass-1 review flagged this as a convention #7 violation: ProbOS has no event-bus subscribe API today, so the listener would have shipped as a stranded object on `runtime` with no caller. Wave 8 AD-575b precedent applies — defer until either a generic event-bus subscribe mechanism ships OR the emit-side at `ward_room/messages.py:597` is modified to call the listener directly. v1 signal source is direct `record_contribution()` invocation by tests and (post-AD-641b-ii) by `WardRoomRouter` integration code.
+
+**v1 ships 2 of 6 capabilities:** real `record_contribution`/`get_weight`/`top_contributors`/`decay` with in-memory storage and `runtime.ward_room_hebbian_router` public attribute. **4 grandchildren wholesale-deferred:** AD-641b-i (persistent storage), AD-641b-ii (`WardRoomRouter` priority integration), AD-641b-iii (adaptive decay cadence), AD-641b-iv (endorsement listener — the dead-code-deferred one).
+
+**`top_contributors` zero-filter:** filters `weight > 0.0` so decayed-to-zero entries don't surface as ghost contributors. The mesh router doesn't have this filter because mesh weights index `(source, target)` pairs that are deleted on full decay; Ward Room weights are persisted in `_weights` with zero values until explicit deletion, so the filter is correct here.
+
+**Trackers:** PROGRESS.md prepended; roadmap.md AD-641 row updated. 11 focused tests pass; mesh Hebbian regression 10/10 pass; full gate 10590 passed (+11 vs previous baseline).
+
+---
+
 ### AD-641a: Observability Bridge — Brain Sensors → Ward Room System Feeds (2026-05-02)
 
 **Problem:** The Ship's Computer (brain) maintains rich operational state — vitals, pool health, attention priorities, Hebbian weights — but the Crew (Ward Room agents) cannot see any of it. Per the AD-641 design doc Category B, the integration model is **read-only observability**: crew read sensors, the brain owns the state. No `ObservabilityBridge`/`brain_sensor`/`sensor_bridge` symbol exists today.
