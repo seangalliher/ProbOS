@@ -761,6 +761,28 @@ async def finalize_startup(
     else:
         runtime.ward_room_hebbian_router = None
 
+    # AD-641f: Engineering Sensor Service
+    es_cfg = getattr(getattr(runtime, "config", None), "engineering_sensors", None)
+    if es_cfg is not None and es_cfg.enabled:
+        from probos.cognitive.engineering_sensors import EngineeringSensorService
+        runtime.engineering_sensor_service = EngineeringSensorService(
+            runtime=runtime,
+            emit_event=runtime.emit_event,
+            report_interval_seconds=es_cfg.report_interval_seconds,
+        )
+        if es_cfg.auto_start_periodic_report:
+            # Hold the start task on runtime so it isn't garbage-collected.
+            # Public attribute (Wave 5 convention #1) -- consumer-facing for tests
+            # that need to await startup completion.
+            runtime.engineering_sensor_start_task = asyncio.create_task(
+                runtime.engineering_sensor_service.start(),
+                name="engineering_sensor_start",
+            )
+        logger.info("AD-641f: EngineeringSensorService wired (interval=%.0fs, auto_start=%s)",
+                    es_cfg.report_interval_seconds, es_cfg.auto_start_periodic_report)
+    else:
+        runtime.engineering_sensor_service = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

@@ -1192,6 +1192,14 @@ class WardRoomHebbianConfig(BaseModel):
     decay_factor: float = 0.99
 
 
+class EngineeringSensorsConfig(BaseModel):
+    """AD-641f: Engineering Chief Observability configuration."""
+
+    enabled: bool = True
+    report_interval_seconds: float = 60.0
+    auto_start_periodic_report: bool = False
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1804,6 +1812,7 @@ class SystemConfig(BaseModel):
     mcp: MCPConfig = MCPConfig()  # AD-449
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
     ward_room_hebbian: WardRoomHebbianConfig = Field(default_factory=WardRoomHebbianConfig)  # AD-641b
+    engineering_sensors: EngineeringSensorsConfig = Field(default_factory=EngineeringSensorsConfig)  # AD-641f
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

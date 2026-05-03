@@ -10,6 +10,24 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-641f: Engineering Chief Ship's Systems Observability — Sensor Bundle for LaForge (2026-05-02)
+
+**Problem:** The Engineering Officer (LaForge) needs read access to **Category D** brain internals (pool scaling events, capability registry summary, gossip state count) to perform Chief Moderation duties. Category D is "brain-only" by default per AD-641 design doc, but LaForge is the documented exception: "Engineering Chief may eventually need observability into Category D systems as part of the Chief Moderation / Ship's Engineer role. This would be Category B (read-only) exposure, not Category C or integration."
+
+**Decision:** Ship a focused observation surface — `EngineeringSensorBundle` (frozen dataclass) + `EngineeringSensorService` (coordinator) — in a new `src/probos/cognitive/engineering_sensors/` package. The bundle is the structured surface; the service polls + emits.
+
+**Capability registry shape repair (architect-discretion verify-first repair vs original draft):** `CapabilityRegistry.get_all_capabilities()` returns `dict[AgentID, list[CapabilityDescriptor]]` (verified at `mesh/capability.py:33, 50, 95`) — keys are agent IDs, NOT intent strings. The original draft would have returned sorted agent IDs labeled as "intents". `_collect_capabilities` flattens descriptor lists via `cap.can` to recover the union of intent labels. Pass-1 R1 caught this before Builder.
+
+**Why dormant periodic emit (`auto_start_periodic_report=False`):** Single-shot `report()` works regardless of cadence; periodic emit is a separate UX choice. Shipping the cadence enabled by default would emit unsolicited noise into the event log before LaForge has a consumer wired — convention #7 (no theater) violation. Operators flip the flag when they want cadence.
+
+**v1 ships 3 of 7 capabilities:** pool/capability/gossip sensors with `take_snapshot()` + `report()` real surface. **4 grandchildren wholesale-deferred:** AD-641f-i (per-peer gossip), AD-641f-ii (registry mutation), AD-641f-iii (cross-pool failover), AD-641f-iv (richer report payload).
+
+**`EngineeringAgent` not modified:** instructions wiring is a future grandchild AD. The agent reads `runtime.engineering_sensor_service.take_snapshot()` voluntarily once wired — v1 ships the surface, not the consumer integration.
+
+**Trackers:** PROGRESS.md prepended; roadmap.md AD-641 row updated. 13 focused tests pass; full gate 10603 passed (+13 vs previous baseline).
+
+---
+
 ### AD-641b: Ward Room Hebbian Learning — Router Only (Listener Deferred) (2026-05-02)
 
 **Problem:** Ward Room conversations have a learning surface analogous-but-separate to mesh Hebbian: which crew contribute best to which topic / channel types. Today, Ward Room routing is static — endorsements feed trust but do not feed routing priority. Per the AD-641 design doc Category C, the Ward Room needs its own Hebbian instance, **not a merge** with the mesh router.
