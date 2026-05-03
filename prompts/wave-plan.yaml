@@ -1,0 +1,58 @@
+# Wave Plan Schema — drives scripts/wave-orchestrator.ps1
+#
+# Each wave entry is consumed sequentially. The orchestrator pauses for
+# architect approval at three gates: after-review, after-builder-build,
+# and before-issue-closure. State is tracked in `state.json` next to this file.
+#
+# Edit this file between waves to add new waves; the orchestrator picks up
+# the next pending wave on each invocation.
+
+waves:
+  - id: "8.5"
+    title: "AD-641 umbrella split"
+    kind: meta              # meta | main | combo | bf
+    dispatch_prompt: "prompts/WAVE-8.5-DISPATCH.md"
+    expected_outputs:
+      - "prompts/ad-641a-*.md"
+      - "prompts/ad-641b-*.md"
+      - "prompts/ad-641c-*.md"
+      - "prompts/ad-641d-*.md"
+      - "prompts/ad-641e-*.md"
+      - "prompts/ad-641f-*.md"
+      - "prompts/WAVE-8.5-SPLIT-SUMMARY.md"
+    builder_required: false  # meta-prompts produce prompts only, not code
+    issues_to_close: []      # AD-641 stays open until children land
+    status: pending          # pending | drafted | reviewed | built | closed
+
+  - id: "9A"
+    title: "AD-641 children — parallel-safe (a/b/f)"
+    kind: main
+    depends_on: ["8.5"]
+    prompt_paths:
+      - "prompts/ad-641a-*.md"
+      - "prompts/ad-641b-*.md"
+      - "prompts/ad-641f-*.md"
+    builder_required: true
+    issues_to_close: []      # Filled in after Wave 8.5 produces sub-AD prompts
+    status: pending
+
+  - id: "9B"
+    title: "AD-641 children — cross-cutting (c/e)"
+    kind: main
+    depends_on: ["9A"]
+    prompt_paths:
+      - "prompts/ad-641c-*.md"
+      - "prompts/ad-641e-*.md"
+    builder_required: true
+    issues_to_close: []
+    status: pending
+
+  - id: "9C"
+    title: "AD-641 child — high-risk (d) + AD-277 closure"
+    kind: main
+    depends_on: ["9B"]
+    prompt_paths:
+      - "prompts/ad-641d-*.md"
+    builder_required: true
+    issues_to_close: [277]   # AD-641 umbrella closes when 9C lands
+    status: pending
