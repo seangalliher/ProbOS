@@ -135,3 +135,58 @@ Cross-conflict with Wave 9A commits (4476091, a56b6c6, f8e12ea):
 ## Disposition
 
 AD-641e is approved as drafted. The Protocol-adapter-registry triple is textbook Open/Closed: existing `WorkflowCache` is unchanged, the Protocol exposes a 5-method surface, the adapter delegates, the registry coordinates without merging. Verify-first claims all grep-confirm. The async/sync, kwarg, and row-shape pattern classes that bit Wave 9A's 641a do not appear here. Three Recommended items are quality nudges, not blockers; three Nits are pure cosmetic. The prompt is build-ready as-is; if the architect wants a single revision pass, R1-R3 take ~10 lines total. The dispatch's "smaller blast radius (purely cognitive layer)" framing held up under verification.
+
+
+---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved
+
+One-line: All 3 Recommended + all 3 Nits applied as documented; no scope expansion; no new structural defects; phantom-API pre-check clean.
+
+### Resolution Audit
+
+| Pass-1 Recommended | Status | Evidence in revised prompt |
+|---|---|---|
+| R1 (`size` property comment) | ✅ Applied | Section 3 adapter, lines added inside `@property def size`: comment "WorkflowCache.size is a @property (verified at workflow_cache.py:115); getattr() invokes the property descriptor, so the `or 0` is purely defensive against a None return -- it is not a method-vs-property guard." |
+| R2 (minimal-stub structural-typing test) | ✅ Applied | Test #4b `test_protocol_runtime_checkable_recognizes_minimal_stub` added in Section 6 — hand-rolled stub with the 5 Protocol members. |
+| R3 (read-side fan-out semantics documented) | ✅ Applied | Section 4 prelude + module docstring both state: "lookup_first() walks backends in registration order and returns the FIRST non-None hit (no merging)." Cites design-doc 'separate stores' principle. |
+
+| Pass-1 Nits | Status | Evidence |
+|---|---|---|
+| N1 (replace "AD: existing" with real AD ref) | ✅ Applied | Section 3 docstring now says `AD-274; preexisting`. |
+| N2 (logger.debug instead of bare `except: pass`) | ✅ Applied | Both `register()` and `lookup_first()` except-Exception blocks are `logger.debug("LearnedShortcutRegistry: emit ... failed", exc_info=True)`. |
+| N3 (regression test for `WorkflowCache` public API) | ✅ Applied | Test #13 `test_existing_workflow_cache_public_api_unchanged` added; asserts `{store, lookup, lookup_fuzzy, size}` intact. |
+
+### New Findings (introduced during revision)
+
+1. **None of substance.** One micro-tension: Acceptance criteria reads "13/13 focused tests pass at `-n 0` (12 v1 + 1 regression guard; 4b is renumbered as #4-stub but counted in the 13)" — but Section 6 enumerates #1, #2, #3, #4, #4b, #5, #6, #7, #8, #9, #10, #11, #12, #13 = 14 tests, not 13. The Revision row N3 says "Acceptance test count updated from 12 to 13 (1 added) -- 4b is structurally a sibling of #4 but counted in the 13." This is internally consistent if 4b is treated as a *sub-case* of #4 (one parametrized test with two `isinstance` checks); it is internally inconsistent if 4b is a separate `def test_...` function. The Builder will likely treat them as separate functions because that's the cleanest reading of Section 6's enumeration (each line is a separate `def`). **Disposition:** Nit, not a blocker. Either:
+   - Builder writes 14 separate test functions and the gate counts 14 — acceptance criteria's "13/13" is mildly off-by-one but the test count is monotonically increasing from baseline so the gate still passes. OR
+   - Builder collapses #4 and #4b into one parametrized test — also fine.
+   Surface as Nit only, no revision required. The substance (structural-typing test exists) is delivered either way.
+
+### Pre-check
+
+`./scripts/phantom-api-precheck.ps1 prompts/ad-641e-learned-shortcut-abstraction.md` → **0 phantom candidates**. Section 5 finalize wiring claim `runtime.learned_shortcut_registry` is self-introduced and clean.
+
+### Wave 9A Defect-Class Sweep (architect-discretion)
+
+| Class | 641e revised status |
+|---|---|
+| Async/sync mismatch | ✅ No async APIs called; `WorkflowCache.lookup/store` sync. |
+| Wrong kwarg name | ✅ `WorkflowCache.lookup(user_input)` / `store(user_input, dag)` are positional; signature-agnostic. |
+| Wrong row/return shape | ✅ Adapter does not unpack lookup return; passes through. |
+| Phantom API on existing class | ✅ `WorkflowCache.evict()` honestly returns `False`; deferred to AD-641e-ii. |
+
+**No structural defects in revised prompt.**
+
+### Cross-conflict Re-scan
+
+- Wave 9A artifacts (events.py:225-229, finalize.py:728-784, 3 Pydantic models): ✅ revised prompt's appends still anchor after the Wave 9A blocks; no overlap.
+- Listener-class greps (`EndorsementListener|handle_event|ward_room_endorsement_listener`): ✅ 0 matches in revised prompt.
+- 641e + 641c three-way append on (events.py / config.py / finalize.py): ✅ distinct EventTypes, distinct Pydantic models, distinct finalize blocks. Mechanical sequential append.
+
+### Disposition
+
+AD-641e revision is **build-ready**. The revision is purely additive (Recommended + Nits, no scope change), structurally sound, and the Open/Closed claim is now mechanically testable via #4b + #13. Build with confidence.

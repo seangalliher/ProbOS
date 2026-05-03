@@ -259,3 +259,80 @@ AD-641c is **not ready for build**. Three structural defects in `_count_endorsem
 The repair is well-scoped: R1+R2+R3 are ~10 lines in `_count_endorsements`; R4 is ~6 lines for tree flattening; R5 is either ~3 lines (resolve department per author) or a Solution Overview deferral edit. Total revision: ~20-25 lines plus VAC footer + Solution Overview updates. Pass-2 should converge cleanly.
 
 Per dispatch hard-stop list item #1 ("Phantom API in a prompt body that the prompt does NOT itself introduce — surface immediately"), R1's `event_type=` kwarg on `EventLog.query` is the canonical hard-stop and is surfaced in the sweep summary.
+
+
+---
+
+## Second-Pass Review (2026-05-02)
+
+**Verdict:** ✅ Approved
+
+One-line: All 5 Required + all 4 Recommended + 2 of 3 Nits applied; both 9A defect classes (async/sync, kwarg, row shape) and both 641c-unique defects (tree-flatten, department resolver) repaired with grep-confirmed surfaces; Solution Overview moved from "4 of 7 with 2 silently inert" to honest "5 of 8 capabilities ship"; phantom-API pre-check clean.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| R1 (phantom kwarg `event_type=` on `EventLog.query`) | ✅ Resolved | Section 3 `_count_endorsements` body now: `entries = await event_log.query_structured(event=EventType.WARD_ROOM_ENDORSEMENT.value, limit=200,)`. Confirmed by grep: `event_type=EventType.WARD_ROOM_ENDORSEMENT` → 0 hits in prompt. Live signature confirmed at `event_log.py:170` (`async def query_structured(*, correlation_id=None, category=None, event=None, parent_event_id=None, limit=100)`). |
+| R2 (async/sync mismatch on `_count_endorsements`) | ✅ Resolved | Method signature is `async def _count_endorsements(self, thread_id: str) -> int:`. `_build_input` cascade: `endorsement_count = await self._count_endorsements(thread_id)`. Both grep-confirmed. |
+| R3 (wrong row shape `.payload` vs `data`) | ✅ Resolved | Row reader: `data = entry.get("data") if isinstance(entry, dict) else {}` with dict-shape guard. Confirmed: `getattr\(entry, "payload"` → 0 hits in prompt. Live shape confirmed at `event_log.py:249-262` (`_row_to_dict` returns dict keyed by `data`). |
+| R4 (flatten posts tree → flat list) | ✅ Resolved | `_extract_posts` rewritten with internal `_walk(node)` helper that appends node and recurses into `node.get("children") or []`. Object-shape branch projects `id`, `author_id`, `body`, `author_callsign`, `created_at` plus walks `getattr(node, "children", None) or []`. Live tree shape confirmed at `threads.py:716-748` (root posts have nested `children` lists). Test #15 `test_extract_posts_recursively_flattens_children` is the regression guard. |
+| R5 (department resolver from `_helpers.py:11`) | ✅ Resolved | `_build_input` imports `from probos.ward_room._helpers import resolve_author_department` (verified at `_helpers.py:11`); resolver called per `author_id`, never reads `p.get("department")`. Confirmed: `p\.get\("department"\)` → 0 hits in prompt. Test #16 `test_build_input_extracts_distinct_departments_via_resolver` is the regression guard. Module-level helper chosen over `ThreadManager._resolve_author_department` shim per Demeter (Convention #11). |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| R6 (VAC footer reflects `get_thread` shape) | ✅ Applied | VAC adds three new grep blocks: `query_structured` signature, `_row_to_dict` row shape, post-dict key list (no `department`). Documents tree-vs-flat and per-author department resolution path. |
+| R7 (`_build_input` distinct-departments regression test) | ✅ Applied | Test #16 added in Section 6. |
+| R8 (count test arrange uses post-R3 shape) | ✅ Applied | Test #14 docstring expanded: "arrange returns rows shaped `{"data": {"thread_id": ...}, ...}` (post-R3 shape); regression guard for R1+R3." |
+| R9 (kwargs splat soft coupling documented) | ✅ Applied | Item #6 added to "What This Does NOT Change" — flags the `WardRoomService.get_thread(**kwargs)` splat as known soft coupling. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| N1 (clock injection on scorer) | 📦 Deferred | Documented as deferred in Revision row N1: rejected as v1 scope expansion; recency test asserts ratios, not absolute values. Acceptable Nit deferral. |
+| N2 (endorsement formula vs docstring mismatch) | ✅ Applied | Docstring corrected: `0 -> 0.000, 1 -> 0.393, 2 -> 0.632, 5 -> 0.918, 10 -> 0.993`. Test #9 expected values updated to `1 -> ~0.393; 10 -> ~0.993`. Behaviour unchanged. |
+| N3 (test count consistency) | ✅ Applied | Acceptance criteria updated 14→16; Section 6 enumerates exactly 16. |
+
+### Solution Overview / v1-deliverables Consistency Audit
+
+| Header | Pre-revision | Post-revision | Honest? |
+|---|---|---|---|
+| `## Solution Overview` line 28 | "no-theater discipline; convention #7 + #14 -- 4 of 7 capabilities ship" | "no-theater discipline; convention #7 + #14 -- 5 of 8 capabilities ship" | ✅ All 5 advertised factors fire against live data. |
+| v1 priority factors line 30 | "4 priority factors wired" with endorsement density "wired but reads from event_log -- see scope" (silently inert pre-R3) | "5 priority factors wired and exercising live data" with endorsement density "read from `event_log.query_structured(event=WARD_ROOM_ENDORSEMENT)`, up to +0.15" | ✅ Endorsement density now functions; cross-department now functions. |
+| Acceptance criteria | "14/14 focused tests pass" | "16/16 focused tests pass" + 3 explicit structural-fix bullets (`_count_endorsements` async; `_extract_posts` recursive; `resolve_author_department`) | ✅ Acceptance criteria reflect actual shipping scope. |
+| What This Does NOT Change | 5 deferrals | 6 deferrals (added `WardRoomService.get_thread` kwargs splat soft coupling) | ✅ |
+| Estimated tests header | ~14 | ~16 | ✅ |
+
+**Convention #12 (Solution Overview drift) discipline: clean.** No header still claims content the body does not deliver.
+
+### New Findings (introduced during revision)
+
+1. **None of substance.** Two minor observations:
+   - **Micro-inconsistency in Revision row R5 prose**: the row says "deferred grandchildren list grows from 3 to 3 (HXI rendering, auto-archival, Hebbian feedback) -- factor count is the difference." This is technically tautological ("3 to 3"); the factor accounting (4+1 → 5) is the live difference, the deferral list stays at 3 grandchildren. Editorial nit only — does not affect correctness or build. **Disposition:** Nit, no revision required.
+   - **Defensive `try/except Exception` around `resolve_author_department`** in `_build_input`: the helper at `_helpers.py:11` returns a string (likely never raises), so the try/except is over-defensive and convention #11 says swallow only when justified. The Builder may keep it (defensive depth) or strip it; either is acceptable. **Disposition:** Builder discretion, not a Nit.
+
+### Pre-check
+
+`./scripts/phantom-api-precheck.ps1 prompts/ad-641c-ward-room-thread-priority.md` → **0 phantom candidates**. The original `runtime.thread_priority_service` self-introduced false positive is cleanly cleared.
+
+### Wave 9A Defect-Class Sweep (architect-discretion)
+
+| Class | 641c revised status |
+|---|---|
+| Async/sync mismatch (`take_snapshot` precedent) | ✅ `_count_endorsements` is `async def`; awaited from `_build_input` (already async). |
+| Wrong kwarg name (`query_structured(event=...)` precedent) | ✅ Uses `query_structured(event=...)` not `query(event_type=...)`. |
+| Wrong row/return shape (`.payload` vs `.data` precedent) | ✅ Reads `entry["data"]` with dict guard. |
+| Phantom API on existing class | ✅ `query_structured(event=...)` exists; `resolve_author_department` exists at `_helpers.py:11`; `get_thread(**kwargs)` exists. All grep-confirmed. |
+| Tree-vs-flat shape (NEW; 641c-unique) | ✅ `_extract_posts` recursively walks `children`. |
+| Per-author resolution vs per-row attribute (NEW; 641c-unique) | ✅ Resolver invoked per `author_id`. |
+
+**All 6 defect classes repaired in this revision.** No new structural defects discovered.
+
+### Cross-conflict Re-scan
+
+- Wave 9A artifacts (events.py:225-229, finalize.py:728-784, 3 Pydantic models): ✅ revised prompt's appends still anchor after the Wave 9A blocks; no overlap.
+- Listener-class greps (`EndorsementListener|handle_event|ward_room_endorsement_listener`): ✅ 0 matches in revised prompt.
+- 641e + 641c three-way append on (events.py / config.py / finalize.py): ✅ distinct EventTypes (`THREAD_PRIORITY_SCORED` vs `LEARNED_SHORTCUT_REGISTERED+HIT`), distinct Pydantic models, distinct finalize blocks. Mechanical sequential append, no textual overlap.
+
+### Disposition
+
+AD-641c revision is **build-ready**. All 5 Required findings are surgically repaired with grep-confirmed live-API surfaces. The two unique 641c structural defects (tree flatten + department resolver) are repaired with regression test guards (#15 + #16). Solution Overview drift (convention #12) is clean: 5 of 8 ship, all 5 factors exercise live data, deferred grandchildren explicitly enumerated. The Wave 9A retrospective lesson did propagate into this revision pass — the same async/sync + kwarg + row-shape triple is now repaired exactly as it was in 641a. Build with confidence; this is the cleanest revision pass of the wave.
