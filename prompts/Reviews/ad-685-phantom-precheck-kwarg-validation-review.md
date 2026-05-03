@@ -76,3 +76,62 @@ Wave 11 single-prompt tooling sweep. The intent is sound, the deferral boundary 
 ## Revision (2026-05-03) — placeholder for Stage 2
 
 (Architect will append revision response after Stage 2 dispatch.)
+
+## Second-Pass Review (2026-05-03)
+
+**Verdict:** ✅ Approved
+**Required #1 resolved via Option B (shared pre-filter in PowerShell wrapper); all 4 Recommended folded; all 4 Nits applied; no new findings.**
+
+Revision (commit eeaf9c7) cleanly addresses the recursive-validity gap surfaced in pass-1. The shared pre-filter is correctly scoped to the wrapper layer (so the existing symbol check benefits without rewriting its regex tunings), the AST-index cache promotion to v1 is a module-level dict only (no caching infrastructure smuggled in beyond AD-685's scope), and the recursive-validity gate is correctly framed as a Builder-side acceptance check rather than a pre-dispatch precondition.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence |
+|---|---|---|
+| R1 (shared pre-filter; lift heuristics to wrapper) | ✅ Resolved | Section 2 rewritten: `shared body pre-filter step` produces ``; symbol check (L97/L105/L114 regexes) reads filtered body; kwarg helper also reads filtered body. Solution Overview now lists 2 capabilities. `Note on "preserved verbatim"` clarifies logic preserved, input changed. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| R1 (AST-index cache → v1) | ✅ Applied | Section 1 step 3: `AST-index caching is v1 (not a fallback)`. Process-local module-level dict. Hard-Stop reworded to `>30s on cold first build`. No sidecar JSON / no separate cache infra — module-level global only. |
+| R2 (test #4 fence breadth) | ✅ Applied | Test #4 renamed `test_helper_skips_kwargs_in_non_python_fenced_blocks`; covers pwsh + bash + sh + text + bare-fence (no language tag); Section 2 step 1 lists same fence types. |
+| R3 (any-definition limitation in DECISIONS) | ✅ Applied | DECISIONS.md draft block lists receiver-class resolution as AD-685d deferred limitation. v1 deferral list also includes AD-685d. |
+| R4 (calibration corpus named) | ✅ Applied | Section 3: `ad-641c-*` (test #2 regression) + `ad-500-*` (test #3 regression) + `≥3 other archived Wave 8/9/10 prompts` (Builder picks). |
+
+| Pass-1 Nit | Status | Notes |
+|---|---|---|
+| N1 (drop `preserved verbatim`) | ✅ Applied | Replaced everywhere with `logic preserved; input changed to pre-filtered body`; explicit callout in Section 2. |
+| N2 (recursive-validity in Hard-Stops) | ✅ Applied | Now appears in BOTH Acceptance Criteria AND Hard-Stops. |
+| N3 (`any_overload` → `any_definition`) | ✅ Applied | Test #6 renamed; DECISIONS.md and Section 1 use `same-named definition` instead of `overload`. |
+| N4 (UTF-8 stdout) | ✅ Applied | Section 1 step 5: `sys.stdout.reconfigure(encoding='utf-8')` or `write bytes directly`. |
+
+### New Findings (introduced during revision)
+
+None. Five-point verification:
+
+1. **Shared pre-filter resolution.** Section 2 step 1 defines the pre-filter ONCE (3 heuristics: non-Python fence mask, `## Revision` mask, prose-table cell mask); steps 2–3 explicitly route both the existing symbol regexes (L97/L105/L114) and the new AST helper through ``. `Note on "preserved verbatim"` makes the logic-vs-input distinction explicit. Recursive-validity gate appears as Builder-side Acceptance Criterion + Hard-Stop (correct framing — not a pre-dispatch precondition). Solution Overview header line `v1 ships 2 capabilities` matches the body. `What This Does NOT Change` correctly excludes AD-685b (field-name) and AD-685c (type-shape).
+2. **AST-index cache scope discipline.** Section 1 step 3 specifies `module-level global` and `short-circuit on subsequent calls within the same process` — a sidecar dict, not a persisted cache. No new caching infrastructure (no JSON sidecar, no DB, no IPC). Hard-Stop targets cold-build time only. Scope-appropriate.
+3. **Test plan expansion.** 8 → 9 tests. Test #9 (`test_powershell_wrapper_shared_prefilter_suppresses_prose_table_phantom`) directly covers Required #1 against the AD-685-self-reference case. Test #4's purpose now lists 5 fence types. All 9 tests map to real behaviors (3 regression cases, 3 heuristic cases, 1 same-name-definition case, 2 wrapper-integration cases).
+4. **Pre-check status documented.** Revision section explicitly notes: `the existing pre-check STILL flags WorkItemStore.get_pending as 1 phantom on this revised prompt — that is correct and expected`. Confirmed by run: `./scripts/phantom-api-precheck.ps1 prompts/ad-685-...md` exits 1 with 1 phantom (`WorkItemStore.get_pending`), identical to pass-1 baseline. No new phantoms introduced by the 11-surface revision.
+5. **Solution Overview / DECISIONS.md consistency.** Top-of-prompt `v1 ships 2 capabilities` aligns with Acceptance Criteria gates (3 of 8 bullets reference shared-pre-filter behavior). DECISIONS.md draft block correctly enumerates AD-685b/c/d deferrals (b: field-name, c: type-shape, d: receiver-class resolution). Cross-link to `Wave 11 pass-1 review Required #1` present.
+
+### Hard-Stop Verification (per dispatch's four pre-conditions)
+
+| Hard-Stop | Triggered? | Notes |
+|---|---|---|
+| 1. R1 not addressed | No | Verified above; Section 2 wrapper-level shared pre-filter is the chosen resolution. |
+| 2. New Required-class issue introduced | No | Five-point verification clean; revision strictly reduces surface. |
+| 3. AST-index cache promoted infrastructure beyond scope | No | Module-level dict only; no JSON sidecar, no persistence layer, no IPC. |
+| 4. v1 scope creep (AD-685b folded in) | No | Test plan + Section 1 contain zero field-name assertions; `WorkItem(payload=...)` cited only in motivation table. |
+
+### Recursive-Validity Gate Framing (architectural confirmation)
+
+The revision correctly frames the recursive-validity check as **Builder-side acceptance**:
+
+- Acceptance Criteria bullet: `Recursive-validity gate (also Hard-Stop): ./scripts/phantom-api-precheck.ps1 prompts/ad-685-...md exits 0 with 0 phantoms after AD-685 ships. Currently exits 1 with the documented WorkItemStore.get_pending self-reference; the shared pre-filter must suppress it.`
+- Hard-Stops bullet: `Recursive-validity gate fails: post-build pre-check still flags any phantom — pre-filter is incomplete; tune before merge (do NOT special-case the AD-685 file by name).`
+
+This is the architecturally correct choice: pre-dispatch the prompt cannot satisfy a check that depends on its own implementation. Builder runs the gate after Section 2 lands; if it fails, the pre-filter is incomplete and tuning is required (no allowlist short-circuit). Pass-1 review's Required #1 option (a) recommended this exact framing.
+
+### Conclusion
+
+Revision is tight, scope-disciplined, and converges to ✅. Recommend single-commit Builder dispatch.
