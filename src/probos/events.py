@@ -295,6 +295,10 @@ class EventType(str, Enum):
     WORKING_MEMORY_NOTE_RECORDED = "working_memory_note_recorded"  # AD-573c
     COMMITMENT_RECORDED = "commitment_recorded"  # AD-573f
 
+    # ── Self-Distillation (AD-487) ─────────────────────────────────
+    ONTOLOGY_PROBE_RECORDED = "ontology_probe_recorded"  # AD-487
+    ONTOLOGY_PROBE_RATE_LIMITED = "ontology_probe_rate_limited"  # AD-487
+
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
     NODE_COMPLETE = "node_complete"

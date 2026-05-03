@@ -1802,6 +1802,16 @@ class BridgeConfig(BaseModel):
     novelty_threshold: float = 0.3
 
 
+class SelfDistillationConfig(BaseModel):
+    """Configuration for AD-487 self-distillation v1 (Map step only)."""
+
+    enabled: bool = True
+    rate_limit_hours: int = 24
+    llm_timeout_seconds: float = 30.0
+    max_sub_topics: int = 5
+    db_path: Path = Path("data/agent_probes.db")
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -1912,6 +1922,7 @@ class SystemConfig(BaseModel):
     distillation: DistillationConfig = DistillationConfig()  # AD-609
     reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
     naval_organization: NavalOrganizationConfig = Field(default_factory=NavalOrganizationConfig)  # AD-477
+    self_distillation: SelfDistillationConfig = SelfDistillationConfig()  # AD-487
 
     @field_validator("health_probe_interval_seconds")
     @classmethod

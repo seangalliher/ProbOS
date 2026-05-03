@@ -77,6 +77,37 @@ def _wire_anomaly_window(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _wire_self_distillation(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-487: Wire PersonalOntologyProber (Map step only) and open its SQLite handle."""
+    # Defensive boundary check: some legacy tests pass MagicMock for config,
+    # which would make `config.self_distillation.enabled` truthy and `db_path`
+    # a MagicMock that aiosqlite cannot open. Skip wiring unless we have a
+    # real Pydantic SelfDistillationConfig.
+    from probos.config import SelfDistillationConfig
+    sd_cfg = getattr(config, "self_distillation", None)
+    if not isinstance(sd_cfg, SelfDistillationConfig):
+        return False
+    if not sd_cfg.enabled:
+        return False
+
+    from probos.cognitive.self_distillation.prober import PersonalOntologyProber
+
+    prober = PersonalOntologyProber(
+        runtime=runtime,
+        config=sd_cfg,
+    )
+    # Late-bind emit fn (Wave 5 convention #5).
+    prober._emit_event_fn = getattr(runtime, "emit_event", None)
+    await prober.start()
+    runtime.personal_ontology_prober = prober  # public attribute (Wave 5 convention #1)
+    logger.info(
+        "AD-487: PersonalOntologyProber initialized (db=%s; rate_limit_hours=%d)",
+        sd_cfg.db_path,
+        sd_cfg.rate_limit_hours,
+    )
+    return True
+
+
 def _wire_tiered_knowledge_loader(*, runtime: Any, config: "SystemConfig") -> int:
     """AD-585: Wire one shared TieredKnowledgeLoader onto CognitiveAgents."""
     knowledge_store = getattr(runtime, "_knowledge_store", None)
@@ -217,6 +248,9 @@ async def finalize_startup(
 
     if _wire_anomaly_window(runtime=runtime, config=config):
         logger.info("AD-673: AnomalyWindowManager wired during finalization")
+
+    if await _wire_self_distillation(runtime=runtime, config=config):
+        logger.info("AD-487: Self-distillation v1 wired during finalization")
 
     # BF-246: Start periodic LLM health probe for recovery from extended outages
     # BF-254: hasattr() alone matches MagicMock auto-attributes; require the

@@ -10,6 +10,24 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-487: Self-Distillation v1 — Personal Ontology Map Step (2026-05-03)
+
+**Problem:** LLMs don't know what they know without prompting. Agents need systematic knowledge-domain inventory to build personal ontologies (capability map, not library copy). Roadmap describes 3-stage map-reduce + daydreaming + DID portability — too much for one wave.
+
+**Decision:** v1 ships ONLY the Map step. `PersonalOntologyProber.probe_domain(agent_id, domain)` builds an `LLMRequest` from a structured self-query template, calls `runtime.llm_client.complete(request, priority=Priority.NORMAL)`, parses the JSON `LLMResponse.content` into a `ProbeResult` (sub_topics + confidence_scores), persists to new `agent_probes` SQLite table via the standard `ConnectionFactory` injection (Wave 5 convention #2), rate-limited per (agent, domain, 24h). Emits `ONTOLOGY_PROBE_RECORDED` + `ONTOLOGY_PROBE_RATE_LIMITED`. Wired onto `SystemConfig.self_distillation`. Lifecycle is `async start()` / `async stop()` (no private `_ensure_schema()` cross-module call). The `_wire_self_distillation` phase function adds a defensive `isinstance(config.self_distillation, SelfDistillationConfig)` boundary check beyond the prompt body — pre-existing tests in `test_new_crew_auto_welcome.py` pass `MagicMock` for `config`, which without the check would make `.enabled` truthy and `db_path` an unresolvable mock path that aiosqlite cannot open. Other wire functions tolerate MagicMock because they don't I/O; this one does, hence the guard.
+
+**Why:** Map step has clean surface (LLM call + parse + persist). Collapse/Reduce need accumulated probes to be useful — premature without Map data. Daydreaming needs dreaming.py bandwidth slot (separate scope). DID portability needs ontology data structure (depends on Reduce). Convention #14 aggressive pre-deferral applied.
+
+**Cross-AD orthogonality (non-conflict):** AD-636 priority lane semaphores and AD-637f priority classification live inside `LLMClient.complete` (llm_client.py:166, 427-457); they throttle LLM tokens by tier. AD-487's 24h per-(agent, domain) limit operates at the prober layer. No integration needed.
+
+**Deferred:**
+- AD-487b: Collapse — cluster probes into capability categories. Ships when >=10 probes accumulate per agent.
+- AD-487c: Reduce — `PersonalOntology` data structure. Depends on AD-487b.
+- AD-487d: Daydream dream type — idle-cycle exploration. Ships when AD-487a/b/c stable + dreaming.py bandwidth.
+- AD-487e: DID portability integration (AD-441). Depends on AD-487c.
+
+**Cross-links:** AD-486 (onboarding Phase 3 Self-Discovery — eventual consumer), AD-441 (DID portability — eventual consumer), dreaming.py (eventual daydream slot), LLMClient (read-only consumer), AD-542 (DatabaseConnection / ConnectionFactory abstraction).
+
 ### Combo C: 5 trivial extensions (526d/572c/573c/573f/575c) (2026-05-03)
 
 **Problem:** Four already-partial-closed parent ADs (AD-526, AD-572, AD-573, AD-575) had remaining trivial extensions worth shipping but each too small for a standalone Builder commit. Wave 8 Combo A precedent shipped 7 children clean; Combo C follows the same template, drops 2 of 7 in revision pass.
