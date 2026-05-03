@@ -828,6 +828,20 @@ async def finalize_startup(
     else:
         runtime.thread_priority_service = None
 
+    # AD-641d: Crew Deliberation Protocol
+    delib_cfg = getattr(getattr(runtime, "config", None), "deliberation", None)
+    if delib_cfg is not None and delib_cfg.enabled:
+        from probos.cognitive.deliberation import DeliberationProtocol
+        runtime.deliberation_protocol = DeliberationProtocol(
+            ward_room=getattr(runtime, "ward_room", None),
+            emit_event=runtime.emit_event,
+            captain_callsign=delib_cfg.captain_callsign,
+        )
+        logger.info("AD-641d: DeliberationProtocol wired (captain=%s)",
+                    delib_cfg.captain_callsign)
+    else:
+        runtime.deliberation_protocol = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

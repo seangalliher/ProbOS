@@ -10,6 +10,27 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+## AD-641d: Crew Deliberation Protocol — Captain-Resolved Judgment Surface
+
+**Era:** V (HXI Foundation)
+**Date:** 2026-05-02
+
+**Decision.** Crew deliberation is a separate surface from `QuorumEngine`. `QuorumEngine` is **mechanical** (confidence-weighted vote among tool agents for destructive ops; pass/fail). `DeliberationProtocol` is **judgment-level** (structured argument turns; Captain resolves with `ADOPTED` / `REJECTED` / `DEFERRED`).
+
+**Arbitration semantics (v1).**
+- Single Captain resolves; identity verified by callsign equality (case-insensitive) — same v1 convention as BF-257 DM rate limiter Captain exemption.
+- `resolve()` is idempotent: a second call after `RESOLVED` returns the existing resolved session unchanged (no overwrite).
+- `outcome=PENDING` is rejected at `resolve()` (returns `None`); only terminal outcomes `ADOPTED`/`REJECTED`/`DEFERRED` close a session.
+- Ward Room thread is the durable record; in-memory `_sessions` map is process-local. Persistence is best-effort (Ward Room calls log-and-degrade on `Exception`).
+
+**Distinct from existing Captain command paths.** AD-641d does NOT touch `_from_captain` priority routing in [src/probos/cognitive/sub_tasks/](src/probos/cognitive/sub_tasks/) or `captain_engagement.py`. Those are queue/quality concerns; deliberation is a strategic-decision surface invoked explicitly via `DeliberationProtocol.initiate(...)`.
+
+**Deferred to grandchildren.** AD-641d-i (multi-Captain quorum), AD-641d-ii (Counselor mediation), AD-641d-iii (structured argument schema), AD-641d-iv (Hebbian feedback to deliberation invitations), AD-641d-v (endorsement bridge to `WardRoomService.endorse`).
+
+**Closes:** AD-641 umbrella (issue #277).
+
+---
+
 ### AD-641e: LearnedShortcut Shared Abstraction — Protocol over WorkflowCache (2026-05-02)
 
 **Problem:** AD-641 design doc Category C names `WorkflowCache` (session-scoped LRU; AD-274 preexisting) and the future Cognitive JIT (AD-531-539; not yet built — `grep -rn "cognitive_jit\|CognitiveJITService" src/probos/` returns zero matches) as parallel "learned shortcut" systems at different timescales. The doc says: "Could share a common storage abstraction without merging logic." Today, no shared abstraction exists.

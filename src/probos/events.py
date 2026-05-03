@@ -230,6 +230,9 @@ class EventType(str, Enum):
     LEARNED_SHORTCUT_REGISTERED = "learned_shortcut_registered"  # AD-641e
     LEARNED_SHORTCUT_HIT = "learned_shortcut_hit"  # AD-641e
     THREAD_PRIORITY_SCORED = "thread_priority_scored"  # AD-641c
+    DELIBERATION_INITIATED = "deliberation_initiated"  # AD-641d
+    DELIBERATION_ARGUMENT_SUBMITTED = "deliberation_argument_submitted"  # AD-641d
+    DELIBERATION_RESOLVED = "deliberation_resolved"  # AD-641d
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

@@ -1219,6 +1219,13 @@ class ThreadPriorityConfig(BaseModel):
     captain_callsign: str = "Captain"
 
 
+class DeliberationConfig(BaseModel):
+    """AD-641d: Crew Deliberation Protocol configuration."""
+
+    enabled: bool = True
+    captain_callsign: str = "Captain"
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1834,6 +1841,7 @@ class SystemConfig(BaseModel):
     engineering_sensors: EngineeringSensorsConfig = Field(default_factory=EngineeringSensorsConfig)  # AD-641f
     learned_shortcuts: LearnedShortcutsConfig = Field(default_factory=LearnedShortcutsConfig)  # AD-641e
     thread_priority: ThreadPriorityConfig = Field(default_factory=ThreadPriorityConfig)  # AD-641c
+    deliberation: DeliberationConfig = Field(default_factory=DeliberationConfig)  # AD-641d
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
