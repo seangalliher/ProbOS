@@ -640,6 +640,39 @@ async def finalize_startup(
         runtime.idea_capture_store = None
         runtime.ready_room_session_manager = None
 
+    # AD-538b: Dream manifest (skip-already-processed marker; survives restart)
+    try:
+        from probos.cognitive.dream_manifest import DreamManifest
+        runtime.dream_manifest = DreamManifest(
+            store_path=runtime.data_dir / "dream_manifest.json",
+        )
+        # Late-bind the manifest into the dream scheduler if it's already wired
+        _ds = getattr(runtime, "dream_scheduler", None)
+        if _ds is not None:
+            try:
+                _ds._manifest = runtime.dream_manifest
+            except Exception:
+                logger.warning(
+                    "AD-538b: failed to bind manifest to dream scheduler",
+                    exc_info=True,
+                )
+    except Exception:
+        logger.warning("AD-538b: DreamManifest wiring failed", exc_info=True)
+        runtime.dream_manifest = None
+
+    # AD-572b: Captain engagement provider (proactive context signals)
+    try:
+        from probos.cognitive.captain_engagement import CaptainEngagementProvider
+        runtime.captain_engagement_provider = CaptainEngagementProvider(
+            runtime=runtime,
+            emit_event=runtime.emit_event,
+        )
+    except Exception:
+        logger.warning(
+            "AD-572b: CaptainEngagementProvider wiring failed", exc_info=True,
+        )
+        runtime.captain_engagement_provider = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

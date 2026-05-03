@@ -286,6 +286,62 @@ class EvaluateHandler:
         callsign = context.get("_callsign", "agent")
         department = context.get("_department", "")
 
+        # AD-655 + AD-656: optional contrastive recall + department-specific
+        # cognitive profile modulation. Both are best-effort and never raise
+        # (Wave-5 tier-2 log-and-degrade).
+        rt = self._runtime
+        if rt is not None:
+            try:
+                # AD-656: department-specific recall depth override (if profile wired)
+                _recall_depth = 2  # AD-655 default k
+                _dept_profiles_cfg = None
+                cfg_obj = getattr(rt, "config", None)
+                if cfg_obj is not None:
+                    _dept_profiles_cfg = getattr(cfg_obj, "dept_profiles", None)
+                if _dept_profiles_cfg is not None and department:
+                    _profile = _dept_profiles_cfg.profiles.get(department)
+                    if _profile is not None:
+                        _recall_depth = max(1, min(20, int(_profile.recall_depth)))
+                        try:
+                            from probos.events import EventType as _ET
+                            _emit = getattr(rt, "emit_event", None)
+                            if _emit is not None:
+                                _emit(
+                                    _ET.DEPT_PROFILE_APPLIED,
+                                    {
+                                        "department": department,
+                                        "recall_depth": _recall_depth,
+                                        "recall_threshold": _profile.recall_threshold,
+                                    },
+                                )
+                        except Exception:
+                            logger.debug(
+                                "AD-656: DEPT_PROFILE_APPLIED emit failed",
+                                exc_info=True,
+                            )
+
+                # AD-655: contrastive recall when episodic memory is wired
+                em = getattr(rt, "episodic_memory", None)
+                if em is not None and hasattr(em, "retrieve_contrastive_episodes"):
+                    _query = context.get("context", "") or ""
+                    if _query.strip():
+                        _contrastive = await em.retrieve_contrastive_episodes(
+                            _query, k=_recall_depth,
+                        )
+                        if _contrastive:
+                            context["_contrastive_priors"] = [
+                                {
+                                    "id": getattr(ep, "id", ""),
+                                    "user_input": getattr(ep, "user_input", ""),
+                                }
+                                for ep in _contrastive
+                            ]
+            except Exception:
+                logger.debug(
+                    "AD-655/AD-656: contrastive/profile hook failed",
+                    exc_info=True,
+                )
+
         # === SAFETY CHECKS (always run, 0 tokens) ===
 
         # BF-191: Deterministic JSON rejection — compose output must be natural language

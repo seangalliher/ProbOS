@@ -213,6 +213,11 @@ class EventType(str, Enum):
     IDEA_CAPTURED = "idea_captured"  # AD-475
     CHANNEL_MESSAGE_RECEIVED = "channel_message_received"  # AD-472
     CHANNEL_DELIVERY_FAILED = "channel_delivery_failed"  # AD-472
+    DREAM_MANIFEST_UPDATED = "dream_manifest_updated"  # AD-538b
+    CAPTAIN_DM_PRIORITY_QUEUED = "captain_dm_priority_queued"  # AD-572b
+    RECREATION_GAME_REGISTERED = "recreation_game_registered"  # AD-526c
+    CONTRASTIVE_RECALL = "contrastive_recall"  # AD-655
+    DEPT_PROFILE_APPLIED = "dept_profile_applied"  # AD-656
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

@@ -691,7 +691,27 @@ class ProactiveCognitiveLoop:
             target_agent_id=agent.id,
         )
 
+        # AD-576b: tight in-cycle retry on transient LLM errors before
+        # incrementing the failure counter. Two attempts at [0.5, 1.5]s
+        # backoff; counter increments only after both fail.
+        _BACKOFFS_SECONDS = (0.5, 1.5)
+        _LLM_ERROR_KEYWORDS = (
+            "llm", "timeout", "connection", "unreachable",
+            "rate limit", "api error", "httpx", "openai",
+        )
         result = await agent.handle_intent(intent)
+        for _backoff in _BACKOFFS_SECONDS:
+            if result and result.success and result.result:
+                break
+            _is_transient = (
+                not result
+                or (result and hasattr(result, 'error') and result.error and
+                    any(kw in str(result.error).lower() for kw in _LLM_ERROR_KEYWORDS))
+            )
+            if not _is_transient:
+                break
+            await asyncio.sleep(_backoff)
+            result = await agent.handle_intent(intent)
 
         if not result or not result.success or not result.result:
             # BF-228: Only count actual LLM errors toward LLM failure status,
@@ -699,10 +719,7 @@ class ProactiveCognitiveLoop:
             is_llm_error = (
                 not result
                 or (result and hasattr(result, 'error') and result.error and
-                    any(kw in str(result.error).lower() for kw in (
-                        "llm", "timeout", "connection", "unreachable",
-                        "rate limit", "api error", "httpx", "openai",
-                    )))
+                    any(kw in str(result.error).lower() for kw in _LLM_ERROR_KEYWORDS))
             )
             if is_llm_error:
                 self._llm_failure_count += 1
@@ -1081,6 +1098,14 @@ class ProactiveCognitiveLoop:
                 "not a demotion. Build trust through demonstrated competence. "
                 "You have no prior episodic memories — do not reference or invent past experiences."
             )
+
+        # AD-572b: Captain engagement signals into proactive context
+        engagement_provider = getattr(rt, "captain_engagement_provider", None)
+        if engagement_provider is not None and hasattr(engagement_provider, "snapshot"):
+            try:
+                context["captain_engagement"] = engagement_provider.snapshot()
+            except Exception:
+                logger.debug("AD-572b: captain engagement snapshot failed", exc_info=True)
 
         # AD-567g: Proactive orientation supplement (diminishing)
         if getattr(self, '_orientation_service', None) and self._config:

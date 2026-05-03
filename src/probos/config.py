@@ -1117,6 +1117,24 @@ class ReadyRoomConfig(BaseModel):
     wardroom_channel_id: str = "ready_room"
 
 
+class DepartmentCognitiveProfile(BaseModel):
+    """AD-656: per-department cognitive profile overlay.
+
+    Modulates retrieval depth, similarity threshold, and context budget
+    for the cognitive chain on a per-department basis.
+    """
+
+    recall_depth: int = Field(default=5, ge=1, le=20)
+    recall_threshold: float = Field(default=0.25, ge=0.0, le=1.0)
+    context_token_budget: int = Field(default=4000, ge=500)
+
+
+class DepartmentProfilesConfig(BaseModel):
+    """AD-656: dict of department-name -> DepartmentCognitiveProfile."""
+
+    profiles: dict[str, DepartmentCognitiveProfile] = Field(default_factory=dict)
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1721,6 +1739,7 @@ class SystemConfig(BaseModel):
     operations: OperationsConfig = OperationsConfig()  # AD-467
     model_routing: ModelRoutingConfig = ModelRoutingConfig()  # AD-463
     ready_room: ReadyRoomConfig = ReadyRoomConfig()  # AD-475
+    dept_profiles: DepartmentProfilesConfig = DepartmentProfilesConfig()  # AD-656
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

@@ -87,6 +87,7 @@ class DreamingEngine:
         reconsolidation_scheduler: Any = None,  # AD-574: spaced review scheduling
         expertise_directory: Any = None,  # AD-600: transactive memory
         failure_distiller: Any = None,  # AD-609: failure and comparative analysis
+        manifest: Any = None,  # AD-538b: DreamManifest for skip-already-processed
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -117,6 +118,7 @@ class DreamingEngine:
         self._reconsolidation_scheduler = reconsolidation_scheduler  # AD-574
         self._expertise_directory = expertise_directory  # AD-600
         self._failure_distiller = failure_distiller  # AD-609
+        self._manifest = manifest  # AD-538b: per-episode skip-already-processed marker
         self._confidence_tracker: Any = None  # AD-444
         self._knowledge_linter: Any = None  # AD-563
         self._quality_trigger: Any = None  # AD-564
@@ -195,8 +197,43 @@ class DreamingEngine:
         if not episodes:
             return {"episodes_replayed": 0, "weights_strengthened": 0, "weights_weakened": 0}
 
+        # AD-538b: filter out already-consolidated episodes via manifest (survives restart)
+        if self._manifest is not None:
+            try:
+                episodes = [
+                    ep for ep in episodes
+                    if not self._manifest.is_processed(getattr(ep, "id", ""), "consolidate")
+                ]
+                if not episodes:
+                    self._last_consolidated_count = current_count
+                    return {"episodes_replayed": 0, "weights_strengthened": 0, "weights_weakened": 0}
+            except Exception:
+                logger.debug("AD-538b: manifest filter failed", exc_info=True)
+
         strengthened = self._replay_episodes(episodes)
         self._last_consolidated_count = current_count
+
+        # AD-538b: mark replayed episodes processed and emit per-batch update event
+        if self._manifest is not None and episodes:
+            try:
+                for ep in episodes:
+                    ep_id = getattr(ep, "id", "")
+                    if ep_id:
+                        self._manifest.mark_processed(ep_id, "consolidate")
+                from probos.events import EventType
+                emit_event = getattr(self, "_emit_event", None)
+                if emit_event is None:
+                    # Try to reach the runtime via existing handles
+                    rt_router = getattr(self.router, "_runtime", None)
+                    if rt_router is not None and hasattr(rt_router, "emit_event"):
+                        emit_event = rt_router.emit_event
+                if emit_event is not None:
+                    emit_event(
+                        EventType.DREAM_MANIFEST_UPDATED,
+                        {"episodes_marked": len(episodes), "step": "consolidate"},
+                    )
+            except Exception:
+                logger.debug("AD-538b: manifest mark/emit failed", exc_info=True)
 
         # AD-567d: Reinforce replayed episodes (sleep replay strengthens memories)
         if self._activation_tracker and self.config.activation_enabled:

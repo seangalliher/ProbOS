@@ -28,6 +28,10 @@ class WorkingMemorySnapshot:
     trust_summary: list[dict[str, Any]] = field(default_factory=list)
     top_connections: list[dict[str, Any]] = field(default_factory=list)
     capabilities: list[str] = field(default_factory=list)
+    # AD-573b: extension fields (all defaulted-empty; backward compatible)
+    relational_links: list[dict[str, Any]] = field(default_factory=list)
+    scratchpad: list[str] = field(default_factory=list)
+    commitments: list[dict[str, Any]] = field(default_factory=list)
 
     def to_text(self) -> str:
         """Serialize to text for LLM context."""
@@ -97,6 +101,57 @@ class WorkingMemoryManager:
         self._recent_results: list[dict[str, Any]] = []
         self._active_intents: list[dict[str, Any]] = []
         self._max_recent = 20
+        # AD-573b: relational links / scratchpad / commitments (bounded rings)
+        self._relational_links: list[dict[str, Any]] = []
+        self._scratchpad: list[str] = []
+        self._commitments: list[dict[str, Any]] = []
+        self._max_relational = 32
+        self._max_scratchpad = 16
+        self._max_commitments = 8
+
+    # ------------------------------------------------------------------
+    # AD-573b: extension helpers (best-effort; never raise per Wave-5 tier-2)
+    # ------------------------------------------------------------------
+
+    def record_relation(self, from_id: str, to_id: str, kind: str = "mention") -> None:
+        try:
+            if not from_id or not to_id:
+                return
+            self._relational_links.append(
+                {"from": from_id, "to": to_id, "kind": kind}
+            )
+            if len(self._relational_links) > self._max_relational:
+                self._relational_links = self._relational_links[-self._max_relational:]
+        except Exception:
+            logger.warning("AD-573b: record_relation failed", exc_info=True)
+
+    def add_scratchpad(self, text: str) -> None:
+        try:
+            if not text:
+                return
+            self._scratchpad.append(text)
+            if len(self._scratchpad) > self._max_scratchpad:
+                self._scratchpad = self._scratchpad[-self._max_scratchpad:]
+        except Exception:
+            logger.warning("AD-573b: add_scratchpad failed", exc_info=True)
+
+    def add_commitment(
+        self, commitment_id: str, summary: str, due_at: float | None = None,
+    ) -> None:
+        try:
+            if not commitment_id:
+                return
+            entry: dict[str, Any] = {
+                "id": commitment_id,
+                "summary": summary,
+            }
+            if due_at is not None:
+                entry["due"] = due_at
+            self._commitments.append(entry)
+            if len(self._commitments) > self._max_commitments:
+                self._commitments = self._commitments[-self._max_commitments:]
+        except Exception:
+            logger.warning("AD-573b: add_commitment failed", exc_info=True)
 
     def record_intent(self, intent: str, params: dict[str, Any]) -> None:
         """Record an intent as active."""

@@ -1478,6 +1478,67 @@ class EpisodicMemory:
 
         return episodes
 
+    async def retrieve_contrastive_episodes(
+        self, query: str, k: int = 2,
+    ) -> list[Episode]:
+        """AD-655: return mid-band-similarity episodes (NOT top-k).
+
+        Definition: episodes whose semantic similarity to the query is in
+        the [0.4, 0.65] band -- relevant enough to be on-topic, distant
+        enough to potentially carry contrasting outcome signal. Band
+        thresholds are v1 defaults; AD-655b will introduce a Pydantic
+        config knob.
+        """
+        if not self._collection:
+            return []
+        if not query.strip():
+            return []
+        count = self._collection.count()
+        if count == 0:
+            return []
+
+        n_results = min(k * 5, count)
+        result = self._collection.query(
+            query_texts=[query],
+            n_results=n_results,
+            include=["metadatas", "documents", "distances"],
+        )
+        if not result or not result["ids"] or not result["ids"][0]:
+            return []
+
+        # AD-655 mid-band thresholds (similarity = 1 - distance)
+        _MID_BAND_LOW = 0.4
+        _MID_BAND_HIGH = 0.65
+
+        contrastive: list[Episode] = []
+        for i, doc_id in enumerate(result["ids"][0]):
+            distance = result["distances"][0][i] if result["distances"] else 0.0
+            similarity = 1.0 - distance
+            if not (_MID_BAND_LOW <= similarity <= _MID_BAND_HIGH):
+                continue
+            metadata = result["metadatas"][0][i] if result["metadatas"] else {}
+            document = result["documents"][0][i] if result["documents"] else ""
+            ep = self._metadata_to_episode(doc_id, document, metadata)
+            contrastive.append(ep)
+            if len(contrastive) >= k:
+                break
+
+        # AD-655: emit CONTRASTIVE_RECALL when an emit hook is wired
+        emit = getattr(self, "_emit_event", None)
+        if emit is not None and contrastive:
+            try:
+                from probos.events import EventType
+                emit(
+                    EventType.CONTRASTIVE_RECALL,
+                    {
+                        "query_len": len(query),
+                        "episode_ids": [ep.id for ep in contrastive],
+                    },
+                )
+            except Exception:
+                logger.debug("AD-655: CONTRASTIVE_RECALL emit failed", exc_info=True)
+        return contrastive
+
     async def recall_by_anchor_scored(
         self,
         *,

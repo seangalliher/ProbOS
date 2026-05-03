@@ -30,6 +30,8 @@ class RecreationService:
         emit_event_fn: Any = None,
         dispatcher: Any | None = None,            # AD-654d
         callsign_registry: Any | None = None,     # AD-654d: for callsign → agent_id
+        *,
+        default_game: str = "tictactoe",          # AD-526c: Captain default
     ):
         self._ward_room = ward_room
         self._records_store = records_store
@@ -38,6 +40,10 @@ class RecreationService:
         self._callsign_registry = callsign_registry
         # Registered game engines by type
         self._engines: dict[str, GameEngine] = {}
+        # AD-526c: optional per-game metadata layered on top of _engines
+        from probos.recreation.metadata import GameMetadata as _GameMetadata
+        self._metadata: dict[str, _GameMetadata] = {}
+        self._default_game: str = default_game
         # Active games by game_id
         self._active_games: dict[str, dict[str, Any]] = {}
         # Map thread_id -> game_id for move routing
@@ -46,6 +52,15 @@ class RecreationService:
         # Register default engines
         self.register_engine(TicTacToeEngine())
 
+    @property
+    def default_game(self) -> str:
+        """AD-526c: Captain-default game preference."""
+        return self._default_game
+
+    def get_metadata(self, game_type: str) -> Any:
+        """AD-526c: return GameMetadata for a registered game (or None)."""
+        return self._metadata.get(game_type)
+
     def _resolve_callsign(self, callsign: str) -> str | None:
         """AD-654d: Resolve a callsign to agent_id via CallsignRegistry."""
         if not self._callsign_registry:
@@ -53,9 +68,38 @@ class RecreationService:
         resolved = self._callsign_registry.resolve(callsign)
         return resolved.get("agent_id") if resolved else None
 
-    def register_engine(self, engine: GameEngine) -> None:
-        """Register a game engine by its game_type."""
+    def register_engine(self, engine: GameEngine, metadata: Any = None) -> None:
+        """Register a game engine by its game_type.
+
+        AD-526c: optional ``metadata: GameMetadata`` supplements the engine
+        with description / agent-count constraints / registration timestamp.
+        Defaults to a ``GameMetadata(description="", agent_count_min=2,
+        agent_count_max=2, registered_at=time.time())`` when None.
+        """
+        import time as _time
+        from probos.events import EventType
+        from probos.recreation.metadata import GameMetadata
+
         self._engines[engine.game_type] = engine
+        meta = metadata if metadata is not None else GameMetadata(
+            registered_at=_time.time(),
+        )
+        self._metadata[engine.game_type] = meta
+
+        if self._emit is not None:
+            try:
+                self._emit(
+                    EventType.RECREATION_GAME_REGISTERED,
+                    {
+                        "game_type": engine.game_type,
+                        "description": meta.description,
+                        "agent_count_min": meta.agent_count_min,
+                        "agent_count_max": meta.agent_count_max,
+                    },
+                )
+            except Exception:
+                # AD-526c: emit is best-effort; never block registration
+                pass
 
     def get_available_games(self) -> list[str]:
         """Return list of registered game type names."""
