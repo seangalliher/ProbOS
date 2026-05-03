@@ -119,6 +119,19 @@ function Get-StagesForWave {
 
 function Format-DraftDispatch {
     param([hashtable]$wave)
+    if ($wave.prompts_already_drafted) {
+        return @"
+============================================================
+WAVE $($wave.id) — STAGE: draft (SKIPPED)
+============================================================
+
+Prompts for this wave were already drafted in a prior wave. Wave-level
+dispatch reference: $($wave.dispatch_prompt)
+
+Run:  ./scripts/wave-orchestrator.ps1 advance
+to proceed to the precheck stage.
+"@
+    }
     $promptPath = $wave.dispatch_prompt
     if (-not $promptPath) {
         $promptPath = "prompts/WAVE-$($wave.id)-DISPATCH.md (does not exist yet — architect must draft this dispatch first)"

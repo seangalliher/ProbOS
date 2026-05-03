@@ -28,6 +28,8 @@ waves:
     title: "AD-641 children — parallel-safe (a/b/f)"
     kind: main
     depends_on: ["8.5"]
+    dispatch_prompt: "prompts/WAVE-9A-DISPATCH.md"
+    prompts_already_drafted: true   # Wave 8.5 produced these; skip 'draft' stage
     prompt_paths:
       - "prompts/ad-641a-observability-bridge.md"
       - "prompts/ad-641b-ward-room-hebbian.md"
