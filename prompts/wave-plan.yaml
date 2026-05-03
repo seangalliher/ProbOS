@@ -49,12 +49,14 @@ waves:
       - "prompts/ad-641e-learned-shortcut-abstraction.md"
     builder_required: true
     issues_to_close: []
-    status: pending
+    status: done
 
   - id: "9C"
     title: "AD-641 child — high-risk (d) + AD-277 closure"
     kind: main
     depends_on: ["9B"]
+    dispatch_prompt: "prompts/WAVE-9C-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
       - "prompts/ad-641d-crew-deliberation-protocol.md"
     builder_required: true
