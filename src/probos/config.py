@@ -1323,10 +1323,31 @@ class DiscordConfig(BaseModel):
     scout_channel_id: int = 0                # Discord channel ID for scout reports (0 = disabled)
 
 
+class SlackConfig(BaseModel):
+    """Slack adapter configuration (AD-472)."""
+
+    enabled: bool = False
+    bot_token: str = ""           # xoxb-... (prefer env var PROBOS_SLACK_BOT_TOKEN)
+    signing_secret: str = ""      # for events-api verification
+    allowed_channel_ids: list[str] = []
+    allowed_user_ids: list[str] = []
+    default_thread_ts: bool = True
+
+
+class WebhookConfig(BaseModel):
+    """Webhook adapter configuration (AD-472)."""
+
+    enabled: bool = False
+    shared_secret: str = ""       # set via env var PROBOS_WEBHOOK_SECRET
+    allowed_channels: list[str] = []
+
+
 class ChannelsConfig(BaseModel):
     """Channel adapter configurations."""
 
     discord: DiscordConfig = DiscordConfig()
+    slack: SlackConfig = SlackConfig()
+    webhook: WebhookConfig = WebhookConfig()
 
 
 class MedicalConfig(BaseModel):

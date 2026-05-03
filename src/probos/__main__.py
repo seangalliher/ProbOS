@@ -451,6 +451,34 @@ async def _serve(
         else:
             console.print("  [yellow]![/yellow] Discord enabled but no token set (PROBOS_DISCORD_TOKEN)")
 
+    # AD-472: Slack adapter (opt-in via uv extras)
+    if config.channels.slack.enabled:
+        from probos.channels.slack_adapter import SlackAdapter
+        slack_cfg = config.channels.slack
+        token = os.environ.get("PROBOS_SLACK_BOT_TOKEN", "") or slack_cfg.bot_token
+        if token:
+            slack_cfg = slack_cfg.model_copy(update={"bot_token": token})
+            adapter = SlackAdapter(runtime, slack_cfg)
+            await adapter.start()
+            if getattr(adapter, "_started", False):
+                adapters.append(adapter)
+                console.print("  [green]\u2713[/green] Slack adapter started")
+            else:
+                console.print("  [red]\u2717[/red] Slack adapter failed — run: uv sync --extra slack")
+
+    # AD-472: Webhook adapter (no opt-in extra; uses existing FastAPI)
+    if config.channels.webhook.enabled:
+        from probos.channels.webhook_adapter import WebhookAdapter
+        webhook_cfg = config.channels.webhook
+        secret = os.environ.get("PROBOS_WEBHOOK_SECRET", "") or webhook_cfg.shared_secret
+        if secret:
+            webhook_cfg = webhook_cfg.model_copy(update={"shared_secret": secret})
+        adapter = WebhookAdapter(runtime, webhook_cfg)
+        await adapter.start()
+        if getattr(adapter, "_started", False):
+            adapters.append(adapter)
+            console.print("  [green]\u2713[/green] Webhook adapter started")
+
     # Wire channel adapters into task scheduler for delivery (AD-284)
     if adapters and runtime.task_scheduler:
         runtime.task_scheduler._channel_adapters = adapters

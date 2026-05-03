@@ -87,6 +87,20 @@ class DiscordAdapter(ChannelAdapter):
         intents.message_content = True
 
         self._bot = discord.Client(intents=intents)
+        # AD-472: Discord enhancement -- warn if Message Content Intent not enabled
+        try:
+            intents_obj = getattr(self._bot, "intents", None)
+            if intents_obj is not None:
+                if not getattr(intents_obj, "message_content", False):
+                    logger.warning(
+                        "AD-472: Discord Message Content Intent is not enabled; "
+                        "the bot will receive empty message text. "
+                        "Enable it in the Discord Developer Portal."
+                    )
+        except Exception:
+            logger.debug(
+                "AD-472: could not introspect Discord intents", exc_info=True,
+            )
         self._setup_event_handlers()
 
         self._bot_task = asyncio.create_task(

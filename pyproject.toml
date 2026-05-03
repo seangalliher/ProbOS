@@ -56,6 +56,9 @@ discord = [
     "discord.py>=2.0",
     "aiohttp>=3.9,<3.13",   # discord.py 2.x incompatible with aiohttp 3.13+ (ClientWebSocketResponse removed)
 ]
+slack = [
+    "slack-sdk>=3.21,<4",
+]
 copilot = [
     "github-copilot-sdk>=0.1.30",
 ]
