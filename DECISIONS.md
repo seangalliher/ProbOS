@@ -10,6 +10,28 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-477: Naval Organization Protocols (v1: Captain's Log + Plan of the Day) (2026-05-03)
+
+**Problem:** AD-477 originally bundled 6 naval-organization capabilities. Half overlap with already-shipped systems (Qualification Programs vs AD-566; SORM vs Standing Orders). Heavy bundling led to no-theater risk and integration ambiguity.
+
+**Decision:** v1 ships ONLY the 2 truly NEW generative surfaces, each with 3 source aggregations:
+- `CaptainsLogService` — synthesizes daily narrative from episodic memory (over-fetch + Python-side date/importance filter) + Ward Room activity (`list_threads`) + active work item summary (`status="open"`). Markdown output to `data/captains_log/YYYY-MM-DD.md`. Dream-consolidation source deferred to AD-477g (no public `runtime.dreaming_engine` accessor exists).
+- `PlanOfDayService` — auto-generated morning operations summary aggregating active WorkItems (`status="open"`) + Ward Room thread queue + alert conditions. Markdown output to `data/plan_of_day/YYYY-MM-DD.md`. Scheduled-duties source deferred to AD-477f (no public `runtime.duty_schedule_tracker` accessor exists).
+
+Both are read-only consumers of existing runtime surfaces. No writes. Public attributes (no underscore per Wave 5 convention #1).
+
+**Why:** Generative narrative + plan documents are forcing-function-ready (Captain reads them daily). Qualification Programs (AD-477b) extends AD-566 — needs separate scope. 3M System (AD-477c), Damage Control (AD-477d), SORM (AD-477e) are larger systems each warranting their own AD. Dream-consolidation (AD-477g) and scheduled-duties (AD-477f) are deferred on accessor-availability forcing functions, mirroring Wave 9B's pre-deferral honesty pattern.
+
+**Deferred:**
+- AD-477b: Qualification Programs (rank-transition requirements; extends AD-566).
+- AD-477c: 3M System (planned preventive maintenance).
+- AD-477d: Damage Control Organization (5-phase protocol).
+- AD-477e: SORM (Ship's Organization and Regulations Manual).
+- AD-477f: Plan of the Day scheduled-duty integration (forcing function: public DutyScheduleTracker accessor or AD-500a-1 ships).
+- AD-477g: Captain's Log dream-consolidation source (forcing function: public `runtime.dreaming_engine` OR `DreamScheduler.recent_consolidation_summaries(...)`).
+
+**Cross-links:** AD-566 (Crew Qualification Battery), AD-539 (Gap → Qualification Pipeline), AD-471 (Watch Bill), Earned Agency, episodic memory, dreaming engine, WorkItemStore.
+
 ### AD-685: Phantom-API Pre-Check Kwarg Shape Validation (2026-05-03)
 
 **Problem:** The phantom-API pre-check (Wave 8 Addendum convention #16) catches symbol-existence phantoms but NOT method-kwarg phantoms. Three documented misses across Waves 9B, 10:

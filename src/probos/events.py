@@ -286,6 +286,10 @@ class EventType(str, Enum):
     BILLET_ASSIGNED = "billet_assigned"
     BILLET_VACATED = "billet_vacated"    # Reserved for AD-595b's vacate() — added now to keep enum changes atomic with BILLET_ASSIGNED
 
+    # Naval Organization (AD-477)
+    CAPTAINS_LOG_GENERATED = "captains_log_generated"  # AD-477
+    PLAN_OF_DAY_GENERATED = "plan_of_day_generated"  # AD-477
+
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
     NODE_COMPLETE = "node_complete"

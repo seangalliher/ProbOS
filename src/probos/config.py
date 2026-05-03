@@ -1487,6 +1487,33 @@ class CounselorConfig(BaseModel):
     alert_on_yellow: bool = False
 
 
+class CaptainsLogConfig(BaseModel):
+    """Captain's Log daily-narrative configuration (AD-477)."""
+
+    enabled: bool = True
+    output_dir: Path = Path("data/captains_log")
+    end_of_day_hour: int = 23  # local hour to trigger generation
+    top_episodes_count: int = 5
+    importance_threshold: int = 5
+
+
+class PlanOfDayConfig(BaseModel):
+    """Plan of the Day morning-summary configuration (AD-477)."""
+
+    enabled: bool = True
+    output_dir: Path = Path("data/plan_of_day")
+    start_of_day_hour: int = 8
+    include_alert_conditions: bool = True
+
+
+class NavalOrganizationConfig(BaseModel):
+    """Naval Organization Protocols (AD-477) — v1 ships Captain's Log + Plan of the Day."""
+
+    captains_log: CaptainsLogConfig = Field(default_factory=CaptainsLogConfig)
+    plan_of_day: PlanOfDayConfig = Field(default_factory=PlanOfDayConfig)
+
+
+
 class CircuitBreakerConfig(BaseModel):
     """Cognitive circuit breaker thresholds (AD-506a)."""
 
@@ -1884,6 +1911,7 @@ class SystemConfig(BaseModel):
     retroactive: RetroactiveConfig = RetroactiveConfig()  # AD-608
     distillation: DistillationConfig = DistillationConfig()  # AD-609
     reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
+    naval_organization: NavalOrganizationConfig = Field(default_factory=NavalOrganizationConfig)  # AD-477
 
     @field_validator("health_probe_interval_seconds")
     @classmethod

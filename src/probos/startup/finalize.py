@@ -1480,6 +1480,34 @@ async def finalize_startup(
     runtime._compensation_handler = compensation_handler
     logger.info("AD-446: CompensationHandler initialized")
 
+    # AD-477: Naval Organization Protocols (v1: Captain's Log + Plan of the Day)
+    naval_cfg = getattr(config, "naval_organization", None)
+    runtime.captains_log_service = None
+    runtime.captains_log_start_task = None
+    runtime.plan_of_day_service = None
+    runtime.plan_of_day_start_task = None
+    if naval_cfg is not None:
+        from probos.naval import CaptainsLogService, PlanOfDayService
+
+        if naval_cfg.captains_log.enabled:
+            runtime.captains_log_service = CaptainsLogService(runtime, naval_cfg.captains_log)
+            runtime.captains_log_start_task = asyncio.create_task(
+                runtime.captains_log_service.start()
+            )
+            logger.info(
+                "AD-477: CaptainsLogService started (output_dir=%s)",
+                naval_cfg.captains_log.output_dir,
+            )
+        if naval_cfg.plan_of_day.enabled:
+            runtime.plan_of_day_service = PlanOfDayService(runtime, naval_cfg.plan_of_day)
+            runtime.plan_of_day_start_task = asyncio.create_task(
+                runtime.plan_of_day_service.start()
+            )
+            logger.info(
+                "AD-477: PlanOfDayService started (output_dir=%s)",
+                naval_cfg.plan_of_day.output_dir,
+            )
+
     # AD-503: Wire InitiativeEngine counselor_fn
     if runtime.initiative and counselor_agent:
         def _counselor_alert_fn() -> list:
