@@ -222,6 +222,8 @@ class EventType(str, Enum):
     EPS_REALLOCATION = "eps_reallocation"  # AD-469
     MCP_BRIDGE_INVOKE = "mcp_bridge_invoke"  # AD-449
     MCP_BRIDGE_FAILED = "mcp_bridge_failed"  # AD-449
+    OBSERVABILITY_SNAPSHOT_PUBLISHED = "observability_snapshot_published"  # AD-641a
+    OBSERVABILITY_BRIDGE_FAILED = "observability_bridge_failed"  # AD-641a
     EPISODE_REJECTED = "episode_rejected"  # AD-610: storage gate rejected episode
     KNOWLEDGE_CONFIRMED = "knowledge_confirmed"  # AD-444: confidence score increased
     KNOWLEDGE_CONTRADICTED = "knowledge_contradicted"  # AD-444: confidence score decreased

@@ -1176,6 +1176,14 @@ class MCPConfig(BaseModel):
     servers: list[MCPServerConfig] = Field(default_factory=list)
 
 
+class ObservabilityBridgeConfig(BaseModel):
+    """AD-641a: Observability Bridge configuration."""
+
+    enabled: bool = True
+    publish_interval_seconds: float = 60.0
+    system_channel: str = "system_observability"
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1786,6 +1794,7 @@ class SystemConfig(BaseModel):
     dept_profiles: DepartmentProfilesConfig = DepartmentProfilesConfig()  # AD-656
     eps: EPSConfig = EPSConfig()  # AD-469
     mcp: MCPConfig = MCPConfig()  # AD-449
+    observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

@@ -724,6 +724,29 @@ async def finalize_startup(
     else:
         runtime.mcp_bridge = None
 
+    # AD-641a: Observability Bridge
+    ob_cfg = getattr(getattr(runtime, "config", None), "observability_bridge", None)
+    if ob_cfg is not None and ob_cfg.enabled:
+        from probos.cognitive.observability import ObservabilityBridge
+        runtime.observability_bridge = ObservabilityBridge(
+            runtime=runtime,
+            ward_room=getattr(runtime, "ward_room", None),
+            emit_event=runtime.emit_event,
+            publish_interval_seconds=ob_cfg.publish_interval_seconds,
+            system_channel=ob_cfg.system_channel,
+        )
+        # Hold the start task on runtime so it isn't garbage-collected.
+        # Public attribute (Wave 5 convention #1) -- consumer-facing for tests
+        # that need to await startup completion.
+        runtime.observability_bridge_start_task = asyncio.create_task(
+            runtime.observability_bridge.start(),
+            name="observability_bridge_start",
+        )
+        logger.info("AD-641a: ObservabilityBridge wired (channel=%s, interval=%.0fs)",
+                    ob_cfg.system_channel, ob_cfg.publish_interval_seconds)
+    else:
+        runtime.observability_bridge = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

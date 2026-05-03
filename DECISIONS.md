@@ -10,6 +10,26 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-641a: Observability Bridge — Brain Sensors → Ward Room System Feeds (2026-05-02)
+
+**Problem:** The Ship's Computer (brain) maintains rich operational state — vitals, pool health, attention priorities, Hebbian weights — but the Crew (Ward Room agents) cannot see any of it. Per the AD-641 design doc Category B, the integration model is **read-only observability**: crew read sensors, the brain owns the state. No `ObservabilityBridge`/`brain_sensor`/`sensor_bridge` symbol exists today.
+
+**Decision:** Ship a new `src/probos/cognitive/observability/` package with `ObservabilityBridge` (read-only sensor coordinator) + `ObservabilityBridgeSnapshot` (frozen dataclass — the public observation surface). Bridge polls 3 brain sensors at a configurable cadence and publishes a single Ward Room system post per cycle. Push-based: bridge polls and posts; crew read by subscribing to the system channel or by calling `take_snapshot()`.
+
+**v1 ships 3 of 7 sensors (no-theater discipline per convention #7+#14):** vitals (from latest `vitals_monitor` heartbeat in event_log via async `query_structured`), pool health (from `runtime.spawner.pools[*].current_size`/`target_size`), attention priorities (top-5 from `runtime.attention._queue` — TODO-tagged grandchild AD-641a-iv adds the public `snapshot()` API that drops the underscore reach).
+
+**4 grandchildren wholesale-deferred:** AD-641a-i Hebbian feed (needs public Hebbian read API), AD-641a-ii HXI surfaces, AD-641a-iii Captain alert routing on threshold breach, AD-641a-iv `AttentionManager.snapshot()`.
+
+**Async surface (architect-discretion verify-first repair vs original draft):** `event_log.query_structured(event=...)` is async at `event_log.py:170` (NOT `query(event_type=...)` — that parameter doesn't exist; rows are dicts with `data` key per `_row_to_dict` at line 249). `take_snapshot()` is therefore async; sync collectors (pool/attention) only. This caught three latent live-API mismatches in pass-2 review that pass-1 missed.
+
+**Why ward_room is optional in `__init__`:** the bridge degrades gracefully when Ward Room isn't yet wired (e.g. partial-startup tests); `_publish_once` no-ops on `ward_room is None` rather than raising.
+
+**Why exception trap in `_publish_once` not just `_publish_loop`:** test 11 (per pass-1 N3) calls `_publish_once` directly to avoid the asyncio-flake landmine of driving the loop. The trap also makes the failed-emit semantic identical regardless of caller, which is the right invariant for a degradation-tier surface.
+
+**Trackers:** PROGRESS.md prepended; roadmap.md AD-641 row tagged *(partial — 641a complete)*. 14 focused tests pass; full gate 10578/10579 (one environmental flake — `test_browse_threads_sort_recent` — passes serially).
+
+---
+
 ### BF-257: DM Receive Rate Limiter (2026-05-02)
 
 **Problem:** Three Science agents (Atlas, Sage, Lyra) entered a DM ping-pong loop in a production incident: Agent A DMs B; B's `_check_unread_dms` routes the unread DM through the cognitive chain (auto-approved by BF-184/187 social obligation bypass); B replies with a DM to A; A receives the unread DM; cycle repeats indefinitely. The loop exhausted all LLM capacity, caused cascading JSON parse failures across the crew, collapsed routing entropy to 0.00, and triggered a false `greet_user` capability gap for the Captain.
