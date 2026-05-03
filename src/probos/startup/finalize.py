@@ -804,6 +804,30 @@ async def finalize_startup(
     else:
         runtime.learned_shortcut_registry = None
 
+    # AD-641c: Thread Priority Service
+    tp_cfg = getattr(getattr(runtime, "config", None), "thread_priority", None)
+    if tp_cfg is not None and tp_cfg.enabled:
+        from probos.cognitive.thread_priority import (
+            ThreadPriorityScorer,
+            ThreadPriorityService,
+        )
+        runtime.thread_priority_service = ThreadPriorityService(
+            runtime=runtime,
+            scorer=ThreadPriorityScorer(
+                weight_captain=tp_cfg.weight_captain,
+                weight_unresolved=tp_cfg.weight_unresolved,
+                weight_cross_department=tp_cfg.weight_cross_department,
+                weight_recency=tp_cfg.weight_recency,
+                weight_endorsement=tp_cfg.weight_endorsement,
+            ),
+            emit_event=runtime.emit_event,
+            captain_callsign=tp_cfg.captain_callsign,
+        )
+        logger.info("AD-641c: ThreadPriorityService wired (captain=%s)",
+                    tp_cfg.captain_callsign)
+    else:
+        runtime.thread_priority_service = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:

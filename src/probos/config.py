@@ -1207,6 +1207,18 @@ class LearnedShortcutsConfig(BaseModel):
     register_workflow_cache: bool = True
 
 
+class ThreadPriorityConfig(BaseModel):
+    """AD-641c: Ward Room Thread Priority configuration."""
+
+    enabled: bool = True
+    weight_captain: float = 0.30
+    weight_unresolved: float = 0.20
+    weight_cross_department: float = 0.15
+    weight_recency: float = 0.20
+    weight_endorsement: float = 0.15
+    captain_callsign: str = "Captain"
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1821,6 +1833,7 @@ class SystemConfig(BaseModel):
     ward_room_hebbian: WardRoomHebbianConfig = Field(default_factory=WardRoomHebbianConfig)  # AD-641b
     engineering_sensors: EngineeringSensorsConfig = Field(default_factory=EngineeringSensorsConfig)  # AD-641f
     learned_shortcuts: LearnedShortcutsConfig = Field(default_factory=LearnedShortcutsConfig)  # AD-641e
+    thread_priority: ThreadPriorityConfig = Field(default_factory=ThreadPriorityConfig)  # AD-641c
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
