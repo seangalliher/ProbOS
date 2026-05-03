@@ -177,3 +177,60 @@ After deferrals, AD-572d and AD-573e join the list of deferred children (alongsi
 ## Re-review
 
 (reserved for pass 2)
+
+---
+
+## Second-Pass Review (2026-05-03)
+
+**Verdict:** ✅ Approved
+**Headline:** All 5 Required + 3 Recommended + 2 Nits resolved cleanly. Combo C ships as 5-child combo (526d/572c/573c/573f/575c). Zero new findings. Pre-check matches expectation (2 documented FPs).
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence |
+|---|---|---|
+| R1 (AD-572d wholesale-defer) | ✅ | No `## AD-572d:` H2 in body (only 5 child sections at lines 46/86/128/186/264). Deferral entry at line 278 with explicit forcing function: "AD-572d-i ships ONLY when a separate AD introduces the interruptible-wait infrastructure on `_think_loop`." `CAPTAIN_DM_PRIORITY_DISPATCHED` removed from Section 0 (note at line 33). Sequencing chain shrunk to 572c→575c (line 41). |
+| R2 (AD-573e wholesale-defer) | ✅ | No `## AD-573e:` H2 in body. Deferral entry at line 279 with forcing function: "AD-573e-i ships ONLY when `cognitive_journal` exposes a recency-ordered per-agent recall API." Sequencing chain shrunk to 573c→573f (line 42). |
+| R3 (AD-573f reshape) | ✅ | Live verify: `working_memory.py:34` = `commitments: list[dict[str, Any]]`; `:107` = `self._commitments: list[dict[str, Any]] = []`; `:110` = `self._max_commitments = 8`; `:138` = `def add_commitment(...)`. Zero `class Commitment` in repo. Prompt now uses dict mutation (`entry["status"] = "done"`), drops `agent_id` parameter, doesn't duplicate the bounded ring. All 5 AD-573f tests reshape to dict ops (line 257). One-line drift on cited lines (35→34, 108→110) — immaterial per Convention #10. |
+| R4 (file path correction) | ✅ | All 3 occurrences updated to `src/probos/cognitive/working_memory.py` (verify-first footer line 400 explicitly notes the fix: "NOT src/probos/working_memory.py"). |
+| R5 (AD-573c SEARCH/REPLACE) | ✅ | Section 1 at lines ~140-165 contains explicit `===MODIFY: src/probos/cognitive/cognitive_agent.py===` / `===SEARCH===` / `===REPLACE===` / `===END REPLACE===` block. SEARCH anchor matches live `cognitive_agent.py:1747-1753` exactly (verified by grep: `markers = {`, `"notebook"`, `"endorse"`, `"proposal"`, `"dm"`, `"ward_room_reply"` all present in stated order). Builder applies mechanically. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| Rec1 (572c iterate-channels) | ✅ | Paste-ready `_build_wardroom_summary` helper at lines 96-122 with full async iteration pattern (list_channels → per-channel list_threads → aggregate). Defensive guards on `getattr(channel, "id", None) or getattr(channel, "channel_id", None)`. |
+| Rec2 (526d Callable import) | ✅ | Line 60: `from typing import Any, Callable  # AD-526d Rec2: explicit Callable import`. |
+| Rec3 (tracker -i references) | ✅ | Combo Tracker section (lines 290-306) updated: DECISIONS.md title cites both wholesale-defers; roadmap.md adds AD-572d-i and AD-573e-i Deferred entries with forcing-function language; GH issue plan for #109 and #8 explicitly cites the new -i sub-children (lines 304-313). |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| N1 (Section 0 EventTypes count) | ✅ | Section 0 table (lines 26-32) lists 3 events — `GAME_PREFERENCE_RECORDED`, `WORKING_MEMORY_NOTE_RECORDED`, `COMMITMENT_RECORDED`. Explanatory note at line 33 covers the dropped `CAPTAIN_DM_PRIORITY_DISPATCHED`. |
+| N2 ("Combo Does NOT Change" restate) | ✅ | Lines 278-285 list AD-572d-i and AD-573e-i at the top of the deferral list with forcing functions, alongside pre-existing 526e/f/g/h, 572e, 573d, 575b. |
+
+### Five High-Priority Verification Points
+
+| # | Verification | Result |
+|---|---|---|
+| 1 | Wholesale-defer completeness (R1 + R2) | ✅ Zero `## AD-572d:` / `## AD-573e:` H2 sections in shipping content. All references (20 grep hits) are in deferral/audit context. "7 children"/"26 tests" appear only in Wave 8 retrospective reference (line 15) + revision audit (line 287) — legitimate historical context. |
+| 2 | AD-573f reshape verification | ✅ Live `working_memory.py:34/107/110/138` confirms `list[dict[str, Any]]` shape with `_max_commitments=8` ring. Prompt mutation pattern (`entry["status"] = "done"`) matches dict shape. `agent_id` parameter dropped as instructed. Zero `class Commitment` in repo. |
+| 3 | AD-573c R5 SEARCH/REPLACE explicitness | ✅ Block at lines ~140-165 uses canonical `===MODIFY===`/`===SEARCH===`/`===REPLACE===`/`===END REPLACE===` markers. SEARCH content reproduces live markers dict character-for-character. REPLACE adds one line: `"note": re.compile(r'\[NOTE\s', re.IGNORECASE),  # AD-573c`. |
+| 4 | Pre-check matches expected | ✅ `./scripts/phantom-api-precheck.ps1 prompts/combo-C-trivial-extensions.md` → 2 phantoms, both documented FPs (`recreation_preference_tracker` introduced by 526d per Wave-5 convention #1; `self_summary_provider` retrospective audit prose). 0 new phantoms. |
+| 5 | Solution Overview / GH-issue-closure consistency | ✅ Combo header line 6: `Closes: #101 (partial), #109 (partial), #8 (partial), #7 (fully)`. Combo Tracker section (lines 304-313) confirms #7 closes (575c shipped); #101/#109/#8 partial-completion comments updated; #109 and #8 explicitly cite -i sub-children. Tracker reflects 5-child shape. |
+
+### New Findings
+
+1. **(Recommended, non-blocking)** `prompts/WAVE-13-DISPATCH.md` is a pass-1 wave-orchestration artifact that still references 7 children + the old GH comment text citing AD-572d / AD-573e as closed (lines 15, 17, 87, 88, 99). This does NOT block Combo C build correctness — the **prompt is canonical for Builder**, and the prompt's own Combo Tracker section gives the correct stage-13 GH issue plan citing -i sub-children. Recommendation: regenerate or hand-edit the dispatch file (or its stage-13 close-out commands) before Builder runs `gh issue comment` so the published comments reflect the 5-child shape. Not a Required-class issue; the dispatch is upstream of the prompt and stage-13 commands are usually copy-edited at execution time.
+
+### Tolerance Reservation
+
+Pass-1 verdict was ⚠️ Conditional. Per Wave 5 convention #15 (relaxed tolerance: 1 ⚠️ allowed), the reservation was consumed at pass-1. Pass-2 verdict is ✅ — no further reservation needed.
+
+### Verdict Justification
+
+- All 5 Required resolved with grep-verified evidence.
+- All 3 Recommended folded.
+- Both Nits addressed.
+- Combo shape integrity preserved at 5 children with clean sequencing chains.
+- Zero new phantoms; pre-check matches expectation.
+- Single new finding is a non-blocking recommendation on a separate document (dispatch) that is upstream of Builder's actual execution surface.
+
+**Recommended Builder dispatch:** single commit, 5-child combo, ~19 tests, message: `Combo C: AD-526d/572c/573c/573f/575c trivial extensions (572d + 573e wholesale-deferred)`.
