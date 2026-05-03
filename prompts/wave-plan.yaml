@@ -111,3 +111,15 @@ waves:
     builder_required: true
     issues_to_close: [7]
     status: done
+
+  - id: "14"
+    title: "AD-487 Self-Distillation v1 (Map step only)"
+    kind: main
+    depends_on: ["13"]
+    dispatch_prompt: "prompts/WAVE-14-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-487-self-distillation-v1.md"
+    builder_required: true
+    issues_to_close: [79]
+    status: pending
