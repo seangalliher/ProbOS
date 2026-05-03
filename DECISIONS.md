@@ -10,7 +10,34 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
-### AD-500: DutyScheduleTracker → WorkItem Producer (2026-05-03)
+### AD-685: Phantom-API Pre-Check Kwarg Shape Validation (2026-05-03)
+
+**Problem:** The phantom-API pre-check (Wave 8 Addendum convention #16) catches symbol-existence phantoms but NOT method-kwarg phantoms. Three documented misses across Waves 9B, 10:
+- `event_log.query(event_type=...)` — real param is `event=`
+- `WorkItemStore.get_pending(...)` — caught only because method missing entirely
+- `runtime.work_item_store.add(work_item)` — `add` exists on other classes (false negative on this kind)
+
+Wave 9 + Wave 10 retrospectives both flagged. Architect recommended Wave 11 fix.
+
+**Decision:** Extend `scripts/phantom-api-precheck.ps1` with a Python AST helper that:
+- Parses every `<obj>.<method>(<kwargs>)` call site in prompt body.
+- Walks `src/probos/` for live signatures.
+- Flags kwargs that don't match any candidate signature's parameter list.
+
+Heuristics to suppress false positives are applied as a **shared pre-filter** uniformly to BOTH the existing symbol-existence check and the new kwarg check (resolves the recursive-validity gap from pass-1 review). Pre-filter strips: non-Python fenced code blocks, `## Revision` audit-trail sections, markdown prose-table cells with backticked symbol references. Helper-internal heuristic: accept kwarg if any same-named definition matches (receiver-class resolution deferred to AD-685c/d as a documented limitation).
+
+**Why now:** Third documented recurrence in 3 waves. Architect's reactive review-pipeline catches these but the proactive drafting pipeline doesn't. One scripted convention beats N drafting-time conventions.
+
+**Deferred:**
+- AD-685b: Field-name validation for dataclass/Pydantic constructors (e.g., `WorkItem(payload=...)`).
+- AD-685c: Type-shape validation for kwargs (dict vs list etc.).
+- AD-685d (potential): Receiver-class resolution. v1's "accept kwarg if any same-named definition matches" is a documented limitation — `runtime.work_item_store.add(work_item=...)` passes if any class with an `add` method has a `work_item` param, even if `WorkItemStore.add` doesn't exist or has a different signature. Requires lightweight type inference on the receiver chain.
+
+**Cross-links:** Wave 8 Retrospective Addendum #16 (original pre-check), Wave 9 Retrospective Addendum tooling outcome, Wave 10 architect's third recommendation, Wave 11 pass-1 review Required #1 (shared pre-filter resolution).
+
+---
+
+
 
 **Problem:** DutyScheduleTracker fires duties via direct `_think_for_agent()` calls, bypassing the AD-496 WorkItemStore + AD-498 work-type-registry surface that all other scheduled work uses. Two parallel tracking surfaces lead to inconsistency in observability, booking lifecycle, and token cost attribution.
 

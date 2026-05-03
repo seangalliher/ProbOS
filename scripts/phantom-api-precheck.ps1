@@ -76,6 +76,97 @@ function Test-SymbolExists {
     return $false
 }
 
+function Get-FilteredPromptBody {
+    # AD-685: Shared pre-filter applied uniformly to BOTH the existing
+    # symbol-existence check AND the new kwarg check. Strips:
+    #   1. Fenced code blocks NOT tagged python/py (pwsh, bash, sh, text,
+    #      json, bare). Only ```python and ```py blocks are scanned.
+    #   2. `## Revision` sections (audit-trail; expected to mention deprecated
+    #      names) through the next `## ` heading or EOF.
+    #   3. Markdown table rows where a cell is a single backticked symbol
+    #      followed by free prose (suppresses motivation-table cites of
+    #      past phantoms).
+    # Stripped regions are replaced with whitespace of equal length to
+    # preserve line numbers for downstream regex error reporting.
+    param([string]$body)
+
+    # 1. Fenced code blocks. Match opening fence + optional language tag.
+    # Replace any fence whose tag is NOT 'python' or 'py' with whitespace.
+    $body = [regex]::Replace(
+        $body,
+        '(?ms)^(```)([a-zA-Z0-9_+-]*)\r?\n(.*?)^```',
+        {
+            param($m)
+            $tag = $m.Groups[2].Value.ToLower()
+            if ($tag -eq 'python' -or $tag -eq 'py') {
+                # Keep python blocks intact.
+                return $m.Value
+            }
+            # Replace entire match with newlines/spaces of equal length.
+            return ($m.Value -replace '[^\r\n]', ' ')
+        }
+    )
+
+    # 2. `## Revision` sections through the next `## ` heading or EOF.
+    $body = [regex]::Replace(
+        $body,
+        '(?ms)^## Revision\b.*?(?=^## |\z)',
+        {
+            param($m)
+            return ($m.Value -replace '[^\r\n]', ' ')
+        }
+    )
+
+    # 3. Markdown prose-table cells: pipe-delimited cell whose content is a
+    # backticked symbol or call expression followed by prose (heuristic to
+    # suppress motivation-table cites of past phantoms — e.g., a Wave 10
+    # row mentioning `WorkItemStore.get_pending` or `event_log.query(...)`).
+    $body = [regex]::Replace(
+        $body,
+        '(?m)^\|.*$',
+        {
+            param($m)
+            $line = $m.Value
+            # Skip table separator rows.
+            if ($line -match '^\|[\s|:-]+\|?\s*$') { return $line }
+            # Mask any backticked call expression or dotted symbol within
+            # the row. Patterns covered:
+            #   `Class.method`, `Class(args)`, `obj.method(args)`, `Class.method(args)`.
+            $masked = [regex]::Replace(
+                $line,
+                '`([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*\s*\([^`]*\)|[A-Z][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)`',
+                {
+                    param($mm)
+                    return ($mm.Value -replace '[^\r\n]', ' ')
+                }
+            )
+            return $masked
+        }
+    )
+
+    # 4. Inline-prose backticked phantom-shape citations (broadens #3 beyond
+    # tables). After step 1 stripped non-Python fences, anything still in
+    # backticks outside ```python``` blocks is prose. Recursive-validity
+    # tuning per AD-685 Hard-Stop: bullet-list and paragraph cites of past
+    # phantoms (e.g., `WorkItemStore.get_pending`, `event_log.query(...)`)
+    # would otherwise survive into the symbol check / kwarg check. Real
+    # production code lives in ```python``` blocks (preserved) — backticked
+    # call-shapes elsewhere are documentation references. Patterns masked:
+    #   - `Class.method`     (CamelCase dotted)
+    #   - `obj.method(args)` (any dotted call site)
+    #   - `Class(args)`      (CamelCase constructor call)
+    $body = [regex]::Replace(
+        $body,
+        '`([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*\([^`]*\)|[A-Z][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*|[A-Z][a-zA-Z0-9_]*\([^`]*\))`',
+        {
+            param($m)
+            return ($m.Value -replace '[^\r\n]', ' ')
+        }
+    )
+
+    return $body
+}
+
 $totalPhantoms = 0
 $report = [System.Collections.ArrayList]@()
 
@@ -87,11 +178,18 @@ foreach ($promptPath in $PromptPaths) {
     Write-Host "`n=== $promptPath ===" -ForegroundColor Cyan
     $body = Get-Content $promptPath -Raw
 
+    # AD-685: Shared pre-filter applied uniformly to BOTH the existing
+    # symbol-existence check AND the new kwarg check. Strips/masks regions
+    # that are expected to mention deprecated names (audit trails) or
+    # non-Python prose. Replaces stripped regions with whitespace of equal
+    # length to preserve line numbers.
+    $filteredBody = Get-FilteredPromptBody $body
+
     # Collect candidate symbols from the prompt body.
     $candidates = [System.Collections.Generic.HashSet[string]]::new()
 
     # Pattern 1: `runtime.X` attribute access
-    $matches = [regex]::Matches($body, 'runtime\.([a-z_][a-z0-9_]*)')
+    $matches = [regex]::Matches($filteredBody, 'runtime\.([a-z_][a-z0-9_]*)')
     foreach ($m in $matches) {
         $sym = $m.Groups[1].Value
         if ($sym -notin @('emit_event','config','logger')) {
@@ -100,7 +198,7 @@ foreach ($promptPath in $PromptPaths) {
     }
 
     # Pattern 2: `<Class>.<method>` (CamelCase class)
-    $matches = [regex]::Matches($body, '\b([A-Z][a-zA-Z0-9_]+)\.([a-z_][a-z0-9_]+)')
+    $matches = [regex]::Matches($filteredBody, '\b([A-Z][a-zA-Z0-9_]+)\.([a-z_][a-z0-9_]+)')
     foreach ($m in $matches) {
         $cls = $m.Groups[1].Value
         $method = $m.Groups[2].Value
@@ -111,7 +209,7 @@ foreach ($promptPath in $PromptPaths) {
     }
 
     # Pattern 3: `<ClassName>(` constructor calls (CamelCase, not stdlib)
-    $matches = [regex]::Matches($body, '\b([A-Z][a-zA-Z0-9_]{3,})\(')
+    $matches = [regex]::Matches($filteredBody, '\b([A-Z][a-zA-Z0-9_]{3,})\(')
     foreach ($m in $matches) {
         $cls = $m.Groups[1].Value
         if ($cls -in $STDLIB_PREFIXES) { continue }
@@ -123,14 +221,14 @@ foreach ($promptPath in $PromptPaths) {
     foreach ($cand in $candidates) {
         # If the prompt body itself defines/introduces the symbol, skip.
         $bareName = $cand -replace '^class:|^runtime\.|^.*\.', ''
-        if ($body -match "(def|class)\s+$bareName\b") { continue }
+        if ($filteredBody -match "(def|class)\s+$bareName\b") { continue }
 
         # Tuning #1 (Wave 8.5): suppress runtime.X when the prompt itself
         # introduces it via a `runtime.X =` self-introduction or
         # `runtime.X: <Type> =` Pydantic-style annotation.
         if ($cand -like 'runtime.*') {
-            if ($body -match "runtime\.$bareName\s*[:=]") { continue }
-            if ($body -match "self\.$bareName\s*[:=]") { continue }
+            if ($filteredBody -match "runtime\.$bareName\s*[:=]") { continue }
+            if ($filteredBody -match "self\.$bareName\s*[:=]") { continue }
         }
 
         # Tuning #2 (Wave 8.5): suppress symbols within negative framing
@@ -138,9 +236,9 @@ foreach ($promptPath in $PromptPaths) {
         # the symbol's absence, not asserting its existence.
         $idx = 0
         $negativeFraming = $false
-        while (($idx = $body.IndexOf($bareName, $idx)) -ge 0) {
+        while (($idx = $filteredBody.IndexOf($bareName, $idx)) -ge 0) {
             $start = [Math]::Max(0, $idx - 30)
-            $window = $body.Substring($start, [Math]::Min(60, $body.Length - $start))
+            $window = $filteredBody.Substring($start, [Math]::Min(60, $filteredBody.Length - $start))
             if ($window -match '\b(NOT|not|was|should be|will be|no longer|removed|deprecated)\b') {
                 $negativeFraming = $true
                 break
@@ -150,7 +248,29 @@ foreach ($promptPath in $PromptPaths) {
         if ($negativeFraming) { continue }
 
         if (-not (Test-SymbolExists $bareName)) {
-            [void]$phantomsHere.Add($cand)
+            [void]$phantomsHere.Add(@{ Symbol = $cand; Category = $(if ($cand -like 'runtime.*') { 'runtime.X' } elseif ($cand -like 'class:*') { '<Class>(...)' } else { '<Class>.<method>' }) })
+        }
+    }
+
+    # AD-685: Kwarg-mismatch check via Python AST helper.
+    $helperPath = Join-Path $PSScriptRoot 'phantom_api_ast_helper.py'
+    $pythonExe = Join-Path $repoRoot '.venv/Scripts/python.exe'
+    if (-not (Test-Path $pythonExe)) { $pythonExe = 'python' }
+    if (Test-Path $helperPath) {
+        try {
+            $helperJson = $filteredBody | & $pythonExe $helperPath --src-root $srcRoot 2>$null
+            if ($LASTEXITCODE -eq 0 -and $helperJson) {
+                $parsed = $helperJson | ConvertFrom-Json
+                foreach ($p in $parsed.phantoms) {
+                    [void]$phantomsHere.Add(@{
+                        Symbol = "$($p.method)($($p.kwarg)=...)"
+                        Category = 'kwarg_mismatch'
+                        CallSite = $p.call_site
+                    })
+                }
+            }
+        } catch {
+            Write-Warning "AST helper failed on $promptPath : $_"
         }
     }
 
@@ -159,7 +279,7 @@ foreach ($promptPath in $PromptPaths) {
     } else {
         Write-Host "  $($phantomsHere.Count) phantom symbol(s):" -ForegroundColor Yellow
         foreach ($p in $phantomsHere) {
-            Write-Host "    - $p" -ForegroundColor Yellow
+            Write-Host "    - [$($p.Category)] $($p.Symbol)" -ForegroundColor Yellow
         }
         $totalPhantoms += $phantomsHere.Count
         [void]$report.Add(@{ Path = $promptPath; Phantoms = @($phantomsHere) })
