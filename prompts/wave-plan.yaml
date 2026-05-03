@@ -98,4 +98,4 @@ waves:
       - "prompts/ad-477-naval-organization-v1.md"
     builder_required: true
     issues_to_close: [71]
-    status: pending
+    status: done

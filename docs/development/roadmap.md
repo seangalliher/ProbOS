@@ -7149,6 +7149,36 @@ Empirical observation across two ProbOS instances revealed a **cold-start develo
 
 **AD-685: Phantom-API Pre-Check Kwarg Shape Validation** *(Complete, OSS, Wave 11)* — Tooling hygiene. Extends `scripts/phantom-api-precheck.ps1` (Wave 8 Addendum convention #16) with a Python AST helper (`scripts/phantom_api_ast_helper.py`) that validates method-kwarg shapes in prompt bodies against live signatures from `src/probos/`. Catches the class of phantom that slipped past the existing symbol-existence check across Waves 9B+10 (`event_log.query(event_type=...)` where the real param is `event=` on `query_structured`; wrong-kwarg variants of valid methods). Ships with a **shared heuristic pre-filter** applied uniformly to BOTH the existing symbol check and the new kwarg check (resolves Wave 11 pass-1 Required #1 recursive-validity gap): masks non-Python fenced blocks, `## Revision` audit-trail sections, table-row + inline-prose backticked call-shape cites — preserves line numbers via whitespace-of-equal-length replacement. AST index module-level dict cache (cold ~1s indexing 2810 method names; warm ~0.25 ms). Helper accepts kwarg if any same-named definition matches OR any candidate accepts `**kwargs`. **Recursive-validity gate passes** — `./scripts/phantom-api-precheck.ps1 prompts/ad-685-phantom-precheck-kwarg-validation.md` exits 0 after build (was 1 phantom self-reference before). Calibration sweep across 5 archived prompts (`ad-641c-*`, `ad-500-*`, `ad-501-*`, `ad-641d-*`, `ad-469-*`): 0 false positives. 9 focused tests pass (clean prompt → 0 phantoms; Wave 9B + Wave 10 regressions caught; non-Python fences/Revision sections skipped via wrapper pre-filter; same-named-method overload tolerance; wrapper merges symbol + kwarg phantoms; wrapper exit 1 on phantom; shared pre-filter suppresses prose-cite phantoms). v1 ships 2 of 4 capabilities; field-name validation → AD-685b, type-shape validation → AD-685c, receiver-class resolution → AD-685d. *Depends on: Wave 8 Addendum convention #16 (original phantom-api-precheck.ps1).*
 
+### Unified Knowledge Graph + Oracle Unification (AD-686 through AD-694)
+
+*"The Oracle sees all — because all knowledge flows through it."*
+
+*Inspired by Thoth (triple-store pattern), Microsoft Fabric IQ (capability mapping), and the "AI Meets Brain" survey (Mem0/G-Memory graph-enhanced recall). Unifies ProbOS's 6 fragmented query paths under a single Oracle interface, adds structural knowledge graph for relationship-aware recall. Research: `docs/research/unified-knowledge-graph.md`.*
+
+**Phase A: Foundation — Oracle Unification + Graph**
+
+**AD-686: Oracle Absorbs SemanticKnowledgeLayer** *(Scoped, OSS, Issue #380)* — Add `_query_semantic()` tier method (Tier 5) to OracleService. Oracle constructor gains `semantic_layer` parameter. Delegates to existing `SemanticKnowledgeLayer.search()` for ChromaDB collections (agents, skills, workflows, QA reports, events). Migrate direct consumers (`introspect.py`, `organizer_agents.py`, `/knowledge` command) to Oracle. SemanticKnowledgeLayer write-path methods unchanged. *Depends on: AD-462e (Oracle — COMPLETE). Related: Phase 21 (SemanticKnowledgeLayer — original implementation).*
+
+**AD-687: Knowledge Edge Store** *(Scoped, OSS, Issue #381)* — `knowledge_edges` SQLite table with typed entity→relation→entity triples, provenance fields (source_agent, source_duty), classification labels, confidence/weight scores. CRUD operations, recursive CTE bounded traversal (1–3 hops), Cloud-Ready abstract connection interface. Entity types: agent, department, incident, decision, duty, finding, capability, standing_order. Relation types: reports_to, member_of, competent_in, resolved_by, involved_in, informed_by, depends_on, produced_by, classified_as, originated_on. *Standalone — no hard dependencies. Related: AD-434 (Ship's Records — co-located institutional memory).*
+
+**AD-688: Oracle Graph Integration** *(Scoped, OSS, Issue #382)* — Add Tier 6 (`_query_graph`) and post-merge graph expansion (`_expand_via_graph`) to OracleService. Tier 6: extract entity references from query, match against `knowledge_edges`, traverse 1–2 hops, score by weight × confidence × hop proximity. Post-merge: 1-hop enrichment on top-K merged results from all tiers (discounted score 0.7×). Constructor gains `knowledge_graph` parameter. Provenance tags: `[knowledge graph]`, `[graph expansion from: {tier}]`. *Depends on: AD-686 (Oracle Tier 5 — establishes 6-tier model), AD-687 (Knowledge Edge Store — provides graph data).*
+
+**AD-689: Edge Population from Existing Data** *(Scoped, OSS, Issue #383)* — Backfill `knowledge_edges` from existing ProbOS data sources: ontology (reports_to, member_of), Hebbian weights above threshold (competent_in), episode agent_ids (involved_in), DECISIONS.md cross-references (resolved_by, informed_by). Idempotent backfill command, warm-boot integration. *Depends on: AD-687 (Knowledge Edge Store). Related: AD-429 (Hebbian Router), ontology models.*
+
+**Phase B: Intelligence**
+
+**AD-690: Dream Step 10 — Relationship Inference** *(Future, OSS, Issue #384)* — Nightly dream step scans recent episodes for co-occurring entities without edges in `knowledge_edges`. LLM classifies relationship type. Anti-contamination: per-entity caps, rejection cache, source tagging. Mirrors Thoth dream cycle Phase 3. *Depends on: AD-687 (Knowledge Edge Store), AD-551 (Dream Step 7g). Related: AD-608 (Retroactive Memory Evolution), AD-557 (Emergence Metrics).*
+
+**AD-691: NL-to-Graph Query** *(Future, Commercial, Issue #385)* — Ship's Computer structural query routing. LLM extracts entity references from natural language → graph traversal → structured result with provenance. Schema-aware query generation (Fabric IQ NL2GQL equivalent). Enhances Ship's Computer `ask` and Ward Room structural questions. *Depends on: AD-688 (Oracle Graph Integration). Related: AD-468 (Ship's Computer Config).*
+
+**AD-692: Classification Enforcement** *(Future, Commercial, Issue #386)* — Access control on graph edges per classification level (private/department/ship/fleet). Federation export filters by classification. Integrates with AD-679 disclosure routing and RecordsStore DocumentClassification. *Depends on: AD-687 (Knowledge Edge Store), AD-679 (Selective Disclosure Routing). Related: AD-456 (Security Infrastructure).*
+
+**Phase C: Scale + Federation**
+
+**AD-693: Federation Knowledge Sync** *(Future, Commercial, Issue #387)* — Cross-instance edge synchronization via federation protocol. Trust-weighted acceptance of foreign knowledge. Provenance chain verification via DID signatures. Selective memory export defined as graph subsets (Clean Room = exclude incident edges). *Depends on: AD-687 (Knowledge Edge Store), Phase 29 (Federation). Related: AD-443 (Transfer Certificates).*
+
+**AD-694: Kùzu Migration** *(Future, Commercial, Issue #388)* — When SQLite CTEs hit complexity limits (>30% of queries need >3 hops), migrate `knowledge_edges` to embedded Kùzu graph DB. Cypher query interface. Dual-read during migration. Zero new runtime dependencies for OSS (Kùzu is commercial-only). *Depends on: AD-687 (Knowledge Edge Store). Decision criteria: query complexity thresholds documented in AD-687.*
+
 ## Bug Tracker
 
 *"Captain, we've detected an anomaly in Deck 7."*
