@@ -74,4 +74,4 @@ waves:
       - "prompts/ad-500-dutyscheduler-workitem-migration.md"
     builder_required: true
     issues_to_close: [88, 87]
-    status: pending
+    status: done
