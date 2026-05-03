@@ -14,10 +14,19 @@ authors = [
 readme = "README.md"
 keywords = ["ai", "agents", "cognitive-mesh", "autonomous", "multi-agent"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
 ]
+
+[project.urls]
+Homepage = "https://github.com/seangalliher/ProbOS"
+Documentation = "https://github.com/seangalliher/ProbOS/blob/main/docs/quickstart.md"
+Repository = "https://github.com/seangalliher/ProbOS"
+Issues = "https://github.com/seangalliher/ProbOS/issues"
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",

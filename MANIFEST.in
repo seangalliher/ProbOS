@@ -1,0 +1,7 @@
+include README.md LICENSE
+recursive-include src/probos *.py
+recursive-include config *.yaml *.yml
+graft docs/quickstart.md
+graft docs/getting-started.md
+prune tests
+prune .github
