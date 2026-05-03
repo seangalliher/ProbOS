@@ -1135,6 +1135,32 @@ class DepartmentProfilesConfig(BaseModel):
     profiles: dict[str, DepartmentCognitiveProfile] = Field(default_factory=dict)
 
 
+class EPSDepartmentConfig(BaseModel):
+    """One department's EPS allocation entry (AD-469)."""
+
+    name: str
+    percent: float = Field(default=0.0, ge=0.0, le=1.0)
+    priority: int = Field(default=5, ge=1, le=10)
+
+
+class EPSConfig(BaseModel):
+    """EPS - Compute/Token Distribution (AD-469)."""
+
+    enabled: bool = True
+    window_seconds: float = Field(default=60.0, ge=10.0)
+    over_budget_threshold: float = Field(default=1.25, ge=1.0, le=10.0)
+    departments: list[EPSDepartmentConfig] = Field(
+        default_factory=lambda: [
+            EPSDepartmentConfig(name="engineering", percent=0.30, priority=3),
+            EPSDepartmentConfig(name="science", percent=0.20, priority=4),
+            EPSDepartmentConfig(name="medical", percent=0.15, priority=2),
+            EPSDepartmentConfig(name="security", percent=0.15, priority=2),
+            EPSDepartmentConfig(name="operations", percent=0.10, priority=4),
+            EPSDepartmentConfig(name="other", percent=0.10, priority=6),
+        ]
+    )
+
+
 class SecurityInfraConfig(BaseModel):
     """Security infrastructure configuration (AD-456).
 
@@ -1740,6 +1766,7 @@ class SystemConfig(BaseModel):
     model_routing: ModelRoutingConfig = ModelRoutingConfig()  # AD-463
     ready_room: ReadyRoomConfig = ReadyRoomConfig()  # AD-475
     dept_profiles: DepartmentProfilesConfig = DepartmentProfilesConfig()  # AD-656
+    eps: EPSConfig = EPSConfig()  # AD-469
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()

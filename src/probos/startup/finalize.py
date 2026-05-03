@@ -673,6 +673,40 @@ async def finalize_startup(
         )
         runtime.captain_engagement_provider = None
 
+    # AD-469: EPS - Compute/Token Distribution (v1 foundation)
+    if config.eps.enabled:
+        from probos.cognitive.eps import (
+            CapacityTracker,
+            DepartmentBudget,
+            DepartmentBudgetTable,
+            EPSCoordinator,
+        )
+        capacity = CapacityTracker(
+            runtime=runtime,
+            window_seconds=config.eps.window_seconds,
+        )
+        budgets = DepartmentBudgetTable(
+            departments=[
+                DepartmentBudget(
+                    name=d.name, percent=d.percent, priority=d.priority,
+                )
+                for d in config.eps.departments
+            ],
+        )
+        runtime.eps_coordinator = EPSCoordinator(
+            capacity_tracker=capacity,
+            budget_table=budgets,
+            emit_event=runtime.emit_event,
+            over_budget_threshold=config.eps.over_budget_threshold,
+        )
+        logger.info(
+            "AD-469: EPSCoordinator wired (%d departments, window=%.0fs)",
+            len(config.eps.departments),
+            config.eps.window_seconds,
+        )
+    else:
+        runtime.eps_coordinator = None
+
     # AD-585: Wire TieredKnowledgeLoader onto all CognitiveAgents.
     wired_count = _wire_tiered_knowledge_loader(runtime=runtime, config=config)
     if wired_count:
