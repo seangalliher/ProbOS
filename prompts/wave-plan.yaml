@@ -61,4 +61,4 @@ waves:
       - "prompts/ad-641d-crew-deliberation-protocol.md"
     builder_required: true
     issues_to_close: [277]   # AD-641 umbrella closes when 9C lands
-    status: pending
+    status: done
