@@ -36,12 +36,14 @@ waves:
       - "prompts/ad-641f-engineering-chief-observability.md"
     builder_required: true
     issues_to_close: []
-    status: pending
+    status: done
 
   - id: "9B"
     title: "AD-641 children — cross-cutting (c/e)"
     kind: main
     depends_on: ["9A"]
+    dispatch_prompt: "prompts/WAVE-9B-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
       - "prompts/ad-641c-ward-room-thread-priority.md"
       - "prompts/ad-641e-learned-shortcut-abstraction.md"
