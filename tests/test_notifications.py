@@ -4,7 +4,7 @@ import time
 import unittest
 from unittest.mock import MagicMock
 
-from probos.task_tracker import AgentNotification, NotificationQueue
+from probos.notifications import AgentNotification, NotificationQueue
 
 
 class TestAgentNotification(unittest.TestCase):
@@ -181,3 +181,74 @@ class TestNotificationQueue(unittest.TestCase):
         self.queue.acknowledge(n.id)
         assert len(self.events) == 1
         assert self.events[0][0] == "notification_ack"
+
+
+class TestAD501Migration(unittest.TestCase):
+    """AD-501: TaskTracker deprecation & NotificationQueue separation invariants."""
+
+    def test_notifications_module_exists(self) -> None:
+        """NotificationQueue + AgentNotification importable from probos.notifications."""
+        from probos.notifications import AgentNotification as AN
+        from probos.notifications import NotificationQueue as NQ
+        assert NQ is NotificationQueue
+        assert AN is AgentNotification
+
+    def test_notification_queue_enqueue_dequeue(self) -> None:
+        """Behavior preserved post-move: notify -> snapshot round-trip."""
+        q = NotificationQueue()
+        n = q.notify(agent_id="a1", agent_type="builder", department="eng", title="hello")
+        snap = q.snapshot()
+        assert len(snap) == 1
+        assert snap[0]["id"] == n.id
+        assert snap[0]["title"] == "hello"
+
+    def test_notification_queue_priority_ordering(self) -> None:
+        """Snapshot returns notifications newest-first (move-preserved invariant)."""
+        q = NotificationQueue()
+        n1 = AgentNotification(agent_id="a1", title="first", created_at=1000.0)
+        n2 = AgentNotification(agent_id="a2", title="second", created_at=2000.0)
+        q._notifications[n1.id] = n1
+        q._notifications[n2.id] = n2
+        snap = q.snapshot()
+        assert snap[0]["title"] == "second"
+        assert snap[1]["title"] == "first"
+
+    def test_agent_notification_dataclass_fields(self) -> None:
+        """AgentNotification dataclass contract preserved."""
+        n = AgentNotification(agent_id="x", agent_type="builder", department="eng", title="t")
+        assert n.acknowledged is False
+        assert n.notification_type == "info"
+        assert isinstance(n.id, str)
+        assert isinstance(n.created_at, float)
+        assert n.created_at > 0.0
+
+    def test_runtime_no_task_tracker_attribute(self) -> None:
+        """ProbOSRuntime no longer carries a `task_tracker` attribute (field removed)."""
+        from probos.runtime import ProbOSRuntime
+        # The dataclass annotation should be gone; instances no longer set the attribute.
+        annotations = getattr(ProbOSRuntime, "__annotations__", {})
+        assert "task_tracker" not in annotations
+
+    def test_build_state_snapshot_no_tasks_key(self) -> None:
+        """build_state_snapshot() no longer includes a `"tasks"` key."""
+        import inspect
+        from probos.runtime import ProbOSRuntime
+        src = inspect.getsource(ProbOSRuntime.build_state_snapshot)
+        assert '"tasks"' not in src
+        assert "task_tracker.snapshot" not in src
+
+    def test_task_tracker_module_deleted(self) -> None:
+        """`probos.task_tracker` is removed; import raises ModuleNotFoundError."""
+        import importlib
+        with self.assertRaises(ModuleNotFoundError):
+            importlib.import_module("probos.task_tracker")
+
+    def test_existing_notification_consumers_unbroken(self) -> None:
+        """Conftest-style consumer pattern still works after the module move."""
+        # Mirrors `tests/conftest.py:200` usage: spec=NotificationQueue.
+        rt = MagicMock()
+        rt.notification_queue = MagicMock(spec=NotificationQueue)
+        rt.notification_queue.unread_count.return_value = 0
+        rt.notification_queue.snapshot.return_value = []
+        assert rt.notification_queue.unread_count() == 0
+        assert rt.notification_queue.snapshot() == []

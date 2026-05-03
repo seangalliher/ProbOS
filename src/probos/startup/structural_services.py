@@ -118,12 +118,6 @@ async def init_structural_services(
     await build_dispatcher.start()
     logger.info("build-dispatcher started")
 
-    # --- Task Tracker (AD-316) ---
-    from probos.task_tracker import TaskTracker
-
-    task_tracker = TaskTracker(on_event=emit_event_fn)
-    logger.info("task-tracker started")
-
     # --- Service Profiles (AD-382) ---
     from probos.service_profile import ServiceProfileStore
     from probos.agents.http_fetch import HttpFetchAgent
@@ -180,7 +174,6 @@ async def init_structural_services(
         initiative=initiative,
         build_queue=build_queue,
         build_dispatcher=build_dispatcher,
-        task_tracker=task_tracker,
         service_profiles=service_profiles,
         directive_store=directive_store,
         bill_runtime=bill_runtime,

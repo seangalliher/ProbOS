@@ -49,7 +49,6 @@ if TYPE_CHECKING:
     from probos.cognitive.skill_catalog import CognitiveSkillCatalog
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.substrate.scaler import PoolScaler
-    from probos.task_tracker import TaskTracker
     from probos.tools.permissions import ToolPermissionStore
     from probos.tools.registry import ToolRegistry
     from probos.ward_room import WardRoomService
@@ -139,7 +138,6 @@ class StructuralServicesResult:
     initiative: "InitiativeEngine"
     build_queue: "BuildQueue"
     build_dispatcher: "BuildDispatcher"
-    task_tracker: "TaskTracker"
     service_profiles: "ServiceProfileStore"
     directive_store: "DirectiveStore | None"
     bill_runtime: Any = None  # AD-618d

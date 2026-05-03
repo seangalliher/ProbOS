@@ -10,6 +10,22 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-501: TaskTracker Deprecation & NotificationQueue Separation (2026-05-03)
+
+**Problem:** `task_tracker.py` carried two unrelated concerns. `NotificationQueue` is live and used by the proactive loop; `TaskTracker` is wired into runtime but no code path creates tasks through it. WorkItemStore (AD-496) is the canonical work-tracking surface now.
+
+**Decision:** Split `task_tracker.py`:
+- Move `NotificationQueue` + `AgentNotification` to new `src/probos/notifications.py` (move-only; no behavior change).
+- Delete `task_tracker.py` (orphaned `TaskType`/`StepStatus`/`TaskStatus`/`TaskStep`/`AgentTask`/`TaskTracker` removed).
+- Remove `runtime.task_tracker` field and `build_state_snapshot()` `"tasks"` key (also removed 3 startup-wiring touchpoints the prompt's verify-first footer missed: `startup/structural_services.py`, `startup/results.py`, `startup/shutdown.py` — all logically required by the field removal).
+- Update existing `tests/test_notifications.py` import (1 line); delete entire orphaned `tests/test_task_tracker.py` (30 tests, all targeting orphan classes); add 8 AD-501 migration-invariance tests.
+
+**Why:** AD-496 WorkItemStore is the canonical work surface. TaskTracker's continued presence is technical debt that confuses Builder agents about the canonical work model.
+
+**Deferred:** BuildQueue migration to WorkItems → AD-501b. Roadmap says "evaluate" not "implement"; AD-498 stability for build-modeling is a separate forcing function.
+
+**Cross-links:** AD-323 (origin of `AgentNotification`), AD-496 (WorkItemStore), AD-498 (Work Type Registry).
+
 ### Wave 9 Retrospective Addendum — Multi-Sub-Wave Umbrella Shipping
 
 **Date:** 2026-05-02

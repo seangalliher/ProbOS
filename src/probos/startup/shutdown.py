@@ -203,10 +203,6 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         runtime.build_dispatcher = None
         runtime.build_queue = None
 
-    # Stop task tracker (AD-316)
-    if runtime.task_tracker:
-        runtime.task_tracker = None
-
     # Disconnect service profiles (AD-382)
     from probos.agents.http_fetch import HttpFetchAgent
     from probos.cognitive.standing_orders import set_directive_store

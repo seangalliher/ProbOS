@@ -155,7 +155,7 @@ def mock_runtime():
     from probos.mesh.routing import HebbianRouter
     from probos.substrate.event_log import EventLog
     from probos.config import SystemConfig
-    from probos.task_tracker import NotificationQueue
+    from probos.notifications import NotificationQueue
     from probos.cognitive.llm_client import BaseLLMClient
     from probos.mesh.gossip import GossipProtocol
     from probos.substrate.pool_group import PoolGroupRegistry

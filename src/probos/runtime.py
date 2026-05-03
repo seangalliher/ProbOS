@@ -66,7 +66,7 @@ from probos.initiative import InitiativeEngine
 from probos.build_queue import BuildQueue
 from probos.worktree_manager import WorktreeManager
 from probos.build_dispatcher import BuildDispatcher
-from probos.task_tracker import NotificationQueue, TaskTracker
+from probos.notifications import NotificationQueue
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.cognitive.attention import AttentionManager
 from probos.cognitive.decomposer import DAGExecutor, IntentDecomposer
@@ -231,7 +231,6 @@ class ProbOSRuntime:
     initiative: InitiativeEngine | None
     build_queue: BuildQueue | None
     build_dispatcher: BuildDispatcher | None
-    task_tracker: TaskTracker | None
     service_profiles: ServiceProfileStore | None
     directive_store: DirectiveStore | None
     notification_queue: NotificationQueue
@@ -538,9 +537,6 @@ class ProbOSRuntime:
         # --- Automated Builder Dispatch (AD-375) ---
         self.build_queue: BuildQueue | None = None
         self.build_dispatcher: BuildDispatcher | None = None
-
-        # --- Task Tracker (AD-316) ---
-        self.task_tracker: TaskTracker | None = None
 
         # --- Service Profiles (AD-382) ---
         self.service_profiles: ServiceProfileStore | None = None
@@ -1055,7 +1051,6 @@ class ProbOSRuntime:
             },
             "pool_groups": self.pool_groups.status(self.pools),
             "pool_to_group": dict(self.pool_groups._pool_to_group),
-            "tasks": self.task_tracker.snapshot() if self.task_tracker else [],
             "directives": self._directive_summary(),
             "notifications": self.notification_queue.snapshot(),
             "unread_count": self.notification_queue.unread_count(),
@@ -1523,7 +1518,6 @@ class ProbOSRuntime:
         self.initiative = struct.initiative
         self.build_queue = struct.build_queue
         self.build_dispatcher = struct.build_dispatcher
-        self.task_tracker = struct.task_tracker
         self.service_profiles = struct.service_profiles
         self.directive_store = struct.directive_store
         self._bill_runtime = struct.bill_runtime  # AD-618d
