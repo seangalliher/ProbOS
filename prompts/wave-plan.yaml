@@ -134,4 +134,4 @@ waves:
       - "prompts/ad-685b-method-call-validation.md"
     builder_required: true
     issues_to_close: []
-    status: pending
+    status: done
