@@ -124,3 +124,59 @@
 **Wave 9B structural-defect pattern recurrence count: 1** (`runtime.dreaming_engine` attribute existence is structurally identical to the already-mitigated `runtime.duty_schedule_tracker` phantom). Plus one new shape: phantom kwarg VALUE (`status="pending"`) that AD-685 v1 doesn't catch — bank for AD-685c/e tooling-hygiene candidate.
 
 **Verdict logic.** 3 Required findings ⇒ ⚠️ Conditional under convention #15 (relaxed tolerance, 1 ⚠️ allowed). All three are mechanical fixes with concrete resolution paths. Recommend: revise per Required #1-3 + Recommended #1-2; second pass should converge to ✅ unless Required #1's path (b) surfaces deeper consumer-side gaps on `DreamScheduler`.
+
+---
+
+## Second-Pass Review (2026-05-03)
+
+**Verdict:** ✅ Approved
+**All 3 Required resolved with verify-first grep evidence; all 3 Recommended folded; Nit #1 folded; Nits #2-3 reasonably deferred. Pre-check returns 1 documented phantom only (`runtime.duty_schedule_tracker` NOTE — audit-trail self-reference). No new phantoms, no regressions. Ready for Builder.**
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence |
+|---|---|---|
+| R1 (dreaming Option a defer) | ✅ Resolved | Solution Overview lines 19-21 ("v1 ships 2 of 6"; CaptainsLog "Three source aggregations"); Dependencies NOTE on dream consolidation lines 38-40; Section 2 docstring "Aggregates THREE sources (dream consolidation deferred to AD-477g)" line 79; Deferred Grandchildren AD-477g entry line 29; DECISIONS.md draft entry line 245. Zero `dreaming_engine` mentions in shipping content (Section 2/3 docstrings, Test Plan, Acceptance Criteria) — all 13 hits are in Deferral, NOTE, DECISIONS-draft, Verified Against Codebase, AD-685 note, or Revision sections. |
+| R2 (episodic by-date pattern) | ✅ Resolved | Section 2 `generate_for_date` docstring (lines 88-96) specifies: `recent(k=N*4)` over-fetch → Python-side `[date_start, date_end]` UTC-midnight filter → `importance >= threshold` filter → sort desc → top N. Live API confirmed at `cognitive/episodic.py:1832` (`async def recent(self, k: int = 10) -> list[Episode]`). Verified Against Codebase footer line 268-269 records the "no by-date query exists" call-out. |
+| R3 (status="open") | ✅ Resolved | Section 3 docstring line 122 (`status="open"` with WorkItemStatus.OPEN annotation); Section 2 docstring line 100 (work-item bullet); Test #8 renamed `test_plan_of_day_aggregates_open_work_items` line 213. Zero `status="pending"` hits in shipping content — only audit-trail mentions in Verified-Against-Codebase footer line 263 and AD-685 note line 283 and Revision section line 319. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| Rec1 (Pydantic factory defaults) | ✅ Applied | Section 4 `NavalOrganizationConfig` uses `Field(default_factory=CaptainsLogConfig)` and `Field(default_factory=PlanOfDayConfig)` (lines 167-169). Wave 5 anti-pattern guidance satisfied. |
+| Rec2 (Verified-Against-Codebase grep audit) | ✅ Applied | Footer (lines 252-275) now contains explicit grep evidence for `WorkItemStore.list_work_items`, `WorkItemStatus` enum members, `episodic.recent`, `ward_room.list_threads`, and zero-hit confirmation for `runtime.dreaming_engine`. Convention #16 satisfied. |
+| Rec3 (Test #12 tightening) | ✅ Applied | Renamed `test_stop_cancels_task_cleanly` → `test_stop_surfaces_cancellederror_to_caller_after_cleanup` with explicit "task cancellation surfaces `CancelledError` to caller after cleanup. Test must `assert raises(CancelledError)` — must not allow silent swallow" description (line 217). |
+
+| Pass-1 Nit | Status | Notes |
+|---|---|---|
+| Nit1 (start-task convention #1 callout) | ✅ Applied | Section 5 wiring text (line 197) explicitly extends "Public attributes (no underscore — Wave 5 convention #1; applies to both services and their start-tasks)". |
+| Nit2 (drop defensive `getattr` in finalize.py) | 📦 Deferred | Reasonable for staged rollout; revisit when `Config.naval_organization` field is mandatory. |
+| Nit3 (test count contingency) | 📦 Moot under R1(a) | No dream-summary test path exists; total holds at 14. |
+
+### Five Verification Points
+
+1. **R1 Option (a) completeness.** ✅ Solution Overview reads "v1 ships 2 of 6 capabilities" with CaptainsLog "Three source aggregations" (line 19). Dependencies NOTE explains `runtime.dreaming_engine` is not public; `runtime.dream_scheduler` exists but no summary API (line 40). Section 2 docstring opens "Aggregates THREE sources (dream consolidation deferred to AD-477g)" (line 79). DECISIONS.md draft Decision section explicitly cites AD-477g as the dream-consolidation deferral (line 232). Deferred Grandchildren section adds AD-477g with explicit forcing function (line 29). Self-check grep confirms zero `dreaming_engine` mentions in shipping content — all hits are in Revision/NOTE/Deferred/DECISIONS-draft/Verified/AD-685-note sections.
+
+2. **R2 episodic by-date pattern verified.** ✅ Section 2 docstring (lines 88-96) specifies the exact pattern. Live API verified at `cognitive/episodic.py:1832` — `async def recent(self, k: int = 10) -> list[Episode]` exists with the assumed `k`-parameter signature. The over-fetch + Python-side `[date_start, date_end]` UTC-midnight + `importance >= threshold` → sort desc → top N pattern is buildable as written. No phantom; Builder will not hit a missing API.
+
+3. **R3 status="open" propagation.** ✅ All shipping-content mentions of `status="pending"` removed. Test #8 renamed to `test_plan_of_day_aggregates_open_work_items`. Section 2 work-item bullet (added under R1's restructure) uses `status="open"` from the start. Verified-Against-Codebase footer adds enum-member evidence.
+
+4. **Pre-check matches expected.** ✅ `./scripts/phantom-api-precheck.ps1 prompts/ad-477-naval-organization-v1.md` returns:
+   ```
+   1 phantom symbol(s):
+     - [runtime.X] runtime.duty_schedule_tracker
+   ```
+   This is the documented NOTE self-reference (AD-477f forcing-function audit trail). Zero new phantoms.
+
+5. **Solution Overview drift discipline.** ✅ Solution Overview, v1-deliverables, Acceptance Criteria, and Test Plan are mutually consistent: 2 capabilities, CaptainsLog has 3 sources (episodic + Ward Room + work items), PlanOfDay has 3 sources (work items + Ward Room + alerts). Test count holds at 14 (Test #8 renamed in place; no add or remove). Acceptance Criteria still says "14 tests pass" (line 290). Revision section accurately summarizes the deltas.
+
+### New Findings
+
+None.
+
+### Wave 12 Tooling Validation
+
+AD-685's kwarg pre-check caught its first non-trivial Wave 12 phantom (`runtime.duty_schedule_tracker`) before the pass-1 review even began (commit `b37fbb4` "Wave 12 pre-check fix: drop runtime.duty_schedule_tracker phantom"). This is the first cycle in which a structural defect was eliminated by tooling rather than by reviewer-grep — the Wave 11 investment is validated. The remaining structural defects in pass-1 (R1 dreaming attribute; R2 by-date query absence; R3 enum-value drift) all sat outside AD-685's current detection envelope (attribute existence on runtime objects; absent-method-by-design; enum-value validation against live `Enum` definitions) — banked as forcing functions for AD-685c/d/e tooling extensions in a future tooling-hygiene wave.
+
+### Verdict logic
+
+All 3 Required resolved with concrete in-prompt evidence. All 3 Recommended folded. 1 of 3 Nits folded; 2 deferred with stated rationale. Pre-check clean (1 documented phantom = 0 new phantoms). No structural defects discovered during verify-first re-grep. Convention #15 ✅ Approved tier — first ✅ of Wave 12 pass-2 sweep.
