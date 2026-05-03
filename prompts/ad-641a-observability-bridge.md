@@ -22,22 +22,23 @@ The roadmap entry (line 7056) names AD-641a as "Observability Bridge — System 
 
 One new module under `src/probos/cognitive/observability/` (new package; AD-641a OWNS `__init__.py` creation, mirroring AD-457/459/466/467/469/475 precedents):
 
-1. **`ObservabilityBridge`** (`bridge.py`) — coordinator that polls 3 brain sensors at a configurable cadence and publishes a single Ward Room system post per cycle. Public API: `start()`, `stop()`, `take_snapshot() -> ObservabilityBridgeSnapshot`. Holds a single named `asyncio.Task` reference (per convention: fire-and-forget tasks silently swallow exceptions).
+1. **`ObservabilityBridge`** (`bridge.py`) — coordinator that polls 3 brain sensors at a configurable cadence and publishes a single Ward Room system post per cycle. Public API: `start()`, `stop()`, `async take_snapshot() -> ObservabilityBridgeSnapshot`. Holds a single named `asyncio.Task` reference (per convention: fire-and-forget tasks silently swallow exceptions). Note: `take_snapshot` is async because it reads `event_log.query_structured` (verified async at `event_log.py:170`).
 2. **`ObservabilityBridgeSnapshot`** (frozen dataclass) — captures `vitals_summary`, `pool_health`, `attention_priorities`, `captured_at`. The snapshot is the public observation surface; agents that want richer brain state read this dataclass, not raw runtime internals (Law of Demeter).
 
 This is **policy + diagnostics layered on existing surfaces.** AD-641a does NOT modify `VitalsMonitorAgent`, does NOT modify `AttentionManager`, does NOT modify `runtime.spawner`. Push-based: bridge polls and posts; crew read by subscribing to the system channel or by calling `take_snapshot()`.
 
-**v1 scope (no-theater discipline; convention #7 + #14 — 3 of 6 capabilities ship):**
+**v1 scope (no-theater discipline; convention #7 + #14 — 3 of 7 capabilities ship):**
 
-- **3 brain sensors wired into v1:** vitals (from latest `VitalsMonitorAgent` heartbeat in event_log), pool health (from `runtime.spawner` pool sizes), attention priorities (from `runtime.attention` queue snapshot — note: attribute is `runtime.attention`, NOT `runtime.attention_manager`).
+- **3 brain sensors wired into v1:** vitals (from latest `VitalsMonitorAgent` heartbeat in event_log via async `query_structured`), pool health (from `runtime.spawner` pool sizes), attention priorities (from `runtime.attention` queue snapshot — note: attribute is `runtime.attention`, NOT `runtime.attention_manager`).
 - Real periodic posts to a configurable Ward Room system channel.
 - `ObservabilityBridgeSnapshot` is real and serialized into post body.
 
-**3 wholesale-deferred to grandchild ADs:**
+**4 wholesale-deferred to grandchild ADs:**
 
 - **Hebbian-weight feed** — `AD-641a-i`. Reading `runtime.hebbian_router._weights` requires a public-API addition (currently private); needs convention #1 (public-attribute discipline) on the Hebbian side first.
 - **Structured HXI surfaces (panels/widgets)** — `AD-641a-ii`. v1 emits to Ward Room as text posts; HXI rendering is its own surface.
 - **Captain alert routing on threshold breach** — `AD-641a-iii`. v1 publishes data; alerting policy + Captain DM dispatch belongs to a separate AD.
+- **`AttentionManager.snapshot()` public API** — `AD-641a-iv`. v1 reads `attn._queue` directly (private-attribute access tagged with TODO comment in `_collect_attention`); future grandchild adds the public read surface so the bridge can drop the underscore reach.
 
 ---
 
@@ -120,7 +121,7 @@ class ObservabilityBridge:
     Public API:
       - start() -> None  -- begin periodic publishing
       - stop()  -> None  -- cancel publish task
-      - take_snapshot() -> ObservabilityBridgeSnapshot  -- one-shot read
+      - async take_snapshot() -> ObservabilityBridgeSnapshot  -- one-shot read (async because event_log query is async)
     """
 
     def __init__(
@@ -161,10 +162,13 @@ class ObservabilityBridge:
         finally:
             self._task = None
 
-    def take_snapshot(self) -> ObservabilityBridgeSnapshot:
+    async def take_snapshot(self) -> ObservabilityBridgeSnapshot:
+        # AD-641a revision: take_snapshot is async because event_log.query_structured
+        # is async (verified at src/probos/substrate/event_log.py:170). Pool/attention
+        # collectors stay sync — only vitals reach the event log.
         return ObservabilityBridgeSnapshot(
             captured_at=time.time(),
-            vitals_summary=self._collect_vitals(),
+            vitals_summary=await self._collect_vitals(),
             pool_health=self._collect_pool_health(),
             attention_priorities=self._collect_attention(),
         )
@@ -194,7 +198,7 @@ class ObservabilityBridge:
             return
 
     async def _publish_once(self) -> None:
-        snap = self.take_snapshot()
+        snap = await self.take_snapshot()
         if self._ward_room is None:
             return
         body = self._format_post(snap)
@@ -227,20 +231,28 @@ class ObservabilityBridge:
             )
         return "\n".join(lines)
 
-    def _collect_vitals(self) -> dict[str, Any]:
+    async def _collect_vitals(self) -> dict[str, Any]:
+        # AD-641a revision: event_log.query()/query_structured() are async
+        # (verified at src/probos/substrate/event_log.py:132, 170). Live query()
+        # signature accepts (category=, agent_id=, limit=) only -- there is NO
+        # event_type= parameter. Use query_structured(event=...) to filter by
+        # event name. Returned rows are dicts (per _row_to_dict at event_log.py:249)
+        # with keys including agent_type and data (payload deserialized).
         event_log = getattr(self._runtime, "event_log", None)
         if event_log is None:
             return {}
         try:
-            recent = event_log.query(
-                event_type=EventType.AGENT_STATE.value, limit=5,
+            recent = await event_log.query_structured(
+                event=EventType.AGENT_STATE.value, limit=20,
             )
         except Exception:
             return {}
-        for entry in reversed(list(recent or [])):
-            payload = getattr(entry, "payload", None) or {}
-            if payload.get("agent_type") == "vitals_monitor":
-                return dict(payload)
+        for entry in recent or []:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("agent_type") == "vitals_monitor":
+                data = entry.get("data") or {}
+                return dict(data) if isinstance(data, dict) else {}
         return {}
 
     def _collect_pool_health(self) -> dict[str, dict[str, Any]]:
@@ -259,6 +271,9 @@ class ObservabilityBridge:
         return out
 
     def _collect_attention(self) -> list[dict[str, Any]]:
+        # AD-641a-iv: replace `attn._queue` read with `attn.snapshot()` once the
+        # public API lands. v1 ships the private-attribute reach with this TODO
+        # so the smell is tracked, not hidden.
         attn = getattr(self._runtime, "attention", None)
         if attn is None:
             return []
@@ -300,9 +315,29 @@ Verified absent: `grep -n "ObservabilityBridgeConfig\|observability_bridge" src/
 
 **File:** `src/probos/startup/finalize.py`
 
-Add after the `runtime.mcp_bridge` wiring block (which AD-449 added). Use the SEARCH/REPLACE pattern matching the live source character-for-character. Anchor on the `runtime.mcp_bridge =` block; insert AD-641a wiring directly after.
+Append after the `runtime.mcp_bridge` wiring block (which AD-449 added; verify by grep before applying):
 
-Wire `runtime.observability_bridge = ObservabilityBridge(runtime=runtime, ward_room=getattr(runtime, "ward_room", None), emit_event=runtime.emit_event, publish_interval_seconds=cfg.publish_interval_seconds, system_channel=cfg.system_channel)` when `cfg.enabled` is True; assign `None` otherwise. Schedule `runtime.observability_bridge.start()` via `asyncio.create_task(...)` and store the task on `runtime` so it isn't garbage-collected (Convention: hold task references; per Wave 5 convention).
+```python
+# AD-641a: Observability Bridge
+ob_cfg = getattr(getattr(runtime, "config", None), "observability_bridge", None)
+if ob_cfg is not None and ob_cfg.enabled:
+    runtime.observability_bridge = ObservabilityBridge(
+        runtime=runtime,
+        ward_room=getattr(runtime, "ward_room", None),
+        emit_event=runtime.emit_event,
+        publish_interval_seconds=ob_cfg.publish_interval_seconds,
+        system_channel=ob_cfg.system_channel,
+    )
+    # Hold the start task on runtime so it isn't garbage-collected.
+    # Public attribute (Wave 5 convention #1) — consumer-facing for tests
+    # that need to await startup completion.
+    runtime.observability_bridge_start_task = asyncio.create_task(
+        runtime.observability_bridge.start(),
+        name="observability_bridge_start",
+    )
+else:
+    runtime.observability_bridge = None
+```
 
 ---
 
@@ -316,30 +351,31 @@ Cover (~14 tests):
 2. `test_event_type_observability_bridge_failed_exists` — enum value asserts.
 3. `test_observability_bridge_config_defaults` — `enabled=True`, `publish_interval_seconds=60.0`, `system_channel="system_observability"`.
 4. `test_snapshot_is_frozen_dataclass` — `dataclasses.replace` returns new instance.
-5. `test_take_snapshot_with_no_runtime_state_returns_empty_collections` — runtime stub with no `event_log`/`spawner`/`attention_manager`.
-6. `test_collect_vitals_picks_latest_vitals_monitor_state` — `event_log.query` returns mixed events; helper picks vitals_monitor entry.
+5. `test_take_snapshot_with_no_runtime_state_returns_empty_collections` — runtime stub with no `event_log`/`spawner`/`attention` (note: real attribute is `runtime.attention`, not `attention_manager` — verified at runtime.py:359). Test must `await bridge.take_snapshot()` since it is async post-revision.
+6. `test_collect_vitals_picks_latest_vitals_monitor_state` — `event_log.query_structured(event=AGENT_STATE.value, limit=20)` returns mixed dict-shaped rows; helper picks the row whose `agent_type == "vitals_monitor"` and unwraps `data`. Mock `event_log` as `AsyncMock` so `query_structured` is auto-awaitable.
 7. `test_collect_pool_health_reads_current_and_target_size` — stub `spawner.pools` with two pools.
-8. `test_collect_attention_returns_top_5_by_score_desc` — stub queue with 7 entries.
+8. `test_collect_attention_returns_top_5_by_score_desc` — stub queue with 7 entries on `runtime.attention._queue`.
 9. `test_publish_once_calls_ward_room_create_post` — `AsyncMock(spec=WardRoomService)`.
 10. `test_publish_once_emits_observability_snapshot_published` — confirm payload contains `captured_at`, `pools`, `attention_count`.
-11. `test_publish_loop_emits_failed_on_exception` — `ward_room.create_post.side_effect = RuntimeError`; expect `OBSERVABILITY_BRIDGE_FAILED`.
+11. `test_publish_once_emits_failed_on_exception` — call `bridge._publish_once()` directly with `ward_room.create_post.side_effect = RuntimeError`; expect `OBSERVABILITY_BRIDGE_FAILED` emit. Direct call avoids the asyncio-flake landmine in exercising the loop (per pass-1 N3).
 12. `test_start_creates_named_task` — `bridge._task.get_name() == "observability_bridge"` (convention: hold + name task references).
 13. `test_stop_cancels_task_cleanly` — task cancelled and `_task` reset to `None`.
 14. `test_publish_interval_minimum_enforced` — `publish_interval_seconds=0.0` clamped to 1.0 in `__init__`.
 
-Per convention #18, all `WardRoomService` mocks must be `AsyncMock(spec=WardRoomService)` so `create_post` is auto-async (BF-250 lesson).
+Per convention #18, all `WardRoomService` mocks must be `AsyncMock(spec=WardRoomService)` so `create_post` is auto-async (BF-250 lesson). `event_log` mocks must also be `AsyncMock` so `query_structured` returns awaitable (post-revision shape).
 
 ---
 
 ## What This Does NOT Change (Explicit Scope Boundaries)
 
 1. **`VitalsMonitorAgent`** — observed only via `event_log.query`; agent code unchanged.
-2. **`AttentionManager`** — observed via existing `_queue` attribute (read-only). No public-API extension required in v1; future grandchild AD may add `snapshot()` public method to replace the `_queue` read.
+2. **`AttentionManager`** — observed via existing `_queue` attribute (read-only). v1 ships an explicit `# AD-641a-iv` TODO comment in `_collect_attention()` flagging the private-attribute reach; the deferred grandchild adds an `AttentionManager.snapshot()` public API and the bridge drops the underscore read.
 3. **`runtime.spawner` / `Pool`** — observed via existing `current_size` / `target_size` properties (verified at `pool.py:53` per AD-467 precedent).
 4. **`HebbianRouter`** — wholesale-deferred to AD-641a-i.
 5. **HXI surfaces** — wholesale-deferred to AD-641a-ii.
 6. **Captain alert routing** — wholesale-deferred to AD-641a-iii.
-7. **NATS publishing** — bridge uses Ward Room post API today; NATS migration belongs to AD-641g (already independently scoped).
+7. **`AttentionManager.snapshot()` public API** — wholesale-deferred to AD-641a-iv.
+8. **NATS publishing** — bridge uses Ward Room post API today; NATS migration belongs to AD-641g (already independently scoped).
 
 ---
 
@@ -414,4 +450,46 @@ grep -n "MCPConfig\|MCPServerConfig" src/probos/config.py
 
 grep -rn "asyncio\.create_task" src/probos/cognitive/
   Multiple existing patterns; new bridge follows convention with named task and instance reference.
+```
+
+---
+
+## Revision (2026-05-02)
+
+Pass-1 review verdict was ⚠️ Conditional with 1 Required + 3 Recommended + 3 Nits. Revision applies the Required, all 3 Recommended, all 3 Nits, plus three architect-discretion verify-first repairs that pass-1 review missed.
+
+- **Required #1 — Section 4 prose-only → python block** (Required): Section 4 now ships a complete python wiring block matching the AD-641f Section 5 house pattern (cfg lookup via `getattr(getattr(runtime, "config", None), "observability_bridge", None)`, public task attribute `runtime.observability_bridge_start_task`, named task `observability_bridge_start`). Builder no longer has to invent the cfg-lookup or task-naming idioms.
+- **Verify-first repair: `event_log.query` API** (architect discretion, missed in pass-1): Live signature is `async def query(category=, agent_id=, limit=)` (event_log.py:132) — there is NO `event_type=` parameter. Live `query_structured` is also async (event_log.py:170). Returns `list[dict]` per `_row_to_dict` (event_log.py:249) with keys `category`, `event`, `agent_type`, `data` (deserialized JSON payload). The previous `_collect_vitals` was structurally broken on three counts: sync call to async method, wrong parameter name (`event_type=` does not exist), wrong row shape (`entry.payload` does not exist; rows are dicts with `data` key). Section 2 `_collect_vitals` is now `async`, uses `await event_log.query_structured(event=EventType.AGENT_STATE.value, limit=20)`, and walks dict rows filtering by `agent_type == "vitals_monitor"`, unwrapping `entry["data"]`.
+- **Verify-first repair: `take_snapshot` becomes async** (consequence of the previous): `take_snapshot` is now `async def`. `_publish_once` already awaited; updated to `await self.take_snapshot()`. Solution Overview, public-API docstring, and test 5/6 descriptions updated to reflect the async signature.
+- **R1 — `event_log.query` signature grep evidence** (Recommended): Footer revision pass shows the live signature confirming the parameter set. Folded into the verify-first repair above.
+- **R2 — private `_queue` read tagged with grandchild AD** (Recommended): Section 2 `_collect_attention` now carries a `# AD-641a-iv: replace with attn.snapshot() once exposed` comment. Grandchild AD-641a-iv added to deferred section. v1-deliverables count updated (3 of 7 capabilities; 4 deferred).
+- **R3 — `mcp` field placement grep** (Recommended): Footer revision pass shows `src/probos/config.py:1788` confirms `mcp: MCPConfig = MCPConfig()  # AD-449` is a top-level field on `SystemConfig` (verified at `config.py:1727`). The "mirror placement after `mcp` field" instruction is grounded.
+- **N1 — `attention_manager` → `attention` in test 5** (Nit): Test 5 description corrected; the live attribute is `runtime.attention` (runtime.py:359), not `runtime.attention_manager`.
+- **N2 — richer post body deferred** (Nit): `_format_post` v1 keeps `dict.repr()` formatting; richer HXI-friendly formatting belongs to AD-641a-ii (HXI surfaces) and is mentioned in the deferred-grandchildren list.
+- **N3 — test 11 rewritten as direct `_publish_once` call** (Nit): Test 11 (was `test_publish_loop_emits_failed_on_exception`) is now `test_publish_once_emits_failed_on_exception` — exercises the exception path via direct method call rather than driving the publish loop, sidestepping the asyncio-flake landmine.
+
+Test count unchanged (~14). Solution Overview, Dependencies header, public-API docstring, and v1-deliverables bullets all reconciled with revised Section 2/3/4 bodies.
+
+---
+
+## Verified Against Codebase (2026-05-02 — revision pass)
+
+```
+grep -n "async def query\b" src/probos/substrate/event_log.py
+  132: async def query(  (signature: category=, agent_id=, limit=  -- NO event_type=)
+  170: async def query_structured(  (signature: correlation_id=, category=, event=, parent_event_id=, limit=)
+
+grep -n "_row_to_dict" src/probos/substrate/event_log.py
+  249: def _row_to_dict(row: tuple) -> dict:
+  → returns dict with keys: id, timestamp, category, event, agent_id, agent_type, pool, detail, correlation_id, parent_event_id, data
+  → confirms entries are dicts (not objects with .payload). Revision walks `entry["data"]` and `entry["agent_type"]`.
+
+grep -n "mcp:.*MCPConfig\|class SystemConfig" src/probos/config.py
+  1727: class SystemConfig(BaseModel):
+  1788:   mcp: MCPConfig = MCPConfig()  # AD-449
+  → confirms `mcp` is a top-level field on SystemConfig; new `observability_bridge` field placement after it is grounded.
+
+grep -n "self\.attention\s*=" src/probos/runtime.py
+  359: self.attention = AttentionManager(...)
+  → confirms attribute is `runtime.attention`, NOT `runtime.attention_manager`. Test 5 description corrected.
 ```

@@ -25,17 +25,19 @@ One new module under `src/probos/cognitive/engineering_sensors/` (new package; A
 
 This is **a focused observation surface**, not an extension of any consensus or routing layer. AD-641f does NOT modify `runtime.spawner`, `runtime.capability_registry`, or `runtime.gossip`. It does NOT modify `EngineeringAgent` — the agent reads `runtime.engineering_sensor_service.take_snapshot()` voluntarily once a future grandchild AD wires the read into its instructions.
 
-**v1 scope (no-theater discipline; convention #7 + #14 — 3 of 6 capabilities ship):**
+**v1 scope (no-theater discipline; convention #7 + #14 — 3 of 7 capabilities ship):**
 
-- **3 sensor surfaces wired:** pool-summary (current/target sizes per pool), capability-summary (`agent_count` and intent counts), gossip-summary (`view_size` and peer count).
+- **3 sensor surfaces wired:** pool-summary (current/target sizes per pool), capability-summary (`agent_count` and intent set flattened from `CapabilityDescriptor.can` across registered agents), gossip-summary (`view_size` and peer count).
 - **Real `take_snapshot()` + `report()`** with real event emission.
 - **`runtime.engineering_sensor_service`** public attribute wired in finalize.
+- **`auto_start_periodic_report` defaults to `False`** — v1 ships the periodic-emit machinery dormant; operators flip the flag once they want the cadence. Single-shot `report()` works regardless.
 
-**3 wholesale-deferred to grandchild ADs:**
+**4 wholesale-deferred to grandchild ADs:**
 
 - **Detailed gossip introspection (per-peer state)** — `AD-641f-i`. v1 returns aggregate counts; per-peer state is its own AD.
 - **Capability registry mutation surface (Engineering can suggest re-registrations)** — `AD-641f-ii`. v1 is read-only.
 - **Cross-pool failover proposal** — `AD-641f-iii`. v1 reports state; remediation belongs to a separate AD.
+- **Richer report payload (per-pool `current_size`/`target_size` summary, intent breakdown)** — `AD-641f-iv`. v1 emits pool names + counts only; structured fan-out to LaForge instructions is its own AD.
 
 ---
 
@@ -223,9 +225,20 @@ class EngineeringSensorService:
         if registry is None:
             return {"agent_count": 0, "intents": []}
         agent_count = int(getattr(registry, "agent_count", 0) or 0)
+        intents: list[str] = []
         try:
             all_caps = registry.get_all_capabilities() or {}
-            intents = sorted({str(k) for k in all_caps.keys()})
+            # AD-641f: get_all_capabilities() returns {agent_id: [CapabilityDescriptor, ...]}
+            # — keys are agent IDs, NOT intent strings. Flatten descriptors to recover
+            # the union of intent labels (`cap.can`).
+            if isinstance(all_caps, dict):
+                seen: set[str] = set()
+                for caps in all_caps.values():
+                    for cap in caps or []:
+                        can = getattr(cap, "can", None)
+                        if can:
+                            seen.add(str(can))
+                intents = sorted(seen)
         except Exception:
             intents = []
         return {"agent_count": agent_count, "intents": intents}
@@ -283,7 +296,9 @@ if es_cfg is not None and es_cfg.enabled:
     )
     if es_cfg.auto_start_periodic_report:
         # Hold the start task on runtime so it isn't garbage-collected.
-        runtime._engineering_sensor_start_task = asyncio.create_task(
+        # Public attribute (Wave 5 convention #1) — consumer-facing for tests
+        # that need to await startup completion.
+        runtime.engineering_sensor_start_task = asyncio.create_task(
             runtime.engineering_sensor_service.start(),
             name="engineering_sensor_start",
         )
@@ -304,13 +319,13 @@ Cover (~13 tests):
 3. `test_bundle_is_frozen_dataclass`
 4. `test_take_snapshot_with_no_runtime_state_returns_empty_dicts` — runtime stub with no spawner/registry/gossip.
 5. `test_collect_pools_reads_current_and_target_size`
-6. `test_collect_capabilities_returns_agent_count_and_sorted_intents`
+6. `test_collect_capabilities_returns_agent_count_and_sorted_intents` — registry stub returns `{agent_id: [CapabilityDescriptor(can=...)]}`; helper flattens to sorted intent set per AD-641f revision (verify-first repair).
 7. `test_collect_gossip_returns_view_size_and_peer_count`
 8. `test_report_emits_engineering_sensor_report` — confirm payload contains expected keys.
 9. `test_report_no_emit_when_emit_event_none`
 10. `test_start_creates_named_task` — `_task.get_name() == "engineering_sensor_report"`.
 11. `test_stop_cancels_task_and_resets_to_none`
-12. `test_report_interval_minimum_enforced` — `report_interval_seconds=0.0` → clamped to 1.0.
+12. `test_report_interval_minimum_enforced` — `report_interval_seconds=0.0` → clamped to 1.0; `report_interval_seconds=-5.0` → also clamps to 1.0 (negative-input boundary, per pass-1 N1).
 13. `test_report_swallows_emit_exceptions` — `emit_event.side_effect = RuntimeError`; service stays alive.
 
 Per convention #11 — service tests use real runtime stubs (SimpleNamespace) over MagicMock so attribute access is deterministic.
@@ -326,6 +341,7 @@ Per convention #11 — service tests use real runtime stubs (SimpleNamespace) ov
 5. **Per-peer gossip introspection** — wholesale-deferred to AD-641f-i.
 6. **Capability registry mutation** — wholesale-deferred to AD-641f-ii.
 7. **Cross-pool failover** — wholesale-deferred to AD-641f-iii.
+8. **Richer report payload** — wholesale-deferred to AD-641f-iv (per pass-1 N2; v1 emits pool names + counts only).
 
 ---
 
@@ -398,4 +414,35 @@ grep -n "ENGINEERING_SENSOR_REPORT" src/probos/events.py
 
 grep -n "class EngineeringSensorBundle\|engineering_sensor_service" src/probos/
   (no matches; new module)
+```
+
+---
+
+## Revision (2026-05-02)
+
+Pass-1 review verdict was ✅ Approved with 0 Required + 3 Recommended + 2 Nits. Revision applies all 3 Recommended (R1/R2/R3), both Nits (N1/N2), and one architect-discretion verify-first repair the review missed.
+
+- **R1 — `get_all_capabilities` return shape** (Recommended): The live registry stores `dict[AgentID, list[CapabilityDescriptor]]` (verified at `src/probos/mesh/capability.py:33, 50, 95`) — keys are agent IDs, NOT intent strings. The previous `intents = sorted({str(k) for k in all_caps.keys()})` would have returned sorted agent IDs labeled as "intents". Section 3 `_collect_capabilities` now flattens descriptor lists via `{cap.can for caps in all_caps.values() for cap in caps}` with `isinstance(all_caps, dict)` defensive shape check. Test 6 description updated to match.
+- **R2 — public attribute consistency** (Recommended): Renamed the start-task handle from a leading-underscore name (`_engineering_sensor_start_task`, formerly held under that key on `runtime`) to the public `runtime.engineering_sensor_start_task` for consistency with the other Wave 9A prompts and Wave 5 convention #1. Section 5 wiring updated.
+- **R3 — `auto_start_periodic_report=False` honesty** (Recommended): Added explicit Solution Overview note that the periodic-emit machinery ships dormant in v1; operators flip the flag to enable cadence; `report()` single-shot still works.
+- **N1 — negative-input clamp test** (Nit): Test 12 expanded to also assert `report_interval_seconds=-5.0` clamps to 1.0.
+- **N2 — richer payload deferral** (Nit): Added `AD-641f-iv` (richer report payload) to deferred grandchildren section. v1-deliverables count updated (3 of 7 capabilities; 4 deferred).
+
+No structural changes; no listener half exists in 641f. Test count unchanged (~13).
+
+---
+
+## Verified Against Codebase (2026-05-02 — revision pass)
+
+```
+grep -n "def get_all_capabilities" src/probos/mesh/capability.py
+  50: def get_all_capabilities(self) -> dict:
+  52: return dict(self._capabilities)
+
+grep -n "self\._capabilities:" src/probos/mesh/capability.py
+  33: self._capabilities: dict[AgentID, list[CapabilityDescriptor]] = {}
+  → confirms dict is keyed by agent_id, values are descriptor lists. Revision flattens via cap.can.
+
+grep -n "class CapabilityDescriptor" src/probos/types.py
+  → CapabilityDescriptor.can is the intent label (verified by `cap.can` access pattern in capability.py:75-83).
 ```
