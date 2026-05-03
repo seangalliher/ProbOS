@@ -47,3 +47,63 @@
 - `config.py:1397` `class DutyScheduleConfig`, `:1412` `duty_schedule: DutyScheduleConfig = DutyScheduleConfig()` on `ProactiveCognitiveConfig` — confirmed. `DutyConfig` (per Required #2) does NOT exist.
 - Hard-stop #1 (proactive loop entanglement) IS TRIGGERED (Required #4 + #5). Surfaced for re-spec.
 - Cross-prompt source-file conflict (Hard-stop #4): AD-500 modifies `proactive.py`, `duty_schedule.py`, `config.py`, `workforce.py` (Section 1 no-op), `events.py` (per Recommended #1, may be dropped). AD-501 modifies `runtime.py`, deletes `task_tracker.py`. **No file overlap.** Sequencing is safe.
+
+
+---
+
+## Second-Pass Review (2026-05-03)
+
+**Verdict:** ✅ Approved
+**One-line headline.** Scope reframe to producer-only is structurally clean and consistent across all shipping sections; all 6 Required + 5 Recommended findings resolved; pre-check clean; one minor finding (`metadata` vs `payload` in Section 2 example) is non-blocking because the prompt has a verify-at-build-time note.
+
+### Resolution Audit — Required
+
+| Pass-1 Required | Status | Evidence in revised prompt |
+|---|---|---|
+| 1. Phantom `runtime.work_item_store.add(work_item)` | ✅ Resolved | Section 2 code block uses `await work_item_store.create_work_item(work_type="duty", ...)`. Verify-first footer confirms `workforce.py:992 async def create_work_item(self, **kwargs)`. Pre-check 0 phantoms. |
+| 2. Phantom class `DutyConfig` | ✅ Resolved | Section 3 uses `DutyScheduleConfig` (config.py:1397, regrep-confirmed). Solution Overview, Dependencies, Test row 6, Acceptance Criteria, DECISIONS.md template all consistent. |
+| 3. `DutyScheduleTracker.__init__` signature change unspecified | ✅ Resolved via reframe | Constructor signature **unchanged in v1**; dependency injected at call time per convention #5. Section 2 explicit. Constructor migration deferred to AD-500a-1. |
+| 4. 6 `record_execution` call sites unaddressed | ✅ Resolved via reframe | All 6 sites at `proactive.py:817/887/900/913/930/1050` explicitly untouched in v1. AD-500a-1 forcing function requires individual mapping before consumer ships. "What This Does NOT Change" lists all 6 lines. |
+| 5. `_think_for_agent` re-selection ambiguity | ✅ Resolved via reframe | `_think_for_agent` untouched in v1 (line 703 listed under untouched). AD-500a-1 forcing function requires written specification of parameter-vs-internal-replace before it ships. |
+| 6. Test #10 (`no_dual_dispatch`) untestable | ✅ Resolved via reframe | Test dropped (no consumer in v1, no dual-dispatch concern). Test Plan total now 6 (was 12). Invariant moves to AD-500a-1's test plan. |
+
+### Resolution Audit — Recommended
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| 1. `DUTY_WORK_ITEM_CREATED` redundant | ✅ Applied | Section 4 reframed as "Reuse existing `WORK_ITEM_CREATED` (no new events)". No new EventType. Acceptance Criteria explicit: "No new EventType added". |
+| 2. Section 1 no-op | ✅ Applied | Section 1 now reads "VERIFIED 2026-05-03: `duty` work type registered at `workforce.py:206-225`. No implementation needed." |
+| 3. `use_work_items` default value | ✅ Applied | `use_work_items: bool = False` in Section 3 + DECISIONS.md template ("Why default `False`"). Convention #14 + transitional-flag discipline cited. |
+| 4. Test #12 fixture coupling | 📦 Deferred | N/A in v1 — test dropped along with consumer-side scope. Recommendation will move to AD-500a-1 if surfaced there (Revision section explicitly notes this). |
+| 5. Hard-stop #5 — full scope reframe | ✅ Applied | Entire scope reframe IS this finding's resolution. v1 ships 2 of 5 capabilities (down from 3). Risk drops HIGH → medium. |
+
+### New Findings (introduced during revision)
+
+1. **`WorkItem` field name in Section 2 example is `payload=` but HEAD shows `metadata=`** (Recommended-class, non-blocking). At `src/probos/workforce.py:583`, `WorkItem` uses `metadata: dict[str, Any] = field(default_factory=dict)`. Section 2's code example uses `payload={"duty_id": ..., "agent_type": ...}`. The prompt's Section 2 line 80 already includes the verify-at-build-time note ("read `workforce.py` near `:559` to confirm whether the parameter is `payload` vs `metadata` vs `params`; ... If the field name differs, use the actual one"), which addresses Hard-stop #5 from the user's review brief. **Suggested one-line improvement (not required):** substitute `payload=` → `metadata=` in the Section 2 example to eliminate the Builder round-trip; HEAD confirms the field name. Test row 2 description ("payload containing `duty_id`") would also benefit from the same substitution. This is non-blocking because the verify-at-build-time instruction is structurally sufficient — Builder will not phantom-implement.
+
+### Verified Against Revised Codebase Claims (NEW in revision)
+
+- `grep -n "async def create_work_item" src/probos/workforce.py` → 992 ✓.
+- `grep -n "class DutyScheduleConfig" src/probos/config.py` → 1397 ✓.
+- `grep -n '"duty":' src/probos/workforce.py` → 206 ✓.
+- `grep -n "class WorkItem\b" src/probos/workforce.py` → 559 ✓; field `metadata: dict[str, Any]` at 583.
+- Closing self-check grep `"work_item_store.add|DutyConfig\b|DUTY_WORK_ITEM_CREATED|3 of 5 capabilities|no_dual_dispatch|12 new tests"` against shipping content (Solution Overview, Sections 1-4, What This Does NOT Change, Test Plan, Tracking, Acceptance Criteria) → 0 hits. All matches confined to the Revision section / Deferred Grandchildren / DECISIONS.md template / pass-1 review excerpts (audit trail, expected). ✓
+- Phantom-API pre-check (`./scripts/phantom-api-precheck.ps1`) → 0 phantoms detected. ✓
+- Solution Overview ("v1 ships 2 of 5 capabilities") consistent with v1-deliverables list (2 items: producer + opt-in flag), Test Plan (6 tests), Acceptance Criteria (no consumer-side claims), title and front-matter (producer-side only). No drift detected.
+
+### Scope Reframe Cleanliness
+
+- Title: "DutyScheduleTracker → WorkItem Migration (Producer Side)" ✓
+- Front-matter Status: "Revised 2026-05-03 (scope reframe per pass-1 review)" + Risk dropped to medium ✓
+- Solution Overview: "v1 ships 2 of 5" ✓
+- Section 3 explicitly removes proactive-loop migration; Deferred section adds AD-500a-1 with explicit forcing function ✓
+- v1-deliverables / Acceptance Criteria do NOT claim consumer-side migration; multiple "UNTOUCHED in v1" guards on `proactive.py` ✓
+- Test Plan: 6 tests (down from 12) ✓
+- DECISIONS.md draft block reflects producer-only with reframe rationale ✓
+- "What This Does NOT Change" lists all 6 `record_execution` lines, `_think_for_agent`, `set_duty_schedule`, `_duty_tracker` field, `__init__` signature ✓
+
+### Convergence
+
+Pass-1 ❌ Not Ready (6 R / 5 Rec / 3 N) → Pass-2 ✅ Approved (0 R / 1 Rec-class new finding / 0 N). The single new finding (`metadata` vs `payload`) is non-blocking because the prompt's Section 2 verify-at-build-time note structurally prevents the phantom from shipping. Convention #15 relaxed-tolerance reservation for highest-risk + largest-revision is honored but not invoked — the reframe is clean enough for a clean ✅.
+
+Builder may proceed per dispatch order (AD-501 → AD-500). Optional one-line example correction (`payload=` → `metadata=`) recommended but not required.
