@@ -34,6 +34,40 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ---
 
+### Wave 8 Retrospective Addendum — Conventions Adopted
+
+**Date:** 2026-05-02
+**Status:** Wave 8 closed 6/6 ✅ (5 main prompts + Combo A) with +87 tests, 0 BFs, 0 quarantines, 0 commercial-boundary leaks. Convergence trend reversed: pass-1 Required = 19 (Wave 7 = 11). The regression was driven entirely by phantom-API drift at draft time. Conventions #16-19 below crystallize the lessons.
+
+**Why a third retrospective entry.** The Wave 5-7 Retrospective Addendum's "Cross-cutting failure modes still recurring" section flagged the dispatch-time scripted phantom-API pre-check as a candidate. Wave 8's regression promotes it from candidate to standing requirement. Three new tactical conventions (#17-19) emerged from BF-257 fix-up and Wave 8 builds. Future architects should read all three retrospective entries as the complete running rule set.
+
+**Convergence trend update.** Pass-1 Required findings: Wave 5 = 22, Wave 6 = 18, Wave 7 = 11, Wave 8 = 19, BF-257 single-prompt = 3. Builder-pass first-time-✅ rate: 6/6 in Wave 8, 1/1 for BF-257. Four waves at 100% Builder convergence. The drafting+review loop remains the gating cost.
+
+**16. Dispatch-time phantom-API scripted pre-check (mandatory for Wave 9+).** Before any architect-review pass begins, the dispatching architect runs `scripts/phantom-api-precheck.ps1` against the freshly drafted prompts. The script greps every `runtime.X`, `<Class>.<method>`, and `<class>(<args>)` triplet in the prompt body against the live `src/probos/` tree and flags anything not found. ~20-min architect investment per wave; would have caught all 5 phantom-API findings in Wave 8 pass-1 (`ProactiveCognitive` vs `ProactiveCognitiveLoop`, `tokens_grouped_by` vs `get_token_usage_by`, `working_memory_manager` vs `working_memory`, `EvaluateSubTask` vs `EvaluateHandler`, `runtime.self_summary_provider` non-existent). Not a substitute for review — a pre-filter that drops mechanical defects before semantic review begins. Output of the pre-check goes into `prompts/Reviews/precheck-wave-N.md` for audit trail.
+
+**17. `_last_response_headers`-style mutable client state must be instance-attribute.** Class-level `dict` / `list` defaults race across instances of long-lived async clients. Pattern from AD-449 (Wave 8) — initial draft put `_last_response_headers: dict[str, str] = {}` at class scope; review caught it; revision moved to `__init__`. Drafting prompts must declare any per-instance mutable state in `__init__`, not as a class attribute, regardless of whether the class is currently single-instance. Future multi-instance (multi-tenant, hot-swap, federation) deployments would silently corrupt cross-instance state.
+
+**18. `httpx.Response` mocks must mock both `.json()` AND `.headers`.** When code under test reads either the body OR the headers of a response, the test mock must provide both. Pattern from AD-449 — initial test mocked only `.json()`; the session-id capture path (which reads `.headers`) returned `MagicMock` and silently broke the assertion. Drafting test sections must enumerate every response attribute the code under test touches; reviewer should grep the implementation for `response.headers`, `response.json()`, `response.status_code`, `response.text` and confirm all referenced attributes are mocked.
+
+**19. Session-managed JSON-RPC clients capture session-id from response headers, not body.** MCP and similar Streamable-HTTP protocols return the session id in the `Mcp-Session-Id` header on the `initialize` response, not in the JSON-RPC `result` payload. Test fixtures that mock only the body and ignore headers will produce a `MagicMock` session id that compares equal to anything. Pattern from AD-449. Combine with #18 above when drafting MCP-style protocol tests.
+
+**Combo prompt pattern validated.** Wave 8's Combo A (originally 8 trivial extensions, dropped to 7 after AD-575b wholesale-defer) shipped in a single Builder commit with 26 focused tests, no re-bundling. Combo prompts are now the standard for trivial-cluster ADs. Per-child verify-first sections (~70 lines each) plus a unified Section 0 + Tracker block converge cleanly. Future Combo B/C/D follow this template.
+
+**Commercial-boundary discipline holds.** AD-449 was the first Commercial-tagged AD post-AD-450 leak. Architect-side commercial-boundary regex in dispatch + dual-pass review caught the `Salesforce/ServiceNow` mention in negative framing during pass-1; revision reframed to generic categories; pass-2 confirmed zero vendor names in shipping content. Builder commit landed clean. The AD-450 retrospective discipline is now operating as a hard rule with mechanical enforcement.
+
+**Solution Overview drift confirmed as a recurring class.** Wave 8 second-pass caught two stale-reference regressions during revision (AD-469 had three stale `tokens_grouped_by` references in Problem / Solution Overview / "What This Does NOT Change" sections after Section 2's mechanical fix; Combo A added a corrected sequential-discipline line at 425 but didn't remove the original at 427). Convention #12 (Solution Overview drift discipline) needs the explicit closing self-check step: "After applying revisions, grep the prompt for the OLD names/values that were changed; expect zero hits." Add to revision-pass dispatch instructions for Wave 9+.
+
+**Outstanding tracked items (NOT in scope for Wave 8 retrospective).**
+
+- BF-257 deferred follow-ups (BF-257b/c/d) — telemetry hook, periodic full-prune, identity-based captain check. Each is a single-prompt BF; queue when forcing function arrives.
+- AD-641 umbrella split — Wave 8.5 meta-prompt that splits AD-641 into 641a-f. Prerequisite for Wave 9. Dispatch alongside the phantom-API pre-check script's first use.
+- AD-484b/c (Homebrew, demo mode, HXI Glass, Playwright) — deferred from AD-484 v1; queue when packaging cycle prioritizes.
+- AD-469b/c/d/e (alert-aware reallocation, back-pressure, atomic enforcement, prompt caching) — deferred from AD-469 v1; queue after Wave 9 lands.
+
+**Cross-links.** Wave 5 Retrospective (7 conventions), Wave 5-7 Retrospective Addendum (8 additional conventions, #8-15), AD-449 (mutable-instance-state precedent), AD-469 (Solution Overview drift example), AD-450 (commercial-boundary leak precedent), AD-682 (test fixture isolation; flake context), BF-257 (DM receive rate limiter; verify-first slip retrospectively measured).
+
+---
+
 ### Wave 5-7 Retrospective Addendum — Additional Conventions
 
 **Date:** 2026-05-02
