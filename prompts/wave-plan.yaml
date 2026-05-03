@@ -86,4 +86,4 @@ waves:
       - "prompts/ad-685-phantom-precheck-kwarg-validation.md"
     builder_required: true
     issues_to_close: []
-    status: pending
+    status: done
