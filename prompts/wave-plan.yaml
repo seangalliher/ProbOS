@@ -62,3 +62,16 @@ waves:
     builder_required: true
     issues_to_close: [277]   # AD-641 umbrella closes when 9C lands
     status: done
+
+  - id: "10"
+    title: "Workforce Cleanup — AD-501 + AD-500 (Combo B)"
+    kind: main
+    depends_on: ["9C"]
+    dispatch_prompt: "prompts/WAVE-10-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-501-tasktracker-deprecation.md"
+      - "prompts/ad-500-dutyscheduler-workitem-migration.md"
+    builder_required: true
+    issues_to_close: [88, 87]
+    status: pending
