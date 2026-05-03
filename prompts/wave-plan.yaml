@@ -123,3 +123,15 @@ waves:
     builder_required: true
     issues_to_close: [79]
     status: done
+
+  - id: "15"
+    title: "AD-685b — Phantom-API Pre-Check Method-Call AST Validation"
+    kind: main
+    depends_on: ["14"]
+    dispatch_prompt: "prompts/WAVE-15-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-685b-method-call-validation.md"
+    builder_required: true
+    issues_to_close: []
+    status: pending
