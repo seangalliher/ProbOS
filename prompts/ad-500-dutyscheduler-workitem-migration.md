@@ -55,10 +55,10 @@ New method: `async def emit_due_duties_as_work_items(self, agent_type: str) -> l
 In `proactive.py`, find the call site of `get_due_duties()`. Currently fires `_think_for_agent()` directly. Switch to:
 
 1. Call `tracker.emit_due_duties_as_work_items(agent_type)` (instead of `get_due_duties()`).
-2. Poll `runtime.work_item_store.get_pending(work_type="duty", agent_id=agent_id)` for active duty WorkItems.
+2. Poll `runtime.work_item_store.list_work_items(work_type="duty", assigned_to=agent_id, status="pending", limit=...)` for active duty WorkItems. (Verify `list_work_items` signature at `workforce.py:1066-1076` — supports `status`/`assigned_to`/`work_type`/`limit` filters.)
 3. For each duty WorkItem: open booking, call `_think_for_agent()`, close booking.
 
-Verify-first: read `proactive.py` to find the exact call site + surrounding loop structure.
+Verify-first: read `proactive.py` to find the exact call site + surrounding loop structure. Confirm the booking lifecycle methods used (`start_booking` at `workforce.py:1371`, `complete_booking` at `:1424`).
 
 ### Section 4 — Section 0 EventTypes
 
@@ -88,7 +88,7 @@ This is the transitional escape hatch per Wave 5 convention #3 (coordinator-then
 | 2 | `test_emit_due_duties_creates_work_items` | DutyScheduleTracker enqueues WorkItems for each due duty |
 | 3 | `test_emit_due_duties_emits_event` | `DUTY_WORK_ITEM_CREATED` fires per item |
 | 4 | `test_emit_due_duties_returns_ids` | Method returns list of WorkItem IDs created |
-| 5 | `test_proactive_loop_polls_work_item_store` | Mock `work_item_store.get_pending` is called with `work_type="duty"` |
+| 5 | `test_proactive_loop_polls_work_item_store` | Mock `work_item_store.list_work_items` is called with `work_type="duty"`, `status="pending"`, `assigned_to=agent_id` |
 | 6 | `test_proactive_loop_opens_booking_per_duty` | Each duty WorkItem opens a booking |
 | 7 | `test_proactive_loop_closes_booking_after_think` | Booking closes after `_think_for_agent` completes |
 | 8 | `test_proactive_loop_closes_booking_on_exception` | Booking closes even when think raises |
@@ -111,7 +111,7 @@ Plus regression check on existing duty/proactive tests — must remain green.
 
 **Problem:** DutyScheduleTracker fires duties via direct `_think_for_agent()` calls, bypassing the AD-496 WorkItemStore + AD-498 work-type-registry surface that all other scheduled work uses. Two parallel tracking surfaces lead to inconsistency in observability, booking lifecycle, and token cost attribution.
 
-**Decision:** Migrate DutyScheduleTracker to enqueue `WorkItem(type="duty")` items via `runtime.work_item_store.add()`. Proactive loop polls `WorkItemStore.get_pending(work_type="duty")` and opens AD-498 bookings around each `_think_for_agent()` call. Provide `DutyConfig.use_work_items: bool = True` transitional flag (per Wave 5 coordinator-then-dispatch convention #3); flag removable in AD-500c when stable.
+**Decision:** Migrate DutyScheduleTracker to enqueue `WorkItem(type="duty")` items via `runtime.work_item_store.create_work_item(...)`. Proactive loop polls `WorkItemStore.list_work_items(work_type="duty", status="pending", assigned_to=agent_id)` and opens AD-498 bookings around each `_think_for_agent()` call. Provide `DutyConfig.use_work_items: bool = True` transitional flag (per Wave 5 coordinator-then-dispatch convention #3); flag removable in AD-500c when stable.
 
 **Why:** Single canonical work surface (WorkItemStore + work types) for all scheduled work. Booking lifecycle gives free observability + token cost attribution per duty execution. AD-500c can then migrate the 7 default duty configs to AD-498 templates.
 
@@ -134,12 +134,19 @@ grep -n "class DutyScheduleTracker\|get_due_duties\|DutyDefinition" src/probos/d
   27: class DutyScheduleTracker:
   47: def get_due_duties(self, agent_type: str) -> list[Any]:
 
-grep -n "class WorkType\|class WorkItem\|class WorkItemStore" src/probos/workforce.py
+grep -n "class WorkType\|class WorkItem\|class WorkItemStore\|def list_work_items\|def create_work_item\|def start_booking\|def complete_booking" src/probos/workforce.py
    97: class WorkTypeTransition:
   106: class WorkTypeDefinition:
   248: class WorkTypeRegistry:
   559: class WorkItem:
   905: class WorkItemStore(EventEmitterMixin):
+  992: async def create_work_item(self, **kwargs: Any) -> WorkItem:
+ 1066: async def list_work_items(self, status, assigned_to, work_type, parent_id, priority, tags, limit, offset)
+ 1371: async def start_booking(self, booking_id: str) -> Booking | None:
+ 1424: async def complete_booking(self, booking_id: str, tokens_consumed: int = 0)
+
+Note: there is NO `get_pending` method on WorkItemStore. The pending-duty filter pattern uses
+`list_work_items(work_type="duty", status="pending", assigned_to=agent_id)`.
 
 (Builder verifies proactive.py call site of get_due_duties at build time)
 ```
@@ -147,7 +154,7 @@ grep -n "class WorkType\|class WorkItem\|class WorkItemStore" src/probos/workfor
 ## Acceptance Criteria
 
 - `DutyScheduleTracker.emit_due_duties_as_work_items()` exists and produces WorkItems.
-- Proactive loop polls `WorkItemStore.get_pending(work_type="duty")` instead of `get_due_duties()` (when `use_work_items=True`).
+- Proactive loop polls `WorkItemStore.list_work_items(work_type="duty", status="pending")` instead of `get_due_duties()` (when `use_work_items=True`).
 - AD-498 booking opens/closes around each duty `_think_for_agent` call.
 - `DUTY_WORK_ITEM_CREATED` EventType added.
 - `DutyConfig.use_work_items` config flag exists (default True).
