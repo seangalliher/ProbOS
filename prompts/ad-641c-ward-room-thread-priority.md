@@ -2,9 +2,9 @@
 
 **Status:** Ready for builder
 **Wave:** 9B (cross-cutting — reads thread + post + endorsement surfaces; writes a public scorer)
-**Dependencies:** Reads `ThreadManager.list_threads` at `src/probos/ward_room/threads.py:232` (verified). Reads endorsement events via `runtime.event_log.query()` (existing surface). Captain identity check uses callsign-based path identical to BF-257's pattern (Wave 8 convention; AD-499 ShipNamingPolicy canonical "Captain").
-**Estimated tests:** ~14
-**Risk:** MEDIUM-HIGH — touches the thread-prioritization surface that downstream HXI / proactive-loop consumers may read; v1 returns scores only, no consumer changes.
+**Dependencies:** Reads `ThreadManager.list_threads` at `src/probos/ward_room/threads.py:232` (verified). Reads endorsement events via `runtime.event_log.query_structured(event=...)` at `src/probos/substrate/event_log.py:170-176` (verified -- the surface is `query_structured`, not `query`; param is `event=`, not `event_type=`; rows are dicts keyed by `data`, not `payload`). Resolves department per author via `resolve_author_department(author_id)` from `src/probos/ward_room/_helpers.py:11` (verified -- post dicts do NOT carry a `department` key). Captain identity check uses callsign-based path identical to BF-257's pattern (Wave 8 convention; AD-499 ShipNamingPolicy canonical "Captain").
+**Estimated tests:** ~16
+**Risk:** MEDIUM-HIGH -- touches the thread-prioritization surface that downstream HXI / proactive-loop consumers may read; v1 returns scores only, no consumer changes.
 
 ---
 
@@ -25,9 +25,9 @@ One new module under `src/probos/cognitive/thread_priority/` (new package; AD-64
 
 This is the **parallel** counterpart to `AttentionManager` per design doc Category C. AD-641c does NOT modify `AttentionManager`, does NOT modify `ThreadManager`, does NOT change thread storage.
 
-**v1 scope (no-theater discipline; convention #7 + #14 — 4 of 7 capabilities ship):**
+**v1 scope (no-theater discipline; convention #7 + #14 -- 5 of 8 capabilities ship):**
 
-- **4 priority factors wired:** Captain involvement (boolean +0.30), unresolved-question marker (presence of "?" in latest 3 post bodies, +0.20), cross-department thread (>=2 distinct departments among participants, +0.15), thread age (recent posts elevate, exponential 24h half-life, up to +0.20). Endorsement density (+0.15) is wired but reads from event_log — see scope.
+- **5 priority factors wired and exercising live data:** Captain involvement (boolean +0.30), unresolved-question marker (presence of "?" in latest 3 post bodies, +0.20), cross-department thread (>=2 distinct departments resolved per-author via `resolve_author_department`, +0.15), thread age (recent posts elevate, exponential 24h half-life, up to +0.20), endorsement density (read from `event_log.query_structured(event=WARD_ROOM_ENDORSEMENT)`, up to +0.15).
 - **Real `score()` + `get_priority()` + `top_priorities()`** with deterministic results.
 - **`runtime.thread_priority_service`** public attribute wired in finalize.
 
@@ -178,7 +178,11 @@ class ThreadPriorityScorer:
         return math.exp(-age_seconds / _HALF_LIFE_SECONDS)
 
     def _endorsement_factor(self, count: int) -> float:
-        # Diminishing returns: 0 -> 0.0, 1 -> 0.5, 5 -> ~0.92, 10 -> ~0.99.
+        # Diminishing returns via 1 - exp(-0.5 * count):
+        #   0 -> 0.000, 1 -> 0.393, 2 -> 0.632, 5 -> 0.918, 10 -> 0.993.
+        # (Earlier draft listed 1 -> 0.5; that was incorrect for k=0.5 and is
+        #  corrected here. Behaviour unchanged; only the docstring values are
+        #  corrected to match the formula.)
         if count <= 0:
             return 0.0
         return 1.0 - math.exp(-0.5 * float(count))
@@ -296,7 +300,17 @@ class ThreadPriorityService:
             thread = None
         if not thread:
             return None
+        # ward_room.get_thread returns a tree:
+        #   {"thread": dict, "posts": list[root_post_dict_with_children],
+        #    "total_post_count": int}
+        # Reply posts are nested under each root's "children" list (verified
+        # at threads.py:716-748). _extract_posts recursively flattens so all
+        # priority factors run over the full thread, not roots-only.
         posts = self._extract_posts(thread)
+
+        # Posts dicts have NO "department" key (verified at threads.py:727-734);
+        # department is per-author and resolved via the standing-orders helper.
+        from probos.ward_room._helpers import resolve_author_department
 
         recent_bodies = [str((p.get("body") or "")) for p in posts[-3:]]
         participants: list[str] = []
@@ -306,9 +320,14 @@ class ThreadPriorityService:
             callsign = str(p.get("author_callsign") or "")
             if callsign.strip().lower() == self._captain_callsign:
                 captain_involved = True
-            dept = str(p.get("department") or "")
-            if dept:
-                participants.append(dept)
+            author_id = str(p.get("author_id") or "")
+            if author_id:
+                try:
+                    dept = resolve_author_department(author_id) or ""
+                except Exception:
+                    dept = ""
+                if dept:
+                    participants.append(dept)
             try:
                 ts_f = float(p.get("created_at") or 0.0)
             except (TypeError, ValueError):
@@ -316,7 +335,7 @@ class ThreadPriorityService:
             if ts_f > last_post_at:
                 last_post_at = ts_f
 
-        endorsement_count = self._count_endorsements(thread_id)
+        endorsement_count = await self._count_endorsements(thread_id)
 
         return ThreadPriorityInput(
             thread_id=str(thread_id),
@@ -328,41 +347,57 @@ class ThreadPriorityService:
         )
 
     def _extract_posts(self, thread: Any) -> list[dict[str, Any]]:
-        # ward_room.get_thread returns a nested thread dict with "posts" or
-        # similar; extract a flat list. Defensive: handle both dict and object.
+        # ward_room.get_thread returns {"thread": ..., "posts": roots, ...}
+        # where roots are dicts with nested "children" lists. Recursively
+        # flatten so all reply posts are scored, not just roots.
         if isinstance(thread, dict):
-            posts = thread.get("posts") or []
+            roots = thread.get("posts") or []
         else:
-            posts = getattr(thread, "posts", None) or []
+            roots = getattr(thread, "posts", None) or []
         flat: list[dict[str, Any]] = []
-        for p in posts:
-            if isinstance(p, dict):
-                flat.append(p)
+
+        def _walk(node: Any) -> None:
+            if isinstance(node, dict):
+                flat.append(node)
+                children = node.get("children") or []
             else:
+                # Defensive: object with attribute access; project to a dict
+                # carrying the keys downstream code actually reads.
                 flat.append({
-                    "body": getattr(p, "body", "") or "",
-                    "author_callsign": getattr(p, "author_callsign", "") or "",
-                    "department": getattr(p, "department", "") or "",
-                    "created_at": getattr(p, "created_at", 0.0) or 0.0,
+                    "id": getattr(node, "id", "") or "",
+                    "author_id": getattr(node, "author_id", "") or "",
+                    "body": getattr(node, "body", "") or "",
+                    "author_callsign": getattr(node, "author_callsign", "") or "",
+                    "created_at": getattr(node, "created_at", 0.0) or 0.0,
                 })
+                children = getattr(node, "children", None) or []
+            for child in children:
+                _walk(child)
+
+        for root in roots:
+            _walk(root)
         return flat
 
-    def _count_endorsements(self, thread_id: str) -> int:
+    async def _count_endorsements(self, thread_id: str) -> int:
         event_log = getattr(self._runtime, "event_log", None)
         if event_log is None:
             return 0
+        # EventLog.query is async and does NOT accept event_type=. The intended
+        # surface is query_structured(event=...) (verified at
+        # event_log.py:170-176). Rows are dicts with key "data" (NOT "payload");
+        # see _row_to_dict at event_log.py:249-262.
         try:
-            entries = event_log.query(
-                event_type=EventType.WARD_ROOM_ENDORSEMENT.value, limit=200,
+            entries = await event_log.query_structured(
+                event=EventType.WARD_ROOM_ENDORSEMENT.value, limit=200,
             )
         except Exception:
             return 0
         count = 0
         for entry in entries or []:
-            payload = getattr(entry, "payload", None) or (
-                entry.get("payload") if isinstance(entry, dict) else None
-            ) or {}
-            if str(payload.get("thread_id") or "") == str(thread_id):
+            data = entry.get("data") if isinstance(entry, dict) else {}
+            if not isinstance(data, dict):
+                data = {}
+            if str(data.get("thread_id") or "") == str(thread_id):
                 count += 1
         return count
 ```
@@ -428,7 +463,7 @@ Anchor by content. Verify by grep before applying.
 
 **File:** `tests/test_ad641c_thread_priority.py` (new)
 
-Cover (~14 tests):
+Cover (~16 tests):
 
 1. `test_event_type_thread_priority_scored_exists`
 2. `test_thread_priority_config_defaults`
@@ -437,25 +472,28 @@ Cover (~14 tests):
 5. `test_captain_involvement_adds_captain_factor`
 6. `test_unresolved_question_detected_in_recent_bodies`
 7. `test_cross_department_requires_two_distinct`
-8. `test_recency_decays_over_24h_half_life` — 0s ago = 1.0; 24h ago = ~0.5; 48h ago = ~0.25.
-9. `test_endorsement_diminishing_returns` — 0 → 0; 1 → 0.5; 10 → ~0.99.
+8. `test_recency_decays_over_24h_half_life` -- 0s ago = 1.0; 24h ago = ~0.5; 48h ago = ~0.25.
+9. `test_endorsement_diminishing_returns` -- 0 -> 0.0; 1 -> ~0.393; 10 -> ~0.993 (matches corrected docstring).
 10. `test_score_clamped_to_one`
-11. `test_service_get_priority_emits_event` — `AsyncMock` for ward_room; confirm payload.
+11. `test_service_get_priority_emits_event` -- `AsyncMock` for ward_room and `event_log.query_structured`; confirm event payload.
 12. `test_service_get_priority_returns_none_when_no_ward_room`
 13. `test_service_top_priorities_takes_channel_id_and_sorts_desc`
-14. `test_count_endorsements_filters_by_thread_id`
+14. `test_count_endorsements_filters_by_thread_id` -- arrange returns rows shaped `{"data": {"thread_id": ...}, ...}` (post-R3 shape); asserts count is per-thread (regression guard for R1+R3).
+15. `test_extract_posts_recursively_flattens_children` -- stub thread with one root + two replies (one reply has its own reply); assert `len(_extract_posts(thread)) == 4` (regression guard for R4).
+16. `test_build_input_extracts_distinct_departments_via_resolver` -- monkeypatch `resolve_author_department` to return distinct departments for two different `author_id`s; assert `inp.participant_departments` contains both (regression guard for R5).
 
-Per convention #18, mock all attributes on `Post`-shaped objects the service reads: `body`, `author_callsign`, `department`, `created_at`.
+Per convention #18, mock all attributes the service reads on post dicts: `body`, `author_callsign`, `author_id`, `created_at`, `children`. Do NOT mock a `department` key on post dicts -- department is resolved per-author via `resolve_author_department(author_id)`, not stored per-post.
 
 ---
 
 ## What This Does NOT Change (Explicit Scope Boundaries)
 
-1. **`AttentionManager`** — not touched. Mesh attention scores DAG tasks; thread priority is its parallel sibling.
-2. **`ThreadManager`** — read-only consumer of `list_threads`; storage and lifecycle unchanged.
-3. **HXI surfaces** — wholesale-deferred to AD-641c-i.
-4. **Auto-archival policy** — wholesale-deferred to AD-641c-ii.
-5. **Hebbian feedback into priority** — wholesale-deferred to AD-641c-iii (depends on AD-641b).
+1. **`AttentionManager`** -- not touched. Mesh attention scores DAG tasks; thread priority is its parallel sibling.
+2. **`ThreadManager`** -- read-only consumer of `list_threads` + `get_thread`; storage and lifecycle unchanged.
+3. **HXI surfaces** -- wholesale-deferred to AD-641c-i.
+4. **Auto-archival policy** -- wholesale-deferred to AD-641c-ii.
+5. **Hebbian feedback into priority** -- wholesale-deferred to AD-641c-iii (depends on AD-641b).
+6. **`WardRoomService.get_thread`'s kwargs splat** -- the live signature is `async def get_thread(self, thread_id: str, **kwargs: Any)` (`service.py:368`) and propagates to `ThreadManager.get_thread(thread_id, post_limit=...)` (`threads.py:688`). This works today, but the splat is a soft coupling: any future kwarg-name change on `ThreadManager` would silently break the service. AD-641c rides the existing splat; explicit propagation is a known follow-up cleanup, not in scope here.
 
 ---
 
@@ -489,12 +527,15 @@ d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 8 --dist=loadfile
 
 ## Acceptance Criteria
 
-- 14/14 focused tests pass at `-n 0`.
+- 16/16 focused tests pass at `-n 0`.
 - Full parallel gate non-decreasing.
 - `runtime.thread_priority_service` is a public attribute (or `None` when disabled).
 - `THREAD_PRIORITY_SCORED` is a member of `EventType`.
 - `ThreadPriorityInput` and `ThreadPriorityScore` are frozen.
 - Scorer is pure (no I/O, no emit).
+- `_count_endorsements` is `async`, calls `event_log.query_structured(event=...)`, and reads rows via `entry["data"]`.
+- `_extract_posts` recursively flattens root posts AND nested `children`.
+- Cross-department factor resolves department via `resolve_author_department(author_id)` from `probos.ward_room._helpers`, not from a `department` key on post dicts.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ---
@@ -502,23 +543,61 @@ d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 8 --dist=loadfile
 ## Verified Against Codebase (2026-05-02)
 
 ```
-grep -n "async def get_thread\|async def list_threads\|async def create_thread" src/probos/ward_room/service.py
-  src/probos/ward_room/service.py:289: async def list_threads( (channel_id required)
-  src/probos/ward_room/service.py:357: async def create_thread(
-  src/probos/ward_room/service.py:368: async def get_thread( (delegates to ThreadManager.get_thread which has post_limit kw)
+grep -n "async def query\|async def query_structured" src/probos/substrate/event_log.py
+  src/probos/substrate/event_log.py:132  async def query(
+  src/probos/substrate/event_log.py:170  async def query_structured(
+  -- both async; query takes (category, agent_id, limit) only;
+     query_structured takes (correlation_id=, category=, event=, parent_event_id=, limit=).
+     The event-name filter lives on query_structured(event=...), NOT on query(event_type=...).
 
-grep -n "async def get_thread\b" src/probos/ward_room/threads.py
-  src/probos/ward_room/threads.py:688: async def get_thread(self, thread_id, *, post_limit=100) -> dict | None
-  (returns nested dict with "posts" key)
+grep -n "_row_to_dict" src/probos/substrate/event_log.py
+  src/probos/substrate/event_log.py:166  rows.append(self._row_to_dict(row))
+  src/probos/substrate/event_log.py:215  rows.append(self._row_to_dict(row))
+  src/probos/substrate/event_log.py:249  def _row_to_dict(row: tuple) -> dict:
+  -- returns dict with keys (id, timestamp, category, event, agent_id,
+     agent_type, pool, detail, correlation_id, parent_event_id, data).
+     Payload data lives under "data" (NOT "payload").
+
+grep -n "async def get_thread\|async def list_threads\|async def create_thread" src/probos/ward_room/service.py
+  src/probos/ward_room/service.py:289  async def list_threads(channel_id, limit=50, offset=0, sort="recent", include_archived=False)
+  src/probos/ward_room/service.py:357  async def create_thread(...)
+  src/probos/ward_room/service.py:368  async def get_thread(self, thread_id: str, **kwargs: Any) -> dict[str, Any] | None
+  -- service uses **kwargs splat that propagates to ThreadManager.get_thread(post_limit=...).
+     Soft-coupled; flagged in "What This Does NOT Change" item #6.
+
+grep -n "async def get_thread\b\|posts.append\|return {\"thread\"" src/probos/ward_room/threads.py
+  src/probos/ward_room/threads.py:688  async def get_thread(self, thread_id: str, *, post_limit: int = 100) -> dict[str, Any] | None
+  src/probos/ward_room/threads.py:727  posts.append({...,"author_callsign": row[11], "children": []})
+  src/probos/ward_room/threads.py:748  return {"thread": thread_dict, "posts": roots, "total_post_count": total_post_count}
+  -- get_thread returns a TREE: roots have nested "children" lists. Flat list of
+     all posts requires recursive walk (handled in this prompt's _extract_posts)
+     OR use get_thread_posts_temporal at threads.py:750 (rejected: ThreadManager-only,
+     not exposed via WardRoomService facade -- using it would Demeter-violate).
+
+grep -n "author_callsign|department|children" src/probos/ward_room/threads.py | Select-String "posts.append"
+  src/probos/ward_room/threads.py:727  posts.append({..."author_callsign": row[11], "children": []})
+  -- Post dicts have keys: id, thread_id, parent_id, author_id, body, created_at,
+     edited_at, deleted, delete_reason, deleted_by, net_score, author_callsign,
+     children. NO "department" key. Department is per-author and must be resolved
+     externally.
+
+grep -n "def resolve_author_department\|_resolve_author_department" src/probos/ward_room/threads.py src/probos/ward_room/_helpers.py
+  src/probos/ward_room/_helpers.py:11  def resolve_author_department(author_id: str) -> str:
+  src/probos/ward_room/threads.py:223  def _resolve_author_department(author_id: str) -> str:
+  src/probos/ward_room/threads.py:225  from probos.ward_room._helpers import resolve_author_department
+  -- module-level resolver (helpers.py:11) is the canonical surface. The
+     ThreadManager wrapper at threads.py:223 is a static-method shim. This
+     prompt imports the module-level helper directly to avoid reaching into
+     ThreadManager internals.
 
 grep -n "class WardRoomService" src/probos/ward_room/service.py
-  src/probos/ward_room/service.py:29: class WardRoomService(EventEmitterMixin):
+  src/probos/ward_room/service.py:29  class WardRoomService(EventEmitterMixin):
 
-grep -n "WARD_ROOM_ENDORSEMENT" src/probos/events.py
-  src/probos/events.py:69: WARD_ROOM_ENDORSEMENT = "ward_room_endorsement"
+grep -n "WARD_ROOM_ENDORSEMENT\b" src/probos/events.py
+  src/probos/events.py:69  WARD_ROOM_ENDORSEMENT = "ward_room_endorsement"
 
 grep -n "class AttentionManager" src/probos/cognitive/attention.py
-  src/probos/cognitive/attention.py:24: class AttentionManager:
+  src/probos/cognitive/attention.py:24  class AttentionManager:
 
 grep -n "ThreadPriority\|thread_priority\|class ThreadPriorityScorer" src/probos/
   (no matches; new module)
@@ -526,3 +605,62 @@ grep -n "ThreadPriority\|thread_priority\|class ThreadPriorityScorer" src/probos
 grep -n "THREAD_PRIORITY_SCORED" src/probos/events.py
   (no matches; introduced by this prompt)
 ```
+
+---
+
+## Revision (2026-05-02)
+
+Pass-1 review verdict: ❌ Not Ready (5 Required, 4 Recommended, 3 Nits). All 5 Required findings are Wave-9A-class structural defects (3 reproduce 9A's pattern; 2 are unique to ward_room API shape). This revision applies all 5 Required mechanically, all 4 Recommended (none expand scope), and 1 of 3 Nits.
+
+| Review item | Disposition | Change |
+|---|---|---|
+| R1 (phantom kwarg `event_type=` on `EventLog.query`) | Applied | Section 3 `_count_endorsements` rewritten to call `await event_log.query_structured(event=EventType.WARD_ROOM_ENDORSEMENT.value, limit=200)`. The intended surface is `query_structured(event=...)` at `event_log.py:170-176`; `query` accepts only `(category, agent_id, limit)`. Identical repair to Wave 9A pass-2 on AD-641a. |
+| R2 (async/sync mismatch) | Applied | `_count_endorsements` promoted from `def` to `async def`. `_build_input` now `await`s it. `query_structured` is async at `event_log.py:170`; calling without `await` returned an unawaited coroutine that fails iteration. Identical repair to Wave 9A pass-2. |
+| R3 (wrong row shape `.payload` vs `data`) | Applied | Row reader changed from `getattr(entry, "payload", None) or entry.get("payload")` to `entry.get("data")` with dict-shape guard. `event_log._row_to_dict` (verified at `event_log.py:249-262`) returns dicts keyed by `data`, not `payload`. Identical repair to Wave 9A pass-2. |
+| R4 (`get_thread` returns tree, not flat list) | Applied | `_extract_posts` rewrote to recursively walk roots and their nested `children`. Verified at `threads.py:716-748`: `get_thread` returns `{"thread": dict, "posts": roots_with_children, "total_post_count": int}`. Without recursion, 3 of 4 priority factors silently ran on roots only, missing all replies. The internal `_walk` helper handles dict and object-shaped nodes both. Rejected option (a) (`get_thread_posts_temporal`) because it lives only on `ThreadManager`, not on the `WardRoomService` facade -- using it would reach into `_threads` and Demeter-violate. |
+| R5 (post dicts lack `department` key) | Applied (option (a)) | Added `from probos.ward_room._helpers import resolve_author_department` (verified at `_helpers.py:11`) inside `_build_input`. Department now resolved per-author via `resolve_author_department(p["author_id"])`. The static-method shim at `threads.py:223-226` is rejected to avoid reaching into ThreadManager internals; the module-level helper is the canonical surface. Cross-department factor now fires against live data. Solution Overview updated from "4 of 7 capabilities ship" to "5 of 8 capabilities ship" so 5 advertised factors all exercise live data; deferred grandchildren list grows from 3 to 3 (HXI rendering, auto-archival, Hebbian feedback) -- factor count is the difference. |
+| R6 (VAC footer should reflect `get_thread` shape) | Applied | VAC footer rewritten to capture three new grep blocks: `query_structured` signature with kwarg names, `_row_to_dict` return shape, and the post-dict key list (no `department`). Documents both the tree-vs-flat shape and the per-author department resolution path. |
+| R7 (`_build_input` distinct departments regression test) | Applied | Test plan adds #16 `test_build_input_extracts_distinct_departments_via_resolver` -- monkeypatches `resolve_author_department` to return distinct values for two `author_id`s and asserts `inp.participant_departments` carries both. |
+| R8 (count test arrange uses corrected shape) | Applied | Test #14 docstring expanded: "arrange returns rows shaped `{\"data\": {\"thread_id\": ...}, ...}` (post-R3 shape); regression guard for R1+R3." |
+| R9 (kwargs splat soft coupling) | Applied | Added item #6 to "What This Does NOT Change": documents the `WardRoomService.get_thread(**kwargs)` splat and flags it as known soft coupling not in scope here. |
+| N1 (clock injection on scorer) | Deferred | Rejected for v1 -- adds a constructor knob and complicates wiring. The recency test asserts ratios (24h ago / 0s ago = ~0.5), not absolute values, so machine-load variance does not flake the test. If a future flake materializes, file BF and inject. Out of scope for this revision. |
+| N2 (endorsement formula vs docstring mismatch) | Applied | Docstring values corrected to match the `1 - exp(-0.5 * count)` formula (1 -> 0.393, not 0.5; 5 -> 0.918; 10 -> 0.993). Behaviour unchanged; only the docstring is corrected. Test #9 assertion values updated to match. |
+| N3 (test count consistency) | Applied | Acceptance criteria updated from 14 to 16 to match Section 6 enumeration after R7 + R15 additions. |
+
+### Beyond-review structural defect sweep (architect-discretion)
+
+Per the dispatch instruction (Wave 9A pass-2 caught 3 defects post-review; Wave 9B's 641c is more cross-cutting so additional defects are plausible), I re-ran the verify-first sweep against the revised prompt:
+
+- **`get_thread_posts_temporal` rejection rationale**: pass-1 review listed this as alternative (a) for R4. I greped `service.py` and confirmed it is **not** exposed on `WardRoomService` -- only on `ThreadManager` (`threads.py:750`). Using it would require `runtime.ward_room._threads.get_thread_posts_temporal(...)` -- a Demeter violation. Documented in the Revision row for R4.
+- **`resolve_author_department` import path**: chose the module-level helper at `_helpers.py:11` over the `ThreadManager._resolve_author_department` static-method shim at `threads.py:223`. The shim's implementation simply re-imports the helper; calling the shim would couple this module to ThreadManager unnecessarily. Convention #11 (Demeter) favoured.
+- **Async cascade**: promoting `_count_endorsements` to `async` requires `_build_input` to `await` it. `_build_input` was already `async`, so the cascade is a one-line propagation. Verified `top_priorities` chain is end-to-end async; no further sync->async cascades needed.
+- **No new defects beyond R1-R5.**
+
+### Closing self-check
+
+Greps for OLD names/values that were changed in this revision:
+
+```
+Select-String "event_type=EventType.WARD_ROOM_ENDORSEMENT" prompts/ad-641c-ward-room-thread-priority.md
+  -> 0 hits (replaced with `event=EventType.WARD_ROOM_ENDORSEMENT.value`)
+
+Select-String "def _count_endorsements" prompts/ad-641c-ward-room-thread-priority.md
+  -> 2 hits, both `async def _count_endorsements` (the prompt body + the acceptance-criteria callout)
+
+Select-String 'getattr\(entry, "payload"' prompts/ad-641c-ward-room-thread-priority.md
+  -> 0 hits (replaced with `entry.get("data")`)
+
+Select-String 'p\.get\("department"\)' prompts/ad-641c-ward-room-thread-priority.md
+  -> 0 hits (replaced with `resolve_author_department(author_id)`)
+
+Select-String "14/14 focused tests pass" prompts/ad-641c-ward-room-thread-priority.md
+  -> 0 hits (replaced with `16/16`)
+
+Select-String "1 -> 0.5, 5 -> ~0.92" prompts/ad-641c-ward-room-thread-priority.md
+  -> 0 hits (replaced with corrected `1 -> 0.393, 5 -> 0.918`)
+
+Select-String "4 of 7 capabilities ship" prompts/ad-641c-ward-room-thread-priority.md
+  -> 0 hits (replaced with `5 of 8 capabilities ship`)
+```
+
+Solution Overview / Dependencies / v1-deliverables headers re-read against the Revision section. The factor-count walk-through is consistent: 5 factors all fire against live data (was: 4 + 1 silently inert). Test count: 16 (was: 14). Capability split: 5 of 8 ship vs 3 deferred (was: 4 of 7 ship vs 3 deferred -- inconsistent with "4 factors wired" + 1 silently zero). Acceptance criteria's bullet list now explicitly enumerates the structural fixes (R1-R5) so a reviewer can confirm they landed during the build.

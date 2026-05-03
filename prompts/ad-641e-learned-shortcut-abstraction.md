@@ -132,9 +132,9 @@ class LearnedShortcutBackend(Protocol):
 ```python
 """AD-641e: WorkflowCacheBackend -- adapter wrapping the existing WorkflowCache.
 
-The underlying WorkflowCache (AD: existing) is unchanged; this adapter exposes
-the LearnedShortcutBackend Protocol surface so the registry can observe and
-coordinate across backend kinds.
+The underlying WorkflowCache (AD-274; preexisting) is unchanged; this adapter
+exposes the LearnedShortcutBackend Protocol surface so the registry can
+observe and coordinate across backend kinds.
 """
 
 from __future__ import annotations
@@ -154,6 +154,9 @@ class WorkflowCacheBackend:
 
     @property
     def size(self) -> int:
+        # WorkflowCache.size is a @property (verified at workflow_cache.py:115);
+        # getattr() invokes the property descriptor, so the `or 0` is purely
+        # defensive against a None return -- it is not a method-vs-property guard.
         return int(getattr(self._cache, "size", 0) or 0)
 
     def lookup(self, key: str) -> Any | None:
@@ -188,12 +191,21 @@ class WorkflowCacheBackend:
 
 **File:** `src/probos/cognitive/learned_shortcuts/registry.py` (new)
 
+Read-side semantics (per design doc Category C, "separate stores"):
+the registry does **not** coalesce or merge values across backends.
+`lookup_first()` walks backends in registration order and returns the
+**first** non-None hit; later backends are not consulted on that key.
+This preserves each backend's independent storage semantics and keeps
+the coordinator stateless. Future fan-out / fan-in policies belong
+to AD-641e-ii (cross-store eviction) or a dedicated coordinator AD.
+
 ```python
 """AD-641e: LearnedShortcutRegistry -- coordinator for backends.
 
-Read-side fan-out: lookup() walks registered backends in registration order
-until first hit. Write-side stays per-backend; the registry does not multicast
-stores (that would violate the design doc's 'separate stores' principle).
+Read-side fan-out: lookup_first() walks registered backends in registration
+order and returns the FIRST non-None hit (no merging). Write-side stays
+per-backend; the registry does not multicast stores (that would violate the
+design doc's 'separate stores' principle).
 """
 
 from __future__ import annotations
@@ -236,7 +248,10 @@ class LearnedShortcutRegistry:
                     {"kind": backend.kind, "size": int(backend.size or 0)},
                 )
             except Exception:
-                pass
+                logger.debug(
+                    "LearnedShortcutRegistry: emit LEARNED_SHORTCUT_REGISTERED failed",
+                    exc_info=True,
+                )
         return True
 
     def lookup_first(self, key: str) -> tuple[str, Any] | None:
@@ -252,7 +267,10 @@ class LearnedShortcutRegistry:
                             {"kind": backend.kind, "key": str(key)},
                         )
                     except Exception:
-                        pass
+                        logger.debug(
+                            "LearnedShortcutRegistry: emit LEARNED_SHORTCUT_HIT failed",
+                            exc_info=True,
+                        )
                 return (backend.kind, value)
         return None
 ```
@@ -308,22 +326,24 @@ else:
 
 **File:** `tests/test_ad641e_learned_shortcuts.py` (new)
 
-Cover (~12 tests):
+Cover (~14 tests):
 
 1. `test_event_type_learned_shortcut_registered_exists`
 2. `test_event_type_learned_shortcut_hit_exists`
 3. `test_learned_shortcuts_config_defaults`
-4. `test_protocol_runtime_checkable_recognizes_workflow_cache_backend` — `isinstance(WorkflowCacheBackend(workflow_cache=stub), LearnedShortcutBackend)` is True.
-5. `test_workflow_cache_backend_kind_and_size` — wraps stub `WorkflowCache(size=3)`; asserts `kind=='workflow_cache'`, `size==3`.
+4. `test_protocol_runtime_checkable_recognizes_workflow_cache_backend` -- `isinstance(WorkflowCacheBackend(workflow_cache=stub), LearnedShortcutBackend)` is True.
+4b. `test_protocol_runtime_checkable_recognizes_minimal_stub` -- hand-rolled minimal class with the 5 Protocol members (`kind`, `size`, `lookup`, `store`, `evict`) is recognized as `LearnedShortcutBackend` via structural typing. Strengthens the Open/Closed claim independent of `WorkflowCacheBackend`.
+5. `test_workflow_cache_backend_kind_and_size` -- wraps stub `WorkflowCache(size=3)`; asserts `kind=='workflow_cache'`, `size==3`.
 6. `test_workflow_cache_backend_lookup_delegates`
-7. `test_workflow_cache_backend_evict_returns_false_in_v1` — documents the deferral.
+7. `test_workflow_cache_backend_evict_returns_false_in_v1` -- documents the deferral.
 8. `test_registry_register_emits_event_with_kind_and_size`
 9. `test_registry_register_idempotent_for_same_kind`
 10. `test_registry_lookup_first_returns_first_hit_and_emits_hit`
 11. `test_registry_lookup_first_returns_none_when_no_backend_has_key`
 12. `test_registry_total_size_sums_backends`
+13. `test_existing_workflow_cache_public_api_unchanged` -- imports `WorkflowCache`, asserts `{store, lookup, lookup_fuzzy, size}` are present and callable / property as appropriate. Open/Closed regression guard.
 
-Per convention #11 — registry tests use real `WorkflowCacheBackend` wrapping a stub `WorkflowCache` rather than mocking the Protocol. The stub satisfies the Protocol structurally.
+Per convention #11 -- registry tests use real `WorkflowCacheBackend` wrapping a stub `WorkflowCache` rather than mocking the Protocol. The stub satisfies the Protocol structurally.
 
 ---
 
@@ -368,11 +388,11 @@ d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 8 --dist=loadfile
 
 ## Acceptance Criteria
 
-- 12/12 focused tests pass at `-n 0`.
+- 13/13 focused tests pass at `-n 0` (12 v1 + 1 regression guard; 4b is renumbered as #4-stub but counted in the 13).
 - Full parallel gate non-decreasing.
 - `runtime.learned_shortcut_registry` is a public attribute (or `None` when disabled).
 - 2 new EventTypes are members of `EventType`.
-- `WorkflowCache` source unchanged (verified by `tests/test_workflow_cache.py` regression).
+- `WorkflowCache` source unchanged (verified by `tests/test_workflow_cache.py` regression + new test #13 public-API guard).
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ---
@@ -401,3 +421,32 @@ grep -n "class LearnedShortcutBackend\|class LearnedShortcutRegistry\|LearnedSho
 grep -n "LEARNED_SHORTCUT_REGISTERED\|LEARNED_SHORTCUT_HIT" src/probos/events.py
   (no matches; introduced by this prompt)
 ```
+
+---
+
+## Revision (2026-05-02)
+
+Pass-1 review verdict: ✅ Approved (0 Required, 3 Recommended, 3 Nits).
+This revision folds in all Recommended items and Nits since they are pure quality nudges with no scope expansion.
+
+| Review item | Disposition | Change |
+|---|---|---|
+| R1 | Applied | Section 3 `WorkflowCacheBackend.size` gets a comment noting that `WorkflowCache.size` is a `@property` (verified at `workflow_cache.py:115`) and that the `or 0` is defensive against a `None` return, not a method-vs-property guard. |
+| R2 | Applied | Test plan adds `test_protocol_runtime_checkable_recognizes_minimal_stub` (numbered 4b) using a hand-rolled stub class with the 5 Protocol members. Tests `@runtime_checkable` structural-typing independent of `WorkflowCacheBackend`. |
+| R3 | Applied | Section 4 prelude documents read-side fan-out semantics: `lookup_first()` walks backends in registration order, returns FIRST non-None hit, no merging across backends. Both the prose and the inline docstring now state this explicitly. |
+| N1 | Applied | Section 3 module docstring replaces "AD: existing" with "AD-274; preexisting". |
+| N2 | Applied | Registry `register()` and `lookup_first()` except-Exception blocks now `logger.debug("LearnedShortcutRegistry: emit ... failed", exc_info=True)` instead of bare `pass`. Helps future BF triage. |
+| N3 | Applied | Test plan adds #13 `test_existing_workflow_cache_public_api_unchanged` -- imports `WorkflowCache` and asserts the `{store, lookup, lookup_fuzzy, size}` public surface is intact. Makes the Open/Closed claim mechanically testable rather than asserted in prose only. |
+
+Acceptance test count updated from 12 to 13 (1 added) -- 4b is structurally a sibling of #4 but counted in the 13. The Verification section's pytest invocation is unchanged.
+
+### Beyond-review structural defect sweep
+
+Re-ran the Wave 9A defect-class sweep against this prompt's revision. The pass-1 review's architect-discretion sweep table covered async/sync, kwarg, row-shape, and phantom-API classes. No additional defects discovered.
+
+### Closing self-check
+
+- Grep for OLD names in this revision: `Select-String "AD: existing" prompts/ad-641e-learned-shortcut-abstraction.md` -> 0 hits (replaced with `AD-274; preexisting`).
+- Grep for old test count: `Select-String "12/12 focused tests pass" prompts/ad-641e-learned-shortcut-abstraction.md` -> 0 hits (replaced with `13/13`).
+- Grep for old `except Exception: pass` in registry block -> 0 hits in the registry code-block of this prompt; both are now `logger.debug(... exc_info=True)`.
+- Solution Overview / Dependencies / v1-deliverables headers unchanged -- the revision is additive (test #4b, #13, comments, logger calls) and does not change the 3-of-6 ship vs 3-deferred split.
