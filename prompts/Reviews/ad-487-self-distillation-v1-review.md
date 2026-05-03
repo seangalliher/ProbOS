@@ -238,3 +238,101 @@ Convention #15 tolerance = 1 ⚠️. Actual = 4 Required + 3 ⚠️ → **❌ No
 Apply R1, R2, R3, R4. Fold Rec1, Rec2, Rec3, Rec4. Judgment-call N1-N3. Re-run `scripts/phantom-api-precheck.ps1`. Append `## Revision (2026-05-03)` to the prompt body. Commit `Wave 14 revision: apply review findings to AD-487`.
 
 Total findings: **4 Required, 4 Recommended, 3 Nits.**
+
+---
+
+## Second-Pass Review (2026-05-03)
+
+**Verdict:** ✅ Approved
+**Pass:** 2
+**Reviewing:** revision commit `a22c1ed` against pass-1 at `34ae9ea`.
+**Headline:** All 4 Required + 4 Recommended + 3 Nits resolved cleanly. Pre-check 0 phantoms. Verify-first restored with real grep evidence at HEAD. Ready for Builder dispatch.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence |
+|---|---|---|
+| R1 (LLMClient.chat → complete) | ✅ | Solution Overview line 14 says `runtime.llm_client.complete(request)`; Dependencies line 26 says `complete(LLMRequest)`; Section 3 body sketch (probe_domain step 4) calls `await self._runtime.llm_client.complete(request, priority=Priority.NORMAL)` and reads `response.content`/`response.error`; Test #6 renamed to `test_probe_domain_calls_llm_client_complete_with_llm_request`; Hard-Stop #1 says "LLMClient.complete signature differs"; footer grep shows `BaseLLMClient.complete` at `llm_client.py:26`. Case-sensitive grep `\.chat\(|llm_client\.chat` against the prompt → 0 hits in shipping content. |
+| R2 (Config → SystemConfig) | ✅ | Section 4 line 290 wires `self_distillation: SelfDistillationConfig = SelfDistillationConfig()` onto `class SystemConfig(BaseModel)`; explicit "verified at config.py:1805" annotation; Section 5 phase function signature is `(*, runtime: Any, config: "SystemConfig") -> bool` matching peer phase functions; DECISIONS.md draft says `SystemConfig.self_distillation`. Case-sensitive grep `(?<!System)Config\.self_distillation` → 0 hits in shipping content (residual matches are revision-prose changelog only). |
+| R3 (connection_factory injection) | ✅ | Section 3 constructor at line 119: `__init__(self, runtime, config, *, connection_factory: ConnectionFactory | None = None)` matches the canonical 8-peer shape verbatim; default-factory fallback `from probos.storage.sqlite_factory import default_factory` (line 124); `_db: DatabaseConnection | None` (line 120) — correct type, distinct from `_connection_factory: ConnectionFactory`; body sketches use `await self._db.execute(...)` / `fetchone()` / `commit()` directly per protocol surface. Footer evidence enumerates all 9 peer call sites. |
+| R4 (verify-first placeholders) | ✅ | All three `(Builder verifies ...)` placeholders gone from shipping content. Footer (lines 425-465) shows actual grep output with line numbers: `BaseLLMClient.complete:26`, `OpenAICompatibleClient.complete:420`, `MockLLMClient.complete:1060`, `LLMRequest:227`, `LLMResponse:240`, `DatabaseConnection:186`, `ConnectionFactory:223`, `SystemConfig:1805`, `default_factory:28`, all 9 `connection_factory: ConnectionFactory` peer sites, 0-hit collision check for `ONTOLOGY_PROBE`/`agent_probes`, 3 `_wire_*` phase function signatures. Architect re-ran every grep against HEAD as part of pass-2 verification (see "Architect Re-Verification" below) — all line numbers match exactly. |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| Rec1 (start/stop lifecycle) | ✅ | Section 3 lines 130-141: `async def start()` opens connection, runs `_SCHEMA`, commits; `async def stop()` closes handle. No `_ensure_schema()` cross-module call remains. Section 5 calls `await prober.start()` after construction. Test #5 renamed to `test_start_creates_table_and_index`. |
+| Rec2 (body sketches) | ✅ | All four methods have numbered body sketches in their docstrings: `probe_domain` (steps 1-8 with explicit `LLMRequest` construction, `try/except` for parse, `ProbeRateLimitedError` raise, `raw_text` always preserved per Test #12), `get_recent_probes` (SQL placeholder positions + `datetime.fromisoformat` round-trip), `_check_rate_limit` (event emission on rejection, return semantics), `_persist` (JSON encoding boundaries, ISO 8601 storage, event emission). Explicit note that `DatabaseConnection` lacks `.cursor()` — bodies use `execute/fetchone/fetchall/commit`. |
+| Rec3 (Section 5 `_wire_` pattern) | ✅ | Section 5 rewritten as `async def _wire_self_distillation(*, runtime: Any, config: "SystemConfig") -> bool` with guard on `config.self_distillation.enabled`, explicit `runtime.personal_ontology_prober = prober` public-attribute assignment, `await prober.start()` async lifecycle. Call site colocated with `_wire_anomaly_window` near finalize.py:218. Async-vs-sync rationale documented inline. |
+| Rec4 (typed exceptions) | ✅ | Section 2 lines 73-78 declare `ProbeLLMError(RuntimeError)` and `ProbeRateLimitedError(RuntimeError)` with one-line docstrings. Section 1 `__init__.py` exports both. Test #10 references `ProbeRateLimitedError` and will import cleanly. |
+
+| Pass-1 Nits | Status | Notes |
+|---|---|---|
+| N1 (PROBE_TEMPLATE rendering) | ✅ | Comment above the constant says "Use `.format(domain=domain, max_sub_topics=N)` — NOT f-string. The doubled braces around the example JSON are literal output the model should emit." Body sketch step 2 uses `.format(...)`. |
+| N2 (max_sub_topics threading) | ✅ | Template now interpolates `{max_sub_topics}` (line 110); body sketch passes `max_sub_topics=self._config.max_sub_topics` to `.format()`. Config field is no longer dead. |
+| N3 (probed_at ISO 8601 round-trip) | ✅ | Schema column comment "ISO 8601 UTC, tz-aware"; `_persist` body sketch uses `result.probed_at.isoformat()`; `get_recent_probes` and `_check_rate_limit` body sketches use `datetime.fromisoformat(row[...])`; `probed_at=datetime.now(timezone.utc)` enforces tz-awareness on creation. Tests #11 and #13 acceptance criteria explicit. |
+
+### Architect Re-Verification (HEAD = `a22c1ed`)
+
+```text
+src/probos/cognitive/llm_client.py
+  26:   async def complete(self, request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
+  420:  async def complete(self, request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
+  1060: async def complete(self, request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
+
+src/probos/types.py
+  227: class LLMRequest:
+  240: class LLMResponse:
+
+src/probos/protocols.py
+  186: class DatabaseConnection(Protocol):
+  223: class ConnectionFactory(Protocol):
+
+src/probos/config.py
+  1805: class SystemConfig(BaseModel):
+
+src/probos/storage/sqlite_factory.py
+  28: default_factory = SQLiteConnectionFactory()
+
+src/probos/startup/finalize.py
+  25:  def _wire_anomaly_window(*, runtime: Any, config: "SystemConfig") -> bool:
+  80:  def _wire_tiered_knowledge_loader(*, runtime: Any, config: "SystemConfig") -> int:
+  107: def _wire_task_context(*, runtime: Any, config: "SystemConfig") -> int:
+```
+
+All evidence in the prompt's "Verified Against Codebase" footer matches HEAD exactly. No drift.
+
+### Phantom-API Pre-Check
+
+```text
+$ ./scripts/phantom-api-precheck.ps1 prompts/ad-487-self-distillation-v1.md
+=== prompts/ad-487-self-distillation-v1.md ===
+  Clean — no phantom symbols detected.
+
+=== Summary ===
+Prompts scanned: 1
+Total phantom candidates: 0
+```
+
+Symbol-existence pre-check stayed clean (as it did at pass-1). Method-shape blind spot from convention #19 — the pre-check still cannot validate that `runtime.llm_client.complete(request, priority=...)` matches `BaseLLMClient.complete`'s actual signature. The architect-time grep sweep above is the compensating control; AD-685b kwarg-shape extension remains the durable fix.
+
+### New Findings
+
+None.
+
+### Convention #15 Tolerance Check
+
+Pass-1 burned the wave's tolerance reservation (4 Required > 1 ⚠️ allowed). Pass-2 finds **0 Required, 0 ⚠️, 0 nits** — clean approval. No tolerance budget consumed at pass-2.
+
+### Method-Shape Phantom Recurrence Counter
+
+Wave 14 R1 (`LLMClient.chat` → `complete`) is the **4th recurrence** of the method-shape phantom pattern across Waves 9-14:
+
+1. **Wave 9:** TrustNetwork phantom method
+2. **Wave 10:** Procedure phantom method (and earlier in same wave: WorkItemStore.add)
+3. **Wave 13:** WorkItemStore.add (additional reference site)
+4. **Wave 14:** LLMClient.chat → complete
+
+Convention #19 (method-kwarg phantom blind spot) and convention #16 (phantom-API pre-check) interact: pre-check validates symbol existence by name; it cannot validate that an asserted method actually exists on a class, nor that kwargs match the signature. AD-685b — extend `phantom-api-precheck.ps1` to AST-parse `<obj>.<method>(...)` calls and validate against the live class signature — has now been the architect's recommended hygiene-AD across 4 waves. **Strong forcing function**: AD-685b should be the next dispatched bug-fix-AD (or the head of Wave 15) — at 4 recurrences, the "watch and wait" posture has expired.
+
+### Re-Review Verdict
+
+**✅ Approved.** Single-commit Builder dispatch recommended.
