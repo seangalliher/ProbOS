@@ -10,6 +10,50 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### Wave 9 Retrospective Addendum — Multi-Sub-Wave Umbrella Shipping
+
+**Date:** 2026-05-02
+**Status:** First multi-sub-wave umbrella ship in ProbOS history. Wave 8.5 (split) + 9A (3 parallel-safe children) + 9B (2 cross-cutting children) + 9C (1 HIGH-risk child + umbrella closure). 6/6 ✅ across all sub-waves; AD-641 umbrella (#277) closed.
+
+**Why this entry.** Wave 9 is the first 4-sub-wave shape. The pre-existing convention library (Wave 5 #1-7, Wave 5-7 Addendum #8-15, Wave 8 Addendum #16-19) covered most issues; this addendum captures the 3 lessons that emerged specifically from the multi-sub-wave shape.
+
+**Convergence trend update.** Pass-1 Required findings: Wave 5 = 22, Wave 6 = 18, Wave 7 = 11, Wave 8 = 19, Wave 9A = 2, Wave 9B = 5, Wave 9C = 4. Builder first-time-✅: 6/6 across all three sub-waves. Cumulative Wave 9 test delta: +83 (10565 → 10648).
+
+**20. Cross-wave dependency verification reads SHIPPED CODE, not prompts.** Wave 9C's pre-flight confirmed AD-641d's claimed dependencies on Wave 9A/9B artifacts by reading the actually-shipped `src/probos/cognitive/observability/`, `cognitive/ward_room_hebbian/`, and the Wave 9B thread priority service — NOT by reading the prompts that introduced them. The distinction matters because v1 cuts can drop capabilities the prompt promised; if a downstream sub-AD asserts a method that didn't ship, that's a phantom-by-omission. Apply this discipline to any sub-AD that depends on a prior wave's artifact: verify against `src/`, not against `prompts/archive/`.
+
+**21. Structural-defect pattern propagation is asymmetric.** Wave 9A's revision pass caught 3 structural defects (async/sync, wrong kwargs, wrong row shape) that pass-1 review missed; the lesson was banked in Wave 8 Addendum convention #19-adjacent prose. **Wave 9B's drafts reproduced the SAME 3 defects PLUS 2 new ones (tree-shape, missing field) on AD-641c.** The retrospective lesson did not propagate into the proactive drafting pipeline — only the reactive review pipeline (where pass-1 caught them). Wave 9C did NOT reproduce them, suggesting either (a) the architect-discretion sweep posture stuck after one cycle, or (b) AD-641d's lower data-shape surface area made it inherently safer. **Recommendation:** extend `scripts/phantom-api-precheck.ps1` to validate method-kwarg shapes against live signatures (not just `runtime.X.Y` access). One scripted convention beats N drafting-time conventions. File as a tooling hygiene AD.
+
+**22. v1 isolation as a Northstar-umbrella default.** Wave 9C confirmed AD-641d ships with **zero direct calls** into Wave 9A/9B artifacts (`runtime.observability_bridge`, `ward_room_hebbian_router`, `thread_priority_service`). Cross-wave integration deferred wholesale to a separate AD (`AD-641d-iv`). This is the "no-theater" convention #7 applied at the umbrella scale: each sub-AD ships an independent v1 surface, even when the umbrella's narrative implies tight integration. The arbitration-vs-observability connection is real, but a v1 that wires them prematurely would be theater that only fires under integration tests not yet written. The integration AD is its own forcing-function decision.
+
+**Cross-cutting failure modes still recurring.** Despite four waves of conventions, two patterns remain:
+
+- **Solution Overview drift after capability defer (convention #12).** Wave 9C R3 wholesale-deferred `endorse` to AD-641d-v; revision had to update 7 separate surfaces (Solution Overview header count, lifecycle bullets, deferred grandchildren, method body, class docstring, test 15, scope §8). The Wave 8 closing self-check ("grep prompt for OLD names/values; expect zero hits") caught it. Worth keeping as standing rule but tooling-resistant — semantic drift, not symbolic phantom.
+
+- **Pre-check method-kwarg blind spot.** Phantom-API pre-check (convention #16) validates `runtime.X` and `<Class>.<method>` references but does NOT parse method calls and validate kwargs against live signatures. Wave 9B's R1 (`event_log.query(event_type=...)` vs actual `query_structured(event=...)`) was caught by review prose, not by the script. Hygiene AD candidate.
+
+**Multi-sub-wave shape lessons (banked for future Northstar umbrellas).**
+
+- **Split → 3-stage build is the right shape.** Wave 8.5 (split, ~1h) + 9A (3 parallel) + 9B (2 cross-cutting) + 9C (1 high-risk) closed 6 children + umbrella in ~1 day total. Compare: Wave 1-4 averaged ~1 wave per 5 ADs. Multi-sub-wave is ~3x denser at the cost of a meta-prompt round-trip.
+- **HIGH-risk goes last.** AD-641d (Wave 9C) was the only ⚠️ pass-1 verdict (within tolerance). Earlier in the chain it would have blocked dependents.
+- **Combo + Multi-sub-wave coexist.** Wave 8 Combo A (7 trivial extensions in 1 commit) and Wave 9 multi-sub-wave (6 children across 3 waves + 1 meta-wave) are now both proven shapes. Combo for trivial-cluster ADs; multi-sub-wave for Northstar umbrellas. Mid-complexity ADs stay in single-prompt waves.
+
+**Tooling outcomes.**
+
+- `scripts/wave-orchestrator.ps1` (semi-autonomous dispatch) ran 4 waves end-to-end without state corruption. The `done`-stage bug found and fixed mid-Wave-8.5 was the only orchestrator defect.
+- `scripts/phantom-api-precheck.ps1` (Wave 8 Addendum #16) ran 4 times. False-positive rate after Wave 8.5 tuning: 1/3 candidates per wave (always the legitimate cross-prompt dep `runtime.observability_bridge`). Tooling extension to method-kwarg shape validation would close the gap surfaced in Wave 9B R1.
+- `prompts/wave-plan.yaml` proved sufficient for sequencing without manual intervention; `dispatch_prompt` + `prompts_already_drafted` flags handle pre-drafted prompt waves cleanly.
+
+**Outstanding tracked items (NOT in scope for Wave 9 retrospective).**
+
+- AD-641b-iv (endorsement listener) — deferred per Wave 8 AD-575b precedent; awaits event-bus subscribe API or direct emit-side wiring.
+- AD-641d-v (deliberation endorse) — deferred per Wave 9C R3; awaits forcing function for Captain endorsement on Ward Room posts.
+- AD-641d-iv (cross-wave integration) — deferred per Wave 9C v1 isolation; integrates 641a/b/c outputs into deliberation arbitration.
+- Tooling hygiene AD candidate — extend `phantom-api-precheck.ps1` to parse method calls and validate kwargs against live signatures (would have caught Wave 9B R1 mechanically).
+
+**Cross-links.** Wave 5 Retrospective (7 conventions), Wave 5-7 Retrospective Addendum (8 conventions, #8-15), Wave 8 Retrospective Addendum (4 conventions, #16-19), AD-641 umbrella closure (#277), AD-449 (Commercial-tagged precedent that primed the cross-wave isolation discipline), Wave 8.5 split convention (umbrella ADs must be split before scheduling).
+
+---
+
 ## AD-641d: Crew Deliberation Protocol — Captain-Resolved Judgment Surface
 
 **Era:** V (HXI Foundation)
