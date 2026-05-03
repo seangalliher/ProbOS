@@ -125,15 +125,31 @@ foreach ($promptPath in $PromptPaths) {
         $bareName = $cand -replace '^class:|^runtime\.|^.*\.', ''
         if ($body -match "(def|class)\s+$bareName\b") { continue }
 
-        # Resolve symbol to check.
-        $check = $bareName
+        # Tuning #1 (Wave 8.5): suppress runtime.X when the prompt itself
+        # introduces it via a `runtime.X =` self-introduction or
+        # `runtime.X: <Type> =` Pydantic-style annotation.
         if ($cand -like 'runtime.*') {
-            # Look for `self.<attr> =` or `<attr>:` Pydantic-style annotation
-            # in runtime.py, config.py, or anywhere in src.
-            $check = $bareName
+            if ($body -match "runtime\.$bareName\s*[:=]") { continue }
+            if ($body -match "self\.$bareName\s*[:=]") { continue }
         }
 
-        if (-not (Test-SymbolExists $check)) {
+        # Tuning #2 (Wave 8.5): suppress symbols within negative framing
+        # (NOT/was/should be/will be/no longer). The body is talking ABOUT
+        # the symbol's absence, not asserting its existence.
+        $idx = 0
+        $negativeFraming = $false
+        while (($idx = $body.IndexOf($bareName, $idx)) -ge 0) {
+            $start = [Math]::Max(0, $idx - 30)
+            $window = $body.Substring($start, [Math]::Min(60, $body.Length - $start))
+            if ($window -match '\b(NOT|not|was|should be|will be|no longer|removed|deprecated)\b') {
+                $negativeFraming = $true
+                break
+            }
+            $idx += $bareName.Length
+        }
+        if ($negativeFraming) { continue }
+
+        if (-not (Test-SymbolExists $bareName)) {
             [void]$phantomsHere.Add($cand)
         }
     }

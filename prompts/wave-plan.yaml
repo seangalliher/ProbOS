@@ -22,18 +22,18 @@ waves:
       - "prompts/WAVE-8.5-SPLIT-SUMMARY.md"
     builder_required: false  # meta-prompts produce prompts only, not code
     issues_to_close: []      # AD-641 stays open until children land
-    status: pending          # pending | drafted | reviewed | built | closed
+    status: done
 
   - id: "9A"
     title: "AD-641 children — parallel-safe (a/b/f)"
     kind: main
     depends_on: ["8.5"]
     prompt_paths:
-      - "prompts/ad-641a-*.md"
-      - "prompts/ad-641b-*.md"
-      - "prompts/ad-641f-*.md"
+      - "prompts/ad-641a-observability-bridge.md"
+      - "prompts/ad-641b-ward-room-hebbian.md"
+      - "prompts/ad-641f-engineering-chief-observability.md"
     builder_required: true
-    issues_to_close: []      # Filled in after Wave 8.5 produces sub-AD prompts
+    issues_to_close: []
     status: pending
 
   - id: "9B"
@@ -41,8 +41,8 @@ waves:
     kind: main
     depends_on: ["9A"]
     prompt_paths:
-      - "prompts/ad-641c-*.md"
-      - "prompts/ad-641e-*.md"
+      - "prompts/ad-641c-ward-room-thread-priority.md"
+      - "prompts/ad-641e-learned-shortcut-abstraction.md"
     builder_required: true
     issues_to_close: []
     status: pending
@@ -52,7 +52,7 @@ waves:
     kind: main
     depends_on: ["9B"]
     prompt_paths:
-      - "prompts/ad-641d-*.md"
+      - "prompts/ad-641d-crew-deliberation-protocol.md"
     builder_required: true
     issues_to_close: [277]   # AD-641 umbrella closes when 9C lands
     status: pending

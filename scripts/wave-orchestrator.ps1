@@ -98,8 +98,7 @@ $MAIN_STAGES = @(
     'push',            # git push
     'gate_3',          # ARCHITECT GATE: approve issue closure
     'close',           # gh issue close + archive prompts
-    'retrospective',   # Optional retrospective stub
-    'done'
+    'retrospective'    # Optional retrospective stub. Advancing from this stage marks wave done.
 )
 
 $META_STAGES = @(
@@ -107,8 +106,7 @@ $META_STAGES = @(
     'precheck',
     'verify_outputs',  # Confirm expected_outputs files exist
     'gate_1',          # ARCHITECT GATE: approve commit
-    'commit_push',
-    'done'
+    'commit_push'      # Verify commit/push landed. Advancing from this stage marks wave done.
 )
 
 function Get-StagesForWave {
