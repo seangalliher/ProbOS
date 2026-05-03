@@ -99,3 +99,15 @@ waves:
     builder_required: true
     issues_to_close: [71]
     status: done
+
+  - id: "13"
+    title: "Combo C — 7 trivial extensions (526d/572c/572d/573c/573e/573f/575c)"
+    kind: main
+    depends_on: ["12"]
+    dispatch_prompt: "prompts/WAVE-13-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/combo-C-trivial-extensions.md"
+    builder_required: true
+    issues_to_close: [7]
+    status: pending
