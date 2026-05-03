@@ -122,4 +122,4 @@ waves:
       - "prompts/ad-487-self-distillation-v1.md"
     builder_required: true
     issues_to_close: [79]
-    status: pending
+    status: done
