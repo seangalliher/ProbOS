@@ -382,3 +382,63 @@ waves:
     builder_required: true
     issues_to_close: [231]
     status: done
+
+  - id: "36"
+    title: "AD-686 v1 Oracle Absorbs SemanticKnowledgeLayer"
+    kind: main
+    depends_on: ["35"]
+    dispatch_prompt: "prompts/WAVE-36-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-686-oracle-absorbs-semantic-v1.md"
+    builder_required: true
+    issues_to_close: [380]
+    status: pending
+
+  - id: "37"
+    title: "AD-687 v1 Knowledge Edge Store"
+    kind: main
+    depends_on: ["36"]
+    dispatch_prompt: "prompts/WAVE-37-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-687-knowledge-edge-store-v1.md"
+    builder_required: true
+    issues_to_close: [381]
+    status: pending
+
+  - id: "38"
+    title: "AD-688 v1 Oracle Graph Integration"
+    kind: main
+    depends_on: ["37"]
+    dispatch_prompt: "prompts/WAVE-38-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-688-oracle-graph-integration-v1.md"
+    builder_required: true
+    issues_to_close: [382]
+    status: pending
+
+  - id: "39"
+    title: "AD-689 v1 Edge Population from Existing Data"
+    kind: main
+    depends_on: ["38"]
+    dispatch_prompt: "prompts/WAVE-39-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-689-edge-population-v1.md"
+    builder_required: true
+    issues_to_close: [383]
+    status: pending
+
+  - id: "40"
+    title: "AD-690 v1 Dream Step 10 Relationship Inference"
+    kind: main
+    depends_on: ["39"]
+    dispatch_prompt: "prompts/WAVE-40-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-690-dream-step10-relationship-inference-v1.md"
+    builder_required: true
+    issues_to_close: [384]
+    status: pending
