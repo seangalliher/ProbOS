@@ -135,3 +135,15 @@ waves:
     builder_required: true
     issues_to_close: []
     status: done
+
+  - id: "16"
+    title: "AD-525 Creative Expression v1 (Skills Inventory + Records Output)"
+    kind: main
+    depends_on: ["15"]
+    dispatch_prompt: "prompts/WAVE-16-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-525-creative-expression-v1.md"
+    builder_required: true
+    issues_to_close: [100]
+    status: pending
