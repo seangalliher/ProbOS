@@ -15,7 +15,7 @@ AD-525 in roadmap.md (line 2937) lists 5 capabilities for agent creative express
 
 1. **Creative Skills Inventory** — `CreativeSkillsRegistry` exposes the open-ended catalog of creative skills (Creative Writing, Technical Writing, Code as Art, Visual Design, Music Composition, Philosophy, Historiography, Comedy/Satire) with per-skill personality affinity (Big Five trait alignment). Per-agent affinity scoring via existing `CrewProfile` Big Five fields. Read-only surface — agents query "what creative skills suit me?"
 
-2. **Creative Output to Ship's Records** — `CreativeOutputWriter` writes agent creative works to `creative/{callsign}/{topic_slug}.md` via existing `RecordsStore.write_entry()`. Frontmatter: `type: creative`, `medium`, `author`, `department`. Default classification `ship` (shared culture). Mirror existing notebook pattern at `notebooks/{callsign}/{topic_slug}.md` (verified at proactive.py:2111).
+2. **Creative Output to Ship's Records** — `CreativeOutputWriter` writes agent creative works to `creative/{callsign}/{topic_slug}.md` via existing `RecordsStore.write_entry()`. Frontmatter is assembled by `write_entry` itself (author, classification, status, created/updated, optional department/topic/tags); `medium` and `skill_id` are encoded in `tags=["creative", medium, skill_id]` since `write_entry` does not accept arbitrary frontmatter keys. Default classification `ship` (shared culture). Mirrors existing `write_entry` caller pattern at proactive.py:3033.
 
 **Deferred to grandchildren:**
 
@@ -26,8 +26,9 @@ AD-525 in roadmap.md (line 2937) lists 5 capabilities for agent creative express
 
 ## Dependencies
 
-- `runtime.records_store` — read-only consumer (`write_entry()` at records_store.py:89; verified signature: author, path, content, message, *, classification, status, department, topic, tags, metrics).
-- `runtime.profile_store` — read-only consumer for Big Five trait fields (verified at acm.py:300; real attribute name is `profile_store` NOT `crew_profile_store`).
+- `runtime.records_store` — read-only consumer (`write_entry()` at records_store.py:89; verified signature: author, path, content, message, *, classification, status, department, topic, tags, metrics). Frontmatter is assembled by `write_entry` itself; callers do NOT prepend YAML.
+- `crew_profile.PersonalityTraits.to_dict()` — adapter used by callers to project a `CrewProfile` into the `dict[str, float]` shape `affinity_score` expects. The Big Five fields are NESTED on `CrewProfile` under `.personality: PersonalityTraits` (verified at crew_profile.py:65 PersonalityTraits floats; crew_profile.py:138 CrewProfile field). Callers must pass `profile.personality.to_dict()`, NOT `profile.openness`.
+- **Soft warning:** `runtime.profile_store` is never assigned anywhere in `src/probos/` — only referenced via defensive `hasattr(runtime, 'profile_store')` guard at acm.py:300. Wiring it is OUT OF SCOPE for AD-525 v1 (file as separate hygiene AD if needed). v1 does NOT depend on `runtime.profile_store` — the affinity_score interface accepts a generic `dict[str, float]` so callers can source traits however they like (test #7 already locks the empty-traits → 0.0 contract).
 - `RecordsStore` git-backed write — already exists; AD-525 just adds a new path prefix `creative/`.
 - Earned Agency — referenced for AD-525b deferral context, NOT required for v1.
 
@@ -46,7 +47,7 @@ Verify no collision with events.py post-Wave-15.
 
 - `src/probos/creative/__init__.py`
 - `src/probos/creative/skills_registry.py`
-- `src/probos/creative/output_writer.py`
+- `src/probos/creative/output_writer.py` (defines `CreativeOutputWriter` AND inline `class CreativeOutputError(Exception): ...` per Wave 9 convention #20 — small types live with their primary class, no orphan `errors.py` module).
 
 Per Wave 8/9/12/14 precedents — owns directory creation.
 
@@ -124,7 +125,15 @@ class CreativeSkillsRegistry:
         """
 
     def register_skill(self, skill: CreativeSkill) -> None:
-        """Add a skill to the registry. Idempotent on skill_id (overwrites)."""
+        """Add a skill to the registry. Last-write-wins on `skill_id` collision."""
+```
+
+**Caller adapter pattern** (for grandchild ADs and tests): callers project a `CrewProfile` into the trait dict via the existing `PersonalityTraits.to_dict()` helper (verified at crew_profile.py:86):
+
+```python
+profile = ...  # CrewProfile from any source (e.g. test fixture, future profile_store)
+traits: dict[str, float] = profile.personality.to_dict()
+score = registry.affinity_score("creative_writing", traits)
 ```
 
 ### Section 4 — `CreativeOutputWriter`
@@ -133,7 +142,7 @@ class CreativeSkillsRegistry:
 class CreativeOutputWriter:
     """Writes agent creative works to Ship's Records under creative/{callsign}/. AD-525 v1.
 
-    Mirrors notebook pattern at notebooks/{callsign}/{topic_slug}.md (proactive.py:2111).
+    Mirrors `RecordsStore.write_entry` caller pattern at proactive.py:3033 (AD-554).
     Default classification: ship (shared culture per AD-525 design).
     """
 
@@ -184,28 +193,83 @@ class CreativeOutputWriter:
         """Return relative paths of all creative works by an author."""
 ```
 
+#### Section 4a — `publish()` body shape and `write_entry` call
+
+`publish()` builds a deterministic relative path, calls `RecordsStore.write_entry` with explicit kwargs, and emits `CREATIVE_WORK_PUBLISHED`. **Frontmatter is assembled by `write_entry` itself** (verified at records_store.py:113-148 — accepts only the documented kwargs; arbitrary keys are NOT supported). Encode `medium` and `skill_id` as tags. Mirrors AD-554 `write_entry` caller at proactive.py:3033.
+
+```python
+async def publish(
+    self,
+    author_callsign: str,
+    topic_slug: str,
+    content: str,
+    *,
+    medium: str,
+    skill_id: str,
+    department: str = "",
+    classification: str | None = None,
+) -> str:
+    if self._records_store is None:
+        rs = getattr(self._runtime, "records_store", None)
+        if rs is None:
+            raise CreativeOutputError("records_store unavailable on runtime")
+        self._records_store = rs
+    cls = classification or self._config.default_classification
+    rel_path = f"creative/{author_callsign}/{topic_slug}.md"
+    try:
+        await self._records_store.write_entry(
+            author=author_callsign,
+            path=rel_path,
+            content=content,
+            message=f"Creative work: {topic_slug} (medium={medium}; skill={skill_id})",
+            classification=cls,
+            status="published",
+            department=department,
+            topic=topic_slug,
+            tags=["creative", medium, skill_id],
+            metrics=None,
+        )
+    except Exception as exc:
+        raise CreativeOutputError(f"failed to write creative work {rel_path}: {exc}") from exc
+    if self._emit_event_fn is not None:
+        try:
+            self._emit_event_fn(
+                EventType.CREATIVE_WORK_PUBLISHED,
+                {"author": author_callsign, "skill_id": skill_id, "medium": medium,
+                 "path": rel_path, "classification": cls},
+            )
+        except Exception:
+            logger.debug("AD-525: failed to emit CREATIVE_WORK_PUBLISHED", exc_info=True)
+    return rel_path
+```
+
 ### Section 5 — Pydantic config
 
 ```python
+from typing import Literal
+
 class CreativeExpressionConfig(BaseModel):
     """Configuration for AD-525 v1 (Skills Inventory + Records Output)."""
     enabled: bool = True
-    default_classification: str = "ship"  # one of: ship, department, private
-    skills_catalog: list[str] = Field(default_factory=list)  # additional skill_ids to load via plugin (deferred); v1 ignores
+    default_classification: Literal["ship", "department", "private"] = "ship"
 ```
+
+**Recommended #2 applied:** `skills_catalog` dropped from v1 — convention #14 (aggressive pre-deferral). Plugin loader lands in AD-525b alongside time-allocation gates.
 
 Wire into `SystemConfig.creative_expression: CreativeExpressionConfig = Field(default_factory=CreativeExpressionConfig)`.
 
 ### Section 6 — Runtime wiring (finalize.py)
 
-Add to `_wire_creative_expression`:
+**6a — Define the wire function** in `src/probos/startup/finalize.py` alongside `_wire_anomaly_window` (line 25) and `_wire_self_distillation` (line 80). Sync `def` — no awaits in the body (matches `_wire_anomaly_window`'s shape; v1 wiring is in-memory only):
 
 ```python
-async def _wire_creative_expression(*, runtime, config) -> bool:
+def _wire_creative_expression(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-525 v1: Wire CreativeSkillsRegistry + CreativeOutputWriter."""
     cfg = getattr(config, "creative_expression", None)
     if not cfg or not cfg.enabled:
         return False
+    from probos.creative.skills_registry import CreativeSkillsRegistry
+    from probos.creative.output_writer import CreativeOutputWriter
     runtime.creative_skills_registry = CreativeSkillsRegistry()
     runtime.creative_skills_registry._emit_event_fn = runtime.emit_event
     runtime.creative_output_writer = CreativeOutputWriter(runtime, cfg)
@@ -216,6 +280,18 @@ async def _wire_creative_expression(*, runtime, config) -> bool:
     )
     return True
 ```
+
+**6b — Invoke the wire function** in the orchestration entry point. Verified call-site band at `startup/finalize.py:249` and `:252`. Insert immediately after the `_wire_self_distillation` invocation (line 252-253):
+
+```python
+    if await _wire_self_distillation(runtime=runtime, config=config):
+        logger.info("AD-487: Self-distillation v1 wired during finalization")
+
+    if _wire_creative_expression(runtime=runtime, config=config):  # <-- ADD
+        logger.info("AD-525: Creative Expression v1 wired during finalization")
+```
+
+Note: `_wire_creative_expression` is sync, so the call uses `if _wire_...(...)`, NOT `if await _wire_...(...)`. Without this invocation the wire function is dead code on warm boot.
 
 Public attributes (Wave 5 convention #1):
 - `runtime.creative_skills_registry`
@@ -257,8 +333,9 @@ Both NO leading underscore.
 | 18 | `test_list_works_by_author_returns_only_authors_works` | Filter behavior |
 | 19 | `test_runtime_attributes_set_when_enabled` | Public-attribute wiring |
 | 20 | `test_runtime_attributes_not_set_when_disabled` | Disabled config skips wiring |
+| 21 | `test_affinity_score_accepts_personality_traits_to_dict_shape` | Lock the `PersonalityTraits.to_dict()` adapter contract — affinity_score must accept the exact shape `CrewProfile.personality.to_dict()` produces |
 
-Total: ~20 tests.
+Total: 21 tests.
 
 ## Tracking
 
@@ -274,9 +351,9 @@ Total: ~20 tests.
 - `CreativeSkillsRegistry` — open-ended catalog of 8 default creative skills (Creative Writing, Technical Writing, Code as Art, Visual Design, Music Composition, Philosophy, Historiography, Comedy/Satire). Per-skill Big Five trait affinity. Read-only `affinity_score(skill_id, traits)` + `top_skills_for(traits, k)`. Extensible via `register_skill()` (runtime-only; no persistence in v1).
 - `CreativeOutputWriter` — publishes agent creative works to `creative/{callsign}/{topic_slug}.md` via existing `RecordsStore.write_entry`. Default classification `ship` (shared culture per design). Frontmatter includes `type: creative`, `medium`, `author`, `department`.
 
-Both are read-only consumers of existing runtime surfaces (`records_store`, `crew_profile_store`); no writes to existing data. Public attributes (no underscore per Wave 5 convention #1).
+Both are read-only consumers of existing runtime surfaces (`records_store`) and the `crew_profile.PersonalityTraits.to_dict()` adapter; no writes to existing data, no dependency on `runtime.profile_store` (which is currently unwired). Public attributes (no underscore per Wave 5 convention #1).
 
-**Why:** Generative + bounded. Skills Inventory is a stateless registry. Output Writer mirrors notebook pattern (proactive.py:2111). No rate limits, no rank gating, no multi-agent collaboration in v1 — those are AD-525b/c/d/e territory with explicit forcing functions.
+**Why:** Generative + bounded. Skills Inventory is a stateless registry. Output Writer mirrors the existing `RecordsStore.write_entry` caller pattern (proactive.py:3033). No rate limits, no rank gating, no multi-agent collaboration in v1 — those are AD-525b/c/d/e territory with explicit forcing functions.
 
 **Deferred:**
 - AD-525b: Time-allocation rules gated by Earned Agency rank. Forcing function: v1 surfaces show agents using CreativeOutputWriter and capacity policy needs to enforce limits.
@@ -289,30 +366,45 @@ Both are read-only consumers of existing runtime surfaces (`records_store`, `cre
 
 3. **docs/development/roadmap.md:** flip AD-525 status to `partial — v1 ships Skills Inventory + Records Output; Time Allocation/Code-as-Art/Cultural Emergence/Collaboration deferred to AD-525b/c/d/e`.
 
-## Verified Against Codebase (2026-05-03)
+## Verified Against Codebase (2026-05-03, revised)
 
 ```
 grep -n "class RecordsStore\|async def write_entry" src/probos/knowledge/records_store.py
    46: class RecordsStore:
    89: async def write_entry(self, author, path, content, message, *, classification, status, department, topic, tags, metrics)
+   (frontmatter assembled by write_entry itself at records_store.py:113-148; arbitrary keys NOT supported)
 
-grep -rn "notebooks/{callsign}" src/probos/
-  proactive.py:2001: f"notebooks/{callsign}"
-  proactive.py:2093: dept, scope=f"notebooks/{callsign}"
-  proactive.py:2111: f"notebooks/{callsign}/{topic_slug}.md"
-  knowledge/records_store.py:260: Creates or updates notebooks/{callsign}/{topic_slug}.md
+grep -n "_records_store.write_entry" src/probos/proactive.py
+   3033: await self._runtime._records_store.write_entry(
+   (canonical caller pattern — kwargs only, no manual frontmatter prepend; mirrored by AD-525 publish())
 
-grep -n "class Rank\|class CrewProfile" src/probos/crew_profile.py
-   30: class Rank(Enum):
+grep -n "openness" src/probos/crew_profile.py
+   55: - openness: ...                 (PersonalityTraits docstring)
+   65: openness: float = 0.5           (PersonalityTraits dataclass field — flat float)
+
+grep -n "class PersonalityTraits\|class CrewProfile\|personality:" src/probos/crew_profile.py
+   50: @dataclass
+   51: class PersonalityTraits:
   116: class CrewProfile:
+  138: personality: PersonalityTraits = field(default_factory=PersonalityTraits)
+   (Big Five floats are NESTED under CrewProfile.personality, NOT flat on CrewProfile)
 
-grep -n "openness\|conscientiousness" src/probos/crew_profile.py | head -5
-  (Builder verifies CrewProfile Big Five field shape — should expose openness/conscientiousness/extraversion/agreeableness/neuroticism floats)
+grep -n "def to_dict" src/probos/crew_profile.py
+   86: def to_dict(self) -> dict[str, float]:    (PersonalityTraits.to_dict via asdict — adapter to dict[str, float])
 
-grep -n "runtime\.profile_store\|profile_store" src/probos/acm.py
-  acm.py:300: if hasattr(runtime, 'profile_store') and runtime.profile_store:
-  acm.py:301: crew_profile = runtime.profile_store.get(agent_id)
-  (verified: runtime attribute is `profile_store` NOT `crew_profile_store`)
+grep -rn "runtime\.profile_store\s*=\|self\.profile_store\s*=" src/probos/
+   (zero hits — `runtime.profile_store` is NEVER assigned in src/; only defensively read at acm.py:300 via hasattr-guard)
+
+grep -n "_wire_anomaly_window\|_wire_self_distillation" src/probos/startup/finalize.py
+   25: def _wire_anomaly_window(*, runtime: Any, config: "SystemConfig") -> bool:    (sync def)
+   80: async def _wire_self_distillation(*, runtime: Any, config: "SystemConfig") -> bool:
+  249: if _wire_anomaly_window(runtime=runtime, config=config):                        (invocation site band)
+  252: if await _wire_self_distillation(runtime=runtime, config=config):
+   (Section 6b inserts `_wire_creative_expression` invocation at line 253, sync shape mirroring _wire_anomaly_window)
+
+Phantom-API pre-check (./scripts/phantom-api-precheck.ps1):
+   1 documented FP: SystemConfig.creative_expression — introduced by Section 5 (Wave 5 convention #1 expected pattern).
+   0 NEW phantoms.
 ```
 
 ## Acceptance Criteria
@@ -334,3 +426,43 @@ grep -n "runtime\.profile_store\|profile_store" src/probos/acm.py
 - Existing `creative/` path namespace already in use — surface; verify by grep before commit.
 - CrewProfile Big Five field names differ from Pydantic shape — surface; affinity_score uses generic `dict[str, float]` so this should be soft.
 - Earned Agency runtime hook tries to gate publish — should NOT happen in v1 (gating is AD-525b territory). If you find yourself adding rank checks, STOP.
+
+---
+
+## Revision (2026-05-03)
+
+Applied pass-1 review (`prompts/Reviews/ad-525-creative-expression-v1-review.md`, verdict ⚠️ Conditional). Three Required + four Recommended + three Nits processed.
+
+**Required (all 3 addressed):**
+
+- **R1 — `write_entry` write-path spec gap.** Section 4 now contains a new **Section 4a** with the explicit kwarg-by-kwarg `await self._records_store.write_entry(...)` call, including `message`, `status="published"`, `tags=["creative", medium, skill_id]`, `topic=topic_slug`, `metrics=None`. Solution Overview corrected: `write_entry` assembles its own YAML frontmatter (verified at records_store.py:113-148) — `medium` and `skill_id` are encoded in `tags`, NOT prepended to content. Caller pattern mirrors proactive.py:3033 (AD-554 convergence reports), citation updated from the stale 2111 (notebook) reference.
+- **R2 — `_wire_creative_expression` invocation site missing.** Section 6 split into 6a (define) and 6b (invoke). 6b explicitly inserts `if _wire_creative_expression(runtime=runtime, config=config): logger.info(...)` at line 253 of `startup/finalize.py`, immediately after the `_wire_self_distillation` invocation block (line 252). Per Recommended #4: dropped `async` — wire body has no awaits, matches `_wire_anomaly_window` (sync `def`, line 25). Builder must invoke as `if _wire_...(...)`, NOT `if await _wire_...(...)`.
+- **R3 — Big Five fields are NESTED, not flat.** Dependencies section rewritten: removed the false claim that v1 depends on `runtime.profile_store` (verified zero `runtime.profile_store = ...` assignments anywhere in `src/probos/`; only a defensive `hasattr`-guarded read at acm.py:300). Added `crew_profile.PersonalityTraits.to_dict()` as the canonical adapter — callers project `profile.personality.to_dict()` into the generic `dict[str, float]` shape `affinity_score` accepts. Section 3 docstring extended with the adapter snippet. Verified Against Codebase footer rewritten to show `crew_profile.py:51 PersonalityTraits` (flat floats), `crew_profile.py:138 CrewProfile.personality` (nested field), and `crew_profile.py:86 to_dict()` (the adapter). Test #21 added: `test_affinity_score_accepts_personality_traits_to_dict_shape` locks the adapter contract into the test surface.
+
+**Recommended (all 4 addressed):**
+
+- **Rec #1 — `CreativeOutputError` undefined.** Section 1 now states the exception is defined inline at the top of `output_writer.py` (Wave 9 convention #20 — small types live with their primary class; no orphan `errors.py`). Section 4a `publish()` body sketch raises it on missing `records_store` and on `write_entry` failure (chained via `from exc`).
+- **Rec #2 — `skills_catalog: list[str]` dead code in v1.** Dropped from Section 5 per convention #14 (aggressive pre-deferral). Plugin loader lands in AD-525b alongside time-allocation gates.
+- **Rec #3 — `list_works_by_author` test coverage.** Test #18 already targets it; left as-is (review acknowledged this as scratch).
+- **Rec #4 — wire async/sync mismatch.** Folded into R2: dropped `async`. Wire body is sync `def`, invocation is `if _wire_...(...)`.
+
+**Nits (all 3 addressed):**
+
+- **Nit #1 — stale `proactive.py:2111` citation.** Solution Overview updated to cite `proactive.py:3033` (the actual `write_entry` caller). Verified footer reflects the same.
+- **Nit #2 — "Idempotent on `skill_id` (overwrites)" wording.** Replaced with "Last-write-wins on `skill_id` collision" in Section 3 `register_skill` docstring.
+- **Nit #3 — `default_classification: Literal[...]`.** Section 5 now types it as `Literal["ship", "department", "private"]` for parse-time validation per Engineering Principles standing rule.
+
+**Convention compliance after revision:**
+
+| # | Convention | Status |
+|---|---|---|
+| 1 | Public-attribute wiring | ✅ |
+| 7 | Two-pass review converges | ✅ (this is pass-2) |
+| 9 | ASCII-only prompt body | ✅ |
+| 14 | Aggressive pre-deferral | ✅ (now 3 of 5 pre-deferred + skills_catalog also dropped) |
+| 15 | Relaxed tolerance | N/A — 0 Required remaining |
+| 16 | Dispatch-time phantom-API pre-check | ✅ ran post-revision: 1 documented FP, 0 NEW phantoms |
+| 20 | Cross-wave dep verification reads SHIPPED CODE | ✅ slip resolved (false `runtime.profile_store` claim deleted) |
+| 23 | AD-685b method-call AST | ✅ |
+
+**Convergence target:** ✅ Approved on second pass.
