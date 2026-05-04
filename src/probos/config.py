@@ -333,6 +333,22 @@ class ChainTuningConfig(BaseModel):
     # Mid band is implicitly [low_trust_ceiling, high_trust_floor)
 
 
+class ChainOptimizerConfig(BaseModel):
+    """AD-659 v1: Cognitive Chain Self-Optimization analysis service.
+
+    v1 is analysis-only — produces OptimizationProposal instances which
+    require Captain approval. apply_proposal() raises NotImplementedError;
+    automatic application is deferred to AD-659b.
+    """
+
+    enabled: bool = False  # opt-in until validated
+    analysis_window: int = 100
+    latency_p95_ms_floor: float = 10000.0
+    success_rate_floor: float = 0.7
+    error_rate_ceiling: float = 0.3
+    min_samples_per_group: int = 20
+
+
 class StepInstructionConfig(BaseModel):
     """AD-651: Step-specific standing order decomposition."""
 
@@ -2000,6 +2016,7 @@ class SystemConfig(BaseModel):
     )  # AD-683
     tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
+    chain_optimizer: ChainOptimizerConfig = ChainOptimizerConfig()  # AD-659
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571

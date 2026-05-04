@@ -192,14 +192,16 @@ def create_app(runtime: Any) -> FastAPI:
     from probos.routers import (
         ontology, system, wardroom, wardroom_admin, records, identity,
         agents, journal, skills, acm, assignments, scheduled_tasks,
-        workforce, build, design, chat, chain_traces, counselor, procedures, gaps,
+        workforce, build, design, chat, chain_traces, chain_optimizer,
+        counselor, procedures, gaps,
         recreation, memory_graph, bills, emergent_leadership, orders,
         infodynamic,
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
         agents, journal, skills, acm, assignments, scheduled_tasks,
-        workforce, build, design, chat, chain_traces, counselor, procedures, gaps,
+        workforce, build, design, chat, chain_traces, chain_optimizer,
+        counselor, procedures, gaps,
         recreation, memory_graph, bills, emergent_leadership, orders,
         infodynamic,
     ):

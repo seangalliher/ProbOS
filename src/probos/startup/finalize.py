@@ -211,6 +211,31 @@ def _wire_duty_scope_provider(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_chain_optimizer(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-659 v1: Wire ChainOptimizer analysis-only proposal service."""
+    cfg = getattr(config, "chain_optimizer", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.cognitive.chain_optimizer import ChainOptimizer
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    runtime.chain_optimizer = ChainOptimizer(
+        runtime,
+        analysis_window=cfg.analysis_window,
+        latency_p95_ms_floor=cfg.latency_p95_ms_floor,
+        success_rate_floor=cfg.success_rate_floor,
+        error_rate_ceiling=cfg.error_rate_ceiling,
+        min_samples_per_group=cfg.min_samples_per_group,
+        emit_event=emit_fn,
+    )
+    logger.info(
+        "AD-659: ChainOptimizer v1 initialized "
+        "(analysis-only; apply path deferred to AD-659b)"
+    )
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -488,6 +513,9 @@ async def finalize_startup(
 
     if _wire_duty_scope_provider(runtime=runtime, config=config):
         logger.info("AD-508: DutyScopeProvider v1 wired during finalization")
+
+    if _wire_chain_optimizer(runtime=runtime, config=config):
+        logger.info("AD-659: ChainOptimizer v1 wired during finalization")
 
     if _wire_workspace_ontology(runtime=runtime, config=config):
         logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")
