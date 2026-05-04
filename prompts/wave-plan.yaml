@@ -219,3 +219,15 @@ waves:
     builder_required: true
     issues_to_close: [93]
     status: done
+
+  - id: "23"
+    title: "Combo E — Cognitive Helpers (AD-508 Duty Scope + AD-478 Workspace Ontology)"
+    kind: main
+    depends_on: ["22"]
+    dispatch_prompt: "prompts/WAVE-23-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/combo-E-cognitive-helpers.md"
+    builder_required: true
+    issues_to_close: [90, 72]
+    status: pending
