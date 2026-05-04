@@ -156,3 +156,53 @@ class CaptainEngagementProvider:
             summary["total_threads"] += count
         return summary
 
+    # ------------------------------------------------------------------
+    # AD-572e: Task awareness in Captain DM context
+    # ------------------------------------------------------------------
+
+    async def task_awareness(self, agent_id: str) -> dict[str, Any]:
+        """AD-572e: open-WorkItem summary for an agent.
+
+        Used by proactive cognitive loop to ground Captain DM response context
+        in the agent's current commitments. Returns up to 10 most recent open
+        WorkItems assigned to ``agent_id``.
+
+        Args:
+            agent_id: The agent identifier (matches WorkItemStore.list_work_items
+                ``assigned_to`` filter; NOT agent_type).
+
+        Returns:
+            ``{"open_count": int, "tasks": [{"id", "title", "type"}]}`` or
+            empty dict when ``work_item_store`` is unavailable / agent_id falsy.
+
+        Defensive: catches all exceptions and logs at debug level; returns
+        empty dict rather than raising (mirrors ``snapshot()`` /
+        ``wardroom_activity_summary()`` error handling).
+        """
+        rt = getattr(self, "_runtime", None)
+        if rt is None or not agent_id:
+            return {}
+        work_item_store = getattr(rt, "work_item_store", None)
+        if work_item_store is None:
+            return {}
+        try:
+            items = await work_item_store.list_work_items(
+                status="open",
+                assigned_to=agent_id,
+                limit=10,
+            )
+        except Exception:
+            logger.debug("AD-572e: work_item_store query failed", exc_info=True)
+            return {}
+        return {
+            "open_count": len(items),
+            "tasks": [
+                {
+                    "id": getattr(item, "id", "") or "",
+                    "title": getattr(item, "title", "") or "",
+                    "type": getattr(item, "work_type", "") or "",
+                }
+                for item in items[:10]
+            ],
+        }
+

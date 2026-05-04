@@ -1196,6 +1196,17 @@ class ProactiveCognitiveLoop:
                         "AD-572c: wardroom_activity_summary failed", exc_info=True,
                     )
 
+            # AD-572e: Task awareness in Captain DM context
+            if hasattr(engagement_provider, "task_awareness"):
+                try:
+                    task_summary = await engagement_provider.task_awareness(agent.id)
+                    if isinstance(context.get("captain_engagement"), dict):
+                        context["captain_engagement"]["task_awareness"] = task_summary
+                except Exception:
+                    logger.debug(
+                        "AD-572e: task_awareness injection failed", exc_info=True,
+                    )
+
         # AD-567g: Proactive orientation supplement (diminishing)
         if getattr(self, '_orientation_service', None) and self._config:
             try:

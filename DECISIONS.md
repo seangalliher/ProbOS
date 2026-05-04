@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-572e: Task Awareness in Captain DM Context (2026-05-03)
+
+**Problem:** Combo A (Wave 8) shipped `CaptainEngagementProvider.snapshot()` for Captain-engagement signals. Combo C (Wave 13) added `wardroom_activity_summary()` for Ward Room context. Captain DMs to specific agents still lacked task awareness — agents had no current-commitments context when responding to Captain queries about their work.
+
+**Decision:** Add `task_awareness(agent_id)` async helper to existing `CaptainEngagementProvider` (no new class, no new public attribute). Reads `runtime.work_item_store.list_work_items(status="open", assigned_to=agent_id, limit=10)`. Returns structured dict (`open_count`, `tasks: [{id, title, type}]`). Proactive cognitive loop injects result into `context["captain_engagement"]["task_awareness"]` during Captain DM response build (mirrors Combo C's wardroom_activity_summary integration).
+
+**Why:** Final AD-572 child. Bounded scope — single async helper + single proactive-loop integration point. Defensive (returns empty dict on any failure, consistent with sibling helpers). Read-only consumer of WorkItemStore (no writes, no schema changes). Mirrors proven Combo C pattern.
+
+**Cross-links:** AD-572b (CaptainEngagementProvider, Combo A), AD-572c (wardroom_activity_summary, Combo C), AD-496 (WorkItemStore), AD-572d-i (Captain Priority Queue — separately deferred; not unblocked by AD-572e).
+
 ### AD-513 Phase 2 v1: Crew Manifest Shell + Watch Filter + Ship Manifest (2026-05-03)
 
 **Problem:** AD-513 Phase 1 delivered `get_crew_manifest()` + HXI panel + REST endpoint. Phase 2 has 6 follow-up capabilities (a-f). Trust-gated visibility, agent tool access, and ACM/competency fields each require new infrastructure. Shell command + watch filter + ship-summary are read-only additive surfaces shippable independently.
