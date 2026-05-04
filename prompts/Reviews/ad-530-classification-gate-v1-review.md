@@ -159,3 +159,106 @@ After revision, verify:
 - [ ] Required #4: `api_key_like` removed from `_DEFAULT_SENSITIVE_PATTERNS` (preferred) or tightened; Test #9 updated.
 - [ ] Recommended #1–#5 addressed or explicitly waived with rationale.
 - [ ] Verified-Against-Codebase footer states the real 4-tier keys verbatim.
+
+---
+
+## Second-Pass Review (2026-05-03)
+
+**Verdict:** ✅ Approved
+**All 4 Required addressed; safety bug (direction inversion) verified by re-derived semantics; 0 new phantoms; 0 regressions. Single-commit dispatch recommended.**
+
+### Resolution Audit — Required
+
+| Pass-1 Required | Status | Evidence |
+|---|---|---|
+| R1 (hierarchy keys: private/department/ship/fleet) | ✅ | Solution Overview line 14, Section 2 docstring line 99–105, `_CLASSIFICATION_LEVELS["private"]`/`["ship"]` at lines 161–162, DECISIONS entry line 322. Grep `confidential` → 5 hits, all legitimate: 2 in regex/test for the literal-string prefix marker (`r"\b(private\|confidential):\s"`), 3 in Revision section auditing old wording. **Zero hits in shipping content as a classification key.** |
+| R2 (direction: BLOCK when dst_lvl > src_lvl) | ✅ | Section 2 line 163: `if dst_lvl > src_lvl:`. Reason renamed `clearance_below_source` → `destination_too_broad`. Verified against records_store.py:841 (`if doc_class > scope: continue` filters broader-than-scope). Safety pair walk-through (3/3 correct): src=private(0)+dst=ship(2)→`2>0`→BLOCK ✓; src=ship(2)+dst=department(1)→`1>2`→ALLOW ✓; src=department(1)+dst=private(0)→`0>1`→ALLOW ✓. |
+| R3 (safe defaults: source→private, dest→ship) | ✅ | Lines 161–162: `src_lvl = _CLASSIFICATION_LEVELS.get(source_classification, _CLASSIFICATION_LEVELS["private"])`; `dst_lvl = _CLASSIFICATION_LEVELS.get(destination_clearance, _CLASSIFICATION_LEVELS["ship"])`. Combined unspecified-on-both: `2 > 0` → BLOCK by hierarchy ✓. Test #7 split into 7 (unknown source) + 7b (unknown destination). |
+| R4 (api_key_like dropped from defaults) | ✅ | `_DEFAULT_SENSITIVE_PATTERNS` (lines 89–93) lists exactly 3 entries: `captain_directive`, `restricted_prefix`, `secret_format`. `api_key_like` mentioned only in (a) docstring as opt-in via `register_pattern()`, (b) AD-530e deferral, (c) Test 9b (opt-in path). AD-530e added with explicit forcing function. |
+
+### Resolution Audit — Recommended
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| #1 DECISIONS forcing functions for AD-530b/c/d | ✅ | All four (b/c/d/e) have explicit forcing-function clauses in the Deferred block (lines 27–30 + 336–339). |
+| #2 `emit_event` field naming (sibling AD-456) | ✅ | Now public field on ClassificationGate (line 121: `self.emit_event = emit_event`); mirrors AD-456 EgressPolicy.emit_event. |
+| #3 `logger.warning` on emit failure (AD-456 parity) | ✅ | Line 261: `logger.warning("AD-530: CLASSIFICATION_DISCLOSURE_BLOCKED emit failed (reason=%s)", ...)`. Was `logger.debug`. |
+| #4 `register_pattern` duplicate-name guard | ✅ | Lines 233–238: explicit name-collision check + `logger.warning` skip; Test 16b added. |
+| #5 `private_marker` rename to avoid `private` key collision | ✅ | Pattern renamed to `restricted_prefix`. DECISIONS entry says "restricted-prefix literals" not "private prefixes". |
+
+### Resolution Audit — Nits
+
+| Pass-1 Nit | Status | Notes |
+|---|---|---|
+| Section 4 reaches `._patterns` from outside | ✅ | New public `pattern_count` property (line 130–132); wiring uses `runtime.classification_gate.pattern_count`. |
+| `DisclosureDecision.reason` should be Literal/enum | ✅ | `DisclosureReason = Literal["ok", "destination_too_broad", "sensitive_pattern_matched"]` at Section 1. |
+| Test count consistency | ✅ | Acceptance criteria says `~20 tests (Tests 1–18 + 7b + 9b + 16b)` matching test plan (21 entries; "~20" is fair). |
+| Verified-Against-Codebase footer states real keys | ✅ | Lines 354–366: keys listed verbatim, direction grounded in :841 with the comparison shown. No "Builder reads exact hierarchy" delegation. |
+
+### Direction-Inversion Safety Verification
+
+Re-derived from records_store.py:716 (`if doc_class == "private" and reader_id != doc_author: return None`; `if doc_class == "department" and reader_department != doc_dept and reader_id != doc_author: return None`; "ship and fleet are readable by all crew") and :841 (`if _CLASSIFICATION_LEVELS.get(doc_class, 0) > _CLASSIFICATION_LEVELS.get(scope, 2): continue`). Higher index = broader access = more openly readable.
+
+| Source | Dest | Computation | Outcome | Correct? |
+|---|---|---|---|---|
+| `private` (0) | `ship` (2) | `2 > 0` → True | BLOCK | ✅ private content cannot leak to ship audience |
+| `ship` (2) | `department` (1) | `1 > 2` → False | ALLOW | ✅ ship is broadly-readable already |
+| `department` (1) | `private` (0) | `0 > 1` → False | ALLOW | ✅ author/department-member can read department content as private workspace |
+| Unknown src (→private 0) | unknown dst (→ship 2) | `2 > 0` → True | BLOCK | ✅ defensive default |
+| `fleet` (3) | `ship` (2) | `2 > 3` → False | ALLOW | ✅ fleet is broadest; narrower dest fine |
+| `private` (0) | `fleet` (3) | `3 > 0` → True | BLOCK | ✅ most-restricted source, broadest dest |
+
+All 6 boundary pairs derive correctly. Direction inversion is verified.
+
+### Pre-check Output
+
+```
+$ ./scripts/phantom-api-precheck.ps1 prompts/ad-530-classification-gate-v1.md
+=== prompts/ad-530-classification-gate-v1.md ===
+  Clean — no phantom symbols detected.
+  Skipped (unresolved class):
+    ~ [no_class_resolution] runtime.classification_gate.update_label(...) (obj=runtime.classification_gate)
+=== Summary ===
+Prompts scanned: 1
+Total phantom candidates: 0
+```
+
+`update_label()` is the documented AD-530b deferred reference (the prompt explicitly says "AD-530b: Security Chief ownership — runtime updates to classification labels via Standing Orders" and lists `runtime.classification_gate.update_label()` as the forcing-function API). `runtime.classification_gate` is itself introduced by Section 4 of this AD; the pre-check legitimately skips because the class is being defined in this same prompt. Not a phantom.
+
+### Solution Overview / Acceptance Criteria Consistency
+
+- Solution Overview (line 14): claims `_CLASSIFICATION_LEVELS` read-only reuse → ✅ verified at lines 161–162 (import + `.get(...)`).
+- Solution Overview (lines 18–22): "observational v1 — gate emits event but does NOT mutate outbound messages" → ✅ verified Section 2 has no message-mutation path; only `_emit_blocked` + return.
+- Solution Overview: "2 of 4 capabilities" (gate + pattern scanner) → ✅ AD-530b/c/d/e deferred with forcing functions.
+- Acceptance Criteria (line 388): "~20 tests" → matches Test Plan's 21 entries (1–18 + 7b + 9b + 16b).
+- Acceptance Criteria principles compliance line present (line 397).
+
+### New Findings
+
+None. The revision addresses all pass-1 findings without introducing new Required-class issues. No new phantoms, no convention regressions.
+
+### Convention Audit (delta from pass-1)
+
+| # | Convention | Pass-1 | Pass-2 |
+|---|---|---|---|
+| 1 | Public attributes | ⚠ (Nit) | ✅ (`pattern_count`/`patterns` properties) |
+| 5 | Phantom-API discipline | ❌ R1 | ✅ |
+| 12 | DECISIONS forcing functions | ⚠ Rec#1 | ✅ |
+| 15 | ≤1 ⚠ tolerance | ❌ Breached | ✅ Reset (revision pass; tolerance applies to pass-2 forward) |
+| 16 | Verified-footer states real keys | ⚠ Nit | ✅ |
+| 23 conventions overall | | 4 ❌ + 3 ⚠ | **All ✅** |
+
+### Verdict Rationale
+
+- All 4 Required resolved with concrete code-line evidence.
+- All 5 Recommended addressed; 4 of 4 Nits addressed.
+- Direction inversion (the safety-critical fix) verified across 6 boundary pairs against records_store.py:716 and :841.
+- Pre-check 0 phantoms.
+- Solution Overview and Acceptance Criteria consistent with revised Section 2.
+- No scope drift introduced during revision (no new ADs/work; AD-530e is a clean deferral, not in-scope work).
+
+**Architect-discretion note:** This revision pass is an example of the safety bug class that AD-685b's automated precheck cannot catch. AD-685b validates *symbol existence* (does this method/class exist?). It does NOT validate *semantic direction* (is the comparison operator correct given the hierarchy's meaning?). The pass-1 inversion would have shipped a gate that, when AD-530d wired it into WardRoomService.create_post, would have blocked broadly-readable `ship` content from `department` viewers (false-positive flood) AND allowed `private` content to leak to `ship` audiences (catastrophic data exfiltration). Architect-discretion review remains the right defense for semantic-logic bugs in security-critical code. Recommend Wave 19+ continues to gate security-package ADs through architect review even after AD-685b is fully tooled.
+
+### Recommended Next Step
+
+**Single-commit dispatch.** Builder may proceed directly to AD-530 v1 implementation against `prompts/ad-530-classification-gate-v1.md` at commit `0770b52`. No further revision needed.
