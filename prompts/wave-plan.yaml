@@ -357,7 +357,7 @@ waves:
       - "prompts/ad-661-diagnostic-context-v1.md"
     builder_required: true
     issues_to_close: [320]
-    status: pending
+    status: done
 
   - id: "34"
     title: "AD-647 v1 Process-Oriented Cognitive Chains (Scout Report)"
