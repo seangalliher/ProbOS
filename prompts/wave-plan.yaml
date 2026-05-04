@@ -146,4 +146,4 @@ waves:
       - "prompts/ad-525-creative-expression-v1.md"
     builder_required: true
     issues_to_close: [100]
-    status: pending
+    status: done
