@@ -97,6 +97,12 @@ class GapRemediationTracker:
         - gap_type="data" → "request_data_routing"
         - gap_type="capability" → "escalate_capability"
         - else → "no_action"
+
+        Note (observational hole, AD-539c-i): a `knowledge` gap with an EMPTY
+        `qualification_path_id` falls through to `"no_action"` — same return
+        as an unrecognized gap_type. v1 accepts this; AD-539c-i may add a
+        distinct `"knowledge_no_path"` sentinel if downstream observability
+        needs to disambiguate the two fall-through cases.
         """
 
     def recent_candidates(self, limit: int = 20) -> tuple[RemediationCandidate, ...]:
@@ -191,10 +197,20 @@ class FleetGapAggregator:
     ) -> tuple[tuple[str, int], ...]:
         """Aggregate intent counts across all reports' affected_intent_types."""
 
-    def _resolve_department(self, agent_id: str) -> str:
+    def _resolve_department(self, agent_type: str) -> str:
         """Best-effort department lookup via runtime.ontology.
 
-        Returns empty string when ontology absent or agent_id not in roster.
+        Calls `runtime.ontology.get_agent_department(agent_type)` — the live
+        ontology API takes `agent_type`, NOT `agent_id` (verified at
+        proactive.py:2380, dreaming.py:1098, cognitive_agent.py:985).
+        `GapReport.agent_type` (gap_predictor.py:194) is the natural caller
+        — `take_snapshot` reads `report.agent_type` directly when bucketing
+        by department.
+
+        Unwraps the returned department: returns `dept.department_id` when
+        the attribute is present, else `str(dept)` (idiom from
+        dreaming.py:1099). Returns empty string when ontology absent,
+        `agent_type` not in roster, or any lookup exception.
         """
 ```
 
@@ -292,6 +308,14 @@ grep -n "_wire_creative_expression\|_wire_classification_gate" src/probos/startu
 
 grep -rn "runtime.ontology" src/probos/ | head -3
   acm.py:300/301: runtime.ontology consumer (AD-539d _resolve_department uses this)
+
+# Revision pass (2026-05-03): live ontology API verified
+grep -n "get_agent_department" src/probos/proactive.py src/probos/cognitive/dreaming.py
+  proactive.py:2380:    dept = self._runtime.ontology.get_agent_department(agent.agent_type)
+  dreaming.py:1098:    dept = self._runtime.ontology.get_agent_department(agent.agent_type)
+  dreaming.py:1099:    department = dept.department_id if hasattr(dept, 'department_id') else str(dept)
+  → confirms signature is get_agent_department(agent_type) and dept-object
+    unwrap idiom uses .department_id when present.
 ```
 
 ---
@@ -318,3 +342,17 @@ grep -rn "runtime.ontology" src/probos/ | head -3
 - **Inter-child:** Both wire into `SystemConfig.gap_pipeline_extensions` — Pydantic field collision is the only realistic risk.
 - **Active enforcement scope creep** — if you find yourself adding code that actually triggers remediation actions in AD-539c (vs just recording candidates), STOP. That's AD-539c-i.
 - **Federation scope creep** — if AD-539d implementation reaches across federation, STOP. That's AD-539d-i.
+
+---
+
+## Revision (2026-05-03)
+
+Pass-1 review at `prompts/Reviews/combo-D-gap-pipeline-extensions-review.md` shipped ✅ Approved with 0 Required + 1 Recommended + 2 Nits. Polish applied this pass:
+
+1. **Rec1 (AD-539d) — `_resolve_department` signature corrected.** Was `_resolve_department(self, agent_id: str)`; now `_resolve_department(self, agent_type: str)`. Live ontology API at proactive.py:2380, dreaming.py:1098, cognitive_agent.py:985 takes `agent_type`. `GapReport.agent_type` (gap_predictor.py:194) is the natural caller — `take_snapshot` reads `report.agent_type` directly when bucketing by department, avoiding a Demeter-violating `runtime.registry` detour to map `agent_id → agent_type`.
+2. **Nit1 (AD-539c) — knowledge-without-path fall-through documented.** `proposed_action_for` docstring now explicitly notes that `gap_type="knowledge"` with empty `qualification_path_id` returns `"no_action"` — same return as unrecognized gap_type. Forcing function for AD-539c-i: add `"knowledge_no_path"` sentinel if downstream observability needs to disambiguate.
+3. **Nit2 (AD-539d) — dept-object unwrap idiom documented.** `_resolve_department` docstring now specifies the `dept.department_id if hasattr(dept, 'department_id') else str(dept)` unwrap pattern (idiom from dreaming.py:1099). Prevents Builder from storing the dept object directly and producing `<DepartmentName: ...>` strings in the snapshot's `by_department` dict.
+
+No test-plan churn — test #6 (`test_take_snapshot_groups_by_department_via_ontology`) and test #7 (`test_take_snapshot_department_empty_when_ontology_absent`) still assert the same behavior. No changes to acceptance criteria, hard-stops, EventTypes, file targets, or commit message.
+
+**Verified Against Codebase footer extended** with proactive.py:2380 + dreaming.py:1098-1099 grep evidence.
