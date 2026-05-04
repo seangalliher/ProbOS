@@ -290,7 +290,7 @@ waves:
       - "prompts/ad-658-chain-harness-metrics-v1.md"
     builder_required: true
     issues_to_close: [317]
-    status: pending
+    status: done
 
   - id: "29"
     title: "AD-644 v1 Agent Situation Awareness Architecture"
