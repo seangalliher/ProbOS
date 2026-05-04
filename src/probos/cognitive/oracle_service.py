@@ -58,6 +58,7 @@ class OracleService:
         trust_network: Any = None,
         hebbian_router: Any = None,
         expertise_directory: Any = None,
+        semantic_layer: Any = None,  # AD-686 (Tier 5)
     ) -> None:
         self._episodic_memory = episodic_memory
         self._records_store = records_store
@@ -66,6 +67,16 @@ class OracleService:
         self._trust_network = trust_network
         self._hebbian_router = hebbian_router
         self._expertise_directory = expertise_directory
+        self._semantic_layer = semantic_layer  # AD-686 (Tier 5)
+
+    def attach_semantic_layer(self, semantic_layer: Any) -> None:
+        """AD-686: Late-bind the SemanticKnowledgeLayer.
+
+        Used by the runtime because `SemanticKnowledgeLayer` is constructed
+        in the structural-services phase (after the cognitive phase that
+        builds `OracleService`). Idempotent — last write wins.
+        """
+        self._semantic_layer = semantic_layer
 
     async def query(
         self,
@@ -91,7 +102,7 @@ class OracleService:
         if not query_text:
             return []
 
-        active_tiers = tiers or ["episodic", "records", "operational", "archive"]
+        active_tiers = tiers or ["episodic", "records", "operational", "archive", "semantic"]
         all_results: list[OracleResult] = []
 
         # Tier 1: Episodic Memory
@@ -146,6 +157,14 @@ class OracleService:
                 all_results.extend(tier_results)
             except Exception:
                 logger.debug("Oracle: Tier 4 (archive) query failed", exc_info=True)
+
+        # Tier 5: Semantic Knowledge Layer (AD-686) — non-episode ChromaDB collections
+        if "semantic" in active_tiers:
+            try:
+                tier_results = await self._query_semantic(query_text, k=k_per_tier)
+                all_results.extend(tier_results)
+            except Exception:
+                logger.debug("Oracle: Tier 5 (semantic) query failed", exc_info=True)
 
         # Merge & sort by score descending
         all_results.sort(key=lambda r: r.score, reverse=True)
@@ -318,5 +337,41 @@ class OracleService:
                     "archived_at": entry.archived_at,
                 },
                 provenance=f"Archive/{entry.category} (timeline {entry.timeline_id[:8]}...)",
+            ))
+        return results
+
+    async def _query_semantic(
+        self,
+        query_text: str,
+        *,
+        k: int,
+        types: list[str] | None = None,
+    ) -> list[OracleResult]:
+        """AD-686: Query SemanticKnowledgeLayer (Tier 5).
+
+        Delegates to the existing async `SemanticKnowledgeLayer.search()` and
+        normalises each result dict into an `OracleResult` so the merged feed
+        is uniform with the other tiers. When the layer is not attached
+        (test/legacy bootstrap), returns `[]` and logs at debug.
+        """
+        layer = self._semantic_layer
+        if layer is None:
+            logger.debug("Oracle: Tier 5 (semantic) — no layer attached; returning []")
+            return []
+
+        raw = await layer.search(query_text, types=types, limit=k)
+        results: list[OracleResult] = []
+        for r in raw:
+            doc_type = r.get("type", "semantic")
+            results.append(OracleResult(
+                source_tier="semantic",
+                content=r.get("document", "") or "",
+                score=float(r.get("score", 0.0) or 0.0),
+                metadata={
+                    "id": r.get("id", ""),
+                    "type": doc_type,
+                    **(r.get("metadata") or {}),
+                },
+                provenance=f"[semantic: {doc_type}]",
             ))
         return results

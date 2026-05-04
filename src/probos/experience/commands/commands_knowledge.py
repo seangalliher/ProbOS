@@ -79,7 +79,24 @@ async def cmd_search(runtime: ProbOSRuntime, console: Console, args: str) -> Non
         console.print("[yellow]Usage: /search [--type agents,skills] <query>[/yellow]")
         return
 
-    results = await layer.search(query, types=types, limit=10)
+    # AD-686: Query via Oracle Tier 5 when available; fall back to direct
+    # layer for legacy paths. Stats panel still reads `layer.stats()` —
+    # stats migration is deferred (no Oracle equivalent in v1).
+    oracle = getattr(runtime, "oracle", None) or getattr(runtime, "_oracle_service", None)
+    if oracle is not None:
+        oracle_results = await oracle.query(query, k_per_tier=10, tiers=["semantic"])
+        results = [
+            {
+                "type": r.metadata.get("type", "semantic"),
+                "id": r.metadata.get("id", ""),
+                "document": r.content,
+                "score": r.score,
+                "metadata": {k_: v for k_, v in r.metadata.items() if k_ not in ("id", "type")},
+            }
+            for r in oracle_results
+        ]
+    else:
+        results = await layer.search(query, types=types, limit=10)
     stats = layer.stats()
     console.print(panels.render_search_panel(query, results, stats))
 

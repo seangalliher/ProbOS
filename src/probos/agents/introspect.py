@@ -758,14 +758,30 @@ class IntrospectionAgent(BaseAgent):
 
         results: list = []
 
-        # Search semantic layer (episodes, agents, skills, workflows)
+        # AD-686: Search via Oracle Tier 5 (semantic). Falls back to direct layer
+        # if Oracle is not present (test/legacy paths).
+        oracle = getattr(rt, "oracle", None) or getattr(rt, "_oracle_service", None)
         layer = getattr(rt, "_semantic_layer", None)
-        if layer is not None:
-            # Parse optional types filter
-            types_str = params.get("types", "")
-            types: list[str] | None = None
-            if types_str:
-                types = [t.strip() for t in types_str.split(",") if t.strip()]
+        types_str = params.get("types", "")
+        types: list[str] | None = None
+        if types_str:
+            types = [t.strip() for t in types_str.split(",") if t.strip()]
+        if oracle is not None:
+            oracle_results = await oracle.query(
+                query, k_per_tier=10, tiers=["semantic"],
+            )
+            # Project OracleResult → legacy dict shape consumers expect.
+            results = [
+                {
+                    "type": r.metadata.get("type", "semantic"),
+                    "id": r.metadata.get("id", ""),
+                    "document": r.content,
+                    "score": r.score,
+                    "metadata": {k_: v for k_, v in r.metadata.items() if k_ not in ("id", "type")},
+                }
+                for r in oracle_results
+            ]
+        elif layer is not None:
             results = await layer.search(query, types=types, limit=10)
 
         # Also search project docs via CodebaseIndex (AD-301)

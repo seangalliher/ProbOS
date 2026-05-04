@@ -141,10 +141,26 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
 
         elif action == "search":
             query = obs.get("params", {}).get("query", "")
-            # Try semantic search first
-            if hasattr(self._runtime, "_semantic_layer") and self._runtime._semantic_layer:
-                results = self._runtime._semantic_layer.search(query, limit=5)
-                if results:
+            # AD-686: Try semantic search via Oracle Tier 5. (Note: the prior
+            # call site used `_semantic_layer.search(...)` synchronously on an
+            # async method; routing through Oracle awaits properly.)
+            oracle = getattr(self._runtime, "oracle", None) or getattr(
+                self._runtime, "_oracle_service", None,
+            )
+            if oracle is not None:
+                oracle_results = await oracle.query(
+                    query, k_per_tier=5, tiers=["semantic"],
+                )
+                if oracle_results:
+                    results = [
+                        {
+                            "type": r.metadata.get("type", "semantic"),
+                            "id": r.metadata.get("id", ""),
+                            "document": r.content,
+                            "score": r.score,
+                        }
+                        for r in oracle_results
+                    ]
                     obs["fetched_content"] = f"Search results for '{query}':\n{json.dumps(results, default=str)}"
                     return obs
             # Fall back to listing

@@ -1321,6 +1321,7 @@ class ProbOSRuntime:
         self._social_verification = cog.social_verification  # AD-567f
         self._orientation_service = cog.orientation_service  # AD-567g
         self._oracle_service = cog.oracle_service  # AD-462e
+        self.oracle = cog.oracle_service  # AD-686 (public alias; same instance)
         self._archive_store = cog.archive_store  # AD-524
         self._consultation_protocol = cog.consultation_protocol  # AD-594
         self._expertise_directory = cog.expertise_directory  # AD-600
@@ -1523,6 +1524,16 @@ class ProbOSRuntime:
             on_build_complete_fn=self._on_build_complete,
         )
         self._semantic_layer = semantic_layer
+        # AD-686: Stitch Tier 5 onto Oracle now that the semantic layer exists.
+        if self._oracle_service is not None and semantic_layer is not None:
+            try:
+                self._oracle_service.attach_semantic_layer(semantic_layer)
+            except Exception:
+                logger.warning(
+                    "AD-686: failed to attach semantic layer to OracleService; "
+                    "Tier 5 semantic queries will return [] until restart",
+                    exc_info=True,
+                )
         self.sif = struct.sif
         self.initiative = struct.initiative
         self.build_queue = struct.build_queue

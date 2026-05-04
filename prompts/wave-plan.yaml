@@ -393,7 +393,7 @@ waves:
       - "prompts/ad-686-oracle-absorbs-semantic-v1.md"
     builder_required: true
     issues_to_close: [380]
-    status: pending
+    status: done
 
   - id: "37"
     title: "AD-687 v1 Knowledge Edge Store"
