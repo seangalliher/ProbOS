@@ -183,3 +183,15 @@ waves:
     builder_required: true
     issues_to_close: [104]
     status: done
+
+  - id: "20"
+    title: "Combo D — Gap Pipeline Extensions (AD-539c + AD-539d)"
+    kind: main
+    depends_on: ["19"]
+    dispatch_prompt: "prompts/WAVE-20-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/combo-D-gap-pipeline-extensions.md"
+    builder_required: true
+    issues_to_close: [106, 107]
+    status: pending
