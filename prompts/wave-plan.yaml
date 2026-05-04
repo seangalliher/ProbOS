@@ -369,7 +369,7 @@ waves:
       - "prompts/ad-647-process-oriented-chains-v1.md"
     builder_required: true
     issues_to_close: [291]
-    status: pending
+    status: done
 
   - id: "35"
     title: "AD-635 v1 Medical Diagnostic Data Access"
