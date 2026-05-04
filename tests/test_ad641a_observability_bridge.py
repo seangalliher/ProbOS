@@ -118,7 +118,8 @@ async def test_collect_attention_returns_top_5_by_score_desc():
 
 
 @pytest.mark.asyncio
-async def test_publish_once_calls_ward_room_create_post():
+async def test_publish_once_does_not_post_to_ward_room():
+    """BF-258: Ward Room posting disabled — telemetry is not discourse."""
     ward_room = AsyncMock(spec=WardRoomService)
     runtime = _make_runtime()
     bridge = ObservabilityBridge(
@@ -126,12 +127,7 @@ async def test_publish_once_calls_ward_room_create_post():
         system_channel="sys_obs_test",
     )
     await bridge._publish_once()
-    ward_room.create_post.assert_awaited_once()
-    call_kwargs = ward_room.create_post.await_args.kwargs
-    assert call_kwargs["thread_id"] == "sys_obs_test"
-    assert call_kwargs["author_id"] == "system"
-    assert call_kwargs["author_callsign"] == "System"
-    assert "[Brain Observability Snapshot]" in call_kwargs["body"]
+    ward_room.create_post.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -157,9 +153,9 @@ async def test_publish_once_emits_observability_snapshot_published():
 
 
 @pytest.mark.asyncio
-async def test_publish_once_emits_failed_on_exception():
+async def test_publish_once_no_failure_event_without_ward_room_posting():
+    """BF-258: With Ward Room posting removed, no BRIDGE_FAILED events emitted."""
     ward_room = AsyncMock(spec=WardRoomService)
-    ward_room.create_post.side_effect = RuntimeError("post failed")
     runtime = _make_runtime()
     emitted: list[tuple[EventType, dict]] = []
     bridge = ObservabilityBridge(
@@ -167,9 +163,8 @@ async def test_publish_once_emits_failed_on_exception():
         ward_room=ward_room,
         emit_event=lambda et, payload: emitted.append((et, payload)),
     )
-    # Direct call avoids the asyncio-flake landmine in exercising the loop.
     await bridge._publish_once()
-    assert any(et == EventType.OBSERVABILITY_BRIDGE_FAILED for et, _ in emitted)
+    assert not any(et == EventType.OBSERVABILITY_BRIDGE_FAILED for et, _ in emitted)
 
 
 @pytest.mark.asyncio

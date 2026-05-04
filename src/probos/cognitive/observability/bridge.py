@@ -118,30 +118,10 @@ class ObservabilityBridge:
 
     async def _publish_once(self) -> None:
         snap = await self.take_snapshot()
-        if self._ward_room is None:
-            return
-        body = self._format_post(snap)
-        try:
-            await self._ward_room.create_post(
-                thread_id=self._channel,
-                author_id="system",
-                author_callsign="System",
-                body=body,
-            )
-        except Exception as exc:
-            logger.warning(
-                "AD-641a: ward_room.create_post failed; will retry next cycle: %s",
-                exc,
-            )
-            if self._emit_event is not None:
-                try:
-                    self._emit_event(
-                        EventType.OBSERVABILITY_BRIDGE_FAILED,
-                        {"reason": str(exc)},
-                    )
-                except Exception:
-                    pass
-            return
+        # BF-258: Ward Room posting disabled. AD-641a design review determined
+        # continuous telemetry posting is architecturally wrong (telemetry is not
+        # discourse). Crew queries system health via Oracle (AD-695).
+        # take_snapshot() retained for future Oracle "health" tier integration.
         if self._emit_event is not None:
             self._emit_event(
                 EventType.OBSERVABILITY_SNAPSHOT_PUBLISHED,
