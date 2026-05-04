@@ -1834,6 +1834,19 @@ class AutonomyBoundariesConfig(BaseModel):
     # register_pattern is runtime-only. Active blocking is AD-511b.
 
 
+class ScopedCognitionConfig(BaseModel):
+    """AD-508 v1: Duty Scope helper (read-only observational)."""
+
+    enabled: bool = True
+
+
+class WorkspaceOntologyConfig(BaseModel):
+    """AD-478 v1: Workspace Ontology read-only register (frequency-bounded)."""
+
+    enabled: bool = True
+    max_terms: int = 1000
+
+
 class GapPipelineExtensionsConfig(BaseModel):
     """AD-539c + AD-539d v1 config (observational gap pipeline extensions)."""
 
@@ -1956,6 +1969,8 @@ class SystemConfig(BaseModel):
     creative_expression: CreativeExpressionConfig = Field(default_factory=CreativeExpressionConfig)  # AD-525
     classification_gate: ClassificationGateConfig = Field(default_factory=ClassificationGateConfig)  # AD-530
     autonomy_boundaries: AutonomyBoundariesConfig = Field(default_factory=AutonomyBoundariesConfig)  # AD-511
+    scoped_cognition: ScopedCognitionConfig = Field(default_factory=ScopedCognitionConfig)  # AD-508
+    workspace_ontology: WorkspaceOntologyConfig = Field(default_factory=WorkspaceOntologyConfig)  # AD-478
     gap_pipeline_extensions: GapPipelineExtensionsConfig = Field(default_factory=GapPipelineExtensionsConfig)  # AD-539c/d
     spreading_activation: SpreadingActivationConfig = SpreadingActivationConfig()  # AD-604
     thought_store: ThoughtStoreConfig = ThoughtStoreConfig()  # AD-606

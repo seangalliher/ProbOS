@@ -205,6 +205,8 @@ class EventType(str, Enum):
     EGRESS_BLOCKED = "egress_blocked"  # AD-456
     CLASSIFICATION_DISCLOSURE_BLOCKED = "classification_disclosure_blocked"  # AD-530
     BOUNDARY_VIOLATION_DETECTED = "boundary_violation_detected"  # AD-511
+    DUTY_SCOPE_QUERIED = "duty_scope_queried"  # AD-508
+    WORKSPACE_TERM_REGISTERED = "workspace_term_registered"  # AD-478
     AUDIT_RECORDED = "audit_recorded"  # AD-456
     VERIFICATION_PASSED = "verification_passed"  # AD-528
     VERIFICATION_FAILED = "verification_failed"  # AD-528

@@ -10,7 +10,34 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
-### AD-511 v1: Agent Autonomy Boundaries — Inviolable Boundary Registry + Observational Detector (2026-05-04)
+### AD-508 v1 + AD-478 v1 (Combo E): Scoped Cognition (Duty Scope) + Meta-Learning (Workspace Ontology) — Cognitive Helpers (2026-05-04)
+
+**Problem:** Two 4-capability ADs with deep deps (AD-507 / AD-273 etc.) but each has a single bounded v1 capability with a clean shipping surface. AD-508 (roadmap.md:6388) calls for a four-tier scope model (Duty/Role/Ship/Personal), scope injection into proactive context, drift detection, extracurricular framework, and Earned Agency scaling. AD-478 (roadmap.md:5991) calls for Workspace Ontology auto-discovery, dream-cycle abstractions, persistent goals, and a cognitive circuit breaker. Shipping all capabilities at once would couple data-surface exposure to proactive-loop integration (AD-508b), Standing-Orders ingestion (AD-508c), Dreaming consolidation (AD-478b), and KnowledgeStore persistence (AD-478b).
+
+**Decision:** Combo E ships **1 of 4 capabilities per child** as observational read-only helpers — Duty Scope data surface + Workspace Ontology term register only. Two children in one commit per Wave 8 Combo A + Wave 13 Combo C precedent (no inter-child file conflicts; both observational; per-prompt overhead × 2 would multiply Builder commit cost ~2× vs combo).
+
+- **`DutyScopeProvider`** (`src/probos/cognitive/scoped_cognition.py`): async `snapshot(agent_id) -> DutyScopeSnapshot` reads `runtime.work_item_store.list_work_items(status="open", assigned_to=agent_id, limit=5)` (verified live signature at workforce.py:1066) and returns frozen `DutyScopeSnapshot(agent_id, open_work_item_count, work_item_titles, captured_at)` with up to 5 titles projected from `WorkItem.title`. Empty snapshot when `agent_id` is falsy or `work_item_store` is missing; `list_work_items` failures logged at debug and produce empty snapshot (log-and-degrade). Constructor `__init__(runtime, *, emit_event=None)` mirrors AD-530 `ClassificationGate` sibling pattern (pass-1 Rec1 folded). Emits `DUTY_SCOPE_QUERIED` per snapshot with `{agent_id, open_count}` payload.
+- **`WorkspaceOntologyRegistry`** (`src/probos/cognitive/workspace_ontology.py`): in-memory frequency-bounded term registry. Public API: `add_term(term, frequency=1)`, `top_terms(k=20)`, `get_frequency(term)`, `term_count()`. Eviction policy: when `len(_terms)` exceeds `max_terms` (default 1000), the lowest-frequency term is dropped (insertion-order tie-break per dict-preserves-insertion + stable `min`). Empty `term` is a no-op. `top_terms` returns `()` for `k <= 0` (pass-1 Nit3 folded — explicit boundary test). Emits `WORKSPACE_TERM_REGISTERED` only on first insertion of a term (not on subsequent increments) to bound event volume.
+- **Privacy invariant** (directly tested at `test_add_term_emits_event_only_on_new_term_with_term_length`): `WORKSPACE_TERM_REGISTERED` payload includes `term_length` (NOT the term itself), matching AD-530/AD-511 pattern. Test asserts no `term` key appears anywhere in the payload.
+- 2 new EventTypes (`DUTY_SCOPE_QUERIED`, `WORKSPACE_TERM_REGISTERED`; verified collision-free against events.py post-Wave-22).
+- 2 new Pydantic configs: `ScopedCognitionConfig(enabled=True)` and `WorkspaceOntologyConfig(enabled=True, max_terms=1000)` wired onto `SystemConfig.scoped_cognition` and `SystemConfig.workspace_ontology` via `Field(default_factory=...)`.
+- Sync `_wire_duty_scope_provider(*, runtime, config) -> bool` and `_wire_workspace_ontology(*, runtime, config) -> bool` at startup/finalize.py mirror AD-525/AD-530/AD-511 sync-wiring shape (no awaits in body); invoked from `finalize_startup` immediately after `_wire_autonomy_boundaries`.
+- Public attributes (Wave 5 convention #1; no underscore): `runtime.duty_scope_provider`, `runtime.workspace_ontology`. `emit_event` is a public field on both helpers (mirrors AD-456/AD-530/AD-511 sibling pattern); `logger.warning` on emit failure (log-and-degrade tier).
+
+**Why:** Both helpers are read-only observational data surfaces with no consumers in v1. Shipping the surfaces alone unblocks downstream ADs (AD-508b proactive injection; AD-478b dream-cycle auto-discovery) to ship later as separable commits each gated by their own forcing function. Captain (or future cognitive consumer) decides when the surfaces are "real enough" to wire into the proactive loop.
+
+**Deferred:**
+- **AD-508b** (Role/Ship/Personal scope models + scope injection into proactive context) — forcing function: AD-508 v1 ships and Captain reviews captured snapshots.
+- **AD-508c** (drift detection — high cognitive drift triggers gentle redirect; depends on AD-502 temporal awareness).
+- **AD-508d** (extracurricular exploration framework — time-bounded discovery beyond duty; depends on AD-434 Ship's Records).
+- **AD-508e** (Earned Agency scaling — higher-rank agents get broader scope permission; depends on AD-357 Earned Agency).
+- **AD-478b** (auto-discovery from dream cycles — DreamingEngine populates terms during consolidation; forcing function: AD-478 v1 ships and Captain decides to switch from manual to auto-discovery).
+- **AD-478c** (persistent goals with progress tracking + conflict arbitration; deferred from Phase 16).
+- **AD-478d** (abstract pattern recognition + cognitive circuit breaker — correlation IDs, novelty gate, metacognitive loop detection, rumination detection).
+
+**Tests:** 19 new focused tests pass (10 `tests/test_ad508_duty_scope.py`, 9 `tests/test_ad478_workspace_ontology.py`). Full gate: 10859 passed, 15 skipped + 1 pre-existing flake (`test_auto_commit_after_debounce` — git debounce timing flake unrelated to this AD). Test delta vs Wave 22 baseline (10840 passed): +19 (exact match — 10 + 9). No hard-stops triggered: no proactive injection, no drift detection, no auto-discovery, no persistent goals, no privacy regression (term contents excluded from event payload — directly tested), no scope creep on either child. Closes GH issues #90 (AD-508) + #72 (AD-478).
+
+
 
 **Problem:** AD-511 (roadmap.md:6388) calls for inviolable agent boundaries — actions an agent will NEVER take regardless of who asks. Five capabilities total: 5 federation-tier boundaries codified, protective disengagement protocol, Holodeck boundary-training scenarios, violation pattern detection, and dream-driven boundary evolution. Shipping all five at once would couple boundary codification to agent-side cognitive integration (disengagement), Holodeck (AD-486), Counselor consumption (AD-511d Captain alert path), and self-mod boundary evolution — and would smuggle in active blocking behavior alongside the registry.
 

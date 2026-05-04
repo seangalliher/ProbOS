@@ -143,6 +143,40 @@ def _wire_autonomy_boundaries(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_duty_scope_provider(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-508 v1: Wire DutyScopeProvider observational helper."""
+    cfg = getattr(config, "scoped_cognition", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.cognitive.scoped_cognition import DutyScopeProvider
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    runtime.duty_scope_provider = DutyScopeProvider(runtime, emit_event=emit_fn)  # public attribute (Wave 5 convention #1)
+    logger.info("AD-508: DutyScopeProvider v1 initialized (observational)")
+    return True
+
+
+def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
+    cfg = getattr(config, "workspace_ontology", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.cognitive.workspace_ontology import WorkspaceOntologyRegistry
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    runtime.workspace_ontology = WorkspaceOntologyRegistry(  # public attribute (Wave 5 convention #1)
+        max_terms=cfg.max_terms,
+        emit_event=emit_fn,
+    )
+    logger.info(
+        "AD-478: WorkspaceOntologyRegistry v1 initialized (max_terms=%d)",
+        cfg.max_terms,
+    )
+    return True
+
+
 def _wire_gap_remediation_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-539c v1: Wire GapRemediationTracker (observational only)."""
     from probos.config import GapPipelineExtensionsConfig
@@ -388,6 +422,12 @@ async def finalize_startup(
 
     if _wire_autonomy_boundaries(runtime=runtime, config=config):
         logger.info("AD-511: Autonomy Boundaries v1 wired during finalization")
+
+    if _wire_duty_scope_provider(runtime=runtime, config=config):
+        logger.info("AD-508: DutyScopeProvider v1 wired during finalization")
+
+    if _wire_workspace_ontology(runtime=runtime, config=config):
+        logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")
 
     if _wire_gap_remediation_tracker(runtime=runtime, config=config):
         logger.info("AD-539c: GapRemediationTracker v1 wired during finalization")
