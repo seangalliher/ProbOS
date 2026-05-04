@@ -1610,6 +1610,16 @@ class ProbOSRuntime:
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687
+        # AD-688: Stitch Tier 6 onto Oracle now that the knowledge graph exists.
+        if self._oracle_service is not None and self.knowledge_edges is not None:
+            try:
+                self._oracle_service.attach_knowledge_graph(self.knowledge_edges)
+            except Exception:
+                logger.warning(
+                    "AD-688: failed to attach knowledge graph to OracleService; "
+                    "Tier 6 graph queries will return [] until restart",
+                    exc_info=True,
+                )
         self.skill_registry = comm.skill_registry
         self.skill_service = comm.skill_service
         # AD-566f: Qualification → Skill Bridge

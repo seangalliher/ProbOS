@@ -30,6 +30,76 @@ class OracleResult:
     provenance: str  # Human-readable provenance tag
 
 
+# AD-688: Tier 6 (graph) tunables — inline caps, NOT config (escalate to
+# config only if v1 adoption signals justify it).
+_GRAPH_DIRECT_LIMIT = 10        # find_edges(limit=…) per direction per token
+_GRAPH_TRAVERSE_LIMIT = 5       # 2-hop edges per direct match
+_GRAPH_EXPANSION_PER_PARENT = 5 # 1-hop neighbors per top-K parent
+_GRAPH_HOP_PROXIMITY_DIRECT = 1.0
+_GRAPH_HOP_PROXIMITY_TWO_HOP = 0.6
+_GRAPH_EXPANSION_DISCOUNT = 0.7  # parent_score × this × edge.weight × edge.confidence
+_GRAPH_MIN_TOKEN_LEN = 3
+
+# Small inline stopword set — keeps _extract_entity_tokens self-contained
+# (no nltk / no external corpus). Lowercase only.
+_GRAPH_STOPWORDS = frozenset({
+    "the", "and", "for", "are", "but", "not", "you", "all", "can", "had",
+    "her", "was", "one", "our", "out", "day", "get", "has", "him", "his",
+    "how", "man", "new", "now", "old", "see", "two", "way", "who", "boy",
+    "did", "its", "let", "put", "say", "she", "too", "use", "what", "with",
+    "from", "this", "that", "they", "have", "been", "were", "their", "would",
+    "there", "could", "about", "into",
+})
+
+
+def _extract_entity_tokens(text: str) -> list[str]:
+    """AD-688: Heuristic token extractor for v1 graph entity matching.
+
+    Strategy: lowercase + split-on-whitespace, drop tokens shorter than
+    ``_GRAPH_MIN_TOKEN_LEN``, drop stopwords, dedupe preserving order.
+    Returns at most 16 tokens (v1 ceiling — keeps per-query graph load
+    bounded). Strips trailing punctuation ``.,!?;:`` from each token before
+    filtering.
+
+    NOT named-entity recognition. AD-691 will add NL-to-graph with
+    embedding-based fuzzy matching; v1 deliberately stays simple so the
+    Oracle integration can be exercised end-to-end with predictable inputs.
+    """
+    if not text:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in text.lower().split():
+        token = raw.strip(".,!?;:'\"()[]{}")
+        if len(token) < _GRAPH_MIN_TOKEN_LEN:
+            continue
+        if token in _GRAPH_STOPWORDS:
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+        if len(out) >= 16:
+            break
+    return out
+
+
+def _record_graph_hit(
+    scored: dict[str, tuple[float, Any, float, str, str]],
+    edge: Any,
+    hop_proximity: float,
+    source_token: str,
+    source_dir: str,
+) -> None:
+    """AD-688: Insert-or-replace a graph hit by edge.id, keeping the
+    highest-scoring instance. Score = weight × confidence × hop_proximity.
+    """
+    score = float(edge.weight) * float(edge.confidence) * hop_proximity
+    existing = scored.get(edge.id)
+    if existing is None or score > existing[0]:
+        scored[edge.id] = (score, edge, hop_proximity, source_token, source_dir)
+
+
 def _format_age(timestamp: float) -> str:
     """Format a timestamp as a human-readable age string."""
     delta = time.time() - timestamp
@@ -59,6 +129,7 @@ class OracleService:
         hebbian_router: Any = None,
         expertise_directory: Any = None,
         semantic_layer: Any = None,  # AD-686 (Tier 5)
+        knowledge_graph: Any = None,  # AD-688 (Tier 6)
     ) -> None:
         self._episodic_memory = episodic_memory
         self._records_store = records_store
@@ -68,6 +139,7 @@ class OracleService:
         self._hebbian_router = hebbian_router
         self._expertise_directory = expertise_directory
         self._semantic_layer = semantic_layer  # AD-686 (Tier 5)
+        self._knowledge_graph = knowledge_graph  # AD-688 (Tier 6)
 
     def attach_semantic_layer(self, semantic_layer: Any) -> None:
         """AD-686: Late-bind the SemanticKnowledgeLayer.
@@ -77,6 +149,16 @@ class OracleService:
         builds `OracleService`). Idempotent — last write wins.
         """
         self._semantic_layer = semantic_layer
+
+    def attach_knowledge_graph(self, knowledge_graph: Any) -> None:
+        """AD-688: Late-bind the KnowledgeEdgeStorage.
+
+        Used by the runtime because `SQLiteKnowledgeEdgeStore` is constructed
+        in the communication phase (after the cognitive phase that builds
+        `OracleService`). Idempotent — last write wins. Mirrors
+        `attach_semantic_layer` shape exactly.
+        """
+        self._knowledge_graph = knowledge_graph
 
     async def query(
         self,
@@ -102,7 +184,9 @@ class OracleService:
         if not query_text:
             return []
 
-        active_tiers = tiers or ["episodic", "records", "operational", "archive", "semantic"]
+        active_tiers = tiers or [
+            "episodic", "records", "operational", "archive", "semantic", "graph",
+        ]
         all_results: list[OracleResult] = []
 
         # Tier 1: Episodic Memory
@@ -165,6 +249,23 @@ class OracleService:
                 all_results.extend(tier_results)
             except Exception:
                 logger.debug("Oracle: Tier 5 (semantic) query failed", exc_info=True)
+
+        # Tier 6: Knowledge Graph (AD-688) — typed-triple traversal
+        if "graph" in active_tiers:
+            try:
+                tier_results = await self._query_graph(query_text, k=k_per_tier)
+                all_results.extend(tier_results)
+            except Exception:
+                logger.debug("Oracle: Tier 6 (graph) query failed", exc_info=True)
+
+        # AD-688: Post-merge graph expansion — 1-hop enrichment of top-K
+        # results from all tiers. Runs BEFORE the final sort/truncate so
+        # expansion results compete on score in the merged ranking.
+        try:
+            expansion_results = await self._expand_via_graph(all_results, top_k=5)
+            all_results.extend(expansion_results)
+        except Exception:
+            logger.debug("Oracle: graph expansion failed", exc_info=True)
 
         # Merge & sort by score descending
         all_results.sort(key=lambda r: r.score, reverse=True)
@@ -375,3 +476,198 @@ class OracleService:
                 provenance=f"[semantic: {doc_type}]",
             ))
         return results
+
+    async def _query_graph(
+        self,
+        query_text: str,
+        *,
+        k: int,
+    ) -> list[OracleResult]:
+        """AD-688: Query KnowledgeEdgeStorage (Tier 6).
+
+        Extracts candidate entity tokens from the query (v1: token-substring
+        match, see ``_extract_entity_tokens``), looks up direct edges via
+        ``find_edges(source_id=token)`` and ``find_edges(target_id=token)``
+        (1-hop, hop_proximity=1.0), and traverses one extra hop from each
+        direct match (2-hop, hop_proximity=0.6). Edges are deduped by
+        ``edge.id`` keeping the highest-scoring instance.
+
+        Score = edge.weight × edge.confidence × hop_proximity.
+
+        When the graph is not attached (test/legacy bootstrap), returns
+        ``[]`` and logs at debug — mirrors the AD-686 Tier-5 unattached
+        path.
+        """
+        graph = self._knowledge_graph
+        if graph is None:
+            logger.debug("Oracle: Tier 6 (graph) — no graph attached; returning []")
+            return []
+
+        tokens = _extract_entity_tokens(query_text)
+        if not tokens:
+            return []
+
+        # edge.id -> (best_score, edge, hop_proximity, source_token, source_dir)
+        scored: dict[str, tuple[float, Any, float, str, str]] = {}
+
+        for token in tokens:
+            # Direct: source_id matches
+            try:
+                src_hits = await graph.find_edges(
+                    source_id=token, limit=_GRAPH_DIRECT_LIMIT,
+                )
+            except Exception:
+                logger.debug("Oracle Tier 6: find_edges(source_id=%r) failed", token, exc_info=True)
+                src_hits = []
+            for edge in src_hits:
+                _record_graph_hit(scored, edge, _GRAPH_HOP_PROXIMITY_DIRECT, token, "source")
+
+            # Direct: target_id matches
+            try:
+                tgt_hits = await graph.find_edges(
+                    target_id=token, limit=_GRAPH_DIRECT_LIMIT,
+                )
+            except Exception:
+                logger.debug("Oracle Tier 6: find_edges(target_id=%r) failed", token, exc_info=True)
+                tgt_hits = []
+            for edge in tgt_hits:
+                _record_graph_hit(scored, edge, _GRAPH_HOP_PROXIMITY_DIRECT, token, "target")
+
+            # 2-hop: traverse one extra step from each direct match's target
+            for edge in (*src_hits, *tgt_hits):
+                try:
+                    paths = await graph.traverse(
+                        source_type=edge.target_type,
+                        source_id=edge.target_id,
+                        max_hops=1,
+                    )
+                except Exception:
+                    logger.debug(
+                        "Oracle Tier 6: traverse(source_id=%r) failed",
+                        edge.target_id, exc_info=True,
+                    )
+                    continue
+                for path in paths[:_GRAPH_TRAVERSE_LIMIT]:
+                    for hop_edge in path:
+                        if hop_edge.id == edge.id:
+                            continue  # don't double-count the seed edge
+                        _record_graph_hit(
+                            scored, hop_edge,
+                            _GRAPH_HOP_PROXIMITY_TWO_HOP, token, "traverse",
+                        )
+
+        if not scored:
+            return []
+
+        results: list[OracleResult] = []
+        for edge_id, (score, edge, hop_prox, source_token, source_dir) in scored.items():
+            content = (
+                f"{edge.source_type.value}:{edge.source_id} "
+                f"--[{edge.relation.value}]--> "
+                f"{edge.target_type.value}:{edge.target_id}"
+            )
+            results.append(OracleResult(
+                source_tier="graph",
+                content=content,
+                score=score,
+                metadata={
+                    "edge_id": edge_id,
+                    "relation": edge.relation.value,
+                    "source_type": edge.source_type.value,
+                    "source_id": edge.source_id,
+                    "target_type": edge.target_type.value,
+                    "target_id": edge.target_id,
+                    "weight": edge.weight,
+                    "confidence": edge.confidence,
+                    "hop_proximity": hop_prox,
+                    "matched_token": source_token,
+                    "matched_direction": source_dir,
+                },
+                provenance="[knowledge graph]",
+            ))
+
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:k]
+
+    async def _expand_via_graph(
+        self,
+        merged_results: list[OracleResult],
+        *,
+        top_k: int = 5,
+    ) -> list[OracleResult]:
+        """AD-688: 1-hop graph enrichment on the top-K merged tier results.
+
+        For each parent in the top-K (by score), extracts candidate tokens
+        from ``parent.content`` via ``_extract_entity_tokens``, fetches up to
+        ``_GRAPH_EXPANSION_PER_PARENT`` neighbor edges via
+        ``find_edges(source_id=token)``, and emits an OracleResult per
+        neighbor. Skips parents whose ``source_tier == "graph"``.
+        """
+        graph = self._knowledge_graph
+        if graph is None or top_k <= 0 or not merged_results:
+            return []
+
+        ordered = sorted(merged_results, key=lambda r: r.score, reverse=True)
+        parents = [p for p in ordered if p.source_tier != "graph"][:top_k]
+        if not parents:
+            return []
+
+        seen_edges: set[str] = set()
+        expansion: list[OracleResult] = []
+
+        for parent in parents:
+            tokens = _extract_entity_tokens(parent.content)
+            if not tokens:
+                continue
+            per_parent_emitted = 0
+            for token in tokens:
+                if per_parent_emitted >= _GRAPH_EXPANSION_PER_PARENT:
+                    break
+                try:
+                    edges = await graph.find_edges(
+                        source_id=token, limit=_GRAPH_EXPANSION_PER_PARENT,
+                    )
+                except Exception:
+                    logger.debug(
+                        "Oracle expansion: find_edges(source_id=%r) failed",
+                        token, exc_info=True,
+                    )
+                    continue
+                for edge in edges:
+                    if per_parent_emitted >= _GRAPH_EXPANSION_PER_PARENT:
+                        break
+                    if edge.id in seen_edges:
+                        continue
+                    seen_edges.add(edge.id)
+                    score = (
+                        parent.score
+                        * _GRAPH_EXPANSION_DISCOUNT
+                        * edge.weight
+                        * edge.confidence
+                    )
+                    content = (
+                        f"{edge.source_type.value}:{edge.source_id} "
+                        f"--[{edge.relation.value}]--> "
+                        f"{edge.target_type.value}:{edge.target_id}"
+                    )
+                    expansion.append(OracleResult(
+                        source_tier="graph",
+                        content=content,
+                        score=score,
+                        metadata={
+                            "edge_id": edge.id,
+                            "relation": edge.relation.value,
+                            "source_type": edge.source_type.value,
+                            "source_id": edge.source_id,
+                            "target_type": edge.target_type.value,
+                            "target_id": edge.target_id,
+                            "weight": edge.weight,
+                            "confidence": edge.confidence,
+                            "expansion_source": parent.provenance,
+                            "expansion_parent_tier": parent.source_tier,
+                            "matched_token": token,
+                        },
+                        provenance=f"[graph expansion: {parent.provenance}]",
+                    ))
+                    per_parent_emitted += 1
+        return expansion
