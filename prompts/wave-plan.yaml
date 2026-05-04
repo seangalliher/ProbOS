@@ -231,3 +231,15 @@ waves:
     builder_required: true
     issues_to_close: [90, 72]
     status: done
+
+  - id: "24"
+    title: "AD-507 v1 Crew Development Framework (Curriculum Registry)"
+    kind: main
+    depends_on: ["23"]
+    dispatch_prompt: "prompts/WAVE-24-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-507-curriculum-v1.md"
+    builder_required: true
+    issues_to_close: [89]
+    status: pending
