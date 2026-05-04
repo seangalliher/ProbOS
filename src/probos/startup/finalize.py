@@ -256,6 +256,30 @@ def _wire_causal_reasoner(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_diagnostic_context(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-661 v1: Wire DiagnosticContextService pull-based assembly service."""
+    cfg = getattr(config, "diagnostic_context", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.cognitive.diagnostic_context import DiagnosticContextService
+
+    runtime.diagnostic_context_service = DiagnosticContextService(
+        runtime,
+        default_budget_tokens=cfg.default_budget_tokens,
+        chain_trace_ratio=cfg.chain_trace_ratio,
+        procedure_ratio=cfg.procedure_ratio,
+        episode_ratio=cfg.episode_ratio,
+        chars_per_token=cfg.chars_per_token,
+    )
+    logger.info(
+        "AD-661: DiagnosticContextService v1 initialized "
+        "(pull-based, keyword-only, budget=%d)",
+        cfg.default_budget_tokens,
+    )
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -539,6 +563,9 @@ async def finalize_startup(
 
     if _wire_causal_reasoner(runtime=runtime, config=config):
         logger.info("AD-660: CausalReasoner v1 wired during finalization")
+
+    if _wire_diagnostic_context(runtime=runtime, config=config):
+        logger.info("AD-661: DiagnosticContextService v1 wired during finalization")
 
     if _wire_workspace_ontology(runtime=runtime, config=config):
         logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")

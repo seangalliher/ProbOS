@@ -349,6 +349,39 @@ class ChainOptimizerConfig(BaseModel):
     min_samples_per_group: int = 20
 
 
+class DiagnosticContextConfig(BaseModel):
+    """AD-661 v1: Diagnostic Context Service — pull-based bundle assembly.
+
+    Default-enabled (deviation from Wave-10 transitional-flag convention)
+    because the service is a read-only aggregator with no automatic
+    invocation; it is invisible at runtime until a caller invokes
+    `assemble()`. See AD-661 prompt for the convention deviation rationale.
+    """
+
+    enabled: bool = True
+    default_budget_tokens: int = 8000
+    chain_trace_ratio: float = 0.4
+    procedure_ratio: float = 0.3
+    episode_ratio: float = 0.3
+    chars_per_token: int = 4
+
+    @field_validator("chain_trace_ratio", "procedure_ratio", "episode_ratio")
+    @classmethod
+    def _ratio_in_unit(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("ratio must be in [0.0, 1.0]")
+        return v
+
+    @model_validator(mode="after")
+    def _ratios_sum_to_one(self) -> "DiagnosticContextConfig":
+        total = self.chain_trace_ratio + self.procedure_ratio + self.episode_ratio
+        if abs(total - 1.0) > 0.01:
+            raise ValueError(
+                f"ratios must sum to 1.0 (±0.01); got {total:.4f}"
+            )
+        return self
+
+
 class CausalReasoningConfig(BaseModel):
     """AD-660 v1: Agent Causal Reasoning Framework.
 
@@ -2034,6 +2067,9 @@ class SystemConfig(BaseModel):
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
     chain_optimizer: ChainOptimizerConfig = ChainOptimizerConfig()  # AD-659
     causal_reasoning: CausalReasoningConfig = CausalReasoningConfig()  # AD-660
+    diagnostic_context: DiagnosticContextConfig = Field(
+        default_factory=DiagnosticContextConfig
+    )  # AD-661
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571

@@ -195,7 +195,7 @@ def create_app(runtime: Any) -> FastAPI:
         workforce, build, design, chat, chain_traces, chain_optimizer,
         counselor, procedures, gaps,
         recreation, memory_graph, bills, emergent_leadership, orders,
-        infodynamic,
+        infodynamic, diagnostic_context,
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -203,7 +203,7 @@ def create_app(runtime: Any) -> FastAPI:
         workforce, build, design, chat, chain_traces, chain_optimizer,
         counselor, procedures, gaps,
         recreation, memory_graph, bills, emergent_leadership, orders,
-        infodynamic,
+        infodynamic, diagnostic_context,
     ):
         app.include_router(r.router)
 
