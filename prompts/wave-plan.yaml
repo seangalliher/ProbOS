@@ -218,4 +218,4 @@ waves:
       - "prompts/ad-511-autonomy-boundaries-v1.md"
     builder_required: true
     issues_to_close: [93]
-    status: pending
+    status: done
