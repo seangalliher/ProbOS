@@ -381,4 +381,4 @@ waves:
       - "prompts/ad-635-medical-diagnostic-v1.md"
     builder_required: true
     issues_to_close: [231]
-    status: pending
+    status: done
