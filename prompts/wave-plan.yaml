@@ -405,7 +405,7 @@ waves:
       - "prompts/ad-687-knowledge-edge-store-v1.md"
     builder_required: true
     issues_to_close: [381]
-    status: pending
+    status: done
 
   - id: "38"
     title: "AD-688 v1 Oracle Graph Integration"
