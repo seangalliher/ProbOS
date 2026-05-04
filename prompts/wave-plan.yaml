@@ -333,7 +333,7 @@ waves:
       - "prompts/ad-659-chain-self-optimization-v1.md"
     builder_required: true
     issues_to_close: [318]
-    status: pending
+    status: done
 
   - id: "32"
     title: "AD-660 v1 Agent Causal Reasoning Framework"
