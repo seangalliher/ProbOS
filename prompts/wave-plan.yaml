@@ -322,3 +322,63 @@ waves:
     # shipped under #287. Phases 1–3 closed (PROGRESS.md:320). Phase 4 = AD-645b
     # is the last in-scope phase under #287; Phase 5 NATS schema deferred to
     # AD-641g per research doc Section 6. Closing #287 with Phase 4 is correct.
+
+  - id: "31"
+    title: "AD-659 v1 Cognitive Chain Self-Optimization Loop"
+    kind: main
+    depends_on: ["30"]
+    dispatch_prompt: "prompts/WAVE-31-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-659-chain-self-optimization-v1.md"
+    builder_required: true
+    issues_to_close: [318]
+    status: pending
+
+  - id: "32"
+    title: "AD-660 v1 Agent Causal Reasoning Framework"
+    kind: main
+    depends_on: ["31"]
+    dispatch_prompt: "prompts/WAVE-32-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-660-causal-reasoning-v1.md"
+    builder_required: true
+    issues_to_close: [319]
+    status: pending
+
+  - id: "33"
+    title: "AD-661 v1 Full Diagnostic Context for Agent Self-Improvement"
+    kind: main
+    depends_on: ["32"]
+    dispatch_prompt: "prompts/WAVE-33-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-661-diagnostic-context-v1.md"
+    builder_required: true
+    issues_to_close: [320]
+    status: pending
+
+  - id: "34"
+    title: "AD-647 v1 Process-Oriented Cognitive Chains (Scout Report)"
+    kind: main
+    depends_on: ["33"]
+    dispatch_prompt: "prompts/WAVE-34-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-647-process-oriented-chains-v1.md"
+    builder_required: true
+    issues_to_close: [291]
+    status: pending
+
+  - id: "35"
+    title: "AD-635 v1 Medical Diagnostic Data Access"
+    kind: main
+    depends_on: ["34"]
+    dispatch_prompt: "prompts/WAVE-35-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-635-medical-diagnostic-v1.md"
+    builder_required: true
+    issues_to_close: [231]
+    status: pending
