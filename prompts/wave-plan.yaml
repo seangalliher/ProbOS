@@ -159,3 +159,15 @@ waves:
     builder_required: true
     issues_to_close: [14]
     status: done
+
+  - id: "18"
+    title: "AD-572e Task Awareness in Captain DM Context"
+    kind: main
+    depends_on: ["17"]
+    dispatch_prompt: "prompts/WAVE-18-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-572e-task-awareness.md"
+    builder_required: true
+    issues_to_close: []
+    status: pending
