@@ -429,7 +429,7 @@ waves:
       - "prompts/ad-689-edge-population-v1.md"
     builder_required: true
     issues_to_close: [383]
-    status: pending
+    status: done
 
   - id: "40"
     title: "AD-690 v1 Dream Step 10 Relationship Inference"
