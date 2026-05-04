@@ -278,7 +278,7 @@ waves:
       - "prompts/ad-657-dream-trace-preservation-v1.md"
     builder_required: true
     issues_to_close: [316]
-    status: pending
+    status: done
 
   - id: "28"
     title: "AD-658 v1 Cognitive Chain Harness Metrics"
