@@ -46,6 +46,77 @@ def _get_analysis_result(prior_results: list[SubTaskResult]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# AD-645b: Composition brief alignment helpers (Phase 4)
+# ---------------------------------------------------------------------------
+
+def _get_composition_brief(prior_results: list[SubTaskResult]) -> dict | None:
+    """Extract the composition_brief from the most recent successful Analyze.
+
+    AD-645 Phase 1 schema (analyze.py:184/:383/:462). Returns ``None`` when
+    the brief is absent (legacy traces, SILENT contribution, or chains
+    without AD-645 Phase 1). Returns ``None`` if the field is present but
+    not a dict (defensive against malformed LLM output).
+    """
+    analysis = _get_analysis_result(prior_results)
+    brief = analysis.get("composition_brief") if analysis else None
+    if not brief or not isinstance(brief, dict):
+        return None
+    return brief
+
+
+_BRIEF_FIELDS_RENDERED: tuple[str, ...] = (
+    "situation",
+    "key_evidence",
+    "response_should_cover",
+    "tone",
+    "sources_to_draw_on",
+)
+
+
+def _render_brief_for_eval(brief: dict) -> str:
+    """Render the composition brief as a Markdown block for the eval LLM.
+
+    Intentionally renders only the five fields most directly assessable
+    against the response (situation, key_evidence, response_should_cover,
+    tone, sources_to_draw_on). ``analytical_reasoning`` is the agent's
+    own narrative reasoning and is not graded against the response.
+    """
+    parts: list[str] = ["## Composition Brief", ""]
+    for key in _BRIEF_FIELDS_RENDERED:
+        value = brief.get(key)
+        if value is None or value == "" or value == []:
+            continue
+        label = key.replace("_", " ").title()
+        if isinstance(value, list):
+            parts.append(f"**{label}:**")
+            for item in value:
+                parts.append(f"- {item}")
+            parts.append("")
+        else:
+            parts.append(f"**{label}:** {value}")
+            parts.append("")
+    return "\n".join(parts).rstrip()
+
+
+_BRIEF_ALIGNMENT_CRITERION_TEXT: str = (
+    "**Brief alignment** \u2014 Did the response cover what the brief said it "
+    "should cover, use the brief's key_evidence, and match the brief's tone? "
+    "Score along three sub-dimensions: covered_topics (response addresses each "
+    "item in response_should_cover), used_evidence (response references at "
+    "least one item from key_evidence), matched_tone (response register fits "
+    "the brief's tone guidance). This criterion is informational; do NOT use "
+    "it to gate pass/fail on its own.\n"
+)
+
+
+_BRIEF_ALIGNMENT_JSON_SCHEMA_FRAGMENT: str = (
+    ', "brief_alignment": {"pass": true/false, "score": 0.0-1.0, '
+    '"reason": "...", "dimensions": {"covered_topics": 0.0-1.0, '
+    '"used_evidence": 0.0-1.0, "matched_tone": 0.0-1.0}}'
+)
+
+
+# ---------------------------------------------------------------------------
 # Evaluation mode prompt builders
 # ---------------------------------------------------------------------------
 
@@ -81,6 +152,13 @@ def _build_ward_room_eval_prompt(
             "agent's personality, not generic or clinical.\n"
         )
 
+    # AD-645b: Brief alignment criterion (Phase 4) — appended only when a
+    # composition brief is available. Numbering after voice (if present).
+    brief = _get_composition_brief(prior_results)
+    if brief is not None:
+        idx = 7 if trust_band == "mid" else 6
+        criteria += f"{idx}. " + _BRIEF_ALIGNMENT_CRITERION_TEXT
+
     system_prompt = (
         f"You are evaluating a draft Ward Room response by {callsign} "
         f"({department} department).\n\n"
@@ -95,6 +173,8 @@ def _build_ward_room_eval_prompt(
     )
     if trust_band == "mid":
         system_prompt += ', "voice": {"pass": true/false, "reason": "..."}'
+    if brief is not None:
+        system_prompt += _BRIEF_ALIGNMENT_JSON_SCHEMA_FRAGMENT
     system_prompt += (
         '}, "recommendation": "approve"|"revise"|"suppress"}'
     )
@@ -103,14 +183,27 @@ def _build_ward_room_eval_prompt(
     analysis = _get_analysis_result(prior_results)
     original = context.get("context", "")
 
-    user_prompt = (
-        "## Draft Response to Evaluate\n\n"
-        f"{compose_output}\n\n"
-        "## Analysis That Informed This Draft\n\n"
-        f"{json.dumps(analysis, indent=2)}\n\n"
-        "## Original Content\n\n"
-        f"{original}"
-    )
+    user_parts: list[str] = [
+        "## Draft Response to Evaluate",
+        "",
+        compose_output,
+        "",
+    ]
+    # AD-645b: Render the brief explicitly so the eval LLM can compare
+    # response-against-plan when scoring brief_alignment.
+    if brief is not None:
+        user_parts.append(_render_brief_for_eval(brief))
+        user_parts.append("")
+    user_parts.extend([
+        "## Analysis That Informed This Draft",
+        "",
+        json.dumps(analysis, indent=2),
+        "",
+        "## Original Content",
+        "",
+        original,
+    ])
+    user_prompt = "\n".join(user_parts)
 
     return system_prompt, user_prompt
 
@@ -145,6 +238,12 @@ def _build_proactive_eval_prompt(
             "agent's personality, not generic or clinical.\n"
         )
 
+    # AD-645b: Brief alignment criterion (Phase 4)
+    brief = _get_composition_brief(prior_results)
+    if brief is not None:
+        idx = 7 if trust_band == "mid" else 6
+        criteria += f"{idx}. " + _BRIEF_ALIGNMENT_CRITERION_TEXT
+
     system_prompt = (
         f"You are evaluating a draft proactive observation by {callsign} "
         f"({department} department).\n\n"
@@ -159,6 +258,8 @@ def _build_proactive_eval_prompt(
     )
     if trust_band == "mid":
         system_prompt += ', "voice": {"pass": true/false, "reason": "..."}'
+    if brief is not None:
+        system_prompt += _BRIEF_ALIGNMENT_JSON_SCHEMA_FRAGMENT
     system_prompt += (
         '}, "recommendation": "approve"|"revise"|"suppress"}'
     )
@@ -167,14 +268,25 @@ def _build_proactive_eval_prompt(
     analysis = _get_analysis_result(prior_results)
     original = context.get("context", "")
 
-    user_prompt = (
-        "## Draft Response to Evaluate\n\n"
-        f"{compose_output}\n\n"
-        "## Analysis That Informed This Draft\n\n"
-        f"{json.dumps(analysis, indent=2)}\n\n"
-        "## Original Content\n\n"
-        f"{original}"
-    )
+    user_parts: list[str] = [
+        "## Draft Response to Evaluate",
+        "",
+        compose_output,
+        "",
+    ]
+    if brief is not None:
+        user_parts.append(_render_brief_for_eval(brief))
+        user_parts.append("")
+    user_parts.extend([
+        "## Analysis That Informed This Draft",
+        "",
+        json.dumps(analysis, indent=2),
+        "",
+        "## Original Content",
+        "",
+        original,
+    ])
+    user_prompt = "\n".join(user_parts)
 
     return system_prompt, user_prompt
 
@@ -572,6 +684,30 @@ class EvaluateHandler:
             "criteria": parsed.get("criteria", {}),
             "recommendation": parsed.get("recommendation", "approve"),
         }
+
+        # AD-645b Phase 4: Ensure brief_alignment is always present in
+        # criteria. When the brief was absent OR the LLM omitted the field
+        # despite being asked, post-fill with neutral score 0.5 and an
+        # explanatory rationale. Additive-only — never overrides an
+        # LLM-supplied verdict.
+        _criteria = result["criteria"] if isinstance(result["criteria"], dict) else {}
+        if "brief_alignment" not in _criteria:
+            _brief_for_fill = _get_composition_brief(prior_results)
+            if _brief_for_fill is None:
+                _criteria["brief_alignment"] = {
+                    "pass": True,
+                    "score": 0.5,
+                    "reason": "brief absent",
+                    "dimensions": {},
+                }
+            else:
+                _criteria["brief_alignment"] = {
+                    "pass": True,
+                    "score": 0.5,
+                    "reason": "verdict omitted criterion",
+                    "dimensions": {},
+                }
+            result["criteria"] = _criteria
 
         logger.info(
             "AD-632e: Evaluate verdict for %s: pass=%s, score=%.2f, recommendation=%s",
