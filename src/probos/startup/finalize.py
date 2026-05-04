@@ -119,6 +119,48 @@ def _wire_classification_gate(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_gap_remediation_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-539c v1: Wire GapRemediationTracker (observational only)."""
+    from probos.config import GapPipelineExtensionsConfig
+
+    cfg = getattr(config, "gap_pipeline_extensions", None)
+    # Defensive boundary check (BF-254 pattern): legacy tests pass MagicMock for
+    # config, which would make cfg.remediation_max_history a MagicMock that
+    # deque(maxlen=...) cannot accept as an int.
+    if not isinstance(cfg, GapPipelineExtensionsConfig) or not cfg.remediation_tracker_enabled:
+        return False
+
+    from probos.cognitive.gap_remediation import GapRemediationTracker
+
+    tracker = GapRemediationTracker(runtime, max_history=cfg.remediation_max_history)
+    tracker.emit_event = getattr(runtime, "emit_event", None)
+    runtime.gap_remediation_tracker = tracker  # public attribute (Wave 5 convention #1)
+    logger.info(
+        "AD-539c: GapRemediationTracker initialized (observational v1; max_history=%d)",
+        cfg.remediation_max_history,
+    )
+    return True
+
+
+def _wire_gap_aggregator(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-539d v1: Wire FleetGapAggregator (local-ship only; no federation)."""
+    from probos.config import GapPipelineExtensionsConfig
+
+    cfg = getattr(config, "gap_pipeline_extensions", None)
+    if not isinstance(cfg, GapPipelineExtensionsConfig) or not cfg.fleet_aggregator_enabled:
+        return False
+
+    from probos.cognitive.gap_aggregation import FleetGapAggregator
+
+    aggregator = FleetGapAggregator(runtime)
+    aggregator.emit_event = getattr(runtime, "emit_event", None)
+    runtime.gap_aggregator = aggregator  # public attribute (Wave 5 convention #1)
+    logger.info(
+        "AD-539d: FleetGapAggregator initialized (local-ship v1; federation deferred to AD-539d-i)"
+    )
+    return True
+
+
 async def _wire_self_distillation(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-487: Wire PersonalOntologyProber (Map step only) and open its SQLite handle."""
     # Defensive boundary check: some legacy tests pass MagicMock for config,
@@ -299,6 +341,12 @@ async def finalize_startup(
 
     if _wire_classification_gate(runtime=runtime, config=config):
         logger.info("AD-530: ClassificationGate v1 wired during finalization")
+
+    if _wire_gap_remediation_tracker(runtime=runtime, config=config):
+        logger.info("AD-539c: GapRemediationTracker v1 wired during finalization")
+
+    if _wire_gap_aggregator(runtime=runtime, config=config):
+        logger.info("AD-539d: FleetGapAggregator v1 wired during finalization")
 
     # BF-246: Start periodic LLM health probe for recovery from extended outages
     # BF-254: hasattr() alone matches MagicMock auto-attributes; require the

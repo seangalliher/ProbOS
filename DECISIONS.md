@@ -10,6 +10,29 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### Combo D: AD-539c + AD-539d gap pipeline extensions (observational v1) (2026-05-03)
+
+**Problem:** AD-539's Knowledge Gap → Qualification pipeline detects gaps but two surfaces are missing: (a) no record of what the system *would* remediate if active remediation were turned on, leaving the design space undocumented; (b) no aggregate view of fleet-level gap distribution by department / priority / intent — only per-gap detail. Both children were pre-deferred from AD-539 per Wave 5-7 convention #14.
+
+**Decision:** v1 ships two observational, additive read-only consumers of the AD-539 pipeline. Combined into one commit (Wave 8 Combo A precedent + Wave 13 Combo C precedent) because both extend the same surface, are bounded in scope, and have no inter-child file conflicts.
+
+- **AD-539c (observational gap remediation tracker):** New `src/probos/cognitive/gap_remediation.py` with `GapRemediationTracker` (bounded ring of `RemediationCandidate` records; default `max_history=100`) and `RemediationCandidate` frozen dataclass (`gap_id`/`agent_id`/`gap_type`/`proposed_action`/`reason`/`candidate_at`). Public API: `record_candidate(gap_report)`, `proposed_action_for(gap_report)`, `recent_candidates(limit=20)`, `candidates_for_agent(agent_id)`. Mapping rules: `knowledge` + non-empty `qualification_path_id` → `trigger_qualification`; `data` → `request_data_routing`; `capability` → `escalate_capability`; else (including `knowledge` with empty path) → `no_action`. Emits `GAP_REMEDIATION_RECORDED` per record with `{gap_id, agent_id, gap_type, proposed_action, reason}`. **v1 NEVER actually triggers remediation actions** — only records what the system would do.
+- **AD-539d (local-ship fleet gap aggregator):** New `src/probos/cognitive/gap_aggregation.py` with `FleetGapAggregator` and `FleetGapSnapshot` frozen dataclass (`snapshot_at`/`total_gaps`/`by_gap_type`/`by_priority`/`by_department`/`top_intents`). Public API: `take_snapshot(gap_reports)`. Aggregates by `gap_type`, `priority`, department (best-effort via `runtime.ontology.get_agent_department(agent_type)` — verified live signature at proactive.py:2380, dreaming.py:1098 — with `dept.department_id if hasattr(dept, 'department_id') else str(dept)` unwrap idiom from dreaming.py:1099), and top-5 most-affected intents from `affected_intent_types`. Reads `report.agent_type` directly (NOT `agent_id` — avoids Demeter detour through registry). Emits `FLEET_GAP_SNAPSHOT_TAKEN` with **counts only** — no agent_ids, no descriptions, no per-gap detail (privacy invariant directly tested at `test_take_snapshot_payload_excludes_agent_ids`).
+- **Fleet = current ship in v1** — no federation reads. Cross-ship aggregation deferred to AD-539d-i (depends on AD-479 federation).
+- 2 new EventTypes (`GAP_REMEDIATION_RECORDED`, `FLEET_GAP_SNAPSHOT_TAKEN`; verified collision-free against events.py post-Wave-19).
+- New `GapPipelineExtensionsConfig` Pydantic model (`remediation_tracker_enabled=True`, `fleet_aggregator_enabled=True`, `remediation_max_history=100`) wired onto `SystemConfig.gap_pipeline_extensions`.
+- Sync `_wire_gap_remediation_tracker` + `_wire_gap_aggregator` at startup/finalize.py mirror AD-525/AD-530 pattern; defensive `isinstance(cfg, GapPipelineExtensionsConfig)` boundary check (BF-254 / AD-487 pattern) handles MagicMock-config legacy tests (`tests/test_new_crew_auto_welcome.py`).
+- Public attributes (Wave 5 convention #1): `runtime.gap_remediation_tracker`, `runtime.gap_aggregator` (no underscore).
+- Late-bind `emit_event` field per AD-456/AD-530 sibling pattern.
+
+**Why:** Both children are small additive surfaces extending shipped pipeline; per-prompt overhead × 2 would multiply Builder commit cost ~2× vs combo. Observational v1 keeps safety profile bounded — no auto-actions, no federation reach. Active remediation (AD-539c-i) requires explicit Captain decision to switch from observational to action mode after reviewing recorded candidates; federation aggregation (AD-539d-i) requires AD-479 federation to ship first.
+
+**Deferred:**
+- AD-539c-i: Active remediation — actually trigger qualification / data routing / capability escalation actions based on recorded candidates. Forcing function: Captain decides to switch from observational to action mode.
+- AD-539d-i: Federated cross-ship gap aggregation — replace local-ship snapshot with multi-ship rollup. Forcing function: AD-479 Federation Hardening ships.
+
+23 focused tests pass at `tests/test_ad539c_remediation.py` (12 — includes wiring boundary test) + `tests/test_ad539d_aggregation.py` (11 — includes wiring boundary test). Closes GH issues #106 + #107.
+
 ### AD-530 v1: Information Classification Enforcement — Disclosure Gate (2026-05-03)
 
 **Problem:** Standing Orders advise agents not to disclose sensitive information, but there's no enforcement layer. Documents have classification metadata (records_store.py:27 `_CLASSIFICATION_LEVELS`), but outbound messages (Ward Room posts, LLM prompts) have no gate at the communication boundary.

@@ -130,6 +130,8 @@ class EventType(str, Enum):
     TASK_EXECUTION_COMPLETE = "task_execution_complete"  # AD-532e: reactive trigger
     PROCEDURE_FALLBACK_LEARNING = "procedure_fallback_learning"  # AD-534b: fallback evidence
     GAP_IDENTIFIED = "gap_identified"  # AD-539: gap → qualification pipeline
+    GAP_REMEDIATION_RECORDED = "gap_remediation_recorded"  # AD-539c: observational remediation candidate
+    FLEET_GAP_SNAPSHOT_TAKEN = "fleet_gap_snapshot_taken"  # AD-539d: local-ship gap aggregation
     TRUST_CASCADE_WARNING = "trust_cascade_warning"  # AD-558: trust cascade breaker tripped
     EMERGENCE_METRICS_UPDATED = "emergence_metrics_updated"  # AD-557: emergence snapshot computed
     GROUPTHINK_WARNING = "groupthink_warning"  # AD-557: redundancy dominates

@@ -1257,7 +1257,7 @@ Dependencies: AD-533 ✅ (procedure store), AD-534 ✅ (replay mechanism for re-
 - **Qualification triggering** — Automatic qualification creation for knowledge gaps that map to existing PCCs. Counselor notification for capability/data gaps requiring different intervention.
 - **Enhanced Dream Step 8** — `predict_gaps()` enhanced with procedure evidence and gap classification. Gap reports include qualification suggestions and progress tracking.
 - **Progress tracking** — Gap closure measured by procedure compilation level improvement, success rate increase, qualification completion. Tracked via `GapReport` with closure metrics.
-- **Deferred:** AD-539b (Holodeck scenario generation from gaps), AD-539c (automatic gap remediation), AD-539d (fleet-level gap aggregation).
+- **Deferred:** AD-539b (Holodeck scenario generation from gaps), AD-539c-i (active gap remediation — AD-539c v1 ships observational tracker only), AD-539d-i (federated cross-ship gap aggregation — AD-539d v1 ships local-ship aggregator only).
 
 > **AD-538b: Dream Consolidation Manifest** *(complete, OSS, depends: AD-538, AD-551)* — Add a `consolidation_manifest` that tracks per-episode, per-dream-step+version what has been processed. Dream cycles skip already-consolidated episodes unless modified (reconsolidation, AD-541b) or decayed (AD-538). Eliminates redundant reprocessing as episode count grows. *Absorption: memvid enrichment manifest tracking pattern — per-frame, per-engine-version processing manifests for incremental-only enrichment (2026-04-05, see docs/research/memvid-evaluation.md Pattern 2).*
 

@@ -1826,6 +1826,14 @@ class ClassificationGateConfig(BaseModel):
     # v1: pattern set is hardcoded; register_pattern is runtime-only.
 
 
+class GapPipelineExtensionsConfig(BaseModel):
+    """AD-539c + AD-539d v1 config (observational gap pipeline extensions)."""
+
+    remediation_tracker_enabled: bool = True
+    fleet_aggregator_enabled: bool = True
+    remediation_max_history: int = 100
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -1932,6 +1940,7 @@ class SystemConfig(BaseModel):
     expertise: ExpertiseConfig = ExpertiseConfig()  # AD-600
     creative_expression: CreativeExpressionConfig = Field(default_factory=CreativeExpressionConfig)  # AD-525
     classification_gate: ClassificationGateConfig = Field(default_factory=ClassificationGateConfig)  # AD-530
+    gap_pipeline_extensions: GapPipelineExtensionsConfig = Field(default_factory=GapPipelineExtensionsConfig)  # AD-539c/d
     spreading_activation: SpreadingActivationConfig = SpreadingActivationConfig()  # AD-604
     thought_store: ThoughtStoreConfig = ThoughtStoreConfig()  # AD-606
     retroactive: RetroactiveConfig = RetroactiveConfig()  # AD-608
