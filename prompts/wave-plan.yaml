@@ -243,3 +243,15 @@ waves:
     builder_required: true
     issues_to_close: [89]
     status: pending
+
+  - id: "25"
+    title: "AD-509 v1 Boot Camp Phase Tracker"
+    kind: main
+    depends_on: ["24"]
+    dispatch_prompt: "prompts/WAVE-25-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-509-boot-camp-v1.md"
+    builder_required: true
+    issues_to_close: [91]
+    status: pending
