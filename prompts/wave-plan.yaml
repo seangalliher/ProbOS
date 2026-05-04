@@ -266,7 +266,7 @@ waves:
       - "prompts/bf-238-post-budget-telemetry-monitoring.md"
     builder_required: true
     issues_to_close: [341]
-    status: pending
+    status: done
 
   - id: "27"
     title: "AD-657 v1 Dream Consolidation Trace Preservation"
