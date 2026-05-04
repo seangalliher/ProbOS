@@ -1459,6 +1459,44 @@ class ProactiveCognitiveLoop:
             except Exception:
                 logger.debug("Episodic recall failed for %s", agent.id, exc_info=True)
 
+        # AD-657: Surface diagnostic exemplars for any consolidated dream pattern that matches recent activity
+        try:
+            store = getattr(rt, 'procedure_store', None)
+            em_for_exemplars = getattr(rt, 'episodic_memory', None)
+            if store and em_for_exemplars:
+                query = f"{agent.agent_type} recent duty observations".strip()
+                matches = await store.find_matching(
+                    query, n_results=1, exclude_negative=True,
+                )
+                if matches and matches[0].get("score", 0.0) >= 0.5:
+                    proc_id = matches[0]["id"]
+                    procedure = await store.get(proc_id)
+                    if procedure and procedure.trace_exemplars:
+                        exemplar_eps = await em_for_exemplars.get_by_ids(
+                            procedure.trace_exemplars[:3],
+                        )
+                        if exemplar_eps:
+                            now = time.time()
+                            exemplars_payload = []
+                            for ep in exemplar_eps:
+                                ui = ep.user_input or ""
+                                rf = ep.reflection or ""
+                                exemplars_payload.append({
+                                    "input": (ui[:300] + " [trimmed]") if len(ui) > 300 else ui,
+                                    "reflection": (rf[:300] + " [trimmed]") if len(rf) > 300 else rf,
+                                    "importance": ep.importance,
+                                    "age": format_duration(now - ep.timestamp) if ep.timestamp > 0 else "",
+                                })
+                            context["recalled_procedure_exemplars"] = {
+                                "procedure_name": procedure.name,
+                                "procedure_id": procedure.id,
+                                "exemplars": exemplars_payload,
+                            }
+        except Exception:
+            logger.debug(
+                "AD-657: trace-exemplar recall failed for %s", agent.id, exc_info=True,
+            )
+
         # AD-462d: Social Memory — check for open memory queries to respond to
         if hasattr(rt, '_social_memory_service') and rt._social_memory_service:
             try:

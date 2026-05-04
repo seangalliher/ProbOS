@@ -93,6 +93,8 @@ class Procedure:
     source_anchors: list[dict[str, Any]] = field(default_factory=list)
     # AD-596c: T2→T3 provenance — links to CognitiveSkillEntry.skill_id
     source_skill_id: str = ""
+    # AD-657: Top-N source episodes preserved for diagnostic context recall (importance DESC, timestamp DESC)
+    trace_exemplars: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -123,6 +125,7 @@ class Procedure:
             "is_archived": self.is_archived,
             "source_anchors": self.source_anchors,
             "source_skill_id": self.source_skill_id,
+            "trace_exemplars": self.trace_exemplars,
         }
 
     @classmethod
@@ -157,6 +160,7 @@ class Procedure:
             is_archived=data.get("is_archived", False),
             source_anchors=data.get("source_anchors", []),
             source_skill_id=data.get("source_skill_id", ""),
+            trace_exemplars=data.get("trace_exemplars", []),
         )
 
 

@@ -10,6 +10,28 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-657 v1: Dream Consolidation Trace Preservation (2026-05-04)
+
+**Problem:** Dream Step 7 extracts a `Procedure` from a success-dominant `EpisodeCluster` and discards the source episodes from the procedure's read path; only `Procedure.provenance` (a flat list of all source episode IDs) is kept, and nothing on the retrieval side surfaces the original episodes when the procedure is recalled. Meta-Harness research (Lee et al., Stanford/UW, arXiv:2603.28052) showed full execution traces scored 50.0% median vs 34.9% for summaries — summaries actively degraded reasoning by discarding diagnostic detail. Roadmap entry (`docs/development/roadmap.md:7092`) calls for "trace exemplars" — the 2-3 most diagnostically rich raw episodes per consolidated dream pattern.
+
+**Decision:** Ship structure + producer + one consumer in v1.
+
+- **Schema:** `Procedure.trace_exemplars: list[str]` (episode IDs); default `[]`; `to_dict`/`from_dict` round-trip; old serialized procedures load with empty exemplars (backward compatible).
+- **Config:** `DreamingConfig.trace_exemplars_per_procedure: int = 3` (0 disables).
+- **Producer:** Step 7 in `dreaming.py` selects top-N from `matched_episodes` ranked `(importance DESC, timestamp DESC)`, populated unconditionally inside the `if procedure:` branch so chain, compound, and standard extractions all benefit.
+- **Read primitive:** `EpisodicMemory.get_by_ids(episode_ids: list[str]) -> list[Episode]` — wraps ChromaDB `_collection.get(ids=...)`, reuses `_metadata_to_episode`, returns episodes in input order, silently omits missing IDs (graceful degradation when AD-593 pruning has evicted an exemplar).
+- **Consumer:** `_gather_context` in `proactive.py` adds `recalled_procedure_exemplars` to the context dict when `procedure_store.find_matching` returns a match with `score >= 0.5`, the matched procedure has non-empty `trace_exemplars`, and at least one exemplar episode is still retrievable. Hard-coded thresholds (top-1 procedure, ≤3 exemplars, 300-char per-field cap). Wrapped in its own `try/except` for failure isolation independent of episodic recall.
+
+**Why:** The "diagnostically rich" ranking uses `Episode.importance` (1-10, AD-598) — already computed at encoding time, already persisted in ChromaDB metadata, already used as a salience signal in retrieval. No new scoring infrastructure. Tie-break by `Episode.timestamp` DESC keeps the most recent exemplar when two episodes share an importance score. Demeter clean: `procedure_store` access goes through the public `runtime.procedure_store` property; `episodic_memory` through the public attribute. No private-attribute access. No new EventType. No new module.
+
+**What this does NOT change.** No re-ranking after extraction; `trace_exemplars` is set ONCE. No backfill — old procedures load with empty exemplars. No mutation of `Procedure.provenance` (stays as the full superset). No retention enforcement on the episode side; if AD-593 prunes an exemplar episode, the consumer block silently degrades. No changes to `cognitive_agent._check_procedural_memory()` — replay-first dispatch path stays untouched. No score-floor / context-budget config — externalize only if AD-657a integration data justifies tuning. No anchor-aware selection (deferred).
+
+**Tests.** 10 focused tests at `tests/test_ad657_trace_exemplars.py`: schema default + round-trip + backward-compat; Step 7 ranking by `(importance, timestamp)` DESC with explicit tie-break; cap enforcement; disabled-when-zero; `get_by_ids` input-order preservation with missing IDs dropped; `get_by_ids` no-collection short-circuit; `_gather_context` happy path with 300-char truncation marker on long input; consumer omits when all exemplar episodes pruned; consumer omits when match score below 0.5 floor.
+
+**Cross-links.** AD-532 (Procedure dataclass), AD-533 (ProcedureStore.find_matching/get), AD-598 (Episode.importance), AD-593 (activation pruning — graceful-degradation forcing function), AD-462b (activation-based memory lifecycle), AD-657a-deferred (anchor-aware exemplar diversification, score-floor tuning).
+
+---
+
 ### AD-509 v1: Onboarding Curriculum Pipeline — Boot Camp Phase Tracker (1 of 5) (2026-05-04)
 
 **Problem:** AD-509 (roadmap.md:6388) calls for a 5-capability framework: Navy Boot Camp model with structured progression, Department A-School per-department curriculum, graduated stimuli with cognitive load monitoring, completion-criteria gating (replacing time-based activation), and trait-adaptive pacing. Shipping all five at once would couple a phase-progression record to per-department curriculum content (depends on AD-507 partial-shipped), Holodeck scenario sequencing (AD-486), competency assessment gates (depends on AD-507c), and personality-driven pacing (depends on AD-494/AD-486 sea-trial observations).

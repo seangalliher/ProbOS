@@ -244,6 +244,8 @@ class TestProcedureSchema:
             "source_anchors",
             # AD-596c: T2→T3 provenance
             "source_skill_id",
+            # AD-657: trace exemplars
+            "trace_exemplars",
         }
         assert set(d.keys()) == expected_keys
 

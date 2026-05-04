@@ -558,6 +558,8 @@ class DreamingConfig(BaseModel):
     # AD-593: Episode pool pressure — accelerate pruning when pool is large
     episode_pressure_threshold: int = 5000  # Above this count, increase pruning aggressiveness
     episode_pressure_multiplier: float = 1.5  # Multiply prune fraction by this when above pressure threshold
+    # AD-657: Trace exemplars preserved per consolidated procedure (0 = disabled)
+    trace_exemplars_per_procedure: int = 3
 
 
 class DreamWMConfig(BaseModel):

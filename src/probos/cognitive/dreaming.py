@@ -485,6 +485,15 @@ class DreamingEngine:
                             llm_client=self._llm_client,
                         )
                     if procedure:
+                        # AD-657: Select top-N diagnostically rich exemplars (importance DESC, timestamp DESC)
+                        n_exemplars = self.config.trace_exemplars_per_procedure
+                        if n_exemplars > 0 and matched_episodes:
+                            ranked = sorted(
+                                matched_episodes,
+                                key=lambda ep: (ep.importance, ep.timestamp),
+                                reverse=True,
+                            )
+                            procedure.trace_exemplars = [ep.id for ep in ranked[:n_exemplars]]
                         # AD-567d: Attach anchor provenance to procedure
                         if cluster.anchor_summary:
                             try:

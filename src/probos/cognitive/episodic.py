@@ -1129,6 +1129,41 @@ class EpisodicMemory:
             )
             return None
 
+    async def get_by_ids(self, episode_ids: list[str]) -> list[Episode]:
+        """AD-657: Fetch full Episode objects by ID, preserving input order.
+
+        Missing IDs (e.g., evicted by AD-593 activation pruning) are silently
+        omitted — caller treats absence as graceful degradation, not error.
+        """
+        if not self._collection or not episode_ids:
+            return []
+        try:
+            result = self._collection.get(
+                ids=list(episode_ids),
+                include=["metadatas", "documents"],
+            )
+        except Exception:
+            logger.debug("AD-657: get_by_ids ChromaDB query failed", exc_info=True)
+            return []
+        if not result or not result.get("ids"):
+            return []
+
+        by_id: dict[str, Episode] = {}
+        result_ids = result["ids"]
+        result_metas = result.get("metadatas") or [{} for _ in result_ids]
+        result_docs = result.get("documents") or ["" for _ in result_ids]
+        for i, doc_id in enumerate(result_ids):
+            try:
+                meta = result_metas[i] if i < len(result_metas) else {}
+                doc = result_docs[i] if i < len(result_docs) else ""
+                by_id[doc_id] = self._metadata_to_episode(doc_id, doc or "", meta or {})
+            except Exception:
+                logger.debug(
+                    "AD-657: failed to reconstruct episode %s", doc_id, exc_info=True,
+                )
+                continue
+        return [by_id[eid] for eid in episode_ids if eid in by_id]
+
     async def update_episode_metadata(
         self,
         episode_id: str,
