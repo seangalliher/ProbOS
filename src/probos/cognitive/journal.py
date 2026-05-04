@@ -7,6 +7,7 @@ AD-431.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import time
@@ -86,6 +87,24 @@ CREATE INDEX IF NOT EXISTS idx_chain_traces_agent ON chain_traces(agent_id);
 CREATE INDEX IF NOT EXISTS idx_chain_traces_chain_id ON chain_traces(chain_id);
 """
 
+_SCHEMA_CAUSAL_TEMPLATES = """
+CREATE TABLE IF NOT EXISTS causal_templates (
+    template_id         TEXT PRIMARY KEY,
+    agent_id            TEXT NOT NULL DEFAULT '',
+    triggered_at        REAL NOT NULL DEFAULT 0.0,
+    trigger_summary     TEXT NOT NULL DEFAULT '',
+    what_changed        TEXT NOT NULL DEFAULT '[]',
+    confounded_variables TEXT NOT NULL DEFAULT '[]',
+    testable_hypotheses TEXT NOT NULL DEFAULT '[]',
+    diagnostic_actions  TEXT NOT NULL DEFAULT '[]',
+    confidence          REAL NOT NULL DEFAULT 0.0,
+    source_event_ref    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_causal_templates_triggered_at ON causal_templates(triggered_at);
+CREATE INDEX IF NOT EXISTS idx_causal_templates_agent ON causal_templates(agent_id);
+"""
+
 
 class CognitiveJournal:
     """Append-only SQLite journal for LLM reasoning traces."""
@@ -126,6 +145,8 @@ class CognitiveJournal:
         await self._db.executescript(_SCHEMA_INDEXES)
         # AD-658: chain harness traces (separate from per-LLM-call journal rows)
         await self._db.executescript(_SCHEMA_CHAIN_TRACES)
+        # AD-660: causal-reasoning templates
+        await self._db.executescript(_SCHEMA_CAUSAL_TEMPLATES)
 
     async def stop(self) -> None:
         if self._db:
@@ -192,6 +213,25 @@ class CognitiveJournal:
                 cursor = await self._db.execute(
                     "DELETE FROM chain_traces WHERE rowid IN "
                     "(SELECT rowid FROM chain_traces ORDER BY started_at ASC LIMIT ?)",
+                    (excess,),
+                )
+                deleted += cursor.rowcount
+
+        # AD-660: extend retention + row-cap to causal_templates
+        if retention_days > 0:
+            cursor = await self._db.execute(
+                "DELETE FROM causal_templates WHERE triggered_at < ?", (cutoff,)
+            )
+            deleted += cursor.rowcount
+        if max_rows > 0:
+            cursor = await self._db.execute("SELECT COUNT(*) FROM causal_templates")
+            row = await cursor.fetchone()
+            total_templates = row[0] if row else 0
+            if total_templates > max_rows:
+                excess = total_templates - max_rows
+                cursor = await self._db.execute(
+                    "DELETE FROM causal_templates WHERE rowid IN "
+                    "(SELECT rowid FROM causal_templates ORDER BY triggered_at ASC LIMIT ?)",
                     (excess,),
                 )
                 deleted += cursor.rowcount
@@ -327,6 +367,93 @@ class CognitiveJournal:
             return [dict(row) for row in rows]
         except Exception:
             logger.debug("Chain trace query failed", exc_info=True)
+            return []
+
+    async def record_causal_template(self, template: Any) -> None:
+        """AD-660: Persist a CausalReasoningTemplate. Fire-and-forget — never raises.
+
+        Accepts any object exposing the CausalReasoningTemplate field set
+        via attribute lookup. List fields are JSON-serialized; triggered_at
+        is stored as Unix-epoch float (datetime.timestamp()). Conflict on
+        template_id is silently dropped via INSERT OR IGNORE.
+        """
+        if not self._db:
+            return
+        try:
+            triggered_ts = template.triggered_at.timestamp()
+            await self._db.execute(
+                """INSERT OR IGNORE INTO causal_templates
+                   (template_id, agent_id, triggered_at, trigger_summary,
+                    what_changed, confounded_variables, testable_hypotheses,
+                    diagnostic_actions, confidence, source_event_ref)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    template.template_id,
+                    template.agent_id,
+                    triggered_ts,
+                    template.trigger_summary,
+                    json.dumps(template.what_changed),
+                    json.dumps(template.confounded_variables),
+                    json.dumps(template.testable_hypotheses),
+                    json.dumps(template.diagnostic_actions),
+                    float(template.confidence),
+                    template.source_event_ref,
+                ),
+            )
+            await self._db.commit()
+        except Exception:
+            logger.debug("Causal template record failed", exc_info=True)
+
+    async def get_recent_causal_templates(
+        self,
+        *,
+        limit: int = 50,
+        agent_id: str | None = None,
+        since: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """AD-660: Return recent causal templates, most recent first.
+
+        Args:
+            limit: Max rows.
+            agent_id: Optional filter by agent.
+            since: Optional Unix-timestamp lower bound on triggered_at.
+
+        List fields are returned JSON-decoded back to list[str].
+        """
+        if not self._db:
+            return []
+        try:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if agent_id is not None:
+                clauses.append("agent_id = ?")
+                params.append(agent_id)
+            if since is not None:
+                clauses.append("triggered_at >= ?")
+                params.append(since)
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            params.append(limit)
+            cursor = await self._db.execute(
+                f"SELECT * FROM causal_templates {where} ORDER BY triggered_at DESC LIMIT ?",
+                params,
+            )
+            rows = await cursor.fetchall()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                d = dict(row)
+                for key in (
+                    "what_changed", "confounded_variables",
+                    "testable_hypotheses", "diagnostic_actions",
+                ):
+                    raw = d.get(key, "[]")
+                    try:
+                        d[key] = json.loads(raw) if isinstance(raw, str) else []
+                    except (ValueError, TypeError):
+                        d[key] = []
+                out.append(d)
+            return out
+        except Exception:
+            logger.debug("Causal template query failed", exc_info=True)
             return []
 
     async def get_reasoning_chain(

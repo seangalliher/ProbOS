@@ -236,6 +236,26 @@ def _wire_chain_optimizer(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_causal_reasoner(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-660 v1: Wire CausalReasoner template-fill service."""
+    cfg = getattr(config, "causal_reasoning", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.cognitive.causal_reasoning import CausalReasoner
+
+    runtime.causal_reasoner = CausalReasoner(
+        runtime,
+        max_tokens=cfg.max_tokens,
+        tier=cfg.tier,
+    )
+    logger.info(
+        "AD-660: CausalReasoner v1 initialized "
+        "(template + journal + counselor concern hook)"
+    )
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -516,6 +536,9 @@ async def finalize_startup(
 
     if _wire_chain_optimizer(runtime=runtime, config=config):
         logger.info("AD-659: ChainOptimizer v1 wired during finalization")
+
+    if _wire_causal_reasoner(runtime=runtime, config=config):
+        logger.info("AD-660: CausalReasoner v1 wired during finalization")
 
     if _wire_workspace_ontology(runtime=runtime, config=config):
         logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")

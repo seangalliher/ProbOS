@@ -1008,6 +1008,20 @@ class CounselorAgent(CognitiveAgent):
         # Persist to profile
         await self._save_profile_and_assessment(agent_id, assessment)
 
+        # AD-660: Opt-in causal reasoning hook.
+        # Fires only when CausalReasoningConfig.enabled (default False).
+        # Records a CausalReasoningTemplate alongside the chain traces.
+        # Fire-and-forget — must NOT raise into the existing counselor path.
+        try:
+            reasoner = getattr(self._runtime, "causal_reasoner", None) if self._runtime else None
+            journal = self._cognitive_journal  # property: runtime.cognitive_journal or None
+            if reasoner is not None:
+                template = await reasoner.analyze_concern(data)
+                if template is not None and journal is not None:
+                    await journal.record_causal_template(template)
+        except Exception:
+            logger.debug("AD-660: causal_reasoner concern hook failed", exc_info=True)
+
         # No DM, no intervention — amber is informational for the Counselor.
         # She tracks the pattern. If it escalates to red, _on_circuit_breaker_trip handles it.
 

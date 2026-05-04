@@ -349,6 +349,22 @@ class ChainOptimizerConfig(BaseModel):
     min_samples_per_group: int = 20
 
 
+class CausalReasoningConfig(BaseModel):
+    """AD-660 v1: Agent Causal Reasoning Framework.
+
+    v1 ships the four-step causal-reasoning template + journal storage +
+    one opt-in integration point in counselor's amber-zone handler. The
+    LLM fills the template; ProbOS persists it. There is no inference
+    engine, no automatic invocation, no action execution.
+
+    Disabled by default — enable to activate the counselor concern hook.
+    """
+
+    enabled: bool = False  # opt-in until validated
+    max_tokens: int = 700
+    tier: str = "standard"
+
+
 class StepInstructionConfig(BaseModel):
     """AD-651: Step-specific standing order decomposition."""
 
@@ -2017,6 +2033,7 @@ class SystemConfig(BaseModel):
     tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
     chain_optimizer: ChainOptimizerConfig = ChainOptimizerConfig()  # AD-659
+    causal_reasoning: CausalReasoningConfig = CausalReasoningConfig()  # AD-660
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571
