@@ -5931,14 +5931,7 @@ Bridge counselor post). Not a general-purpose telemetry firehose — scoped to d
 queries with clinical justification. Defense in depth: query audit trail records who
 accessed what, when.
 
-**Design direction (not decomposed into sub-ADs yet):**
-- `ClinicalTelemetryService` — query facade over dream history, anomaly audit, cognitive
-  journal, circuit breaker state. Clearance-checked at query time.
-- Proactive context injection — clinical agents see diagnostic data summary during
-  `_gather_context()` when subordinate/crew health assessment is active (parallels
-  AD-630 subordinate stats injection pattern).
-- Shell command — `/clinical` or `/medbay` for Captain to query the same data directly.
-- API endpoints — REST routes gated by clearance resolution.
+**v1 delivered:** `ClinicalTelemetryService` query facade over dream history and cognitive journal chain traces, clearance-gated (FULL/ORACLE + clinical role). In-memory audit ring. Remaining capabilities decomposed into AD-635b through AD-635f.
 
 **Origin:** Crew proposal from Chapel (consolidation anomaly investigation). Proposal
 rejected on analytical grounds, but the diagnostic access gap it revealed is genuine.
@@ -5951,6 +5944,16 @@ access), AD-566c (drift detection — drift reports as diagnostic data Medical s
 AD-505 (Counselor — shares clinical domain, requires same access for therapeutic
 intervention), AD-504 (self-monitoring — clinical view of another agent's self-monitoring
 state), AD-632a (sub-task journal entries — future diagnostic data source via dag_node_id).*
+
+**AD-635b: Clinical Telemetry — Anomaly Audit Trail Persistence** *(Scoped, OSS, Issue #391)* — Persist the in-memory audit ring (`ClinicalTelemetryService._audit` deque) to SQLite for post-incident review. v1 audit ring is bounded in-memory (max 1000 entries) and lost on restart. Must use cloud-ready storage abstraction. *Depends on: AD-635 v1 (COMPLETE). Related: AD-456d (AuditLog persistence — same pattern).*
+
+**AD-635c: Clinical Telemetry — Circuit Breaker State History** *(Scoped, OSS, Issue #392)* — Expose circuit breaker trip history (not just current state) to clinical agents via `ClinicalTelemetryService`. Clinical need: identifying agents with recurring trips as candidates for Counselor intervention or LIMDU. *Depends on: AD-635 v1 (COMPLETE), AD-495 (Circuit Breaker — COMPLETE). Related: AD-628g (LIMDU protocol).*
+
+**AD-635d: Clinical Telemetry — REST Endpoints** *(Scoped, OSS, Issue #393)* — REST API routes for clinical telemetry queries gated by clearance resolution. Endpoints: `GET /api/clinical/dreams`, `GET /api/clinical/chain-traces/{agent_id}`, `GET /api/clinical/circuit-breakers/{agent_id}`, `GET /api/clinical/audit`. *Depends on: AD-635 v1 (COMPLETE). Related: AD-456 (audit layer).*
+
+**AD-635e: Clinical Telemetry — Shell Command** *(Scoped, OSS, Issue #394)* — Shell command (`/clinical` or `/medbay`) for Captain to query clinical telemetry data directly. Captain bypasses clearance gate (Fleet Admiral authority). *Depends on: AD-635 v1 (COMPLETE). Related: AD-635d (REST endpoints).*
+
+**AD-635f: Clinical Telemetry — Proactive Context Injection** *(Scoped, OSS, Issue #395)* — Clinical agents see diagnostic data summary during `_gather_context()` when health assessment is active. Parallels AD-630 subordinate stats injection pattern. *Depends on: AD-635 v1 (COMPLETE), AD-635c. Related: AD-630, AD-644 (SA Architecture).*
 
 ---
 
