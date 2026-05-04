@@ -170,4 +170,4 @@ waves:
       - "prompts/ad-572e-task-awareness.md"
     builder_required: true
     issues_to_close: []
-    status: pending
+    status: done
