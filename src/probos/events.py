@@ -306,6 +306,9 @@ class EventType(str, Enum):
     CREATIVE_WORK_PUBLISHED = "creative_work_published"  # AD-525
     CREATIVE_SKILL_AFFINITY_QUERIED = "creative_skill_affinity_queried"  # AD-525
 
+    # ── Statistical Process Control (AD-522) ───────────────────────
+    SPC_RULE_VIOLATED = "spc_rule_violated"  # AD-522 v1
+
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
     NODE_COMPLETE = "node_complete"

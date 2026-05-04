@@ -10,6 +10,35 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-522 v1: Statistical Process Control — Calibration Profile + Western Electric Rules (4 of 8) (2026-05-04)
+
+**Problem:** AD-522 (roadmap.md:6423) calls for industrial Statistical Process Control — per-agent control charts, Cp/Cpk, Western Electric / Nelson rule patterns, moving-range continuous recalibration, and Holodeck-onboarding-driven calibration sampling. Five capabilities total. The full surface depends on AD-503 (Counselor), AD-504 (Self-Monitoring), AD-506 (Graduated Response), and AD-486 (Holodeck) — none of which are required for the *foundation* — and on Cp/Cpk indices that are themselves a separable surface. Shipping all five at once would couple landing on the calibration math to four unrelated cross-AD fronts and produce a single oversized commit.
+
+**Decision:** v1 ships **2 of 5 capabilities** per Wave 5 convention #14 aggressive pre-deferral — the statistical foundation only, with no upstream consumers and no integrations.
+
+- **`AgentCalibrationProfile`** (`src/probos/cognitive/spc/calibration_profile.py`): per-agent SPC control chart with bounded sample window via `collections.deque(maxlen=sample_window)` (default 100 most-recent observations). `record_observation(value)` appends; properties `mean` (via `statistics.fmean`), `stdev` (via `statistics.stdev`, returns 0.0 below 2 samples), `ucl=mean+3σ`, `lcl=mean-3σ`. `zone(value)` returns `unknown` (insufficient samples) / `zone_c` (within 1σ) / `zone_b` (1-2σ) / `zone_a` (2-3σ) / `beyond_3sigma`. `recent_values(n)` returns the most recent n samples as a tuple.
+- **`WesternElectricRules`** (`src/probos/cognitive/spc/rules.py`): static `check(profile, window_size=20)` runs **4 of 8 rules** over the most recent window. Rule 1: 1 point beyond 3σ. Rule 2: 2-of-3 in Zone A (>2σ same side). Rule 3: 4-of-5 in Zone B (>1σ same side). Rule 4: 8 consecutive on same side of centerline. Defensive short-circuit returns `[]` when `sample_count<8` or `stdev==0.0`. Each detected pattern produces a `RuleViolation(rule_name, description, sample_index)` frozen dataclass.
+- **`SPCCalibrationStore`** (`src/probos/cognitive/spc/store.py`): per-agent profile registry. `get_or_create(agent_id)` is idempotent; `record_observation(agent_id, value)` is a shorthand. `check_rules(agent_id, window_size=20)` runs `WesternElectricRules.check` and emits `SPC_RULE_VIOLATED` per detected violation. `all_profiles()` returns a tuple. Late-bind `emit_event` field per AD-456/AD-530/AD-539c sibling pattern; `_emit_violation` is log-and-degrade tier on emit failure.
+- 1 new EventType (`SPC_RULE_VIOLATED`; verified collision-free against events.py post-Wave-20).
+- New `SPCConfig` Pydantic model (`enabled=True`, `sample_window=100`) wired onto `SystemConfig.spc: SPCConfig = Field(default_factory=SPCConfig)`.
+- Sync `_wire_spc_calibration(*, runtime, config) -> bool` at startup/finalize.py mirrors AD-525/AD-530/AD-539c sync-wiring shape (no awaits in body); invoked from `finalize_startup` immediately after `_wire_gap_aggregator` (anchored on the self_distillation/gap_remediation block per architect dispatch). Defensive `isinstance(cfg, SPCConfig)` boundary check (BF-254 / AD-487 pattern) handles legacy MagicMock-config tests.
+- Public attribute `runtime.spc_calibration_store` (no underscore — Wave 5 convention #1).
+- Statistics implementation uses stdlib `statistics.fmean` + `statistics.stdev` (sample stdev, n-1 denominator).
+
+**Why:** SPC math is independent of how observations are sourced, of how violations are routed downstream, and of any specific consumer. Shipping the foundation alone unblocks AD-522b/c/d/e to ship later as separable, smaller commits each gated by their own forcing function. v1 is **OBSERVATIONAL** — the store is a passive recorder; nothing in v1 mutates trust, raises alarms, or auto-acts on a violation.
+
+**Deferred:**
+- **AD-522b** (Cp/Cpk process capability indices) — depends on a baseline-distribution definition decision separate from control limits.
+- **AD-522c** (graduated response integration — SPC zones → AD-506 Green/Amber/Red) — forcing function: AD-503/504/506 ship.
+- **AD-522d** (moving-range / continuous recalibration with assignable-vs-common-cause distinction; sigma_multiplier-by-neuroticism using `crew_profile.PersonalityTraits` — future-consumer surface, not consumed in v1) — depends on AD-522b.
+- **AD-522e** (calibration sampling integration with Holodeck onboarding) — depends on AD-486.
+
+**Cross-AD orthogonality preserved:** EmergentDetector and `crew_profile.PersonalityTraits` are explicitly NOT consumed by v1 (future-consumer surfaces — EmergentDetector integration deferred to AD-522c; trait-driven control limit width deferred to AD-522d). AD-503 Counselor and AD-504 Self-Monitoring are explicitly NOT consumed by v1.
+
+**Tests:** 21 focused tests at `tests/test_ad522_spc.py` covering EventType, Pydantic config defaults, AgentCalibrationProfile (initial state / ring buffer eviction / mean-stdev-UCL-LCL / zone defensive `unknown` / full zone classification including beyond-3σ / recent_values slice with empty + zero edge cases), WesternElectricRules (insufficient-samples / zero-stdev short-circuits, all 4 rules positive cases, in-control true-negative — large stable baseline of 51 samples used for rule-1/2/3 positive cases to keep mean/stdev unaffected by appended outliers), SPCCalibrationStore (get_or_create idempotency, event emission per violation with no-emit on unknown agent, all_profiles tuple return), and 2 wiring tests (enabled/disabled config). Full gate: 10820 passed, 15 skipped + 1 pre-existing flake (`test_browse_threads_sort_recent` — passes in isolation; unrelated). Test delta vs Wave-20 baseline: **+21** (exact match).
+
+**Closes:** GitHub issue #97.
+
 ### Combo D: AD-539c + AD-539d gap pipeline extensions (observational v1) (2026-05-03)
 
 **Problem:** AD-539's Knowledge Gap → Qualification pipeline detects gaps but two surfaces are missing: (a) no record of what the system *would* remediate if active remediation were turned on, leaving the design space undocumented; (b) no aggregate view of fleet-level gap distribution by department / priority / intent — only per-gap detail. Both children were pre-deferred from AD-539 per Wave 5-7 convention #14.

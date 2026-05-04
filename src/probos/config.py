@@ -1834,6 +1834,13 @@ class GapPipelineExtensionsConfig(BaseModel):
     remediation_max_history: int = 100
 
 
+class SPCConfig(BaseModel):
+    """AD-522 v1: Statistical Process Control (calibration profile + WE rules)."""
+
+    enabled: bool = True
+    sample_window: int = 100
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -1948,6 +1955,7 @@ class SystemConfig(BaseModel):
     reconsolidation: ReconsolidationConfig = ReconsolidationConfig()  # AD-574
     naval_organization: NavalOrganizationConfig = Field(default_factory=NavalOrganizationConfig)  # AD-477
     self_distillation: SelfDistillationConfig = SelfDistillationConfig()  # AD-487
+    spc: SPCConfig = Field(default_factory=SPCConfig)  # AD-522 v1
 
     @field_validator("health_probe_interval_seconds")
     @classmethod

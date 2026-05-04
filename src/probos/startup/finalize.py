@@ -161,6 +161,26 @@ def _wire_gap_aggregator(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_spc_calibration(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-522 v1: Wire SPCCalibrationStore (calibration profile + WE rules)."""
+    from probos.config import SPCConfig
+
+    cfg = getattr(config, "spc", None)
+    if not isinstance(cfg, SPCConfig) or not cfg.enabled:
+        return False
+
+    from probos.cognitive.spc import SPCCalibrationStore
+
+    store = SPCCalibrationStore(runtime, sample_window=cfg.sample_window)
+    store.emit_event = getattr(runtime, "emit_event", None)
+    runtime.spc_calibration_store = store  # public attribute (Wave 5 convention #1)
+    logger.info(
+        "AD-522: SPCCalibrationStore initialized (sample_window=%d; 4 of 8 WE rules)",
+        cfg.sample_window,
+    )
+    return True
+
+
 async def _wire_self_distillation(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-487: Wire PersonalOntologyProber (Map step only) and open its SQLite handle."""
     # Defensive boundary check: some legacy tests pass MagicMock for config,
@@ -347,6 +367,9 @@ async def finalize_startup(
 
     if _wire_gap_aggregator(runtime=runtime, config=config):
         logger.info("AD-539d: FleetGapAggregator v1 wired during finalization")
+
+    if _wire_spc_calibration(runtime=runtime, config=config):
+        logger.info("AD-522: SPCCalibrationStore v1 wired during finalization")
 
     # BF-246: Start periodic LLM health probe for recovery from extended outages
     # BF-254: hasattr() alone matches MagicMock auto-attributes; require the
