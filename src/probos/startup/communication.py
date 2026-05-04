@@ -313,6 +313,17 @@ async def init_communication(
         asyncio.create_task(journal_prune_loop_fn())
         logger.info("cognitive-journal started")
 
+    # --- Knowledge Edge Store (AD-687) ---
+    knowledge_edges = None
+    if config.knowledge_edges.enabled:
+        from probos.knowledge.edges import SQLiteKnowledgeEdgeStore
+
+        knowledge_edges = SQLiteKnowledgeEdgeStore(
+            db_path=str(data_dir / Path(config.knowledge_edges.db_path).name),
+        )
+        await knowledge_edges.start()
+        logger.info("knowledge-edges started (db=%s)", knowledge_edges.db_path)
+
     # --- Skill Framework (AD-428) ---
     from probos.skill_framework import SkillRegistry, AgentSkillService
 
@@ -465,6 +476,7 @@ async def init_communication(
         assignment_service=assignment_service,
         bridge_alerts=bridge_alerts,
         cognitive_journal=cognitive_journal,
+        knowledge_edges=knowledge_edges,
         skill_registry=skill_registry,
         skill_service=skill_service,
         acm=acm,

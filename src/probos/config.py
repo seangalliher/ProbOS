@@ -1740,6 +1740,32 @@ class CognitiveJournalConfig(BaseModel):
     prune_interval_seconds: float = 3600.0
 
 
+class KnowledgeEdgesConfig(BaseModel):
+    """Knowledge Edge Store — typed-triple graph (AD-687).
+
+    Default ``enabled=True`` is intentional and DEVIATES from the Wave-10
+    transitional-flag convention. Rationale: this v1 ships an empty,
+    write-only-when-called-by-consumers SQLite table. Consumers (Oracle
+    Tier 6, Hebbian backfill, Dream Step 10) arrive in AD-688/689/690. With
+    no consumers the store costs one CREATE TABLE IF NOT EXISTS at boot —
+    invisible at runtime. Same precedent: ``CognitiveJournalConfig`` (also
+    enabled=True for an infrastructure store).
+    """
+    enabled: bool = True
+    db_path: str = "data/knowledge_edges.sqlite"
+    max_traverse_hops: int = 3
+
+    @field_validator("max_traverse_hops")
+    @classmethod
+    def _cap_hops(cls, v: int) -> int:
+        if v < 1 or v > 3:
+            raise ValueError(
+                "knowledge_edges.max_traverse_hops must be in [1, 3] "
+                "(MAX_HOPS_CEILING; research §Phase 1)"
+            )
+        return v
+
+
 class ClinicalTelemetryConfig(BaseModel):
     """AD-635 v1: Clearance-gated clinical query facade (Medical / Counselor).
 
@@ -2049,6 +2075,7 @@ class SystemConfig(BaseModel):
     behavioral_metrics: BehavioralMetricsConfig = BehavioralMetricsConfig()
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
+    knowledge_edges: KnowledgeEdgesConfig = Field(default_factory=KnowledgeEdgesConfig)  # AD-687
     communications: CommunicationsConfig = CommunicationsConfig()
     workforce: WorkforceConfig = WorkforceConfig()
     temporal: TemporalConfig = TemporalConfig()

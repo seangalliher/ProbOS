@@ -424,6 +424,9 @@ class ProbOSRuntime:
         # --- Cognitive Journal (AD-431) ---
         self.cognitive_journal: CognitiveJournal | None = None
 
+        # --- Knowledge Edge Store (AD-687) ---
+        self.knowledge_edges: Any = None  # SQLiteKnowledgeEdgeStore | None — Any to avoid circular import
+
         # --- Counselor Profile Store (AD-503) ---
         self._counselor_profile_store: Any = None
 
@@ -1606,6 +1609,7 @@ class ProbOSRuntime:
         self.tool_registry = comm.tool_registry
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
+        self.knowledge_edges = comm.knowledge_edges  # AD-687
         self.skill_registry = comm.skill_registry
         self.skill_service = comm.skill_service
         # AD-566f: Qualification → Skill Bridge

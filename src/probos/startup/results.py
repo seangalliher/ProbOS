@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from probos.cognitive.emergence_metrics import EmergenceMetricsEngine
     from probos.cognitive.feedback import FeedbackEngine
     from probos.cognitive.journal import CognitiveJournal
+    from probos.knowledge.edges import SQLiteKnowledgeEdgeStore
     from probos.cognitive.consultation import ConsultationProtocol
     from probos.cognitive.self_mod import SelfModificationPipeline
     from probos.cognitive.strategy_advisor import StrategyAdvisor
@@ -153,6 +154,7 @@ class CommunicationResult:
     assignment_service: "AssignmentService | None"
     bridge_alerts: "BridgeAlertService | None"
     cognitive_journal: "CognitiveJournal | None"
+    knowledge_edges: "SQLiteKnowledgeEdgeStore | None"  # AD-687
     skill_registry: "SkillRegistry"
     skill_service: "AgentSkillService"
     acm: "AgentCapitalService"
