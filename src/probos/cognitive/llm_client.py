@@ -80,16 +80,16 @@ class OpenAICompatibleClient(BaseLLMClient):
         else:
             # Build a CognitiveConfig from legacy keyword args
             models = models or {
-                "fast": "gpt-4o-mini",
+                "fast": "claude-sonnet-4-6",
                 "standard": "claude-sonnet-4-6",
-                "deep": "claude-opus-4-0-20250115",
+                "deep": "claude-opus-4-6",
             }
             self._config = CognitiveConfig(
                 llm_base_url=base_url,
                 llm_api_key=api_key,
-                llm_model_fast=models.get("fast", "gpt-4o-mini"),
-                llm_model_standard=models.get("standard", "claude-sonnet-4"),
-                llm_model_deep=models.get("deep", "claude-sonnet-4"),
+                llm_model_fast=models.get("fast", "claude-sonnet-4-6"),
+                llm_model_standard=models.get("standard", "claude-sonnet-4-6"),
+                llm_model_deep=models.get("deep", "claude-opus-4-6"),
                 llm_timeout_seconds=timeout,
             )
 

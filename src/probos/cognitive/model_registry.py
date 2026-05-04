@@ -42,13 +42,13 @@ class ModelDescriptor:
 # routing decisions are observable without operator action.
 _DEFAULT_DESCRIPTORS: tuple[ModelDescriptor, ...] = (
     ModelDescriptor(
-        name="gpt-4o-mini",
-        provider="openai",
+        name="claude-sonnet-4-6-fast",
+        provider="anthropic",
         tier="fast",
         capabilities=frozenset({ModelCapability.GENERAL, ModelCapability.FAST}),
-        cost_per_million_input_tokens=0.15,
-        cost_per_million_output_tokens=0.60,
-        context_window_tokens=128_000,
+        cost_per_million_input_tokens=3.0,
+        cost_per_million_output_tokens=15.0,
+        context_window_tokens=200_000,
     ),
     ModelDescriptor(
         name="claude-sonnet-4-6",
@@ -64,7 +64,7 @@ _DEFAULT_DESCRIPTORS: tuple[ModelDescriptor, ...] = (
         context_window_tokens=200_000,
     ),
     ModelDescriptor(
-        name="claude-opus-4-0",
+        name="claude-opus-4-6",
         provider="anthropic",
         tier="deep",
         capabilities=frozenset({

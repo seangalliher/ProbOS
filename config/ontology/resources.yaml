@@ -13,21 +13,21 @@ model_tiers:
   - id: fast
     name: "Fast"
     description: "Quick, low-cost operations — routing, classification, simple generation"
-    default_model: "gpt-4o-mini"
+    default_model: "claude-sonnet-4-6"
     use_cases: ["intent routing", "classification", "simple responses", "triage"]
     cost: low
     latency: low
   - id: standard
     name: "Standard"
     description: "General-purpose operations — most agent reasoning"
-    default_model: "claude-sonnet-4"
+    default_model: "claude-sonnet-4-6"
     use_cases: ["proactive thinks", "code review", "analysis", "Ward Room responses"]
     cost: medium
     latency: medium
   - id: deep
     name: "Deep"
     description: "Complex reasoning — architecture decisions, deep analysis"
-    default_model: "claude-sonnet-4"
+    default_model: "claude-opus-4-6"
     use_cases: ["architecture review", "complex debugging", "self-modification proposals", "dream consolidation"]
     cost: high
     latency: high

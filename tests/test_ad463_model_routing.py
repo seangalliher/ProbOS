@@ -58,13 +58,13 @@ def test_model_registry_default_seed_includes_three_tiers():
 def test_model_registry_register_overwrites_by_name():
     reg = ModelRegistry()
     new_d = ModelDescriptor(
-        name="gpt-4o-mini",  # overwrites seed
-        provider="openai",
+        name="claude-sonnet-4-6-fast",  # overwrites seed
+        provider="anthropic",
         tier="fast",
         cost_per_million_output_tokens=0.99,
     )
     reg.register(new_d)
-    got = reg.get("gpt-4o-mini")
+    got = reg.get("claude-sonnet-4-6-fast")
     assert got is not None
     assert got.cost_per_million_output_tokens == 0.99
     # Other seeds preserved
@@ -73,9 +73,9 @@ def test_model_registry_register_overwrites_by_name():
 
 def test_model_registry_mark_unavailable_excludes_from_by_tier():
     reg = ModelRegistry()
-    assert any(d.name == "gpt-4o-mini" for d in reg.by_tier("fast"))
-    assert reg.mark_unavailable("gpt-4o-mini") is True
-    assert not any(d.name == "gpt-4o-mini" for d in reg.by_tier("fast"))
+    assert any(d.name == "claude-sonnet-4-6-fast" for d in reg.by_tier("fast"))
+    assert reg.mark_unavailable("claude-sonnet-4-6-fast") is True
+    assert not any(d.name == "claude-sonnet-4-6-fast" for d in reg.by_tier("fast"))
 
 
 # ----- Router -----
@@ -87,7 +87,7 @@ def test_router_single_candidate_returns_it():
     emit = MagicMock()
     router = ModelRouter(registry=reg, emit_event=emit)
     decision = router.choose(tier="fast")
-    assert decision.chosen_model == "gpt-4o-mini"
+    assert decision.chosen_model == "claude-sonnet-4-6-fast"
     assert decision.reason == "single candidate"
     assert decision.fallback is False
     et, _ = emit.call_args[0]
@@ -101,13 +101,13 @@ def test_router_picks_cheapest_among_tier():
         name="expensive-fast",
         provider="openai",
         tier="fast",
-        cost_per_million_output_tokens=10.0,
+        cost_per_million_output_tokens=100.0,
     ))
     emit = MagicMock()
     router = ModelRouter(registry=reg, emit_event=emit)
     decision = router.choose(tier="fast")
-    # gpt-4o-mini at $0.60 < expensive-fast at $10
-    assert decision.chosen_model == "gpt-4o-mini"
+    # claude-sonnet-4-6-fast at $15.0 < expensive-fast at $100.0
+    assert decision.chosen_model == "claude-sonnet-4-6-fast"
     assert decision.reason == "cheapest-by-output-cost"
 
 
@@ -161,7 +161,7 @@ def test_llm_client_resolve_model_for_tier_with_router_returns_chosen():
     router = ModelRouter(registry=reg)
     client = OpenAICompatibleClient(model_router=router)
     chosen = client._resolve_model_for_tier("fast")
-    assert chosen == "gpt-4o-mini"
+    assert chosen == "claude-sonnet-4-6-fast"
 
 
 def test_llm_client_resolve_model_for_tier_with_failing_router_falls_back():

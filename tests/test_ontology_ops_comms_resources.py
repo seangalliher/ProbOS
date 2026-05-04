@@ -185,7 +185,7 @@ class TestModelTiers:
     async def test_model_tier_query(self, service: VesselOntologyService) -> None:
         fast = service.get_model_tier("fast")
         assert fast is not None
-        assert fast.default_model == "gpt-4o-mini"
+        assert fast.default_model == "claude-sonnet-4-6"
 
     @pytest.mark.asyncio
     async def test_model_tier_unknown(self, service: VesselOntologyService) -> None:
