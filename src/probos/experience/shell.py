@@ -25,6 +25,7 @@ from probos.experience.commands import (
     commands_config,
     commands_tool_access,
     commands_skill,
+    commands_manifest,
 )
 from probos.experience.commands.approval_callbacks import (
     user_escalation_callback,
@@ -51,6 +52,7 @@ class ProbOSShell:
     COMMANDS: dict[str, str] = {
         "/status":    "Show system status overview",
         "/agents":    "List all agents with trust scores",
+        "/manifest":  "Show crew manifest (/manifest [<dept>] [watch:<name>] | /manifest --ship)",
         "/weights":   "Show Hebbian connection weights",
         "/gossip":    "Show gossip protocol view",
         "/log":       "Show recent event log entries (/log [category])",
@@ -226,6 +228,7 @@ class ProbOSShell:
         handlers: dict[str, Any] = {
             "/status":     lambda: commands_status.cmd_status(rt, con, arg),
             "/agents":     lambda: commands_status.cmd_agents(rt, con, arg),
+            "/manifest":   lambda: commands_manifest.cmd_manifest(rt, con, arg),
             "/ping":       lambda: commands_status.cmd_ping(rt, con, arg),
             "/scaling":    lambda: commands_status.cmd_scaling(rt, con, arg),
             "/federation": lambda: commands_status.cmd_federation(rt, con, arg),

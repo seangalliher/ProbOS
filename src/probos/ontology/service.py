@@ -7,9 +7,12 @@ graph at startup, provides query methods for runtime use.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from probos.ontology.billet_registry import BilletRegistry
 from probos.ontology.departments import DepartmentService
@@ -470,17 +473,51 @@ class VesselOntologyService:
         self,
         *,
         department: str | None = None,
+        watch: str | None = None,
         trust_network: Any | None = None,
         callsign_registry: Any | None = None,
+        watch_manager: Any | None = None,
     ) -> list[dict[str, Any]]:
         """Assemble live crew roster from ship subsystems.
 
         Returns one entry per crew agent with fields:
           agent_type, callsign, department, post, rank, trust_score, agent_id.
+        When ``watch_manager`` is provided, each entry also carries a ``watch``
+        field (lowercase WatchType.value or empty string).
 
         Enrichment sources are optional — omit for a minimal roster.
+
+        AD-513 Phase 2 v1: ``watch`` filter restricts the manifest to entries
+        whose agent_id is assigned to that watch. If ``watch`` is set but
+        ``watch_manager`` is None, returns ``[]`` (cannot satisfy the filter).
+        Watch matching is case-insensitive (normalized to lowercase to match
+        WatchType.value shape, watch_rotation.py:22).
         """
         from probos.crew_profile import Rank
+
+        # AD-513 Phase 2: build agent_id -> watch reverse lookup once.
+        # WatchManager.get_roster() returns {watch_name: [agent_id, ...]}
+        # (watch_rotation.py:150-152). Watch names are already WatchType.value
+        # (lowercase).
+        agent_to_watch: dict[str, str] = {}
+        if watch_manager is not None:
+            try:
+                roster = watch_manager.get_roster()
+                for watch_name, agent_ids in roster.items():
+                    for aid in agent_ids:
+                        if aid:
+                            agent_to_watch[aid] = watch_name
+            except Exception:
+                logger.warning(
+                    "get_crew_manifest: watch_manager.get_roster() failed; "
+                    "watch enrichment skipped this call",
+                    exc_info=True,
+                )
+                agent_to_watch = {}
+
+        # AD-513 Phase 2: watch filter cannot be satisfied without a manager.
+        if watch is not None and watch_manager is None:
+            return []
 
         crew_types = self.get_crew_agent_types()
         manifest: list[dict[str, Any]] = []
@@ -520,9 +557,94 @@ class VesselOntologyService:
                 entry["trust_score"] = 0.5
                 entry["rank"] = Rank.ENSIGN.value
 
+            # AD-513 Phase 2: enrich with watch assignment when manager provided.
+            # Empty agent_id (unfilled crew slot) gets empty watch.
+            if watch_manager is not None:
+                aid = entry["agent_id"]
+                entry["watch"] = agent_to_watch.get(aid, "") if aid else ""
+
             manifest.append(entry)
 
         if department:
             manifest = [e for e in manifest if e["department"] == department]
 
+        # AD-513 Phase 2: watch filter (case-insensitive, joins on agent_id).
+        if watch is not None:
+            watch_normalized = watch.lower()
+            manifest = [
+                e for e in manifest
+                if e.get("agent_id") and agent_to_watch.get(e["agent_id"]) == watch_normalized
+            ]
+
         return manifest
+
+    def get_ship_manifest(
+        self,
+        *,
+        trust_network: Any | None = None,
+        watch_manager: Any | None = None,
+    ) -> dict[str, Any]:
+        """Vessel-level summary for federation gossip / workforce planning.
+
+        AD-513 Phase 2 v1.
+
+        Returns:
+            {
+                "ship_name": str,             # from VesselIdentity.name
+                "agent_count": int,           # len(manifest)
+                "departments": list[str],     # distinct, sorted
+                "watches": list[str],         # populated watch names; [] if no manager
+                "alert_state": str,           # current alert condition (default "GREEN")
+                "manifest_summary": list[dict],  # [{agent_type, callsign, department, post}]
+            }
+
+        Alert state is sourced from the ontology service's own loader
+        (``self.get_alert_condition()``); no external alert manager required.
+        Designed as a cheap-to-compute vessel-level overview for gossip
+        subsystems.
+        """
+        manifest = self.get_crew_manifest(
+            trust_network=trust_network,
+            watch_manager=watch_manager,
+            callsign_registry=None,
+        )
+
+        identity = self.get_vessel_identity()
+
+        departments = sorted({
+            e["department"] for e in manifest if e.get("department")
+        })
+
+        watches: list[str] = []
+        if watch_manager is not None:
+            try:
+                roster = watch_manager.get_roster()
+                watches = sorted(
+                    name for name, agent_ids in roster.items() if agent_ids
+                )
+            except Exception:
+                logger.warning(
+                    "get_ship_manifest: watch_manager.get_roster() failed; "
+                    "returning empty watches list",
+                    exc_info=True,
+                )
+                watches = []
+
+        manifest_summary = [
+            {
+                "agent_type": e.get("agent_type", ""),
+                "callsign": e.get("callsign", ""),
+                "department": e.get("department", ""),
+                "post": e.get("post", ""),
+            }
+            for e in manifest
+        ]
+
+        return {
+            "ship_name": identity.name,
+            "agent_count": len(manifest),
+            "departments": departments,
+            "watches": watches,
+            "alert_state": self.get_alert_condition(),
+            "manifest_summary": manifest_summary,
+        }

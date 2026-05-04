@@ -10,6 +10,26 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-513 Phase 2 v1: Crew Manifest Shell + Watch Filter + Ship Manifest (2026-05-03)
+
+**Problem:** AD-513 Phase 1 delivered `get_crew_manifest()` + HXI panel + REST endpoint. Phase 2 has 6 follow-up capabilities (a-f). Trust-gated visibility, agent tool access, and ACM/competency fields each require new infrastructure. Shell command + watch filter + ship-summary are read-only additive surfaces shippable independently.
+
+**Decision:** v1 ships 3 of 6 Phase-2 capabilities:
+- (a) `/manifest` shell command — formatted Rich table with department/watch filters and `--ship` flag for vessel-level summary.
+- (d) Watch filter on `get_crew_manifest(watch=...)` — additive kwarg + watch_manager dep injection. Backward-compatible.
+- (f) `get_ship_manifest()` — vessel-level summary (ship_name, agent_count, departments, watches, alert_state) for federation gossip / workforce planning.
+
+All read-only consumers; no writes; no schema migration.
+
+**Why:** Wave 5 convention #14 aggressive pre-deferral. Phase 2b/c/e each have meaningful infrastructure asks (viewer-context plumbing, Tool registry integration, ACM lifecycle API). Shell + watch + ship-summary deliver immediate Captain-facing value with minimal coupling.
+
+**Deferred:**
+- AD-513 Phase 2b: Trust-gated visibility (redacted views by earned-agency tier).
+- AD-513 Phase 2c: Agent tool access (internal API for designed agents).
+- AD-513 Phase 2e: ACM lifecycle state + competency fields in manifest payload.
+
+**Cross-links:** AD-513 Phase 1 (ontology/service.py:469), AD-429 (Ontology), AD-064 (Watch Rotation — WatchManager consumer), AD-479 (Federation — ship manifest is the gossip surface).
+
 ### AD-487: Self-Distillation v1 — Personal Ontology Map Step (2026-05-03)
 
 **Problem:** LLMs don't know what they know without prompting. Agents need systematic knowledge-domain inventory to build personal ontologies (capability map, not library copy). Roadmap describes 3-stage map-reduce + daydreaming + DID portability — too much for one wave.

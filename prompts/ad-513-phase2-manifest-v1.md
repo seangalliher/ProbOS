@@ -362,9 +362,11 @@ Pass-1 review (Reviews/ad-513-phase2-manifest-v1-review.md) verdict ⚠️ Condi
 **Nits**
 
 - **N6 — Empty Section 5 deleted.** "### Section 5 — Pydantic config (optional). No new config required." removed.
-- **N7 — untime.callsign_registry promoted to verified.** Footer now shows the cognitive_agent.py:4126 grep hit and drops the deferred line. (callsign_registry was already verified at the cognitive_agent and routers/ontology call sites.)
+- **N7 — 
+untime.callsign_registry promoted to verified.** Footer now shows the cognitive_agent.py:4126 grep hit and drops the deferred line. (callsign_registry was already verified at the cognitive_agent and routers/ontology call sites.)
 - **N8 — /manifest collision check moved to verified.** Hard-stop entry "Existing /manifest command name collides" removed; footer shows the 0-match grep against shell.py.
-- **Hard-stop on untime.watch_manager removed** — verified at runtime.py:238/580/1659.
+- **Hard-stop on 
+untime.watch_manager removed** — verified at runtime.py:238/580/1659.
 - **Hard-stop on "WatchManager doesn't expose query-by-watch" removed** — fallback now spelled out in Section 1 body.
 - **commands_manifest.py module docstring expanded** to a sentence describing the /manifest slash command, the filter args, and the --ship flag.
 
