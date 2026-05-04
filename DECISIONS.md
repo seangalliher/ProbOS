@@ -78,6 +78,26 @@ Both are read-only consumers of existing runtime surfaces. No writes. Public att
 
 **Cross-links:** AD-566 (Crew Qualification Battery), AD-539 (Gap → Qualification Pipeline), AD-471 (Watch Bill), Earned Agency, episodic memory, dreaming engine, WorkItemStore.
 
+### AD-525: Agent Creative Expression v1 (Skills Inventory + Records Output) (2026-05-03)
+
+**Problem:** Agents operate purely in duty mode — every action serves a functional purpose. Personality framework (Big Five traits) exists but has no creative outlet. Roadmap describes 5 capabilities (Skills Inventory + Time Allocation + Records Output + Code-as-Art + Cultural Emergence). Heavy interaction surface; large scope.
+
+**Decision:** v1 ships 2 of 5 capabilities — the bounded generative surfaces with no infrastructure ask:
+- `CreativeSkillsRegistry` — open-ended catalog of 8 default creative skills (Creative Writing, Technical Writing, Code as Art, Visual Design, Music Composition, Philosophy, Historiography, Comedy/Satire). Per-skill Big Five trait affinity. Read-only `affinity_score(skill_id, traits)` + `top_skills_for(traits, k)`. Extensible via `register_skill()` (runtime-only; no persistence in v1).
+- `CreativeOutputWriter` — publishes agent creative works to `creative/{callsign}/{topic_slug}.md` via existing `RecordsStore.write_entry`. Default classification `ship` (shared culture per design). `medium` and `skill_id` are encoded as `tags=["creative", medium, skill_id]` since `write_entry` does not accept arbitrary frontmatter keys (verified at records_store.py:113-148); the canonical author/classification/status/created/updated/department/topic/tags frontmatter is assembled by `write_entry` itself.
+
+Both are read-only consumers of existing runtime surfaces (`records_store`) and the `crew_profile.PersonalityTraits.to_dict()` adapter; no writes to existing data, no dependency on `runtime.profile_store` (which is currently unwired). Public attributes (no underscore per Wave 5 convention #1).
+
+**Why:** Generative + bounded. Skills Inventory is a stateless registry. Output Writer mirrors the existing `RecordsStore.write_entry` caller pattern (proactive.py:3033). No rate limits, no rank gating, no multi-agent collaboration in v1 — those are AD-525b/c/d/e territory with explicit forcing functions.
+
+**Deferred:**
+- AD-525b: Time-allocation rules gated by Earned Agency rank. Forcing function: v1 surfaces show agents using CreativeOutputWriter and capacity policy needs to enforce limits.
+- AD-525c: Code-as-creative-expression — relaxed-consensus path for non-duty BuildSpec runs.
+- AD-525d: Cultural emergence detection — depends on Archive (AD-434) + corpus threshold (~50+ works).
+- AD-525e: Creative collaboration — co-authoring; depends on cultural-emergence baseline.
+
+**Cross-links:** AD-357 (Earned Agency — eventual gate), AD-434 (Archive — eventual cultural-emergence consumer), AD-526 (Recreation — Combo A AD-526c + Combo C AD-526d trackers exist; creative output is distinct from games), CrewProfile Big Five traits (read-only consumer), RecordsStore (consumer).
+
 ### AD-685b: Phantom-API Pre-Check — Method-Call AST Validation (2026-05-03)
 
 **Problem:** AD-685 v1 catches kwarg-name phantoms but NOT method-name phantoms. 4 documented recurrences across Waves 9B, 10, 12, 14 of the pattern: prompt asserts `<obj>.<method>(...)` where `<method>` doesn't exist on the resolved class. 3 of 4 caught at review time (LLMClient.chat → complete being the most recent in Wave 14); only 1 caught by AD-685 v1 (runtime.duty_schedule_tracker via runtime.X check). Architect's 4th-recurrence forcing function.

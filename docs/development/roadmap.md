@@ -2934,7 +2934,7 @@ Without provenance, ProbOS cannot prove its core thesis. The Collaborative Intel
 
 *Connects to: AD-557 (Emergence Metrics — provenance provides PID ground truth), Vessel Ontology (structural grounding — orthogonal axis), Ward Room (message metadata), EpisodicMemory (evidence chain anchors), Ship's Records AD-434 (notebook provenance), confabulation cascade defenses. Inspired by intelligence community source evaluation methodology (CIA Source Reliability ratings, NATO STANAG 2022 Admiralty Code).*
 
-**AD-525: Agent Creative Expression — Liberal Arts & Hobbies** *(planned, OSS, depends: AD-434, AD-357, Holodeck)* — Agents currently operate purely in duty mode — every action serves a functional purpose. But rounded personalities require freedom of expression beyond operational utility. AD-525 gives agents creative dimensions: hobbies, artistic expression, and the freedom to create for its own sake.
+**AD-525: Agent Creative Expression — Liberal Arts & Hobbies** *(partial — v1 ships Skills Inventory + Records Output; Time Allocation/Code-as-Art/Cultural Emergence/Collaboration deferred to AD-525b/c/d/e, OSS, depends: AD-434, AD-357, Holodeck)* — Agents currently operate purely in duty mode — every action serves a functional purpose. But rounded personalities require freedom of expression beyond operational utility. AD-525 gives agents creative dimensions: hobbies, artistic expression, and the freedom to create for its own sake.
 
 **(1) Creative Skills Inventory:** An open-ended catalog of creative skills available on the ship that agents can discover and adopt based on personality affinity. The medium is unbounded — any form of creative expression an agent gravitates toward is valid. Initial examples:
 

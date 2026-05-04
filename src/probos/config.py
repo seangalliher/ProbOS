@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -1812,6 +1812,13 @@ class SelfDistillationConfig(BaseModel):
     db_path: Path = Path("data/agent_probes.db")
 
 
+class CreativeExpressionConfig(BaseModel):
+    """Configuration for AD-525 v1 (Skills Inventory + Records Output)."""
+
+    enabled: bool = True
+    default_classification: Literal["ship", "department", "private"] = "ship"
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -1916,6 +1923,7 @@ class SystemConfig(BaseModel):
     bill: BillConfig = BillConfig()  # AD-618b
     consultation: ConsultationConfig = ConsultationConfig()  # AD-594
     expertise: ExpertiseConfig = ExpertiseConfig()  # AD-600
+    creative_expression: CreativeExpressionConfig = Field(default_factory=CreativeExpressionConfig)  # AD-525
     spreading_activation: SpreadingActivationConfig = SpreadingActivationConfig()  # AD-604
     thought_store: ThoughtStoreConfig = ThoughtStoreConfig()  # AD-606
     retroactive: RetroactiveConfig = RetroactiveConfig()  # AD-608

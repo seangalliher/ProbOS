@@ -299,6 +299,10 @@ class EventType(str, Enum):
     ONTOLOGY_PROBE_RECORDED = "ontology_probe_recorded"  # AD-487
     ONTOLOGY_PROBE_RATE_LIMITED = "ontology_probe_rate_limited"  # AD-487
 
+    # ── Creative Expression (AD-525) ───────────────────────────────
+    CREATIVE_WORK_PUBLISHED = "creative_work_published"  # AD-525
+    CREATIVE_SKILL_AFFINITY_QUERIED = "creative_skill_affinity_queried"  # AD-525
+
     # DAG execution (on_event callback chain, not _emit_event)
     NODE_START = "node_start"
     NODE_COMPLETE = "node_complete"
