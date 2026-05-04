@@ -290,8 +290,15 @@ def test_recursive_validity_ad685b_prompt_clean():
     (architect-acknowledged in dispatch). This test asserts no NEW
     method_phantom flags introduced by Section 1.
     """
-    prompt = _REPO_ROOT / "prompts" / "ad-685b-method-call-validation.md"
-    assert prompt.is_file(), f"AD-685b prompt missing at {prompt}"
+    # Prompt path: lives in prompts/ during active wave, then archived to
+    # prompts/archive/ post-wave. Check both locations to keep test stable
+    # across wave-archive lifecycle.
+    candidates = [
+        _REPO_ROOT / "prompts" / "ad-685b-method-call-validation.md",
+        _REPO_ROOT / "prompts" / "archive" / "ad-685b-method-call-validation.md",
+    ]
+    prompt = next((p for p in candidates if p.is_file()), candidates[0])
+    assert prompt.is_file(), f"AD-685b prompt missing in prompts/ or prompts/archive/"
 
     src_root = _REPO_ROOT / "src" / "probos"
     body = prompt.read_text(encoding="utf-8")
