@@ -119,6 +119,30 @@ def _wire_classification_gate(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_autonomy_boundaries(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-511 v1: Wire InviolableBoundaryRegistry + BoundaryViolationDetector."""
+    cfg = getattr(config, "autonomy_boundaries", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.security.autonomy_boundaries import (
+        BoundaryViolationDetector,
+        InviolableBoundaryRegistry,
+    )
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    registry = InviolableBoundaryRegistry()
+    detector = BoundaryViolationDetector(registry, emit_event=emit_fn)
+    runtime.boundary_registry = registry  # public attribute (Wave 5 convention #1)
+    runtime.boundary_detector = detector  # public attribute (Wave 5 convention #1)
+    logger.info(
+        "AD-511: Autonomy Boundaries v1 initialized (%d boundaries; %d patterns; observational)",
+        len(registry.list_boundaries()),
+        detector.pattern_count,
+    )
+    return True
+
+
 def _wire_gap_remediation_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-539c v1: Wire GapRemediationTracker (observational only)."""
     from probos.config import GapPipelineExtensionsConfig
@@ -361,6 +385,9 @@ async def finalize_startup(
 
     if _wire_classification_gate(runtime=runtime, config=config):
         logger.info("AD-530: ClassificationGate v1 wired during finalization")
+
+    if _wire_autonomy_boundaries(runtime=runtime, config=config):
+        logger.info("AD-511: Autonomy Boundaries v1 wired during finalization")
 
     if _wire_gap_remediation_tracker(runtime=runtime, config=config):
         logger.info("AD-539c: GapRemediationTracker v1 wired during finalization")

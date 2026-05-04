@@ -1826,6 +1826,14 @@ class ClassificationGateConfig(BaseModel):
     # v1: pattern set is hardcoded; register_pattern is runtime-only.
 
 
+class AutonomyBoundariesConfig(BaseModel):
+    """AD-511 v1: Agent Autonomy Boundaries (registry + observational detector)."""
+
+    enabled: bool = True
+    # v1: 5 federation-tier boundaries + 6 detection patterns are hardcoded.
+    # register_pattern is runtime-only. Active blocking is AD-511b.
+
+
 class GapPipelineExtensionsConfig(BaseModel):
     """AD-539c + AD-539d v1 config (observational gap pipeline extensions)."""
 
@@ -1947,6 +1955,7 @@ class SystemConfig(BaseModel):
     expertise: ExpertiseConfig = ExpertiseConfig()  # AD-600
     creative_expression: CreativeExpressionConfig = Field(default_factory=CreativeExpressionConfig)  # AD-525
     classification_gate: ClassificationGateConfig = Field(default_factory=ClassificationGateConfig)  # AD-530
+    autonomy_boundaries: AutonomyBoundariesConfig = Field(default_factory=AutonomyBoundariesConfig)  # AD-511
     gap_pipeline_extensions: GapPipelineExtensionsConfig = Field(default_factory=GapPipelineExtensionsConfig)  # AD-539c/d
     spreading_activation: SpreadingActivationConfig = SpreadingActivationConfig()  # AD-604
     thought_store: ThoughtStoreConfig = ThoughtStoreConfig()  # AD-606
