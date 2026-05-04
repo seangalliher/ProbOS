@@ -52,6 +52,40 @@ CREATE INDEX IF NOT EXISTS idx_journal_intent_id ON journal(intent_id);
 CREATE INDEX IF NOT EXISTS idx_journal_correlation_id ON journal(correlation_id);
 """
 
+_SCHEMA_CHAIN_TRACES = """
+CREATE TABLE IF NOT EXISTS chain_traces (
+    chain_id            TEXT NOT NULL,
+    step_index          INTEGER NOT NULL,
+    step_name           TEXT NOT NULL,
+    sub_task_type       TEXT NOT NULL,
+    tier                TEXT NOT NULL DEFAULT 'standard',
+    chain_source        TEXT NOT NULL DEFAULT '',
+    agent_id            TEXT NOT NULL DEFAULT '',
+    agent_type          TEXT NOT NULL DEFAULT '',
+    intent              TEXT NOT NULL DEFAULT '',
+    intent_id           TEXT NOT NULL DEFAULT '',
+    started_at          REAL NOT NULL DEFAULT 0.0,
+    duration_ms         REAL NOT NULL DEFAULT 0.0,
+    tokens_used         INTEGER NOT NULL DEFAULT 0,
+    success             INTEGER NOT NULL DEFAULT 1,
+    error_truncated     TEXT NOT NULL DEFAULT '',
+    context_keys_declared INTEGER NOT NULL DEFAULT 0,
+    context_keys_passed   INTEGER NOT NULL DEFAULT 0,
+    context_filter_applied INTEGER NOT NULL DEFAULT 0,
+    communication_context TEXT,
+    chain_trust_band      TEXT,
+    trust_score           REAL,
+    boot_camp_active      INTEGER NOT NULL DEFAULT 0,
+    from_captain          INTEGER NOT NULL DEFAULT 0,
+    is_dm                 INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chain_id, step_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chain_traces_started_at ON chain_traces(started_at);
+CREATE INDEX IF NOT EXISTS idx_chain_traces_agent ON chain_traces(agent_id);
+CREATE INDEX IF NOT EXISTS idx_chain_traces_chain_id ON chain_traces(chain_id);
+"""
+
 
 class CognitiveJournal:
     """Append-only SQLite journal for LLM reasoning traces."""
@@ -90,6 +124,8 @@ class CognitiveJournal:
         await self._db.commit()
         # Now create indexes that depend on migrated columns
         await self._db.executescript(_SCHEMA_INDEXES)
+        # AD-658: chain harness traces (separate from per-LLM-call journal rows)
+        await self._db.executescript(_SCHEMA_CHAIN_TRACES)
 
     async def stop(self) -> None:
         if self._db:
@@ -125,6 +161,13 @@ class CognitiveJournal:
             )
             deleted += cursor.rowcount
 
+        # AD-658: extend retention to chain_traces
+        if retention_days > 0:
+            cursor = await self._db.execute(
+                "DELETE FROM chain_traces WHERE started_at < ?", (cutoff,)
+            )
+            deleted += cursor.rowcount
+
         # Row-count cap
         if max_rows > 0:
             cursor = await self._db.execute("SELECT COUNT(*) FROM journal")
@@ -136,6 +179,20 @@ class CognitiveJournal:
                     "DELETE FROM journal WHERE id IN "
                     "(SELECT id FROM journal ORDER BY timestamp ASC LIMIT ?)",
                     (excess,)
+                )
+                deleted += cursor.rowcount
+
+        # AD-658: row-count cap on chain_traces
+        if max_rows > 0:
+            cursor = await self._db.execute("SELECT COUNT(*) FROM chain_traces")
+            row = await cursor.fetchone()
+            total_traces = row[0] if row else 0
+            if total_traces > max_rows:
+                excess = total_traces - max_rows
+                cursor = await self._db.execute(
+                    "DELETE FROM chain_traces WHERE rowid IN "
+                    "(SELECT rowid FROM chain_traces ORDER BY started_at ASC LIMIT ?)",
+                    (excess,),
                 )
                 deleted += cursor.rowcount
 
@@ -196,6 +253,81 @@ class CognitiveJournal:
             await self._db.commit()
         except Exception:
             logger.debug("Journal record failed", exc_info=True)
+
+    async def record_chain_trace(self, trace: Any) -> None:
+        """AD-658: Append a chain-step trace row. Fire-and-forget — never raises.
+
+        Accepts a ChainExecutionTrace (or any object with the same field set
+        accessible via attribute lookup). Conflicts on (chain_id, step_index)
+        are silently dropped via INSERT OR IGNORE — chain steps are write-once.
+        """
+        if not self._db:
+            return
+        try:
+            await self._db.execute(
+                """INSERT OR IGNORE INTO chain_traces
+                   (chain_id, step_index, step_name, sub_task_type, tier,
+                    chain_source, agent_id, agent_type, intent, intent_id,
+                    started_at, duration_ms, tokens_used, success, error_truncated,
+                    context_keys_declared, context_keys_passed, context_filter_applied,
+                    communication_context, chain_trust_band, trust_score,
+                    boot_camp_active, from_captain, is_dm)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    trace.chain_id, trace.step_index, trace.step_name,
+                    trace.sub_task_type, trace.tier, trace.chain_source,
+                    trace.agent_id, trace.agent_type, trace.intent, trace.intent_id,
+                    trace.started_at, trace.duration_ms, trace.tokens_used,
+                    1 if trace.success else 0, trace.error_truncated,
+                    trace.context_keys_declared, trace.context_keys_passed,
+                    1 if trace.context_filter_applied else 0,
+                    trace.communication_context, trace.chain_trust_band,
+                    trace.trust_score,
+                    1 if trace.boot_camp_active else 0,
+                    1 if trace.from_captain else 0,
+                    1 if trace.is_dm else 0,
+                ),
+            )
+            await self._db.commit()
+        except Exception:
+            logger.debug("Chain trace record failed", exc_info=True)
+
+    async def get_recent_chain_traces(
+        self,
+        *,
+        limit: int = 50,
+        agent_id: str | None = None,
+        since: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """AD-658: Return recent chain-step traces, most recent first.
+
+        Args:
+            limit: Max rows (capped by caller; default 50).
+            agent_id: Optional filter by agent.
+            since: Optional Unix-timestamp lower bound on started_at.
+        """
+        if not self._db:
+            return []
+        try:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if agent_id is not None:
+                clauses.append("agent_id = ?")
+                params.append(agent_id)
+            if since is not None:
+                clauses.append("started_at >= ?")
+                params.append(since)
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            params.append(limit)
+            cursor = await self._db.execute(
+                f"SELECT * FROM chain_traces {where} ORDER BY started_at DESC LIMIT ?",
+                params,
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception:
+            logger.debug("Chain trace query failed", exc_info=True)
+            return []
 
     async def get_reasoning_chain(
         self, agent_id: str, *, limit: int = 20,

@@ -368,6 +368,7 @@ class SubTaskExecutor:
                     intent=intent, intent_id=intent_id, journal=journal,
                     chain_start_time=chain_start_time,
                     chain_timeout_ms=chain.chain_timeout_ms,
+                    chain_source=chain.source,
                 )
                 results.append(result)
                 completed.add(spec.name)
@@ -385,6 +386,7 @@ class SubTaskExecutor:
                         intent=intent, intent_id=intent_id, journal=journal,
                         chain_start_time=chain_start_time,
                         chain_timeout_ms=chain.chain_timeout_ms,
+                        chain_source=chain.source,
                     )
                     for step_index, spec in ready
                 ]
@@ -462,6 +464,7 @@ class SubTaskExecutor:
         journal: Any | None,
         chain_start_time: float,
         chain_timeout_ms: int,
+        chain_source: str = "",
     ) -> SubTaskResult:
         """Execute a single sub-task step with context filtering, timeout, and journal recording."""
         handler = self._handlers.get(spec.sub_task_type)
@@ -494,6 +497,7 @@ class SubTaskExecutor:
             }
 
         step_start = time.monotonic()
+        step_started_at = time.time()  # AD-658: wall-clock for chain trace
         try:
             result = await asyncio.wait_for(
                 handler(spec, step_context, prior_results),
@@ -597,6 +601,47 @@ class SubTaskExecutor:
             except Exception:
                 logger.debug(
                     "AD-632a: Journal recording failed for step '%s'",
+                    spec.name, exc_info=True,
+                )
+
+        # AD-658: Per-step harness trace (independent of per-LLM-call journal row)
+        if journal is not None:
+            try:
+                from probos.cognitive.chain_trace import ChainExecutionTrace
+                trace = ChainExecutionTrace(
+                    chain_id=chain_id,
+                    step_index=step_index,
+                    step_name=spec.name,
+                    sub_task_type=spec.sub_task_type.value,
+                    tier=result.tier_used or spec.tier,
+                    chain_source=chain_source,
+                    agent_id=agent_id,
+                    agent_type=agent_type,
+                    intent=intent,
+                    intent_id=intent_id,
+                    started_at=step_started_at,
+                    duration_ms=result.duration_ms,
+                    tokens_used=result.tokens_used,
+                    success=result.success,
+                    error_truncated=(result.error or "")[:200],
+                    context_keys_declared=len(spec.context_keys),
+                    context_keys_passed=len(step_context),
+                    context_filter_applied=bool(
+                        spec.context_keys
+                        and spec.sub_task_type != SubTaskType.QUERY
+                    ),
+                    communication_context=context.get("_communication_context"),
+                    chain_trust_band=context.get("_chain_trust_band"),
+                    trust_score=context.get("_trust_score"),
+                    boot_camp_active=bool(context.get("_boot_camp_active")),
+                    from_captain=bool(context.get("_from_captain")),
+                    is_dm=bool(context.get("_is_dm")),
+                )
+                if hasattr(journal, "record_chain_trace"):
+                    await journal.record_chain_trace(trace)
+            except Exception:
+                logger.debug(
+                    "AD-658: chain trace emission failed for step '%s'",
                     spec.name, exc_info=True,
                 )
 
