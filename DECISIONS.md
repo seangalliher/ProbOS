@@ -10,7 +10,29 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
-### AD-508 v1 + AD-478 v1 (Combo E): Scoped Cognition (Duty Scope) + Meta-Learning (Workspace Ontology) — Cognitive Helpers (2026-05-04)
+### AD-507 v1: Crew Development Framework — Core Knowledge Curriculum Registry (1 of 4) (2026-05-04)
+
+**Problem:** AD-507 (roadmap.md:6382) calls for a 4-capability framework: Core Knowledge Curriculum, per-agent progression tracking, competency assessment, and Standing Orders integration. Shipping all four at once would couple a curriculum content catalog to per-agent state (alongside qualification credentials AD-477), measurement infrastructure (competency outcomes), and federation/department tier integration (Standing Orders) — far beyond a registry surface and dependent on AD-486 onboarding consumer being ready.
+
+**Decision:** v1 ships **1 of 4 capabilities** per Wave 5 convention #14 aggressive pre-deferral — the read-only Core Knowledge Curriculum Registry only. NO progression tracking, NO competency assessment, NO Standing Orders integration.
+
+- **`CoreKnowledgeCurriculumRegistry`** (`src/probos/crew_development/curriculum.py`): read-only catalog of 9 universal curriculum modules across 7 categories (`identity`, `communication`, `memory`, `trust`, `ethics`, `self_regulation`, `help_seeking`) and 5 delivery phases (`orientation`, `calibration`, `self_discovery`, `ship_records`, `ward_room`). Public API: `list_modules() -> tuple[CurriculumModule, ...]`, `get_module(module_id) -> CurriculumModule | None`, `list_by_category(category)`, `list_by_phase(phase)`, `register_module(module)` (runtime-only, idempotent overwrite-by-id; not persisted in v1).
+- **`CurriculumModule`** frozen dataclass: `module_id`, `title`, `category`, `summary`, `learning_objectives: tuple[str, ...]`, `delivery_phase`. Module catalog seeded module-level immutable `_DEFAULT_MODULES` tuple covering all 9 universal knowledge domains from the AD-507 roadmap entry: `identity_grounding`, `chain_of_command`, `ward_room_protocol`, `dm_etiquette`, `notebook_discipline`, `episodic_vs_llm`, `trust_mechanics`, `ethics_boundaries`, `self_regulation`.
+- 1 new EventType `CURRICULUM_MODULE_QUERIED` (verified collision-free against events.py post-Wave-23). `get_module` emits on hit (not on miss); `list_by_category` and `list_by_phase` emit on non-empty result with `query_type` in payload (`by_id`, `by_category:{cat}`, `by_phase:{phase}`). Observability for AD-486 onboarding consumer.
+- New `CrewDevelopmentConfig` Pydantic model (`enabled=True`; module catalog hardcoded in v1) wired onto `SystemConfig.crew_development: CrewDevelopmentConfig = Field(default_factory=CrewDevelopmentConfig)`.
+- Sync `_wire_curriculum_registry(*, runtime, config) -> bool` at startup/finalize.py mirrors AD-525/AD-530/AD-511 sync-wiring shape (no awaits in body); invoked from `finalize_startup` immediately after `_wire_autonomy_boundaries`.
+- Public attribute (Wave 5 convention #1; no underscore): `runtime.curriculum_registry`. `emit_event` is a public field on the registry (mirrors AD-456/AD-530/AD-511 sibling pattern); `logger.warning` on emit failure (log-and-degrade tier).
+
+**Why:** A read-only content catalog is independent of how the content is delivered (AD-486 Phase 1 Orientation), how progression is tracked (AD-507b), how competency is measured (AD-507c), and how curriculum requirements bind to Standing Orders (AD-507d). Shipping the registry alone unblocks AD-486 onboarding integration and AD-477 qualification gates to consume curriculum content as read-only future consumers, while AD-507b/c/d ship later as separable, smaller commits each gated by their own forcing function.
+
+**Deferred:**
+- **AD-507b** (Curriculum progression tracking — per-agent module-completion record, stored alongside qualification credentials AD-477) — forcing function: AD-507 v1 ships and AD-486 onboarding consumer ready.
+- **AD-507c** (Competency assessment framework — measurable outcomes per module, not time-based completion) — depends on AD-507b.
+- **AD-507d** (Standing Orders integration — curriculum requirements encoded at Ship/Department tier) — depends on AD-507c.
+
+**Tests:** 11 focused tests at `tests/test_ad507_curriculum.py` (matches prompt's ~11 target): Section 0 EventType existence; Section 4 Pydantic config defaults; 1 frozen-dataclass contract; 1 default-catalog completeness with 9-module + 7-category coverage assertion; 1 lookup hit/miss; 1 emit-on-hit-only assertion; 2 filter tests with phase/category event payloads; 1 register-overwrites-existing-id; 2 wiring tests for enabled/disabled config. Full gate: 10870 passed, 15 skipped + 1 pre-existing flake (`test_nl_to_dream_cycle_changes_weights` — re-ran in isolation: PASSED; unrelated). Test delta vs Wave 23 baseline (10859 passed): +11 (exact match). No hard-stops triggered: no progression tracking, no competency assessment, no Standing Orders integration, no scope creep. Closes GH issue #89.
+
+
 
 **Problem:** Two 4-capability ADs with deep deps (AD-507 / AD-273 etc.) but each has a single bounded v1 capability with a clean shipping surface. AD-508 (roadmap.md:6388) calls for a four-tier scope model (Duty/Role/Ship/Personal), scope injection into proactive context, drift detection, extracurricular framework, and Earned Agency scaling. AD-478 (roadmap.md:5991) calls for Workspace Ontology auto-discovery, dream-cycle abstractions, persistent goals, and a cognitive circuit breaker. Shipping all capabilities at once would couple data-surface exposure to proactive-loop integration (AD-508b), Standing-Orders ingestion (AD-508c), Dreaming consolidation (AD-478b), and KnowledgeStore persistence (AD-478b).
 

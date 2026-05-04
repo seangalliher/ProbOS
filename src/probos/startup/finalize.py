@@ -119,6 +119,25 @@ def _wire_classification_gate(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_curriculum_registry(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-507 v1: Wire CoreKnowledgeCurriculumRegistry (read-only catalog)."""
+    cfg = getattr(config, "crew_development", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.crew_development.curriculum import CoreKnowledgeCurriculumRegistry
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    registry = CoreKnowledgeCurriculumRegistry()
+    registry.emit_event = emit_fn
+    runtime.curriculum_registry = registry  # public attribute (Wave 5 convention #1)
+    logger.info(
+        "AD-507: Crew Development Framework v1 initialized (curriculum registry; %d modules)",
+        len(registry.list_modules()),
+    )
+    return True
+
+
 def _wire_autonomy_boundaries(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-511 v1: Wire InviolableBoundaryRegistry + BoundaryViolationDetector."""
     cfg = getattr(config, "autonomy_boundaries", None)
@@ -422,6 +441,9 @@ async def finalize_startup(
 
     if _wire_autonomy_boundaries(runtime=runtime, config=config):
         logger.info("AD-511: Autonomy Boundaries v1 wired during finalization")
+
+    if _wire_curriculum_registry(runtime=runtime, config=config):
+        logger.info("AD-507: Crew Development Framework v1 wired during finalization")
 
     if _wire_duty_scope_provider(runtime=runtime, config=config):
         logger.info("AD-508: DutyScopeProvider v1 wired during finalization")

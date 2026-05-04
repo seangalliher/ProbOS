@@ -309,6 +309,9 @@ class EventType(str, Enum):
     CREATIVE_WORK_PUBLISHED = "creative_work_published"  # AD-525
     CREATIVE_SKILL_AFFINITY_QUERIED = "creative_skill_affinity_queried"  # AD-525
 
+    # ── Crew Development (AD-507) ──────────────────────────────────
+    CURRICULUM_MODULE_QUERIED = "curriculum_module_queried"  # AD-507
+
     # ── Statistical Process Control (AD-522) ───────────────────────
     SPC_RULE_VIOLATED = "spc_rule_violated"  # AD-522 v1
 

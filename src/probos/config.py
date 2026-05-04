@@ -1834,6 +1834,15 @@ class AutonomyBoundariesConfig(BaseModel):
     # register_pattern is runtime-only. Active blocking is AD-511b.
 
 
+class CrewDevelopmentConfig(BaseModel):
+    """AD-507 v1: Crew Development Framework (Core Knowledge Curriculum Registry)."""
+
+    enabled: bool = True
+    # v1: 9 default modules are hardcoded. register_module is runtime-only.
+    # Progression tracking, competency assessment, and Standing Orders
+    # integration are deferred to AD-507b/c/d.
+
+
 class ScopedCognitionConfig(BaseModel):
     """AD-508 v1: Duty Scope helper (read-only observational)."""
 
@@ -1969,6 +1978,7 @@ class SystemConfig(BaseModel):
     creative_expression: CreativeExpressionConfig = Field(default_factory=CreativeExpressionConfig)  # AD-525
     classification_gate: ClassificationGateConfig = Field(default_factory=ClassificationGateConfig)  # AD-530
     autonomy_boundaries: AutonomyBoundariesConfig = Field(default_factory=AutonomyBoundariesConfig)  # AD-511
+    crew_development: CrewDevelopmentConfig = Field(default_factory=CrewDevelopmentConfig)  # AD-507
     scoped_cognition: ScopedCognitionConfig = Field(default_factory=ScopedCognitionConfig)  # AD-508
     workspace_ontology: WorkspaceOntologyConfig = Field(default_factory=WorkspaceOntologyConfig)  # AD-478
     gap_pipeline_extensions: GapPipelineExtensionsConfig = Field(default_factory=GapPipelineExtensionsConfig)  # AD-539c/d
