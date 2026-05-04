@@ -182,4 +182,4 @@ waves:
       - "prompts/ad-530-classification-gate-v1.md"
     builder_required: true
     issues_to_close: [104]
-    status: pending
+    status: done
