@@ -305,7 +305,7 @@ waves:
       - "prompts/ad-683-ship-state-snapshot-v1.md"
     builder_required: true
     issues_to_close: [313]
-    status: pending
+    status: done
 
   - id: "30"
     title: "AD-645 v1 Artifact-Mediated Cognitive Chain"
