@@ -345,7 +345,7 @@ waves:
       - "prompts/ad-660-causal-reasoning-v1.md"
     builder_required: true
     issues_to_close: [319]
-    status: pending
+    status: done
 
   - id: "33"
     title: "AD-661 v1 Full Diagnostic Context for Agent Self-Improvement"
