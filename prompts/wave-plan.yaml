@@ -147,3 +147,15 @@ waves:
     builder_required: true
     issues_to_close: [100]
     status: done
+
+  - id: "17"
+    title: "AD-513 Phase 2 v1 (Crew Manifest Shell + Watch Filter + Ship Manifest)"
+    kind: main
+    depends_on: ["16"]
+    dispatch_prompt: "prompts/WAVE-17-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-513-phase2-manifest-v1.md"
+    builder_required: true
+    issues_to_close: [14]
+    status: pending
