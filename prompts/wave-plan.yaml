@@ -308,13 +308,17 @@ waves:
     status: done
 
   - id: "30"
-    title: "AD-645 v1 Artifact-Mediated Cognitive Chain"
+    title: "AD-645b: EVALUATE Brief Alignment (AD-645 Phase 4)"
     kind: main
     depends_on: ["29"]
     dispatch_prompt: "prompts/WAVE-30-DISPATCH.md"
     prompts_already_drafted: false
     prompt_paths:
-      - "prompts/ad-645-artifact-mediated-chain-v1.md"
+      - "prompts/ad-645b-evaluate-brief-alignment.md"
     builder_required: true
     issues_to_close: [287]
     status: pending
+    # Retarget rationale: original AD-645 v1 stub was drafted before Phases 1–3
+    # shipped under #287. Phases 1–3 closed (PROGRESS.md:320). Phase 4 = AD-645b
+    # is the last in-scope phase under #287; Phase 5 NATS schema deferred to
+    # AD-641g per research doc Section 6. Closing #287 with Phase 4 is correct.
