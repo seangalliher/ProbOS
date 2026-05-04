@@ -158,4 +158,4 @@ waves:
       - "prompts/ad-513-phase2-manifest-v1.md"
     builder_required: true
     issues_to_close: [14]
-    status: pending
+    status: done
