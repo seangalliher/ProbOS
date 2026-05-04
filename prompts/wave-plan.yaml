@@ -293,15 +293,18 @@ waves:
     status: done
 
   - id: "29"
-    title: "AD-644 v1 Agent Situation Awareness Architecture"
+    title: "AD-683 v1 Ship State Snapshot for Cold-Start Onboarding"
+    # Retarget rationale: AD-644 Phases 1-4 already shipped (commit f10369d).
+    # Phase 5 (deprecation) is higher-risk and deferred to AD-644b. AD-683
+    # is a tractable single-AD v1 that fits the streamlined wave cadence.
     kind: main
     depends_on: ["28"]
     dispatch_prompt: "prompts/WAVE-29-DISPATCH.md"
     prompts_already_drafted: false
     prompt_paths:
-      - "prompts/ad-644-situation-awareness-v1.md"
+      - "prompts/ad-683-ship-state-snapshot-v1.md"
     builder_required: true
-    issues_to_close: [285]
+    issues_to_close: [313]
     status: pending
 
   - id: "30"
