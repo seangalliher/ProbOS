@@ -741,6 +741,15 @@ class TelemetryConfig(BaseModel):
     max_samples_per_bucket: int = 1000
 
 
+class PostBudgetTelemetryConfig(BaseModel):
+    """BF-238: Post-budget exhaustion telemetry configuration."""
+
+    enabled: bool = True
+    exhaustion_alert_threshold: float = 0.5  # Per-agent rate that triggers WARN
+    min_samples_for_alert: int = 10          # Suppress alert below this invocation count
+    recent_suppressions_max: int = 100       # Ring buffer size for ops review
+
+
 class ConfidenceConfig(BaseModel):
     """AD-444: Knowledge confidence scoring configuration."""
 
@@ -1904,6 +1913,7 @@ class SystemConfig(BaseModel):
     records: RecordsConfig = RecordsConfig()
     archive: ArchiveConfig = ArchiveConfig()
     telemetry: TelemetryConfig = TelemetryConfig()  # AD-461
+    post_budget_telemetry: PostBudgetTelemetryConfig = PostBudgetTelemetryConfig()  # BF-238
     confidence: ConfidenceConfig = ConfidenceConfig()  # AD-444
     lint: LintConfig = LintConfig()  # AD-563
     quality_trigger: QualityTriggerConfig = QualityTriggerConfig()  # AD-564

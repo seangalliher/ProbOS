@@ -242,7 +242,7 @@ waves:
       - "prompts/ad-507-curriculum-v1.md"
     builder_required: true
     issues_to_close: [89]
-    status: pending
+    status: done
 
   - id: "25"
     title: "AD-509 v1 Boot Camp Phase Tracker"
@@ -254,4 +254,64 @@ waves:
       - "prompts/ad-509-boot-camp-v1.md"
     builder_required: true
     issues_to_close: [91]
+    status: done
+
+  - id: "26"
+    title: "BF-238 Post Budget Telemetry Monitoring"
+    kind: bf
+    depends_on: ["25"]
+    dispatch_prompt: "prompts/WAVE-26-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/bf-238-post-budget-telemetry-monitoring.md"
+    builder_required: true
+    issues_to_close: [341]
+    status: pending
+
+  - id: "27"
+    title: "AD-657 v1 Dream Consolidation Trace Preservation"
+    kind: main
+    depends_on: ["26"]
+    dispatch_prompt: "prompts/WAVE-27-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-657-dream-trace-preservation-v1.md"
+    builder_required: true
+    issues_to_close: [316]
+    status: pending
+
+  - id: "28"
+    title: "AD-658 v1 Cognitive Chain Harness Metrics"
+    kind: main
+    depends_on: ["27"]
+    dispatch_prompt: "prompts/WAVE-28-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-658-chain-harness-metrics-v1.md"
+    builder_required: true
+    issues_to_close: [317]
+    status: pending
+
+  - id: "29"
+    title: "AD-644 v1 Agent Situation Awareness Architecture"
+    kind: main
+    depends_on: ["28"]
+    dispatch_prompt: "prompts/WAVE-29-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-644-situation-awareness-v1.md"
+    builder_required: true
+    issues_to_close: [285]
+    status: pending
+
+  - id: "30"
+    title: "AD-645 v1 Artifact-Mediated Cognitive Chain"
+    kind: main
+    depends_on: ["29"]
+    dispatch_prompt: "prompts/WAVE-30-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-645-artifact-mediated-chain-v1.md"
+    builder_required: true
+    issues_to_close: [287]
     status: pending

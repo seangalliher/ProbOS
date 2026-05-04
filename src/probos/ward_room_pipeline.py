@@ -26,6 +26,163 @@ class PostBudget:
     spent: bool = False
 
 
+class PostBudgetTelemetry:
+    """BF-238: Aggregate per-agent + per-thread counters for PostBudget exhaustion.
+
+    Records every `process_and_post()` invocation and every Step-7 suppression
+    triggered by an already-spent PostBudget. Exposes per-agent / per-thread
+    / overall exhaustion rate plus a bounded ring buffer of recent
+    suppressions for ops review.
+
+    Observational only - never mutates pipeline state, never blocks posts.
+    The event_log row written by BF-237 in `WardRoomPostPipeline` is the
+    durable audit trail; this class is the in-memory aggregate surface.
+    """
+
+    def __init__(
+        self,
+        *,
+        exhaustion_alert_threshold: float = 0.5,
+        min_samples_for_alert: int = 10,
+        recent_suppressions_max: int = 100,
+    ) -> None:
+        self._exhaustion_alert_threshold = float(exhaustion_alert_threshold)
+        self._min_samples_for_alert = int(min_samples_for_alert)
+        self._recent_suppressions_max = int(recent_suppressions_max)
+        self._total_invocations = 0
+        self._total_exhaustions = 0
+        self._invocations_by_agent: dict[str, int] = {}
+        self._exhaustions_by_agent: dict[str, int] = {}
+        self._invocations_by_thread: dict[str, int] = {}
+        self._exhaustions_by_thread: dict[str, int] = {}
+        self._recent_suppressions: list[tuple[float, str, str]] = []
+        # One-shot guard: agents that have already triggered a threshold alert.
+        self._alerted_agents: set[str] = set()
+
+    # --- Public read-only properties ---
+
+    @property
+    def total_invocations(self) -> int:
+        return self._total_invocations
+
+    @property
+    def total_exhaustions(self) -> int:
+        return self._total_exhaustions
+
+    @property
+    def alert_threshold(self) -> float:
+        return self._exhaustion_alert_threshold
+
+    @property
+    def min_samples_for_alert(self) -> int:
+        return self._min_samples_for_alert
+
+    # --- Recording API (called by WardRoomPostPipeline) ---
+
+    def record_invocation(self, agent_type: str, thread_id: str) -> None:
+        """Increment per-agent + per-thread + total invocation counters."""
+        self._total_invocations += 1
+        if agent_type:
+            self._invocations_by_agent[agent_type] = (
+                self._invocations_by_agent.get(agent_type, 0) + 1
+            )
+        if thread_id:
+            self._invocations_by_thread[thread_id] = (
+                self._invocations_by_thread.get(thread_id, 0) + 1
+            )
+
+    def record_exhaustion(self, agent_type: str, thread_id: str) -> None:
+        """Increment per-agent + per-thread + total exhaustion counters and
+        append to the recent-suppressions ring buffer.
+
+        Triggers a one-shot WARN alert when the per-agent rate first crosses
+        the configured threshold AND per-agent invocations are at or above
+        the min-samples gate.
+        """
+        self._total_exhaustions += 1
+        if agent_type:
+            self._exhaustions_by_agent[agent_type] = (
+                self._exhaustions_by_agent.get(agent_type, 0) + 1
+            )
+        if thread_id:
+            self._exhaustions_by_thread[thread_id] = (
+                self._exhaustions_by_thread.get(thread_id, 0) + 1
+            )
+        # Append to ring buffer, bounded by recent_suppressions_max.
+        self._recent_suppressions.append((time.time(), agent_type, thread_id))
+        if len(self._recent_suppressions) > self._recent_suppressions_max:
+            # Drop oldest entries to enforce the bound.
+            overflow = len(self._recent_suppressions) - self._recent_suppressions_max
+            self._recent_suppressions = self._recent_suppressions[overflow:]
+
+        # One-shot threshold alert.
+        self._maybe_alert(agent_type)
+
+    # --- Read API ---
+
+    def exhaustion_rate(
+        self,
+        *,
+        agent_type: str | None = None,
+        thread_id: str | None = None,
+    ) -> float | None:
+        """Return exhaustion rate as `exhaustions / invocations`.
+
+        Scope precedence (mutually exclusive in v1; if both supplied,
+        agent_type wins to keep the API single-axis):
+          - agent_type given -> per-agent rate
+          - thread_id given  -> per-thread rate
+          - neither          -> overall rate
+
+        Returns None when the corresponding invocation count is zero.
+        """
+        if agent_type:
+            invocations = self._invocations_by_agent.get(agent_type, 0)
+            exhaustions = self._exhaustions_by_agent.get(agent_type, 0)
+        elif thread_id:
+            invocations = self._invocations_by_thread.get(thread_id, 0)
+            exhaustions = self._exhaustions_by_thread.get(thread_id, 0)
+        else:
+            invocations = self._total_invocations
+            exhaustions = self._total_exhaustions
+        if invocations == 0:
+            return None
+        return exhaustions / invocations
+
+    def recent_suppressions(
+        self, limit: int = 10
+    ) -> tuple[tuple[float, str, str], ...]:
+        """Return the most recent suppressions for ops spot-check.
+
+        Each entry is `(timestamp, agent_type, thread_id)`. Newest last.
+        `limit <= 0` returns an empty tuple.
+        """
+        if limit <= 0:
+            return ()
+        # Slice from the tail; preserves insertion order (newest last).
+        return tuple(self._recent_suppressions[-limit:])
+
+    # --- Internal ---
+
+    def _maybe_alert(self, agent_type: str) -> None:
+        """One-shot per-agent WARN when rate first crosses threshold."""
+        if not agent_type or agent_type in self._alerted_agents:
+            return
+        invocations = self._invocations_by_agent.get(agent_type, 0)
+        if invocations < self._min_samples_for_alert:
+            return
+        rate = self.exhaustion_rate(agent_type=agent_type)
+        if rate is None or rate <= self._exhaustion_alert_threshold:
+            return
+        self._alerted_agents.add(agent_type)
+        logger.warning(
+            "BF-238: PostBudget exhaustion rate %.2f for agent_type=%s "
+            "exceeds threshold %.2f over %d invocations; review whether "
+            "post_budget limit is too aggressive for this agent",
+            rate, agent_type, self._exhaustion_alert_threshold, invocations,
+        )
+
+
 class WardRoomPostPipeline:
     """Process and post an agent's Ward Room response.
 
@@ -47,6 +204,7 @@ class WardRoomPostPipeline:
         config: Any,
         runtime: Any | None = None,  # For skill_service access
         novelty_gate: "NoveltyGate | None" = None,  # AD-493
+        post_budget_telemetry: "PostBudgetTelemetry | None" = None,  # BF-238
     ) -> None:
         self._ward_room = ward_room
         self._router = ward_room_router
@@ -56,6 +214,7 @@ class WardRoomPostPipeline:
         self._config = config
         self._runtime = runtime
         self._novelty_gate = novelty_gate
+        self._post_budget_telemetry = post_budget_telemetry  # BF-238
 
     async def process_and_post(
         self,
@@ -79,6 +238,14 @@ class WardRoomPostPipeline:
             event_type: Original event type ("ward_room_thread_created" or "ward_room_post_created")
             post_id: Parent post ID (for replies to posts, not thread creation)
         """
+        # BF-238: Record every pipeline invocation BEFORE early-return guards
+        # so the rate denominator includes empty-text returns.
+        if self._post_budget_telemetry is not None:
+            self._post_budget_telemetry.record_invocation(
+                agent.agent_type if agent else "",
+                thread_id,
+            )
+
         # Step 1: Text sanitization (BF-199)
         from probos.utils.text_sanitize import sanitize_ward_room_text
         response_text = sanitize_ward_room_text(response_text)
@@ -153,6 +320,11 @@ class WardRoomPostPipeline:
                 "BF-237: Suppressing main post for %s — action extractor already posted in this invocation",
                 agent.agent_type,
             )
+            # BF-238: Aggregate counter + threshold-alert surface.
+            if self._post_budget_telemetry is not None:
+                self._post_budget_telemetry.record_exhaustion(
+                    agent.agent_type, thread_id,
+                )
             # BF-237: Emit telemetry event for observability
             if self._runtime and getattr(self._runtime, 'event_log', None):
                 try:

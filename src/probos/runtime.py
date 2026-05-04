@@ -1663,7 +1663,20 @@ class ProbOSRuntime:
         self.dream_adapter = fin.dream_adapter
 
         # AD-654a: Wire up WardRoomPostPipeline for agent self-posting
-        from probos.ward_room_pipeline import WardRoomPostPipeline
+        # BF-238: Construct PostBudgetTelemetry first so the pipeline can
+        # record invocation + exhaustion events.
+        from probos.ward_room_pipeline import (
+            PostBudgetTelemetry,
+            WardRoomPostPipeline,
+        )
+        pbt_cfg = self.config.post_budget_telemetry
+        self.post_budget_telemetry: PostBudgetTelemetry | None = None
+        if pbt_cfg.enabled:
+            self.post_budget_telemetry = PostBudgetTelemetry(
+                exhaustion_alert_threshold=pbt_cfg.exhaustion_alert_threshold,
+                min_samples_for_alert=pbt_cfg.min_samples_for_alert,
+                recent_suppressions_max=pbt_cfg.recent_suppressions_max,
+            )
         self.ward_room_post_pipeline: WardRoomPostPipeline | None = None
         if self.ward_room:
             self.ward_room_post_pipeline = WardRoomPostPipeline(
@@ -1675,6 +1688,7 @@ class ProbOSRuntime:
                 config=self.config,
                 runtime=self,
                 novelty_gate=getattr(self, '_novelty_gate', None),
+                post_budget_telemetry=self.post_budget_telemetry,
             )
 
     # --- BF-071: Retention prune loops ---
