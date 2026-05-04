@@ -171,3 +171,15 @@ waves:
     builder_required: true
     issues_to_close: []
     status: done
+
+  - id: "19"
+    title: "AD-530 v1 Information Classification Enforcement (Disclosure Gate)"
+    kind: main
+    depends_on: ["18"]
+    dispatch_prompt: "prompts/WAVE-19-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-530-classification-gate-v1.md"
+    builder_required: true
+    issues_to_close: [104]
+    status: pending
