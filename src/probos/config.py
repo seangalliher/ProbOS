@@ -1740,6 +1740,17 @@ class CognitiveJournalConfig(BaseModel):
     prune_interval_seconds: float = 3600.0
 
 
+class ClinicalTelemetryConfig(BaseModel):
+    """AD-635 v1: Clearance-gated clinical query facade (Medical / Counselor).
+
+    Disabled by default — Captain opts in via YAML. v1 is read-only, has no
+    automatic invocation, and surfaces nothing at runtime until a clinical
+    agent invokes a query method on `runtime.clinical_telemetry`.
+    """
+    enabled: bool = False
+    audit_max_entries: int = 1000
+
+
 class CommunicationsConfig(BaseModel):
     """Communications settings (AD-485)."""
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
@@ -2070,6 +2081,9 @@ class SystemConfig(BaseModel):
     diagnostic_context: DiagnosticContextConfig = Field(
         default_factory=DiagnosticContextConfig
     )  # AD-661
+    clinical_telemetry: ClinicalTelemetryConfig = Field(
+        default_factory=ClinicalTelemetryConfig
+    )  # AD-635
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571

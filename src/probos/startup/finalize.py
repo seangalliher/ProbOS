@@ -280,6 +280,25 @@ def _wire_diagnostic_context(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-635 v1: Wire ClinicalTelemetryService clearance-gated query facade."""
+    cfg = getattr(config, "clinical_telemetry", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.cognitive.clinical_telemetry import ClinicalTelemetryService
+
+    runtime.clinical_telemetry = ClinicalTelemetryService(
+        runtime,
+        audit_max_entries=cfg.audit_max_entries,
+    )
+    logger.info(
+        "AD-635: ClinicalTelemetryService v1 initialized "
+        "(2 domains: dream_history + chain_traces; clearance gate FULL+)"
+    )
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -566,6 +585,9 @@ async def finalize_startup(
 
     if _wire_diagnostic_context(runtime=runtime, config=config):
         logger.info("AD-661: DiagnosticContextService v1 wired during finalization")
+
+    if _wire_clinical_telemetry(runtime=runtime, config=config):
+        logger.info("AD-635: ClinicalTelemetryService v1 wired during finalization")
 
     if _wire_workspace_ontology(runtime=runtime, config=config):
         logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")

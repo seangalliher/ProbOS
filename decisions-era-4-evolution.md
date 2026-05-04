@@ -4977,6 +4977,27 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Files modified:** `src/probos/cognitive/sub_task.py` (depends_on field + validate_chain() + _get_ready_steps() + wave-based _execute_steps() + _execute_single_step()), `src/probos/cognitive/cognitive_agent.py` (depends_on on EVALUATE/REFLECT steps in both chain types). **Tests:** `tests/test_ad632h_parallel_dispatch.py` (NEW, 34 tests across 7 classes).
 
 **Build prompt:** `prompts/ad-632h-parallel-dispatch.md`. **Issue:** #243.
+
+### AD-635: Medical Diagnostic Data Access — Clinical Telemetry Query Facade v1 (2026-05-04, v1 CLOSED)
+
+**Context:** Medical (Chapel, FULL clearance) and Counselor (Echo, ORACLE clearance) agents own clinical responsibility for crew cognitive health monitoring but had zero cross-agent telemetry visibility. AD-588 solved self-query; AD-635 solves cross-agent clinical query. v1 ships 2 of 4 data domains identified in #231 — dream cycle history and cross-agent cognitive journal chain traces. The remaining domains (consolidation anomaly audit trail, circuit breaker history) plus REST/shell/proactive surfaces are deferred to AD-635b–f.
+
+| DD | Decision | Reasoning |
+|----|----------|-----------|
+| DD-1: Default-False ClinicalTelemetryConfig | `enabled: bool = False` — service is invisible at runtime out-of-box | Wave 10 transitional-flag convention. Captain opts in via YAML; no surprise behavior change at upgrade |
+| DD-2: Public accessor on the OWNER, not consumer | `EmergentDetector.recent_dreams(limit)` instead of ClinicalTelemetryService reaching `_dream_history` | Open/Closed. Demeter. Future consumers reuse the accessor |
+| DD-3: Demeter exception for `runtime._emergent_detector` | Wirer reads via `getattr(runtime, "_emergent_detector", None)` | Mirrors `dream_adapter.py` precedent. Public `runtime.emergent_detector` property tracked as cleanup AD |
+| DD-4: Denied queries return `[]`, never raise | `_authorize_clinical_query()` failure logs warning + audit entry + empty list | Log-and-degrade tier — clinical workflows must not crash on auth gate. Audit ring captures every denial |
+| DD-5: Tier floor FULL+ AND clinical role gate | Both `effective_recall_tier(rank, billet, grants) ∈ {FULL, ORACLE}` AND `agent_type ∈ {diagnostician, counselor}` | Defense in depth. Rank/billet alone insufficient — must also be a clinical role |
+| DD-6: Bounded in-memory audit ring (default 1000) | `collections.deque(maxlen=audit_max_entries)` snapshot via `audit_log` property | v1 in-memory only. Persistence deferred to AD-635b. Bounded prevents unbounded growth |
+| DD-7: Reuse existing CognitiveJournal cross-agent path | `journal.get_recent_chain_traces(limit, agent_id=target)` already supports cross-agent queries | No new journal API. v1 just gates the existing capability |
+
+**Files modified:** `src/probos/cognitive/clinical_telemetry.py` (NEW, ~280 lines, ClinicalTelemetryService + CLINICAL_ROLES + QUALIFYING_TIERS), `src/probos/cognitive/emergent_detector.py` (recent_dreams() public accessor), `src/probos/config.py` (ClinicalTelemetryConfig + SystemConfig.clinical_telemetry field), `src/probos/startup/finalize.py` (_wire_clinical_telemetry + registration after _wire_diagnostic_context). **Tests:** `tests/test_ad635_clinical_telemetry.py` (NEW, 9 tests).
+
+**Deferred to:** AD-635b (anomaly audit trail + audit log persistence), AD-635c (circuit breaker history), AD-635d (REST endpoints), AD-635e (shell `/clinical` command), AD-635f (proactive context injection + agent-side hooks).
+
+**Build prompt:** `prompts/ad-635-medical-diagnostic-v1.md`. **Issue:** #231. **Depends:** AD-588, AD-620/621/622, AD-658.
+
 ### AD-636: LLM Priority Scheduling & Load Distribution (2026-04-16, COMPLETE)
 
 **Context:** AD-632 sub-task chains increased LLM call volume 3-5x per agent. With 14 crew agents running proactive cycles every 120s, the LLM proxy saturates and Captain DMs timeout at the 30s TTL. Four-part fix ensures interactive requests always get priority while background work is distributed evenly.

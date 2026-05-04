@@ -5877,7 +5877,7 @@ Interactive intents don't use chains, so no DM impact. Config: `llm.max_concurre
 token bucket, complementary to priority lanes), AD-617b (per-agent token budget — fairness
 enforcement), AD-576 (LLM unavailability awareness — brownout protocol for degraded state).*
 
-**AD-635: Medical Diagnostic Data Access — Clinical Telemetry Query Interface** *(SCOPED, OSS,
+**AD-635: Medical Diagnostic Data Access — Clinical Telemetry Query Interface** *(v1 CLOSED, OSS,
 depends: AD-588, AD-620/621/622)* — Medical and Counselor agents have clinical responsibility
 for fitness-for-duty assessments and crew cognitive health monitoring but zero visibility into
 the substrate data needed for differential diagnosis. AD-588 (Telemetry-Grounded Introspection)

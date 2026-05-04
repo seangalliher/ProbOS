@@ -255,6 +255,19 @@ class EmergentDetector:
         """
         self._dream_history.clear()
 
+    def recent_dreams(self, limit: int = 20) -> list[dict]:
+        """AD-635: Public read accessor over the dream-report ring buffer.
+
+        Returns up to `limit` most-recent dream reports as a list of dicts.
+        Most recent last (FIFO order matches deque iteration). Returns a
+        new list each call — callers may mutate without affecting state.
+        """
+        if limit <= 0:
+            return []
+        if limit >= len(self._dream_history):
+            return list(self._dream_history)
+        return list(self._dream_history)[-limit:]
+
     def record_activity(self) -> None:
         """Record that cognitive activity occurred (Hebbian interaction).
 
