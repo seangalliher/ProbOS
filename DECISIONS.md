@@ -10,6 +10,32 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-509 v1: Onboarding Curriculum Pipeline — Boot Camp Phase Tracker (1 of 5) (2026-05-04)
+
+**Problem:** AD-509 (roadmap.md:6388) calls for a 5-capability framework: Navy Boot Camp model with structured progression, Department A-School per-department curriculum, graduated stimuli with cognitive load monitoring, completion-criteria gating (replacing time-based activation), and trait-adaptive pacing. Shipping all five at once would couple a phase-progression record to per-department curriculum content (depends on AD-507 partial-shipped), Holodeck scenario sequencing (AD-486), competency assessment gates (depends on AD-507c), and personality-driven pacing (depends on AD-494/AD-486 sea-trial observations).
+
+**Decision:** v1 ships **1 of 5 capabilities** per Wave 5 convention #14 aggressive pre-deferral — the in-memory `BootCampPhaseTracker` only. NO A-School curriculum, NO graduated stimuli, NO completion-criteria gating, NO trait-adaptive pacing.
+
+- **`BootCampPhase`** str-Enum (`src/probos/crew_development/boot_camp.py`): 5 phases + COMPLETED sentinel — `ORIENTATION`, `CORE_KNOWLEDGE`, `A_SCHOOL`, `CALIBRATION`, `INTEGRATION`, `COMPLETED`. Module-level immutable `_PHASE_ORDER` tuple defines canonical progression.
+- **`AgentBootCampRecord`** dataclass: `agent_id`, `current_phase` (defaults `ORIENTATION`), `started_at: float`, `phase_history: list[tuple[str, float]]`, `to_dict()` projection.
+- **`BootCampPhaseTracker`**: in-memory `dict[str, AgentBootCampRecord]`. Public API: `get_or_create(agent_id)` idempotent + seeds initial ORIENTATION history entry on creation; `advance_phase(agent_id) -> BootCampPhase` returns next phase, no-op once COMPLETED, appends `(phase_value, time.time())` to history, emits `BOOT_CAMP_PHASE_ADVANCED`; `get_record(agent_id)`; `all_records()` stable tuple; `is_completed(agent_id)`.
+- 1 new EventType `BOOT_CAMP_PHASE_ADVANCED` (verified collision-free against events.py post-Wave-24). Event payload `{agent_id, previous_phase, current_phase}`.
+- New `BootCampPhaseConfig(enabled=True)` Pydantic model wired onto `SystemConfig.boot_camp_phase: BootCampPhaseConfig = Field(default_factory=BootCampPhaseConfig)`.
+- Sync `_wire_boot_camp_tracker(*, runtime, config) -> bool` at `startup/finalize.py` mirrors AD-507/AD-525/AD-530/AD-511 sync-wiring shape (no awaits in body); invoked from `finalize_startup` immediately after `_wire_curriculum_registry`.
+- Public attribute (Wave 5 convention #1; no underscore): `runtime.boot_camp_tracker`. `emit_event` is a public field on the tracker (mirrors AD-507/AD-456/AD-530/AD-511 sibling pattern); `logger.warning` on emit failure (log-and-degrade tier).
+
+**Naming-collision resolution.** The Wave 25 prompt drafted `BootCampConfig` + `SystemConfig.boot_camp` but `BootCampConfig` (AD-638 cold-start boot camp at `config.py:285`) + `SystemConfig.boot_camp` (`config.py:1966`) already existed. Disambiguated to `BootCampPhaseConfig` + `SystemConfig.boot_camp_phase` to preserve AD-638's existing surface. The public runtime attribute `runtime.boot_camp_tracker` is collision-free (verified 0 hits prior to build, per the prompt's pre-check). This is a wrong-class-name variant of phantom-config (user-memory-flagged anti-pattern); resolution preserves prompt intent (AD-509 v1 ships *Phase Tracker* — name reflects scope) and avoids breaking AD-638.
+
+**Why:** A per-agent phase progression record is independent of per-department curriculum content (AD-509b), graduated stimuli sequencing (AD-509c), completion criteria (AD-509d — which would replace the v1 caller-driven model), and trait-adaptive pacing (AD-509e). Shipping the tracker alone unblocks AD-486 Holodeck Birth Chamber, AD-507 Curriculum Registry, AD-477 Qualification Gates, and the proactive cognitive loop to consume phase observations as read-only future consumers, while AD-509b/c/d/e ship later as separable, smaller commits each gated by their own forcing function.
+
+**Deferred:**
+- **AD-509b** (Department A-School per-department curriculum — Medical/Engineering/Science/Security/Operations/Communications fundamentals) — forcing function: AD-509 v1 ships and AD-507 progression tracking (AD-507b) ready.
+- **AD-509c** (Graduated stimuli + cognitive load monitoring — controlled exposure isolated → department → ship-wide).
+- **AD-509d** (Completion-criteria gating — replaces time-based activation; depends on AD-507c competency assessment).
+- **AD-509e** (Trait-adaptive pacing — analytical roles get longer calibration; depends on AD-494/AD-486 sea-trial observations).
+
+**Tests:** 15 focused tests at `tests/test_ad509_boot_camp.py` (matches prompt's ~15 target): Section 0 EventType existence with literal value assertion; Section 4 Pydantic config defaults; Section 2 enum-shape (5 phases + COMPLETED, total 6) and `AgentBootCampRecord` initial state; Section 3 `get_or_create` idempotency + seed-history-entry, `advance_phase` progresses through canonical order, `advance_phase` stops at COMPLETED with phase_history fixed at 6 entries, `advance_phase` emits event with full payload, `advance_phase` records phase_history correctly, `get_record` hit/miss, `all_records` returns tuple, `is_completed` returns True only at COMPLETED phase; Section 5 wiring tests for enabled/disabled config. Full gate: 10885 passed, 15 skipped + 1 pre-existing flake (`test_resolve_refires_after_clean_period` — re-ran in isolation: PASSED in 7.41s; xdist-noise pattern; unrelated). Test delta vs Wave 24 baseline (10870 passed): +15 (exact match). No hard-stops triggered: no A-School curriculum, no graduated stimuli, no completion-criteria gating, no trait-adaptive pacing, no Holodeck integration, no scope creep, no phantoms in implementation, no architectural change required. Closes GH issue #91.
+
 ### AD-507 v1: Crew Development Framework — Core Knowledge Curriculum Registry (1 of 4) (2026-05-04)
 
 **Problem:** AD-507 (roadmap.md:6382) calls for a 4-capability framework: Core Knowledge Curriculum, per-agent progression tracking, competency assessment, and Standing Orders integration. Shipping all four at once would couple a curriculum content catalog to per-agent state (alongside qualification credentials AD-477), measurement infrastructure (competency outcomes), and federation/department tier integration (Standing Orders) — far beyond a registry surface and dependent on AD-486 onboarding consumer being ready.

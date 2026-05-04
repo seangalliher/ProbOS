@@ -1843,6 +1843,19 @@ class CrewDevelopmentConfig(BaseModel):
     # integration are deferred to AD-507b/c/d.
 
 
+class BootCampPhaseConfig(BaseModel):
+    """AD-509 v1: Boot Camp Phase Tracker (in-memory observational).
+
+    Disambiguated from AD-638 ``BootCampConfig`` (cold-start boot camp); the
+    AD-509 v1 tracker records 5-phase progression per agent.
+    """
+
+    enabled: bool = True
+    # v1: tracker only. A-School curriculum, graduated stimuli,
+    # completion-criteria gating, and trait-adaptive pacing are deferred
+    # to AD-509b/c/d/e.
+
+
 class ScopedCognitionConfig(BaseModel):
     """AD-508 v1: Duty Scope helper (read-only observational)."""
 
@@ -1979,6 +1992,7 @@ class SystemConfig(BaseModel):
     classification_gate: ClassificationGateConfig = Field(default_factory=ClassificationGateConfig)  # AD-530
     autonomy_boundaries: AutonomyBoundariesConfig = Field(default_factory=AutonomyBoundariesConfig)  # AD-511
     crew_development: CrewDevelopmentConfig = Field(default_factory=CrewDevelopmentConfig)  # AD-507
+    boot_camp_phase: BootCampPhaseConfig = Field(default_factory=BootCampPhaseConfig)  # AD-509
     scoped_cognition: ScopedCognitionConfig = Field(default_factory=ScopedCognitionConfig)  # AD-508
     workspace_ontology: WorkspaceOntologyConfig = Field(default_factory=WorkspaceOntologyConfig)  # AD-478
     gap_pipeline_extensions: GapPipelineExtensionsConfig = Field(default_factory=GapPipelineExtensionsConfig)  # AD-539c/d

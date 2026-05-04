@@ -14,8 +14,16 @@ from probos.crew_development.curriculum import (
     CoreKnowledgeCurriculumRegistry,
     CurriculumModule,
 )
+from probos.crew_development.boot_camp import (
+    AgentBootCampRecord,
+    BootCampPhase,
+    BootCampPhaseTracker,
+)
 
 __all__ = [
     "CoreKnowledgeCurriculumRegistry",
     "CurriculumModule",
+    "AgentBootCampRecord",
+    "BootCampPhase",
+    "BootCampPhaseTracker",
 ]

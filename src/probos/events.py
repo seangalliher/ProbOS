@@ -312,6 +312,9 @@ class EventType(str, Enum):
     # ── Crew Development (AD-507) ──────────────────────────────────
     CURRICULUM_MODULE_QUERIED = "curriculum_module_queried"  # AD-507
 
+    # ── Boot Camp Phase Tracker (AD-509) ───────────────────────────
+    BOOT_CAMP_PHASE_ADVANCED = "boot_camp_phase_advanced"  # AD-509
+
     # ── Statistical Process Control (AD-522) ───────────────────────
     SPC_RULE_VIOLATED = "spc_rule_violated"  # AD-522 v1
 
