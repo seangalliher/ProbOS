@@ -417,7 +417,7 @@ waves:
       - "prompts/ad-688-oracle-graph-integration-v1.md"
     builder_required: true
     issues_to_close: [382]
-    status: pending
+    status: done
 
   - id: "39"
     title: "AD-689 v1 Edge Population from Existing Data"
