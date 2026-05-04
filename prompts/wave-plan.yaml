@@ -206,4 +206,4 @@ waves:
       - "prompts/ad-522-spc-v1.md"
     builder_required: true
     issues_to_close: [97]
-    status: pending
+    status: done
