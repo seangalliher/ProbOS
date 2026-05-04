@@ -207,3 +207,15 @@ waves:
     builder_required: true
     issues_to_close: [97]
     status: done
+
+  - id: "22"
+    title: "AD-511 v1 Agent Autonomy Boundaries"
+    kind: main
+    depends_on: ["21"]
+    dispatch_prompt: "prompts/WAVE-22-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-511-autonomy-boundaries-v1.md"
+    builder_required: true
+    issues_to_close: [93]
+    status: pending
