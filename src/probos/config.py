@@ -1819,6 +1819,13 @@ class CreativeExpressionConfig(BaseModel):
     default_classification: Literal["ship", "department", "private"] = "ship"
 
 
+class ClassificationGateConfig(BaseModel):
+    """Configuration for AD-530 v1 disclosure gate."""
+
+    enabled: bool = True
+    # v1: pattern set is hardcoded; register_pattern is runtime-only.
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -1924,6 +1931,7 @@ class SystemConfig(BaseModel):
     consultation: ConsultationConfig = ConsultationConfig()  # AD-594
     expertise: ExpertiseConfig = ExpertiseConfig()  # AD-600
     creative_expression: CreativeExpressionConfig = Field(default_factory=CreativeExpressionConfig)  # AD-525
+    classification_gate: ClassificationGateConfig = Field(default_factory=ClassificationGateConfig)  # AD-530
     spreading_activation: SpreadingActivationConfig = SpreadingActivationConfig()  # AD-604
     thought_store: ThoughtStoreConfig = ThoughtStoreConfig()  # AD-606
     retroactive: RetroactiveConfig = RetroactiveConfig()  # AD-608

@@ -102,6 +102,23 @@ def _wire_creative_expression(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_classification_gate(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-530 v1: Wire ClassificationGate observational disclosure gate."""
+    cfg = getattr(config, "classification_gate", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.security.classification import ClassificationGate
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    runtime.classification_gate = ClassificationGate(runtime, emit_event=emit_fn)  # public attribute (Wave 5 convention #1)
+    logger.info(
+        "AD-530: ClassificationGate initialized (%d patterns)",
+        runtime.classification_gate.pattern_count,
+    )
+    return True
+
+
 async def _wire_self_distillation(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-487: Wire PersonalOntologyProber (Map step only) and open its SQLite handle."""
     # Defensive boundary check: some legacy tests pass MagicMock for config,
@@ -279,6 +296,9 @@ async def finalize_startup(
 
     if _wire_creative_expression(runtime=runtime, config=config):
         logger.info("AD-525: Creative Expression v1 wired during finalization")
+
+    if _wire_classification_gate(runtime=runtime, config=config):
+        logger.info("AD-530: ClassificationGate v1 wired during finalization")
 
     # BF-246: Start periodic LLM health probe for recovery from extended outages
     # BF-254: hasattr() alone matches MagicMock auto-attributes; require the

@@ -6510,7 +6510,7 @@ Motivated by findings in ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (
 
 **(3) Scope:** Not censorship — hazard labeling. Like a biosafety cabinet, not a gag order. Agents can still communicate; dangerous content is flagged and contained.
 
-**AD-530: Information Classification Enforcement** *(planned, OSS)* — The study found "disclosure of sensitive information" as a consistent failure mode. ProbOS agents operate with Standing Orders that say "don't share sensitive info" but there's no enforcement layer defining *what* is sensitive or *preventing* disclosure.
+**AD-530: Information Classification Enforcement** *(partial — v1 ships ClassificationGate observational disclosure gate; b/c/d/e deferred, OSS)* — The study found "disclosure of sensitive information" as a consistent failure mode. ProbOS agents operate with Standing Orders that say "don't share sensitive info" but there's no enforcement layer defining *what* is sensitive or *preventing* disclosure.
 
 **(1) Problem:** Standing Orders are advisory — agents comply based on instruction-following, not enforcement. An agent with access to config values, API endpoints, internal architecture details, or Captain conversations has no technical barrier to including that information in Ward Room posts, LLM prompts, or duty logs.
 

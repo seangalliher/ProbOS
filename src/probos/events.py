@@ -201,6 +201,7 @@ class EventType(str, Enum):
     BACKUP_FAILED = "backup_failed"  # AD-466
     SECRET_ROTATED = "secret_rotated"  # AD-456
     EGRESS_BLOCKED = "egress_blocked"  # AD-456
+    CLASSIFICATION_DISCLOSURE_BLOCKED = "classification_disclosure_blocked"  # AD-530
     AUDIT_RECORDED = "audit_recorded"  # AD-456
     VERIFICATION_PASSED = "verification_passed"  # AD-528
     VERIFICATION_FAILED = "verification_failed"  # AD-528

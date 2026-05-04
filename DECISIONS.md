@@ -10,6 +10,33 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-530 v1: Information Classification Enforcement — Disclosure Gate (2026-05-03)
+
+**Problem:** Standing Orders advise agents not to disclose sensitive information, but there's no enforcement layer. Documents have classification metadata (records_store.py:27 `_CLASSIFICATION_LEVELS`), but outbound messages (Ward Room posts, LLM prompts) have no gate at the communication boundary.
+
+**Decision:** v1 ships an observational disclosure gate:
+- New `src/probos/security/classification.py` with `ClassificationGate` class.
+- Primary method `check_disclosure(content, *, source_classification, destination_clearance) -> DisclosureDecision`.
+- Reuses existing `_CLASSIFICATION_LEVELS` hierarchy at records_store.py:27 (real keys: `private`/`department`/`ship`/`fleet`; higher index = broader access). Read-only consumer; no duplication.
+- Disclosure direction: BLOCK when `dst_lvl > src_lvl` — destination has broader reach than source classification permits. Direction is grounded in records_store.py:716 and :841 openness semantics.
+- Safe defaults: unknown source → most restrictive (`private`, level 0); unknown destination → broadest (`ship`, level 2). Pairing makes unspecified-on-both BLOCK by hierarchy.
+- Built-in pattern set (3 regex patterns: captain-directive markers, restricted-prefix literals, secret-format `name=value`). `api_key_like` 32+ char heuristic is **opt-in via `register_pattern()`**, NOT default — UUIDs / commit hashes / opaque tokens collide with it.
+- `CLASSIFICATION_DISCLOSURE_BLOCKED` EventType emitted on every block.
+- Privacy: event payload includes `content_length` only (NOT content); `blocked_phrases` lists pattern NAMES (NOT matched substrings).
+- Public attribute `runtime.classification_gate` (Wave 5 convention #1); `emit_event` is a public field on the class (mirrors AD-456 EgressPolicy.emit_event).
+
+v1 is OBSERVATIONAL — gate returns DisclosureDecision; caller decides whether to redact/suppress/retry. Integration into Ward Room post / LLM prompt builder paths deferred to AD-530d (active enforcement).
+
+**Why:** Standing Orders → enforcement gap is real. Existing classification infrastructure is document-only. Communication-boundary gate is the missing piece. v1 is conservative (observational; never mutates messages) so the gate can be tuned without risk of false-positive suppression breaking real communication.
+
+**Deferred:**
+- AD-530b: Security Chief (Worf) runtime API for classification updates via Standing Orders. Forcing function: SecurityAgent spawned and needs `runtime.classification_gate.update_label()`.
+- AD-530c: Full audit trail (event on every classified READ, not just blocks). Forcing function: AD-530d integration site lands and Captain reviews blocked-event volume.
+- AD-530d: Active enforcement — integrate gate into WardRoomService.create_post + LLMClient prompt builder; redact/suppress/retry policy. Forcing function: AD-530b ships and Captain (or SecurityAgent under Standing Order) issues a label change.
+- AD-530e: Default-pattern revisit (re-evaluate `api_key_like` and add tightened API-key prefix patterns: `sk-`, `pk_`, `Bearer`, `AKIA`, `ghp_`). Forcing function: AD-530d integration sites produce real outbound corpus and FP rate of `api_key_like` is measurable.
+
+**Cross-links:** RecordsStore `_CLASSIFICATION_LEVELS` (records_store.py:27 — read-only consumer), AD-456 EgressPolicy (orthogonal — network egress, not content), AD-679 selective disclosure routing (orthogonal — document routing), Standing Orders (Federation tier — eventual policy source for AD-530b).
+
 ### AD-572e: Task Awareness in Captain DM Context (2026-05-03)
 
 **Problem:** Combo A (Wave 8) shipped `CaptainEngagementProvider.snapshot()` for Captain-engagement signals. Combo C (Wave 13) added `wardroom_activity_summary()` for Ward Room context. Captain DMs to specific agents still lacked task awareness — agents had no current-commitments context when responding to Captain queries about their work.
