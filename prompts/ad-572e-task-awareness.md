@@ -81,7 +81,7 @@ async def task_awareness(self, agent_id: str) -> dict[str, Any]:
             {
                 "id": getattr(item, "id", "") or "",
                 "title": getattr(item, "title", "") or "",
-                "type": getattr(item, "work_type", "") or getattr(item, "type", "") or "",
+                "type": getattr(item, "work_type", "") or "",
             }
             for item in items[:10]
         ],
@@ -92,22 +92,22 @@ Mirrors Combo C's `wardroom_activity_summary` shape — async helper, defensive 
 
 ### Section 2 — Proactive context integration
 
-In proactive cognitive loop's Captain-DM context-build path (verify location by grep — likely in `src/probos/proactive.py` near where `wardroom_activity_summary` was added in Combo C).
+Injection site: `src/probos/proactive.py:1181-1196` — sibling to Combo C's `wardroom_activity_summary` block, nested inside the existing `if engagement_provider is not None and hasattr(engagement_provider, "snapshot"):` block (proactive.py:1182). Reuse the existing `engagement_provider` local from line 1181 — do NOT re-fetch `captain_engagement_provider`.
 
-Mirrors Combo C pattern:
+Mirrors Combo C pattern exactly (`hasattr` forward-compat guard + `isinstance` injection guard):
 
 ```python
 # AD-572e: Task awareness in Captain DM context
-provider = getattr(self._runtime, "captain_engagement_provider", None)
-if provider is not None:
+if hasattr(engagement_provider, "task_awareness"):
     try:
-        task_summary = await provider.task_awareness(agent.id)
-        context.setdefault("captain_engagement", {})["task_awareness"] = task_summary
+        task_summary = await engagement_provider.task_awareness(agent.id)
+        if isinstance(context.get("captain_engagement"), dict):
+            context["captain_engagement"]["task_awareness"] = task_summary
     except Exception:
         logger.debug("AD-572e: task_awareness injection failed", exc_info=True)
 ```
 
-Verify-first: Builder reads Combo C's wardroom_activity_summary injection site to find the canonical injection point.
+The `isinstance` guard ensures injection only happens when `snapshot()` already populated `captain_engagement` (proactive.py:1184) — avoids creating the key if Combo A's snapshot failed silently. The `hasattr` guard provides rolling-deploy / downgrade safety.
 
 ### Section 3 — Pydantic config
 
@@ -171,11 +171,29 @@ grep -n "list_work_items" src/probos/workforce.py
  1066: async def list_work_items(self, status, assigned_to, work_type, parent_id, priority, tags, limit, offset)
 
 grep -n "captain_engagement_provider\|wardroom_activity_summary" src/probos/proactive.py
-  (Builder verifies the Combo C injection site for Section 2 mirroring)
+ 1181:     engagement_provider = getattr(rt, "captain_engagement_provider", None)
+ 1182:     if engagement_provider is not None and hasattr(engagement_provider, "snapshot"):
+ 1184:         context["captain_engagement"] = engagement_provider.snapshot()
+ 1189:         if hasattr(engagement_provider, "wardroom_activity_summary"):
+ 1191:             summary = await engagement_provider.wardroom_activity_summary()
+ 1192:             if isinstance(context.get("captain_engagement"), dict):
+ 1193:                 context["captain_engagement"]["wardroom_activity_summary"] = summary
+  (AD-572e Section 2 slots in as sibling block immediately after this Combo C block, reusing engagement_provider local.)
 
 grep -n "runtime.work_item_store\|work_item_store" src/probos/runtime.py
   (Builder verifies runtime attribute name — should match Wave 10 AD-500 + Wave 12 AD-477 verification)
 ```
+
+## Revision (2026-05-03)
+
+Pass-1 review verdict: ✅ Approved (0 Required). Revision pass folds 3 Recommended + 1 Nit for Combo C pattern conformance.
+
+- **Nit1 — Section 1 phantom `.type` fallback dropped.** `WorkItem` has only `.work_type` (workforce.py:559-585); the `or getattr(item, "type", "")` second fallback was unreachable. Now: `"type": getattr(item, "work_type", "") or "",`.
+- **Rec1 — Section 2 `setdefault` → `isinstance` guard.** Replaced `context.setdefault("captain_engagement", {})["task_awareness"] = task_summary` with the Combo C canonical `if isinstance(context.get("captain_engagement"), dict): context["captain_engagement"]["task_awareness"] = task_summary`. Avoids creating the key when Combo A's `snapshot()` failed silently.
+- **Rec2 — Section 2 `hasattr(engagement_provider, "task_awareness")` forward-compat guard added.** Mirrors Combo C's `hasattr(..., "wardroom_activity_summary")` (proactive.py:1189) for rolling-deploy / downgrade safety.
+- **Rec3 — Section 2 reuses `engagement_provider` local.** No more fresh `provider = getattr(self._runtime, "captain_engagement_provider", None)` re-fetch; AD-572e block slots in as sibling inside the existing `if engagement_provider is not None and hasattr(engagement_provider, "snapshot"):` block (proactive.py:1182). Single `captain_engagement_provider` lookup per loop iteration.
+- **Section 2 verify-first citation added.** Exact line range `proactive.py:1181-1196` now in Section 2 header (was "verify location by grep" hint).
+- **Verified Against Codebase footer expanded** with proactive.py:1181-1193 line-by-line citation showing the Combo C block AD-572e mirrors.
 
 ## Acceptance Criteria
 
