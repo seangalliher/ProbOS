@@ -1129,6 +1129,39 @@ class EpisodicMemory:
             )
             return None
 
+    async def list_episodes(self, *, limit: int | None = None) -> list[Episode]:
+        """AD-689: Return episodes ordered by timestamp DESC.
+
+        Used by EdgeBackfillService.backfill_episodes to walk the full
+        collection once. Returns [] if the collection is unavailable.
+        ``limit=None`` returns all rows; pass a non-negative int to cap
+        the slice. Missing/malformed rows are silently skipped.
+        """
+        if not self._collection:
+            return []
+        try:
+            result = self._collection.get(include=["metadatas", "documents"])
+        except Exception:
+            logger.debug("AD-689: list_episodes ChromaDB query failed", exc_info=True)
+            return []
+        if not result or not result.get("ids"):
+            return []
+        ids = result["ids"]
+        metas = result.get("metadatas") or [{} for _ in ids]
+        docs = result.get("documents") or ["" for _ in ids]
+        paired = list(zip(ids, metas, docs))
+        paired.sort(key=lambda x: (x[1] or {}).get("timestamp", 0), reverse=True)
+        if limit is not None and limit >= 0:
+            paired = paired[:limit]
+        out: list[Episode] = []
+        for ep_id, meta, doc in paired:
+            try:
+                out.append(self._metadata_to_episode(ep_id, doc or "", meta or {}))
+            except Exception:
+                logger.debug("AD-689: failed to reconstruct episode %s", ep_id, exc_info=True)
+                continue
+        return out
+
     async def get_by_ids(self, episode_ids: list[str]) -> list[Episode]:
         """AD-657: Fetch full Episode objects by ID, preserving input order.
 

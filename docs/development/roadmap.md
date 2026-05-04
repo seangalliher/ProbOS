@@ -7196,7 +7196,7 @@ Empirical observation across two ProbOS instances revealed a **cold-start develo
 
 **AD-688: Oracle Graph Integration** *(Complete, OSS, Issue #382)* — Add Tier 6 (`_query_graph`) and post-merge graph expansion (`_expand_via_graph`) to OracleService. Tier 6: extract entity references from query, match against `knowledge_edges`, traverse 1–2 hops, score by weight × confidence × hop proximity. Post-merge: 1-hop enrichment on top-K merged results from all tiers (discounted score 0.7×). Constructor gains `knowledge_graph` parameter. Provenance tags: `[knowledge graph]`, `[graph expansion from: {tier}]`. *Depends on: AD-686 (Oracle Tier 5 — establishes 6-tier model), AD-687 (Knowledge Edge Store — provides graph data).*
 
-**AD-689: Edge Population from Existing Data** *(Scoped, OSS, Issue #383)* — Backfill `knowledge_edges` from existing ProbOS data sources: ontology (reports_to, member_of), Hebbian weights above threshold (competent_in), episode agent_ids (involved_in), DECISIONS.md cross-references (resolved_by, informed_by). Idempotent backfill command, warm-boot integration. *Depends on: AD-687 (Knowledge Edge Store). Related: AD-429 (Hebbian Router), ontology models.*
+**AD-689: Edge Population from Existing Data** *(Complete, OSS, Issue #383)* — Backfill `knowledge_edges` from existing ProbOS data sources: ontology (reports_to, member_of), Hebbian weights above threshold (competent_in), episode agent_ids (involved_in), DECISIONS.md cross-references (resolved_by, informed_by). Idempotent backfill command, warm-boot integration. *Depends on: AD-687 (Knowledge Edge Store). Related: AD-429 (Hebbian Router), ontology models.*
 
 **Phase B: Intelligence**
 

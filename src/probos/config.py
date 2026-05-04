@@ -1766,6 +1766,37 @@ class KnowledgeEdgesConfig(BaseModel):
         return v
 
 
+class EdgeBackfillConfig(BaseModel):
+    """AD-689: One-shot backfill of ``knowledge_edges`` from existing data.
+
+    Default ``enabled=True`` follows the same precedent as
+    ``KnowledgeEdgesConfig`` — the warm-boot wirer is a no-op once the table
+    has any rows (idempotency-by-row-count guard). The first cold boot after
+    AD-689 lands populates the graph from ontology/Hebbian/episodes/DECISIONS;
+    subsequent boots see ``find_edges(limit=1) != []`` and skip.
+    """
+    enabled: bool = True
+    run_on_warm_boot: bool = True
+    hebbian_threshold: float = 0.5
+    force: bool = False
+    decisions_paths: list[str] = Field(
+        default_factory=lambda: [
+            "DECISIONS.md",
+            "decisions-era-1-genesis.md",
+            "decisions-era-2-emergence.md",
+            "decisions-era-3-product.md",
+            "decisions-era-4-evolution.md",
+        ]
+    )
+
+    @field_validator("hebbian_threshold")
+    @classmethod
+    def _check_threshold(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("edge_backfill.hebbian_threshold must be in [0.0, 1.0]")
+        return v
+
+
 class ClinicalTelemetryConfig(BaseModel):
     """AD-635 v1: Clearance-gated clinical query facade (Medical / Counselor).
 
@@ -2076,6 +2107,7 @@ class SystemConfig(BaseModel):
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
     knowledge_edges: KnowledgeEdgesConfig = Field(default_factory=KnowledgeEdgesConfig)  # AD-687
+    edge_backfill: EdgeBackfillConfig = Field(default_factory=EdgeBackfillConfig)  # AD-689
     communications: CommunicationsConfig = CommunicationsConfig()
     workforce: WorkforceConfig = WorkforceConfig()
     temporal: TemporalConfig = TemporalConfig()

@@ -1,5 +1,6 @@
 """Persistent knowledge store — Git-backed artifact repository."""
 
+from probos.knowledge.backfill import EdgeBackfillResult, EdgeBackfillService
 from probos.knowledge.edges import (
     KnowledgeEdge,
     KnowledgeEdgeStorage,
@@ -11,6 +12,8 @@ from probos.knowledge.edges import (
 from probos.knowledge.store import KnowledgeStore
 
 __all__ = [
+    "EdgeBackfillResult",
+    "EdgeBackfillService",
     "KnowledgeEdge",
     "KnowledgeEdgeStorage",
     "KnowledgeEdgeStore",

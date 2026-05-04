@@ -236,6 +236,61 @@ def _wire_chain_optimizer(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _wire_edge_backfill(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-689: Wire EdgeBackfillService and run a one-shot backfill on warm boot
+    if the knowledge_edges table is empty (or force=True)."""
+    cfg = getattr(config, "edge_backfill", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    knowledge_edges = getattr(runtime, "knowledge_edges", None)
+    if knowledge_edges is None:
+        logger.debug("AD-689: knowledge_edges unavailable; skipping backfill")
+        return False
+
+    from pathlib import Path
+    from probos.knowledge.backfill import EdgeBackfillService
+
+    service = EdgeBackfillService(
+        knowledge_edges=knowledge_edges,
+        ontology=getattr(runtime, "ontology", None),
+        hebbian_router=getattr(runtime, "hebbian_router", None),
+        episodic_memory=getattr(runtime, "episodic_memory", None),
+        decisions_paths=[Path(p) for p in cfg.decisions_paths],
+        hebbian_threshold=cfg.hebbian_threshold,
+    )
+    runtime.edge_backfill = service  # public attribute (Wave 5 conv #1)
+
+    if not cfg.run_on_warm_boot:
+        logger.info("AD-689: EdgeBackfillService wired; warm-boot run disabled by config")
+        return True
+
+    if not cfg.force:
+        try:
+            existing = await knowledge_edges.find_edges(limit=1)
+        except Exception:
+            existing = []
+            logger.debug("AD-689: find_edges probe failed; will run backfill", exc_info=True)
+        if existing:
+            logger.info(
+                "AD-689: knowledge_edges already populated; skipping warm-boot backfill "
+                "(use edge_backfill.force=true to override)"
+            )
+            return True
+
+    try:
+        result = await service.backfill_all()
+        logger.info(
+            "AD-689: backfill complete (ontology=%d hebbian=%d episodes=%d "
+            "decisions=%d total=%d duration=%.0fms)",
+            result.ontology, result.hebbian, result.episodes, result.decisions,
+            result.total, result.duration_ms,
+        )
+    except Exception:
+        logger.warning("AD-689: warm-boot backfill failed", exc_info=True)
+    return True
+
+
 def _wire_causal_reasoner(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-660 v1: Wire CausalReasoner template-fill service."""
     cfg = getattr(config, "causal_reasoning", None)
@@ -579,6 +634,9 @@ async def finalize_startup(
 
     if _wire_chain_optimizer(runtime=runtime, config=config):
         logger.info("AD-659: ChainOptimizer v1 wired during finalization")
+
+    if await _wire_edge_backfill(runtime=runtime, config=config):
+        logger.info("AD-689: EdgeBackfillService v1 wired during finalization")
 
     if _wire_causal_reasoner(runtime=runtime, config=config):
         logger.info("AD-660: CausalReasoner v1 wired during finalization")

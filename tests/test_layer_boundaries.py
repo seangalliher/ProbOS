@@ -72,6 +72,10 @@ ALLOWED_EXCEPTIONS = {
     ("cognitive/ground_truth.py", "probos.workforce"),
     # AD-583: knowledge → cognitive.social_verification — pure function import for independence scoring
     ("knowledge/records_store.py", "probos.cognitive.social_verification"),
+    # AD-689: knowledge → mesh.routing — REL_INTENT relation-type constant
+    # for filtering Hebbian weights during edge backfill. Pure constant, no
+    # behavioral coupling.
+    ("knowledge/backfill.py", "probos.mesh.routing"),
 }
 
 

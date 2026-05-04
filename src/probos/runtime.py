@@ -427,6 +427,9 @@ class ProbOSRuntime:
         # --- Knowledge Edge Store (AD-687) ---
         self.knowledge_edges: Any = None  # SQLiteKnowledgeEdgeStore | None — Any to avoid circular import
 
+        # --- Edge Backfill Service (AD-689) ---
+        self.edge_backfill: Any = None  # EdgeBackfillService | None — wired in finalize phase
+
         # --- Counselor Profile Store (AD-503) ---
         self._counselor_profile_store: Any = None
 
