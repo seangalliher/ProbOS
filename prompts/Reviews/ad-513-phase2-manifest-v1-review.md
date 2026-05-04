@@ -195,3 +195,69 @@ All three are catchable at draft time per the relevant conventions; revision pas
 ## Recommended Disposition
 
 ⚠️ Conditional. Apply Required #1 + #2; fold Recommended #3-5; judgment on Nits #6-8. Single revision pass should converge to ✅ at second-pass review.
+
+
+---
+
+## Second-Pass Review (2026-05-03)
+
+**Verdict:** ✅ Approved
+**One-line headline:** All pass-1 findings resolved; phantom lert_manager and essel_class cleanly excised; Section 1 watch-filter spec now explicit with reverse-roster pseudo-code, `agent_id` match key, and case-normalization. Pre-check 0 phantoms.
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence |
+|---|---|---|
+| R1 — phantom `alert_manager` parameter | ✅ | Section 2 signature (lines 109-114) has only `trust_network` + `watch_manager`; body sources alert via `self.get_alert_condition()` (line 100 explanatory bullet). cmd_manifest `--ship` branch (lines 174-178) drops the kwarg. Test #9 renamed to `test_get_ship_manifest_alert_state_reflects_ontology_current_condition`. `grep alert_manager prompt` → 2 hits, both explanatory ("No `alert_manager` parameter…", docstring "no external alert_manager needed") — neither is a phantom usage. `grep get_alert_condition src/probos/ontology/service.py` → line 99-100 verified. |
+| R2 — `vessel_class` field drop | ✅ | Section 2 return-shape doc (lines 130-138) lists only `ship_name` / `agent_count` / `departments` / `watches` / `alert_state` / `manifest_summary` — no `vessel_class`. Verified footer (line 300 grep) confirms `VesselIdentity` fields are name/version/description/instance_id/started_at (models.py:56-61). `grep vessel_class prompt` → 3 hits, all explanatory (Section 2 "no class field exists", footer code-comment, revision log). |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| R3 — pin sources for return-shape keys | ✅ | Section 2 names a verified source for every key (`ship_name` → `get_vessel_identity().name`; `agent_count` → `len(manifest)`; `departments` → distinct from manifest; `watches` → `get_roster()` populated; `alert_state` → `get_alert_condition()`). |
+| R4 — `watches` shape decision | ✅ | Chose option (b) populated watches from `get_roster()`, with rationale ("federation gossip use case is better served by a fuller picture"). |
+| R5 — case-normalization on `/manifest watch:<arg>` | ✅ | Section 3 token parser: `watch = token.split(":", 1)[1].lower()` (line 165). Matches WatchType.value lowercase shape. |
+
+| Pass-1 Nit | Status | Notes |
+|---|---|---|
+| N6 — empty Section 5 | ✅ | Removed. |
+| N7 — `runtime.callsign_registry` promotion | ✅ | Footer now shows cognitive_agent.py:4126 grep hit. |
+| N8 — `/manifest` collision moved to verified | ✅ | Footer "0 matches — no command-name collision". Hard-stop entry removed. |
+
+### Section 1 Watch Filter Spec Improvement
+
+Pass-1 Required #2 flagged the watch-lookup pattern as under-specified. Revision delivers:
+- (a) **Explicit reverse-roster pseudo-code** with two-level loop, building `agent_to_watch: dict[str, str]`.
+- (b) **`agent_id` (not `agent_type`) as match key**, with explicit empty-string skip for unfilled crew (cites service.py:497-503).
+- (c) **Lowercase normalization** on the `watch` filter arg, anchored to `WatchType.value` (cites watch_rotation.py:22 `ALPHA = "alpha"`).
+- (d) **`watch=set + watch_manager=None` → empty list** explicitly stated ("cannot satisfy filter").
+
+Materially improved. The three pass-1 invent-and-likely-get-wrong points are now spelled out.
+
+### Pre-Check
+
+`./scripts/phantom-api-precheck.ps1 prompts/ad-513-phase2-manifest-v1.md` → **Clean — no phantom symbols detected. Total phantom candidates: 0.**
+
+### Consistency Spot-Checks
+
+- **Solution Overview** still claims "3 of 6 capabilities ship" with (a)/(d)/(f) — unchanged from pass-1, still accurate.
+- **Test count** still 17 (5 + 4 + 6 + 2) — Section 1 (5) / Section 2 (4) / Section 3 (6) / Section 4 (2). Test #9 renamed but count preserved.
+- **Tracking** still names PROGRESS.md / DECISIONS.md (Era V) / roadmap.md flip-to-partial.
+- **DECISIONS.md draft** mentions `get_ship_manifest()` ships `alert_state` — no longer references `alert_manager` or `vessel_class`.
+
+### New Findings
+
+None.
+
+### Standing Convention Audit (delta from pass-1)
+
+| # | Convention | Pass-1 | Pass-2 |
+|---|---|---|---|
+| 15 | Relaxed tolerance | ⚠️ breached (2 Required) | ✅ 0 Required |
+| 17 | Defense-in-depth on read paths | partial | ✅ phantom param removed; defensive `getattr` dropped at call site |
+| 20 | AD-685b kwarg pre-check | ran; missed `alert_manager` (param-shape, not `runtime.X`) | ran; clean |
+
+Recommendation note for Wave 17 retrospective candidate: extend pre-check to flag method parameters whose name follows `<noun>_manager` / `<noun>_registry` / `<noun>_service` against runtime attribute existence. Don't draft until 2nd recurrence (convention #14 forcing-function discipline).
+
+### Disposition
+
+✅ Approved. Single revision pass converged as predicted in pass-1's "Recommended Disposition". Prompt cleared for Builder dispatch.
