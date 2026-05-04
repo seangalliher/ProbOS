@@ -1758,6 +1758,8 @@ The scout report is the first case, but the pattern applies to any structured pr
 | DD-2 | BF-209 is the interim fix until dependencies land | ScoutAgent opts out of chain for structured duties. Clean, principled, replaceable |
 | DD-3 | Bills (AD-618) are the process definition format | YAML declarative procedures with BPMN decision points already designed for multi-step agent processes |
 
+**v1 (2026-05-04):** scaffold (ProcessChainStepKind/Step/Definition/Executor) + Scout-internal migration. BF-209 retained.
+
 ### AD-648 — Post Capability Profiles (Ontology Grounding for Confabulation Prevention)
 
 **Date:** 2026-04-19

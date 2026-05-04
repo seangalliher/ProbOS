@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.cognitive.process_chains import (
+    ProcessChainDefinition,
+    ProcessChainExecutor,
+    ProcessChainStep,
+    ProcessChainStepKind,
+)
 from probos.types import CapabilityDescriptor, IntentDescriptor
 
 logger = logging.getLogger(__name__)
@@ -380,7 +386,12 @@ class ScoutAgent(CognitiveAgent):
         return result
 
     async def act(self, decision: dict[str, Any]) -> dict[str, Any]:
-        """Parse LLM classification, store report, deliver notifications."""
+        """Parse LLM classification, store report, deliver notifications.
+
+        AD-647 v1: post-classification pipeline (parse → enrich → filter → store → notify)
+        runs through `SCOUT_REPORT_CHAIN` via `ProcessChainExecutor`. The chain handlers
+        are bound methods on this agent so they have access to runtime, paths, and state.
+        """
         # AD-398/BF-024: pass through conversational responses for 1:1, ward room, and proactive
         # BF-177: Allow duty-triggered proactive_think (scout_report) to reach report generation
         is_duty_triggered = bool(decision.get("duty", {}).get("duty_id"))
@@ -392,16 +403,56 @@ class ScoutAgent(CognitiveAgent):
             # no pending repos to mark. Safe to return.
             return {"success": True, "result": "No new findings to report."}
 
+        # AD-647 v1: build per-invocation chain (handlers are bound methods)
+        chain = ProcessChainDefinition(
+            name="scout_report",
+            description="Scout: parse classification → enrich → filter+store → notify.",
+            steps=(
+                ProcessChainStep(
+                    kind=ProcessChainStepKind.TRANSFORM,
+                    name="parse_and_mark_seen",
+                    handler=self._scout_step_parse_and_mark_seen,
+                ),
+                ProcessChainStep(
+                    kind=ProcessChainStepKind.TRANSFORM,
+                    name="enrich_and_filter",
+                    handler=self._scout_step_enrich_and_filter,
+                ),
+                ProcessChainStep(
+                    kind=ProcessChainStepKind.STORE,
+                    name="persist_report",
+                    handler=self._scout_step_persist_report,
+                ),
+                ProcessChainStep(
+                    kind=ProcessChainStepKind.NOTIFY,
+                    name="notify_and_deliver",
+                    handler=self._scout_step_notify_and_deliver,
+                ),
+            ),
+        )
+        executor = ProcessChainExecutor()
+        try:
+            result_ctx = await executor.run(chain, context={"llm_output": llm_output})
+        except Exception:
+            logger.warning("AD-647: scout_report chain failed; falling back to error result", exc_info=True)
+            return {"success": False, "result": "Scout report pipeline failed. See logs."}
+
+        digest = result_ctx.get("digest", "")
+        return {"success": True, "result": digest}
+
+    # ------------------------------------------------------------------
+    # AD-647 v1: Scout process-chain handlers (bound to this agent so
+    # handlers can read self._runtime / self._reports_dir / self._seen_file
+    # / self._repo_metadata / self._pending_seen_repos).
+    # ------------------------------------------------------------------
+
+    async def _scout_step_parse_and_mark_seen(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """TRANSFORM: parse ===SCOUT_REPORT=== blocks, mark seen on success."""
+        llm_output = ctx.get("llm_output", "") or ""
         findings = parse_scout_reports(llm_output)
 
-        # BF-214: Mark repos as seen ONLY after classification succeeds.
-        # "Succeeds" = parse_scout_reports found at least one ===SCOUT_REPORT=== block
-        # (including SKIP classifications, which parse_scout_reports filters out but
-        # their presence proves the LLM responded in the correct format).
-        # If findings is empty AND llm_output contains ===SCOUT_REPORT===, the LLM
-        # classified everything as SKIP — that's a valid result, mark as seen.
-        # If findings is empty AND no ===SCOUT_REPORT=== blocks, the LLM failed to
-        # produce the expected format — do NOT mark as seen, allow retry next cycle.
+        # BF-214: mark seen only after classification succeeds
+        # (succeeded = at least one ===SCOUT_REPORT=== block parsed, even if all are SKIP).
         _pending = getattr(self, "_pending_seen_repos", [])
         _classification_succeeded = bool(findings) or "===SCOUT_REPORT===" in llm_output
         if _pending and _classification_succeeded:
@@ -419,7 +470,11 @@ class ScoutAgent(CognitiveAgent):
             )
             self._pending_seen_repos = []
 
-        # Enrich with metadata from perceive
+        return {"findings": findings}
+
+    async def _scout_step_enrich_and_filter(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """TRANSFORM: enrich findings with repo metadata, filter by relevance."""
+        findings: list[ScoutFinding] = ctx.get("findings", []) or []
         metadata = getattr(self, "_repo_metadata", {})
         for f in findings:
             meta = metadata.get(f.repo_full_name, {})
@@ -427,23 +482,32 @@ class ScoutAgent(CognitiveAgent):
             f.license = meta.get("license", f.license)
             f.topics = meta.get("topics", f.topics)
 
-        # Filter by relevance
         filtered = filter_findings(findings, min_relevance=3)
         self._last_findings = filtered
+        return {"filtered": filtered, "total_classified": len(findings)}
 
-        # Store report
+    async def _scout_step_persist_report(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """STORE: write the day's report JSON to the reports directory."""
+        filtered: list[ScoutFinding] = ctx.get("filtered", []) or []
+        total_classified: int = ctx.get("total_classified", 0)
+
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self._reports_dir.mkdir(parents=True, exist_ok=True)
         report_path = self._reports_dir / f"{date_str}.json"
         report_data = {
             "date": date_str,
-            "total_classified": len(findings),
+            "total_classified": total_classified,
             "total_relevant": len(filtered),
             "findings": [asdict(f) for f in filtered],
         }
         report_path.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
+        return {"date_str": date_str, "report_path": str(report_path)}
 
-        # Bridge notifications for high-scoring findings (AD-395: composite_score)
+    async def _scout_step_notify_and_deliver(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """NOTIFY: post high-scoring findings to notification queue + deliver to Discord."""
+        filtered: list[ScoutFinding] = ctx.get("filtered", []) or []
+        date_str: str = ctx.get("date_str", "unknown")
+
         if self._runtime and hasattr(self._runtime, "notification_queue"):
             for f in filtered:
                 if f.composite_score >= 4:
@@ -457,11 +521,9 @@ class ScoutAgent(CognitiveAgent):
                         action_url=f.url,
                     )
 
-        # Discord delivery
         await self._deliver_discord(filtered, date_str)
-
         digest = format_digest(filtered, date_str)
-        return {"success": True, "result": digest}
+        return {"digest": digest}
 
     async def _deliver_discord(self, findings: list[ScoutFinding], date_str: str) -> None:
         """Deliver digest to Discord if configured."""
