@@ -266,3 +266,90 @@ Audited against Wave 5 #1-7, Wave 5-7 Addendum #8-15, Wave 8 Addendum #16-19, Wa
 1. **Required #1** — Builder will guess at `RecordsStore.write_entry` kwargs, likely producing inconsistent commit messages and incorrect frontmatter assembly. Test 14 may pass while real artifact shape regresses notebooks-vs-creative consistency.
 2. **Required #2** — Wired services land but `_wire_creative_expression` is never invoked; `runtime.creative_skills_registry` is `None` at runtime; tests 19-20 still pass (they construct the writer directly).
 3. **Required #3** — Narrative drift in DECISIONS.md and grandchild ADs; AD-525b/d/e consumers will inherit the wrong attribute claim and re-introduce phantom dependencies.
+
+
+---
+
+## Second-Pass Review (2026-05-03)
+
+**Verdict:** ✅ Approved
+**All three Required addressed in Section 4a (write_entry kwarg call), Section 6b (wire invocation), and Dependencies/Section 3 (nested Big Five + `to_dict` adapter). All four Recommended folded; all three Nits applied. One residual DECISIONS.md draft contradiction noted as Nit-only.**
+
+### Resolution Audit
+
+| Pass-1 Required | Status | Evidence |
+|---|---|---|
+| R1 (`write_entry` kwarg spec) | ✅ | New Section 4a explicit kwarg call (`author`, `path`, `content`, `message`, `classification`, `status="published"`, `department`, `topic=topic_slug`, `tags=["creative", medium, skill_id]`, `metrics=None`); all match `records_store.py:89-103` signature. Solution Overview corrected: frontmatter assembled by `write_entry` itself (verified at records_store.py:113-148), `medium`/`skill_id` encoded via `tags`. `message=f"Creative work: {topic_slug} (medium={medium}; skill={skill_id})"` is descriptive. Caller pattern citation updated to `proactive.py:3033`. |
+| R2 (wire invocation site) | ✅ | Section 6 split into 6a (define) + 6b (invoke). 6b inserts `if _wire_creative_expression(runtime=runtime, config=config):` at `startup/finalize.py:253`, immediately after `_wire_self_distillation` invocation block. `_wire_creative_expression` declared sync `def` (matches `_wire_anomaly_window` line 25 shape). No `await` in invocation — explicitly called out. Recommended #4 absorbed. |
+| R3 (nested Big Five + adapter) | ✅ | Dependencies section deletes false `runtime.profile_store` claim, adds `crew_profile.PersonalityTraits.to_dict()` as canonical adapter with grep evidence. Section 3 `affinity_score` interface stays generic `dict[str, float]`. Section 3 example block shows `traits = profile.personality.to_dict()`. Test #21 (`test_affinity_score_accepts_personality_traits_to_dict_shape`) added — locks adapter contract. Soft-warning on unwired `runtime.profile_store` documented (read-only consumer; affinity returns 0.0 when absent — locked by test #7). |
+
+| Pass-1 Recommended | Status | Notes |
+|---|---|---|
+| Rec #1 (`CreativeOutputError`) | ✅ | Section 1 specifies `class CreativeOutputError(Exception)` inline at top of `output_writer.py` (Wave 9 convention #20). Section 4a raises on missing `records_store` and chains via `from exc` on `write_entry` failure. |
+| Rec #2 (`skills_catalog` dead-code) | ✅ | Dropped from Section 5; deferred to AD-525b plugin loader. Convention #14 honored. |
+| Rec #3 (`list_works_by_author` coverage) | ✅ | Test #18 (`test_list_works_by_author_returns_only_authors_works`) targets it — already in plan; pass-1 marked scratch; revision left as-is. |
+| Rec #4 (wire async/sync mismatch) | ✅ | Folded into R2: `_wire_creative_expression` is sync `def`, invocation is `if _wire_...(...)` not `if await _wire_...(...)`. |
+
+| Pass-1 Nit | Status | Notes |
+|---|---|---|
+| Nit #1 (stale `proactive.py:2111`) | ✅ | Solution Overview + Verified footer updated to `proactive.py:3033`. |
+| Nit #2 (idempotency wording) | ✅ | Section 3 docstring: "Last-write-wins on `skill_id` collision". |
+| Nit #3 (`Literal` type) | ✅ | Section 5: `default_classification: Literal["ship", "department", "private"]`. |
+
+### Verification Points
+
+1. **R1 kwargs match signature.** Verified live: `records_store.py:89-103` exposes `(author, path, content, message, *, classification="ship", status="draft", department="", topic="", tags=None, metrics=None)`. Section 4a publish() body passes all kwargs in correct shape; `tags=["creative", medium, skill_id]` is the chosen encoding for the otherwise-unsupported `medium`/`skill_id`. `message` is descriptive. ✅
+2. **R2 invocation is sync.** Verified at `startup/finalize.py:25` (`_wire_anomaly_window` sync `def`, sync invocation at line 249) vs `:80` (`_wire_self_distillation` async, awaited at line 252). Section 6b mirrors the line 249 pattern (sync). No `await`. Insert band line 253 verified. ✅
+3. **R3 nested Big Five + adapter.** Verified live: `crew_profile.py:51` `class PersonalityTraits` (flat floats), `:138` `personality: PersonalityTraits` field on `CrewProfile`. `to_dict()` lives at `crew_profile.py:85` (prompt cites `:86` — off-by-one cosmetic, sub-nit, not flagging). Adapter contract locked by new test #21. `runtime.profile_store` unwired-soft-warning honored. ✅
+4. **Frontmatter shape correction.** Solution Overview no longer claims arbitrary `type/medium/author/department` keys. Section 4a uses `tags=["creative", medium, skill_id]` consistently. **Residual contradiction (NEW Nit, see below):** DECISIONS.md draft block in Tracking section still says `Frontmatter includes type: creative, medium, author, department.` ✅ for the build-driving sections; ⚠ for the DECISIONS draft only.
+5. **Pre-check.** `./scripts/phantom-api-precheck.ps1 prompts/ad-525-creative-expression-v1.md` → 1 phantom (`SystemConfig.creative_expression`, documented FP introduced by Section 5, Wave 5 convention #1 pattern), 0 NEW phantoms. `runtime.creative_skills_registry.list_skills(...)` flagged as `[no_class_resolution]` skip (introduced by Section 6a wiring; expected). ✅
+
+### New Findings
+
+1. **Nit-N1 (DECISIONS.md draft residual).** The DECISIONS.md draft inside the Tracking section (line ~258 of the prompt) still reads:
+   > Frontmatter includes `type: creative`, `medium`, `author`, `department`.
+
+   This contradicts the corrected Section 4a (frontmatter is auto-assembled by `write_entry`; `medium`/`skill_id` are encoded via `tags`). Because the build-driving sections (Solution Overview, Section 4a) are correct, this is a Nit only — Builder will follow Section 4a. Recommended fix during commit:
+
+   > Frontmatter is assembled by `RecordsStore.write_entry` (author, classification, status, created/updated, optional department/topic/tags); AD-525 encodes `medium` and `skill_id` in `tags=["creative", medium, skill_id]`.
+
+   Not blocking ✅. File the edit as a single-line touch alongside Builder's normal DECISIONS.md write.
+
+### Pre-Check Output
+
+```
+=== prompts/ad-525-creative-expression-v1.md ===
+  1 phantom symbol(s):
+    - [<Class>.<method>] SystemConfig.creative_expression       (FP — introduced by Section 5)
+  Skipped (unresolved class):
+    ~ [no_class_resolution] runtime.creative_skills_registry.list_skills(...)   (FP — introduced by Section 6a)
+
+=== Summary ===
+Prompts scanned: 1
+Total phantom candidates: 1
+```
+
+0 NEW phantoms. Wave 5 convention #1 expected pattern (introduced-by-prompt wiring) accounts for both items.
+
+### AD-685b Catches-Per-Wave Note
+
+- Wave 15 (own-validation): 0 catches. (AD-685b validated against post-AD-680 ledger; tooling clean.)
+- Wave 16 (this wave): **1 real catch** — `crew_profile_store` → `profile_store` typo at draft time (commit 77788e2). First non-trivial real-world catch since rollout.
+- Caveat re-affirmed (carried forward from pass-1 § Verified): AD-685b validates **method existence on receiver class**, not **runtime attribute wiring**. The deeper "is `runtime.profile_store` actually wired?" check is AD-685c/d territory. Document as limitation, file separate hygiene-AD if/when warranted.
+
+Catches-per-wave count: **Wave 15 = 0; Wave 16 = 1.** AD-685b ledger updated.
+
+### Convention Compliance (post-revision)
+
+| # | Convention | Status |
+|---|---|---|
+| 1 | Public-attribute wiring | ✅ |
+| 7 | Two-pass review converges | ✅ (this is pass-2; ✅ Approved) |
+| 9 | ASCII-only prompt body | ✅ |
+| 14 | Aggressive pre-deferral | ✅ (3 of 5 capabilities deferred + skills_catalog dropped) |
+| 15 | Relaxed tolerance | N/A — 0 Required remaining |
+| 16 | Dispatch-time phantom-API pre-check | ✅ (1 documented FP, 0 NEW) |
+| 20 | Cross-wave dep verification reads SHIPPED CODE | ✅ (false `runtime.profile_store` dep deleted) |
+| 23 | AD-685b method-call AST | ✅ (caught real phantom at draft) |
+
+**Verdict:** ✅ Approved. Builder may proceed. One Nit-only DECISIONS.md draft adjustment recommended at commit time but is non-blocking.
