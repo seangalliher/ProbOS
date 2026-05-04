@@ -195,3 +195,15 @@ waves:
     builder_required: true
     issues_to_close: [106, 107]
     status: done
+
+  - id: "21"
+    title: "AD-522 v1 Statistical Process Control (Calibration + Western Electric Rules)"
+    kind: main
+    depends_on: ["20"]
+    dispatch_prompt: "prompts/WAVE-21-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-522-spc-v1.md"
+    builder_required: true
+    issues_to_close: [97]
+    status: pending
