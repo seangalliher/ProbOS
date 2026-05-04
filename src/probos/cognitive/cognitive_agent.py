@@ -4263,6 +4263,26 @@ class CognitiveAgent(BaseAgent):
         if intent_name == "direct_message":
             parts: list[str] = []
 
+            # AD-683: Cold-start ship state snapshot (boot-camp DM path only).
+            if observation.get("_boot_camp_active") and self._runtime is not None:
+                _bc = getattr(self._runtime, "boot_camp", None)
+                _snap = getattr(_bc, "ship_state_snapshot", None) if _bc else None
+                if _snap is not None:
+                    try:
+                        _snapshot_text = _snap.render_text()
+                    except Exception:
+                        logger.debug(
+                            "AD-683: ship_state_snapshot.render_text failed; "
+                            "skipping injection",
+                            exc_info=True,
+                        )
+                        _snapshot_text = ""
+                    if _snapshot_text:
+                        parts.append("--- Ship State Snapshot ---")
+                        parts.append(_snapshot_text)
+                        parts.append("---")
+                        parts.append("")
+
             # AD-502: Temporal awareness header
             temporal_ctx = self._build_temporal_context()
             if temporal_ctx:

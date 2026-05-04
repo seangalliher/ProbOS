@@ -102,6 +102,8 @@ class BootCampCoordinator:
         trust_service: TrustServiceProtocol,
         episodic_memory: EpisodicMemoryProtocol,
         emit_event_fn: Callable[..., Any] | None = None,
+        *,
+        ship_state_builder: Any | None = None,  # AD-683: ShipStateSnapshotBuilder | None
     ) -> None:
         self._config = config
         self._ward_room = ward_room
@@ -113,6 +115,9 @@ class BootCampCoordinator:
         self._started_at: float | None = None
         self._nudge_cooldowns: dict[str, float] = {}
         self._observation_thread_id: str | None = None
+        # AD-683: Cold-start ship state snapshot — populated at activate() end.
+        self._ship_state_builder = ship_state_builder
+        self.ship_state_snapshot: Any | None = None  # ShipStateSnapshot | None
 
     @property
     def is_active(self) -> bool:
@@ -174,6 +179,17 @@ class BootCampCoordinator:
             "agent_count": len(crew_agents),
             "timestamp": self._started_at,
         })
+
+        # AD-683: Capture ship state snapshot for cold-start orientation.
+        if self._ship_state_builder is not None:
+            try:
+                self.ship_state_snapshot = await self._ship_state_builder.build()
+            except Exception:
+                logger.warning(
+                    "AD-683: ship_state_snapshot capture failed during activate; "
+                    "cold-start agents will not see snapshot",
+                    exc_info=True,
+                )
 
     async def check_graduation(self, agent_id: str) -> bool:
         """Check if agent meets graduation criteria."""

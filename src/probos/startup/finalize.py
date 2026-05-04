@@ -156,6 +156,23 @@ def _wire_boot_camp_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_ship_state_snapshot(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-683 v1: Wire ShipStateSnapshotBuilder (cold-start onboarding)."""
+    cfg = getattr(config, "ship_state_snapshot", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.onboarding import ShipStateSnapshotBuilder
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    builder = ShipStateSnapshotBuilder(runtime, emit_event=emit_fn)
+    runtime.ship_state_snapshot = builder  # public attribute (Wave 5 convention #1)
+    logger.info(
+        "AD-683: ShipStateSnapshotBuilder v1 initialized (cold-start orientation)"
+    )
+    return True
+
+
 def _wire_autonomy_boundaries(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-511 v1: Wire InviolableBoundaryRegistry + BoundaryViolationDetector."""
     cfg = getattr(config, "autonomy_boundaries", None)
@@ -465,6 +482,9 @@ async def finalize_startup(
 
     if _wire_boot_camp_tracker(runtime=runtime, config=config):
         logger.info("AD-509: Boot Camp Phase Tracker v1 wired during finalization")
+
+    if _wire_ship_state_snapshot(runtime=runtime, config=config):
+        logger.info("AD-683: Ship State Snapshot v1 wired during finalization")
 
     if _wire_duty_scope_provider(runtime=runtime, config=config):
         logger.info("AD-508: DutyScopeProvider v1 wired during finalization")

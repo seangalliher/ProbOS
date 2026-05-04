@@ -295,6 +295,12 @@ class BootCampConfig(BaseModel):
     nudge_cooldown_seconds: int = 600
 
 
+class ShipStateSnapshotConfig(BaseModel):
+    """AD-683: Ship State Snapshot for Cold-Start Onboarding."""
+
+    enabled: bool = True
+
+
 class TieredTrustConfig(BaseModel):
     """AD-640: Role-based trust initialization tiers."""
 
@@ -1989,6 +1995,9 @@ class SystemConfig(BaseModel):
     llm_rate: LLMRateConfig = LLMRateConfig()  # AD-617
     sub_task: SubTaskConfig = SubTaskConfig()  # AD-632a
     boot_camp: BootCampConfig = BootCampConfig()  # AD-638
+    ship_state_snapshot: ShipStateSnapshotConfig = Field(
+        default_factory=ShipStateSnapshotConfig
+    )  # AD-683
     tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585

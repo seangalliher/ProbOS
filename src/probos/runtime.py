@@ -1583,6 +1583,7 @@ class ProbOSRuntime:
                     trust_service=self.trust_network,
                     episodic_memory=self.episodic_memory,
                     emit_event_fn=self._emit_event,
+                    ship_state_builder=getattr(self, "ship_state_snapshot", None),  # AD-683
                 )
                 logger.info("AD-638: BootCampCoordinator initialized")
             except Exception as e:
