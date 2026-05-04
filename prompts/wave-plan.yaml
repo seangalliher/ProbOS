@@ -230,4 +230,4 @@ waves:
       - "prompts/combo-E-cognitive-helpers.md"
     builder_required: true
     issues_to_close: [90, 72]
-    status: pending
+    status: done
