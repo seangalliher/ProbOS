@@ -691,7 +691,7 @@ waves:
       - "prompts/ad-459b-active-shedding-v1.md"
     builder_required: true
     issues_to_close: [396]
-    status: pending
+    status: done
 
   - id: "62"
     title: "AD-635b v1 Clinical Telemetry Anomaly Audit Trail Persistence"
