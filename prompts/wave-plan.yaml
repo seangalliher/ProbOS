@@ -727,7 +727,7 @@ waves:
       - "prompts/ad-635d-clinical-rest-v1.md"
     builder_required: true
     issues_to_close: [393]
-    status: pending
+    status: done
 
   - id: "65"
     title: "AD-635e v1 Clinical Telemetry Shell Command"
