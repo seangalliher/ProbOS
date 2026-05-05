@@ -28,7 +28,28 @@ class CredentialSpec:
     env_var_aliases: list[str] = field(default_factory=list)  # e.g., ["GITHUB_TOKEN"]
     cli_command: list[str] | None = None  # e.g., ["gh", "auth", "token"]
     allowed_departments: list[str] | None = None  # None = unrestricted
+    # AD-456c: minimum Earned Agency tier required to read this credential.
+    # String matches ``probos.earned_agency.AgencyLevel.value`` --
+    # ``"reactive"`` (Ensign) / ``"suggestive"`` (Lieutenant) /
+    # ``"autonomous"`` (Commander) / ``"unrestricted"`` (Senior). Default
+    # ``None`` = no tier gate (preserves AD-456 v1 ungated-lookup behavior).
+    # Only enforced when ``CredentialStore._tier_enforcement`` is True (set
+    # at finalize via ``config.security_infra.credential_tier_enforcement``).
+    min_tier: str | None = None
     description: str = ""
+
+
+# AD-456c: Earned Agency tier ordinal map. Mirrors ``_TIER_ORDER`` shape from
+# ``probos.earned_agency`` (line 90) but locally defined to avoid importing
+# the full ``earned_agency`` module surface into credential_store. Unknown
+# tier strings resolve to ``-1`` via ``.get(name, -1)`` -- sentinel for deny
+# when ``_tier_enforcement`` is True (test #12 locks this).
+_AGENCY_ORDER: dict[str, int] = {
+    "reactive": 0,        # Ensign
+    "suggestive": 1,      # Lieutenant
+    "autonomous": 2,      # Commander
+    "unrestricted": 3,    # Senior
+}
 
 
 class CredentialStore:
@@ -57,6 +78,10 @@ class CredentialStore:
         self._emit_event = emit_event
         self._store: dict[str, str] = {}
         self._store_loaded = False
+        # AD-456c: per-tier credential lookup gate. Default False preserves
+        # AD-456 v1 ungated-lookup behavior; finalize flips to True when
+        # ``config.security_infra.credential_tier_enforcement`` is set.
+        self._tier_enforcement: bool = False
         self._register_builtins()
 
     def _register_builtins(self) -> None:
@@ -80,6 +105,20 @@ class CredentialStore:
             env_var="LLM_API_KEY",
             description="Shared LLM API key",
         ))
+
+    def set_tier_enforcement(self, enabled: bool) -> None:
+        """AD-456c: Toggle per-tier credential lookup gate.
+
+        When enabled, ``get(...)`` consults ``CredentialSpec.min_tier`` and
+        the caller-supplied ``tier`` kwarg; specs with ``min_tier=None``
+        remain ungated. When disabled (the v1 default), the tier check is a
+        no-op regardless of any ``min_tier`` settings -- AD-456 v1
+        ungated-lookup behavior is preserved bit-for-bit.
+
+        Wired from ``startup/finalize.py`` based on
+        ``config.security_infra.credential_tier_enforcement``.
+        """
+        self._tier_enforcement = bool(enabled)
 
     def register(self, spec: CredentialSpec) -> None:
         """Register a credential spec. Extensions can add their own."""
@@ -177,6 +216,39 @@ class CredentialStore:
                 "AD-456: SECRET_ROTATED emit failed (name=%s)", name, exc_info=True,
             )
 
+    def _emit_tier_denied(
+        self,
+        *,
+        name: str,
+        requester: str,
+        requested_tier: str | None,
+        required_tier: str,
+    ) -> None:
+        """AD-456c: Emit ``CREDENTIAL_TIER_DENIED`` on a tier-gated denial.
+
+        Log-and-degrade tier -- emit failures must NOT propagate; the deny
+        decision is already returned to the caller and the access has been
+        logged via ``_log_access``.
+        """
+        if self._emit_event is None:
+            return
+        try:
+            from probos.events import EventType
+            self._emit_event(
+                EventType.CREDENTIAL_TIER_DENIED,
+                {
+                    "name": name,
+                    "requester": requester,
+                    "requested_tier": requested_tier,
+                    "required_tier": required_tier,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "AD-456c: CREDENTIAL_TIER_DENIED emit failed (name=%s, requester=%s)",
+                name, requester, exc_info=True,
+            )
+
     # ---------- end AD-456 extension ----------
 
     def get(
@@ -185,14 +257,23 @@ class CredentialStore:
         *,
         requester: str = "unknown",
         department: str | None = None,
+        tier: str | None = None,
     ) -> str | None:
-        """Resolve a credential by name. Returns None if not available."""
+        """Resolve a credential by name. Returns None if not available.
+
+        AD-456c: When ``CredentialStore._tier_enforcement`` is True AND the
+        spec carries a ``min_tier``, ``tier`` (Earned Agency level value --
+        ``"reactive"``/``"suggestive"``/``"autonomous"``/``"unrestricted"``)
+        must satisfy the floor or the lookup is denied. When enforcement is
+        False (v1 default), ``tier`` is ignored and AD-456 ungated-lookup
+        behavior is preserved.
+        """
         spec = self._specs.get(name)
         if not spec:
             logger.warning("CredentialStore: unknown credential '%s'", name)
             return None
 
-        # Department access check
+        # Department access check (AD-395)
         if spec.allowed_departments is not None and department:
             if department not in spec.allowed_departments:
                 logger.warning(
@@ -200,6 +281,27 @@ class CredentialStore:
                     department, name,
                 )
                 self._log_access(name, requester, "denied_department")
+                return None
+
+        # AD-456c: Per-tier access check (defense in depth -- runs AFTER
+        # department check). Only consulted when enforcement is on AND the
+        # spec carries a min_tier; otherwise this block is a no-op.
+        if self._tier_enforcement and spec.min_tier is not None:
+            required_order = _AGENCY_ORDER[spec.min_tier]
+            actual_order = _AGENCY_ORDER.get(tier, -1) if tier is not None else -1
+            if actual_order < required_order:
+                logger.warning(
+                    "CredentialStore: tier '%s' denied access to '%s' "
+                    "(required min_tier=%s)",
+                    tier, name, spec.min_tier,
+                )
+                self._emit_tier_denied(
+                    name=name,
+                    requester=requester,
+                    requested_tier=tier,
+                    required_tier=spec.min_tier,
+                )
+                self._log_access(name, requester, "denied_tier")
                 return None
 
         # Check cache

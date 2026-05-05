@@ -1470,6 +1470,14 @@ class SecurityInfraConfig(BaseModel):
     # once fleet-wide allowlist coverage is verified.).
     egress_active_enforcement: bool = False
 
+    # AD-456c: Per-tier credential lookup gate (v1 default False — preserves
+    # AD-456 ungated-lookup behavior on existing deployments; flip to True at
+    # upgrade time after reviewing per-spec ``min_tier`` coverage. AD-456c-5
+    # will flip default to True once fleet-wide ``min_tier`` coverage is
+    # verified AND caller-side ``tier=`` argument propagation (AD-456c-2)
+    # has landed in all production credential-using agent paths.).
+    credential_tier_enforcement: bool = False
+
 
 class SecurityConfig(BaseModel):
     """Security Team configuration (AD-455)."""

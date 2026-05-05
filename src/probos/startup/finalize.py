@@ -1265,6 +1265,17 @@ async def finalize_startup(
                 exc_info=True,
             )
 
+    # AD-456c: Per-tier credential lookup gate. Default False preserves
+    # AD-456 ungated-lookup behavior; Captain flips at upgrade time after
+    # reviewing per-spec min_tier coverage AND caller-side tier= argument
+    # propagation (AD-456c-2).
+    if (
+        credential_store is not None
+        and config.security_infra.credential_tier_enforcement
+    ):
+        credential_store.set_tier_enforcement(True)
+        logger.info("AD-456c: CredentialStore per-tier gate enabled")
+
     if config.security_infra.egress_enabled:
         from probos.security.egress import EgressPolicy
         runtime.egress_policy = EgressPolicy(
