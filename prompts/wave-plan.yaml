@@ -559,7 +559,7 @@ waves:
       - "prompts/ad-686b-oracle-write-path-v1.md"
     builder_required: true
     issues_to_close: [414]
-    status: pending
+    status: done
 
   - id: "51"
     title: "AD-660b v1 Causal Reasoning Auto-Invocation + Emergence Integration"
