@@ -679,7 +679,7 @@ waves:
       - "prompts/ad-458b-preflight-validation-v1.md"
     builder_required: true
     issues_to_close: [397]
-    status: pending
+    status: done
 
   - id: "61"
     title: "AD-459b v1 Saucer Separation Active Shedding Hooks"
