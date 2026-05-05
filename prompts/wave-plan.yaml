@@ -715,7 +715,7 @@ waves:
       - "prompts/ad-635c-circuit-breaker-history-v1.md"
     builder_required: true
     issues_to_close: [392]
-    status: pending
+    status: done
 
   - id: "64"
     title: "AD-635d v1 Clinical Telemetry REST Endpoints"
