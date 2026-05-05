@@ -442,3 +442,62 @@ waves:
     builder_required: true
     issues_to_close: [384]
     status: done
+  - id: "41"
+    title: "AD-691 v1 NL-to-Graph Query (Ship's Computer structural routing)"
+    kind: main
+    depends_on: ["40"]
+    dispatch_prompt: "prompts/WAVE-41-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-691-nl-to-graph-query-v1.md"
+    builder_required: true
+    issues_to_close: [385]
+    status: pending
+
+  - id: "42"
+    title: "AD-692 v1 Classification Enforcement on Knowledge Graph"
+    kind: main
+    depends_on: ["41"]
+    dispatch_prompt: "prompts/WAVE-42-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-692-classification-enforcement-v1.md"
+    builder_required: true
+    issues_to_close: [386]
+    status: pending
+
+  - id: "43"
+    title: "AD-695 v1 Ship Health Oracle Tier + Threshold Bridge Alerts"
+    kind: main
+    depends_on: ["42"]
+    dispatch_prompt: "prompts/WAVE-43-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-695-ship-health-oracle-v1.md"
+    builder_required: true
+    issues_to_close: [389]
+    status: pending
+
+  - id: "44"
+    title: "AD-594a v1 Consultation Workspace (Session-Scoped Ship's Records)"
+    kind: main
+    depends_on: ["43"]
+    dispatch_prompt: "prompts/WAVE-44-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-594a-consultation-workspace-v1.md"
+    builder_required: true
+    issues_to_close: [160]
+    status: pending
+
+  - id: "45"
+    title: "AD-661 Combo: b (Ship's Records) + c (remainder redistribution)"
+    kind: combo
+    depends_on: ["44"]
+    dispatch_prompt: "prompts/WAVE-45-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-661bc-diagnostic-context-extensions.md"
+    builder_required: true
+    issues_to_close: [412, 413]
+    status: pending
