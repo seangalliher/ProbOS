@@ -619,7 +619,7 @@ waves:
       - "prompts/ad-456b-runtime-sandboxing-v1.md"
     builder_required: true
     issues_to_close: [398]
-    status: pending
+    status: done
 
   - id: "56"
     title: "AD-456c v1 Per-Tier Credential Lookup"
