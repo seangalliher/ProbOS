@@ -595,7 +595,7 @@ waves:
       - "prompts/ad-659c-chain-optimizer-counselor-v1.md"
     builder_required: true
     issues_to_close: [410]
-    status: pending
+    status: done
 
   - id: "54"
     title: "AD-658a v1 Chain Trace Token Input/Output Split"
