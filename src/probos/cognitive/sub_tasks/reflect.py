@@ -577,6 +577,8 @@ class ReflectHandler:
             name=spec.name,
             result=result,
             tokens_used=getattr(response, "tokens_used", 0),
+            prompt_tokens=getattr(response, "prompt_tokens", 0),
+            completion_tokens=getattr(response, "completion_tokens", 0),
             duration_ms=duration,
             success=True,
             tier_used=getattr(response, "tier", ""),

@@ -58,11 +58,13 @@ class SubTaskResult:
     sub_task_type: SubTaskType
     name: str
     result: dict = field(default_factory=dict)  # Structured output (handler-specific)
-    tokens_used: int = 0                # Prompt + completion tokens
+    tokens_used: int = 0                # Prompt + completion tokens (sum; backwards-compat)
     duration_ms: float = 0.0            # Wall clock time
     success: bool = True
     error: str = ""                     # Empty if success, error message if not
     tier_used: str = ""                 # Actual LLM tier used
+    prompt_tokens: int = 0              # AD-658a: prompt-side token count
+    completion_tokens: int = 0          # AD-658a: completion-side token count
 
 
 @dataclass
@@ -622,6 +624,11 @@ class SubTaskExecutor:
                     started_at=step_started_at,
                     duration_ms=result.duration_ms,
                     tokens_used=result.tokens_used,
+                    # AD-658a: forward prompt/completion split from SubTaskResult.
+                    # Defensive getattr tolerates SubTaskResult instances built
+                    # by older external fixtures that pre-date the field add.
+                    prompt_tokens=getattr(result, "prompt_tokens", 0),
+                    completion_tokens=getattr(result, "completion_tokens", 0),
                     success=result.success,
                     error_truncated=(result.error or "")[:200],
                     context_keys_declared=len(spec.context_keys),

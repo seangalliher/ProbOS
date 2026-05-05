@@ -670,6 +670,8 @@ class ComposeHandler:
             name=spec.name,
             result={"output": response.content or ""},
             tokens_used=response.tokens_used,
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
             duration_ms=duration,
             success=True,
             tier_used=response.tier,

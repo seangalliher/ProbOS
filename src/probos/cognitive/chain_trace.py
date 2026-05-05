@@ -32,7 +32,9 @@ class ChainExecutionTrace:
     # Wall-clock + execution
     started_at: float = 0.0
     duration_ms: float = 0.0
-    tokens_used: int = 0
+    tokens_used: int = 0                # AD-658: prompt + completion (sum)
+    prompt_tokens: int = 0              # AD-658a: prompt-side token count
+    completion_tokens: int = 0          # AD-658a: completion-side token count
     success: bool = True
     error_truncated: str = ""
 

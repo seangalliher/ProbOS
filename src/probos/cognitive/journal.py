@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS chain_traces (
     started_at          REAL NOT NULL DEFAULT 0.0,
     duration_ms         REAL NOT NULL DEFAULT 0.0,
     tokens_used         INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens       INTEGER NOT NULL DEFAULT 0,
+    completion_tokens   INTEGER NOT NULL DEFAULT 0,
     success             INTEGER NOT NULL DEFAULT 1,
     error_truncated     TEXT NOT NULL DEFAULT '',
     context_keys_declared INTEGER NOT NULL DEFAULT 0,
@@ -111,6 +113,12 @@ CREATE INDEX IF NOT EXISTS idx_causal_templates_agent ON causal_templates(agent_
 _MIGRATIONS_CAUSAL_TEMPLATES_AD660B = (
     "ALTER TABLE causal_templates ADD COLUMN ranked_hypotheses_json TEXT",
     "ALTER TABLE causal_templates ADD COLUMN recommended_actions_json TEXT",
+)
+
+# AD-658a: idempotent migration for warm-boot DBs created under AD-658 v1.
+_MIGRATIONS_CHAIN_TRACES_AD658A = (
+    "ALTER TABLE chain_traces ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE chain_traces ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0",
 )
 
 # AD-659b: ChainOptimizer proposal persistence (net-new table; no warm-boot migration).
@@ -207,6 +215,12 @@ class CognitiveJournal:
         await self._db.executescript(_SCHEMA_CAUSAL_TEMPLATES)
         # AD-660b: idempotent ALTER TABLE for warm-boot DBs that pre-date AD-660b.
         for stmt in _MIGRATIONS_CAUSAL_TEMPLATES_AD660B:
+            try:
+                await self._db.execute(stmt)
+            except Exception:
+                pass
+        # AD-658a: idempotent ALTER TABLE for warm-boot DBs that pre-date AD-658a.
+        for stmt in _MIGRATIONS_CHAIN_TRACES_AD658A:
             try:
                 await self._db.execute(stmt)
             except Exception:
@@ -377,16 +391,22 @@ class CognitiveJournal:
                 """INSERT OR IGNORE INTO chain_traces
                    (chain_id, step_index, step_name, sub_task_type, tier,
                     chain_source, agent_id, agent_type, intent, intent_id,
-                    started_at, duration_ms, tokens_used, success, error_truncated,
+                    started_at, duration_ms, tokens_used,
+                    prompt_tokens, completion_tokens,
+                    success, error_truncated,
                     context_keys_declared, context_keys_passed, context_filter_applied,
                     communication_context, chain_trust_band, trust_score,
                     boot_camp_active, from_captain, is_dm)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     trace.chain_id, trace.step_index, trace.step_name,
                     trace.sub_task_type, trace.tier, trace.chain_source,
                     trace.agent_id, trace.agent_type, trace.intent, trace.intent_id,
                     trace.started_at, trace.duration_ms, trace.tokens_used,
+                    # AD-658a: defensive getattr — tolerates pre-AD-658a trace objects
+                    # produced by external test fixtures or stub journals.
+                    getattr(trace, "prompt_tokens", 0),
+                    getattr(trace, "completion_tokens", 0),
                     1 if trace.success else 0, trace.error_truncated,
                     trace.context_keys_declared, trace.context_keys_passed,
                     1 if trace.context_filter_applied else 0,
