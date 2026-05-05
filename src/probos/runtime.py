@@ -1510,6 +1510,7 @@ class ProbOSRuntime:
         self._behavioral_metrics_engine = dream_result.behavioral_metrics_engine  # AD-569
         self.task_scheduler = dream_result.task_scheduler
         self._flush_task = dream_result.flush_task
+        self.dreaming_engine = dream_result.dreaming_engine  # AD-690: needed by finalize wiring
         self._cold_start = cold_start
         if self._cold_start:
             self._lifecycle_state = "reset"

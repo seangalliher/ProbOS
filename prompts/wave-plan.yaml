@@ -511,7 +511,7 @@ waves:
       - "prompts/ad-685c-phantom-type-shape-v1.md"
     builder_required: true
     issues_to_close: [406]
-    status: pending
+    status: done
 
   - id: "47"
     title: "AD-685d v1 Phantom-API Dataclass/Pydantic Field-Name Validation"
