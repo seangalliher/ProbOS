@@ -464,7 +464,7 @@ waves:
       - "prompts/ad-692-classification-enforcement-v1.md"
     builder_required: true
     issues_to_close: [386]
-    status: pending
+    status: done
 
   - id: "43"
     title: "AD-695 v1 Ship Health Oracle Tier + Threshold Bridge Alerts"
