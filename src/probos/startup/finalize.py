@@ -1370,6 +1370,7 @@ async def finalize_startup(
 
     # AD-528: Ground-Truth Task Verification (v1: read-only scoring + emit).
     # AD-528b: optional active-rejection gate (default disabled).
+    # AD-528c: optional trust-network feedback listener (default disabled).
     if config.ground_truth.enabled:
         from probos.cognitive.ground_truth import (
             GroundTruthVerifier,
@@ -1408,6 +1409,38 @@ async def finalize_startup(
             )
         else:
             runtime.ground_truth_rejection_gate = None
+        # AD-528c: trust-network feedback listener subscribes to
+        # VERIFICATION_PASSED + VERIFICATION_FAILED and calls
+        # runtime.trust_network.record_outcome(...). Default disabled per
+        # Convention #14 + #3; AD-528c-1 flips default True after fleet
+        # rehearsal. v1 has zero coupling to the rejection gate -- the
+        # listener consumes existing AD-528 events directly.
+        if (
+            config.ground_truth.trust_feedback_enabled
+            and runtime.trust_network is not None
+        ):
+            from probos.cognitive.ground_truth import GroundTruthTrustFeedback
+            from probos.events import EventType
+            feedback = GroundTruthTrustFeedback(
+                runtime=runtime,
+                success_weight=config.ground_truth.trust_feedback_success_weight,
+                failure_weight=config.ground_truth.trust_feedback_failure_weight,
+            )
+            runtime.add_event_listener(
+                feedback.on_event,
+                event_types=[
+                    EventType.VERIFICATION_PASSED.value,
+                    EventType.VERIFICATION_FAILED.value,
+                ],
+            )
+            runtime.ground_truth_trust_feedback = feedback
+            logger.info(
+                "AD-528c: GroundTruthTrustFeedback wired (success_weight=%.2f, failure_weight=%.2f)",
+                config.ground_truth.trust_feedback_success_weight,
+                config.ground_truth.trust_feedback_failure_weight,
+            )
+        else:
+            runtime.ground_truth_trust_feedback = None
         logger.info(
             "AD-528: GroundTruthVerifier wired (threshold=%.2f, window=%.0fs)",
             config.ground_truth.threshold,
@@ -1417,6 +1450,7 @@ async def finalize_startup(
         runtime.ground_truth_verifier = None
         runtime.verification_episode_writer = None
         runtime.ground_truth_rejection_gate = None
+        runtime.ground_truth_trust_feedback = None
 
     # AD-463: Model Diversity & Neural Routing (v1 foundation)
     if config.model_routing.enabled:

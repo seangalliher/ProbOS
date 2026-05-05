@@ -434,3 +434,96 @@ class GroundTruthRejectionGate:
             logger.warning(
                 "AD-528b: %s emit failed", event_type.value, exc_info=True,
             )
+
+
+# ---------------------------------------------------------------------------
+# AD-528c: Trust-Network Feedback
+# ---------------------------------------------------------------------------
+
+
+class GroundTruthTrustFeedback:
+    """Subscribes to ground-truth verification events; updates ``TrustNetwork``.
+
+    v1 surface: registered as a sync listener via
+    ``runtime.add_event_listener(feedback.on_event, event_types=[
+        EventType.VERIFICATION_PASSED.value,
+        EventType.VERIFICATION_FAILED.value,
+    ])`` in ``startup/finalize.py``. On each event, ``on_event`` reads the
+    event payload, extracts ``agent_id`` + ``booking_id``, and calls
+    ``runtime.trust_network.record_outcome(...)`` with an asymmetric weight
+    scheme: ``success_weight`` (default 1.0) on PASSED, ``failure_weight``
+    (default 0.5) on FAILED.
+
+    ``VERIFICATION_REJECTED`` and ``WORK_ITEM_QUARANTINED`` are NOT consumed
+    in v1. Every REJECTED co-fires with a FAILED inside
+    ``GroundTruthVerifier._emit`` (the verifier emits PASSED/FAILED
+    unconditionally before the rejection-gate emit logic runs). Listening
+    to REJECTED would double-count negative trust updates. Distinct
+    REJECTED-aware weighting (escalate negative weight when the gate
+    engaged) is deferred to AD-528c-1.
+
+    ProbOS principle 3 compliance is structural — ``record_outcome``
+    internally stores raw ``(alpha, beta)`` Beta-distribution parameters
+    and applies AD-558 dampening + cascade breaker + hard floor. v1
+    invokes the public method only; never mutates ``record.alpha`` /
+    ``record.beta`` directly, never bypasses dampening, never derives
+    means.
+
+    Tier-2 log-and-degrade: a ``record_outcome`` exception is logged at
+    WARNING with ``exc_info=True`` but NOT propagated — the listener is
+    invoked from the runtime's local event-dispatch path which already
+    wraps in debug-level swallowing; the inner WARNING gives operators a
+    visible failure signal without crashing the event-dispatch path.
+    """
+
+    def __init__(
+        self,
+        *,
+        runtime: Any,
+        success_weight: float = 1.0,
+        failure_weight: float = 0.5,
+    ) -> None:
+        self._runtime = runtime
+        self._success_weight = success_weight
+        self._failure_weight = failure_weight
+
+    def on_event(self, event: dict[str, Any]) -> None:
+        """Process a single verification event; update trust if applicable.
+
+        Synchronous (not ``async``) — the runtime's local dispatch path
+        routes sync vs async via ``asyncio.iscoroutinefunction``; sync is
+        preferred because ``record_outcome`` itself is sync and we avoid
+        spawning fire-and-forget tasks per event.
+        """
+        type_str = event.get("type", "")
+        data = event.get("data", {}) or {}
+        agent_id = str(data.get("agent_id", ""))
+        if not agent_id:
+            return
+        tn = getattr(self._runtime, "trust_network", None)
+        if tn is None:
+            return
+        if type_str == EventType.VERIFICATION_PASSED.value:
+            success, weight = True, self._success_weight
+        elif type_str == EventType.VERIFICATION_FAILED.value:
+            success, weight = False, self._failure_weight
+        else:
+            # REJECTED, QUARANTINED, and any future event type: no-op in v1.
+            # See class docstring for double-counting rationale.
+            return
+        booking_id = str(data.get("booking_id", ""))
+        try:
+            tn.record_outcome(
+                agent_id,
+                success=success,
+                weight=weight,
+                intent_type="ground_truth_verification",
+                episode_id=booking_id,
+                verifier_id="ground_truth",
+                source="ground_truth_verification",
+            )
+        except Exception:
+            logger.warning(
+                "AD-528c: trust_network.record_outcome failed (agent_id=%s, success=%s)",
+                agent_id, success, exc_info=True,
+            )

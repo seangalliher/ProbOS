@@ -1290,7 +1290,7 @@ class InfodynamicConfig(BaseModel):
 
 
 class GroundTruthConfig(BaseModel):
-    """Ground-truth task verification configuration (AD-528, AD-528b)."""
+    """Ground-truth task verification configuration (AD-528, AD-528b, AD-528c)."""
 
     enabled: bool = True
     threshold: float = Field(default=0.75, ge=0.0, le=1.0)
@@ -1305,6 +1305,19 @@ class GroundTruthConfig(BaseModel):
     # metadata under `quarantine_metadata_key`.
     active_rejection_enabled: bool = False
     quarantine_metadata_key: str = "ground_truth_quarantine"
+    # AD-528c: trust-network feedback. Default False per Convention #14
+    # (transitional flag) + Convention #3 (default off until fleet rehearsal
+    # confirms no false-positive trust drops, AD-528c-1). When True,
+    # finalize.py registers a GroundTruthTrustFeedback listener that
+    # subscribes to VERIFICATION_PASSED + VERIFICATION_FAILED and calls
+    # runtime.trust_network.record_outcome(...) — the public API that
+    # internally stores raw (alpha, beta) per ProbOS principle 3.
+    # VERIFICATION_REJECTED is NOT consumed in v1 (every REJECTED co-fires
+    # with FAILED inside verifier.verify(); double-counting prevention).
+    # REJECTED-aware weighting is deferred to AD-528c-1.
+    trust_feedback_enabled: bool = False
+    trust_feedback_success_weight: float = Field(default=1.0, ge=0.0)
+    trust_feedback_failure_weight: float = Field(default=0.5, ge=0.0)
 
 
 class OperationsConfig(BaseModel):
