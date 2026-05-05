@@ -1,4 +1,4 @@
-"""AD-635 v1 — Clinical Telemetry Query Facade.
+"""AD-635 / AD-635b — Clinical Telemetry Query Facade.
 
 Clearance-gated read-only query service enabling Medical (Chapel,
 chief_medical/FULL) and Counselor (Echo, counselor/ORACLE) to perform
@@ -8,22 +8,26 @@ v1 surfaces TWO data domains:
   - Dream cycle history (via EmergentDetector.recent_dreams)
   - Cross-agent cognitive journal chain traces (via CognitiveJournal.get_recent_chain_traces)
 
-Anomaly audit trail and circuit breaker state history are deferred to AD-635b/c.
+Circuit breaker state history is deferred to AD-635c.
 REST endpoints, shell command, and proactive injection are deferred to AD-635d/e/f.
+
+AD-635b adds optional SQLite write-through persistence of the audit ring
+via ``ClinicalAuditStore``. Default-off; opt-in via ``audit_persistence_enabled``.
 
 Authorization model (AD-620/622): caller must hold a clearance tier of FULL
 or ORACLE (resolved via effective_recall_tier from rank + billet + active
 grants) AND have a clinical agent_type. Denied queries return [] and log
 a warning — they never raise. Every query is logged to a bounded in-memory
-audit ring. Persistence of the audit log is deferred to AD-635b.
+audit ring (and durably to SQLite when persistence is enabled).
 """
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from probos.earned_agency import (
     RecallTier,
@@ -31,6 +35,11 @@ from probos.earned_agency import (
     resolve_active_grants,
     resolve_billet_clearance,
 )
+
+if TYPE_CHECKING:
+    # AD-635b: forward-ref to avoid a runtime import cycle with the
+    # audit-store module (defense in depth — current shape has no cycle).
+    from probos.cognitive.clinical_audit_store import ClinicalAuditStore
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +56,22 @@ QUALIFYING_TIERS: frozenset[RecallTier] = frozenset(
 class ClinicalTelemetryService:
     """AD-635 v1: Read-only clearance-gated cross-agent clinical query facade."""
 
-    def __init__(self, runtime: Any, *, audit_max_entries: int = 1000) -> None:
+    def __init__(
+        self,
+        runtime: Any,
+        *,
+        audit_max_entries: int = 1000,
+        audit_store: "ClinicalAuditStore | None" = None,
+    ) -> None:
         self._runtime = runtime
         self._audit: collections.deque[dict[str, Any]] = collections.deque(
             maxlen=max(1, int(audit_max_entries))
         )
+        # AD-635b: optional SQLite write-through. None preserves AD-635 v1
+        # in-memory-only behavior bit-for-bit. Tasks are tracked per the
+        # Standing Order on async hygiene (fire-and-forget references held).
+        self._audit_store = audit_store
+        self._write_tasks: set[asyncio.Task[None]] = set()
 
     # ---- Public API ------------------------------------------------------
 
@@ -249,4 +269,34 @@ class ClinicalTelemetryService:
         }
         if target_agent_id is not None:
             entry["target_agent_id"] = target_agent_id
+        # In-memory ring append happens FIRST. A write-through-side failure
+        # MUST NOT prevent the in-memory record (DLog #11). Tier-2 log-and-
+        # degrade applies to the persistence side, not the ring.
         self._audit.append(entry)
+        if self._audit_store is not None:
+            self._schedule_write_through(entry)
+
+    def _schedule_write_through(self, entry: dict[str, Any]) -> None:
+        """AD-635b: fire-and-forget SQLite persistence task."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug(
+                "AD-635b: no running event loop; audit write-through skipped",
+            )
+            return
+        task = loop.create_task(self._write_through(entry))
+        self._write_tasks.add(task)
+        task.add_done_callback(self._write_tasks.discard)
+
+    async def _write_through(self, entry: dict[str, Any]) -> None:
+        """AD-635b: persist one audit entry; tier-2 log-and-degrade on failure."""
+        try:
+            await self._audit_store.append(entry)
+        except Exception:
+            logger.warning(
+                "AD-635b: audit write-through failed for %s/%s",
+                entry.get("requester_agent_id"),
+                entry.get("query_type"),
+                exc_info=True,
+            )

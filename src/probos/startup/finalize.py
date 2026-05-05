@@ -548,20 +548,35 @@ def _wire_edge_classification(*, runtime: Any, config: "SystemConfig") -> bool:
 
 
 def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-635 v1: Wire ClinicalTelemetryService clearance-gated query facade."""
+    """AD-635 / AD-635b: Wire ClinicalTelemetryService + optional audit persistence."""
     cfg = getattr(config, "clinical_telemetry", None)
     if not cfg or not cfg.enabled:
         return False
 
     from probos.cognitive.clinical_telemetry import ClinicalTelemetryService
 
+    audit_store = None
+    if cfg.audit_persistence_enabled:
+        # AD-635b: double-gated — service must be enabled AND persistence
+        # opted in. Default cfg.audit_persistence_enabled=False keeps the
+        # AD-635 v1 in-memory-only contract.
+        from probos.cognitive.clinical_audit_store import ClinicalAuditStore
+        audit_store = ClinicalAuditStore(db_path=cfg.audit_db_path)
+        logger.info(
+            "AD-635b: ClinicalAuditStore wired (db_path=%s)",
+            cfg.audit_db_path,
+        )
+
     runtime.clinical_telemetry = ClinicalTelemetryService(
         runtime,
         audit_max_entries=cfg.audit_max_entries,
+        audit_store=audit_store,
     )
     logger.info(
         "AD-635: ClinicalTelemetryService v1 initialized "
-        "(2 domains: dream_history + chain_traces; clearance gate FULL+)"
+        "(2 domains: dream_history + chain_traces; clearance gate FULL+; "
+        "persistence=%s)",
+        bool(audit_store),
     )
     return True
 

@@ -2025,14 +2025,21 @@ class EdgeBackfillConfig(BaseModel):
 
 
 class ClinicalTelemetryConfig(BaseModel):
-    """AD-635 v1: Clearance-gated clinical query facade (Medical / Counselor).
+    """AD-635 / AD-635b: Clearance-gated clinical query facade (Medical / Counselor).
 
-    Disabled by default — Captain opts in via YAML. v1 is read-only, has no
-    automatic invocation, and surfaces nothing at runtime until a clinical
-    agent invokes a query method on `runtime.clinical_telemetry`.
+    AD-635 v1 shipped the read-only query facade with a bounded in-memory
+    audit ring (``audit_max_entries`` deque). AD-635b adds optional
+    SQLite persistence of the audit ring for post-incident review,
+    gated by ``audit_persistence_enabled`` (default False per Wave-10
+    convention #14 — transitional flag, default off until validated).
+
+    The service is invisible at runtime out-of-the-box (``enabled=False``).
+    Captain opts in via YAML; persistence requires a second opt-in.
     """
     enabled: bool = False
     audit_max_entries: int = 1000
+    audit_persistence_enabled: bool = False
+    audit_db_path: str = "data/clinical_audit.db"
 
 
 class ProcessChainRegistryConfig(BaseModel):
