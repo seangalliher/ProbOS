@@ -197,6 +197,8 @@ class EventType(str, Enum):
     PERFORMANCE_THRESHOLD_BREACHED = "performance_threshold_breached"  # AD-457
     SERVICE_TIER_DEGRADED = "service_tier_degraded"  # AD-459
     SERVICE_TIER_RESTORED = "service_tier_restored"  # AD-459
+    SUBSYSTEM_PAUSED = "subsystem_paused"  # AD-459b
+    SUBSYSTEM_RESUMED = "subsystem_resumed"  # AD-459b
     PREFLIGHT_FAILED = "preflight_failed"  # AD-458
     INFODYNAMIC_REPORT = "infodynamic_report"  # AD-491
     BACKUP_COMPLETE = "backup_complete"  # AD-466

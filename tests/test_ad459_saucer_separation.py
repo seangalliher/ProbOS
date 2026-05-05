@@ -32,9 +32,9 @@ def test_event_type_service_tier_restored_exists() -> None:
 
 
 def test_degradation_config_defaults() -> None:
-    """v1 has no operator-tunable fields."""
+    """v1 has no operator-tunable fields beyond AD-459b transitional flag."""
     cfg = DegradationConfig()
-    assert cfg.model_dump() == {}
+    assert cfg.model_dump() == {"auto_pause_enabled": False}
 
 
 # ---------------------------------------------------------------------------

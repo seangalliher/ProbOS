@@ -1199,6 +1199,47 @@ async def finalize_startup(
     )
     logger.info("AD-459: DegradationManager wired (stress=normal)")
 
+    # AD-459b: register active-shedding adopters when operator opts in.
+    # Default `auto_pause_enabled=False` keeps the AD-459 v1 read-only
+    # contract; flipping to True wires DreamScheduler + ProactiveCognitiveLoop
+    # adopters whose `start`/`stop` methods are invoked on tier transitions.
+    #
+    # Source-attribute notes:
+    #   * `runtime.dream_scheduler` is set during the dreaming phase (see
+    #     runtime.py:1516) BEFORE `finalize_startup` is invoked, so the
+    #     attribute is available here.
+    #   * `proactive_loop` is the LOCAL variable bound at line ~863 / ~985
+    #     of this same function. `runtime.proactive_loop` is NOT yet
+    #     assigned at this point — that happens after finalize_startup
+    #     returns (runtime.py:1704). Use the local binding.
+    if config.degradation.auto_pause_enabled:
+        from probos.degradation.subsystem import LifecycleAdapter
+        adopters_registered: list[str] = []
+        if runtime.dream_scheduler is not None:
+            runtime.degradation_manager.register_subsystem(
+                "dream_scheduler",
+                LifecycleAdapter(
+                    "dream_scheduler",
+                    on_pause=runtime.dream_scheduler.stop,
+                    on_resume=runtime.dream_scheduler.start,
+                ),
+            )
+            adopters_registered.append("dream_scheduler")
+        if proactive_loop is not None:
+            runtime.degradation_manager.register_subsystem(
+                "proactive_loop",
+                LifecycleAdapter(
+                    "proactive_loop",
+                    on_pause=proactive_loop.stop,
+                    on_resume=proactive_loop.start,
+                ),
+            )
+            adopters_registered.append("proactive_loop")
+        logger.info(
+            "AD-459b: active shedding enabled; adopters=%s",
+            adopters_registered,
+        )
+
     # AD-468: Runtime Configuration Service
     if config.runtime_overrides.enabled:
         from probos.runtime_config_service import RuntimeConfigService

@@ -1280,13 +1280,21 @@ class InfrastructureConfig(BaseModel):
     backup_subdir: str = "backups"
 
 class DegradationConfig(BaseModel):
-    """Saucer separation / graceful degradation (AD-459).
+    """Saucer separation / graceful degradation (AD-459 / AD-459b).
 
-    v1 has no operator-tunable fields — the manager is always wired and
-    the default policy is the only policy. AD-459b will add fields for
-    custom policies, stress-level transition thresholds, and operator
-    override (e.g., shed-ESSENTIAL emergency override).
+    AD-459 v1 shipped the read-only coordinator (always-wired, no
+    operator-tunable fields). AD-459b adds active subsystem pause/resume
+    hooks gated by ``auto_pause_enabled`` (default False per Wave-10
+    convention #14 — transitional flag, default off until validated in
+    rehearsal). When True, finalize.py registers ``dream_scheduler`` and
+    ``proactive_loop`` adopters via ``LifecycleAdapter``; the manager
+    invokes their pause/resume callbacks on tier-mask transitions.
+
+    Future: custom policies, stress-level thresholds, operator override
+    for shed-ESSENTIAL emergency mode.
     """
+
+    auto_pause_enabled: bool = False
 
 
 class InfodynamicConfig(BaseModel):
