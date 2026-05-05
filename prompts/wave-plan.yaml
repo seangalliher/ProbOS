@@ -501,3 +501,302 @@ waves:
     builder_required: true
     issues_to_close: [412, 413]
     status: done
+  - id: "46"
+    title: "AD-685c v1 Phantom-API Type-Shape Validation"
+    kind: main
+    depends_on: ["45"]
+    dispatch_prompt: "prompts/WAVE-46-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-685c-phantom-type-shape-v1.md"
+    builder_required: true
+    issues_to_close: [406]
+    status: pending
+
+  - id: "47"
+    title: "AD-685d v1 Phantom-API Dataclass/Pydantic Field-Name Validation"
+    kind: main
+    depends_on: ["46"]
+    dispatch_prompt: "prompts/WAVE-47-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-685d-phantom-field-name-v1.md"
+    builder_required: true
+    issues_to_close: [407]
+    status: pending
+
+  - id: "48"
+    title: "AD-647b v1 Process Chains Registry + BF-209 Bypass Removal"
+    kind: main
+    depends_on: ["47"]
+    dispatch_prompt: "prompts/WAVE-48-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-647b-chain-registry-v1.md"
+    builder_required: true
+    issues_to_close: [404]
+    status: pending
+
+  - id: "49"
+    title: "AD-647c v1 Process Chains Bills/Watch Bill Integration (NATS deferred to AD-641g)"
+    kind: main
+    depends_on: ["48"]
+    dispatch_prompt: "prompts/WAVE-49-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-647c-bills-integration-v1.md"
+    builder_required: true
+    issues_to_close: [405]
+    status: pending
+
+  - id: "50"
+    title: "AD-686b v1 Oracle Write-Path Migration"
+    kind: main
+    depends_on: ["49"]
+    dispatch_prompt: "prompts/WAVE-50-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-686b-oracle-write-path-v1.md"
+    builder_required: true
+    issues_to_close: [414]
+    status: pending
+
+  - id: "51"
+    title: "AD-660b v1 Causal Reasoning Auto-Invocation + Emergence Integration"
+    kind: main
+    depends_on: ["50"]
+    dispatch_prompt: "prompts/WAVE-51-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-660b-causal-auto-emergence-v1.md"
+    builder_required: true
+    issues_to_close: [411]
+    status: pending
+
+  - id: "52"
+    title: "AD-659b v1 Chain Optimizer Apply Approved Proposals"
+    kind: main
+    depends_on: ["51"]
+    dispatch_prompt: "prompts/WAVE-52-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-659b-chain-optimizer-apply-v1.md"
+    builder_required: true
+    issues_to_close: [409]
+    status: pending
+
+  - id: "53"
+    title: "AD-659c v1 Chain Optimizer Counselor Monitoring + Decision Persistence"
+    kind: main
+    depends_on: ["52"]
+    dispatch_prompt: "prompts/WAVE-53-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-659c-chain-optimizer-counselor-v1.md"
+    builder_required: true
+    issues_to_close: [410]
+    status: pending
+
+  - id: "54"
+    title: "AD-658a v1 Chain Trace Token Input/Output Split"
+    kind: main
+    depends_on: ["53"]
+    dispatch_prompt: "prompts/WAVE-54-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-658a-chain-trace-token-split-v1.md"
+    builder_required: true
+    issues_to_close: [408]
+    status: pending
+
+  - id: "55"
+    title: "AD-456b v1 Security Infrastructure Runtime Sandboxing"
+    kind: main
+    depends_on: ["54"]
+    dispatch_prompt: "prompts/WAVE-55-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-456b-runtime-sandboxing-v1.md"
+    builder_required: true
+    issues_to_close: [398]
+    status: pending
+
+  - id: "56"
+    title: "AD-456c v1 Per-Tier Credential Lookup"
+    kind: main
+    depends_on: ["55"]
+    dispatch_prompt: "prompts/WAVE-56-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-456c-per-tier-credentials-v1.md"
+    builder_required: true
+    issues_to_close: [399]
+    status: pending
+
+  - id: "57"
+    title: "AD-456d v1 AuditLog SQLite Persistence"
+    kind: main
+    depends_on: ["56"]
+    dispatch_prompt: "prompts/WAVE-57-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-456d-auditlog-sqlite-v1.md"
+    builder_required: true
+    issues_to_close: [400]
+    status: pending
+
+  - id: "58"
+    title: "AD-528b v1 Ground-Truth Active Rejection & Quarantine"
+    kind: main
+    depends_on: ["57"]
+    dispatch_prompt: "prompts/WAVE-58-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-528b-active-rejection-v1.md"
+    builder_required: true
+    issues_to_close: [401]
+    status: pending
+
+  - id: "59"
+    title: "AD-528c v1 Ground-Truth Trust-Network Feedback"
+    kind: main
+    depends_on: ["58"]
+    dispatch_prompt: "prompts/WAVE-59-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-528c-trust-feedback-v1.md"
+    builder_required: true
+    issues_to_close: [402]
+    status: pending
+
+  - id: "60"
+    title: "AD-458b v1 Pre-Flight Validation LLMTier + TokenBudget Checks"
+    kind: main
+    depends_on: ["59"]
+    dispatch_prompt: "prompts/WAVE-60-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-458b-preflight-validation-v1.md"
+    builder_required: true
+    issues_to_close: [397]
+    status: pending
+
+  - id: "61"
+    title: "AD-459b v1 Saucer Separation Active Shedding Hooks"
+    kind: main
+    depends_on: ["60"]
+    dispatch_prompt: "prompts/WAVE-61-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-459b-active-shedding-v1.md"
+    builder_required: true
+    issues_to_close: [396]
+    status: pending
+
+  - id: "62"
+    title: "AD-635b v1 Clinical Telemetry Anomaly Audit Trail Persistence"
+    kind: main
+    depends_on: ["61"]
+    dispatch_prompt: "prompts/WAVE-62-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-635b-anomaly-audit-v1.md"
+    builder_required: true
+    issues_to_close: [391]
+    status: pending
+
+  - id: "63"
+    title: "AD-635c v1 Clinical Telemetry Circuit Breaker State History"
+    kind: main
+    depends_on: ["62"]
+    dispatch_prompt: "prompts/WAVE-63-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-635c-circuit-breaker-history-v1.md"
+    builder_required: true
+    issues_to_close: [392]
+    status: pending
+
+  - id: "64"
+    title: "AD-635d v1 Clinical Telemetry REST Endpoints"
+    kind: main
+    depends_on: ["63"]
+    dispatch_prompt: "prompts/WAVE-64-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-635d-clinical-rest-v1.md"
+    builder_required: true
+    issues_to_close: [393]
+    status: pending
+
+  - id: "65"
+    title: "AD-635e v1 Clinical Telemetry Shell Command"
+    kind: main
+    depends_on: ["64"]
+    dispatch_prompt: "prompts/WAVE-65-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-635e-clinical-shell-v1.md"
+    builder_required: true
+    issues_to_close: [394]
+    status: pending
+
+  - id: "66"
+    title: "AD-635f v1 Clinical Telemetry Proactive Context Injection"
+    kind: main
+    depends_on: ["65"]
+    dispatch_prompt: "prompts/WAVE-66-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-635f-clinical-proactive-v1.md"
+    builder_required: true
+    issues_to_close: [395]
+    status: pending
+
+  - id: "67"
+    title: "AD-573b-f Combo Working Memory Extensions"
+    kind: combo
+    depends_on: ["66"]
+    dispatch_prompt: "prompts/WAVE-67-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-573b-f-working-memory-combo.md"
+    builder_required: true
+    issues_to_close: [8]
+    status: pending
+
+  - id: "68"
+    title: "AD-572b-e Combo Captain Engagement Extensions"
+    kind: combo
+    depends_on: ["67"]
+    dispatch_prompt: "prompts/WAVE-68-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-572b-e-captain-engagement-combo.md"
+    builder_required: true
+    issues_to_close: [109]
+    status: pending
+
+  - id: "69"
+    title: "AD-574b-c Combo DM Reply Extensions"
+    kind: combo
+    depends_on: ["68"]
+    dispatch_prompt: "prompts/WAVE-69-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-574b-c-dm-reply-combo.md"
+    builder_required: true
+    issues_to_close: [110]
+    status: pending
+
+  - id: "70"
+    title: "AD-526c-h Combo Recreation System Extensions"
+    kind: combo
+    depends_on: ["69"]
+    dispatch_prompt: "prompts/WAVE-70-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-526c-h-recreation-combo.md"
+    builder_required: true
+    issues_to_close: [101]
+    status: pending
