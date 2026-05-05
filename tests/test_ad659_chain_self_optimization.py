@@ -158,7 +158,11 @@ async def test_chain_optimizer_analyze_aggregates_all_detectors():
             success=0 if i < 15 else 1,
         ))
 
-    journal = SimpleNamespace(get_recent_chain_traces=AsyncMock(return_value=traces))
+    journal = SimpleNamespace(
+        get_recent_chain_traces=AsyncMock(return_value=traces),
+        record_optimization_proposal=AsyncMock(return_value=None),
+        get_pending_optimization_proposals=AsyncMock(return_value=[]),
+    )
     runtime = SimpleNamespace(cognitive_journal=journal)
     opt = ChainOptimizer(runtime, min_samples_per_group=20)
 
@@ -173,9 +177,9 @@ async def test_chain_optimizer_analyze_aggregates_all_detectors():
     pending = opt.list_pending()
     assert len(pending) == len(opt.pending_proposals)
 
-    # decide flips fields
+    # decide flips fields (AD-659b: now async + persists)
     target = pending[0]
-    decided = opt.decide(target.proposal_id, "approve", actor="captain")
+    decided = await opt.decide(target.proposal_id, "approve", actor="captain")
     assert decided is not None
     assert decided.decision == "approve"
     assert decided.decided_by == "captain"
@@ -185,10 +189,12 @@ async def test_chain_optimizer_analyze_aggregates_all_detectors():
     assert target not in opt.list_pending()
 
 
-def test_chain_optimizer_apply_proposal_raises_not_implemented():
-    opt = ChainOptimizer(SimpleNamespace())
-    with pytest.raises(NotImplementedError, match="AD-659b"):
-        opt.apply_proposal("anything")
+@pytest.mark.asyncio
+async def test_chain_optimizer_apply_proposal_disabled_raises_runtime_error():
+    """AD-659b: apply_enabled=False → RuntimeError from apply_proposal."""
+    opt = ChainOptimizer(SimpleNamespace(), apply_enabled=False)
+    with pytest.raises(RuntimeError, match="apply_enabled=False"):
+        await opt.apply_proposal("anything")
 
 
 # --- API tests -------------------------------------------------------------

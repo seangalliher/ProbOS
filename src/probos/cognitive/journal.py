@@ -113,6 +113,33 @@ _MIGRATIONS_CAUSAL_TEMPLATES_AD660B = (
     "ALTER TABLE causal_templates ADD COLUMN recommended_actions_json TEXT",
 )
 
+# AD-659b: ChainOptimizer proposal persistence (net-new table; no warm-boot migration).
+_SCHEMA_OPTIMIZATION_PROPOSALS = """
+CREATE TABLE IF NOT EXISTS optimization_proposals (
+    proposal_id        TEXT PRIMARY KEY,
+    detector_name      TEXT NOT NULL DEFAULT '',
+    target_parameter   TEXT NOT NULL DEFAULT '',
+    current_value_json TEXT NOT NULL DEFAULT 'null',
+    proposed_value_json TEXT NOT NULL DEFAULT 'null',
+    rationale          TEXT NOT NULL DEFAULT '',
+    supporting_metric  TEXT NOT NULL DEFAULT '',
+    risk_level         TEXT NOT NULL DEFAULT '',
+    created_at         REAL NOT NULL DEFAULT 0.0,
+    decision           TEXT,
+    decided_at         REAL,
+    decided_by         TEXT,
+    applied            INTEGER NOT NULL DEFAULT 0,
+    applied_at         REAL,
+    applied_by         TEXT,
+    pre_apply_value_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_optimization_proposals_created_at
+    ON optimization_proposals(created_at);
+CREATE INDEX IF NOT EXISTS idx_optimization_proposals_dedup_key
+    ON optimization_proposals(detector_name, target_parameter, decision);
+"""
+
 
 class CognitiveJournal:
     """Append-only SQLite journal for LLM reasoning traces."""
@@ -161,6 +188,8 @@ class CognitiveJournal:
                 await self._db.execute(stmt)
             except Exception:
                 pass
+        # AD-659b: ChainOptimizer proposal persistence (idempotent CREATE).
+        await self._db.executescript(_SCHEMA_OPTIMIZATION_PROPOSALS)
         await self._db.commit()
 
     async def stop(self) -> None:
@@ -383,6 +412,92 @@ class CognitiveJournal:
         except Exception:
             logger.debug("Chain trace query failed", exc_info=True)
             return []
+
+    async def record_optimization_proposal(self, proposal: Any) -> None:
+        """AD-659b: Persist or update a single OptimizationProposal.
+
+        Uses INSERT OR REPLACE keyed on `proposal_id` so the same call site
+        handles initial creation and post-decide / post-apply / post-revert
+        updates. Fire-and-forget — never raises.
+        """
+        if not self._db:
+            return
+        try:
+            await self._db.execute(
+                """INSERT OR REPLACE INTO optimization_proposals
+                   (proposal_id, detector_name, target_parameter,
+                    current_value_json, proposed_value_json,
+                    rationale, supporting_metric, risk_level, created_at,
+                    decision, decided_at, decided_by,
+                    applied, applied_at, applied_by, pre_apply_value_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    proposal.proposal_id,
+                    proposal.detector_name,
+                    proposal.target_parameter,
+                    json.dumps(proposal.current_value),
+                    json.dumps(proposal.proposed_value),
+                    proposal.rationale,
+                    proposal.supporting_metric,
+                    proposal.risk_level,
+                    proposal.created_at,
+                    proposal.decision,
+                    proposal.decided_at,
+                    proposal.decided_by,
+                    1 if proposal.applied else 0,
+                    proposal.applied_at,
+                    proposal.applied_by,
+                    json.dumps(proposal.pre_apply_value),
+                ),
+            )
+            await self._db.commit()
+        except Exception:
+            logger.debug("AD-659b: optimization proposal record failed", exc_info=True)
+
+    async def get_pending_optimization_proposals(
+        self, *, detector_name: str | None = None,
+        target_parameter: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """AD-659b: Return undecided (decision IS NULL) proposals, oldest-first.
+
+        Optional dedup-key filter for `(detector_name, target_parameter)` lookups.
+        """
+        if not self._db:
+            return []
+        try:
+            clauses = ["decision IS NULL"]
+            params: list[Any] = []
+            if detector_name is not None:
+                clauses.append("detector_name = ?")
+                params.append(detector_name)
+            if target_parameter is not None:
+                clauses.append("target_parameter = ?")
+                params.append(target_parameter)
+            where = "WHERE " + " AND ".join(clauses)
+            cursor = await self._db.execute(
+                f"SELECT * FROM optimization_proposals {where} ORDER BY created_at ASC",
+                params,
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception:
+            logger.debug("AD-659b: pending proposals query failed", exc_info=True)
+            return []
+
+    async def get_optimization_proposal(self, proposal_id: str) -> dict[str, Any] | None:
+        """AD-659b: Fetch a single proposal by id."""
+        if not self._db:
+            return None
+        try:
+            cursor = await self._db.execute(
+                "SELECT * FROM optimization_proposals WHERE proposal_id = ?",
+                (proposal_id,),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception:
+            logger.debug("AD-659b: proposal fetch failed", exc_info=True)
+            return None
 
     async def record_causal_template(self, template: Any) -> None:
         """AD-660: Persist a CausalReasoningTemplate. Fire-and-forget — never raises.

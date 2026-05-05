@@ -55,10 +55,10 @@ async def decide_proposal(
     req: DecisionRequest,
     runtime: Any = Depends(get_runtime),
 ) -> dict[str, Any]:
-    """AD-659 v1: Record Captain's decision on a proposal.
+    """AD-659 v1 + AD-659b: Record Captain's decision on a proposal.
 
-    v1 records the decision in-memory only. Approved proposals are NOT
-    applied — apply_proposal() raises NotImplementedError until AD-659b.
+    Decision is persisted but NOT applied — call POST /apply explicitly
+    to mutate `runtime.config.chain_tuning` (gated by `apply_enabled`).
     """
     optimizer = getattr(runtime, "chain_optimizer", None)
     if optimizer is None:
@@ -68,13 +68,69 @@ async def decide_proposal(
             status_code=400,
             detail="decision must be 'approve' or 'reject'",
         )
-    proposal = optimizer.decide(proposal_id, req.decision, actor=req.actor)
+    proposal = await optimizer.decide(proposal_id, req.decision, actor=req.actor)
     if proposal is None:
         raise HTTPException(
             status_code=404, detail=f"proposal {proposal_id} not found"
         )
     return {
         "status": "recorded",
-        "applied": False,  # explicit v1 limitation
+        "applied": proposal.applied,
+        "proposal": proposal.to_dict(),
+    }
+
+
+class ActorRequest(BaseModel):
+    actor: str = "captain"
+
+
+@router.post("/proposals/{proposal_id}/apply")
+async def apply_proposal(
+    proposal_id: str,
+    req: ActorRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-659b: Apply an approved proposal to runtime.config.chain_tuning.
+
+    Returns 503 if ChainOptimizer disabled, 403 if `apply_enabled=False`,
+    400 if proposal not approved or target not apply-able, 404 if missing.
+    """
+    optimizer = getattr(runtime, "chain_optimizer", None)
+    if optimizer is None:
+        raise HTTPException(status_code=503, detail="ChainOptimizer not enabled")
+    try:
+        proposal = await optimizer.apply_proposal(proposal_id, actor=req.actor)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        msg = str(exc)
+        status = 404 if "not found" in msg else 400
+        raise HTTPException(status_code=status, detail=msg) from exc
+    return {
+        "status": "applied",
+        "applied": True,
+        "proposal": proposal.to_dict(),
+    }
+
+
+@router.post("/proposals/{proposal_id}/revert")
+async def revert_proposal(
+    proposal_id: str,
+    req: ActorRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-659b: Manually revert an applied proposal to its `pre_apply_value`."""
+    optimizer = getattr(runtime, "chain_optimizer", None)
+    if optimizer is None:
+        raise HTTPException(status_code=503, detail="ChainOptimizer not enabled")
+    try:
+        proposal = await optimizer.revert_proposal(proposal_id, actor=req.actor)
+    except ValueError as exc:
+        msg = str(exc)
+        status = 404 if "not found" in msg else 400
+        raise HTTPException(status_code=status, detail=msg) from exc
+    return {
+        "status": "reverted",
+        "applied": False,
         "proposal": proposal.to_dict(),
     }

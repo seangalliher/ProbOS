@@ -334,11 +334,16 @@ class ChainTuningConfig(BaseModel):
 
 
 class ChainOptimizerConfig(BaseModel):
-    """AD-659 v1: Cognitive Chain Self-Optimization analysis service.
+    """AD-659 v1 + AD-659b: Cognitive Chain Self-Optimization service.
 
-    v1 is analysis-only — produces OptimizationProposal instances which
-    require Captain approval. apply_proposal() raises NotImplementedError;
-    automatic application is deferred to AD-659b.
+    v1 (AD-659) shipped analysis-only proposal generation + Captain approval
+    REST surface. AD-659b adds the apply path (gated by `apply_enabled`),
+    SQLite persistence, dedup keyed on (detector_name, target_parameter),
+    manual revert, and an opt-in scheduled analyze loop.
+
+    Both new flags default OFF. `apply_enabled=True` grants live-mutation
+    authority over `chain_tuning.low_trust_ceiling` / `high_trust_floor`.
+    `analysis_interval_seconds > 0` enables periodic background analysis.
     """
 
     enabled: bool = False  # opt-in until validated
@@ -347,6 +352,15 @@ class ChainOptimizerConfig(BaseModel):
     success_rate_floor: float = 0.7
     error_rate_ceiling: float = 0.3
     min_samples_per_group: int = 20
+    apply_enabled: bool = False  # AD-659b: apply path gate (default OFF)
+    analysis_interval_seconds: int = 0  # AD-659b: 0 disables scheduled loop
+
+    @field_validator("analysis_interval_seconds")
+    @classmethod
+    def _validate_interval(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("analysis_interval_seconds must be >= 0")
+        return v
 
 
 class DiagnosticContextConfig(BaseModel):

@@ -212,7 +212,7 @@ def _wire_duty_scope_provider(*, runtime: Any, config: "SystemConfig") -> bool:
 
 
 def _wire_chain_optimizer(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-659 v1: Wire ChainOptimizer analysis-only proposal service."""
+    """AD-659 v1 + AD-659b: Wire ChainOptimizer with apply path + persistence."""
     cfg = getattr(config, "chain_optimizer", None)
     if not cfg or not cfg.enabled:
         return False
@@ -220,18 +220,34 @@ def _wire_chain_optimizer(*, runtime: Any, config: "SystemConfig") -> bool:
     from probos.cognitive.chain_optimizer import ChainOptimizer
 
     emit_fn = getattr(runtime, "emit_event", None)
-    runtime.chain_optimizer = ChainOptimizer(
+    interval = getattr(cfg, "analysis_interval_seconds", 0)
+    try:
+        interval_int = int(interval)
+    except (TypeError, ValueError):
+        interval_int = 0
+    apply_enabled = bool(getattr(cfg, "apply_enabled", False))
+    optimizer = ChainOptimizer(
         runtime,
         analysis_window=cfg.analysis_window,
         latency_p95_ms_floor=cfg.latency_p95_ms_floor,
         success_rate_floor=cfg.success_rate_floor,
         error_rate_ceiling=cfg.error_rate_ceiling,
         min_samples_per_group=cfg.min_samples_per_group,
+        apply_enabled=apply_enabled,
+        analysis_interval_seconds=interval_int,
         emit_event=emit_fn,
     )
+    runtime.chain_optimizer = optimizer
+    if interval_int > 0:
+        optimizer.start_scheduled_loop()
+        # Mirror task onto runtime for shutdown observability (matches
+        # `runtime._flush_task` precedent).
+        runtime.chain_optimizer_analyze_task = optimizer._loop_task
     logger.info(
-        "AD-659: ChainOptimizer v1 initialized "
-        "(analysis-only; apply path deferred to AD-659b)"
+        "AD-659b: ChainOptimizer initialized (apply_enabled=%s, "
+        "analysis_interval_seconds=%s)",
+        apply_enabled,
+        interval_int,
     )
     return True
 
