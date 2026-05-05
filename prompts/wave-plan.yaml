@@ -535,7 +535,7 @@ waves:
       - "prompts/ad-647b-chain-registry-v1.md"
     builder_required: true
     issues_to_close: [404]
-    status: pending
+    status: done
 
   - id: "49"
     title: "AD-647c v1 Process Chains Bills/Watch Bill Integration (NATS deferred to AD-641g)"
