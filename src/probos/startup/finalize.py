@@ -291,6 +291,62 @@ async def _wire_edge_backfill(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _wire_relationship_inference(
+    *, runtime: Any, config: "SystemConfig"
+) -> bool:
+    """AD-690: Wire SQLiteRejectionCache and attach knowledge_edges +
+    rejection_cache to DreamingEngine for Step 7i relationship inference.
+
+    Skips silently if dreaming is disabled, knowledge_edges is unavailable,
+    or relationship_inference_enabled is False.
+    """
+    dream_cfg = getattr(config, "dreaming", None)
+    if not dream_cfg or not getattr(dream_cfg, "relationship_inference_enabled", False):
+        return False
+
+    knowledge_edges = getattr(runtime, "knowledge_edges", None)
+    if knowledge_edges is None:
+        logger.debug(
+            "AD-690: relationship inference enabled but knowledge_edges not "
+            "wired; skipping (depends on AD-687)."
+        )
+        return False
+
+    dreaming_engine = getattr(runtime, "dreaming_engine", None)
+    if dreaming_engine is None:
+        logger.debug(
+            "AD-690: relationship inference enabled but dreaming_engine not "
+            "wired; skipping."
+        )
+        return False
+
+    from pathlib import Path
+
+    from probos.knowledge.rejection_cache import SQLiteRejectionCache
+
+    data_dir = getattr(config, "data_dir", "data")
+    db_path = str(Path(data_dir) / "rejection_cache.sqlite")
+    cache = SQLiteRejectionCache(db_path)
+    try:
+        await cache.start()
+    except Exception as exc:
+        logger.warning(
+            "AD-690: rejection cache failed to start at %s: %s; "
+            "Step 7i will be skipped",
+            db_path,
+            exc,
+        )
+        return False
+
+    runtime.rejection_cache = cache
+
+    if hasattr(dreaming_engine, "set_knowledge_edges"):
+        dreaming_engine.set_knowledge_edges(knowledge_edges)
+    if hasattr(dreaming_engine, "set_rejection_cache"):
+        dreaming_engine.set_rejection_cache(cache)
+    return True
+
+
 def _wire_causal_reasoner(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-660 v1: Wire CausalReasoner template-fill service."""
     cfg = getattr(config, "causal_reasoning", None)
@@ -637,6 +693,9 @@ async def finalize_startup(
 
     if await _wire_edge_backfill(runtime=runtime, config=config):
         logger.info("AD-689: EdgeBackfillService v1 wired during finalization")
+
+    if await _wire_relationship_inference(runtime=runtime, config=config):
+        logger.info("AD-690: Dream Step 7i relationship inference v1 wired during finalization")
 
     if _wire_causal_reasoner(runtime=runtime, config=config):
         logger.info("AD-660: CausalReasoner v1 wired during finalization")

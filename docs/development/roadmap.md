@@ -7200,7 +7200,7 @@ Empirical observation across two ProbOS instances revealed a **cold-start develo
 
 **Phase B: Intelligence**
 
-**AD-690: Dream Step 10 — Relationship Inference** *(Future, OSS, Issue #384)* — Nightly dream step scans recent episodes for co-occurring entities without edges in `knowledge_edges`. LLM classifies relationship type. Anti-contamination: per-entity caps, rejection cache, source tagging. Mirrors Thoth dream cycle Phase 3. *Depends on: AD-687 (Knowledge Edge Store), AD-551 (Dream Step 7g). Related: AD-608 (Retroactive Memory Evolution), AD-557 (Emergence Metrics).*
+**AD-690: Dream Step 10 — Relationship Inference** *(Complete (v1), OSS, Issue #384)* — Nightly dream step scans recent episodes for co-occurring entities without edges in `knowledge_edges`. LLM classifies relationship type. Anti-contamination: per-entity caps, rejection cache, source tagging. Mirrors Thoth dream cycle Phase 3. *Depends on: AD-687 (Knowledge Edge Store), AD-551 (Dream Step 7g). Related: AD-608 (Retroactive Memory Evolution), AD-557 (Emergence Metrics).*
 
 **AD-691: NL-to-Graph Query** *(Future, Commercial, Issue #385)* — Ship's Computer structural query routing. LLM extracts entity references from natural language → graph traversal → structured result with provenance. Schema-aware query generation (Fabric IQ NL2GQL equivalent). Enhances Ship's Computer `ask` and Ward Room structural questions. *Depends on: AD-688 (Oracle Graph Integration). Related: AD-468 (Ship's Computer Config).*
 

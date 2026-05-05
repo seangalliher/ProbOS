@@ -550,6 +550,10 @@ class DreamReport:
     wm_entries_flushed: int = 0
     bridged_procedures: int = 0  # AD-572: cross-cycle procedural bridge
     wm_priming_entries: int = 0
+    # AD-690: Dream Step 7i — Relationship inference (titled "Dream Step 10" in spec/issue)
+    inferred_relationships: int = 0
+    relationship_pairs_rejected: int = 0
+    relationship_pairs_capped: int = 0
 
 
 # ------------------------------------------------------------------

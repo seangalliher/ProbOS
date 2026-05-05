@@ -631,6 +631,11 @@ class DreamingConfig(BaseModel):
     episode_pressure_multiplier: float = 1.5  # Multiply prune fraction by this when above pressure threshold
     # AD-657: Trace exemplars preserved per consolidated procedure (0 = disabled)
     trace_exemplars_per_procedure: int = 3
+    # AD-690: Dream Step 7i — Relationship inference from co-occurring episode agents
+    relationship_inference_enabled: bool = True
+    relationship_inference_max_pairs_per_run: int = 50
+    relationship_inference_max_per_entity: int = 5
+    relationship_inference_min_confidence: float = 0.6
 
 
 class DreamWMConfig(BaseModel):

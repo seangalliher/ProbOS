@@ -9,6 +9,10 @@ from probos.knowledge.edges import (
     KnowledgeRelationType,
     SQLiteKnowledgeEdgeStore,
 )
+from probos.knowledge.rejection_cache import (
+    RejectionCacheStorage,
+    SQLiteRejectionCache,
+)
 from probos.knowledge.store import KnowledgeStore
 
 __all__ = [
@@ -20,5 +24,7 @@ __all__ = [
     "KnowledgeEntityType",
     "KnowledgeRelationType",
     "KnowledgeStore",
+    "RejectionCacheStorage",
     "SQLiteKnowledgeEdgeStore",
+    "SQLiteRejectionCache",
 ]

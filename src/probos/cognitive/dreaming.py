@@ -129,6 +129,9 @@ class DreamingEngine:
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
         self._extraction_candidates: dict[str, float] = {}  # AD-532e: intent_type -> timestamp
         self._reactive_cooldowns: dict[str, float] = {}  # AD-532e: agent_id -> last reactive check
+        # AD-690: late-bound after finalize phase (knowledge_edges adopted at runtime.py:1615)
+        self._knowledge_edges: Any = None
+        self._rejection_cache: Any = None
 
     def set_ward_room(self, ward_room: Any) -> None:
         """BF-106: Late-bind ward_room (available after Phase 7)."""
@@ -164,6 +167,14 @@ class DreamingEngine:
     def set_quality_router(self, router: Any) -> None:
         """AD-565: Late-bind quality router."""
         self._quality_router = router
+
+    def set_knowledge_edges(self, store: Any) -> None:
+        """AD-690: Late-bind KnowledgeEdgeStore (adopted in finalize phase)."""
+        self._knowledge_edges = store
+
+    def set_rejection_cache(self, cache: Any) -> None:
+        """AD-690: Late-bind SQLiteRejectionCache (adopted in finalize phase)."""
+        self._rejection_cache = cache
 
     @property
     def last_clusters(self) -> list[Any]:
@@ -1066,6 +1077,55 @@ class DreamingEngine:
             except Exception as e:
                 logger.warning("Step 7h episodic-procedural bridge failed; continuing dream cycle: %s", e)
 
+        # Step 7i: Relationship Inference (AD-690 — titled "Dream Step 10" in spec
+        # and GH issue #384; numbered 7i in the pipeline to avoid collision with
+        # existing Step 10 = AD-555 Notebook Quality Metrics).
+        inferred_relationships = 0
+        relationship_pairs_rejected = 0
+        relationship_pairs_capped = 0
+        ri_cfg = getattr(self.config, "relationship_inference_enabled", False)
+        ri_edges = getattr(self, "_knowledge_edges", None)
+        ri_cache = getattr(self, "_rejection_cache", None)
+        if (
+            ri_cfg
+            and ri_edges is not None
+            and ri_cache is not None
+            and self._llm_client is not None
+            and episodes
+        ):
+            try:
+                from probos.cognitive.relationship_inference import (
+                    infer_relationships_from_episodes,
+                )
+
+                ri_result = await infer_relationships_from_episodes(
+                    episodes=episodes,
+                    knowledge_edges=ri_edges,
+                    llm_client=self._llm_client,
+                    rejection_cache=ri_cache,
+                    max_pairs_per_run=getattr(
+                        self.config, "relationship_inference_max_pairs_per_run", 50,
+                    ),
+                    max_inferences_per_entity=getattr(
+                        self.config, "relationship_inference_max_per_entity", 5,
+                    ),
+                    min_confidence=getattr(
+                        self.config, "relationship_inference_min_confidence", 0.6,
+                    ),
+                )
+                inferred_relationships = ri_result.inferred_edges
+                relationship_pairs_rejected = ri_result.relationship_pairs_rejected
+                relationship_pairs_capped = ri_result.relationship_pairs_capped
+                logger.debug(
+                    "Step 7i: candidates=%d inferred=%d rejected=%d capped=%d",
+                    ri_result.candidate_pairs,
+                    inferred_relationships,
+                    relationship_pairs_rejected,
+                    relationship_pairs_capped,
+                )
+            except Exception as e:
+                logger.warning("Step 7i relationship inference failed; continuing dream cycle: %s", e)
+
         # Step 8: Enhanced capability gap detection (AD-385 + AD-539)
         gaps_predicted = 0
         gaps_classified = 0
@@ -1532,6 +1592,10 @@ class DreamingEngine:
             chain_procedures_extracted=chain_procedures_extracted,  # AD-632g
             procedures=procedures,
             bridged_procedures=bridged_procedures,
+            # AD-690: Dream Step 7i — relationship inference
+            inferred_relationships=inferred_relationships,
+            relationship_pairs_rejected=relationship_pairs_rejected,
+            relationship_pairs_capped=relationship_pairs_capped,
             procedures_evolved=procedures_evolved,
             negative_procedures_extracted=negative_procedures_extracted,
             failure_patterns_extracted=failure_patterns_extracted,
