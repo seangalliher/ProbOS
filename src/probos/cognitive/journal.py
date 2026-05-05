@@ -140,6 +140,29 @@ CREATE INDEX IF NOT EXISTS idx_optimization_proposals_dedup_key
     ON optimization_proposals(detector_name, target_parameter, decision);
 """
 
+# AD-659c: OptimizationCounselor watchdog decision audit trail (net-new table).
+_SCHEMA_OPTIMIZATION_DECISIONS = """
+CREATE TABLE IF NOT EXISTS optimization_decisions (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id        TEXT NOT NULL DEFAULT '',
+    decided_at         REAL NOT NULL DEFAULT 0.0,
+    decision           TEXT NOT NULL DEFAULT '',
+    baseline_success_rate REAL,
+    post_success_rate  REAL,
+    drop_amount        REAL,
+    sample_count_baseline INTEGER NOT NULL DEFAULT 0,
+    sample_count_post  INTEGER NOT NULL DEFAULT 0,
+    auto_revert_attempted INTEGER NOT NULL DEFAULT 0,
+    auto_revert_succeeded INTEGER NOT NULL DEFAULT 0,
+    detail             TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_optimization_decisions_proposal
+    ON optimization_decisions(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_optimization_decisions_decided_at
+    ON optimization_decisions(decided_at);
+"""
+
 
 class CognitiveJournal:
     """Append-only SQLite journal for LLM reasoning traces."""
@@ -190,6 +213,8 @@ class CognitiveJournal:
                 pass
         # AD-659b: ChainOptimizer proposal persistence (idempotent CREATE).
         await self._db.executescript(_SCHEMA_OPTIMIZATION_PROPOSALS)
+        # AD-659c: OptimizationCounselor watchdog decisions (idempotent CREATE).
+        await self._db.executescript(_SCHEMA_OPTIMIZATION_DECISIONS)
         await self._db.commit()
 
     async def stop(self) -> None:
@@ -498,6 +523,85 @@ class CognitiveJournal:
         except Exception:
             logger.debug("AD-659b: proposal fetch failed", exc_info=True)
             return None
+
+    async def record_optimization_decision(
+        self,
+        *,
+        proposal_id: str,
+        decided_at: float,
+        decision: str,
+        baseline_success_rate: float | None = None,
+        post_success_rate: float | None = None,
+        drop_amount: float | None = None,
+        sample_count_baseline: int = 0,
+        sample_count_post: int = 0,
+        auto_revert_attempted: bool = False,
+        auto_revert_succeeded: bool = False,
+        detail: str = "",
+    ) -> None:
+        """AD-659c: Persist a single OptimizationCounselor watchdog decision.
+
+        INSERT-only (no upsert). Each watchdog observation is a new row.
+        Fire-and-forget — never raises.
+        """
+        if not self._db:
+            return
+        try:
+            await self._db.execute(
+                """INSERT INTO optimization_decisions
+                   (proposal_id, decided_at, decision,
+                    baseline_success_rate, post_success_rate, drop_amount,
+                    sample_count_baseline, sample_count_post,
+                    auto_revert_attempted, auto_revert_succeeded, detail)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    proposal_id,
+                    decided_at,
+                    decision,
+                    baseline_success_rate,
+                    post_success_rate,
+                    drop_amount,
+                    sample_count_baseline,
+                    sample_count_post,
+                    1 if auto_revert_attempted else 0,
+                    1 if auto_revert_succeeded else 0,
+                    detail,
+                ),
+            )
+            await self._db.commit()
+        except Exception:
+            logger.debug("AD-659c: optimization decision record failed", exc_info=True)
+
+    async def get_recent_optimization_decisions(
+        self,
+        *,
+        limit: int = 50,
+        proposal_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """AD-659c: Return recent watchdog decisions, newest-first.
+
+        Optional `proposal_id` filter for per-proposal audit lookups.
+        """
+        if not self._db:
+            return []
+        try:
+            if proposal_id is not None:
+                cursor = await self._db.execute(
+                    "SELECT * FROM optimization_decisions "
+                    "WHERE proposal_id = ? ORDER BY decided_at DESC LIMIT ?",
+                    (proposal_id, limit),
+                )
+            else:
+                cursor = await self._db.execute(
+                    "SELECT * FROM optimization_decisions "
+                    "ORDER BY decided_at DESC LIMIT ?",
+                    (limit,),
+                )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception:
+            logger.debug("AD-659c: optimization decisions query failed", exc_info=True)
+            return []
 
     async def record_causal_template(self, template: Any) -> None:
         """AD-660: Persist a CausalReasoningTemplate. Fire-and-forget — never raises.

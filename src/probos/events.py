@@ -228,6 +228,9 @@ class EventType(str, Enum):
     EPS_REALLOCATION = "eps_reallocation"  # AD-469
     MCP_BRIDGE_INVOKE = "mcp_bridge_invoke"  # AD-449
     MCP_BRIDGE_FAILED = "mcp_bridge_failed"  # AD-449
+    OPTIMIZATION_PROPOSAL_APPLIED = "optimization_proposal_applied"  # AD-659c
+    OPTIMIZATION_PROPOSAL_REVERTED = "optimization_proposal_reverted"  # AD-659c
+    OPTIMIZATION_REGRESSION_DETECTED = "optimization_regression_detected"  # AD-659c
     OBSERVABILITY_SNAPSHOT_PUBLISHED = "observability_snapshot_published"  # AD-641a
     OBSERVABILITY_BRIDGE_FAILED = "observability_bridge_failed"  # AD-641a
     WARD_ROOM_HEBBIAN_UPDATED = "ward_room_hebbian_updated"  # AD-641b

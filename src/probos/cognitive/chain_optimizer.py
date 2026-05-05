@@ -405,6 +405,24 @@ class ChainOptimizer:
             proposal.proposal_id, proposal.target_parameter,
             proposal.pre_apply_value, proposal.proposed_value, actor,
         )
+        # AD-659c: emit event so OptimizationCounselor watchdog can snapshot baseline.
+        if self.emit_event is not None:
+            try:
+                from probos.events import EventType as _ET
+                self.emit_event(_ET.OPTIMIZATION_PROPOSAL_APPLIED, {
+                    "proposal_id": proposal.proposal_id,
+                    "target_parameter": proposal.target_parameter,
+                    "pre_apply_value": proposal.pre_apply_value,
+                    "proposed_value": proposal.proposed_value,
+                    "detector_name": proposal.detector_name,
+                    "actor": actor,
+                    "applied_at": proposal.applied_at,
+                })
+            except Exception:
+                logger.debug(
+                    "AD-659c: emit OPTIMIZATION_PROPOSAL_APPLIED failed",
+                    exc_info=True,
+                )
         return proposal
 
     async def revert_proposal(
@@ -446,6 +464,25 @@ class ChainOptimizer:
             proposal.proposal_id, proposal.target_parameter,
             prior_value, proposal.pre_apply_value, actor,
         )
+        # AD-659c: emit event for audit trail (covers Captain-driven and
+        # watchdog-driven reverts; actor distinguishes).
+        if self.emit_event is not None:
+            try:
+                from probos.events import EventType as _ET
+                self.emit_event(_ET.OPTIMIZATION_PROPOSAL_REVERTED, {
+                    "proposal_id": proposal.proposal_id,
+                    "target_parameter": proposal.target_parameter,
+                    "reverted_to": proposal.pre_apply_value,
+                    "from_value": prior_value,
+                    "detector_name": proposal.detector_name,
+                    "actor": actor,
+                    "reverted_at": proposal.applied_at,
+                })
+            except Exception:
+                logger.debug(
+                    "AD-659c: emit OPTIMIZATION_PROPOSAL_REVERTED failed",
+                    exc_info=True,
+                )
         return proposal
 
     def start_scheduled_loop(self) -> None:

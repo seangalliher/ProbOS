@@ -252,6 +252,41 @@ def _wire_chain_optimizer(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _wire_optimization_counselor(
+    *, runtime: Any, config: "SystemConfig",
+) -> bool:
+    """AD-659c v1: Wire OptimizationCounselor watchdog for AD-659b apply path."""
+    cfg = getattr(config, "chain_optimizer_counselor", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.cognitive.optimization_counselor import OptimizationCounselor
+
+    counselor = OptimizationCounselor(
+        runtime,
+        baseline_window_seconds=cfg.baseline_window_seconds,
+        observation_window_seconds=cfg.observation_window_seconds,
+        success_rate_drop_floor=cfg.success_rate_drop_floor,
+        min_samples_per_window=cfg.min_samples_per_window,
+        auto_revert_enabled=cfg.auto_revert_enabled,
+    )
+    runtime.optimization_counselor = counselor  # public attribute (Wave 5 conv #1)
+    try:
+        await counselor.start()
+    except Exception:
+        logger.warning(
+            "AD-659c: OptimizationCounselor.start() failed", exc_info=True,
+        )
+    logger.info(
+        "AD-659c: OptimizationCounselor initialized "
+        "(auto_revert_enabled=%s, observation_window=%.1fs, drop_floor=%.2f)",
+        cfg.auto_revert_enabled,
+        cfg.observation_window_seconds,
+        cfg.success_rate_drop_floor,
+    )
+    return True
+
+
 async def _wire_edge_backfill(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-689: Wire EdgeBackfillService and run a one-shot backfill on warm boot
     if the knowledge_edges table is empty (or force=True)."""
@@ -870,6 +905,9 @@ async def finalize_startup(
 
     if _wire_chain_optimizer(runtime=runtime, config=config):
         logger.info("AD-659: ChainOptimizer v1 wired during finalization")
+
+    if await _wire_optimization_counselor(runtime=runtime, config=config):
+        logger.info("AD-659c: OptimizationCounselor v1 wired during finalization")
 
     if await _wire_edge_backfill(runtime=runtime, config=config):
         logger.info("AD-689: EdgeBackfillService v1 wired during finalization")

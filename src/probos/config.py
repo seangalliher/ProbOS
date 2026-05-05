@@ -363,6 +363,50 @@ class ChainOptimizerConfig(BaseModel):
         return v
 
 
+class ChainOptimizerCounselorConfig(BaseModel):
+    """AD-659c v1: OptimizationCounselor watchdog for AD-659b applied proposals.
+
+    Default-OFF (Wave-10 convention #14). Captain opts in once AD-659b apply
+    has accumulated production data and detection accuracy is validated.
+
+    `auto_revert_enabled` is a SECOND gate — the watchdog can be enabled to
+    only observe + record decisions (no destructive action) without granting
+    revert authority. Captain flips auto_revert separately once observed
+    decisions look correct.
+    """
+
+    enabled: bool = False
+    baseline_window_seconds: float = 1800.0       # 30 min
+    observation_window_seconds: float = 1800.0    # 30 min
+    success_rate_drop_floor: float = 0.10         # 10% absolute drop
+    min_samples_per_window: int = 20
+    auto_revert_enabled: bool = False             # SECOND gate
+
+    @field_validator(
+        "baseline_window_seconds",
+        "observation_window_seconds",
+    )
+    @classmethod
+    def _validate_window(cls, v: float) -> float:
+        if v <= 0.0:
+            raise ValueError("window seconds must be > 0")
+        return v
+
+    @field_validator("success_rate_drop_floor")
+    @classmethod
+    def _validate_drop_floor(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("success_rate_drop_floor must be in [0.0, 1.0]")
+        return v
+
+    @field_validator("min_samples_per_window")
+    @classmethod
+    def _validate_min_samples(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("min_samples_per_window must be >= 1")
+        return v
+
+
 class DiagnosticContextConfig(BaseModel):
     """AD-661 v1 + AD-661b/c: Diagnostic Context Service — pull-based bundle assembly.
 
@@ -2285,6 +2329,7 @@ class SystemConfig(BaseModel):
     tiered_trust: TieredTrustConfig = TieredTrustConfig()  # AD-640
     chain_tuning: ChainTuningConfig = ChainTuningConfig()  # AD-639
     chain_optimizer: ChainOptimizerConfig = ChainOptimizerConfig()  # AD-659
+    chain_optimizer_counselor: ChainOptimizerCounselorConfig = ChainOptimizerCounselorConfig()  # AD-659c
     causal_reasoning: CausalReasoningConfig = CausalReasoningConfig()  # AD-660
     diagnostic_context: DiagnosticContextConfig = Field(
         default_factory=DiagnosticContextConfig
