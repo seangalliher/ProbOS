@@ -87,6 +87,16 @@ class HttpFetchAgent(BaseAgent):
         """Wire or disconnect the ServiceProfileStore."""
         cls._profile_store = store
 
+    # AD-456b: Egress policy (active enforcement) — set via runtime wiring when
+    # config.security_infra.egress_active_enforcement is True. Default None
+    # preserves AD-456 v1 consultation-only behavior.
+    _egress_policy: ClassVar[Any] = None
+
+    @classmethod
+    def set_egress_policy(cls, policy: Any) -> None:
+        """Wire or disconnect the EgressPolicy for active SSRF enforcement."""
+        cls._egress_policy = policy
+
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
         observation = await self.perceive(intent.__dict__)
@@ -179,6 +189,23 @@ class HttpFetchAgent(BaseAgent):
             ip = ipaddress.ip_address(sockaddr[0])
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 return f"Blocked private/reserved IP: {ip}"
+
+        # AD-456b: Egress policy consultation (active enforcement). Defense in
+        # depth — runs AFTER scheme/host/private-IP guards. EgressPolicy emits
+        # EGRESS_BLOCKED itself; we only need to surface the block to the
+        # caller. When _egress_policy is None (config.security_infra.
+        # egress_active_enforcement=False, the v1 default), this block is a
+        # no-op and AD-456 consultation-only behavior is preserved.
+        policy = type(self)._egress_policy
+        if policy is not None:
+            try:
+                if not policy.is_allowed(url):
+                    return "Egress policy: blocked by AD-456b runtime sandboxing"
+            except Exception:
+                logger.warning(
+                    "AD-456b: EgressPolicy.is_allowed failed; allowing request",
+                    exc_info=True,
+                )
 
         return None
 

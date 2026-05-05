@@ -1448,7 +1448,7 @@ class DeliberationConfig(BaseModel):
 
 
 class SecurityInfraConfig(BaseModel):
-    """Security infrastructure configuration (AD-456).
+    """Security infrastructure configuration (AD-456 + AD-456b).
 
     Distinct from ``SecurityConfig`` (AD-455) which configures threat detection,
     input validation, trust integrity, and red-team coordination.
@@ -1459,6 +1459,16 @@ class SecurityInfraConfig(BaseModel):
     egress_enabled: bool = True
     egress_deny_by_default: bool = True  # v1: real-signal default per no-theater
     audit_enabled: bool = True
+
+    # AD-456b: Runtime Sandboxing
+    sandbox_enabled: bool = True
+    sandbox_default_wall_timeout_seconds: float = 30.0
+    sandbox_default_memory_peak_mb: float = 256.0
+    # AD-456b: Egress active enforcement (v1 default False — preserves AD-456
+    # consultation-only behavior on existing deployments; flip to True at upgrade
+    # time after reviewing allowlist coverage. AD-456b-7 will flip default to True
+    # once fleet-wide allowlist coverage is verified.).
+    egress_active_enforcement: bool = False
 
 
 class SecurityConfig(BaseModel):

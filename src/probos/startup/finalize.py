@@ -1285,6 +1285,36 @@ async def finalize_startup(
     else:
         runtime.audit_log = None
 
+    # AD-456b: Runtime Sandboxing
+    if config.security_infra.sandbox_enabled:
+        from probos.security.runtime_sandbox import RuntimeSandbox, SandboxLimits
+        runtime.runtime_sandbox = RuntimeSandbox(
+            default_limits=SandboxLimits(
+                wall_timeout_seconds=config.security_infra.sandbox_default_wall_timeout_seconds,
+                memory_peak_mb=config.security_infra.sandbox_default_memory_peak_mb,
+            ),
+            emit_event=runtime.emit_event,
+        )
+        logger.info(
+            "AD-456b: RuntimeSandbox wired (wall=%.1fs, mem_peak=%.0fMB)",
+            config.security_infra.sandbox_default_wall_timeout_seconds,
+            config.security_infra.sandbox_default_memory_peak_mb,
+        )
+    else:
+        runtime.runtime_sandbox = None
+
+    # AD-456b: HttpFetchAgent egress active enforcement (gated on
+    # egress_active_enforcement; v1 default False preserves AD-456
+    # consultation-only behavior). When False, _egress_policy stays None
+    # and HttpFetchAgent._validate_url skips the consultation block.
+    if (
+        config.security_infra.egress_active_enforcement
+        and runtime.egress_policy is not None
+    ):
+        from probos.agents.http_fetch import HttpFetchAgent
+        HttpFetchAgent.set_egress_policy(runtime.egress_policy)
+        logger.info("AD-456b: HttpFetchAgent egress active enforcement enabled")
+
     # AD-528: Ground-Truth Task Verification (v1: read-only scoring + emit;
     # active rejection deferred to AD-528b)
     if config.ground_truth.enabled:
