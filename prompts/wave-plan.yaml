@@ -547,7 +547,7 @@ waves:
       - "prompts/ad-647c-bills-integration-v1.md"
     builder_required: true
     issues_to_close: [405]
-    status: pending
+    status: done
 
   - id: "50"
     title: "AD-686b v1 Oracle Write-Path Migration"
