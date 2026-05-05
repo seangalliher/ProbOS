@@ -67,6 +67,15 @@ This file is read by the reviewer agent when auditing a build prompt before it g
 - **Verification section:** The prompt should end with specific test commands the builder should run.
 - **Tracking section:** List which files to update (PROGRESS.md, roadmap.md, DECISIONS.md) and what to write.
 
+## 10. Startup Phase Ordering (BF-259/260/261/262 lesson)
+
+Four bugs in one audit shared the same root cause: features wired in finalize (Phase 8) but consumed by earlier startup phases, with `getattr(runtime, "x", None)` silently returning `None`.
+
+- **Phase ordering audit:** If the prompt creates a new service/object in `finalize.py`, grep for every `getattr(runtime, "<attr>", None)` reference to that attribute. If any reference occurs in a phase that runs BEFORE finalize (Phase 8), flag it — the attribute won't exist yet. Known phase order: Phase 2 (communication) → Phase 3 (agent fleet) → Phase 5 (cognitive services) → Phase 7 (boot camp) → Phase 8 (finalize).
+- **Result dataclass unpacking:** If the prompt adds a field to a Result dataclass in `startup/results.py` (e.g., `DreamingResult`, `CommunicationResult`, `CognitiveServicesResult`), verify the corresponding unpacking line exists in `runtime.py`. A field in the Result with no matching `self.x = result.x` in runtime is a guaranteed silent failure for any finalize consumer.
+- **Late-bind target verification:** If the prompt late-binds an object into another (e.g., `_ds._manifest = ...`), verify the target object is the one that actually reads the attribute. Grep the target class for `self._manifest` (or whatever attribute). If zero references, the binding is on the wrong object.
+- **Guard clause log levels:** If a feature is config-enabled (`enabled=True` default) but fails to wire due to a guard clause, the guard should log at WARNING, not DEBUG. Silent failure of an enabled feature is a diagnostic trap. DEBUG is appropriate only for features that are config-disabled.
+
 ---
 
 ## Output Format

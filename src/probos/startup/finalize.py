@@ -818,6 +818,10 @@ async def finalize_startup(
 
     if _wire_ship_state_snapshot(runtime=runtime, config=config):
         logger.info("AD-683: Ship State Snapshot v1 wired during finalization")
+        # BF-261: Late-bind into BootCampCoordinator (created at Phase 7, before finalize)
+        _bc = getattr(runtime, "boot_camp", None)
+        if _bc is not None and getattr(_bc, "_ship_state_builder", None) is None:
+            _bc._ship_state_builder = runtime.ship_state_snapshot
 
     if _wire_duty_scope_provider(runtime=runtime, config=config):
         logger.info("AD-508: DutyScopeProvider v1 wired during finalization")
@@ -1289,14 +1293,14 @@ async def finalize_startup(
         runtime.dream_manifest = DreamManifest(
             store_path=runtime.data_dir / "dream_manifest.json",
         )
-        # Late-bind the manifest into the dream scheduler if it's already wired
-        _ds = getattr(runtime, "dream_scheduler", None)
-        if _ds is not None:
+        # Late-bind the manifest into the dreaming engine if it's already wired
+        _de = getattr(runtime, "dreaming_engine", None)
+        if _de is not None:
             try:
-                _ds._manifest = runtime.dream_manifest
+                _de._manifest = runtime.dream_manifest
             except Exception:
                 logger.warning(
-                    "AD-538b: failed to bind manifest to dream scheduler",
+                    "AD-538b: failed to bind manifest to dreaming engine",
                     exc_info=True,
                 )
     except Exception:

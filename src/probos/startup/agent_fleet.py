@@ -60,10 +60,10 @@ async def create_agent_fleet(
     await create_pool_fn("introspect", "introspect", target_size=2, agent_ids=ids, runtime=runtime)
 
     # NL-to-Graph Query pool (AD-691) — single-agent dispatcher onto runtime.nl_graph_query
+    # BF-262: removed runtime.nl_graph_query guard (service wired in finalize, after fleet)
     if (
         getattr(config, "nl_graph_query", None)
         and config.nl_graph_query.enabled
-        and getattr(runtime, "nl_graph_query", None) is not None
     ):
         ids = generate_pool_ids("nl_graph_query", "nl_graph_query", 1)
         await create_pool_fn(

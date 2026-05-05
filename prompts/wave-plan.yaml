@@ -523,7 +523,7 @@ waves:
       - "prompts/ad-685d-phantom-field-name-v1.md"
     builder_required: true
     issues_to_close: [407]
-    status: pending
+    status: done
 
   - id: "48"
     title: "AD-647b v1 Process Chains Registry + BF-209 Bypass Removal"
