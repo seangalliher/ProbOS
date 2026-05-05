@@ -452,7 +452,7 @@ waves:
       - "prompts/ad-691-nl-to-graph-query-v1.md"
     builder_required: true
     issues_to_close: [385]
-    status: pending
+    status: done
 
   - id: "42"
     title: "AD-692 v1 Classification Enforcement on Knowledge Graph"
