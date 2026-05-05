@@ -1248,11 +1248,19 @@ class ValidationFrameworkConfig(BaseModel):
 
 
 class PreFlightConfig(BaseModel):
-    """Pre-flight validation configuration (AD-458)."""
+    """Pre-flight validation configuration (AD-458 / AD-458b)."""
 
     enabled: bool = True
-    # AD-458b will add token-budget configuration when LLMTierReachableCheck
-    # and TokenBudgetCheck join v2.
+    # AD-458b: optional LLM-tier reachability and token-budget checks.
+    # Default-True on _check_enabled flags so the wiring is live; the
+    # token-budget check is harmless under AD-469 v1 (`check_budgets()`
+    # returns `[]`) and activates automatically once AD-469b lands.
+    # `token_budget_blocking` defaults False — warn rather than abort
+    # until operator confidence builds.
+    llm_tier_check_enabled: bool = True
+    required_llm_tier: str = "deep"
+    token_budget_check_enabled: bool = True
+    token_budget_blocking: bool = False
 
 
 class EngineeringConfig(BaseModel):

@@ -1098,13 +1098,15 @@ async def finalize_startup(
         )
         logger.info("AD-451: ValidationFramework wired (ReconciliationEscalator)")
 
-    # AD-458: Pre-flight validation runner (v1: 2 checks; LLMTier + TokenBudget deferred to AD-458b)
+    # AD-458 / AD-458b: Pre-flight validation runner (4 checks at default config)
     if config.pre_flight.enabled:
         from pathlib import Path
         from probos.cognitive.pre_flight import (
+            LLMTierReachableCheck,
             PreFlightRunner,
             TargetFilesExistCheck,
             TargetFilesWritableCheck,
+            TokenBudgetCheck,
         )
         # finalize.py is at src/probos/startup/finalize.py — four levels deep
         # from the repo root, so parents[3] resolves to the repo root:
@@ -1119,8 +1121,25 @@ async def finalize_startup(
                 TargetFilesWritableCheck(repo_root=repo_root),
             ],
         )
+        # AD-458b: append LLM-tier and token-budget checks AFTER the cheap
+        # filesystem checks. PreFlightRunner short-circuits on the first
+        # blocking failure, so the cheapest checks run first.
+        if config.pre_flight.llm_tier_check_enabled:
+            runtime.pre_flight_runner.checks.append(
+                LLMTierReachableCheck(
+                    runtime=runtime,
+                    required_tier=config.pre_flight.required_llm_tier,
+                ),
+            )
+        if config.pre_flight.token_budget_check_enabled:
+            runtime.pre_flight_runner.checks.append(
+                TokenBudgetCheck(
+                    runtime=runtime,
+                    blocking=config.pre_flight.token_budget_blocking,
+                ),
+            )
         logger.info(
-            "AD-458: PreFlightRunner wired (%d checks; LLMTier + TokenBudget deferred to AD-458b)",
+            "AD-458b: PreFlightRunner wired (%d checks)",
             len(runtime.pre_flight_runner.checks),
         )
 

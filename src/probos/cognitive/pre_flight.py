@@ -124,12 +124,98 @@ class TargetFilesWritableCheck:
         )
 
 
-# AD-458b deferred:
-#   - LLMTierReachableCheck: needs public is_tier_operational(...) accessor on
-#     TieredLLMClient (today's _tier_status is private at llm_client.py:100).
-#   - TokenBudgetCheck: hard enforcement already lives in AD-617b proactive
-#     cognitive loop; a soft pre-flight gate would either duplicate or ship
-#     as theater. Defer until AD-617b surface is exercised.
+# ---------------------------------------------------------------------------
+# AD-458b: LLM tier reachability and token-budget pre-flight checks.
+# Both check classes consume existing public surfaces only:
+#   - LLMTierReachableCheck reads BaseLLMClient.get_health_status() (cached;
+#     refreshed on a 30s interval by the BF-246 background probe).
+#   - TokenBudgetCheck reads EPSCoordinator.check_budgets() (AD-469 v1;
+#     returns [] until AD-469b lands the agent->department resolver).
+# Neither check probes the network nor mutates state.
+# ---------------------------------------------------------------------------
+
+
+class LLMTierReachableCheck:
+    """Verify the configured LLM tier reports operational status (AD-458b).
+
+    Consumes the public `BaseLLMClient.get_health_status()` cache rather than
+    issuing a live probe. The cache is maintained by the BF-246 background
+    health probe (30s interval). Default `required_tier='deep'` because the
+    Architect's proposal generation is the highest-risk LLM dependency in
+    the build cycle. Operator can switch to 'fast' or 'standard' via
+    `PreFlightConfig.required_llm_tier`.
+
+    blocking=True (default): a build that depends on the LLM tier should
+    not proceed when the tier is reported unreachable.
+    """
+
+    name = "llm_tier_reachable"
+
+    def __init__(self, *, runtime: Any, required_tier: str = "deep") -> None:
+        self._runtime = runtime
+        self._required_tier = required_tier
+
+    async def check(self, spec: "BuildSpec") -> PreFlightResult:
+        client = getattr(self._runtime, "llm_client", None)
+        if client is None:
+            return PreFlightResult(
+                passed=True, check_name=self.name,
+                detail="no llm_client (skipped)",
+            )
+        health = client.get_health_status()
+        tiers = health.get("tiers", {}) if isinstance(health, dict) else {}
+        tier_info = tiers.get(self._required_tier, {}) if isinstance(tiers, dict) else {}
+        status = tier_info.get("status", "unknown") if isinstance(tier_info, dict) else "unknown"
+        if status == "operational":
+            return PreFlightResult(
+                passed=True, check_name=self.name,
+                detail=f"tier '{self._required_tier}' operational",
+            )
+        return PreFlightResult(
+            passed=False, check_name=self.name,
+            detail=f"tier '{self._required_tier}' status: {status}",
+        )
+
+
+class TokenBudgetCheck:
+    """Verify EPS department budgets are within allocation (AD-458b).
+
+    Thin wrapper over the public `EPSCoordinator.check_budgets()` method.
+    Under AD-469 v1, `check_budgets()` returns `[]` (honest deferral until
+    AD-469b's agent->department resolver lands); this check is therefore
+    a no-op today but the wiring is live so the gate activates the moment
+    AD-469b changes the contract.
+
+    blocking=False (default): a budget overrun is a rate-of-spend signal,
+    not a hard correctness signal. Warn rather than abort. Operator can
+    flip via `PreFlightConfig.token_budget_blocking` once confidence
+    builds and AD-469b is in production.
+    """
+
+    name = "token_budget"
+
+    def __init__(self, *, runtime: Any, blocking: bool = False) -> None:
+        self._runtime = runtime
+        self._blocking = blocking
+
+    async def check(self, spec: "BuildSpec") -> PreFlightResult:
+        eps = getattr(self._runtime, "eps_coordinator", None)
+        if eps is None:
+            return PreFlightResult(
+                passed=True, check_name=self.name,
+                detail="no eps_coordinator (skipped)",
+            )
+        exceeded: list[str] = await eps.check_budgets()
+        if not exceeded:
+            return PreFlightResult(
+                passed=True, check_name=self.name,
+                detail="all departments within budget",
+            )
+        return PreFlightResult(
+            passed=False, check_name=self.name,
+            detail=f"budgets exceeded: {', '.join(exceeded[:5])}",
+            blocking=self._blocking,
+        )
 
 
 @dataclass
