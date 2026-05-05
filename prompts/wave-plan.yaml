@@ -703,7 +703,7 @@ waves:
       - "prompts/ad-635b-anomaly-audit-v1.md"
     builder_required: true
     issues_to_close: [391]
-    status: pending
+    status: done
 
   - id: "63"
     title: "AD-635c v1 Clinical Telemetry Circuit Breaker State History"
