@@ -1478,6 +1478,14 @@ class SecurityInfraConfig(BaseModel):
     # has landed in all production credential-using agent paths.).
     credential_tier_enforcement: bool = False
 
+    # AD-456d: AuditLog SQLite persistence (v1 default False — preserves
+    # AD-456 in-memory-only audit chain on existing deployments; flip to
+    # True at upgrade time after rehearsing rehydrate-on-boot against a
+    # production-shaped audit trail. AD-456d-4 will flip default to True
+    # once AD-456d-1 (shutdown-flush hook) lands.).
+    audit_persistence_enabled: bool = False
+    audit_persistence_filename: str = "audit_log.db"
+
 
 class SecurityConfig(BaseModel):
     """Security Team configuration (AD-455)."""

@@ -211,6 +211,7 @@ class EventType(str, Enum):
     SANDBOX_LIMIT_EXCEEDED = "sandbox_limit_exceeded"  # AD-456b
     SANDBOX_CAPABILITY_DENIED = "sandbox_capability_denied"  # AD-456b
     CREDENTIAL_TIER_DENIED = "credential_tier_denied"  # AD-456c
+    AUDIT_PERSISTED = "audit_persisted"  # AD-456d
     VERIFICATION_PASSED = "verification_passed"  # AD-528
     VERIFICATION_FAILED = "verification_failed"  # AD-528
     RESOURCE_ALLOCATED = "resource_allocated"  # AD-467

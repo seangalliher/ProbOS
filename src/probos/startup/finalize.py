@@ -1296,6 +1296,48 @@ async def finalize_startup(
     else:
         runtime.audit_log = None
 
+    # AD-456d: AuditLog SQLite persistence. Whole block is try/except —
+    # boot continues with runtime.audit_log_persistence=None on any
+    # failure (mirrors AD-456 CredentialStore extension shape).
+    runtime.audit_log_persistence = None
+    if (
+        runtime.audit_log is not None
+        and config.security_infra.audit_persistence_enabled
+    ):
+        try:
+            from probos.security.audit import AuditLogPersistence
+            from probos.storage.sqlite_factory import SQLiteConnectionFactory
+            persistence = AuditLogPersistence(
+                db_path=str(
+                    runtime.data_dir / config.security_infra.audit_persistence_filename
+                ),
+                connection_factory=SQLiteConnectionFactory(),
+                emit_event=runtime.emit_event,
+            )
+            await persistence.start()
+            loaded = await persistence.load_entries()
+            if loaded:
+                runtime.audit_log.entries.extend(loaded)
+                if not runtime.audit_log.verify_chain():
+                    logger.warning(
+                        "AD-456d: AuditLog chain verification FAILED on "
+                        "rehydrate (tamper or corruption suspected; "
+                        "AD-456d-3 will add Captain alert path)"
+                    )
+            runtime.audit_log.attach_persistence(persistence)
+            runtime.audit_log_persistence = persistence
+            logger.info(
+                "AD-456d: AuditLog persistence wired (db=%s, rehydrated=%d)",
+                persistence._db_path, len(loaded),
+            )
+        except Exception:
+            logger.warning(
+                "AD-456d: AuditLog persistence wiring failed (boot continues "
+                "with in-memory-only audit chain)",
+                exc_info=True,
+            )
+            runtime.audit_log_persistence = None
+
     # AD-456b: Runtime Sandboxing
     if config.security_infra.sandbox_enabled:
         from probos.security.runtime_sandbox import RuntimeSandbox, SandboxLimits
