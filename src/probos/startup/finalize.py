@@ -348,7 +348,7 @@ async def _wire_relationship_inference(
 
 
 def _wire_causal_reasoner(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-660 v1: Wire CausalReasoner template-fill service."""
+    """AD-660 v1 + AD-660b: Wire CausalReasoner template-fill service."""
     cfg = getattr(config, "causal_reasoning", None)
     if not cfg or not cfg.enabled:
         return False
@@ -359,10 +359,13 @@ def _wire_causal_reasoner(*, runtime: Any, config: "SystemConfig") -> bool:
         runtime,
         max_tokens=cfg.max_tokens,
         tier=cfg.tier,
+        max_invocations_per_hour=cfg.max_invocations_per_hour,
     )
     logger.info(
-        "AD-660: CausalReasoner v1 initialized "
-        "(template + journal + counselor concern hook)"
+        "AD-660b: CausalReasoner initialized "
+        "(template + journal + concern hook + emergence hooks; "
+        "rate=%d/hr/bucket)",
+        cfg.max_invocations_per_hour,
     )
     return True
 

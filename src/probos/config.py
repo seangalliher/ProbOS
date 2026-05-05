@@ -400,19 +400,31 @@ class DiagnosticContextConfig(BaseModel):
 
 
 class CausalReasoningConfig(BaseModel):
-    """AD-660 v1: Agent Causal Reasoning Framework.
+    """AD-660 v1 + AD-660b: Agent Causal Reasoning Framework.
 
-    v1 ships the four-step causal-reasoning template + journal storage +
-    one opt-in integration point in counselor's amber-zone handler. The
-    LLM fills the template; ProbOS persists it. There is no inference
-    engine, no automatic invocation, no action execution.
+    v1 (AD-660) shipped the four-step template + journal storage + opt-in
+    counselor concern hook. AD-660b flips the default ON, adds AD-557
+    emergence-warning hooks (groupthink + fragmentation) on the same path,
+    introduces hypothesis ranking + recommended-action surfacing, and adds
+    a per-bucket sliding-window rate limiter to bound LLM cost.
 
-    Disabled by default — enable to activate the counselor concern hook.
+    Default-on is safe because (a) the rate limiter caps invocations per
+    bucket per hour, (b) `analyze()` is fire-and-forget — never raises into
+    callers, and (c) downstream consumers (counselor hooks, journal) treat
+    every result as best-effort.
     """
 
-    enabled: bool = False  # opt-in until validated
+    enabled: bool = True  # AD-660b: default-on (rate-limited)
     max_tokens: int = 700
     tier: str = "standard"
+    max_invocations_per_hour: int = 5  # AD-660b: per-bucket rate cap
+
+    @field_validator("max_invocations_per_hour")
+    @classmethod
+    def _validate_rate_cap(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("max_invocations_per_hour must be >= 1")
+        return v
 
 
 class NLGraphQueryConfig(BaseModel):

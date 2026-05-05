@@ -98,12 +98,20 @@ CREATE TABLE IF NOT EXISTS causal_templates (
     testable_hypotheses TEXT NOT NULL DEFAULT '[]',
     diagnostic_actions  TEXT NOT NULL DEFAULT '[]',
     confidence          REAL NOT NULL DEFAULT 0.0,
-    source_event_ref    TEXT
+    source_event_ref    TEXT,
+    ranked_hypotheses_json TEXT,
+    recommended_actions_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_causal_templates_triggered_at ON causal_templates(triggered_at);
 CREATE INDEX IF NOT EXISTS idx_causal_templates_agent ON causal_templates(agent_id);
 """
+
+# AD-660b: idempotent migration for warm-boot DBs created under AD-660 v1.
+_MIGRATIONS_CAUSAL_TEMPLATES_AD660B = (
+    "ALTER TABLE causal_templates ADD COLUMN ranked_hypotheses_json TEXT",
+    "ALTER TABLE causal_templates ADD COLUMN recommended_actions_json TEXT",
+)
 
 
 class CognitiveJournal:
@@ -147,6 +155,13 @@ class CognitiveJournal:
         await self._db.executescript(_SCHEMA_CHAIN_TRACES)
         # AD-660: causal-reasoning templates
         await self._db.executescript(_SCHEMA_CAUSAL_TEMPLATES)
+        # AD-660b: idempotent ALTER TABLE for warm-boot DBs that pre-date AD-660b.
+        for stmt in _MIGRATIONS_CAUSAL_TEMPLATES_AD660B:
+            try:
+                await self._db.execute(stmt)
+            except Exception:
+                pass
+        await self._db.commit()
 
     async def stop(self) -> None:
         if self._db:
@@ -385,8 +400,9 @@ class CognitiveJournal:
                 """INSERT OR IGNORE INTO causal_templates
                    (template_id, agent_id, triggered_at, trigger_summary,
                     what_changed, confounded_variables, testable_hypotheses,
-                    diagnostic_actions, confidence, source_event_ref)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    diagnostic_actions, confidence, source_event_ref,
+                    ranked_hypotheses_json, recommended_actions_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     template.template_id,
                     template.agent_id,
@@ -398,6 +414,8 @@ class CognitiveJournal:
                     json.dumps(template.diagnostic_actions),
                     float(template.confidence),
                     template.source_event_ref,
+                    json.dumps(getattr(template, "ranked_hypotheses", []) or []),
+                    json.dumps(getattr(template, "recommended_actions", []) or []),
                 ),
             )
             await self._db.commit()
@@ -450,6 +468,20 @@ class CognitiveJournal:
                         d[key] = json.loads(raw) if isinstance(raw, str) else []
                     except (ValueError, TypeError):
                         d[key] = []
+                # AD-660b: decode list-of-dict columns (default to empty list)
+                for json_col, dest_key in (
+                    ("ranked_hypotheses_json", "ranked_hypotheses"),
+                    ("recommended_actions_json", "recommended_actions"),
+                ):
+                    raw = d.pop(json_col, None) if json_col in d else None
+                    if not isinstance(raw, str):
+                        d[dest_key] = []
+                        continue
+                    try:
+                        decoded = json.loads(raw)
+                        d[dest_key] = decoded if isinstance(decoded, list) else []
+                    except (ValueError, TypeError):
+                        d[dest_key] = []
                 out.append(d)
             return out
         except Exception:

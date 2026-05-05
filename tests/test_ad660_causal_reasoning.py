@@ -169,12 +169,16 @@ async def test_analyze_concern_returns_none_on_missing_agent_id() -> None:
 # ----- Test 7: integration point — disabled config = no-op -------------------
 
 def test_wirer_skips_when_config_disabled() -> None:
-    """AD-660: _wire_causal_reasoner returns False when config disabled."""
-    from probos.config import SystemConfig
+    """AD-660 + AD-660b: _wire_causal_reasoner returns False when config disabled.
+
+    AD-660b flipped the default to enabled=True. This test now constructs
+    an explicitly-disabled config to exercise the skip path.
+    """
+    from probos.config import CausalReasoningConfig, SystemConfig
     from probos.startup.finalize import _wire_causal_reasoner
 
     sys_cfg = SystemConfig()
-    assert sys_cfg.causal_reasoning.enabled is False  # default
+    sys_cfg.causal_reasoning = CausalReasoningConfig(enabled=False)
     runtime = SimpleNamespace()
     wired = _wire_causal_reasoner(runtime=runtime, config=sys_cfg)
     assert wired is False

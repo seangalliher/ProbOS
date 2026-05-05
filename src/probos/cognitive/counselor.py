@@ -1725,7 +1725,7 @@ class CounselorAgent(CognitiveAgent):
                 logger.debug("Cascade sweep failed for %s", agent_id, exc_info=True)
 
     async def _on_groupthink_warning(self, data: dict[str, Any]) -> None:
-        """AD-557: Respond to groupthink risk — redundancy dominates synergy."""
+        """AD-557 + AD-660b: Respond to groupthink risk — redundancy dominates synergy."""
         redundancy_ratio = data.get("redundancy_ratio", 0.0)
         top_pairs = data.get("top_synergy_pairs", [])
         # AD-583: Escalate to ERROR for extreme groupthink
@@ -1741,6 +1741,19 @@ class CounselorAgent(CognitiveAgent):
                 "agents may be echoing rather than complementing",
                 redundancy_ratio,
             )
+
+        # AD-660b: Causal reasoning hook for emergence anomalies.
+        # Rate-limited at the reasoner level (bucket=_emergence:groupthink).
+        # Fire-and-forget — must NOT raise into the existing handler path.
+        try:
+            reasoner = getattr(self._runtime, "causal_reasoner", None) if self._runtime else None
+            journal = self._cognitive_journal
+            if reasoner is not None:
+                template = await reasoner.analyze_groupthink(data)
+                if journal is not None:
+                    await journal.record_causal_template(template)
+        except Exception:
+            logger.debug("AD-660b: groupthink causal hook failed", exc_info=True)
 
     async def _on_wrong_convergence_detected(self, data: dict[str, Any]) -> None:
         """AD-583: Respond to convergence with low anchor independence."""
@@ -1851,7 +1864,7 @@ class CounselorAgent(CognitiveAgent):
                 logger.debug("AD-583f: Failed to DM %s", callsign, exc_info=True)
 
     async def _on_fragmentation_warning(self, data: dict[str, Any]) -> None:
-        """AD-557: Respond to fragmentation risk — synergy near zero."""
+        """AD-557 + AD-660b: Respond to fragmentation risk — synergy near zero."""
         synergy_ratio = data.get("synergy_ratio", 0.0)
         pairs_analyzed = data.get("pairs_analyzed", 0)
         logger.warning(
@@ -1859,6 +1872,17 @@ class CounselorAgent(CognitiveAgent):
             "agents may not be building on each other's contributions",
             synergy_ratio, pairs_analyzed,
         )
+
+        # AD-660b: Causal reasoning hook (bucket=_emergence:fragmentation).
+        try:
+            reasoner = getattr(self._runtime, "causal_reasoner", None) if self._runtime else None
+            journal = self._cognitive_journal
+            if reasoner is not None:
+                template = await reasoner.analyze_fragmentation(data)
+                if journal is not None:
+                    await journal.record_causal_template(template)
+        except Exception:
+            logger.debug("AD-660b: fragmentation causal hook failed", exc_info=True)
         """Handle circuit breaker trip with trip-aware clinical assessment (AD-495)."""
         agent_id = data.get("agent_id", "")
         if not agent_id or agent_id == self.id:
