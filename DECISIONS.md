@@ -10,6 +10,22 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-692 v1: Classification Enforcement on Knowledge Graph Edges (2026-05-04)
+
+**Problem:** AD-687 (Wave 37) provisioned `KnowledgeEdge.classification` as a string field with values from `records_store._CLASSIFICATION_LEVELS` (private/department/ship/fleet) but did NOT enforce it on read or write. Any caller could read every edge regardless of classification, write edges at any level without authority check, and a future federation export would forward all edges including `fleet`-classified.
+
+**Solution:** Decorator-pattern wrapper `ClassificationGatedKnowledgeEdgeStore` around the existing `SQLiteKnowledgeEdgeStore`. Implements the `KnowledgeEdgeStorage` Protocol so it is a drop-in replacement; reads accept an optional `requester_agent_id` kwarg and filter edges by clearance; writes route through `KnowledgeEdgeClassificationGate.authorize_write()` which checks the writer's clearance against the edge's classification. Pure synchronous `filter_for_export(edges, *, target_classification)` ships as the federation extension seam (default excludes FLEET). 4-tier `ClassificationLevel` IntEnum mirrors `records_store._CLASSIFICATION_LEVELS` integer ordering byte-for-byte. Late-bind clearance resolver via setter so the wrapper module does NOT import substrate (`earned_agency`, `ontology`) directly — wirer in `startup/finalize.py` builds the closure over `runtime.ontology` + `runtime.clearance_grant_store` + `runtime.registry` and re-stitches Oracle Tier 6 via `oracle.attach_knowledge_graph(wrapper)` so graph queries flow through the gate, not the bare store. `OracleService._query_graph` plumbed with `requester_agent_id` from the existing `query()` `agent_id` kwarg; `TypeError` fallback in two private helpers (`_graph_find_edges`/`_graph_traverse`) keeps Tier 6 compatible with both the wrapper and the bare AD-687 store (preserves Wave 38 MagicMock-based tests).
+
+**Taxonomy decision:** AD-679 SHIPPED but ORTHOGONAL. AD-679 is 5-tier `DisclosureLevel` IntEnum (PUBLIC..CLASSIFIED) for IntentMessage recipient routing; AD-692 is 4-tier `ClassificationLevel` IntEnum (PRIVATE..FLEET) for KnowledgeEdge read/write gating. **Different taxonomies by design** — recipient clearance vs. data-scope-of-audience. Bridging intentionally NOT provided in v1; `filter_for_export` ships as a documented seam for future commercial overlay or an AD-692c bridging AD if signal justifies.
+
+**Backward-compat invariant:** when `requester_agent_id is None`, the wrapper is a no-op pass-through. All Wave 37/38/39/40/41 tests stay green WITHOUT modification (they don't pass `requester_agent_id`). Default `enabled=True` follows the same precedent as `KnowledgeEdgesConfig` and `EdgeBackfillConfig` — zero-cost transparency until consumers (Oracle Tier 6 via AD-688 plumbing) supply a requester id.
+
+**OSS-vs-commercial boundary:** v1 ships the OSS extension point — the gate, the wrapper, the resolver injection seam, the federation export helper, the Oracle Tier 6 plumb. Commercial overlays (audit-event persistence, RBAC, multi-tenant policy, AD-679 bridging) layer on top of the stable `KnowledgeEdgeStorage` Protocol seam without modifying the underlying store. Per-department classification matching is deferred to AD-692b if adoption signals justify (KnowledgeEdge has no department field today; v1's DEPARTMENT gate is tier-based only).
+
+**Tests:** 21 (over the 12 floor by 9 — parametrized 8-case matrix in `test_edge_visible_to_matrix` is the fan-out source). Closes GH issue #386. Wave 42.
+
+---
+
 ### AD-691 v1: NL-to-Graph Query Service — Ship's Computer Structural Routing (2026-05-04)
 
 **Problem:** Phase B (Intelligence) of the Unified Knowledge Graph stack. AD-687 (Wave 37) provisioned `runtime.knowledge_edges`. AD-688 (Wave 38) made it queryable through the Oracle's Tier 6. AD-689 (Wave 39) populated it from four structural data sources. The graph is now populated and queryable — but there is no LLM-driven NL-to-graph entry point. A human asking "who reports to the chief engineer?" or "what duties depend on the medical bay?" has no path that uses the graph relations as first-class structure. Tier 6 falls back to bag-of-tokens against `source_id`/`target_id` strings, which only fires when the query happens to contain literal IDs.

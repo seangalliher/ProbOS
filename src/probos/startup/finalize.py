@@ -415,6 +415,82 @@ def _wire_nl_graph_query(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_edge_classification(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-692 v1: Wrap ``runtime.knowledge_edges`` with the classification
+    gate. Re-stitches Oracle Tier 6 so the wrapper (not the bare store) is
+    consulted on graph queries.
+
+    Resolver maps ``requester_agent_id`` -> RecallTier name via the AD-635
+    helpers (``effective_recall_tier`` + ``resolve_billet_clearance`` +
+    ``resolve_active_grants``).
+    """
+    cfg = getattr(config, "knowledge_edge_classification", None)
+    if not cfg or not cfg.enabled:
+        return False
+    if getattr(runtime, "knowledge_edges", None) is None:
+        # Underlying store disabled (knowledge_edges.enabled=False); no-op.
+        return False
+
+    from probos.knowledge.edge_classification import (
+        ClassificationGatedKnowledgeEdgeStore,
+        KnowledgeEdgeClassificationGate,
+    )
+    from probos.earned_agency import (
+        effective_recall_tier,
+        resolve_active_grants,
+        resolve_billet_clearance,
+    )
+
+    gate = KnowledgeEdgeClassificationGate(
+        default_classification=cfg.default_classification,
+    )
+
+    def _resolve_tier(agent_id: str) -> str:
+        try:
+            registry = getattr(runtime, "registry", None)
+            agent = registry.get(agent_id) if registry else None
+            agent_type = getattr(agent, "agent_type", agent_id) if agent else agent_id
+            rank_holder = getattr(agent, "rank", None) if agent else None
+            billet = resolve_billet_clearance(
+                agent_type, getattr(runtime, "ontology", None),
+            )
+            grants = resolve_active_grants(
+                agent_id, getattr(runtime, "clearance_grant_store", None),
+            )
+            tier = effective_recall_tier(rank_holder, billet, grants)
+            return tier.value  # RecallTier is a str Enum
+        except Exception:
+            logger.debug(
+                "AD-692: resolver failed for agent=%s; defaulting to basic",
+                agent_id, exc_info=True,
+            )
+            return "basic"
+
+    gate.set_clearance_resolver(_resolve_tier)
+    wrapper = ClassificationGatedKnowledgeEdgeStore(runtime.knowledge_edges, gate)
+    runtime.knowledge_edges = wrapper
+    runtime.edge_classification_gate = gate
+
+    # Re-stitch Oracle Tier 6 so it sees the wrapper, not the bare store.
+    oracle = getattr(runtime, "_oracle_service", None)
+    if oracle is not None:
+        try:
+            oracle.attach_knowledge_graph(wrapper)
+        except Exception:
+            logger.warning(
+                "AD-692: failed to re-attach wrapped knowledge graph to Oracle; "
+                "Tier 6 graph queries continue against the bare store",
+                exc_info=True,
+            )
+
+    logger.info(
+        "AD-692: KnowledgeEdgeClassificationGate v1 initialized "
+        "(default_classification=%s; Oracle Tier 6 re-stitched)",
+        cfg.default_classification,
+    )
+    return True
+
+
 def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-635 v1: Wire ClinicalTelemetryService clearance-gated query facade."""
     cfg = getattr(config, "clinical_telemetry", None)
@@ -729,6 +805,9 @@ async def finalize_startup(
 
     if _wire_nl_graph_query(runtime=runtime, config=config):
         logger.info("AD-691: NLGraphQueryService v1 wired during finalization")
+
+    if _wire_edge_classification(runtime=runtime, config=config):
+        logger.info("AD-692: KnowledgeEdgeClassificationGate v1 wired during finalization")
 
     if _wire_clinical_telemetry(runtime=runtime, config=config):
         logger.info("AD-635: ClinicalTelemetryService v1 wired during finalization")

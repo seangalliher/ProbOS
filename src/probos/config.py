@@ -1803,6 +1803,30 @@ class KnowledgeEdgesConfig(BaseModel):
         return v
 
 
+class KnowledgeEdgeClassificationConfig(BaseModel):
+    """AD-692: Classification enforcement on knowledge graph edges.
+
+    OSS extension point. Default ``enabled=True`` follows the same precedent
+    as ``KnowledgeEdgesConfig`` — the wrapper is a transparent pass-through
+    when ``requester_agent_id`` is ``None`` (system/internal callers,
+    backward-compatible with Wave 37/38/39/40). Filtering only applies once
+    consumers (Oracle Tier 6 via AD-688 plumbing) supply a requester id.
+    """
+    enabled: bool = True
+    default_classification: str = "private"
+
+    @field_validator("default_classification")
+    @classmethod
+    def _validate_default(cls, v: str) -> str:
+        allowed = {"private", "department", "ship", "fleet"}
+        if v.lower() not in allowed:
+            raise ValueError(
+                f"knowledge_edge_classification.default_classification "
+                f"must be one of {sorted(allowed)}, got {v!r}"
+            )
+        return v.lower()
+
+
 class EdgeBackfillConfig(BaseModel):
     """AD-689: One-shot backfill of ``knowledge_edges`` from existing data.
 
@@ -2144,6 +2168,9 @@ class SystemConfig(BaseModel):
     event_log: EventLogConfig = EventLogConfig()
     cognitive_journal: CognitiveJournalConfig = CognitiveJournalConfig()
     knowledge_edges: KnowledgeEdgesConfig = Field(default_factory=KnowledgeEdgesConfig)  # AD-687
+    knowledge_edge_classification: KnowledgeEdgeClassificationConfig = Field(
+        default_factory=KnowledgeEdgeClassificationConfig
+    )  # AD-692
     edge_backfill: EdgeBackfillConfig = Field(default_factory=EdgeBackfillConfig)  # AD-689
     communications: CommunicationsConfig = CommunicationsConfig()
     workforce: WorkforceConfig = WorkforceConfig()

@@ -250,10 +250,13 @@ class OracleService:
             except Exception:
                 logger.debug("Oracle: Tier 5 (semantic) query failed", exc_info=True)
 
-        # Tier 6: Knowledge Graph (AD-688) — typed-triple traversal
+        # Tier 6: Knowledge Graph (AD-688/692) — typed-triple traversal,
+        # classification-gated when ``agent_id`` is supplied.
         if "graph" in active_tiers:
             try:
-                tier_results = await self._query_graph(query_text, k=k_per_tier)
+                tier_results = await self._query_graph(
+                    query_text, k=k_per_tier, requester_agent_id=agent_id,
+                )
                 all_results.extend(tier_results)
             except Exception:
                 logger.debug("Oracle: Tier 6 (graph) query failed", exc_info=True)
@@ -482,8 +485,14 @@ class OracleService:
         query_text: str,
         *,
         k: int,
+        requester_agent_id: str = "",
     ) -> list[OracleResult]:
         """AD-688: Query KnowledgeEdgeStorage (Tier 6).
+
+        AD-692: When ``requester_agent_id`` is non-empty, the wrapper
+        (``ClassificationGatedKnowledgeEdgeStore``) filters edges by
+        clearance. Empty string preserves the Wave 38 behavior (no
+        filtering) so legacy callers and tests stay green.
 
         Extracts candidate entity tokens from the query (v1: token-substring
         match, see ``_extract_entity_tokens``), looks up direct edges via
@@ -513,8 +522,9 @@ class OracleService:
         for token in tokens:
             # Direct: source_id matches
             try:
-                src_hits = await graph.find_edges(
-                    source_id=token, limit=_GRAPH_DIRECT_LIMIT,
+                src_hits = await self._graph_find_edges(
+                    graph, source_id=token, limit=_GRAPH_DIRECT_LIMIT,
+                    requester_agent_id=requester_agent_id,
                 )
             except Exception:
                 logger.debug("Oracle Tier 6: find_edges(source_id=%r) failed", token, exc_info=True)
@@ -524,8 +534,9 @@ class OracleService:
 
             # Direct: target_id matches
             try:
-                tgt_hits = await graph.find_edges(
-                    target_id=token, limit=_GRAPH_DIRECT_LIMIT,
+                tgt_hits = await self._graph_find_edges(
+                    graph, target_id=token, limit=_GRAPH_DIRECT_LIMIT,
+                    requester_agent_id=requester_agent_id,
                 )
             except Exception:
                 logger.debug("Oracle Tier 6: find_edges(target_id=%r) failed", token, exc_info=True)
@@ -536,10 +547,12 @@ class OracleService:
             # 2-hop: traverse one extra step from each direct match's target
             for edge in (*src_hits, *tgt_hits):
                 try:
-                    paths = await graph.traverse(
+                    paths = await self._graph_traverse(
+                        graph,
                         source_type=edge.target_type,
                         source_id=edge.target_id,
                         max_hops=1,
+                        requester_agent_id=requester_agent_id,
                     )
                 except Exception:
                     logger.debug(
@@ -588,6 +601,54 @@ class OracleService:
 
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:k]
+
+    async def _graph_find_edges(
+        self,
+        graph: Any,
+        *,
+        source_id: str | None = None,
+        target_id: str | None = None,
+        limit: int,
+        requester_agent_id: str,
+    ) -> list[Any]:
+        """AD-692: Pass ``requester_agent_id`` only when the underlying
+        store accepts it (the AD-692 wrapper does; the bare AD-687 store
+        does not). Keeps Tier 6 compatible with both."""
+        kwargs: dict[str, Any] = {"limit": limit}
+        if source_id is not None:
+            kwargs["source_id"] = source_id
+        if target_id is not None:
+            kwargs["target_id"] = target_id
+        if requester_agent_id:
+            kwargs["requester_agent_id"] = requester_agent_id
+            try:
+                return await graph.find_edges(**kwargs)
+            except TypeError:
+                kwargs.pop("requester_agent_id", None)
+        return await graph.find_edges(**kwargs)
+
+    async def _graph_traverse(
+        self,
+        graph: Any,
+        *,
+        source_type: Any,
+        source_id: str,
+        max_hops: int,
+        requester_agent_id: str,
+    ) -> list[list[Any]]:
+        """AD-692: Mirror of ``_graph_find_edges`` for ``traverse``."""
+        kwargs: dict[str, Any] = {
+            "source_type": source_type,
+            "source_id": source_id,
+            "max_hops": max_hops,
+        }
+        if requester_agent_id:
+            kwargs["requester_agent_id"] = requester_agent_id
+            try:
+                return await graph.traverse(**kwargs)
+            except TypeError:
+                kwargs.pop("requester_agent_id", None)
+        return await graph.traverse(**kwargs)
 
     async def _expand_via_graph(
         self,
