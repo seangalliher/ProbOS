@@ -500,4 +500,4 @@ waves:
       - "prompts/ad-661bc-diagnostic-context-extensions.md"
     builder_required: true
     issues_to_close: [412, 413]
-    status: pending
+    status: done
