@@ -10,6 +10,29 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-685d v1: Phantom-API Pre-Check Dataclass/Pydantic Field-Name Validation (2026-05-04)
+
+**Problem:** AD-685/AD-685b/AD-685c validate kwarg names, method names, and kwarg type-shapes — but not field-name typos on dataclass / Pydantic instances. A prompt asserting `meta.totel_ops` (typo of `total_operations`) or `AgentMeta(succes_count=5)` (typo of `success_count`) ships clean. Property/field collisions across inheritance (child dataclass field shadowing parent `@property`) also slip through. GH issue #407 calls for field-name validation closing this fourth gap.
+
+**Decision:** Extend `scripts/phantom_api_ast_helper.py` (single-file extension, ~+280 lines to ~1280 total) with `field_phantom` and `property_field_collision` categories.
+
+- New 5th cache `_CLASS_FIELDS_CACHE` and `build_class_field_index()` AST walker indexes `@dataclass`-decorated classes and `BaseModel` subclasses → `{fields, parents, properties, methods, kind}`. ClassVar annotations excluded; plain (non-dataclass non-Pydantic) classes recorded only when they declare properties or methods (supports parent-side collision lookup).
+- `_resolve_transitive_fields()` cycle-safe recursive parent walk returning `(fields, properties, methods)` unioned across the class chain.
+- `find_field_phantoms()` flags constructor kwargs (`MyDc(typo=...)` via `_CTOR_RE` + AST keyword parse) and attribute access (`obj.typo` via `_ATTR_RE`, NOT followed by `(`) against transitive field sets. Receiver resolution via Pattern B (`var = MyClass(...)`) only — chained `runtime.X.field` deferred to a future AD; `runtime` direct receiver skipped to avoid flagging public attrs whose classes the helper doesn't model uniformly.
+- `find_property_field_collisions()` walks each indexed class's transitive parents and flags every (child_field, parent_property) and (child_field, parent_method) pair. Parent properties are higher-confidence collisions; methods still surface because shadowing a parent method with an instance field is a real bug.
+- PowerShell wrapper extends dispatch with two new `elseif` branches rendering `<Class>.<field> <kind> -> not in fields {...}` and `<Child>.<name> shadows <Parent>.<name> (property|method)`.
+- Backward compat preserved: AD-685 records keep no `category` field; AD-685b/c records unchanged. Existing 35 phantom-API pre-check tests stay green.
+
+**Hard architect calls:** (1) Chained `runtime.X.field` attribute-access deferred — multi-segment AST walk needed; punt. (2) Private fields (`_` prefix) skipped both directions — ProbOS narrow-private-access convention. (3) ClassVar annotations excluded from fields. (4) Plain classes recorded only with properties/methods to avoid flagging non-dataclass typos. (5) Single-file extension preserved (no package split).
+
+**Out of scope:** TypedDict (defer AD-685e); runtime introspection; dynamic `__annotations__` mutation; per-instance type narrowing across function boundaries; constructor kwarg type-shape on dataclass fields (AD-685c handles function annotations only); NamedTuple / attrs / msgspec; exit-code semantics change.
+
+**Acceptance:** 12 focused tests pass at `tests/test_ad685d_phantom_field_name.py` (over 10 floor by 2): dataclass happy + unknown attribute + unknown ctor; Pydantic happy + unknown; property/field collision; method/field collision; inherited fields recognized via transitive walk; var-no-resolve silent skip; output category strings exact; ClassVar excluded; subprocess self-test on prompt body returns exit 0 with FPs constrained to fixture class names. Full gate: 11134 passed, 15 skipped (delta +12 vs Wave 46 baseline 11122 — exact target hit).
+
+**Closes:** GH issue #407.
+
+**Related:** AD-685, AD-685b, AD-685c.
+
 ### AD-685c v1: Phantom-API Pre-Check Type-Shape Validation (2026-05-04)
 
 **Problem:** AD-685 v1 (Wave 11) validates kwarg names against live signatures; AD-685b v1 (Wave 15) validates method names against resolved classes. Neither validates that kwarg **values** match the parameter's annotated type. A prompt asserting `obj.method(name=42)` where the method declares `name: str` ships clean today. GH issue #406 calls for type-shape validation closing this gap.

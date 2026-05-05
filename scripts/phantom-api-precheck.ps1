@@ -280,6 +280,20 @@ foreach ($promptPath in $PromptPaths) {
                             Category = 'type_shape_mismatch'
                             CallSite = $p.call_site
                         })
+                    } elseif ($p.category -eq 'field_phantom') {
+                        $valid = ($p.valid_fields -join ',')
+                        if ($valid.Length -gt 80) { $valid = $valid.Substring(0, 80) + '...' }
+                        [void]$phantomsHere.Add(@{
+                            Symbol = "$($p.class).$($p.field) <$($p.access_kind)> -> not in fields {$valid}"
+                            Category = 'field_phantom'
+                            CallSite = $p.call_site
+                        })
+                    } elseif ($p.category -eq 'property_field_collision') {
+                        [void]$phantomsHere.Add(@{
+                            Symbol = "$($p.child).$($p.name) shadows $($p.parent).$($p.name) ($($p.kind))"
+                            Category = 'property_field_collision'
+                            CallSite = "$($p.child).$($p.name)"
+                        })
                     } else {
                         [void]$phantomsHere.Add(@{
                             Symbol = "$($p.method)($($p.kwarg)=...)"

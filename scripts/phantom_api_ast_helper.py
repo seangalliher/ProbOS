@@ -79,6 +79,11 @@ _RUNTIME_ATTRS_CACHE: dict[str, dict[str, str]] = {}
 # priority level) — emit `pattern_a_conflict` unresolved on use.
 _RUNTIME_CONFLICTS_CACHE: dict[str, set[str]] = {}
 
+# AD-685d: class field index cache.
+# class_name -> {"fields": set[str], "parents": list[str], "properties": set[str],
+#                "methods": set[str], "kind": "dataclass"|"pydantic"|"plain"}
+_CLASS_FIELDS_CACHE: dict[str, dict[str, dict]] = {}
+
 # Stdlib / common third-party method names that are noisy to validate.
 # These are method names where false-positive risk outweighs catch rate.
 _NOISY_METHODS = frozenset({
@@ -714,6 +719,326 @@ def build_class_method_index(src_root: Path) -> dict[str, set[str]]:
     return classes
 
 
+# AD-685d: Pydantic base classes we recognize. Matched by trailing-name-only
+# at class definition site (handles `from pydantic import BaseModel` and
+# also `pydantic.BaseModel` import styles).
+_PYDANTIC_BASES = frozenset({"BaseModel"})
+
+
+def _is_dataclass_decorated(node: ast.ClassDef) -> bool:
+    """True if class has @dataclass / @dataclasses.dataclass decorator."""
+    for dec in node.decorator_list:
+        if isinstance(dec, ast.Name) and dec.id == "dataclass":
+            return True
+        if isinstance(dec, ast.Attribute) and dec.attr == "dataclass":
+            return True
+        # @dataclass(frozen=True) — Call wrapping Name/Attribute.
+        if isinstance(dec, ast.Call):
+            f = dec.func
+            if isinstance(f, ast.Name) and f.id == "dataclass":
+                return True
+            if isinstance(f, ast.Attribute) and f.attr == "dataclass":
+                return True
+    return False
+
+
+def _base_names(node: ast.ClassDef) -> list[str]:
+    """Extract simple base class names (last segment for dotted bases)."""
+    names: list[str] = []
+    for b in node.bases:
+        if isinstance(b, ast.Name):
+            names.append(b.id)
+        elif isinstance(b, ast.Attribute):
+            names.append(b.attr)
+        # Subscripted bases (Generic[T]) — skip.
+    return names
+
+
+def _is_pydantic_class(node: ast.ClassDef) -> bool:
+    """True if any base name matches a known Pydantic base."""
+    return any(n in _PYDANTIC_BASES for n in _base_names(node))
+
+
+def build_class_field_index(src_root: Path) -> dict[str, dict]:
+    """Build a class_name -> field/property metadata index (AD-685d).
+
+    For each `@dataclass`-decorated class and each `BaseModel` subclass,
+    record:
+      fields:     set of AnnAssign target names (excluding ClassVar / dunders)
+      parents:    list of simple base class names (for transitive lookup)
+      properties: set of names decorated with @property
+      methods:    set of non-dunder def/async-def names
+      kind:       "dataclass" | "pydantic" | "plain"
+
+    Plain (non-dataclass non-Pydantic) classes are recorded ONLY when they
+    contain `@property` or method definitions that downstream classes
+    might collide with — to support property/field collision checks across
+    plain-class parents.
+    """
+    cache_key = str(src_root.resolve())
+    if cache_key in _CLASS_FIELDS_CACHE:
+        return _CLASS_FIELDS_CACHE[cache_key]
+
+    classes: dict[str, dict] = {}
+    for py_file in src_root.rglob("*.py"):
+        try:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            is_dc = _is_dataclass_decorated(node)
+            is_pyd = _is_pydantic_class(node)
+            kind = "dataclass" if is_dc else ("pydantic" if is_pyd else "plain")
+            fields: set[str] = set()
+            properties: set[str] = set()
+            methods: set[str] = set()
+            for item in node.body:
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                    name = item.target.id
+                    if name.startswith("__") and name.endswith("__"):
+                        continue
+                    # Skip ClassVar[...] annotations — those are class-level
+                    # constants, not instance fields.
+                    ann = item.annotation
+                    if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name) \
+                            and ann.value.id == "ClassVar":
+                        continue
+                    if is_dc or is_pyd:
+                        fields.add(name)
+                elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    is_property = any(
+                        (isinstance(d, ast.Name) and d.id == "property")
+                        for d in item.decorator_list
+                    )
+                    if is_property:
+                        properties.add(item.name)
+                    else:
+                        if not (item.name.startswith("__") and item.name.endswith("__")):
+                            methods.add(item.name)
+            if kind == "plain" and not properties and not methods:
+                continue
+            existing = classes.get(node.name)
+            if existing is None:
+                classes[node.name] = {
+                    "fields": fields,
+                    "parents": _base_names(node),
+                    "properties": properties,
+                    "methods": methods,
+                    "kind": kind,
+                }
+            else:
+                existing["fields"].update(fields)
+                existing["properties"].update(properties)
+                existing["methods"].update(methods)
+                # Keep first-seen kind/parents — multiple ClassDefs of same
+                # name across files are rare and non-canonical here.
+
+    _CLASS_FIELDS_CACHE[cache_key] = classes
+    return classes
+
+
+def _resolve_transitive_fields(
+    class_name: str,
+    class_index: dict[str, dict],
+    *,
+    _seen: set[str] | None = None,
+) -> tuple[set[str], set[str], set[str]]:
+    """Return (fields, properties, methods) including all transitive parents.
+
+    Cycle-safe via _seen. Unknown parents (third-party / stdlib) contribute
+    nothing — the validator treats them as adding no constraint, which is
+    the conservative skip-on-unknown stance.
+    """
+    seen = _seen if _seen is not None else set()
+    if class_name in seen:
+        return set(), set(), set()
+    seen.add(class_name)
+    info = class_index.get(class_name)
+    if info is None:
+        return set(), set(), set()
+    fields = set(info["fields"])
+    properties = set(info["properties"])
+    methods = set(info["methods"])
+    for parent in info["parents"]:
+        pf, pp, pm = _resolve_transitive_fields(parent, class_index, _seen=seen)
+        fields.update(pf)
+        properties.update(pp)
+        methods.update(pm)
+    return fields, properties, methods
+
+
+# AD-685d: `<ClassName>(<kwargs>)` constructor call site.
+_CTOR_RE = re.compile(
+    r"\b([A-Z][a-zA-Z0-9_]+)\s*\(([^()]*)\)",
+)
+# AD-685d: `<obj>.<field>` attribute access NOT followed by `(`.
+# (Method calls are AD-685b territory; this restricts to true attribute reads.)
+_ATTR_RE = re.compile(
+    r"\b([a-zA-Z_][a-zA-Z0-9_]*)\.([a-z_][a-z0-9_]*)\b(?!\s*\()",
+)
+
+
+def find_field_phantoms(
+    body: str,
+    class_index: dict[str, dict],
+    runtime_attrs: dict[str, str],
+    pattern_b_vars: dict[str, str],
+) -> list[dict]:
+    """Scan body for dataclass/Pydantic field-name phantoms (AD-685d).
+
+    Detects two patterns:
+      1. Constructor kwargs: `MyDc(unknown_field=...)` where MyDc is a
+         dataclass or Pydantic model and `unknown_field` is not in its
+         transitive field set.
+      2. Attribute accesses: `obj.unknown_field` (NOT followed by `(`)
+         where `obj` resolves to a known dataclass/Pydantic class and
+         `unknown_field` is neither field, property, nor method.
+
+    Conservative skip rules (no flag emitted):
+      - Class not in class_index → skip (unknown classes contribute nothing).
+      - Class kind is "plain" → skip (only validate dataclass/Pydantic).
+      - Field name starts with underscore → skip (private; conventionally
+        unchecked).
+      - Receiver doesn't resolve to a class → skip silently (mirrors
+        AD-685b Pattern B silent skip rationale).
+    """
+    phantoms: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(call_site: str, kind_label: str, class_name: str,
+             field_name: str, valid_fields: set[str]) -> None:
+        key = f"{call_site}::{class_name}::{field_name}"
+        if key in seen:
+            return
+        seen.add(key)
+        phantoms.append({
+            "call_site": call_site,
+            "class": class_name,
+            "field": field_name,
+            "category": "field_phantom",
+            "access_kind": kind_label,
+            "valid_fields": sorted(valid_fields)[:20],
+        })
+
+    # --- Pattern 1: constructor calls ---
+    for m in _CTOR_RE.finditer(body):
+        cls = m.group(1)
+        kwarg_block = m.group(2)
+        if cls in _NOISY_RECEIVER_TOKENS:
+            continue
+        info = class_index.get(cls)
+        if info is None or info["kind"] == "plain":
+            continue
+        valid_fields, _, _ = _resolve_transitive_fields(cls, class_index)
+        if not valid_fields:
+            continue
+        try:
+            expr = ast.parse(f"_f({kwarg_block})", mode="eval")
+        except SyntaxError:
+            continue
+        if not isinstance(expr.body, ast.Call):
+            continue
+        for kw in expr.body.keywords:
+            name = kw.arg
+            if name is None or name.startswith("_"):
+                continue
+            if name in valid_fields:
+                continue
+            call_site = f"{cls}({kwarg_block.strip()})"
+            _add(call_site, "constructor", cls, name, valid_fields)
+
+    # --- Pattern 2: attribute accesses ---
+    for m in _ATTR_RE.finditer(body):
+        recv = m.group(1)
+        field_name = m.group(2)
+        if field_name.startswith("_"):
+            continue
+        if recv in _NOISY_RECEIVER_TOKENS:
+            continue
+        # Resolve receiver → class.
+        if recv == "runtime":
+            # Skip — `runtime.X` here is the resolution edge; field access
+            # would be `runtime.X.field` which has more segments and is
+            # handled elsewhere if class is resolved via Pattern A. We skip
+            # to avoid flagging public runtime attrs which are themselves
+            # objects whose classes we don't model uniformly.
+            continue
+        # Detect chained access (e.g., `runtime.X.field`) — if the char
+        # before recv is '.', this is a chained access we can't statically
+        # resolve from a single regex hit. Skip per AD-685b precedent.
+        if m.start() > 0 and body[m.start() - 1] == ".":
+            continue
+        cls_name = pattern_b_vars.get(recv)
+        if cls_name is None:
+            continue
+        info = class_index.get(cls_name)
+        if info is None or info["kind"] == "plain":
+            continue
+        valid_fields, valid_props, valid_methods = _resolve_transitive_fields(
+            cls_name, class_index,
+        )
+        if field_name in valid_fields:
+            continue
+        if field_name in valid_props or field_name in valid_methods:
+            continue
+        if not valid_fields and not valid_props and not valid_methods:
+            continue
+        call_site = f"{recv}.{field_name}"
+        _add(call_site, "attribute", cls_name, field_name, valid_fields)
+
+    return phantoms
+
+
+def find_property_field_collisions(
+    class_index: dict[str, dict],
+) -> list[dict]:
+    """Flag classes whose fields shadow a parent property or method (AD-685d).
+
+    Walks each indexed class's transitive parents (via class_index entries
+    only — unknown parents skipped silently) and flags every (child_field,
+    parent_property) and (child_field, parent_method) pair where names
+    collide. Parent properties are higher-confidence collisions; methods
+    are still surfaced because shadowing a parent method with an instance
+    field is also a real bug.
+    """
+    collisions: list[dict] = []
+    for cls, info in class_index.items():
+        if info["kind"] not in ("dataclass", "pydantic"):
+            continue
+        own_fields = info["fields"]
+        if not own_fields:
+            continue
+        for parent in info["parents"]:
+            if parent == cls:
+                continue
+            pinfo = class_index.get(parent)
+            if pinfo is None:
+                continue
+            _, parent_props, parent_methods = _resolve_transitive_fields(
+                parent, class_index,
+            )
+            for fname in own_fields:
+                if fname in parent_props:
+                    collisions.append({
+                        "child": cls,
+                        "parent": parent,
+                        "name": fname,
+                        "kind": "property",
+                        "category": "property_field_collision",
+                    })
+                elif fname in parent_methods:
+                    collisions.append({
+                        "child": cls,
+                        "parent": parent,
+                        "name": fname,
+                        "kind": "method",
+                        "category": "property_field_collision",
+                    })
+    return collisions
+
+
 def build_runtime_attr_index(src_root: Path) -> tuple[dict[str, str], set[str]]:
     """Build a runtime attribute -> class_name index.
 
@@ -992,9 +1317,15 @@ def main(argv: list[str] | None = None) -> int:
         pattern_b_unresolved,
     )
     type_shape_phantoms = find_type_shape_phantoms(body, index)
+    class_field_index = build_class_field_index(args.src_root)
+    field_phantoms = find_field_phantoms(
+        body, class_field_index, runtime_attrs, pattern_b_vars,
+    )
+    collision_phantoms = find_property_field_collisions(class_field_index)
 
     print(json.dumps({
-        "phantoms": kwarg_phantoms + method_phantoms + type_shape_phantoms,
+        "phantoms": (kwarg_phantoms + method_phantoms + type_shape_phantoms
+                     + field_phantoms + collision_phantoms),
         "unresolved": unresolved,
     }), flush=True)
     return 0
