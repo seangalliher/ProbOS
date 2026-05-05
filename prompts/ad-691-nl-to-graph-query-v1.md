@@ -3,7 +3,7 @@
 **Status:** Draft (Wave 41) · **Phase:** Unified Knowledge Graph — Phase B (Intelligence)
 **Depends on:** AD-687 (KnowledgeEdgeStore, Wave 37), AD-688 (Oracle Tier 6 graph, Wave 38)
 **Closes:** GH issue #385
-**Estimated tests:** 12 (≥10 floor)
+**Estimated tests:** 14 (≥12 floor)
 
 ## Problem
 
@@ -59,27 +59,22 @@ Plus:
 
 ## Architect Calls
 
-### DLog #1 — Ship's Computer / decomposer integration is OUT of scope v1
+### DLog #1 — Decomposer integration shipped via NLGraphQueryAgent (Section 5b)
 
-Captain's spec said *"v1: minimal — expose `runtime.nl_graph_query` and add
-an intent route. No need to modify the LLM-based router upstream if too
-entangled — pure callable surface is acceptable v1."*
+The decomposer (`cognitive/decomposer.py`) discovers intents dynamically from
+`IntentDescriptor` metadata declared by registered agents (intent dispatch
+happens via the mesh, not via hardcoded routes in `decompose()`). The natural
+fix is therefore **not** a decomposer-side edit but a small agent that wraps
+`NLGraphQueryService` and self-registers an IntentDescriptor — exactly the
+pattern `IntrospectionAgent` uses (`agents/introspect.py:18`, single-agent
+utility pool, `_runtime`-backed delegation, no consensus).
 
-Verify-first finding: the decomposer (`cognitive/decomposer.py`) discovers
-intents dynamically from `IntentDescriptor` metadata declared by registered
-agents (intent dispatch happens via the mesh, not via hardcoded routes in
-`decompose()`). To add an `nl_graph_query` intent, we'd need a new agent
-declaring the descriptor + a pool registration — none of which fits the
-"don't modify the router upstream" guard.
-
-**Decision:** v1 ships the **pure callable surface only** —
-`runtime.nl_graph_query.query(natural_language=...)`. The API endpoint and
-direct `await runtime.nl_graph_query.query(...)` from any consumer are the
-two integration points. Decomposer routing (a new agent + IntentDescriptor)
-is **explicitly deferred to AD-691b** (file a tracking issue immediately
-when AD-691 lands). This matches the AD-688 precedent (Tier 6 graph integration
-shipped as `OracleService.query(..., tiers=["graph"])` callable surface; no
-decomposer change).
+**Decision:** v1 ships **both** the pure callable surface
+(`runtime.nl_graph_query.query(...)`) **and** an `NLGraphQueryAgent`
+(Section 5b) registered into a single-agent utility pool (Section 5c). The
+agent declares `IntentDescriptor(name="nl_graph_query", tier="utility",
+requires_consensus=False, requires_reflect=True)` so the decomposer routes
+structural-query NL to it. No decomposer-side modification.
 
 ### DLog #2 — Provenance citation format
 
@@ -725,9 +720,226 @@ Block B (line 202–208, for-loop):
 (The two tuples differ in their leading line — `from probos.routers import (`
 vs `for r in (` — which provides unique anchoring per block.)
 
+## Section 5b — `NLGraphQueryAgent` (NEW `src/probos/agents/utility/nl_graph_query_agent.py`)
+
+Single-agent utility pool that wraps `NLGraphQueryService` and self-registers
+an IntentDescriptor so the decomposer routes structural-query NL to it.
+Pattern mirror: `src/probos/agents/introspect.py:18` (`IntrospectionAgent` —
+`tier = "utility"`, `_runtime`-backed delegation, `requires_reflect=True`,
+no consensus, full `perceive→decide→act→report` lifecycle).
+
+Full file (greenfield):
+
+```python
+"""NL-to-Graph Query agent (AD-691) — wraps NLGraphQueryService.
+
+Declares an ``nl_graph_query`` IntentDescriptor so the decomposer
+(`cognitive/decomposer.py`) — which discovers intents dynamically from
+registered agents — routes structural-query natural language
+("who reports to chief_engineer?", "what depends on the dream pipeline?",
+"how is medbay connected to security?") to this agent.
+
+The agent is purely a thin dispatcher onto ``runtime.nl_graph_query`` and
+holds no state of its own. NEVER raises into the caller — every failure
+path returns a well-formed degraded ``IntentResult``.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from probos.substrate.agent import BaseAgent
+from probos.types import (
+    CapabilityDescriptor,
+    IntentDescriptor,
+    IntentMessage,
+    IntentResult,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class NLGraphQueryAgent(BaseAgent):
+    """Decomposer-routable surface for ``runtime.nl_graph_query``.
+
+    Examples of routed natural-language queries:
+      - "who reports to chief_engineer?"
+      - "what depends on the dream pipeline?"
+      - "how is medbay connected to security?"
+    """
+
+    agent_type: str = "nl_graph_query"
+    tier = "utility"
+    default_capabilities = [
+        CapabilityDescriptor(
+            can="nl_graph_query",
+            detail="Translate natural-language structural questions into typed graph traversals over the knowledge edge store and return a synthesized answer with explicit graph-edge provenance.",
+        ),
+    ]
+    initial_confidence: float = 0.85
+    intent_descriptors = [
+        IntentDescriptor(
+            name="nl_graph_query",
+            params={
+                "query": "natural-language question about relationships between entities (agents, departments, duties, incidents, decisions, findings, capabilities, standing_orders)",
+                "max_hops": "optional traversal depth (1-3, default 2)",
+                "limit": "optional max edges returned (default 10)",
+            },
+            description=(
+                "Answer structural / relationship questions over the knowledge graph. "
+                "Use for queries about who reports to whom, what depends on what, how "
+                "two entities are connected, or which entities share a relation. "
+                "Returns a natural-language answer with [graph: <edge.id>] provenance."
+            ),
+            requires_consensus=False,
+            requires_reflect=True,
+            tier="utility",
+        ),
+    ]
+
+    _handled_intents = {"nl_graph_query"}
+
+    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
+        """Full lifecycle: perceive → decide → act → report."""
+        observation = await self.perceive(intent.__dict__)
+        if observation is None:
+            return None
+
+        plan = await self.decide(observation)
+        if plan is None:
+            return None
+
+        result = await self.act(plan)
+        report = await self.report(result)
+
+        success = bool(report.get("success", False))
+        self.update_confidence(success)
+
+        return IntentResult(
+            intent_id=intent.id,
+            agent_id=self.id,
+            success=success,
+            result=report.get("data"),
+            error=report.get("error"),
+            confidence=self.confidence,
+        )
+
+    async def perceive(self, intent: dict[str, Any]) -> Any:
+        if intent.get("intent") not in self._handled_intents:
+            return None
+        return {"params": intent.get("params", {}) or {}}
+
+    async def decide(self, observation: Any) -> Any:
+        params = observation["params"]
+        nl = params.get("query") or params.get("q") or params.get("text") or ""
+        if not isinstance(nl, str) or not nl.strip():
+            return None
+        return {
+            "query": nl.strip(),
+            "max_hops": params.get("max_hops"),
+            "limit": params.get("limit"),
+        }
+
+    async def act(self, plan: Any) -> Any:
+        rt = self._runtime
+        if rt is None:
+            return {"success": False, "error": "No runtime reference available"}
+        service = getattr(rt, "nl_graph_query", None)
+        if service is None:
+            return {"success": False, "error": "nl_graph_query service unavailable"}
+        try:
+            result = await service.query(
+                plan["query"],
+                max_hops=plan.get("max_hops"),
+                limit=plan.get("limit"),
+            )
+        except Exception as e:  # Tier-2: log-and-degrade
+            logger.warning("AD-691: NLGraphQueryAgent.act delegation failed", exc_info=True)
+            return {"success": False, "error": f"nl_graph_query failed: {e}"}
+        return {
+            "success": True,
+            "data": {
+                "query": result.query,
+                "answer": result.answer,
+                "provenance": list(result.provenance),
+                "extracted_entities": [e.to_dict() for e in result.extracted_entities],
+                "edge_count": len(result.edges_traversed),
+                "path_count": len(result.paths),
+            },
+        }
+```
+
+Also export from `src/probos/agents/utility/__init__.py` (append to whatever
+existing `__all__` / re-export list is there; if the file is empty, add
+`from probos.agents.utility.nl_graph_query_agent import NLGraphQueryAgent`).
+Verify the file's existing shape before SEARCH/REPLACE — if it already
+imports siblings (`language_agents`, `organizer_agents`, etc.), follow that
+convention; otherwise add a single-line import.
+
+## Section 5c — Pool registration in `src/probos/runtime.py` and `src/probos/startup/agent_fleet.py`
+
+Two edits, both grep-anchored.
+
+**5c.1 — Template registration (`runtime.py:598`)**
+
+SEARCH/REPLACE: insert the new template registration immediately after the
+introspect template registration (`runtime.py:598`). Also add the import at
+the top alongside `IntrospectionAgent` (`runtime.py:25`).
+
+Import block addition (anchor: `from probos.agents.introspect import IntrospectionAgent`):
+
+```python
+from probos.agents.introspect import IntrospectionAgent
+from probos.agents.utility.nl_graph_query_agent import NLGraphQueryAgent  # AD-691
+```
+
+Template registration (anchor: `self.spawner.register_template("introspect", IntrospectionAgent)`):
+
+```python
+        self.spawner.register_template("introspect", IntrospectionAgent)
+        self.spawner.register_template("nl_graph_query", NLGraphQueryAgent)  # AD-691
+        self.spawner.register_template("skill_agent", SkillBasedAgent)
+```
+
+**5c.2 — Pool creation (`startup/agent_fleet.py:60`)**
+
+Gate on `config.nl_graph_query.enabled` (the field added in Section 1) AND
+on runtime having the service wired (`getattr(runtime, "nl_graph_query", None)
+is not None`). Single-agent pool (`target_size=1`) — this is a thin
+dispatcher; no parallelism benefit.
+
+SEARCH/REPLACE anchor — the introspect pool block (`agent_fleet.py:58-60`):
+
+```python
+    # Introspect pool (needs runtime kwarg)
+    ids = generate_pool_ids("introspect", "introspect", 2)
+    await create_pool_fn("introspect", "introspect", target_size=2, agent_ids=ids, runtime=runtime)
+
+    # NL-to-Graph Query pool (AD-691) — single-agent dispatcher onto runtime.nl_graph_query
+    if (
+        getattr(config, "nl_graph_query", None)
+        and config.nl_graph_query.enabled
+        and getattr(runtime, "nl_graph_query", None) is not None
+    ):
+        ids = generate_pool_ids("nl_graph_query", "nl_graph_query", 1)
+        await create_pool_fn(
+            "nl_graph_query", "nl_graph_query",
+            target_size=1, agent_ids=ids, runtime=runtime,
+        )
+```
+
+Note: this phase runs AFTER `finalize_startup` wires `runtime.nl_graph_query`
+(verify the ordering at HEAD — `start()` invokes `_wire_*` finalizers before
+`create_agent_fleet`). If the ordering is reversed, the gate's third clause
+(`runtime.nl_graph_query is not None`) will skip pool creation cleanly
+rather than crashing — explicit log emit for that case is in Section 7's
+"What this does NOT change" boundary (no startup-ordering refactor).
+
 ## Section 6 — Tests (NEW `tests/test_ad691_nl_graph_query.py`)
 
-12 focused tests (≥10 floor, +2 margin). Pattern modelled on
+14 focused tests (≥12 floor — bumped from 10 to accommodate agent +
+pool tests). Pattern modelled on
 `tests/test_ad690_relationship_inference.py`.
 
 ### Stubs (top of file)
@@ -831,13 +1043,41 @@ above is reduced.
     a runtime stub holding a service that returns a fixed
     `NLGraphQueryResult`; assert 200 + body matches `to_dict()`.
 
-(Architect call: ship 12. If test count drops by 2, drop tests 7 and 11 —
-both are convergent with tests 6 and 10 respectively. Keep 13/14.)
+### Agent tests (Section 5b/5c coverage)
+
+15. `test_agent_act_happy_path_delegates_to_runtime_service` — Construct
+    `NLGraphQueryAgent` with a runtime stub whose `nl_graph_query` is a
+    `_FakeService` returning a fixed `NLGraphQueryResult` (1 entity,
+    1 edge, answer + provenance). Call `await agent.handle_intent(...)`
+    with `IntentMessage(intent="nl_graph_query", params={"query":
+    "who reports to chief_engineer?"})`. Assert `result.success is True`,
+    `result.result["answer"]` matches the stub answer,
+    `result.result["provenance"]` matches the stub provenance, and that
+    `_FakeService.calls == 1` with the natural-language query passed
+    through verbatim.
+16. `test_agent_pool_registered_when_feature_enabled` — Smoke test using
+    the standard runtime-bootstrap fixture (mirror the fixture pattern
+    used by `test_ad690_*` or any prior `test_ad6xx_*` runtime smoke
+    test). Boot a runtime with `nl_graph_query.enabled=True`; assert
+    `"nl_graph_query" in runtime.spawner._templates`,
+    `"nl_graph_query" in runtime.pools`, and the pool's agent declares
+    an `IntentDescriptor(name="nl_graph_query", tier="utility")`. If
+    a full runtime boot is too heavy for unit-tier (Wave 8/10 cost
+    lesson), substitute with a focused test: directly invoke
+    `create_agent_fleet` against a minimal runtime stub with
+    `_templates`/`pools` dicts pre-populated and assert the gate
+    triggers pool creation.
+
+(Architect call: ship 14. If test count must drop by 2, drop tests 7 and
+11 — both are convergent with tests 6 and 10 respectively. NEVER drop
+13/14 (API surface) or 15/16 (agent + pool surface — the new core scope).)
 
 ## Section 7 — What This Does NOT Change
 
-- **No decomposer integration / new agent / IntentDescriptor** (DLog #1).
-  Deferred to AD-691b. File a tracking issue immediately when AD-691 lands.
+- **No decomposer-side modification.** v1 ships an `NLGraphQueryAgent`
+  (Section 5b) + single-agent pool (Section 5c) so the decomposer's
+  existing dynamic IntentDescriptor discovery picks up the route
+  automatically. The decomposer source is not touched.
 - **No embedding-based fuzzy entity match** (deferred AD-691c if surfaced).
   v1 uses verbatim entity IDs as extracted by the LLM.
 - **No write/mutation queries.** Graph is read-only here. Mutation
@@ -856,12 +1096,16 @@ both are convergent with tests 6 and 10 respectively. Keep 13/14.)
 ## Section 8 — Tracker Updates
 
 - `PROGRESS.md` — prepend AD-691 v1 CLOSED entry at top of file (Wave 41).
+  Note: ships both callable surface AND decomposer-routable
+  `NLGraphQueryAgent`.
 - `docs/development/roadmap.md` — flip AD-691 status from **Scoped** to
-  **Complete**. Description should mention OSS extension point shipped;
-  do NOT mention commercial pricing/positioning.
+  **Complete**. Description should mention OSS extension point shipped
+  (callable + agent + pool); do NOT mention commercial pricing/positioning.
 - `DECISIONS.md` — prepend AD-691 entry at top of Era V section (date
-  2026-05-04). Reference: GH issue #385, Wave 41. Note DLog #1
-  (decomposer-integration deferred to AD-691b).
+  2026-05-04). Reference: GH issue #385, Wave 41. Note that decomposer
+  integration ships in v1 via `NLGraphQueryAgent` (no decomposer-side
+  modification — leverages existing dynamic `IntentDescriptor`
+  discovery).
 
 ## Section 9 — Cloud-Ready Storage
 
@@ -884,6 +1128,13 @@ Expected candidates (all FPs):
   index. Same intro-not-in-index FP class as prior waves.
 - `service.query(...)` kwarg shapes — service introduced by Section 2; not
   in index yet.
+- `NLGraphQueryAgent` / `agent.handle_intent` / `agent.perceive` /
+  `agent.decide` / `agent.act` — agent introduced by Section 5b; methods
+  override `BaseAgent` lifecycle hooks (verified shape against
+  `agents/introspect.py:54-86`). Same intro-not-in-index FP class.
+- `runtime.spawner._templates` / `runtime.pools` (test 16) — internal
+  attributes used in pool-registration smoke test; same private-attr
+  test-fixture FP class as prior waves' template-registration tests.
 - `_StubLLM.__new__` / `_StubEdgeStore.__new__` — stdlib object protocol
   used in test fixtures.
 - `_GRAPH_HOP_PROXIMITY_BASE` / `_CITATION_RE` / `_RELATION_VALUES` /
@@ -911,17 +1162,22 @@ Architect target: 0 NEW phantoms.
 
 ## Section 12 — Acceptance Criteria
 
-- 12 new tests pass at `tests/test_ad691_nl_graph_query.py`.
+- 14 new tests pass at `tests/test_ad691_nl_graph_query.py` (12 service +
+  API tests + 2 agent / pool tests).
 - Full gate (`pytest tests/ -q -n 8 --dist=loadfile`) passes; test count
-  delta = +12 vs Wave 40 baseline 11028 → expected 11040 (±1 for known
+  delta = +14 vs Wave 40 baseline 11028 → expected 11042 (±1 for known
   xdist flakes — see Wave 23/27/30/31/32/33 baselines).
 - No new phantoms beyond the FP classes documented in Section 10.
+- `NLGraphQueryAgent` registered as a spawner template AND created into
+  the `nl_graph_query` pool when `config.nl_graph_query.enabled=True`.
+- Decomposer's dynamic intent registry exposes `nl_graph_query` after
+  startup (verify via `runtime._collect_intent_descriptors()` — the
+  live entry point at `runtime.py:3048`; called by
+  `decomposer.refresh_descriptors(...)` at `runtime.py:671`).
 - Pre-commit deletion sanity: max single-file deletion < 200 lines.
 - Trackers updated per Section 8.
 - **Verify all changes comply with the Engineering Principles in
   `.github/copilot-instructions.md`.**
-- File a GH issue for AD-691b (decomposer integration / new agent +
-  IntentDescriptor) before closing AD-691.
 
 ## Verified Against Codebase (2026-05-04, HEAD `bea66c5`)
 
@@ -959,4 +1215,20 @@ src/probos/api.py:192-208          twin-block routers tuple (import + for-loop)
 tests/test_ad690_relationship_inference.py:28   class _StubLLM (sequential-response pattern)
 src/probos/cognitive/decomposer.py:280   async def decompose(...)  # confirms NO hardcoded
                                           "ask" intent; routing is dynamic — supports DLog #1
+src/probos/agents/introspect.py:18       class IntrospectionAgent(BaseAgent)
+                                           tier="utility", _runtime-backed delegation,
+                                           full perceive→decide→act→report lifecycle —
+                                           pattern reference for NLGraphQueryAgent (Section 5b)
+src/probos/runtime.py:25                from probos.agents.introspect import IntrospectionAgent
+                                           — anchor for the new NLGraphQueryAgent import
+src/probos/runtime.py:598               self.spawner.register_template("introspect", IntrospectionAgent)
+                                           — anchor for new template registration
+src/probos/startup/agent_fleet.py:58-60 # Introspect pool block (single-agent utility,
+                                           runtime kwarg) — anchor for new
+                                           nl_graph_query pool block (Section 5c.2)
+src/probos/types.py:64                  @dataclass class IntentResult (intent_id, agent_id,
+                                           success, result, error, confidence, timestamp)
+src/probos/types.py:581                 @dataclass class IntentDescriptor (name, params,
+                                           description, requires_consensus=False,
+                                           requires_reflect=False, tier="domain")
 ```
