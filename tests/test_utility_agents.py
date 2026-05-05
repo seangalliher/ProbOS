@@ -577,7 +577,7 @@ class TestSchedulerAgent:
 class TestUtilityExports:
 
     def test_all_agents_exported(self):
-        """__init__.py exports all 10 utility agents."""
+        """__init__.py exports all utility agents (10 cognitive + AD-691)."""
         from probos.agents.utility import __all__
 
         expected = {
@@ -591,6 +591,7 @@ class TestUtilityExports:
             "TodoAgent",
             "NoteTakerAgent",
             "SchedulerAgent",
+            "NLGraphQueryAgent",  # AD-691
         }
         assert set(__all__) == expected
 

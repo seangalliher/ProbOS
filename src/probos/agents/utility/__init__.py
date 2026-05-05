@@ -18,6 +18,7 @@ from probos.agents.utility.organizer_agents import (
     NoteTakerAgent,
     SchedulerAgent,
 )
+from probos.agents.utility.nl_graph_query_agent import NLGraphQueryAgent
 
 __all__ = [
     "WebSearchAgent",
@@ -30,4 +31,5 @@ __all__ = [
     "TodoAgent",
     "NoteTakerAgent",
     "SchedulerAgent",
+    "NLGraphQueryAgent",
 ]

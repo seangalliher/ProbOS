@@ -398,6 +398,38 @@ class CausalReasoningConfig(BaseModel):
     tier: str = "standard"
 
 
+class NLGraphQueryConfig(BaseModel):
+    """AD-691 v1: NL-to-Graph Query Service.
+
+    Default-enabled (deviation from Wave-10 transitional-flag convention)
+    because the service is a callable read-only aggregator with no automatic
+    invocation; it is invisible at runtime until a caller invokes
+    `runtime.nl_graph_query.query()`. Same precedent as
+    `DiagnosticContextConfig` and `KnowledgeEdgesConfig`.
+    """
+
+    enabled: bool = True
+    default_max_hops: int = 2
+    default_limit: int = 10
+    llm_tier: str = "standard"
+    extraction_max_tokens: int = 600
+    synthesis_max_tokens: int = 800
+
+    @field_validator("default_max_hops")
+    @classmethod
+    def _hops_in_range(cls, v: int) -> int:
+        if not 1 <= v <= 3:
+            raise ValueError("default_max_hops must be in [1, 3]")
+        return v
+
+    @field_validator("default_limit")
+    @classmethod
+    def _limit_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("default_limit must be >= 1")
+        return v
+
+
 class StepInstructionConfig(BaseModel):
     """AD-651: Step-specific standing order decomposition."""
 
@@ -2145,6 +2177,9 @@ class SystemConfig(BaseModel):
     diagnostic_context: DiagnosticContextConfig = Field(
         default_factory=DiagnosticContextConfig
     )  # AD-661
+    nl_graph_query: NLGraphQueryConfig = Field(
+        default_factory=NLGraphQueryConfig
+    )  # AD-691
     clinical_telemetry: ClinicalTelemetryConfig = Field(
         default_factory=ClinicalTelemetryConfig
     )  # AD-635

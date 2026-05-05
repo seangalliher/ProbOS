@@ -391,6 +391,30 @@ def _wire_diagnostic_context(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_nl_graph_query(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-691 v1: Wire NLGraphQueryService LLM-driven NL→graph router."""
+    cfg = getattr(config, "nl_graph_query", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.cognitive.nl_graph_query import NLGraphQueryService
+
+    runtime.nl_graph_query = NLGraphQueryService(
+        runtime,
+        default_max_hops=cfg.default_max_hops,
+        default_limit=cfg.default_limit,
+        llm_tier=cfg.llm_tier,
+        extraction_max_tokens=cfg.extraction_max_tokens,
+        synthesis_max_tokens=cfg.synthesis_max_tokens,
+    )
+    logger.info(
+        "AD-691: NLGraphQueryService v1 initialized "
+        "(default_max_hops=%d, default_limit=%d, llm_tier=%s)",
+        cfg.default_max_hops, cfg.default_limit, cfg.llm_tier,
+    )
+    return True
+
+
 def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-635 v1: Wire ClinicalTelemetryService clearance-gated query facade."""
     cfg = getattr(config, "clinical_telemetry", None)
@@ -702,6 +726,9 @@ async def finalize_startup(
 
     if _wire_diagnostic_context(runtime=runtime, config=config):
         logger.info("AD-661: DiagnosticContextService v1 wired during finalization")
+
+    if _wire_nl_graph_query(runtime=runtime, config=config):
+        logger.info("AD-691: NLGraphQueryService v1 wired during finalization")
 
     if _wire_clinical_telemetry(runtime=runtime, config=config):
         logger.info("AD-635: ClinicalTelemetryService v1 wired during finalization")
