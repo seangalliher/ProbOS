@@ -643,7 +643,7 @@ waves:
       - "prompts/ad-456d-auditlog-sqlite-v1.md"
     builder_required: true
     issues_to_close: [400]
-    status: pending
+    status: done
 
   - id: "58"
     title: "AD-528b v1 Ground-Truth Active Rejection & Quarantine"
