@@ -10,6 +10,32 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-685c v1: Phantom-API Pre-Check Type-Shape Validation (2026-05-04)
+
+**Problem:** AD-685 v1 (Wave 11) validates kwarg names against live signatures; AD-685b v1 (Wave 15) validates method names against resolved classes. Neither validates that kwarg **values** match the parameter's annotated type. A prompt asserting `obj.method(name=42)` where the method declares `name: str` ships clean today. GH issue #406 calls for type-shape validation closing this gap.
+
+**Decision:** Extend `scripts/phantom_api_ast_helper.py` (single-file, NOT a directory split — verified at draft) with a third `category="type_shape_mismatch"` phantom class.
+
+- `_collect_param_annotations()` mirrors `_collect_param_names()` for positional/kwonly/`*args`/`**kwargs`; `build_index()` records `param_annotations: dict[str, ast.AST]` alongside existing `params` in the same AST walk (zero extra I/O).
+- Slotted `TypeShape` (`literal_types`/`allow_none`/`container`/`element_shapes`/`unknown` + `is_skippable()`); pure-AST `_annotation_to_type_shape` handles primitives, `Optional[X]`, `X | None`, `Union[A, B, ...]`, `list[T]`/`dict[K, V]`/`tuple[T, ...]`/`tuple[T1, T2]`/`set[T]`/`frozenset[T]` plus bare containers; unknown classes (e.g. `KnowledgeEdge`) → `unknown=True` → SKIP.
+- Slotted `ValueShape` + pure-AST `_value_to_shape` for `ast.Constant` (str/int/float/bool/None — bytes returns None per Captain spec) + `ast.List`/`ast.Set`/`ast.Tuple`/`ast.Dict`; `ast.Name`/`ast.Call`/`ast.Attribute` → silent skip.
+- `_value_matches_shape` is conservative — skippable shapes never flag; `None` matches iff `allow_none`; primitive matches iff in `literal_types`; bool also matches int (Python `isinstance(True, int)`); container matches when kind matches AND every element shape matches (homogeneous for list/set/`tuple[T, ...]`, positional for `tuple[T1, T2]`, key/value for dict); empty container is permissive.
+- `find_type_shape_phantoms` re-parses each call's kwarg block as `ast.parse(f"_f({block})", mode="eval")` to recover value ASTs; flags only when EVERY applicable candidate has an annotation AND NONE match the value. If ANY candidate has the kwarg without an annotation → permissive across all candidates → no flag.
+- `_jsonable_candidate(c)` projects candidate dicts to a JSON-serializable subset (strips `param_annotations` AST nodes); both `find_kwarg_phantoms` and `find_type_shape_phantoms` route emitted candidate slices through it.
+- `main()` adds type-shape phantoms to the `phantoms` list. PowerShell wrapper adds a third `elseif type_shape_mismatch` branch rendering `<method>(<kwarg>=<<value_type>> -> expected <<types>>)`. No exit-code semantics change. Existing AD-685 v1 kwarg-phantom records (no `category` field) and AD-685b method-phantom records ship unchanged.
+
+**Rationale:** The phantom-API pre-check has caught three method-shape recurrences and one kwarg-shape recurrence across Waves 9B/10/12/14/27. Type-shape mismatches (`obj.f(name=42)` against `name: str`) belong to the same class of statically-detectable phantoms. Captain's spec asks for ≥2x perf bound only; reusing the existing single AST walk to capture annotations alongside param names meets that trivially. Keeping the helper single-file (rather than splitting into a `scripts/phantom-api-precheck/` package per the Captain's draft) preserves the AST-only-no-imports sandbox property; a package split is a separate refactor AD if needed. Conservative skip-over-flag remains the standing principle: untyped params skip, unknown classes skip, bytes literals skip, variable refs skip, empty containers permissive — false positives are far costlier than false negatives at the dispatch gate.
+
+**Trade-offs:**
+
+- Unknown class annotations (e.g. `def f(x: KnowledgeEdge)`) are skipped entirely; AD-685d (Wave 47) adds dataclass / Pydantic field-name validation for those cases.
+- No type-shape on return values (separate AD if ever needed). No runtime introspection. No bytes-content reasoning. No PowerShell `$STDLIB_PREFIXES`/`$DOC_FILE_PATTERN` change.
+- One drift-fix during build: helper crashed on first JSON serialization with `TypeError: Object of type BinOp is not JSON serializable` because `param_annotations` AST nodes leaked into `candidates[:5]` slices of phantom records. `_jsonable_candidate(c)` was added and routed through both kwarg and type-shape phantom emitters; existing `tests/test_phantom_api_precheck_kwargs.py` (which calls the wrapper end-to-end via subprocess) was the failing canary that surfaced this.
+
+**Closes:** GH issue #406.
+
+**Related:** AD-685 v1 (Wave 11, kwarg-name validation), AD-685b v1 (Wave 15, method-call AST validation), AD-685d (Wave 47 / future, dataclass / Pydantic field-name validation).
+
 ### AD-661b + AD-661c v1: DiagnosticContextService Ship's Records + Budget Remainder Redistribution (2026-05-04)
 
 **Problem:** AD-661 v1 (Wave 33, commit 9119f50) shipped a 3-tier pull-based diagnostic-context aggregator with a hard 40/30/30 split and no remainder redistribution. Two follow-ups remained open: AD-661b (#412) — bundle had no Ship's Records (AD-434) coverage even though `runtime.records_store` was already public; AD-661c (#413) — when one tier under-filled its allocation (e.g. procedures producing 200 tokens against a 2400-token slice), the unused budget went to waste even when other tiers had more candidates waiting. Captain's Wave 45 "no trivial deferral" rule: ship both extensions in one Builder cycle.

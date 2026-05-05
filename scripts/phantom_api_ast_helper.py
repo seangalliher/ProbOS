@@ -141,12 +141,14 @@ def build_index(src_root: Path) -> dict[str, list[dict]]:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 params = _collect_param_names(node)
+                annotations = _collect_param_annotations(node)
                 index.setdefault(node.name, []).append({
                     "file": str(py_file.relative_to(src_root.parent.parent)
                                   if src_root.parent.parent in py_file.parents
                                   else py_file),
                     "line": node.lineno,
                     "params": params,
+                    "param_annotations": annotations,
                     "accepts_kwargs": _has_var_keyword(node),
                 })
 
@@ -171,9 +173,45 @@ def _collect_param_names(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[s
     return names
 
 
+def _collect_param_annotations(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> dict[str, ast.AST]:
+    """Collect parameter -> annotation AST nodes (only annotated params).
+
+    Mirrors `_collect_param_names()` for positional, keyword-only, and
+    *args/**kwargs categories. Unannotated params are omitted (caller treats
+    absence as 'no shape constraint' per AD-685c v1 conservative rule).
+    """
+    args = func.args
+    annotations: dict[str, ast.AST] = {}
+    for a in args.posonlyargs:
+        if a.annotation is not None:
+            annotations[a.arg] = a.annotation
+    for a in args.args:
+        if a.annotation is not None:
+            annotations[a.arg] = a.annotation
+    for a in args.kwonlyargs:
+        if a.annotation is not None:
+            annotations[a.arg] = a.annotation
+    if args.vararg is not None and args.vararg.annotation is not None:
+        annotations[args.vararg.arg] = args.vararg.annotation
+    if args.kwarg is not None and args.kwarg.annotation is not None:
+        annotations[args.kwarg.arg] = args.kwarg.annotation
+    return annotations
+
+
 def _has_var_keyword(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """True if the function accepts **kwargs (any kwarg passes)."""
     return func.args.kwarg is not None
+
+
+def _jsonable_candidate(c: dict) -> dict:
+    """Project a candidate dict to a JSON-serializable subset.
+
+    `param_annotations` (AD-685c) holds AST nodes which are not JSON
+    serializable; stripped from any record exported to stdout.
+    """
+    return {k: v for k, v in c.items() if k != "param_annotations"}
 
 
 def find_kwarg_phantoms(body: str, index: dict[str, list[dict]]) -> list[dict]:
@@ -211,7 +249,7 @@ def find_kwarg_phantoms(body: str, index: dict[str, list[dict]]) -> list[dict]:
                 "call_site": call_site,
                 "method": method,
                 "kwarg": kwarg_name,
-                "candidates": candidates[:5],
+                "candidates": [_jsonable_candidate(c) for c in candidates[:5]],
             })
     return phantoms
 
@@ -266,6 +304,362 @@ def _is_none_node(node: ast.AST) -> bool:
     if isinstance(node, ast.Name) and node.id == "None":
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# AD-685c: Type-shape validation against kwarg literal values.
+# ---------------------------------------------------------------------------
+
+# Primitive Python type names that the validator can resolve from literals.
+_PRIMITIVE_TYPE_NAMES = frozenset({"str", "int", "float", "bool", "bytes"})
+
+# Container annotation names → canonical container kind.
+_CONTAINER_ANNOTATIONS = {
+    "list": "list", "List": "list",
+    "dict": "dict", "Dict": "dict",
+    "tuple": "tuple", "Tuple": "tuple",
+    "set": "set", "Set": "set",
+    "frozenset": "set", "FrozenSet": "set",
+}
+
+
+class TypeShape:
+    """Structured type-shape extracted from an annotation AST.
+
+    Fields:
+      literal_types: primitive type names the annotation accepts.
+      allow_none:    True iff `None` is a valid value.
+      container:     'list'/'dict'/'tuple'/'set' or None.
+      element_shapes: per-element/key/value shapes for containers.
+      unknown:       True if any branch references a non-primitive class
+                     (validator SKIPs to avoid false positives).
+    """
+
+    __slots__ = ("literal_types", "allow_none", "container",
+                 "element_shapes", "unknown")
+
+    def __init__(
+        self,
+        *,
+        literal_types: frozenset[str] = frozenset(),
+        allow_none: bool = False,
+        container: str | None = None,
+        element_shapes: tuple["TypeShape", ...] = (),
+        unknown: bool = False,
+    ) -> None:
+        self.literal_types = literal_types
+        self.allow_none = allow_none
+        self.container = container
+        self.element_shapes = element_shapes
+        self.unknown = unknown
+
+    def is_skippable(self) -> bool:
+        """True if this shape carries no actionable validation evidence."""
+        if self.unknown:
+            return True
+        if self.literal_types or self.container or self.allow_none:
+            return False
+        return True
+
+
+_UNKNOWN_SHAPE = TypeShape(unknown=True)
+_EMPTY_SHAPE = TypeShape()
+
+
+def _annotation_to_type_shape(node: ast.AST) -> TypeShape:
+    """Resolve an annotation AST node to a TypeShape.
+
+    Handles primitives (str/int/float/bool/bytes), Optional[X], X | None,
+    Union[A, B], list[T] / dict[K,V] / tuple[T,...] / set[T]. Any
+    unrecognised class name yields a TypeShape(unknown=True) which the
+    validator treats as 'skip — cannot validate'.
+    """
+    if isinstance(node, ast.Constant) and node.value is None:
+        return TypeShape(allow_none=True)
+    if isinstance(node, ast.Name):
+        name = node.id
+        if name == "None":
+            return TypeShape(allow_none=True)
+        if name in _PRIMITIVE_TYPE_NAMES:
+            return TypeShape(literal_types=frozenset({name}))
+        if name in _CONTAINER_ANNOTATIONS:
+            return TypeShape(container=_CONTAINER_ANNOTATIONS[name])
+        return _UNKNOWN_SHAPE
+    if isinstance(node, ast.Subscript):
+        base = node.value
+        if not isinstance(base, ast.Name):
+            return _UNKNOWN_SHAPE
+        base_name = base.id
+        slice_node = node.slice
+        if base_name == "Optional":
+            inner = _annotation_to_type_shape(slice_node)
+            if inner.unknown:
+                return TypeShape(
+                    literal_types=inner.literal_types,
+                    allow_none=True,
+                    container=inner.container,
+                    element_shapes=inner.element_shapes,
+                    unknown=True,
+                )
+            return TypeShape(
+                literal_types=inner.literal_types,
+                allow_none=True,
+                container=inner.container,
+                element_shapes=inner.element_shapes,
+            )
+        if base_name == "Union":
+            return _union_shape(_iter_tuple_elts(slice_node))
+        if base_name in _CONTAINER_ANNOTATIONS:
+            kind = _CONTAINER_ANNOTATIONS[base_name]
+            elts = _iter_tuple_elts(slice_node)
+            element_shapes = tuple(_annotation_to_type_shape(e) for e in elts)
+            return TypeShape(container=kind, element_shapes=element_shapes)
+        return _UNKNOWN_SHAPE
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _union_shape(_flatten_bitor(node))
+    return _UNKNOWN_SHAPE
+
+
+def _iter_tuple_elts(node: ast.AST) -> list[ast.AST]:
+    """Return the element list for a subscript slice (Tuple) or single expr."""
+    if isinstance(node, ast.Tuple):
+        return list(node.elts)
+    return [node]
+
+
+def _flatten_bitor(node: ast.AST) -> list[ast.AST]:
+    """Flatten nested `A | B | C` BinOp chain to a list of leaf nodes."""
+    leaves: list[ast.AST] = []
+
+    def _walk(n: ast.AST) -> None:
+        if isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitOr):
+            _walk(n.left)
+            _walk(n.right)
+        else:
+            leaves.append(n)
+
+    _walk(node)
+    return leaves
+
+
+def _union_shape(branches: list[ast.AST]) -> TypeShape:
+    """Combine N branch annotations into a single union TypeShape."""
+    literal_types: set[str] = set()
+    allow_none = False
+    container: str | None = None
+    element_shapes: tuple[TypeShape, ...] = ()
+    unknown = False
+    for b in branches:
+        sub = _annotation_to_type_shape(b)
+        if sub.allow_none:
+            allow_none = True
+        if sub.literal_types:
+            literal_types.update(sub.literal_types)
+        if sub.container is not None:
+            if container is not None and container != sub.container:
+                unknown = True
+            else:
+                container = sub.container
+                element_shapes = sub.element_shapes
+        if sub.unknown:
+            unknown = True
+    return TypeShape(
+        literal_types=frozenset(literal_types),
+        allow_none=allow_none,
+        container=container,
+        element_shapes=element_shapes,
+        unknown=unknown,
+    )
+
+
+class ValueShape:
+    """Structured shape extracted from a kwarg value AST.
+
+    Mirrors TypeShape but populated from a concrete literal expression.
+    Returned None means 'cannot resolve' (variable refs, calls, bytes,
+    anything non-static); the validator silently skips such kwargs.
+    """
+
+    __slots__ = ("primitive", "container", "element_shapes")
+
+    def __init__(
+        self,
+        *,
+        primitive: str | None = None,
+        container: str | None = None,
+        element_shapes: tuple["ValueShape", ...] = (),
+    ) -> None:
+        self.primitive = primitive
+        self.container = container
+        self.element_shapes = element_shapes
+
+
+def _value_to_shape(node: ast.AST) -> ValueShape | None:
+    """Classify a kwarg value AST. Returns None when not statically resolvable.
+
+    bytes literals return None per AD-685c v1 spec ('skipped on bytes/bytes-like
+    — cannot resolve'). Variable refs, calls, attribute accesses also return
+    None (the validator silently skips these kwargs).
+    """
+    if isinstance(node, ast.Constant):
+        v = node.value
+        if v is None:
+            return ValueShape(primitive="NoneType")
+        if isinstance(v, bool):
+            return ValueShape(primitive="bool")
+        if isinstance(v, int):
+            return ValueShape(primitive="int")
+        if isinstance(v, float):
+            return ValueShape(primitive="float")
+        if isinstance(v, str):
+            return ValueShape(primitive="str")
+        if isinstance(v, bytes):
+            return None
+        return None
+    if isinstance(node, ast.List):
+        return ValueShape(
+            container="list",
+            element_shapes=tuple(s for s in (_value_to_shape(e) for e in node.elts) if s is not None),
+        )
+    if isinstance(node, ast.Set):
+        return ValueShape(
+            container="set",
+            element_shapes=tuple(s for s in (_value_to_shape(e) for e in node.elts) if s is not None),
+        )
+    if isinstance(node, ast.Tuple):
+        return ValueShape(
+            container="tuple",
+            element_shapes=tuple(s for s in (_value_to_shape(e) for e in node.elts) if s is not None),
+        )
+    if isinstance(node, ast.Dict):
+        keys = tuple(s for s in (_value_to_shape(k) for k in node.keys if k is not None) if s is not None)
+        vals = tuple(s for s in (_value_to_shape(v) for v in node.values) if s is not None)
+        return ValueShape(container="dict", element_shapes=keys + vals)
+    return None
+
+
+def _value_matches_shape(value: ValueShape, shape: TypeShape) -> bool:
+    """True iff the concrete value is compatible with the annotation shape.
+
+    Conservative — when the shape is skippable (unknown/empty), return True
+    so the validator does not flag. False is reserved for clear mismatches.
+    """
+    if shape.is_skippable():
+        return True
+    if value.primitive == "NoneType":
+        return shape.allow_none
+    if value.container is not None:
+        if shape.container is None:
+            return False
+        if value.container != shape.container:
+            return False
+        if not shape.element_shapes:
+            return True
+        if value.container in ("list", "set"):
+            elem_shape = shape.element_shapes[0]
+            return all(_value_matches_shape(e, elem_shape) for e in value.element_shapes)
+        if value.container == "tuple":
+            if len(shape.element_shapes) == 1:
+                elem_shape = shape.element_shapes[0]
+                return all(_value_matches_shape(e, elem_shape) for e in value.element_shapes)
+            if len(shape.element_shapes) != len(value.element_shapes):
+                return False
+            return all(_value_matches_shape(e, s)
+                       for e, s in zip(value.element_shapes, shape.element_shapes))
+        if value.container == "dict":
+            if not value.element_shapes:
+                return True
+            if len(shape.element_shapes) != 2:
+                return True
+            key_shape, val_shape = shape.element_shapes
+            half = len(value.element_shapes) // 2
+            keys = value.element_shapes[:half]
+            vals = value.element_shapes[half:]
+            if not all(_value_matches_shape(k, key_shape) for k in keys):
+                return False
+            if not all(_value_matches_shape(v, val_shape) for v in vals):
+                return False
+            return True
+        return False
+    if value.primitive is None:
+        return True
+    if value.primitive in shape.literal_types:
+        return True
+    if value.primitive == "bool" and "int" in shape.literal_types:
+        return True
+    return False
+
+
+def find_type_shape_phantoms(
+    body: str, index: dict[str, list[dict]],
+) -> list[dict]:
+    """Scan body for kwarg literals whose type mismatches the annotation.
+
+    For each call-site whose kwarg name IS valid against the live signature
+    index (i.e., not already a kwarg phantom), parse the value AST and
+    check it against the union of param-annotation shapes across matching
+    candidates. Flag iff every candidate has an annotation AND none match
+    the value.
+    """
+    phantoms: list[dict] = []
+    for match in _CALL_RE.finditer(body):
+        receiver = match.group(1)
+        method = match.group(2)
+        kwarg_block = match.group(3)
+        if receiver in _NOISY_RECEIVER_TOKENS:
+            continue
+        if method in _NOISY_METHODS:
+            continue
+        candidates = index.get(method)
+        if not candidates:
+            continue
+        if any(c["accepts_kwargs"] for c in candidates):
+            continue
+        try:
+            expr = ast.parse(f"_f({kwarg_block})", mode="eval")
+        except SyntaxError:
+            continue
+        if not isinstance(expr.body, ast.Call):
+            continue
+        for keyword in expr.body.keywords:
+            kwarg_name = keyword.arg
+            if kwarg_name is None:
+                continue
+            value_shape = _value_to_shape(keyword.value)
+            if value_shape is None:
+                continue
+            applicable_shapes: list[TypeShape] = []
+            for c in candidates:
+                if kwarg_name not in c["params"]:
+                    continue
+                ann = c.get("param_annotations", {}).get(kwarg_name)
+                if ann is None:
+                    applicable_shapes = []
+                    break
+                applicable_shapes.append(_annotation_to_type_shape(ann))
+            if not applicable_shapes:
+                continue
+            if any(_value_matches_shape(value_shape, s) for s in applicable_shapes):
+                continue
+            expected = sorted({
+                t for s in applicable_shapes for t in s.literal_types
+            })
+            value_label = (
+                value_shape.primitive
+                if value_shape.primitive is not None
+                else (value_shape.container or "unknown")
+            )
+            call_site = f"{receiver}.{method}({kwarg_block.strip()})"
+            phantoms.append({
+                "call_site": call_site,
+                "method": method,
+                "kwarg": kwarg_name,
+                "value_type": value_label,
+                "expected_types": expected,
+                "category": "type_shape_mismatch",
+                "candidates": [_jsonable_candidate(c) for c in candidates[:5]],
+            })
+    return phantoms
 
 
 def _extract_class_from_call(call: ast.Call) -> str | None:
@@ -597,9 +991,10 @@ def main(argv: list[str] | None = None) -> int:
         pattern_b_vars,
         pattern_b_unresolved,
     )
+    type_shape_phantoms = find_type_shape_phantoms(body, index)
 
     print(json.dumps({
-        "phantoms": kwarg_phantoms + method_phantoms,
+        "phantoms": kwarg_phantoms + method_phantoms + type_shape_phantoms,
         "unresolved": unresolved,
     }), flush=True)
     return 0

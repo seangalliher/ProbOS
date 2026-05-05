@@ -272,6 +272,14 @@ foreach ($promptPath in $PromptPaths) {
                             Category = 'method_phantom'
                             CallSite = $p.call_site
                         })
+                    } elseif ($p.category -eq 'type_shape_mismatch') {
+                        $expected = ($p.expected_types -join '|')
+                        if (-not $expected) { $expected = '<unknown>' }
+                        [void]$phantomsHere.Add(@{
+                            Symbol = "$($p.method)($($p.kwarg)=<$($p.value_type)> -> expected <$expected>)"
+                            Category = 'type_shape_mismatch'
+                            CallSite = $p.call_site
+                        })
                     } else {
                         [void]$phantomsHere.Add(@{
                             Symbol = "$($p.method)($($p.kwarg)=...)"
