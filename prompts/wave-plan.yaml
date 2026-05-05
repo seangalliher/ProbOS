@@ -583,7 +583,7 @@ waves:
       - "prompts/ad-659b-chain-optimizer-apply-v1.md"
     builder_required: true
     issues_to_close: [409]
-    status: pending
+    status: done
 
   - id: "53"
     title: "AD-659c v1 Chain Optimizer Counselor Monitoring + Decision Persistence"
