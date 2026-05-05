@@ -1303,6 +1303,21 @@ class ObservabilityBridgeConfig(BaseModel):
     system_channel: str = "system_observability"
 
 
+class ThresholdAlertConfig(BaseModel):
+    """AD-695: Threshold-driven bridge alerts.
+
+    Default-False — opt-in until a node operator chooses to surface health
+    breaches into the ward room. Replaces the AD-641a continuous-posting
+    loop with on-breach-only notifications.
+    """
+
+    enabled: bool = False
+    pool_saturation_floor: float = Field(default=0.9, ge=0.0, le=1.0)
+    degradation_min_severity: str = "degraded"
+    attention_queue_depth: int = Field(default=20, ge=0)
+    dedup_window_seconds: float = Field(default=300.0, ge=1.0)
+
+
 class WardRoomHebbianConfig(BaseModel):
     """AD-641b: Ward Room Hebbian Router configuration."""
 
@@ -2159,6 +2174,7 @@ class SystemConfig(BaseModel):
     eps: EPSConfig = EPSConfig()  # AD-469
     mcp: MCPConfig = MCPConfig()  # AD-449
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
+    threshold_alerts: ThresholdAlertConfig = Field(default_factory=ThresholdAlertConfig)  # AD-695
     ward_room_hebbian: WardRoomHebbianConfig = Field(default_factory=WardRoomHebbianConfig)  # AD-641b
     engineering_sensors: EngineeringSensorsConfig = Field(default_factory=EngineeringSensorsConfig)  # AD-641f
     learned_shortcuts: LearnedShortcutsConfig = Field(default_factory=LearnedShortcutsConfig)  # AD-641e

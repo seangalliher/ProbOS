@@ -1353,6 +1353,44 @@ async def finalize_startup(
     else:
         runtime.observability_bridge = None
 
+    # AD-695: Threshold Alert Service — replaces AD-641a continuous posting
+    ta_cfg = getattr(getattr(runtime, "config", None), "threshold_alerts", None)
+    if ta_cfg is not None and ta_cfg.enabled:
+        from probos.cognitive.threshold_alerts import ThresholdAlertService
+        runtime.threshold_alerts = ThresholdAlertService(
+            runtime,
+            pool_saturation_floor=ta_cfg.pool_saturation_floor,
+            degradation_min_severity=ta_cfg.degradation_min_severity,
+            attention_queue_depth=ta_cfg.attention_queue_depth,
+            dedup_window_seconds=ta_cfg.dedup_window_seconds,
+        )
+        logger.info(
+            "AD-695: ThresholdAlertService wired "
+            "(pool>=%.0f%%, degradation>=%s, attention>=%d, dedup=%.0fs)",
+            ta_cfg.pool_saturation_floor * 100,
+            ta_cfg.degradation_min_severity,
+            ta_cfg.attention_queue_depth,
+            ta_cfg.dedup_window_seconds,
+        )
+    else:
+        runtime.threshold_alerts = None
+
+    # AD-695: Stitch Tier 7 health provider onto Oracle. ``runtime`` itself
+    # satisfies the duck-typed contract (spawner / attention / degradation_manager
+    # / observability_bridge). Done here in finalize because OracleService is
+    # built in the cognitive phase BEFORE attention / spawner / degradation_manager
+    # are fully populated, so late-bind is required.
+    oracle_for_health = getattr(runtime, "_oracle_service", None) or getattr(runtime, "oracle", None)
+    if oracle_for_health is not None:
+        try:
+            oracle_for_health.attach_health_provider(runtime)
+        except Exception:
+            logger.warning(
+                "AD-695: failed to attach health provider to OracleService; "
+                "Tier 7 health queries will return [] until restart",
+                exc_info=True,
+            )
+
     # AD-641b: Ward Room Hebbian Router (router only; listener deferred to AD-641b-iv)
     wr_heb_cfg = getattr(getattr(runtime, "config", None), "ward_room_hebbian", None)
     if wr_heb_cfg is not None and wr_heb_cfg.enabled:

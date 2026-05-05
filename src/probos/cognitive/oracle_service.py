@@ -130,6 +130,7 @@ class OracleService:
         expertise_directory: Any = None,
         semantic_layer: Any = None,  # AD-686 (Tier 5)
         knowledge_graph: Any = None,  # AD-688 (Tier 6)
+        health_provider: Any = None,  # AD-695 (Tier 7)
     ) -> None:
         self._episodic_memory = episodic_memory
         self._records_store = records_store
@@ -140,6 +141,7 @@ class OracleService:
         self._expertise_directory = expertise_directory
         self._semantic_layer = semantic_layer  # AD-686 (Tier 5)
         self._knowledge_graph = knowledge_graph  # AD-688 (Tier 6)
+        self._health_provider = health_provider  # AD-695 (Tier 7)
 
     def attach_semantic_layer(self, semantic_layer: Any) -> None:
         """AD-686: Late-bind the SemanticKnowledgeLayer.
@@ -159,6 +161,18 @@ class OracleService:
         `attach_semantic_layer` shape exactly.
         """
         self._knowledge_graph = knowledge_graph
+
+    def attach_health_provider(self, health_provider: Any) -> None:
+        """AD-695: Late-bind the runtime health provider.
+
+        Health provider is duck-typed against ``runtime``: must expose
+        ``spawner.pools``, ``attention``, ``degradation_manager``, and
+        optionally ``observability_bridge``. Used because spawner / attention /
+        degradation manager are wired in the structural-services phase
+        AFTER the cognitive phase that builds OracleService. Idempotent —
+        last write wins.
+        """
+        self._health_provider = health_provider
 
     async def query(
         self,
@@ -185,7 +199,7 @@ class OracleService:
             return []
 
         active_tiers = tiers or [
-            "episodic", "records", "operational", "archive", "semantic", "graph",
+            "episodic", "records", "operational", "archive", "semantic", "graph", "health",
         ]
         all_results: list[OracleResult] = []
 
@@ -260,6 +274,15 @@ class OracleService:
                 all_results.extend(tier_results)
             except Exception:
                 logger.debug("Oracle: Tier 6 (graph) query failed", exc_info=True)
+
+        # Tier 7: Ship Health (AD-695) — observable runtime telemetry
+        # (vitals, pools, attention, degradation) as queryable OracleResults.
+        if "health" in active_tiers:
+            try:
+                tier_results = await self._query_health(query_text, k=k_per_tier)
+                all_results.extend(tier_results)
+            except Exception:
+                logger.debug("Oracle: Tier 7 (health) query failed", exc_info=True)
 
         # AD-688: Post-merge graph expansion — 1-hop enrichment of top-K
         # results from all tiers. Runs BEFORE the final sort/truncate so
@@ -732,3 +755,126 @@ class OracleService:
                     ))
                     per_parent_emitted += 1
         return expansion
+
+    async def _query_health(
+        self,
+        query_text: str,
+        *,
+        k: int,
+    ) -> list[OracleResult]:
+        """AD-695: Tier 7 — runtime telemetry as queryable OracleResults.
+
+        Reads the same surfaces the ObservabilityBridge collects (pool stats,
+        attention queue, degradation status), plus an optional vitals_summary
+        if observability_bridge is wired. Each metric becomes one OracleResult
+        with score = simple keyword overlap against query_text. Returns at
+        most ``k`` results, sorted by score desc.
+        """
+        provider = self._health_provider
+        if provider is None:
+            logger.debug("Oracle: Tier 7 (health) — no health_provider attached; returning []")
+            return []
+
+        query_tokens = {
+            tok for tok in query_text.lower().replace("_", " ").split() if len(tok) >= 3
+        }
+
+        def _score(content: str) -> float:
+            if not query_tokens:
+                return 0.5  # uniform when query has no scoreable tokens
+            content_tokens = {
+                tok for tok in content.lower().replace("_", " ").split() if len(tok) >= 3
+            }
+            if not content_tokens:
+                return 0.0
+            overlap = len(query_tokens & content_tokens)
+            return overlap / max(1, len(query_tokens))
+
+        results: list[OracleResult] = []
+
+        # Pool stats
+        spawner = getattr(provider, "spawner", None)
+        pools = getattr(spawner, "pools", None) if spawner is not None else None
+        if isinstance(pools, dict):
+            for name, pool in pools.items():
+                current = getattr(pool, "current_size", 0) or 0
+                target = getattr(pool, "target_size", 0) or 0
+                content = (
+                    f"pool {name} size={current}/{target}"
+                )
+                score = _score(content)
+                if score > 0.0 or not query_tokens:
+                    results.append(OracleResult(
+                        source_tier="health",
+                        content=content,
+                        score=score,
+                        metadata={"metric": "pool", "pool": str(name),
+                                  "current_size": int(current),
+                                  "target_size": int(target)},
+                        provenance="[health: pool]",
+                    ))
+
+        # Attention queue
+        attn = getattr(provider, "attention", None)
+        if attn is not None:
+            depth = int(getattr(attn, "queue_size", 0) or 0)
+            content = f"attention queue depth={depth}"
+            score = _score(content)
+            if score > 0.0 or not query_tokens:
+                results.append(OracleResult(
+                    source_tier="health",
+                    content=content,
+                    score=score,
+                    metadata={"metric": "attention", "queue_depth": depth},
+                    provenance="[health: attention]",
+                ))
+
+        # Degradation
+        dm = getattr(provider, "degradation_manager", None)
+        if dm is not None:
+            try:
+                status = dm.status()
+            except Exception:
+                status = None
+            if status is not None:
+                level = getattr(getattr(status, "stress_level", None), "value", "unknown")
+                shed = list(getattr(status, "shed_services", []) or [])
+                content = (
+                    f"degradation stress_level={level} shed_services={len(shed)}"
+                )
+                score = _score(content)
+                if score > 0.0 or not query_tokens:
+                    results.append(OracleResult(
+                        source_tier="health",
+                        content=content,
+                        score=score,
+                        metadata={"metric": "degradation",
+                                  "stress_level": str(level),
+                                  "shed_count": len(shed)},
+                        provenance="[health: degradation]",
+                    ))
+
+        # Vitals (optional, via observability_bridge.take_snapshot)
+        bridge = getattr(provider, "observability_bridge", None)
+        if bridge is not None:
+            try:
+                snap = await bridge.take_snapshot()
+            except Exception:
+                snap = None
+            vitals = dict(getattr(snap, "vitals_summary", {}) or {}) if snap else {}
+            if vitals:
+                content = "vitals " + " ".join(
+                    f"{k_}={v_}" for k_, v_ in vitals.items()
+                )
+                score = _score(content)
+                if score > 0.0 or not query_tokens:
+                    results.append(OracleResult(
+                        source_tier="health",
+                        content=content,
+                        score=score,
+                        metadata={"metric": "vitals", **vitals},
+                        provenance="[health: vitals]",
+                    ))
+
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:k]

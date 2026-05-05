@@ -118,10 +118,20 @@ class ObservabilityBridge:
 
     async def _publish_once(self) -> None:
         snap = await self.take_snapshot()
-        # BF-258: Ward Room posting disabled. AD-641a design review determined
-        # continuous telemetry posting is architecturally wrong (telemetry is not
-        # discourse). Crew queries system health via Oracle (AD-695).
-        # take_snapshot() retained for future Oracle "health" tier integration.
+        # AD-695: Ward Room posting REMOVED (BF-258). The bridge is now a
+        # cadence trigger for ThresholdAlertService — alerts post to the
+        # ward room ONLY when metrics breach thresholds. Snapshot collection
+        # retained for the Oracle "health" tier (AD-695) and event-log
+        # subscribers.
+        ta = getattr(self._runtime, "threshold_alerts", None)
+        if ta is not None:
+            try:
+                await ta.check_and_alert()
+            except Exception:
+                logger.warning(
+                    "AD-695: threshold_alerts.check_and_alert failed; will retry next cycle",
+                    exc_info=True,
+                )
         if self._emit_event is not None:
             self._emit_event(
                 EventType.OBSERVABILITY_SNAPSHOT_PUBLISHED,
