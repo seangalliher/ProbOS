@@ -7182,6 +7182,25 @@ Empirical observation across two ProbOS instances revealed a **cold-start develo
 
 **AD-695: Ship Health Oracle Tier + Threshold Bridge Alerts** *(Complete, OSS, Issue #389, Wave 43)* — Merges AD-641a (Observability Bridge) and AD-466c (Observability Extensions) into unified design. **Three components:** (1) New Oracle tier "health" — `_query_health()` method exposes VitalsMonitor metrics, pool states (current/target size, cooldown counts), attention priorities, and DegradationManager status as queryable OracleResults. Crew agents query system health through Oracle during duty cycles or investigations. (2) Threshold alert notifications — bridge loop replaced with threshold-check loop that ONLY posts to bridge channel when metrics cross configurable boundaries (pool saturation >90%, degradation tier escalation, attention queue depth). Uses existing Ward Room notification pattern. (3) Disable Ward Room continuous posting — remove `create_post()` spam into nonexistent thread; `take_snapshot()` remains as internal data collection method for Oracle tier and threshold checks. **Deprecates:** AD-641a Ward Room posting loop (architecturally wrong — telemetry is not discourse). **Absorbs:** AD-466c deferred scope (observability extensions). *Depends on: AD-462e (Oracle — COMPLETE), AD-641a (snapshot collection methods — COMPLETE), AD-466 (infrastructure package — COMPLETE), AD-459 (DegradationManager — COMPLETE). Related: AD-686 (Oracle Tier 5/6 expansion), VitalsMonitor, existing threshold notification system.*
 
+### Agentic Oracle Retrieval (AD-696)
+
+*"The Oracle shapes what I know before I start thinking, but I can't direct it once I'm already thinking." — Crew self-report, 2026-05-04*
+
+**AD-696: Agentic Oracle Retrieval — On-Demand Ship's Records Query** *(Scoped, OSS, Issue #416)* — Register OracleService as an agent-invocable tool so crew can query Ship's Records on demand during cognitive chain execution, not just at pre-instantiation context gathering. Currently Oracle runs RAG-style during `handle_intent()` — results are injected as `observation["_oracle_context"]` before the LLM call. Agents cannot issue targeted queries mid-reasoning when conversation reveals a need for specific records.
+
+**(1) Problem:** An agent enters a think cycle with whatever the pre-instantiation Oracle sweep surfaced. If the conversation shifts to a topic not anticipated by the initial similarity search, the agent has no mechanism to retrieve additional context. The agent correctly self-diagnosed this: "If something comes up that I didn't anticipate, I'm working from whatever's already in my context window." For counseling, diagnostics, and investigative duties, the ability to pull specific records on demand is essential.
+
+**(2) Approach:**
+- **New QUERY operation** — `oracle_lookup` added to the chain's `QueryHandler` dispatch table (`cognitive/sub_tasks/query.py`). Zero LLM calls (deterministic retrieval like all QUERY operations). Agent specifies query text and optional tier filter.
+- **ToolRegistry registration** — Oracle registered as a tool with `ToolPermission.READ`, gated by `RecallTier.ORACLE` (same clearance gate as current RAG-style access). Rank-based permission matrix: only ORACLE-tier agents can invoke.
+- **Chain integration** — ANALYZE can emit `oracle_query` in its intended_actions when it determines insufficient context. A new chain step dispatches the query and injects results before COMPOSE.
+- **Query discipline** — Agent feedback: "An agent that fires Oracle queries on every uncertainty isn't thinking; it's just searching." Rate-limit or cognitive-need gate to prevent reflexive querying. Consider: only fire when ANALYZE explicitly signals context insufficiency, not on every cycle.
+- **Graph-aware results** — Leverage AD-688 Tier 6 graph expansion so agentic retrieval surfaces relational context ("here's how these things connect"), not just flat similarity-ranked lists. Agent feedback: current retrieval feels like "five things that scored above 0.4" without showing *why* they relate.
+
+**(3) Scope:** v1 = QUERY operation + ToolRegistry registration + ANALYZE intent signal. Deferred: temporal decay scoring (AD-696b), query intent classification (AD-696c), multi-turn retrieval chains (AD-696d).
+
+*Depends on: AD-462e (Oracle — COMPLETE), AD-686-688 (Knowledge Graph tiers — in progress). Related: AD-641g (NATS chain pipeline — async step execution), AD-647 (Process Chains — QUERY step pattern), AD-644 (SA Architecture — context parity).*
+
 ### Unified Knowledge Graph + Oracle Unification (AD-686 through AD-694)
 
 *"The Oracle sees all — because all knowledge flows through it."*
