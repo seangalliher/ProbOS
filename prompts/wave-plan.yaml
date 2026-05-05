@@ -488,7 +488,7 @@ waves:
       - "prompts/ad-594a-consultation-workspace-v1.md"
     builder_required: true
     issues_to_close: [160]
-    status: pending
+    status: done
 
   - id: "45"
     title: "AD-661 Combo: b (Ship's Records) + c (remainder redistribution)"
