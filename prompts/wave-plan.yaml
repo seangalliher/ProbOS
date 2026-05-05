@@ -631,7 +631,7 @@ waves:
       - "prompts/ad-456c-per-tier-credentials-v1.md"
     builder_required: true
     issues_to_close: [399]
-    status: pending
+    status: done
 
   - id: "57"
     title: "AD-456d v1 AuditLog SQLite Persistence"
