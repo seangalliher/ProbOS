@@ -10,6 +10,30 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-647c v1: Process Chains Bills/Watch Bill Integration (2026-05-04)
+
+**Problem:** AD-647 (Wave 34) shipped the chain executor scaffold; AD-647b (Wave 48) shipped the chain registry + base-class hook; AD-618a-e (Bills) and AD-595a-e (Watch Bill) shipped independently. All four substrates are live, but no chain currently maps to a Bill — meaning Watch Bill role assignments and Bill step lifecycle do NOT flow through chain execution. Process chains can run, but they don't update `BillInstance` step state or resolve role-assigned agents from the active Watch Bill.
+
+**Decision:**
+- `ProcessChainStep` gains two optional fields (default `""`): `bill_step_id` (the `BillStep.id` this chain step satisfies) and `assigned_role` (the `BillRole.id` whose holder agent should run this step).
+- `ProcessChainExecutor` accepts `bill_runtime=None` ctor kwarg. When set AND `context['bill_instance_id']` is supplied, the executor resolves the active `BillInstance` once at chain start, injects `_resolved_agent_id_<step.name>` from `BillInstance.role_assignments[step.assigned_role].agent_id` before each step, calls `bill_runtime.complete_step(instance.id, step.bill_step_id, result=step_output)` on success and `fail_step(..., error=...)` on handler exception. All bill_runtime calls wrapped in try/except→logger.warning (tier-2 log-and-degrade) so bill-side errors never break chain execution.
+- `ProcessChainRegistry.register_bill_chain(bill_definition, chain_definition)` validates every chain step's non-empty `bill_step_id` against the bill's `BillStep.id` set; mismatch raises `ValueError` and the chain is NOT registered (fail-fast).
+- New `CONSULT` value appended to `ProcessChainStepKind` (semantic label only — executor already awaits async handlers; CONSULT handlers can internally await `asyncio.Event` / ward-room threads / ConsultationWorkspace decisions today).
+- New public property `runtime.bill_runtime` mirrors `runtime.billet_registry` shape (closes the Wave 5 conv #1 hole that AD-635 documented retrospectively for `_emergent_detector`).
+
+**Architect calls (DLogs):**
+1. Field named `bill_step_id` not `bill_id` — `bill_id` is overloaded across the Bills surface (`BillDefinition.bill` is the bill slug; `BillInstance.bill_id` is the slug too). The chain step's field maps to `BillStep.id`, the step-id-within-a-bill. The bill-instance correlation is supplied by the caller via `context['bill_instance_id']` at run-time — orthogonal field, not on the step.
+2. CONSULT = enum value only, NO executor change. The existing executor already runs `await step.handler(running)` which natively supports `async def __call__` handlers that await any async resource. True suspend-and-resume across process restart requires checkpointing infrastructure and is out of scope (placeholder AD-647d).
+3. `runtime.bill_runtime` public property added (1 line, mirrors `runtime.billet_registry`) instead of recreating AD-635's `getattr(rt, '_bill_runtime', None)` Demeter exception at every call site.
+4. Three-guard defense for bill recording: `bill_step_id != ""` AND `context.get('bill_instance_id')` AND `self._bill_runtime is not None`. Any one missing → executor behaves exactly as v1 (no bill side-effects).
+5. Bill recording is tier-2 log-and-degrade — every `bill_runtime.{get_instance, complete_step, fail_step}` call wrapped in try/except. Chain execution is the source of truth for chain success; Bills tracking is a secondary observability surface.
+6. Unresolved `assigned_role` is log-and-degrade. Handler still runs, just without `_resolved_agent_id_<step>` injected. Executor does NOT synthesize a fall-back identity; the handler decides (typically via `context['_agent']` per AD-647b convention).
+7. `register_bill_chain` is fail-fast at registration time. Mismatched `bill_step_id` raises `ValueError` and the chain is NOT registered. Empty `bill_step_id` values are permitted and skip validation.
+
+**Out of scope:** No NATS coupling (AD-641g, #403); no LLM step templates (`prompt_template_id` still reserved/rejected); no parallel/conditional/rollback steps; no CONSULT suspend-and-resume across process restart (AD-647d placeholder); no Scout migration to bill-bound; no HXI surface; no new EventType. Backward compatibility: all 8 existing AD-647 v1 tests + 12 existing AD-647b v1 tests pass unchanged — new fields default to `""`, new ctor kwarg defaults to `None`.
+
+**Closes:** GH issue #405. Wave 49.
+
 ### AD-647b v1: Process Chain Registry + BF-209 Bypass Removal (2026-05-04)
 
 **Problem:** AD-647 v1 (Wave 34) shipped `ProcessChainStep`/`ProcessChainDefinition`/`ProcessChainExecutor` but ScoutAgent constructed its `scout_report` chain inline inside `act()` per invocation, with handlers as bound methods. No registry, no introspection, no replacement path. ScoutAgent additionally carried a per-agent BF-209 override on `_should_activate_chain` that returned False for `proactive_think + duty_id="scout_report"` — an opt-out that did not generalize.

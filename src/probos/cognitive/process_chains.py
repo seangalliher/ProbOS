@@ -29,11 +29,16 @@ class ProcessChainStepKind(str, Enum):
     TRANSFORM — classify / enrich / filter (may call LLM in future; v1 callable only).
     STORE     — persist artifact (file, journal, ChromaDB, knowledge store).
     NOTIFY    — route to consumer (Ward Room, DM, channel adapter, queue).
+    CONSULT   — human-in-the-loop or cross-agent consultation; handler awaits an
+                external resource (asyncio.Event, ward-room thread, ConsultationWorkspace
+                decision). Behaviorally identical to TRANSFORM in v1; suspend/resume
+                across process restart is NOT supported (future AD-647d).
     """
     QUERY = "query"
     TRANSFORM = "transform"
     STORE = "store"
     NOTIFY = "notify"
+    CONSULT = "consult"
 
 
 @runtime_checkable
@@ -51,9 +56,19 @@ class ProcessChainHandler(Protocol):
 class ProcessChainStep:
     """A single typed step in a process chain.
 
-    `kind`     — one of ProcessChainStepKind
-    `name`     — human-readable label, unique within a definition
-    `handler`  — async callable conforming to ProcessChainHandler
+    `kind`           — one of ProcessChainStepKind
+    `name`           — human-readable label, unique within a definition
+    `handler`        — async callable conforming to ProcessChainHandler
+    `bill_step_id`   — AD-647c: BillStep.id this chain step satisfies; empty string
+                       means no bill linkage. When set AND the executor's caller
+                       supplies ``context["bill_instance_id"]``, the executor will
+                       call ``bill_runtime.complete_step(...)`` / ``fail_step(...)``
+                       against that BillInstance step on chain step success/failure.
+    `assigned_role`  — AD-647c: BillRole id whose holder agent should run this step.
+                       When set AND the active BillInstance has a matching
+                       ``role_assignments[role]`` entry, the resolved agent_id is
+                       injected into the running context as
+                       ``_resolved_agent_id_<step.name>``. Unresolved → log-and-degrade.
 
     LLM prompt-template handlers are NOT supported in v1; the
     `prompt_template_id` field is reserved for AD-647b.
@@ -62,6 +77,8 @@ class ProcessChainStep:
     name: str
     handler: ProcessChainHandler
     prompt_template_id: str = ""  # reserved for AD-647b; must be "" in v1
+    bill_step_id: str = ""        # AD-647c
+    assigned_role: str = ""       # AD-647c
 
 
 @dataclass(frozen=True)
@@ -114,15 +131,28 @@ class ProcessChainExecutor:
       - Empty step list is rejected at run() time.
     """
 
-    def __init__(self, *, emit_event: Callable[[str, dict], Any] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        emit_event: Callable[[str, dict], Any] | None = None,
+        bill_runtime: Any = None,  # AD-647c: optional BillRuntime for step lifecycle recording
+    ) -> None:
         self._emit_event = emit_event
+        self._bill_runtime = bill_runtime
 
     async def run(
         self,
         definition: ProcessChainDefinition,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Execute the chain. Returns the final accumulated context."""
+        """Execute the chain. Returns the final accumulated context.
+
+        AD-647c: when ``self._bill_runtime`` is set AND
+        ``context["bill_instance_id"]`` is supplied, step lifecycle events
+        (complete / fail) are recorded against the corresponding ``BillInstance``
+        step (resolved by ``ProcessChainStep.bill_step_id``). Bill recording is
+        tier-2 log-and-degrade — bill-side errors never break chain execution.
+        """
         if not definition.steps:
             raise ProcessChainExecutionError(
                 definition.name, "<none>", ValueError("empty chain definition")
@@ -131,8 +161,16 @@ class ProcessChainExecutor:
         running: dict[str, Any] = dict(context) if context else {}
         chain_started = time.monotonic()
 
+        # AD-647c: resolve BillInstance once at chain start (cheap dict lookup).
+        bill_instance = self._resolve_bill_instance(running)
+
         for step in definition.steps:
             step_started = time.monotonic()
+
+            # AD-647c: inject resolved agent for assigned_role (if any).
+            if step.assigned_role and bill_instance is not None:
+                self._inject_resolved_agent(running, step, bill_instance)
+
             try:
                 step_output = await step.handler(running)
             except Exception as exc:
@@ -141,6 +179,8 @@ class ProcessChainExecutor:
                     definition.name, step.name, step.kind.value, type(exc).__name__,
                     exc_info=True,
                 )
+                # AD-647c: record bill step failure (tier-2 log-and-degrade).
+                self._record_bill_step_failure(bill_instance, step, exc, running)
                 raise ProcessChainExecutionError(definition.name, step.name, exc) from exc
 
             if step_output is None:
@@ -155,6 +195,9 @@ class ProcessChainExecutor:
                 )
 
             running.update(step_output)
+            # AD-647c: record bill step completion (tier-2 log-and-degrade).
+            self._record_bill_step_completion(bill_instance, step, step_output, running)
+
             logger.debug(
                 "AD-647: process chain '%s' step '%s' (%s) ok in %.1fms",
                 definition.name, step.name, step.kind.value,
@@ -167,6 +210,103 @@ class ProcessChainExecutor:
             (time.monotonic() - chain_started) * 1000.0,
         )
         return running
+
+    # ------------------------------------------------------------------
+    # AD-647c: Bills/Watch Bill integration helpers (tier-2 log-and-degrade)
+    # ------------------------------------------------------------------
+
+    def _resolve_bill_instance(self, running: dict[str, Any]) -> Any:
+        """Resolve the active BillInstance from context, or None.
+
+        Three guards (defense in depth): bill_runtime present AND
+        context.bill_instance_id present AND lookup succeeds.
+        """
+        if self._bill_runtime is None:
+            return None
+        instance_id = running.get("bill_instance_id")
+        if not instance_id:
+            return None
+        try:
+            return self._bill_runtime.get_instance(instance_id)
+        except Exception as exc:
+            logger.warning(
+                "AD-647c: bill_runtime.get_instance(%r) raised %s; chain proceeds without bill linkage",
+                instance_id, type(exc).__name__,
+            )
+            return None
+
+    def _inject_resolved_agent(
+        self,
+        running: dict[str, Any],
+        step: ProcessChainStep,
+        bill_instance: Any,
+    ) -> None:
+        """Resolve assigned_role -> agent_id via BillInstance.role_assignments.
+
+        Unresolved roles log-and-degrade — handler still runs, just without
+        the ``_resolved_agent_id_<step>`` hint in context.
+        """
+        try:
+            assignments = getattr(bill_instance, "role_assignments", {}) or {}
+            assignment = assignments.get(step.assigned_role)
+            if assignment is None:
+                logger.warning(
+                    "AD-647c: chain step '%s' assigned_role '%s' has no holder in BillInstance %s; "
+                    "handler will run without resolved agent",
+                    step.name, step.assigned_role, getattr(bill_instance, "id", "?"),
+                )
+                return
+            agent_id = getattr(assignment, "agent_id", None)
+            if not agent_id:
+                return
+            running[f"_resolved_agent_id_{step.name}"] = agent_id
+        except Exception as exc:
+            logger.warning(
+                "AD-647c: role resolution for step '%s' raised %s; degrading silently",
+                step.name, type(exc).__name__,
+            )
+
+    def _record_bill_step_completion(
+        self,
+        bill_instance: Any,
+        step: ProcessChainStep,
+        step_output: dict[str, Any],
+        running: dict[str, Any],
+    ) -> None:
+        if bill_instance is None or not step.bill_step_id:
+            return
+        try:
+            self._bill_runtime.complete_step(
+                bill_instance.id,
+                step.bill_step_id,
+                result=step_output,
+            )
+        except Exception as exc:
+            logger.warning(
+                "AD-647c: bill_runtime.complete_step(%s, %s) raised %s; chain success preserved",
+                getattr(bill_instance, "id", "?"), step.bill_step_id, type(exc).__name__,
+            )
+
+    def _record_bill_step_failure(
+        self,
+        bill_instance: Any,
+        step: ProcessChainStep,
+        exc: BaseException,
+        running: dict[str, Any],
+    ) -> None:
+        if bill_instance is None or not step.bill_step_id:
+            return
+        try:
+            self._bill_runtime.fail_step(
+                bill_instance.id,
+                step.bill_step_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        except Exception as bill_exc:
+            logger.warning(
+                "AD-647c: bill_runtime.fail_step(%s, %s) raised %s; chain failure surfaces normally",
+                getattr(bill_instance, "id", "?"), step.bill_step_id, type(bill_exc).__name__,
+            )
 
 
 class ProcessChainRegistry:
@@ -203,3 +343,40 @@ class ProcessChainRegistry:
 
     def unregister_chain(self, chain_id: str) -> bool:
         return self._chains.pop(chain_id, None) is not None
+
+    def register_bill_chain(
+        self,
+        bill_definition: Any,
+        chain_definition: ProcessChainDefinition,
+    ) -> None:
+        """AD-647c: Register a chain associated with a Bill, validating step mappings.
+
+        Every chain step's ``bill_step_id`` (when non-empty) MUST appear in the
+        bill's ``BillStep.id`` set. Validation is fail-fast at registration time;
+        a mismatch raises ``ValueError`` and the chain is NOT registered.
+
+        Empty ``bill_step_id`` values are permitted (chain steps not bound to a
+        specific BillStep) and do not participate in validation.
+
+        Parameters
+        ----------
+        bill_definition : BillDefinition
+            The bill whose steps the chain claims to satisfy. Duck-typed: must
+            expose ``bill`` (slug) and ``steps`` iterable of objects with ``.id``.
+        chain_definition : ProcessChainDefinition
+            The chain to register. Step ``bill_step_id`` values are validated.
+        """
+        bill_step_ids = {
+            getattr(s, "id", "") for s in getattr(bill_definition, "steps", [])
+        }
+        unknown: list[tuple[str, str]] = []
+        for step in chain_definition.steps:
+            if step.bill_step_id and step.bill_step_id not in bill_step_ids:
+                unknown.append((step.name, step.bill_step_id))
+        if unknown:
+            details = ", ".join(f"{name}->{bsid}" for name, bsid in unknown)
+            raise ValueError(
+                f"AD-647c: chain '{chain_definition.name}' references unknown bill step ids "
+                f"in bill '{getattr(bill_definition, 'bill', '?')}': {details}"
+            )
+        self.register_chain(chain_definition)

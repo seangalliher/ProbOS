@@ -989,6 +989,17 @@ class ProbOSRuntime:
         return self.ontology.billet_registry
 
     @property
+    def bill_runtime(self) -> Any:
+        """AD-647c: Public read-only accessor for BillRuntime.
+
+        Closes the Wave 5 conv #1 hole that AD-635 documented retrospectively
+        for ``_emergent_detector``. ProcessChainExecutor uses this to record
+        chain-step lifecycle against BillInstance steps when chains are
+        bill-bound.
+        """
+        return self._bill_runtime
+
+    @property
     def emergence_metrics_engine(self) -> Any:
         """Public accessor for emergence metrics engine (AD-680). Read-only."""
         return self._emergence_metrics_engine
