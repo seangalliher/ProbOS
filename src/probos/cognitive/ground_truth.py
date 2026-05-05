@@ -242,3 +242,195 @@ class VerificationEpisodeWriter:
                 result.booking_id, result.agent_id, exc_info=True,
             )
             return False
+
+
+# ---------------------------------------------------------------------------
+# AD-528b: Active Rejection & Quarantine
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RejectionDecision:
+    """Outcome of a ``GroundTruthRejectionGate.evaluate()`` call.
+
+    ``action`` is ``"allow"`` when the underlying verifier returned
+    ``verified=True``; ``"reject"`` when the gate took the rejection branch.
+    On the reject path, ``quarantine_metadata`` carries the payload that was
+    (or would be) merged into the work item's metadata under the gate's
+    configured ``metadata_key``. On the allow path, ``quarantine_metadata``
+    is empty.
+
+    Frozen because consumers (HXI surfaces, Counselor alert paths, and the
+    future AD-528b-2 caller-integration wiring) need a value-type they can
+    pass around without defensive-copy.
+    """
+
+    verified: bool
+    score: float
+    action: str  # "allow" | "reject"
+    quarantine_metadata: dict[str, Any] = field(default_factory=dict)
+    signals: list[str] = field(default_factory=list)
+    booking_id: str = ""
+    agent_id: str = ""
+    work_item_id: str = ""
+
+
+class GroundTruthRejectionGate:
+    """Wraps ``GroundTruthVerifier`` with a pre-commit rejection decision +
+    metadata-only quarantine.
+
+    v1 surface: callers (deferred to AD-528b-2) invoke ``evaluate(...)``
+    BEFORE attempting a ``→ done`` transition on a work item. If verification
+    passes, ``evaluate`` returns ``RejectionDecision(action="allow")`` and
+    the caller proceeds. If verification fails, the gate emits
+    ``VERIFICATION_REJECTED``, attempts to merge a quarantine payload into
+    the work item's metadata via
+    ``runtime.work_item_store.update_work_item(work_item_id, metadata=...)``,
+    emits ``WORK_ITEM_QUARANTINED`` on successful merge, and returns
+    ``RejectionDecision(action="reject", quarantine_metadata=...)``.
+
+    Status-machine semantics: v1 does NOT mutate work-item status. The
+    caller decides whether to transition the item to ``failed``, keep it
+    in ``in_progress``, or escalate. State-machine extension (adding a
+    ``quarantined`` status to the ``task`` work_type) is deferred to
+    AD-528b-5.
+
+    Trust-network feedback (raise/lower trust on PASSED/FAILED/REJECTED)
+    is a distinct AD — AD-528c (Wave 59). v1 of this class has zero
+    coupling to ``runtime.trust_network`` or ``probos.consensus.trust``.
+    """
+
+    DEFAULT_METADATA_KEY = "ground_truth_quarantine"
+
+    def __init__(
+        self,
+        *,
+        verifier: GroundTruthVerifier,
+        runtime: Any,
+        emit_event: Any | None = None,
+        metadata_key: str = DEFAULT_METADATA_KEY,
+    ) -> None:
+        self._verifier = verifier
+        self._runtime = runtime
+        self._emit_event = emit_event
+        self._metadata_key = metadata_key
+
+    async def evaluate(
+        self,
+        *,
+        booking_id: str,
+        agent_id: str,
+        claimed_summary: str,
+        work_item_id: str,
+        completed_at: float | None = None,
+    ) -> RejectionDecision:
+        """Evaluate a claimed completion; return allow/reject decision."""
+        result = await self._verifier.verify(
+            booking_id=booking_id,
+            agent_id=agent_id,
+            claimed_summary=claimed_summary,
+            completed_at=completed_at,
+        )
+        if result.verified:
+            return RejectionDecision(
+                verified=True,
+                score=result.score,
+                action="allow",
+                signals=list(result.signals),
+                booking_id=booking_id,
+                agent_id=agent_id,
+                work_item_id=work_item_id,
+            )
+
+        # Rejection branch. Emit VERIFICATION_REJECTED first (the cognitive
+        # decision is independent of whether the metadata persists), then
+        # attempt the metadata merge, then emit WORK_ITEM_QUARANTINED only
+        # if the merge succeeded.
+        payload: dict[str, Any] = {
+            "score": result.score,
+            "signals": list(result.signals),
+            "rejected_at": time.time(),
+            "reason": "ground_truth_score_below_threshold",
+            "booking_id": booking_id,
+            "agent_id": agent_id,
+        }
+        self._emit(
+            EventType.VERIFICATION_REJECTED,
+            {**payload, "work_item_id": work_item_id},
+        )
+        applied = await self._apply_quarantine(work_item_id, payload)
+        if applied:
+            self._emit(
+                EventType.WORK_ITEM_QUARANTINED,
+                {
+                    **payload,
+                    "work_item_id": work_item_id,
+                    "metadata_key": self._metadata_key,
+                },
+            )
+        return RejectionDecision(
+            verified=False,
+            score=result.score,
+            action="reject",
+            quarantine_metadata=payload,
+            signals=list(result.signals),
+            booking_id=booking_id,
+            agent_id=agent_id,
+            work_item_id=work_item_id,
+        )
+
+    async def _apply_quarantine(
+        self, work_item_id: str, payload: dict[str, Any]
+    ) -> bool:
+        """Merge quarantine payload into work item metadata. Tier-2 log-and-degrade.
+
+        Read-modify-write: fetch the current work item, copy its existing
+        metadata, set ``existing[metadata_key] = payload``, write the merged
+        dict back via ``update_work_item``. Existing keys in the work item's
+        metadata survive the merge.
+
+        Returns True if the merge persisted; False on any failure (missing
+        runtime, missing work_item_store, missing work item, store exception).
+        Failures are logged at WARNING with ``exc_info=True`` per the
+        copilot-instructions tier-2 rule — ``evaluate`` has already emitted
+        ``VERIFICATION_REJECTED``, so a metadata-apply failure must NOT
+        propagate to the caller.
+        """
+        rt = self._runtime
+        if rt is None or not work_item_id:
+            return False
+        store = getattr(rt, "work_item_store", None)
+        if store is None:
+            return False
+        try:
+            item = await store.get_work_item(work_item_id)
+            if item is None:
+                return False
+            existing_meta = dict(getattr(item, "metadata", None) or {})
+            existing_meta[self._metadata_key] = payload
+            await store.update_work_item(work_item_id, metadata=existing_meta)
+            return True
+        except Exception:
+            logger.warning(
+                "AD-528b: quarantine metadata apply failed (work_item_id=%s, key=%s)",
+                work_item_id, self._metadata_key, exc_info=True,
+            )
+            return False
+
+    def _emit(self, event_type: EventType, payload: dict[str, Any]) -> None:
+        """Synchronously emit an event via the optional ``emit_event`` hook.
+
+        Mirrors ``GroundTruthVerifier._emit`` shape. If no hook is set, the
+        emit is silent (no-op) — the gate's behaviour (decision + metadata
+        apply) still executes. If the hook raises, the exception is logged
+        and swallowed (tier-2 log-and-degrade) so a downstream consumer's
+        bug cannot break the rejection-decision path.
+        """
+        if not self._emit_event:
+            return
+        try:
+            self._emit_event(event_type, payload)
+        except Exception:
+            logger.warning(
+                "AD-528b: %s emit failed", event_type.value, exc_info=True,
+            )

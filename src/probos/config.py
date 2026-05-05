@@ -1290,12 +1290,21 @@ class InfodynamicConfig(BaseModel):
 
 
 class GroundTruthConfig(BaseModel):
-    """Ground-truth task verification configuration (AD-528)."""
+    """Ground-truth task verification configuration (AD-528, AD-528b)."""
 
     enabled: bool = True
     threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     event_window_seconds: float = Field(default=600.0, ge=10.0)
     write_episode: bool = True
+    # AD-528b: active rejection & metadata quarantine. Default False per
+    # Convention #14 (transitional flag) + Convention #3 (default off until
+    # caller integration lands at AD-528b-2). When True, finalize.py
+    # constructs a GroundTruthRejectionGate that wraps the verifier; the
+    # gate emits VERIFICATION_REJECTED + WORK_ITEM_QUARANTINED on the
+    # rejection branch and writes a quarantine payload into the work item's
+    # metadata under `quarantine_metadata_key`.
+    active_rejection_enabled: bool = False
+    quarantine_metadata_key: str = "ground_truth_quarantine"
 
 
 class OperationsConfig(BaseModel):

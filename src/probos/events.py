@@ -214,6 +214,8 @@ class EventType(str, Enum):
     AUDIT_PERSISTED = "audit_persisted"  # AD-456d
     VERIFICATION_PASSED = "verification_passed"  # AD-528
     VERIFICATION_FAILED = "verification_failed"  # AD-528
+    VERIFICATION_REJECTED = "verification_rejected"  # AD-528b
+    WORK_ITEM_QUARANTINED = "work_item_quarantined"  # AD-528b
     RESOURCE_ALLOCATED = "resource_allocated"  # AD-467
     TASK_SCHEDULED = "task_scheduled"  # AD-467
     WORKFLOW_STARTED = "workflow_started"  # AD-467

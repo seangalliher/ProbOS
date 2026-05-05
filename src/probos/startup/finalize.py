@@ -1368,8 +1368,8 @@ async def finalize_startup(
         HttpFetchAgent.set_egress_policy(runtime.egress_policy)
         logger.info("AD-456b: HttpFetchAgent egress active enforcement enabled")
 
-    # AD-528: Ground-Truth Task Verification (v1: read-only scoring + emit;
-    # active rejection deferred to AD-528b)
+    # AD-528: Ground-Truth Task Verification (v1: read-only scoring + emit).
+    # AD-528b: optional active-rejection gate (default disabled).
     if config.ground_truth.enabled:
         from probos.cognitive.ground_truth import (
             GroundTruthVerifier,
@@ -1387,6 +1387,27 @@ async def finalize_startup(
             )
         else:
             runtime.verification_episode_writer = None
+        # AD-528b: rejection gate wraps the verifier when the transitional
+        # flag is set. Caller integration (consult gate before allowing
+        # `→ done` transitions) is deferred to AD-528b-2; v1 ships the
+        # layer + finalize wiring + tests with no production callers.
+        if (
+            config.ground_truth.active_rejection_enabled
+            and runtime.ground_truth_verifier is not None
+        ):
+            from probos.cognitive.ground_truth import GroundTruthRejectionGate
+            runtime.ground_truth_rejection_gate = GroundTruthRejectionGate(
+                verifier=runtime.ground_truth_verifier,
+                runtime=runtime,
+                emit_event=runtime.emit_event,
+                metadata_key=config.ground_truth.quarantine_metadata_key,
+            )
+            logger.info(
+                "AD-528b: GroundTruthRejectionGate wired (metadata_key=%s)",
+                config.ground_truth.quarantine_metadata_key,
+            )
+        else:
+            runtime.ground_truth_rejection_gate = None
         logger.info(
             "AD-528: GroundTruthVerifier wired (threshold=%.2f, window=%.0fs)",
             config.ground_truth.threshold,
@@ -1395,6 +1416,7 @@ async def finalize_startup(
     else:
         runtime.ground_truth_verifier = None
         runtime.verification_episode_writer = None
+        runtime.ground_truth_rejection_gate = None
 
     # AD-463: Model Diversity & Neural Routing (v1 foundation)
     if config.model_routing.enabled:
