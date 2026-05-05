@@ -476,7 +476,7 @@ waves:
       - "prompts/ad-695-ship-health-oracle-v1.md"
     builder_required: true
     issues_to_close: [389]
-    status: pending
+    status: done
 
   - id: "44"
     title: "AD-594a v1 Consultation Workspace (Session-Scoped Ship's Records)"
