@@ -667,7 +667,7 @@ waves:
       - "prompts/ad-528c-trust-feedback-v1.md"
     builder_required: true
     issues_to_close: [402]
-    status: pending
+    status: done
 
   - id: "60"
     title: "AD-458b v1 Pre-Flight Validation LLMTier + TokenBudget Checks"
