@@ -19,7 +19,8 @@ _SUBDIRS = (
     "duty-logs",
     "operations",
     "manuals",
-    "bills",        # AD-618a: Standard Operating Procedures (raw YAML, not markdown)
+    "bills",          # AD-618a: Standard Operating Procedures (raw YAML, not markdown)
+    "consultations",  # AD-594a: Session-scoped consultation workspaces (raw files; per-workspace subdirs)
     "_archived",
 )
 
@@ -877,6 +878,65 @@ class RecordsStore:
         }
 
     # --- Internal helpers ---
+
+    # ------------------------------------------------------------------
+    # AD-594a: Raw-file surfaces (no frontmatter coercion)
+    # Used by ConsultationWorkspace for manifest.yaml / journal.md / plan files /
+    # work-item YAML / per-advisory artifacts. Reuses _safe_path for traversal
+    # protection and _commit for the git plumbing. Never raises path-traversal
+    # errors silently — _safe_path raises ValueError; callers (WorkspaceRegistry)
+    # treat that as a programmer error.
+    # ------------------------------------------------------------------
+    async def write_workspace_file(
+        self,
+        author: str,
+        path: str,
+        content: str,
+        message: str,
+    ) -> str:
+        """AD-594a: Write a raw text file (no YAML frontmatter wrapper).
+
+        Args:
+            author: Author identity for the git commit.
+            path: Repo-relative path (e.g. ``consultations/<id>/manifest.yaml``).
+            content: Raw text to write (UTF-8). For binary use, encode upstream.
+            message: Commit message body.
+
+        Returns the relative path of the written file.
+        """
+        file_path = self._safe_path(path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+        if self._config.auto_commit:
+            await self._git("add", path)
+            await self._commit(f"[records] {message} — by {author}")
+        logger.debug("AD-594a: workspace file written: %s by %s", path, author)
+        return path
+
+    async def read_workspace_file(self, path: str) -> str | None:
+        """AD-594a: Read a raw text file. Returns None if missing."""
+        file_path = self._safe_path(path)
+        if not file_path.exists():
+            return None
+        return file_path.read_text(encoding="utf-8")
+
+    async def append_workspace_file(
+        self,
+        author: str,
+        path: str,
+        content: str,
+        message: str,
+    ) -> str:
+        """AD-594a: Append text to a raw file (e.g. journal.md). Creates if absent."""
+        file_path = self._safe_path(path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with file_path.open("a", encoding="utf-8") as fh:
+            fh.write(content)
+        if self._config.auto_commit:
+            await self._git("add", path)
+            await self._commit(f"[records] {message} — by {author}")
+        logger.debug("AD-594a: workspace file appended: %s by %s", path, author)
+        return path
 
     def _parse_document(self, raw: str) -> tuple[dict, str]:
         """Parse YAML frontmatter + content from a markdown document."""

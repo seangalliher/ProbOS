@@ -1884,6 +1884,20 @@ class ClinicalTelemetryConfig(BaseModel):
     audit_max_entries: int = 1000
 
 
+class ConsultationWorkspaceConfig(BaseModel):
+    """AD-594a v1: Session-scoped consultation workspace registry.
+
+    Default-True is intentional — the registry is read-only on boot (constructs
+    an empty in-memory cache and ensures the ``consultations/`` subdir exists
+    in Ship's Records). No automatic side effects until an agent calls
+    ``runtime.consultation_workspaces.create(...)``. Same precedent as
+    ``KnowledgeEdgesConfig`` / ``EdgeBackfillConfig``.
+    """
+    enabled: bool = True
+    root_path: str = "consultations"
+    input_processor: str = "passthrough"
+
+
 class CommunicationsConfig(BaseModel):
     """Communications settings (AD-485)."""
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
@@ -2226,6 +2240,9 @@ class SystemConfig(BaseModel):
     clinical_telemetry: ClinicalTelemetryConfig = Field(
         default_factory=ClinicalTelemetryConfig
     )  # AD-635
+    consultation_workspaces: ConsultationWorkspaceConfig = Field(
+        default_factory=ConsultationWorkspaceConfig
+    )  # AD-594a
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571

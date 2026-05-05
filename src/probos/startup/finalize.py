@@ -510,6 +510,38 @@ def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_consultation_workspaces(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-594a v1: Wire WorkspaceRegistry session-scoped consultation workspaces.
+
+    Registry is purely on-demand: nothing is materialized until an agent calls
+    ``runtime.consultation_workspaces.create(...)``. Requires ``runtime.records_store``
+    (AD-434) to be adopted; if missing, no-op.
+    """
+    cfg = getattr(config, "consultation_workspaces", None)
+    if not cfg or not cfg.enabled:
+        return False
+    records_store = getattr(runtime, "records_store", None)
+    if records_store is None:
+        logger.info(
+            "AD-594a: records_store unavailable; consultation_workspaces skipped"
+        )
+        return False
+
+    from probos.consultation import WorkspaceRegistry, build_input_processor
+
+    runtime.consultation_workspaces = WorkspaceRegistry(
+        records_store,
+        root_path=cfg.root_path,
+        input_processor=build_input_processor(cfg.input_processor),
+    )
+    logger.info(
+        "AD-594a: WorkspaceRegistry v1 initialized "
+        "(root=%s, input_processor=%s)",
+        cfg.root_path, cfg.input_processor,
+    )
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -811,6 +843,9 @@ async def finalize_startup(
 
     if _wire_clinical_telemetry(runtime=runtime, config=config):
         logger.info("AD-635: ClinicalTelemetryService v1 wired during finalization")
+
+    if _wire_consultation_workspaces(runtime=runtime, config=config):
+        logger.info("AD-594a: WorkspaceRegistry v1 wired during finalization")
 
     if _wire_workspace_ontology(runtime=runtime, config=config):
         logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")
