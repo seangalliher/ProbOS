@@ -1,18 +1,23 @@
-"""AD-635 / AD-635b — Clinical Telemetry Query Facade.
+"""AD-635 / AD-635b / AD-635c — Clinical Telemetry Query Facade.
 
 Clearance-gated read-only query service enabling Medical (Chapel,
 chief_medical/FULL) and Counselor (Echo, counselor/ORACLE) to perform
 cross-agent clinical diagnostics over substrate telemetry.
 
-v1 surfaces TWO data domains:
-  - Dream cycle history (via EmergentDetector.recent_dreams)
-  - Cross-agent cognitive journal chain traces (via CognitiveJournal.get_recent_chain_traces)
+v3 surfaces THREE data domains:
+  - Dream cycle history (via EmergentDetector.recent_dreams; AD-635 v1)
+  - Cross-agent cognitive journal chain traces (via CognitiveJournal.get_recent_chain_traces; AD-635 v1)
+  - Cognitive circuit breaker state + zone transition history (via CircuitBreakerHistoryStore; AD-635c)
 
-Circuit breaker state history is deferred to AD-635c.
 REST endpoints, shell command, and proactive injection are deferred to AD-635d/e/f.
 
 AD-635b adds optional SQLite write-through persistence of the audit ring
-via ``ClinicalAuditStore``. Default-off; opt-in via ``audit_persistence_enabled``.
+via ``ClinicalAuditStore``. AD-635c adds optional SQLite write-through
+persistence of cognitive-circuit-breaker transitions via
+``CircuitBreakerHistoryStore`` plus the clearance-gated
+``query_circuit_breaker_history`` reader. Both are default-off; opt-in
+via ``audit_persistence_enabled`` and
+``circuit_breaker_history_persistence_enabled`` respectively.
 
 Authorization model (AD-620/622): caller must hold a clearance tier of FULL
 or ORACLE (resolved via effective_recall_tier from rank + billet + active
@@ -37,9 +42,13 @@ from probos.earned_agency import (
 )
 
 if TYPE_CHECKING:
-    # AD-635b: forward-ref to avoid a runtime import cycle with the
-    # audit-store module (defense in depth — current shape has no cycle).
+    # AD-635b / AD-635c: forward-refs to avoid runtime import cycles
+    # with the persistence modules (defense in depth — current shapes
+    # have no cycle).
     from probos.cognitive.clinical_audit_store import ClinicalAuditStore
+    from probos.cognitive.circuit_breaker_history_store import (
+        CircuitBreakerHistoryStore,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +71,7 @@ class ClinicalTelemetryService:
         *,
         audit_max_entries: int = 1000,
         audit_store: "ClinicalAuditStore | None" = None,
+        circuit_breaker_history_store: "CircuitBreakerHistoryStore | None" = None,
     ) -> None:
         self._runtime = runtime
         self._audit: collections.deque[dict[str, Any]] = collections.deque(
@@ -72,6 +82,11 @@ class ClinicalTelemetryService:
         # Standing Order on async hygiene (fire-and-forget references held).
         self._audit_store = audit_store
         self._write_tasks: set[asyncio.Task[None]] = set()
+        # AD-635c: optional CircuitBreakerHistoryStore handle for the
+        # query_circuit_breaker_history reader. None disables the third
+        # data domain (returns [] like the other domains do when their
+        # underlying store is unavailable).
+        self._circuit_breaker_history_store = circuit_breaker_history_store
 
     # ---- Public API ------------------------------------------------------
 
@@ -192,6 +207,77 @@ class ClinicalTelemetryService:
     def audit_log(self) -> list[dict[str, Any]]:
         """Snapshot of the audit ring (most recent last). Returns a copy."""
         return list(self._audit)
+
+    async def query_circuit_breaker_history(
+        self,
+        *,
+        requester_agent_id: str,
+        target_agent_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """AD-635c: Return up to `limit` recent breaker transitions.
+
+        When `target_agent_id` is provided, filters to that agent.
+        When None, returns transitions across all agents (most recent
+        first). Returns [] (not raises) if requester lacks clearance,
+        if the store is unavailable, or on any underlying failure.
+        Every call is logged to the audit ring.
+        """
+        granted = self._authorize_clinical_query(requester_agent_id)
+        if not granted:
+            self._record_audit(
+                requester_agent_id,
+                "circuit_breaker_history",
+                granted=False,
+                result_count=0,
+                target_agent_id=target_agent_id,
+            )
+            logger.warning(
+                "AD-635c: circuit_breaker_history denied for %s "
+                "(clearance/role gate)",
+                requester_agent_id,
+            )
+            return []
+
+        store = self._circuit_breaker_history_store
+        if store is None:
+            self._record_audit(
+                requester_agent_id,
+                "circuit_breaker_history",
+                granted=True,
+                result_count=0,
+                target_agent_id=target_agent_id,
+            )
+            return []
+
+        try:
+            rows = await store.recent(
+                max(0, int(limit)),
+                agent_id=target_agent_id,
+            )
+        except Exception:
+            logger.warning(
+                "AD-635c: circuit_breaker_history query failed for %s -> %s",
+                requester_agent_id, target_agent_id,
+                exc_info=True,
+            )
+            self._record_audit(
+                requester_agent_id,
+                "circuit_breaker_history",
+                granted=True,
+                result_count=0,
+                target_agent_id=target_agent_id,
+            )
+            return []
+
+        self._record_audit(
+            requester_agent_id,
+            "circuit_breaker_history",
+            granted=True,
+            result_count=len(rows),
+            target_agent_id=target_agent_id,
+        )
+        return rows
 
     # ---- Internals -------------------------------------------------------
 

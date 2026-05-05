@@ -548,7 +548,8 @@ def _wire_edge_classification(*, runtime: Any, config: "SystemConfig") -> bool:
 
 
 def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-635 / AD-635b: Wire ClinicalTelemetryService + optional audit persistence."""
+    """AD-635 / AD-635b / AD-635c: Wire ClinicalTelemetryService +
+    optional audit persistence + optional circuit-breaker history persistence."""
     cfg = getattr(config, "clinical_telemetry", None)
     if not cfg or not cfg.enabled:
         return False
@@ -567,16 +568,39 @@ def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
             cfg.audit_db_path,
         )
 
-    runtime.clinical_telemetry = ClinicalTelemetryService(
+    breaker_history_store = None
+    if cfg.circuit_breaker_history_persistence_enabled:
+        # AD-635c: double-gated — service must be enabled AND breaker-
+        # history persistence opted in. Default disabled flag keeps the
+        # AD-488 / AD-506a in-memory-only contract.
+        from probos.cognitive.circuit_breaker_history_store import (
+            CircuitBreakerHistoryStore,
+        )
+        breaker_history_store = CircuitBreakerHistoryStore(
+            db_path=cfg.circuit_breaker_history_db_path,
+        )
+        logger.info(
+            "AD-635c: CircuitBreakerHistoryStore wired (db_path=%s)",
+            cfg.circuit_breaker_history_db_path,
+        )
+
+    service = ClinicalTelemetryService(
         runtime,
         audit_max_entries=cfg.audit_max_entries,
         audit_store=audit_store,
+        circuit_breaker_history_store=breaker_history_store,
     )
+    # AD-635c: stash the breaker store for the late-bind block at the
+    # tail of finalize_startup. The proactive-loop wirer runs AFTER us;
+    # the late-bind reads this attribute and calls
+    # ``runtime.proactive_loop.circuit_breaker.set_history_store(...)``.
+    service._pending_breaker_store = breaker_history_store
+    runtime.clinical_telemetry = service
     logger.info(
-        "AD-635: ClinicalTelemetryService v1 initialized "
-        "(2 domains: dream_history + chain_traces; clearance gate FULL+; "
-        "persistence=%s)",
-        bool(audit_store),
+        "AD-635: ClinicalTelemetryService initialized "
+        "(3 domains: dream_history + chain_traces + circuit_breaker_history; "
+        "clearance gate FULL+; audit_persistence=%s; breaker_history_persistence=%s)",
+        bool(audit_store), bool(breaker_history_store),
     )
     return True
 
@@ -1004,6 +1028,28 @@ async def finalize_startup(
         )
         proactive_loop.set_runtime(runtime)
         proactive_loop.set_config(config.proactive_cognitive, cb_config=config.circuit_breaker, trait_config=config.trait_adaptive)
+        # AD-635c: late-bind seam — attach the CircuitBreakerHistoryStore
+        # (constructed by _wire_clinical_telemetry above) to the breaker
+        # owned by the proactive loop. Either side missing — clinical
+        # disabled, persistence disabled, or no pending store — is
+        # silently fine; the breaker simply stays unattached and
+        # query_circuit_breaker_history returns [] from an empty store.
+        _clinical = getattr(runtime, "clinical_telemetry", None)
+        if _clinical is not None:
+            _pending_store = getattr(_clinical, "_pending_breaker_store", None)
+            if _pending_store is not None:
+                try:
+                    proactive_loop.circuit_breaker.set_history_store(_pending_store)
+                    logger.info(
+                        "AD-635c: CircuitBreakerHistoryStore attached to "
+                        "CognitiveCircuitBreaker via late-bind"
+                    )
+                except Exception:
+                    logger.warning(
+                        "AD-635c: failed to attach CircuitBreakerHistoryStore "
+                        "to breaker via late-bind",
+                        exc_info=True,
+                    )
         if config.proactive_cognitive.duty_schedule.enabled:
             proactive_loop.set_duty_schedule(config.proactive_cognitive.duty_schedule)
         # PATCH(AD-517): Wire knowledge store for cooldown persistence

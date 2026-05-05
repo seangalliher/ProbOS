@@ -1,22 +1,33 @@
-"""AD-488: Cognitive Circuit Breaker — metacognitive loop detection.
+"""AD-488 / AD-635c: Cognitive Circuit Breaker — metacognitive loop detection.
 
 Monitors per-agent cognitive event patterns for rumination signatures
 and intervenes with forced cooldown + attention redirection.
 Not punishment — health protection.
 
 AD-506a: Graduated 4-zone model (Green → Amber → Red → Critical).
+AD-635c: Optional SQLite write-through persistence of state + zone
+transitions via ``CircuitBreakerHistoryStore``. Default-off; opt-in via
+``ClinicalTelemetryConfig.circuit_breaker_history_persistence_enabled``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.similarity import jaccard_similarity
+
+if TYPE_CHECKING:
+    # AD-635c: forward-ref to avoid a runtime import cycle with the
+    # history-store module (defense in depth — current shape has no cycle).
+    from probos.cognitive.circuit_breaker_history_store import (
+        CircuitBreakerHistoryStore,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -186,12 +197,29 @@ class CognitiveCircuitBreaker:
         self._agents: dict[str, AgentBreakerState] = {}
         self._trip_reasons: dict[str, str] = {}  # AD-495: per-agent trip reason
         self._trait_thresholds: dict[str, TraitAdaptiveThresholds] = {}  # AD-494
+        # AD-635c: optional SQLite write-through. None preserves AD-488 +
+        # AD-506a behavior bit-for-bit. Tasks tracked per the Standing Order
+        # on async hygiene (fire-and-forget references held).
+        self._history_store: "CircuitBreakerHistoryStore | None" = None
+        self._write_tasks: set[asyncio.Task[None]] = set()
 
     def _get_state(self, agent_id: str) -> AgentBreakerState:
         """Get or create per-agent breaker state."""
         if agent_id not in self._agents:
             self._agents[agent_id] = AgentBreakerState()
         return self._agents[agent_id]
+
+    def set_history_store(
+        self, store: "CircuitBreakerHistoryStore | None"
+    ) -> None:
+        """AD-635c: late-bind seam — attach a history store after construction.
+
+        Called from ``startup/finalize.py`` once both the proactive loop
+        (which owns the breaker) and the clinical-telemetry wirer (which
+        owns the config) have completed their primary wiring. Passing
+        ``None`` clears the seam.
+        """
+        self._history_store = store
 
     def set_agent_traits(
         self,
@@ -293,6 +321,15 @@ class CognitiveCircuitBreaker:
             if elapsed >= state.cooldown_seconds:
                 state.state = BreakerState.HALF_OPEN
                 state.last_probe_at = now
+                # AD-635c: record state transition (open → half_open).
+                self._record_transition(
+                    agent_id,
+                    transition_kind="state",
+                    old_value="open",
+                    new_value="half_open",
+                    trip_count=state.trip_count,
+                    cooldown_seconds=state.cooldown_seconds,
+                )
                 logger.info(
                     "AD-488: Circuit breaker HALF_OPEN for %s (cooldown %.0fs elapsed)",
                     agent_id, elapsed,
@@ -428,6 +465,14 @@ class CognitiveCircuitBreaker:
                 state.zone_history = state.zone_history[-20:]
             # AD-506b: Cache transition for recovery detection
             state.last_zone_transition = (old_zone.value, new_zone.value)
+            # AD-635c: record zone transition (green|amber|red|critical).
+            self._record_transition(
+                agent_id,
+                transition_kind="zone",
+                old_value=old_zone.value,
+                new_value=new_zone.value,
+                trip_count=state.trip_count,
+            )
             logger.info(
                 "AD-506a: Zone transition %s -> %s for %s",
                 old_zone.value, new_zone.value, agent_id,
@@ -472,6 +517,15 @@ class CognitiveCircuitBreaker:
         # If HALF_OPEN and no signals → recovery successful → CLOSED
         if state.state == BreakerState.HALF_OPEN:
             state.state = BreakerState.CLOSED
+            # AD-635c: record state transition (half_open → closed).
+            self._record_transition(
+                agent_id,
+                transition_kind="state",
+                old_value="half_open",
+                new_value="closed",
+                trip_count=state.trip_count,
+                cooldown_seconds=state.cooldown_seconds,
+            )
             logger.info("AD-488: Circuit breaker CLOSED for %s (recovery confirmed)", agent_id)
 
         return False
@@ -479,6 +533,9 @@ class CognitiveCircuitBreaker:
     def _trip(self, agent_id: str, reason: str) -> None:
         """Trip the circuit breaker for an agent."""
         state = self._get_state(agent_id)
+        # AD-635c: capture the prior state value BEFORE mutation, so the
+        # transition row carries closed→open or half_open→open correctly.
+        prior_state_value = state.state.value
         state.trip_count += 1
         state.tripped_at = time.monotonic()
         state.state = BreakerState.OPEN
@@ -491,6 +548,17 @@ class CognitiveCircuitBreaker:
             self._max_cooldown,
         )
         state.cooldown_seconds = cooldown
+
+        # AD-635c: record state transition (closed|half_open → open).
+        self._record_transition(
+            agent_id,
+            transition_kind="state",
+            old_value=prior_state_value,
+            new_value="open",
+            trip_count=state.trip_count,
+            cooldown_seconds=state.cooldown_seconds,
+            reason=reason,
+        )
 
         logger.warning(
             "AD-488: Circuit breaker TRIPPED for %s — %s. "
@@ -575,3 +643,66 @@ class CognitiveCircuitBreaker:
         self._agents.clear()
         self._trip_reasons.clear()
         self._trait_thresholds.clear()  # AD-494
+
+    # ---- AD-635c: history write-through ---------------------------------
+
+    def _record_transition(
+        self,
+        agent_id: str,
+        *,
+        transition_kind: str,
+        old_value: str,
+        new_value: str,
+        trip_count: int = 0,
+        cooldown_seconds: float = 0.0,
+        reason: str | None = None,
+    ) -> None:
+        """AD-635c: record one state or zone transition.
+
+        Short-circuits when no history store is attached — keeps the
+        no-persistence path free of any per-call overhead beyond a single
+        attribute load + None check.
+        """
+        if self._history_store is None:
+            return
+        entry: dict[str, Any] = {
+            "ts": time.time(),
+            "agent_id": agent_id,
+            "transition_kind": transition_kind,
+            "old_value": old_value,
+            "new_value": new_value,
+            "trip_count": int(trip_count),
+            "cooldown_seconds": float(cooldown_seconds),
+        }
+        if reason is not None:
+            entry["reason"] = reason
+        self._schedule_history_write(entry)
+
+    def _schedule_history_write(self, entry: dict[str, Any]) -> None:
+        """AD-635c: fire-and-forget SQLite persistence task."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug(
+                "AD-635c: no running event loop; circuit-breaker history "
+                "write skipped",
+            )
+            return
+        task = loop.create_task(self._write_history(entry))
+        self._write_tasks.add(task)
+        task.add_done_callback(self._write_tasks.discard)
+
+    async def _write_history(self, entry: dict[str, Any]) -> None:
+        """AD-635c: persist one transition entry; tier-2 log-and-degrade."""
+        try:
+            await self._history_store.append(entry)
+        except Exception:
+            logger.warning(
+                "AD-635c: circuit-breaker history write-through failed for "
+                "%s/%s (%s -> %s)",
+                entry.get("agent_id"),
+                entry.get("transition_kind"),
+                entry.get("old_value"),
+                entry.get("new_value"),
+                exc_info=True,
+            )

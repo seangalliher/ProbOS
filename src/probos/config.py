@@ -2025,21 +2025,28 @@ class EdgeBackfillConfig(BaseModel):
 
 
 class ClinicalTelemetryConfig(BaseModel):
-    """AD-635 / AD-635b: Clearance-gated clinical query facade (Medical / Counselor).
+    """AD-635 / AD-635b / AD-635c: Clearance-gated clinical query facade (Medical / Counselor).
 
     AD-635 v1 shipped the read-only query facade with a bounded in-memory
     audit ring (``audit_max_entries`` deque). AD-635b adds optional
     SQLite persistence of the audit ring for post-incident review,
-    gated by ``audit_persistence_enabled`` (default False per Wave-10
-    convention #14 — transitional flag, default off until validated).
+    gated by ``audit_persistence_enabled``. AD-635c adds optional
+    SQLite persistence of cognitive-circuit-breaker state and zone
+    transitions, gated by ``circuit_breaker_history_persistence_enabled``,
+    plus a clearance-gated ``query_circuit_breaker_history`` method on
+    ``ClinicalTelemetryService`` that reads from the durable store.
 
-    The service is invisible at runtime out-of-the-box (``enabled=False``).
-    Captain opts in via YAML; persistence requires a second opt-in.
+    Each persistence flag defaults False per Wave-10 convention #14
+    (transitional flag, default off until validated). The service is
+    invisible at runtime out-of-the-box (``enabled=False``). Captain
+    opts in via YAML; each persistence side requires its own opt-in.
     """
     enabled: bool = False
     audit_max_entries: int = 1000
     audit_persistence_enabled: bool = False
     audit_db_path: str = "data/clinical_audit.db"
+    circuit_breaker_history_persistence_enabled: bool = False
+    circuit_breaker_history_db_path: str = "data/circuit_breaker_history.db"
 
 
 class ProcessChainRegistryConfig(BaseModel):
