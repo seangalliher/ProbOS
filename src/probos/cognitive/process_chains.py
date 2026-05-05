@@ -167,3 +167,39 @@ class ProcessChainExecutor:
             (time.monotonic() - chain_started) * 1000.0,
         )
         return running
+
+
+class ProcessChainRegistry:
+    """AD-647b v1 — runtime catalog of `ProcessChainDefinition` keyed by chain_id.
+
+    Public API:
+        register_chain(definition)       -> None        (replace + WARN on duplicate)
+        get_chain(chain_id)              -> ProcessChainDefinition | None
+        list_chains()                    -> list[str]   (sorted chain_ids)
+        unregister_chain(chain_id)       -> bool        (False if absent)
+
+    Registration uses ``definition.name`` as the chain_id. Builders that
+    need to disambiguate two chains with the same human-readable name
+    must distinguish them at definition construction (not at registration).
+    """
+
+    def __init__(self) -> None:
+        self._chains: dict[str, ProcessChainDefinition] = {}
+
+    def register_chain(self, definition: ProcessChainDefinition) -> None:
+        chain_id = definition.name
+        if chain_id in self._chains:
+            logger.warning(
+                "AD-647b: replacing existing process chain registration: %s",
+                chain_id,
+            )
+        self._chains[chain_id] = definition
+
+    def get_chain(self, chain_id: str) -> ProcessChainDefinition | None:
+        return self._chains.get(chain_id)
+
+    def list_chains(self) -> list[str]:
+        return sorted(self._chains.keys())
+
+    def unregister_chain(self, chain_id: str) -> bool:
+        return self._chains.pop(chain_id, None) is not None

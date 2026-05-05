@@ -149,7 +149,13 @@ async def test_scout_act_runs_through_process_chain(tmp_path, monkeypatch):
 
     agent = ScoutAgent.__new__(ScoutAgent)  # bypass spawner ctor — we wire the minimum we need
     agent.id = "scout-test"
-    agent._runtime = None  # no notification queue, no discord
+    # AD-647b: minimal runtime stub with the chain registry; no notification queue / discord.
+    from types import SimpleNamespace
+    from probos.cognitive.process_chains import ProcessChainRegistry
+    from probos.cognitive.scout import SCOUT_REPORT_CHAIN
+    _registry = ProcessChainRegistry()
+    _registry.register_chain(SCOUT_REPORT_CHAIN)
+    agent._runtime = SimpleNamespace(process_chain_registry=_registry)
     agent._last_findings = []
     agent._pending_seen_repos = []  # already marked / nothing to mark
     agent._repo_metadata = {

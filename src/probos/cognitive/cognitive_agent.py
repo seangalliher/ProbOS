@@ -90,6 +90,12 @@ def _classify_concurrency_priority(intent: IntentMessage) -> int:
 
 
 class CognitiveAgent(BaseAgent):
+    # AD-647b v1: agents that own a registered ProcessChainDefinition set
+    # this to the chain_id ("name" of the definition). When set, the
+    # AD-632 communication-chain gate (_should_activate_chain) returns
+    # False for any observation whose duty_id matches — the agent runs
+    # its process chain via runtime.process_chain_registry instead.
+    process_chain_id: str | None = None
     """Agent whose decide() step consults an LLM guided by instructions.
 
     The perceive/decide/act/report lifecycle is preserved.  ``decide()``
@@ -1686,15 +1692,26 @@ class CognitiveAgent(BaseAgent):
         """AD-632f: Evaluate whether this observation warrants a multi-step chain.
 
         Gates (evaluated in order, first failure short-circuits):
-          0. Executor exists and is enabled
-          1. Intent type is in _CHAIN_ELIGIBLE_INTENTS
+          0. AD-647b — observation is a duty-triggered proactive_think for the
+             agent's registered process_chain_id (agent runs the process chain,
+             not the comm chain). Generalizes BF-209.
+          1. Executor exists and is enabled
+          2. Intent type is in _CHAIN_ELIGIBLE_INTENTS
         """
-        # Gate 0: executor readiness
+        # Gate 0 (AD-647b): process-chain owners skip the comm chain when
+        # the duty matches their registered chain_id.
+        if self.process_chain_id is not None:
+            intent = observation.get("intent", "")
+            if intent == "proactive_think":
+                duty = (observation.get("params") or {}).get("duty") or {}
+                if duty.get("duty_id") == self.process_chain_id:
+                    return False
+        # Gate 1: executor readiness
         if self._sub_task_executor is None:
             return False
         if not self._sub_task_executor.enabled:
             return False
-        # Gate 1: intent type filter
+        # Gate 2: intent type filter
         intent = observation.get("intent", "")
         if intent not in _CHAIN_ELIGIBLE_INTENTS:
             logger.debug(

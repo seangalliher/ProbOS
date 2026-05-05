@@ -10,6 +10,29 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-647b v1: Process Chain Registry + BF-209 Bypass Removal (2026-05-04)
+
+**Problem:** AD-647 v1 (Wave 34) shipped `ProcessChainStep`/`ProcessChainDefinition`/`ProcessChainExecutor` but ScoutAgent constructed its `scout_report` chain inline inside `act()` per invocation, with handlers as bound methods. No registry, no introspection, no replacement path. ScoutAgent additionally carried a per-agent BF-209 override on `_should_activate_chain` that returned False for `proactive_think + duty_id="scout_report"` — an opt-out that did not generalize.
+
+**Decision:**
+- New `ProcessChainRegistry` in `cognitive/process_chains.py` keyed by `chain_id = definition.name`. API: `register_chain(definition)` (replace + WARNING on duplicate, mirrors `ToolRegistry.register`), `get_chain(chain_id) -> ProcessChainDefinition | None` (Demeter-friendly None on miss), `list_chains() -> list[str]` (sorted), `unregister_chain(chain_id) -> bool` (False on absent, no exception).
+- New class attribute `process_chain_id: str | None = None` on `CognitiveAgent`. Base-class `_should_activate_chain` short-circuits to False when `self.process_chain_id is not None` AND observation is `proactive_think` with `params.duty.duty_id == self.process_chain_id` — this generalizes BF-209 into a declarative class-attribute hook.
+- Scout handler refactor: four `_scout_step_*` methods promoted from bound instance methods to module-level functions reading `_agent` from chain context. `SCOUT_REPORT_CHAIN: ProcessChainDefinition` is now a static module-level constant. `ScoutAgent.process_chain_id = "scout_report"`. ScoutAgent's BF-209 `_should_activate_chain` override is REMOVED. `act()` looks up chain via `runtime.process_chain_registry.get_chain(self.process_chain_id)` with module-level fallback + WARNING when registry is missing.
+- New `ProcessChainRegistryConfig(enabled=True)` Pydantic model + `_wire_process_chain_registry` finalize wirer that constructs the registry and registers `SCOUT_REPORT_CHAIN`.
+- Test fixture `test_scout_act_runs_through_process_chain` updated to inject a `SimpleNamespace` runtime carrying a populated `process_chain_registry` (replaces `_runtime = None`).
+
+**Architect calls (DLogs):**
+1. Module-level handlers + `_agent` in context is the correct long-term shape (registry stores definitions, not factories); `_deliver_discord` stays bound (reads runtime/config/id).
+2. Hook lives on `_should_activate_chain` (not a default `act()`) — `CognitiveAgent.act()` already has substantial chain-aggregation logic we don't fork.
+3. Duplicate-registration semantics: replace + WARN (matches `ToolRegistry`); more useful for hot-reload/test isolation than rejection.
+4. Registry never raises on miss (`get_chain` → None, `unregister_chain` → False).
+5. `enabled=True` default is intentional — Scout's `act()` depends on the registry; cost is one empty dict + one register call at boot. Same precedent as `KnowledgeEdgesConfig`/`ConsultationWorkspaceConfig`.
+6. Backward-compat invariant: all 8 existing AD-647 v1 tests continue to pass after the Section 6 fixture amendment.
+
+**Out of scope (explicit non-goals):** No NATS / Bills / Watch Bill integration (AD-647c, #405). No parallel/conditional/rollback steps. No LLM-template handlers. No registry persistence (in-memory only). No HXI surface for `list_chains()`. No `_deliver_discord` refactor. No `BaseAgent` change (hook lives on `CognitiveAgent`).
+
+**Result:** 12 new tests in `tests/test_ad647b_chain_registry.py` (over the 10 floor by 2). All 8 existing AD-647 v1 tests pass with the fixture amendment. Phantom-API pre-check on the prompt + touched source files: clean (no NEW phantoms). Full gate: 11144 passed (delta +12 vs Wave 47 baseline 11132 — exact target hit; 1 known xdist flake `test_knowledge_store::test_auto_commit_after_debounce` passes serial in 7.41s, same Waves 8/14/15/16/19/22/27/30/31/32/33/37/41/42 environmental git-debounce pattern, unrelated to this AD). Pre-commit deletion sanity: max ~110 deletions in `scout.py` (4 bound `_scout_step_*` methods removed — content moved to module level above class). No surprise deletions. No hard-stops triggered: no architectural change required, no phantom in implementation (verify-first pre-check at draft confirmed all 8 anchors at HEAD: `ProcessChainExecutor` line 108, `_should_activate_chain` overrides at scout.py:253 + cognitive_agent.py:1685, `ScoutAgent` class at scout.py:206, four `_scout_step_*` instance methods at scout.py:449/475/489/506, `ToolRegistry.register` precedent at tools/registry.py:113, `_wire_consultation_workspaces` sibling at finalize.py:515, `consultation_workspaces` field at config.py:2260; `runtime.process_chain_registry` collision-free greenfield 0 hits in src). Closes GH issue #404.
+
 ### AD-685d v1: Phantom-API Pre-Check Dataclass/Pydantic Field-Name Validation (2026-05-04)
 
 **Problem:** AD-685/AD-685b/AD-685c validate kwarg names, method names, and kwarg type-shapes — but not field-name typos on dataclass / Pydantic instances. A prompt asserting `meta.totel_ops` (typo of `total_operations`) or `AgentMeta(succes_count=5)` (typo of `success_count`) ships clean. Property/field collisions across inheritance (child dataclass field shadowing parent `@property`) also slip through. GH issue #407 calls for field-name validation closing this fourth gap.

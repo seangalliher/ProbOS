@@ -1901,6 +1901,18 @@ class ClinicalTelemetryConfig(BaseModel):
     audit_max_entries: int = 1000
 
 
+class ProcessChainRegistryConfig(BaseModel):
+    """AD-647b v1: Registry of named process chains (`ProcessChainDefinition`).
+
+    Default-True is intentional — registry construction cost is one empty
+    dict + one ``register_chain(SCOUT_REPORT_CHAIN)`` call at boot, and
+    Scout's ``act()`` depends on the registry being present (the
+    module-level fallback is a defensive belt — disabling the registry
+    would still log a WARNING per scout invocation).
+    """
+    enabled: bool = True
+
+
 class ConsultationWorkspaceConfig(BaseModel):
     """AD-594a v1: Session-scoped consultation workspace registry.
 
@@ -2260,6 +2272,9 @@ class SystemConfig(BaseModel):
     consultation_workspaces: ConsultationWorkspaceConfig = Field(
         default_factory=ConsultationWorkspaceConfig
     )  # AD-594a
+    process_chain_registry: ProcessChainRegistryConfig = Field(
+        default_factory=ProcessChainRegistryConfig
+    )  # AD-647b
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571

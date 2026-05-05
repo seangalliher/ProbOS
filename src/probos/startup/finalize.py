@@ -512,6 +512,29 @@ def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_process_chain_registry(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-647b v1: Initialize ProcessChainRegistry and register built-in chains.
+
+    Currently registered:
+      - SCOUT_REPORT_CHAIN (chain_id="scout_report")
+    """
+    cfg = getattr(config, "process_chain_registry", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.cognitive.process_chains import ProcessChainRegistry
+    from probos.cognitive.scout import SCOUT_REPORT_CHAIN
+
+    registry = ProcessChainRegistry()
+    registry.register_chain(SCOUT_REPORT_CHAIN)
+    runtime.process_chain_registry = registry
+    logger.info(
+        "AD-647b: ProcessChainRegistry initialized (chains=%s)",
+        registry.list_chains(),
+    )
+    return True
+
+
 def _wire_consultation_workspaces(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-594a v1: Wire WorkspaceRegistry session-scoped consultation workspaces.
 
@@ -849,6 +872,9 @@ async def finalize_startup(
 
     if _wire_clinical_telemetry(runtime=runtime, config=config):
         logger.info("AD-635: ClinicalTelemetryService v1 wired during finalization")
+
+    if _wire_process_chain_registry(runtime=runtime, config=config):
+        logger.info("AD-647b: ProcessChainRegistry v1 wired during finalization")
 
     if _wire_consultation_workspaces(runtime=runtime, config=config):
         logger.info("AD-594a: WorkspaceRegistry v1 wired during finalization")
