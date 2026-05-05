@@ -571,7 +571,7 @@ waves:
       - "prompts/ad-660b-causal-auto-emergence-v1.md"
     builder_required: true
     issues_to_close: [411]
-    status: pending
+    status: done
 
   - id: "52"
     title: "AD-659b v1 Chain Optimizer Apply Approved Proposals"
