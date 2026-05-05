@@ -193,7 +193,7 @@ def create_app(runtime: Any) -> FastAPI:
         ontology, system, wardroom, wardroom_admin, records, identity,
         agents, journal, skills, acm, assignments, scheduled_tasks,
         workforce, build, design, chat, chain_traces, chain_optimizer,
-        counselor, procedures, gaps,
+        clinical, counselor, procedures, gaps,
         recreation, memory_graph, bills, emergent_leadership, orders,
         infodynamic, diagnostic_context, nl_graph_query,
     )
@@ -201,7 +201,7 @@ def create_app(runtime: Any) -> FastAPI:
         ontology, system, wardroom, wardroom_admin, records, identity,
         agents, journal, skills, acm, assignments, scheduled_tasks,
         workforce, build, design, chat, chain_traces, chain_optimizer,
-        counselor, procedures, gaps,
+        clinical, counselor, procedures, gaps,
         recreation, memory_graph, bills, emergent_leadership, orders,
         infodynamic, diagnostic_context, nl_graph_query,
     ):
