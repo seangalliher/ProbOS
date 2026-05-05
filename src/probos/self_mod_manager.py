@@ -136,18 +136,17 @@ class SelfModManager:
                 )
             except Exception:
                 logger.warning("Failed to persist patched agent — may be lost on restart", exc_info=True)
-        # Auto-index for semantic search (AD-243)
-        if self._semantic_layer:
-            try:
-                await self._semantic_layer.index_agent(
-                    agent_type=original_record.agent_type,
-                    intent_name=original_record.intent_name,
-                    description=original_record.intent_name,
-                    strategy=original_record.strategy,
-                    source_snippet=patch_result.patched_source[:200] if patch_result.patched_source else "",
-                )
-            except Exception:
-                logger.debug("Semantic layer indexing failed", exc_info=True)
+        # AD-686b: route through Oracle write-path
+        oracle = getattr(self._runtime, "oracle", None) or getattr(self._runtime, "_oracle_service", None)
+        if oracle is not None:
+            await oracle.write_semantic(
+                "agent",
+                agent_type=original_record.agent_type,
+                intent_name=original_record.intent_name,
+                description=original_record.intent_name,
+                strategy=original_record.strategy,
+                source_snippet=patch_result.patched_source[:200] if patch_result.patched_source else "",
+            )
 
         # Auto-retry the original request
         retry_result = None

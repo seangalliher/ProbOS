@@ -413,22 +413,18 @@ async def _run_selfmod(
                         "Failed to store agent '%s' in knowledge store",
                         record.agent_type, exc_info=True,
                     )
+            # AD-686b: route through Oracle write-path
+            oracle = getattr(rt, "oracle", None) or getattr(rt, "_oracle_service", None)
             semantic_indexed = False
-            if rt._semantic_layer:
-                try:
-                    await rt._semantic_layer.index_agent(
-                        agent_type=record.agent_type,
-                        intent_name=record.intent_name,
-                        description=record.intent_name,
-                        strategy=record.strategy,
-                        source_snippet=record.source_code[:200] if record.source_code else "",
-                    )
-                    semantic_indexed = True
-                except Exception:
-                    logger.warning(
-                        "Failed to index agent '%s' in semantic layer",
-                        record.agent_type, exc_info=True,
-                    )
+            if oracle is not None:
+                semantic_indexed = await oracle.write_semantic(
+                    "agent",
+                    agent_type=record.agent_type,
+                    intent_name=record.intent_name,
+                    description=record.intent_name,
+                    strategy=record.strategy,
+                    source_snippet=record.source_code[:200] if record.source_code else "",
+                )
 
             # Generate capability report from designed agent source
             capability_report = ""

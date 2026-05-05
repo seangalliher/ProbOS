@@ -173,7 +173,40 @@ class OracleService:
         last write wins.
         """
         self._health_provider = health_provider
+    # ------------------------------------------------------------------
+    # AD-686b: write_semantic — Oracle owns the semantic write feed
+    # ------------------------------------------------------------------
+    async def write_semantic(self, kind: str, /, **fields: Any) -> bool:
+        """AD-686b: Write a record to SemanticKnowledgeLayer through the Oracle.
 
+        Five supported kinds: ``"agent"`` / ``"skill"`` / ``"workflow"`` /
+        ``"qa_report"`` / ``"event"``. Tier-2 log-and-degrade: returns
+        ``False`` (and logs) if the layer is not attached, the kind is
+        unknown, or delegation raises. Returns ``True`` only when the
+        underlying ``layer.index_<kind>(**fields)`` completes successfully.
+        Mirrors the existing read-path Tier 5 (``_query_semantic``) shape.
+        """
+        layer = self._semantic_layer
+        if layer is None:
+            logger.debug(
+                "Oracle: write_semantic(%s) — no semantic layer attached; dropping", kind,
+            )
+            return False
+        method = getattr(layer, f"index_{kind}", None)
+        if method is None:
+            logger.warning(
+                "Oracle: write_semantic(%s) — unknown kind (no layer.index_%s)",
+                kind, kind,
+            )
+            return False
+        try:
+            await method(**fields)
+            return True
+        except Exception:
+            logger.warning(
+                "Oracle: write_semantic(%s) — delegation failed", kind, exc_info=True,
+            )
+            return False
     async def query(
         self,
         query_text: str,

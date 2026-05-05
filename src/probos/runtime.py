@@ -2502,18 +2502,15 @@ class ProbOSRuntime:
                                     await self._knowledge_store.store_agent(record, record.source_code)
                                 except Exception:
                                     logger.warning("Failed to persist designed agent — may be lost on restart", exc_info=True)
-                            # Auto-index for semantic search (AD-243)
-                            if self._semantic_layer:
-                                try:
-                                    await self._semantic_layer.index_agent(
-                                        agent_type=record.agent_type,
-                                        intent_name=record.intent_name,
-                                        description=record.intent_name,
-                                        strategy=record.strategy,
-                                        source_snippet=record.source_code[:200] if record.source_code else "",
-                                    )
-                                except Exception:
-                                    logger.debug("Semantic layer indexing failed", exc_info=True)
+                            # AD-686b: route through Oracle write-path
+                            await self.oracle.write_semantic(
+                                "agent",
+                                agent_type=record.agent_type,
+                                intent_name=record.intent_name,
+                                description=record.intent_name,
+                                strategy=record.strategy,
+                                source_snippet=record.source_code[:200] if record.source_code else "",
+                            )
                         elif record:
                             self_mod_result = {
                                 "status": record.status,
@@ -3303,16 +3300,13 @@ class ProbOSRuntime:
                 await self._knowledge_store.store_skill(skill.name, skill.source_code, descriptor_dict)
             except Exception:
                 logger.warning("Failed to persist skill — may be lost on restart", exc_info=True)
-        # Auto-index skill for semantic search (AD-243)
-        if self._semantic_layer:
-            try:
-                await self._semantic_layer.index_skill(
-                    intent_name=skill.name,
-                    description=skill.descriptor.description if skill.descriptor else skill.name,
-                    target_agent=getattr(skill, "target_agent", ""),
-                )
-            except Exception:
-                logger.debug("Semantic skill indexing failed", exc_info=True)
+        # AD-686b: route through Oracle write-path
+        await self.oracle.write_semantic(
+            "skill",
+            intent_name=skill.name,
+            description=skill.descriptor.description if skill.descriptor else skill.name,
+            target_agent=getattr(skill, "target_agent", ""),
+        )
 
     # ------------------------------------------------------------------
     # SystemQA helper (AD-154)
@@ -3352,16 +3346,13 @@ class ProbOSRuntime:
                     await self._knowledge_store.store_qa_report(record.agent_type, report_dict)
                 except Exception:
                     logger.debug("Failed to persist QA report", exc_info=True)
-            # Auto-index QA report for semantic search (AD-243)
-            if self._semantic_layer:
-                try:
-                    await self._semantic_layer.index_qa_report(
-                        agent_type=record.agent_type,
-                        verdict=report.verdict,
-                        pass_rate=report.passed / report.total_tests if report.total_tests > 0 else 0.0,
-                    )
-                except Exception:
-                    logger.debug("Semantic QA report indexing failed", exc_info=True)
+            # AD-686b: route through Oracle write-path
+            await self.oracle.write_semantic(
+                "qa_report",
+                agent_type=record.agent_type,
+                verdict=report.verdict,
+                pass_rate=report.passed / report.total_tests if report.total_tests > 0 else 0.0,
+            )
 
             # Trust updates (AD-155)
             for agent_id_or_agent in pool.healthy_agents:
