@@ -607,7 +607,7 @@ waves:
       - "prompts/ad-658a-chain-trace-token-split-v1.md"
     builder_required: true
     issues_to_close: [408]
-    status: pending
+    status: done
 
   - id: "55"
     title: "AD-456b v1 Security Infrastructure Runtime Sandboxing"
