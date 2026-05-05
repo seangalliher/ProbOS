@@ -655,7 +655,7 @@ waves:
       - "prompts/ad-528b-active-rejection-v1.md"
     builder_required: true
     issues_to_close: [401]
-    status: pending
+    status: done
 
   - id: "59"
     title: "AD-528c v1 Ground-Truth Trust-Network Feedback"
