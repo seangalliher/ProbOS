@@ -67,7 +67,10 @@ async def test_chain_trace_keyword_filter_and_budget() -> None:
          "error_truncated": "", "communication_context": ""},
         {"chain_id": "c3", "step_index": 0, "step_name": "EVALUATE",
          "sub_task_type": "cpu_check", "intent": "diagnose",
-         "error_truncated": "x" * 6000,  # forces budget overflow on its own
+         # AD-661c: bumped from 6000 → 12000 chars so the row exceeds the
+         # GLOBAL budget (not just chain_budget). Under the new redistribute
+         # default this preserves the original test intent (overflow → truncated).
+         "error_truncated": "x" * 12000,
          "communication_context": ""},
     ])
     runtime = SimpleNamespace(

@@ -350,22 +350,34 @@ class ChainOptimizerConfig(BaseModel):
 
 
 class DiagnosticContextConfig(BaseModel):
-    """AD-661 v1: Diagnostic Context Service — pull-based bundle assembly.
+    """AD-661 v1 + AD-661b/c: Diagnostic Context Service — pull-based bundle assembly.
 
     Default-enabled (deviation from Wave-10 transitional-flag convention)
     because the service is a read-only aggregator with no automatic
     invocation; it is invisible at runtime until a caller invokes
     `assemble()`. See AD-661 prompt for the convention deviation rationale.
+
+    AD-661b adds a 4th allocation tier (`records_ratio`) for Ship's Records
+    (AD-434). The synthetic system-context reader naturally surfaces only
+    ship/fleet records; per-agent record authorization is deferred (AD-661f).
+
+    AD-661c adds `redistribute_remainder` (default True): unused budget from
+    under-filled tiers is redistributed to other tiers in priority order
+    (chain_traces > procedures > episodes > records) while candidates remain.
     """
 
     enabled: bool = True
     default_budget_tokens: int = 8000
-    chain_trace_ratio: float = 0.4
-    procedure_ratio: float = 0.3
-    episode_ratio: float = 0.3
+    chain_trace_ratio: float = 0.30
+    procedure_ratio: float = 0.25
+    episode_ratio: float = 0.25
+    records_ratio: float = 0.20
     chars_per_token: int = 4
+    redistribute_remainder: bool = True
 
-    @field_validator("chain_trace_ratio", "procedure_ratio", "episode_ratio")
+    @field_validator(
+        "chain_trace_ratio", "procedure_ratio", "episode_ratio", "records_ratio",
+    )
     @classmethod
     def _ratio_in_unit(cls, v: float) -> float:
         if not 0.0 <= v <= 1.0:
@@ -374,7 +386,12 @@ class DiagnosticContextConfig(BaseModel):
 
     @model_validator(mode="after")
     def _ratios_sum_to_one(self) -> "DiagnosticContextConfig":
-        total = self.chain_trace_ratio + self.procedure_ratio + self.episode_ratio
+        total = (
+            self.chain_trace_ratio
+            + self.procedure_ratio
+            + self.episode_ratio
+            + self.records_ratio
+        )
         if abs(total - 1.0) > 0.01:
             raise ValueError(
                 f"ratios must sum to 1.0 (±0.01); got {total:.4f}"

@@ -381,7 +381,9 @@ def _wire_diagnostic_context(*, runtime: Any, config: "SystemConfig") -> bool:
         chain_trace_ratio=cfg.chain_trace_ratio,
         procedure_ratio=cfg.procedure_ratio,
         episode_ratio=cfg.episode_ratio,
+        records_ratio=cfg.records_ratio,
         chars_per_token=cfg.chars_per_token,
+        redistribute_remainder=cfg.redistribute_remainder,
     )
     logger.info(
         "AD-661: DiagnosticContextService v1 initialized "

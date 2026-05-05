@@ -10,6 +10,28 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-661b + AD-661c v1: DiagnosticContextService Ship's Records + Budget Remainder Redistribution (2026-05-04)
+
+**Problem:** AD-661 v1 (Wave 33, commit 9119f50) shipped a 3-tier pull-based diagnostic-context aggregator with a hard 40/30/30 split and no remainder redistribution. Two follow-ups remained open: AD-661b (#412) — bundle had no Ship's Records (AD-434) coverage even though `runtime.records_store` was already public; AD-661c (#413) — when one tier under-filled its allocation (e.g. procedures producing 200 tokens against a 2400-token slice), the unused budget went to waste even when other tiers had more candidates waiting. Captain's Wave 45 "no trivial deferral" rule: ship both extensions in one Builder cycle.
+
+**Decision:** Promote allocation to 4 tiers + add two-pass fill with priority-ordered remainder redistribution.
+
+- **AD-661b**: `DiagnosticBundle` gains `records: list[dict]` field. New `_gather_record_candidates(*, keywords)` collector reads `runtime.records_store.list_entries()` + `read_entry(path, reader_id, reader_department)`. Synthetic system reader (`_RECORDS_READER_ID = "_diagnostic_context_system"` + empty department) naturally surfaces only ship/fleet records via RecordsStore's built-in classification gate. Per-agent record authorization deferred AD-661f. Each accepted record normalized to flat dict (path/title/summary_excerpt/classification/author/status/tags); content truncated to `_RECORDS_CONTENT_EXCERPT_CHARS=1200`; candidate list capped at `_MAX_RECORDS_CANDIDATES=30`. Tier-2 log-and-degrade.
+- **AD-661c**: `_collect_*` collectors renamed to `_gather_*` candidate producers (no per-tier budget clip). New `_fill_with_redistribution(candidates_by_tier, allocations, total_budget, redistribute) -> (filled, truncated)` centralizes budget bookkeeping. Priority order `_TIER_PRIORITY = ("chain_traces", "procedures", "episodes", "records")`. Pass 1 fills each tier up to its allocation; Pass 2 (only when `redistribute=True`) walks tiers in priority order topping up while global budget has room. `truncated=True` iff global budget exhausted AND at least one tier still has unconsumed candidates.
+- Default allocation split moves from 40/30/30 (3-tier) to 30/25/25/20 (4-tier). `redistribute_remainder=True` by default — default-on rather than transitional-flag-off because the change is strictly an enhancement: under-filled tiers no longer lose budget that other tiers could use. The router is unchanged because `bundle.to_dict()` automatically includes the new `records` key.
+
+**Rationale:** AD-661 v1's hard 40/30/30 split was a deliberate first-cut bound — simple, predictable, easy to reason about — with redistribution explicitly punted to a follow-up. Six months of integration data shows under-filled tiers are common (procedures often have only 1–2 entries; episodes drop to 0 when no exemplars exist), and the wasted budget directly degrades chain-trace coverage which is the richest diagnostic signal. Two-pass fill with priority ordering retains the v1 "each tier gets a guaranteed slice" contract while giving the global budget back to whoever can use it. Records as a 4th tier is the obvious next step: AD-434 had been shipped for many waves, `runtime.records_store` is public, and the Lee et al. Meta-Harness proposer (arXiv:2603.28052) calls for *all* available raw diagnostic context. The synthetic system reader is the simplest way to surface ship/fleet records without coupling to per-agent clearance plumbing (AD-635/AD-660/AD-692 already own the agent-clearance graph; folding it into a read-only aggregator would breach Open/Closed).
+
+**Trade-offs:**
+
+- v1 had a strong "each tier gets exactly its slice" semantic; v1c relaxes it. Tests that asserted `truncated` under the v1 per-tier-cap semantics now need to overflow the GLOBAL budget rather than just one tier's slice. One v1 test fixture (test_chain_trace_keyword_filter_and_budget) needed amendment for this reason — c3 row content bumped from 6000 to 12000 chars.
+- Records via synthetic system reader cannot surface department-classified records to agents who would normally have department-level access. AD-661f will plug per-agent reader identity in.
+- `_TIER_PRIORITY` is hardcoded chain_traces > procedures > episodes > records. If integration data shows records or episodes deserve higher priority for some queries, the priority order would need to become query-aware (deferred).
+
+**Closes:** GH issues #412 + #413.
+
+**Related:** AD-661 (v1, Wave 33), AD-657 (trace preservation), AD-658 (chain traces), AD-434 (Ship's Records), AD-692 (edge classification — orthogonal taxonomy by design).
+
 ### AD-594a v1: Consultation Workspace Substrate (2026-05-04)
 
 **Problem:** AD-594 Crew Consultation Protocol decomposed into four independent ADs (594a/b/c/d). Without a session-scoped shared workspace in Ship's Records, the consultation primitive (594b), parallel execution dispatch (594c), and delivery pipeline (594d) all have no anchor — multi-agent advisory consultations would either smuggle state through ad-hoc IntentMessage payloads or write to records-store with the wrong frontmatter wrapper. The substrate must ship first; sibling ADs build on it.

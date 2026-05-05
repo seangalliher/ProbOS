@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 CHARS_PER_TOKEN = 4  # Same precedent as agent_working_memory.py:35
 
+# AD-661b: Ship's Records collection caps
+_MAX_RECORDS_CANDIDATES = 30  # absolute cap on records pulled from records_store before token-trim
+_RECORDS_READER_ID = "_diagnostic_context_system"  # synthetic privileged reader (sees ship/fleet only)
+_RECORDS_CONTENT_EXCERPT_CHARS = 1200  # truncate raw record content before inclusion in bundle dict
+
 
 def _estimate_tokens(text: str, *, chars_per_token: int = CHARS_PER_TOKEN) -> int:
     """Heuristic token estimator — len(text) // chars_per_token, min 1.
@@ -54,17 +59,21 @@ class DiagnosticBundle:
     """Token-budgeted bundle of raw diagnostic artifacts.
 
     Field types are intentionally `list[dict]` (not typed dataclasses) — v1
-    is a thin pass-through over journal rows and episode metadata; consumers
-    should treat the bundle as a read-only snapshot, not a typed model.
+    is a thin pass-through over journal rows, episode metadata, and record
+    excerpts; consumers should treat the bundle as a read-only snapshot.
 
     `total_estimated_tokens` uses the `len(text) // 4` heuristic — see
     `_estimate_tokens()`.
+
+    AD-661b adds `records` (Ship's Records — AD-434). Empty when
+    `runtime.records_store` is None or no records match the query.
     """
 
     query: str
     chain_traces: list[dict[str, Any]] = field(default_factory=list)
     procedures: list[dict[str, Any]] = field(default_factory=list)
     episodes: list[dict[str, Any]] = field(default_factory=list)
+    records: list[dict[str, Any]] = field(default_factory=list)
     total_estimated_tokens: int = 0
     truncated: bool = False
 
@@ -74,6 +83,7 @@ class DiagnosticBundle:
             "chain_traces": list(self.chain_traces),
             "procedures": list(self.procedures),
             "episodes": list(self.episodes),
+            "records": list(self.records),
             "total_estimated_tokens": self.total_estimated_tokens,
             "truncated": self.truncated,
         }
@@ -96,17 +106,21 @@ class DiagnosticContextService:
         runtime: Any,
         *,
         default_budget_tokens: int = 8000,
-        chain_trace_ratio: float = 0.4,
-        procedure_ratio: float = 0.3,
-        episode_ratio: float = 0.3,
+        chain_trace_ratio: float = 0.30,
+        procedure_ratio: float = 0.25,
+        episode_ratio: float = 0.25,
+        records_ratio: float = 0.20,
         chars_per_token: int = CHARS_PER_TOKEN,
+        redistribute_remainder: bool = True,
     ) -> None:
         self._runtime = runtime
         self._default_budget_tokens = default_budget_tokens
         self._chain_trace_ratio = chain_trace_ratio
         self._procedure_ratio = procedure_ratio
         self._episode_ratio = episode_ratio
+        self._records_ratio = records_ratio
         self._chars_per_token = chars_per_token
+        self._redistribute_remainder = redistribute_remainder
 
     async def assemble(
         self,
@@ -126,87 +140,124 @@ class DiagnosticContextService:
 
         Returns:
             DiagnosticBundle. Never raises.
+
+        AD-661b: 4th tier `records` (Ship's Records). Empty when records_store
+        unavailable or no matches.
+
+        AD-661c: When ``redistribute_remainder=True`` (default), unused budget
+        from any under-filled tier is redistributed to other tiers in priority
+        order (chain_traces > procedures > episodes > records) while
+        candidates remain.
         """
-        budget = max(1, budget_tokens if budget_tokens is not None else self._default_budget_tokens)
+        budget = max(
+            1,
+            budget_tokens if budget_tokens is not None else self._default_budget_tokens,
+        )
         keywords = _extract_keywords(query)
 
+        # Per-tier base allocations — episodes absorbs int-trunc remainder of the
+        # initial split (mirrors v1 behavior); records is computed last.
         chain_budget = int(budget * self._chain_trace_ratio)
         procedure_budget = int(budget * self._procedure_ratio)
-        episode_budget = budget - chain_budget - procedure_budget  # absorb int-trunc remainder
+        records_budget = int(budget * self._records_ratio)
+        episode_budget = max(
+            0, budget - chain_budget - procedure_budget - records_budget,
+        )
 
-        truncated = False
-
-        # --- chain traces ----------------------------------------------------
+        # --- gather candidates per tier (all candidates, no per-tier budget clip) ---
         try:
             since_ts = since.timestamp() if since is not None else None
-            chain_rows, chain_truncated = await self._collect_chain_traces(
-                keywords=keywords,
-                budget_tokens=chain_budget,
-                agent_id=agent_id,
-                since=since_ts,
+            chain_candidates = await self._gather_chain_trace_candidates(
+                keywords=keywords, agent_id=agent_id, since=since_ts,
             )
         except Exception:
             logger.warning("AD-661: chain_traces collection failed", exc_info=True)
-            chain_rows, chain_truncated = [], False
-        truncated = truncated or chain_truncated
+            chain_candidates = []
 
-        # --- procedures + inline exemplars ----------------------------------
         try:
-            procedures, exemplar_episode_index, proc_truncated = await self._collect_procedures(
-                keywords=keywords,
-                budget_tokens=procedure_budget,
+            proc_entries, exemplar_episode_index = (
+                await self._gather_procedure_candidates(keywords=keywords)
             )
         except Exception:
             logger.warning("AD-661: procedure collection failed", exc_info=True)
-            procedures, exemplar_episode_index, proc_truncated = [], {}, False
-        truncated = truncated or proc_truncated
+            proc_entries, exemplar_episode_index = [], {}
 
-        # --- episodes (deduped exemplars, keyword-filtered) ------------------
         try:
-            episodes, ep_truncated = self._collect_episodes(
+            episode_candidates = self._gather_episode_candidates(
                 keywords=keywords,
-                budget_tokens=episode_budget,
                 exemplar_episode_index=exemplar_episode_index,
             )
         except Exception:
             logger.warning("AD-661: episode collection failed", exc_info=True)
-            episodes, ep_truncated = [], False
-        truncated = truncated or ep_truncated
+            episode_candidates = []
 
-        # --- total tokens ---------------------------------------------------
-        total = sum(self._row_tokens(r) for r in chain_rows) \
-              + sum(self._row_tokens(p) for p in procedures) \
-              + sum(self._row_tokens(e) for e in episodes)
+        try:
+            record_candidates = await self._gather_record_candidates(
+                keywords=keywords,
+            )
+        except Exception:
+            logger.warning("AD-661: records collection failed", exc_info=True)
+            record_candidates = []
+
+        # --- two-pass fill: per-tier allocation, then optional redistribution ---
+        candidates_by_tier: dict[str, list[dict[str, Any]]] = {
+            "chain_traces": chain_candidates,
+            "procedures": proc_entries,
+            "episodes": episode_candidates,
+            "records": record_candidates,
+        }
+        allocations: dict[str, int] = {
+            "chain_traces": chain_budget,
+            "procedures": procedure_budget,
+            "episodes": episode_budget,
+            "records": records_budget,
+        }
+        filled, truncated = self._fill_with_redistribution(
+            candidates_by_tier=candidates_by_tier,
+            allocations=allocations,
+            total_budget=budget,
+            redistribute=self._redistribute_remainder,
+        )
+
+        chain_rows = filled["chain_traces"]
+        procedures = filled["procedures"]
+        episodes = filled["episodes"]
+        records = filled["records"]
+
+        total = (
+            sum(self._row_tokens(r) for r in chain_rows)
+            + sum(self._row_tokens(p) for p in procedures)
+            + sum(self._row_tokens(e) for e in episodes)
+            + sum(self._row_tokens(r) for r in records)
+        )
 
         return DiagnosticBundle(
             query=query,
             chain_traces=chain_rows,
             procedures=procedures,
             episodes=episodes,
+            records=records,
             total_estimated_tokens=total,
             truncated=truncated,
         )
 
     # --- collectors -----------------------------------------------------------
 
-    async def _collect_chain_traces(
+    async def _gather_chain_trace_candidates(
         self,
         *,
         keywords: list[str],
-        budget_tokens: int,
         agent_id: str | None,
         since: float | None,
-    ) -> tuple[list[dict[str, Any]], bool]:
+    ) -> list[dict[str, Any]]:
+        """AD-661b/c: gather all keyword-matching chain trace rows (no budget clip)."""
         journal = getattr(self._runtime, "cognitive_journal", None)
         if journal is None or not hasattr(journal, "get_recent_chain_traces"):
-            return [], False
-        # Pull a generous slice; budget-clip after filter.
+            return []
         raw = await journal.get_recent_chain_traces(
             limit=200, agent_id=agent_id, since=since,
         )
         accepted: list[dict[str, Any]] = []
-        used = 0
-        truncated = False
         for row in raw:
             haystack = " ".join(str(row.get(k) or "") for k in (
                 "step_name", "sub_task_type", "intent",
@@ -214,34 +265,27 @@ class DiagnosticContextService:
             ))
             if not _matches(haystack, keywords):
                 continue
-            cost = self._row_tokens(row)
-            if used + cost > budget_tokens:
-                truncated = True
-                break
             accepted.append(row)
-            used += cost
-        return accepted, truncated
+        return accepted
 
-    async def _collect_procedures(
+    async def _gather_procedure_candidates(
         self,
         *,
         keywords: list[str],
-        budget_tokens: int,
-    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], bool]:
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        """AD-661b/c: gather procedure entries + cross-procedure exemplar index (no budget clip)."""
         store = getattr(self._runtime, "procedure_store", None)
         episodic = getattr(self._runtime, "episodic_memory", None)
         if store is None or not hasattr(store, "list_active"):
-            return [], {}, False
+            return [], {}
         try:
             summaries = await store.list_active()
         except Exception:
             logger.debug("AD-661: list_active failed", exc_info=True)
-            return [], {}, False
+            return [], {}
 
         procedures: list[dict[str, Any]] = []
         exemplar_index: dict[str, dict[str, Any]] = {}
-        used = 0
-        truncated = False
 
         for summary in summaries:
             haystack = " ".join(str(summary.get(k) or "") for k in (
@@ -280,37 +324,102 @@ class DiagnosticContextService:
                 "compilation_level": getattr(full, "compilation_level", 1),
                 "exemplar_episodes": exemplar_dicts,
             }
-            cost = self._row_tokens(entry)
-            if used + cost > budget_tokens:
-                truncated = True
-                break
             procedures.append(entry)
-            used += cost
 
-        return procedures, exemplar_index, truncated
+        return procedures, exemplar_index
 
-    def _collect_episodes(
+    def _gather_episode_candidates(
         self,
         *,
         keywords: list[str],
-        budget_tokens: int,
         exemplar_episode_index: dict[str, dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], bool]:
-        # v1 source: deduped exemplars across all in-bundle procedures.
-        # NO call into EpisodicMemory.recall() — that is semantic search.
+    ) -> list[dict[str, Any]]:
+        """AD-661b/c: deduped exemplars, keyword-filtered (no budget clip).
+
+        Source: deduped exemplars across all in-bundle procedures.
+        Explicitly NOT calling ``EpisodicMemory.recall()`` (that is semantic
+        search and is out of scope for v1 / AD-661b).
+        """
         accepted: list[dict[str, Any]] = []
-        used = 0
-        truncated = False
-        for ep_id, ep_dict in exemplar_episode_index.items():
+        for ep_dict in exemplar_episode_index.values():
             if not _matches(ep_dict.get("text", ""), keywords):
                 continue
-            cost = self._row_tokens(ep_dict)
-            if used + cost > budget_tokens:
-                truncated = True
-                break
             accepted.append(ep_dict)
-            used += cost
-        return accepted, truncated
+        return accepted
+
+    async def _gather_record_candidates(
+        self,
+        *,
+        keywords: list[str],
+    ) -> list[dict[str, Any]]:
+        """AD-661b: keyword-filter Ship's Records and normalize to flat dicts.
+
+        Reader identity is the synthetic ``_RECORDS_READER_ID`` with empty
+        department; this naturally surfaces only ``ship``/``fleet`` records via
+        ``RecordsStore.read_entry()``'s built-in classification gate. Per-agent
+        record authorization is deferred (AD-661f).
+
+        Hard-caps the candidate list at ``_MAX_RECORDS_CANDIDATES`` before
+        token-trim; truncates raw record content to
+        ``_RECORDS_CONTENT_EXCERPT_CHARS`` to keep individual records bounded.
+        """
+        store = getattr(self._runtime, "records_store", None)
+        if store is None or not hasattr(store, "list_entries"):
+            return []
+        try:
+            entries = await store.list_entries()
+        except Exception:
+            logger.debug("AD-661b: list_entries failed", exc_info=True)
+            return []
+
+        accepted: list[dict[str, Any]] = []
+        for entry in entries:
+            fm = entry.get("frontmatter") or {}
+            path = entry.get("path") or ""
+            title = str(fm.get("title") or path)
+            # Keyword phase 1: title — cheap.
+            if _matches(title, keywords):
+                content_excerpt = await self._read_record_excerpt(store, path)
+            else:
+                # Keyword phase 2: full content — only if title missed.
+                content_excerpt = await self._read_record_excerpt(store, path)
+                if not _matches(content_excerpt, keywords):
+                    continue
+            accepted.append({
+                "path": path,
+                "title": title,
+                "summary_excerpt": content_excerpt,
+                "classification": str(fm.get("classification") or "ship"),
+                "author": str(fm.get("author") or ""),
+                "status": str(fm.get("status") or ""),
+                "tags": list(fm.get("tags") or []),
+            })
+            if len(accepted) >= _MAX_RECORDS_CANDIDATES:
+                break
+        return accepted
+
+    async def _read_record_excerpt(self, store: Any, path: str) -> str:
+        """Read record content via ``read_entry``, truncate to excerpt length.
+
+        Returns empty string on any failure or denial (denied records simply
+        do not surface in diagnostic context — same v1 graceful-degradation
+        contract).
+        """
+        try:
+            doc = await store.read_entry(
+                path,
+                reader_id=_RECORDS_READER_ID,
+                reader_department="",
+            )
+        except Exception:
+            logger.debug("AD-661b: read_entry failed for %s", path, exc_info=True)
+            return ""
+        if not doc:
+            return ""
+        content = str(doc.get("content") or "")
+        if len(content) > _RECORDS_CONTENT_EXCERPT_CHARS:
+            content = content[:_RECORDS_CONTENT_EXCERPT_CHARS]
+        return content
 
     # --- helpers ---------------------------------------------------------------
 
@@ -332,3 +441,77 @@ class DiagnosticContextService:
             "importance": getattr(ep, "importance", 0.0),
             "intent_type": getattr(ep, "intent_type", ""),
         }
+
+    # --- AD-661c: budget allocation + redistribution -------------------------
+
+    # Priority order for redistribution: chain traces are richest diagnostic
+    # signal; records the broadest. Order is deliberately stable — used by both
+    # tests and the redistribution loop.
+    _TIER_PRIORITY: tuple[str, ...] = (
+        "chain_traces", "procedures", "episodes", "records",
+    )
+
+    def _fill_with_redistribution(
+        self,
+        *,
+        candidates_by_tier: dict[str, list[dict[str, Any]]],
+        allocations: dict[str, int],
+        total_budget: int,
+        redistribute: bool,
+    ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
+        """Two-pass fill across tiers, optional remainder redistribution.
+
+        Pass 1: each tier fills up to its allocated budget in priority order.
+        Pass 2 (only when ``redistribute`` is True): walk tiers in priority
+        order again, topping up tiers that have remaining candidates while the
+        global budget still has room.
+
+        Returns ``(filled_by_tier, truncated)``. ``truncated`` is True iff the
+        global budget is exhausted AND at least one tier still has unconsumed
+        candidates.
+        """
+        filled: dict[str, list[dict[str, Any]]] = {
+            tier: [] for tier in self._TIER_PRIORITY
+        }
+        consumed_index: dict[str, int] = {tier: 0 for tier in self._TIER_PRIORITY}
+        used_total = 0
+
+        # Pass 1 — per-tier hard allocation.
+        for tier in self._TIER_PRIORITY:
+            tier_budget = max(0, int(allocations.get(tier, 0)))
+            candidates = candidates_by_tier.get(tier, [])
+            tier_used = 0
+            idx = 0
+            while idx < len(candidates):
+                cost = self._row_tokens(candidates[idx])
+                if tier_used + cost > tier_budget:
+                    break
+                filled[tier].append(candidates[idx])
+                tier_used += cost
+                used_total += cost
+                idx += 1
+            consumed_index[tier] = idx
+
+        # Pass 2 — optional redistribution of the unused remainder.
+        if redistribute and used_total < total_budget:
+            for tier in self._TIER_PRIORITY:
+                candidates = candidates_by_tier.get(tier, [])
+                idx = consumed_index[tier]
+                while idx < len(candidates) and used_total < total_budget:
+                    cost = self._row_tokens(candidates[idx])
+                    if used_total + cost > total_budget:
+                        break
+                    filled[tier].append(candidates[idx])
+                    used_total += cost
+                    idx += 1
+                consumed_index[tier] = idx
+                if used_total >= total_budget:
+                    break
+
+        # Truncated iff budget exhausted AND at least one tier still has
+        # candidates left over.
+        truncated = any(
+            consumed_index[tier] < len(candidates_by_tier.get(tier, []))
+            for tier in self._TIER_PRIORITY
+        )
+        return filled, truncated
