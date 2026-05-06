@@ -981,3 +981,27 @@ waves:
       AD-523a shipped via BF-080 (verify-only). AD-523b shipped this wave
       (HXI Notebooks panel, +8 vitest). AD-523c superseded by AD-562
       Knowledge Browser (planned).
+
+  - id: "78"
+    title: "AD-569 v1 Behavioral Metrics Extensions (1-build + 5 verify-only + 1 defer)"
+    kind: combo
+    depends_on: ["77"]
+    dispatch_prompt: "prompts/WAVE-78-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-569g-hxi-behavioral-dashboard.md"
+    builder_required: true
+    issues_to_close: [108]
+    status: pending
+    notes: |
+      Closes GH #108 (umbrella AD-569 a-g). Reframe 7 -> 1-build:
+      AD-569a/b/c/e shipped via AD-569 main entry (PROGRESS.md:363);
+      AD-569d shipped via AD-583f/g satisfaction (decisions-era-4
+      :3219); only AD-569g (HXI Behavioral Dashboard v1) builds in
+      this wave - HXI-only panel on top of /api/behavioral-metrics
+      (shipped under AD-569). AD-569f (Measurement Framework Infra)
+      deferred with forcing function - research-grade psychometric
+      layer with no present-day consumer. Vitest-only delta
+      (+9 to +12 window). Baseline 11498 -> expected 11498 pytest
+      (delta = 0); vitest gate covers the new panel separately.
+

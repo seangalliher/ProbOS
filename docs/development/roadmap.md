@@ -4498,13 +4498,13 @@ Ward Room posts about the same stimulus are natural concept maps. QAP (Quadratic
 **Prerequisite:** AD-557 complete ✅. AD-567f (social verification) for metric 5. Existing Ward Room thread infrastructure for metrics 1-3.
 
 **Deferred sub-ADs (to be decomposed when scoped for build):**
-> - **AD-569a: Analytical Frame Diversity Probe** — Ward Room thread analysis, department-based frame classification, diversity scoring. G-theory design: agent × department × stimulus facets. QAP for knowledge-network comparison.
-> - **AD-569b: Synthesis Detection Probe** — Novel element identification in multi-agent thread conclusions. TMS coordination subscale mapping.
-> - **AD-569c: Cross-Department Trigger Rate Probe** — Temporal correlation analysis across department channels. TMS specialization subscale mapping. ICC(1) for department-level effect validation.
-> - **AD-569d: Convergence Correctness Probe** — Ground truth tracking for converged conclusions. r_wg statistical agreement testing. HLM nested analysis.
-> - **AD-569e: Anchor-Grounded Emergence Probe** — Integration with AD-567f social verification for provenance-validated emergence.
-> - **AD-569f: Measurement Framework Infrastructure** — G-study/D-study engine, ICC/r_wg computation, MTMM matrix generation, variance decomposition reporting. Shared infrastructure for all behavioral probes.
-> - **AD-569g: HXI Behavioral Dashboard** — Visualization of behavioral metrics with facet breakdown alongside existing Tier 3 probes.
+> - **AD-569a: Analytical Frame Diversity Probe** *(complete)* — Ward Room thread analysis, department-based frame classification, diversity scoring. G-theory design: agent × department × stimulus facets. QAP for knowledge-network comparison.
+> - **AD-569b: Synthesis Detection Probe** *(complete)* — Novel element identification in multi-agent thread conclusions. TMS coordination subscale mapping.
+> - **AD-569c: Cross-Department Trigger Rate Probe** *(complete)* — Temporal correlation analysis across department channels. TMS specialization subscale mapping. ICC(1) for department-level effect validation.
+> - **AD-569d: Convergence Correctness Probe** *(complete via AD-583f/g)* — Ground truth tracking for converged conclusions. r_wg statistical agreement testing. HLM nested analysis.
+> - **AD-569e: Anchor-Grounded Emergence Probe** *(complete)* — Integration with AD-567f social verification for provenance-validated emergence.
+> - **AD-569f: Measurement Framework Infrastructure** *(deferred — forcing function: first qualification probe requiring G-theory variance decomposition; tracked under AD-569 umbrella)* — G-study/D-study engine, ICC/r_wg computation, MTMM matrix generation, variance decomposition reporting. Shared infrastructure for all behavioral probes.
+> - **AD-569g: HXI Behavioral Dashboard** *(complete — Wave 78, v1 without facet breakdown)* — Visualization of behavioral metrics with facet breakdown alongside existing Tier 3 probes.
 
 ### Anchor-Indexed Episodic Recall (AD-570)
 

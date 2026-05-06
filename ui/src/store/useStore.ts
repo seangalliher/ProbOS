@@ -21,6 +21,7 @@ import type {
   NotebookAuthor,     // AD-523b
   NotebookDetail,     // AD-523b
   NotebookSearchResult,  // AD-523b
+  BehavioralSnapshot,  // AD-569g
   BillDefinitionView, BillInstanceView,  // AD-618d
 } from './types';
 
@@ -272,6 +273,12 @@ export interface HXIState {
   notebooksSearchQuery: string;
   notebooksSearchResults: NotebookSearchResult[] | null;  // null = not in search mode
   notebooksLoading: boolean;
+  // AD-569g: Behavioral Metrics Dashboard
+  behavioralMetricsOpen: boolean;
+  behavioralMetricsLoading: boolean;
+  behavioralMetricsLatest: BehavioralSnapshot | null;
+  behavioralMetricsHistory: BehavioralSnapshot[];
+  behavioralMetricsError: string | null;
   // Assignments (AD-408)
   assignments: Assignment[];
   // Scheduled Tasks (Phase 25a)
@@ -323,6 +330,10 @@ export interface HXIState {
   setNotebookSearchQuery: (q: string) => void;
   runNotebookSearch: () => Promise<void>;
   clearNotebookSearch: () => void;
+  // AD-569g
+  openBehavioralMetrics: () => Promise<void>;
+  closeBehavioralMetrics: () => void;
+  refreshBehavioralMetrics: () => Promise<void>;
   // Ward Room HXI actions (AD-407c)
   openWardRoom: (channelId?: string) => void;
   closeWardRoom: () => void;
@@ -505,6 +516,12 @@ export const useStore = create<HXIState>((set, get) => ({
   notebooksSearchQuery: '',
   notebooksSearchResults: null,
   notebooksLoading: false,
+  // AD-569g: Behavioral Metrics Dashboard
+  behavioralMetricsOpen: false,
+  behavioralMetricsLoading: false,
+  behavioralMetricsLatest: null,
+  behavioralMetricsHistory: [],
+  behavioralMetricsError: null,
   // Assignments (AD-408)
   assignments: [],
   // Scheduled Tasks (Phase 25a)
@@ -696,6 +713,41 @@ export const useStore = create<HXIState>((set, get) => ({
     }
   },
   clearNotebookSearch: () => set({ notebooksSearchQuery: '', notebooksSearchResults: null }),
+  // AD-569g: Behavioral Metrics Dashboard
+  openBehavioralMetrics: async () => {
+    set({ behavioralMetricsOpen: true, behavioralMetricsLoading: true, behavioralMetricsError: null });
+    await get().refreshBehavioralMetrics();
+  },
+  closeBehavioralMetrics: () => set({ behavioralMetricsOpen: false }),
+  refreshBehavioralMetrics: async () => {
+    set({ behavioralMetricsLoading: true, behavioralMetricsError: null });
+    try {
+      const [latestRes, historyRes] = await Promise.all([
+        fetch('/api/behavioral-metrics').then(r => r.json()),
+        fetch('/api/behavioral-metrics/history?limit=20').then(r => r.json()),
+      ]);
+      const latest =
+        latestRes && latestRes.status !== 'not_available' && latestRes.status !== 'no_data'
+          ? (latestRes as BehavioralSnapshot)
+          : null;
+      const history =
+        historyRes && Array.isArray(historyRes.snapshots)
+          ? (historyRes.snapshots as BehavioralSnapshot[])
+          : [];
+      set({
+        behavioralMetricsLatest: latest,
+        behavioralMetricsHistory: history,
+        behavioralMetricsLoading: false,
+      });
+    } catch (err) {
+      set({
+        behavioralMetricsLatest: null,
+        behavioralMetricsHistory: [],
+        behavioralMetricsLoading: false,
+        behavioralMetricsError: err instanceof Error ? err.message : 'Failed to fetch behavioral metrics',
+      });
+    }
+  },
   minimizeAgentProfile: () => {
     const agentId = get().activeProfileAgent;
     if (!agentId) return;

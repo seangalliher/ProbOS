@@ -654,3 +654,27 @@ export interface NotebookSearchResult {
   score: number;
   snippet: string;
 }
+
+// AD-569g: Behavioral Metrics Dashboard
+export interface BehavioralSnapshot {
+  timestamp: number;
+  frame_diversity_score: number;
+  frame_diversity_threads: number;
+  department_representation: Record<string, number>;
+  synthesis_rate: number;
+  synthesis_threads: number;
+  total_novel_elements: number;
+  cross_dept_trigger_rate: number;
+  trigger_pairs: Array<[string, string, number]>;
+  trigger_events: number;
+  convergence_events: number;
+  verified_correct: number;
+  verified_incorrect: number;
+  unverified: number;
+  convergence_correctness_rate: number | null;
+  anchor_grounded_rate: number;
+  anchor_independence_score: number;
+  anchor_analyzed_threads: number;
+  threads_analyzed: number;
+  behavioral_quality_score: number;
+}

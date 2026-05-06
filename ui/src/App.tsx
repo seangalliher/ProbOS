@@ -18,6 +18,7 @@ import { WelcomeOverlay } from './components/WelcomeOverlay';
 import { GamePanel } from './components/GamePanel';
 import CrewRosterPanel from './components/CrewRosterPanel';
 import NotebooksPanel from './components/NotebooksPanel';
+import BehavioralMetricsPanel from './components/BehavioralMetricsPanel';
 
 function NotebooksToggle() {
   const open = useStore(s => s.notebooksOpen);
@@ -49,6 +50,40 @@ function NotebooksToggle() {
       }}
     >
       NOTEBOOKS
+    </div>
+  );
+}
+
+function BehavioralMetricsToggle() {
+  const open = useStore(s => s.behavioralMetricsOpen);
+  const openMetrics = useStore(s => s.openBehavioralMetrics);
+
+  if (open) return null;
+
+  return (
+    <div
+      onClick={() => openMetrics()}
+      data-testid="behavioral-metrics-toggle"
+      style={{
+        position: 'fixed',
+        top: 12, left: 270,
+        zIndex: 25,
+        padding: '6px 12px',
+        background: 'rgba(10, 10, 18, 0.75)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(240, 176, 96, 0.15)',
+        borderRadius: 6,
+        cursor: 'pointer',
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: 1.5,
+        fontFamily: "'JetBrains Mono', monospace",
+        color: '#8888a0',
+        userSelect: 'none' as const,
+      }}
+    >
+      METRICS
     </div>
   );
 }
@@ -169,6 +204,8 @@ export default function App() {
       <CrewRosterToggle />
       <NotebooksPanel />
       <NotebooksToggle />
+      <BehavioralMetricsPanel />
+      <BehavioralMetricsToggle />
       <WelcomeOverlay />
     </div>
   );
