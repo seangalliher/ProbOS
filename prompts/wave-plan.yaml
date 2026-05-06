@@ -1151,3 +1151,74 @@ waves:
       surface. No new Intent. No router. No LLM call inside engine. No
       commercial language (AD-633 umbrella is fully OSS — zero commercial
       sub-ADs).
+
+  - id: "83"
+    title: "AD-482 v1 Self-Improvement Pipeline (8 OSS sub-ADs concrete + 1 Protocol seam)"
+    kind: single
+    depends_on: ["82"]
+    dispatch_prompt: "prompts/WAVE-83-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-482-self-improvement-pipeline-v1.md"
+    builder_required: true
+    issues_to_close: [76]
+    status: pending
+    notes: |
+      Closes GH #76 (AD-482 Self-Improvement Pipeline umbrella). Eight OSS
+      sub-ADs ship concretely: 482a StageContract (frozen dataclass +
+      shape-only validators), 482b CapabilityProposal + ProposalStore (typed
+      schema for "what was found, why it matters, how it fits"; in-memory
+      append-only registry; terminal decisions emit lessons), 482c
+      ApprovalGate (queue surface over ProposalStore with approve/reject
+      including modifications support + audit log + rationale persistence;
+      wraps not replaces SelfModificationPipeline._user_approval_fn), 482d
+      EvolutionStore (ChromaDB-backed lessons collection separate from
+      EpisodicMemory's "episodes" — name "self_improvement_lessons";
+      time-decay weighting 0.5^(age/half_life) with 30-day default;
+      log-and-degrade in-memory fallback when chroma absent), 482e
+      PivotRefineDecision enum + IterationGuard (PROCEED/REFINE/PIVOT;
+      iteration cap 5 default; artifact-version provenance), 482f
+      QAAgentPool + Shapley aggregator (wraps existing SystemQAAgent
+      template; pool size 3 default; consumes compute_shapley_values from
+      consensus/shapley.py; synthetic Vote per QA agent; degrades to
+      single-instance when spawner short), 482g AgentVersion +
+      AgentVersionStore (in-memory parent-version lineage with per-version
+      raw Beta(alpha,beta) trust + source_hash; emits AGENT_VERSION_PROMOTED),
+      482h LocalDiskPersistence (writes promoted agents to
+      src/probos/agents/designed/{agent_type}_v{N}.py + sidecar
+      {agent_type}_v{N}.meta.yaml; Git PR creation is AD-482h-1 follow-on
+      with subprocess git + GitHub MCP wiring as separate AD). One
+      Protocol seam ships with NoOp default impl: 482i ShadowDeploymentPolicy
+      (concrete impl is AD-482i-1 — needs parallel-pool comparator with
+      scaler-aware shadow workers, AD-280 territory). ZERO hard-deferrals
+      (Captain rule honored — every sub-AD with a consumer at HEAD ships
+      concretely or as Protocol seam in v1). 6 new EventTypes
+      (CAPABILITY_PROPOSAL_CREATED/APPROVED/REJECTED, PIVOT_REFINE_DECIDED,
+      EVOLUTION_LESSON_RECORDED, AGENT_VERSION_PROMOTED). New package
+      src/probos/cognitive/self_improvement/ with 6 modules (stage_contract,
+      proposal, approval_gate, evolution_store, qa_pool, versioning) +
+      __init__.py re-exports. Pydantic SelfImprovementConfig
+      (default-False; AD-633 / AD-695 default-False precedent — pipeline
+      spawns real QA agents, opens new ChromaDB collection, writes new
+      files on promote). Finalize wirer _wire_self_improvement invoked
+      immediately after AD-633 _wire_predictive_branching; gated on
+      runtime._chroma_client (optional — degrades to in-memory) and
+      runtime.spawner (optional — degrades to single-instance pool); tier-2
+      log-and-degrade. Reuses existing SystemQAAgent template at
+      runtime.py:619 (no new agent class), reuses compute_shapley_values
+      at consensus/shapley.py:37 (no new Shapley impl), mirrors
+      EpisodicMemory ChromaDB construction shape at episodic.py:732 (no
+      new vector DB). 7 public typed runtime attributes (proposal_store,
+      approval_gate, evolution_store, qa_agent_pool, agent_version_store,
+      agent_persistence, shadow_deployment_policy) initialized to None in
+      runtime.__init__ and set by wirer. SelfModificationPipeline ctor
+      signature unchanged (Callable shape preserved for back-compat;
+      ApprovalGate is parallel surface, not replacement). Baseline 11614
+      -> target >= 11654 (+40 floor; 42 tests planned across 11 test
+      classes — StageContract 4, CapabilityProposal 4, PivotRefine 3,
+      ApprovalGate 6, EvolutionStore 6, QAAgentPool 7, Versioning 3,
+      Persistence 4, ShadowSeam 2, Config+Wiring 2, Integration 1). No
+      HXI surface (deferred AD-482-HXI follow-on). No new Intent. No
+      router. No LLM call inside any v1 module. No commercial language
+      (AD-482 umbrella is fully OSS — zero *(Commercial)* tags on any
+      sub-AD letter in roadmap.md:3665-3732; pre-commit hook banned phrases (the e-word + tier and the private repo path token) confirmed 0 hits across dispatch, prompt, and this notes block).
