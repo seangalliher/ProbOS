@@ -763,7 +763,7 @@ waves:
       - "prompts/ad-573d-dream-to-working-memory.md"
     builder_required: true
     issues_to_close: [8]
-    status: drafted
+    status: done
     notes: |
       Wave-10 reframe applied at AD scoping. Of the original 5-AD combo
       (AD-573b/c/d/e/f), four are NOT outstanding work at HEAD fa6d83d:
