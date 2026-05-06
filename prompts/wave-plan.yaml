@@ -862,3 +862,29 @@ waves:
       key. Deferred: AD-696b temporal decay, AD-696c query intent
       classification, AD-696d multi-turn retrieval. Baseline 11433 → +13
       target (window [+10, +14]).
+  - id: "73"
+    title: "AD-462f v1 Memory Architecture: Optimized Memory Representation (retrieval-as-pointers)"
+    kind: single
+    depends_on: ["72"]
+    dispatch_prompt: "prompts/WAVE-73-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-462f-memory-refs-v1.md"
+    builder_required: true
+    issues_to_close: [58]
+    status: pending
+    notes: |
+      Full-closure v1 per GH #58. Pillars 1+2 (structured metadata, concept
+      graphs) already shipped via prior ADs — pillar 1 by AD-567a/541/598/579b,
+      pillar 2 by AD-688/692; v1 documents that coverage in roadmap and
+      decisions. Pillar 3 (retrieval-as-pointers) ships here: MemoryRef
+      dataclass in types.py, OracleService.query_refs/resolve_ref/format_refs
+      with 256-entry OrderedDict LRU, oracle_refs QUERY op gated at
+      RecallTier.ENHANCED (Lieutenant+, lower than AD-696's ORACLE-gated
+      oracle_lookup), MEMORY_REFS_DISPATCHED event. Reverses the original
+      AD-462f deferral note in decisions-era-4-evolution.md:2699.
+      Deferred: AD-462f-1 ToolRegistry registration (same root cause as
+      AD-696-1: init_communication signature lacks runtime parameter),
+      AD-462f-b ANALYZE intent signal + chain dispatch seam, AD-462f-c
+      cross-conversation ref persistence, AD-462f-d per-tier metadata
+      contracts. Baseline 11447 → +14 target (window [+11, +15]).
