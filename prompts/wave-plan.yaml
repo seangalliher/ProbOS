@@ -948,3 +948,20 @@ waves:
       integration deferred to AD-463b/c/d/e/f). Both forcing functions
       file new GH tracking issues at close-comment. Baseline 11480 →
       +18 target (window [+15, +22]).
+
+
+  - id: "76"
+    title: "AD-644 v1 Situation Awareness Architecture (no-build close)"
+    kind: single
+    depends_on: ["75"]
+    dispatch_prompt: "prompts/archive/WAVE-76-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/archive/ad-644-situation-awareness-closure.md"
+    builder_required: false
+    issues_to_close: [285]
+    status: done
+    notes: |
+      All 5 phases shipped earlier (Phases 1-4 in commit f10369d;
+      Phase 5 deprecation in Wave 71 / AD-644b commit 8a20695).
+      No-build close.
