@@ -809,10 +809,10 @@ waves:
     dispatch_prompt: "prompts/WAVE-69-DISPATCH.md"
     prompts_already_drafted: false
     prompt_paths:
-      - "prompts/ad-574b-c-dm-reply-combo.md"
+      - "prompts/ad-574b-dm-sync-chat.md"
     builder_required: true
     issues_to_close: [110]
-    status: pending
+    status: done
 
   - id: "70"
     title: "AD-526c-h Combo Recreation System Extensions"
