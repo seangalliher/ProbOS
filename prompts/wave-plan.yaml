@@ -852,7 +852,7 @@ waves:
       - "prompts/ad-696-agentic-oracle-retrieval-v1.md"
     builder_required: true
     issues_to_close: [416]
-    status: pending
+    status: done
     notes: |
       Full-scope v1 per GH #416: oracle_lookup QUERY op + ToolRegistry
       registration (READ, RecallTier.ORACLE gate) + ANALYZE intent signal
