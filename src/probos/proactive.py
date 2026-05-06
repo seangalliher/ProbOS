@@ -1784,7 +1784,7 @@ class ProactiveCognitiveLoop:
             except Exception:
                 logger.debug("Ontology context fetch failed for %s", agent.id, exc_info=True)
 
-        # 6. Skill profile context (AD-429b)
+        # 6. Skill profile context (AD-429b) + AD-428b v1 development goals
         if hasattr(rt, 'skill_service') and rt.skill_service:
             try:
                 profile = await rt.skill_service.get_profile(agent.id)
@@ -1796,6 +1796,17 @@ class ProactiveCognitiveLoop:
                         context["skill_profile"] = skill_summary
             except Exception:
                 logger.debug("Skill profile fetch failed for %s", agent.id, exc_info=True)
+            # AD-428b v1: development goals (separate try so a goal-fetch
+            # failure doesn't suppress skill_profile, and vice versa).
+            try:
+                goals = await rt.skill_service.get_development_goals(agent.id)
+                if goals:
+                    context["development_goals"] = goals
+            except Exception:
+                logger.debug(
+                    "AD-428b: development_goals fetch failed for %s",
+                    agent.id, exc_info=True,
+                )
 
         # AD-630: Subordinate communication stats for Chiefs
         if hasattr(rt, 'ontology') and rt.ontology:

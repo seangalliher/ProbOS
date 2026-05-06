@@ -166,6 +166,97 @@ def resolve_active_grants(
         return []
 
 
+def proficiency_promotion_eligibility(
+    *,
+    profile: Any,
+    next_rank: Rank,
+    pcc_floor: int = 3,
+    role_floor: int = 3,
+) -> dict[str, Any]:
+    """AD-428b v1: pure inspector for proficiency-based promotion readiness.
+
+    Returns:
+        {
+            "next_rank": str,
+            "pcc_floor": int,
+            "role_floor": int,
+            "passes": bool,
+            "blockers": list[str],
+            "pcc_count_at_floor": int,
+            "role_count_at_floor": int,
+            "required_pcc_count": int,
+            "required_role_count": int,
+        }
+
+    Rank thresholds (Dreyfus mapping):
+        ENSIGN -> LIEUTENANT: 2 PCCs at APPLY (3), 1 ROLE at APPLY (3)
+        LIEUTENANT -> COMMANDER: 4 PCCs at APPLY (3), 2 ROLE at ENABLE (4)
+        COMMANDER -> SENIOR: 6 PCCs at ENABLE (4), 3 ROLE at ADVISE (5)
+
+    Does NOT modify Rank.from_trust(). NOT called from any existing decision
+    path; v1 is inspection only. Captain or AD-428b-iv (gating consumer)
+    decides whether to enforce.
+    """
+    blockers: list[str] = []
+    if next_rank == Rank.LIEUTENANT:
+        req_pcc, req_role = 2, 1
+        pcc_floor, role_floor = 3, 3
+    elif next_rank == Rank.COMMANDER:
+        req_pcc, req_role = 4, 2
+        pcc_floor, role_floor = 3, 4
+    elif next_rank == Rank.SENIOR:
+        req_pcc, req_role = 6, 3
+        pcc_floor, role_floor = 4, 5
+    else:
+        # ENSIGN promotion to ENSIGN is the boot state — no gate.
+        req_pcc, req_role = 0, 0
+
+    if profile is None:
+        return {
+            "next_rank": next_rank.value,
+            "pcc_floor": pcc_floor,
+            "role_floor": role_floor,
+            "passes": req_pcc == 0 and req_role == 0,
+            "blockers": ["no_skill_profile"] if (req_pcc + req_role) > 0 else [],
+            "pcc_count_at_floor": 0,
+            "role_count_at_floor": 0,
+            "required_pcc_count": req_pcc,
+            "required_role_count": req_role,
+        }
+
+    pccs_ok = sum(
+        1 for r in getattr(profile, "pccs", [])
+        if not getattr(r, "suspended", False)
+        and getattr(getattr(r, "proficiency", None), "value", 0) >= pcc_floor
+    )
+    role_ok = sum(
+        1 for r in getattr(profile, "role_skills", [])
+        if not getattr(r, "suspended", False)
+        and getattr(getattr(r, "proficiency", None), "value", 0) >= role_floor
+    )
+
+    if pccs_ok < req_pcc:
+        blockers.append(
+            f"need {req_pcc} PCCs at level {pcc_floor}+ (have {pccs_ok})"
+        )
+    if role_ok < req_role:
+        blockers.append(
+            f"need {req_role} role skills at level {role_floor}+ (have {role_ok})"
+        )
+
+    return {
+        "next_rank": next_rank.value,
+        "pcc_floor": pcc_floor,
+        "role_floor": role_floor,
+        "passes": not blockers,
+        "blockers": blockers,
+        "pcc_count_at_floor": pccs_ok,
+        "role_count_at_floor": role_ok,
+        "required_pcc_count": req_pcc,
+        "required_role_count": req_role,
+    }
+
+
 def agency_from_rank(rank: Rank) -> AgencyLevel:
     """Map rank to agency level."""
     return {

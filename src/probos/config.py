@@ -131,6 +131,10 @@ class MeshConfig(BaseModel):
     # weights. Default falls back to hebbian_decay_rate so v1 is behavior-equivalent;
     # AD-571c-i forcing function flips this to 0.999 once AD-557 benchmarks land.
     hebbian_social_decay_rate: float = 0.995
+    # AD-428b v1: Map intent_id -> skill_id for skill-weighted routing.
+    # Empty dict (default) means skill weighting is off; the router returns
+    # base_weight unchanged. Reread per call so config reload picks up changes.
+    intent_skill_map: dict[str, str] = Field(default_factory=dict)
     hebbian_reward: float = 0.05
     signal_ttl_seconds: float = 30.0
     capability_broadcast_interval_seconds: float = 5.0

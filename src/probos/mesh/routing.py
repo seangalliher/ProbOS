@@ -70,6 +70,9 @@ class HebbianRouter:
         self._db: DatabaseConnection | None = None
         self._connection_factory = connection_factory
         self._tier_registry: Any = None
+        # AD-428b v1: skill-weighted routing late-binds. Both default to "off".
+        self._skill_service: Any = None
+        self._intent_skill_map: dict[str, str] = {}
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
             self._connection_factory = default_factory
@@ -77,6 +80,70 @@ class HebbianRouter:
     def set_tier_registry(self, registry: Any) -> None:
         """Inject agent tier registry for tier-aware reporting (AD-571)."""
         self._tier_registry = registry
+
+    def set_skill_service(self, service: Any) -> None:
+        """AD-428b v1: inject AgentSkillService for skill-weighted routing.
+
+        Late-bind. Idempotent. None disables skill weighting (default).
+        """
+        self._skill_service = service
+
+    def set_intent_skill_map(self, mapping: dict[str, str]) -> None:
+        """AD-428b v1: set the intent_id -> skill_id mapping read at routing time.
+
+        Empty mapping (default) means score_with_skill_weight() is a no-op.
+        Late-bind. Idempotent. Re-callable.
+        """
+        # Defensive copy — caller may continue to mutate the original config dict.
+        self._intent_skill_map = dict(mapping or {})
+
+    async def score_with_skill_weight(
+        self,
+        intent_id: "AgentID",
+        agent_id: "AgentID",
+        base_weight: float,
+    ) -> float:
+        """AD-428b v1: skill-weighted routing score multiplier.
+
+        Returns base_weight unchanged when:
+          - skill_service is not attached
+          - intent_skill_map is empty
+          - intent_id is not in the map
+          - agent has no profile
+          - agent has no record for the mapped skill (or it's suspended)
+
+        When all conditions hold, returns:
+          base_weight * (1.0 + 0.10 * (proficiency.value - 1))
+        capped at 2.0x. FOLLOW (1) is neutral; SHAPE (7) doubles.
+
+        Tier-2 log-and-degrade — any error returns base_weight unchanged.
+        """
+        if self._skill_service is None or not self._intent_skill_map:
+            return base_weight
+        skill_id = self._intent_skill_map.get(intent_id)
+        if skill_id is None:
+            return base_weight
+        try:
+            profile = await self._skill_service.get_profile(agent_id)
+        except Exception:
+            logger.debug(
+                "AD-428b: skill_service.get_profile failed for %s; returning base_weight",
+                agent_id,
+                exc_info=True,
+            )
+            return base_weight
+        if profile is None:
+            return base_weight
+        # Reuse the SkillProfile.get_proficiency helper added in Section 1b.
+        try:
+            level = profile.get_proficiency(skill_id)
+        except AttributeError:
+            return base_weight
+        if level is None:
+            return base_weight
+        multiplier = 1.0 + 0.10 * (level.value - 1)
+        capped = min(multiplier, 2.0)
+        return base_weight * capped
 
     def _decay_rate_for(self, rel_type: str) -> float:
         """AD-571c: route per-rel_type to the right decay rate."""

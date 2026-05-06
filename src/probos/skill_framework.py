@@ -63,6 +63,12 @@ class SkillDefinition:
     decay_rate_days: int = 14   # Days idle before proficiency drops one level
     origin: str = "built_in"    # "built_in" (PCC), "role", "acquired", "designed"
     preferred_tools: list[ToolPreference] = field(default_factory=list)
+    # AD-428b v1: composite-skill membership. When non-empty, this skill is a
+    # composite that fires when the agent has APPLY+ on every constituent.
+    composite_skill_ids: list[str] = field(default_factory=list)
+    # AD-428b v1: pairwise synergy declaration. When skill A lists B AND B lists A,
+    # SkillProfile.synergy_bonus(A, B) returns a non-zero float.
+    synergy_partners: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -121,6 +127,64 @@ class SkillProfile:
             if s.proficiency.value >= ProficiencyLevel.ASSIST.value and not s.suspended:
                 domains.add(s.skill_id)
         return len(domains)
+
+    def get_proficiency(self, skill_id: str) -> "ProficiencyLevel | None":
+        """AD-428b v1: lookup proficiency for a skill_id; None if not held or suspended."""
+        for record in self.all_skills:
+            if record.skill_id == skill_id and not record.suspended:
+                return record.proficiency
+        return None
+
+    def has_composite_capability(
+        self, composite: "SkillDefinition"
+    ) -> bool:
+        """AD-428b v1: True iff agent has APPLY+ on EVERY constituent of the composite.
+
+        Composites with empty composite_skill_ids never fire (degenerate case).
+        """
+        if not composite.composite_skill_ids:
+            return False
+        for constituent_id in composite.composite_skill_ids:
+            level = self.get_proficiency(constituent_id)
+            if level is None or level.value < ProficiencyLevel.APPLY.value:
+                return False
+        return True
+
+    def synergy_bonus(
+        self,
+        skill_a_id: str,
+        skill_b_id: str,
+        registry_lookup: Any = None,
+    ) -> float:
+        """AD-428b v1: pairwise synergy bonus between two skills.
+
+        Returns 0.0 unless ALL of:
+          - agent holds both skills at APPLY+
+          - skill A's SkillDefinition.synergy_partners contains B
+          - skill B's SkillDefinition.synergy_partners contains A
+        Bonus = 0.10 * (min(level_a, level_b) - APPLY + 1) capped at 0.50.
+
+        registry_lookup: callable taking skill_id -> SkillDefinition | None.
+        Pass None to opt out of synergy_partners check (returns 0.0).
+        """
+        if registry_lookup is None or skill_a_id == skill_b_id:
+            return 0.0
+        level_a = self.get_proficiency(skill_a_id)
+        level_b = self.get_proficiency(skill_b_id)
+        if level_a is None or level_b is None:
+            return 0.0
+        if level_a.value < ProficiencyLevel.APPLY.value or level_b.value < ProficiencyLevel.APPLY.value:
+            return 0.0
+        defn_a = registry_lookup(skill_a_id)
+        defn_b = registry_lookup(skill_b_id)
+        if defn_a is None or defn_b is None:
+            return 0.0
+        if skill_b_id not in defn_a.synergy_partners:
+            return 0.0
+        if skill_a_id not in defn_b.synergy_partners:
+            return 0.0
+        bonus = 0.10 * (min(level_a.value, level_b.value) - ProficiencyLevel.APPLY.value + 1)
+        return min(bonus, 0.50)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -340,6 +404,18 @@ CREATE TABLE IF NOT EXISTS qualification_records (
     requirement_status TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (agent_id, path_id)
 );
+
+-- AD-428b v1: per-agent development goals (one goal per skill).
+CREATE TABLE IF NOT EXISTS agent_development_goals (
+    agent_id TEXT NOT NULL,
+    skill_id TEXT NOT NULL,
+    target_level INTEGER NOT NULL,
+    set_at REAL NOT NULL,
+    notes TEXT DEFAULT '',
+    PRIMARY KEY (agent_id, skill_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dev_goals_agent ON agent_development_goals(agent_id);
 """
 
 
@@ -380,6 +456,22 @@ class SkillRegistry:
                 await self._db.commit()
             except Exception:
                 pass  # Column already exists
+            # AD-428b v1: composite_skill_ids column (JSON-encoded list)
+            try:
+                await self._db.execute(
+                    "ALTER TABLE skill_definitions ADD COLUMN composite_skill_ids TEXT DEFAULT '[]'"
+                )
+                await self._db.commit()
+            except Exception:
+                pass  # Column already exists
+            # AD-428b v1: synergy_partners column (JSON-encoded list)
+            try:
+                await self._db.execute(
+                    "ALTER TABLE skill_definitions ADD COLUMN synergy_partners TEXT DEFAULT '[]'"
+                )
+                await self._db.commit()
+            except Exception:
+                pass  # Column already exists
             # Load existing definitions into cache
             async with self._db.execute("SELECT * FROM skill_definitions") as cur:
                 async for row in cur:
@@ -393,6 +485,9 @@ class SkillRegistry:
     def _row_to_definition(self, row) -> SkillDefinition:
         prefs_raw = json.loads(row["preferred_tools"] if "preferred_tools" in row.keys() else "[]")
         prefs = [ToolPreference(tool_id=p["tool_id"], priority=p.get("priority", 0), context=p.get("context", "")) for p in prefs_raw]
+        # AD-428b v1: tolerate older rows where columns are absent.
+        composite_raw = row["composite_skill_ids"] if "composite_skill_ids" in row.keys() else "[]"
+        synergy_raw = row["synergy_partners"] if "synergy_partners" in row.keys() else "[]"
         return SkillDefinition(
             skill_id=row["skill_id"],
             name=row["name"],
@@ -403,6 +498,8 @@ class SkillRegistry:
             decay_rate_days=row["decay_rate_days"] or 14,
             origin=row["origin"] or "built_in",
             preferred_tools=prefs,
+            composite_skill_ids=json.loads(composite_raw or "[]"),
+            synergy_partners=json.loads(synergy_raw or "[]"),
         )
 
     async def register_skill(self, defn: SkillDefinition) -> SkillDefinition:
@@ -410,12 +507,15 @@ class SkillRegistry:
         self._cache[defn.skill_id] = defn
         if self._db:
             prefs_json = json.dumps([{"tool_id": p.tool_id, "priority": p.priority, "context": p.context} for p in defn.preferred_tools])
+            composite_json = json.dumps(defn.composite_skill_ids)
+            synergy_json = json.dumps(defn.synergy_partners)
             await self._db.execute(
                 "INSERT OR REPLACE INTO skill_definitions "
-                "(skill_id, name, category, description, domain, prerequisites, decay_rate_days, origin, preferred_tools) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(skill_id, name, category, description, domain, prerequisites, decay_rate_days, origin, preferred_tools, composite_skill_ids, synergy_partners) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (defn.skill_id, defn.name, defn.category.value, defn.description,
-                 defn.domain, json.dumps(defn.prerequisites), defn.decay_rate_days, defn.origin, prefs_json),
+                 defn.domain, json.dumps(defn.prerequisites), defn.decay_rate_days, defn.origin, prefs_json,
+                 composite_json, synergy_json),
             )
             await self._db.commit()
         return defn
@@ -677,6 +777,95 @@ class AgentSkillService:
             async for row in cur:
                 records.append(self._row_to_record(row))
         return records
+
+    # ------------------------------------------------------------------
+    # AD-428b v1: Development goals
+    # ------------------------------------------------------------------
+
+    async def add_development_goal(
+        self,
+        agent_id: str,
+        skill_id: str,
+        target_level: ProficiencyLevel,
+        notes: str = "",
+    ) -> dict[str, Any]:
+        """AD-428b v1: set or replace a development goal for a (agent, skill).
+
+        One goal per (agent_id, skill_id). Calling with the same skill_id
+        replaces the existing goal. Returns the persisted goal as a dict.
+        """
+        now = time.time()
+        if not self._db:
+            return {
+                "agent_id": agent_id,
+                "skill_id": skill_id,
+                "target_level": target_level.value,
+                "set_at": now,
+                "notes": notes,
+            }
+        await self._db.execute(
+            "INSERT OR REPLACE INTO agent_development_goals "
+            "(agent_id, skill_id, target_level, set_at, notes) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (agent_id, skill_id, target_level.value, now, notes),
+        )
+        await self._db.commit()
+        return {
+            "agent_id": agent_id,
+            "skill_id": skill_id,
+            "target_level": target_level.value,
+            "set_at": now,
+            "notes": notes,
+        }
+
+    async def clear_development_goal(
+        self, agent_id: str, skill_id: str
+    ) -> bool:
+        """AD-428b v1: remove a development goal. Returns True if a row was deleted."""
+        if not self._db:
+            return False
+        cur = await self._db.execute(
+            "DELETE FROM agent_development_goals WHERE agent_id = ? AND skill_id = ?",
+            (agent_id, skill_id),
+        )
+        await self._db.commit()
+        return cur.rowcount > 0  # type: ignore[attr-defined]
+
+    async def get_development_goals(
+        self, agent_id: str
+    ) -> list[dict[str, Any]]:
+        """AD-428b v1: return all development goals for an agent.
+
+        Each entry: {skill_id, target_level (int 1-7), target_label, set_at, notes,
+        current_level (int|None — agent's current proficiency on the skill)}.
+        Sorted by skill_id.
+        """
+        if not self._db:
+            return []
+        # Build a map of agent's current proficiency per skill.
+        records = await self.get_all_records(agent_id)
+        current_by_skill = {r.skill_id: r.proficiency.value for r in records}
+        goals: list[dict[str, Any]] = []
+        async with self._db.execute(
+            "SELECT skill_id, target_level, set_at, notes "
+            "FROM agent_development_goals WHERE agent_id = ? ORDER BY skill_id",
+            (agent_id,),
+        ) as cur:
+            async for row in cur:
+                target_lvl = int(row["target_level"])
+                try:
+                    target_label = ProficiencyLevel(target_lvl).name
+                except ValueError:
+                    target_label = "UNKNOWN"
+                goals.append({
+                    "skill_id": row["skill_id"],
+                    "target_level": target_lvl,
+                    "target_label": target_label,
+                    "set_at": row["set_at"],
+                    "notes": row["notes"] or "",
+                    "current_level": current_by_skill.get(row["skill_id"]),
+                })
+        return goals
 
     async def check_prerequisites(
         self, agent_id: str, skill_id: str,

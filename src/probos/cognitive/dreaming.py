@@ -88,6 +88,8 @@ class DreamingEngine:
         expertise_directory: Any = None,  # AD-600: transactive memory
         failure_distiller: Any = None,  # AD-609: failure and comparative analysis
         manifest: Any = None,  # AD-538b: DreamManifest for skip-already-processed
+        skill_service: Any = None,  # AD-428b v1: AgentSkillService for cluster reinforcement
+        intent_skill_map: dict[str, str] | None = None,  # AD-428b v1: intent->skill map
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -101,6 +103,9 @@ class DreamingEngine:
         self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
         self._llm_client = llm_client  # AD-532: for procedure extraction
         self._procedure_store = procedure_store  # AD-533: persistent procedure storage
+        # AD-428b v1: dream consolidation reinforces skills via record_exercise().
+        self._skill_service = skill_service
+        self._intent_skill_map: dict[str, str] = dict(intent_skill_map or {})
         self._ward_room = ward_room  # AD-537: observational learning
         self._agent_id = agent_id  # AD-537: dreaming agent ID
         self._trust_network_lookup = trust_network_lookup  # AD-537: trust score lookup
@@ -347,6 +352,8 @@ class DreamingEngine:
 
         # Step 3: Trust consolidation
         trust_adjustments = self._consolidate_trust(episodes)
+        # AD-428b v1: reinforce skills based on consolidated episodes.
+        await self._reinforce_skills_for_episodes(episodes)
 
         # Step 3.5: Contradiction detection (AD-403)
         contradictions = detect_contradictions(episodes)
@@ -2329,6 +2336,58 @@ class DreamingEngine:
             self.router._compat_weights[(src, tgt)] = w
 
         return pruned
+
+    async def _reinforce_skills_for_episodes(
+        self, episodes: list[Any]
+    ) -> int:
+        """AD-428b v1: reinforce skills via record_exercise() per consolidated episode.
+
+        Walks episodes, maps each (agent_id, intent_type) to a skill via
+        self._intent_skill_map, and calls skill_service.record_exercise(agent_id,
+        skill_id) once per (agent_id, skill_id) pair (per-call dedup).
+
+        Tier-2 log-and-degrade — every record_exercise call is wrapped; any
+        skill-side error logs at debug and the next pair proceeds.
+
+        Returns the number of (agent_id, skill_id) reinforcements made.
+        """
+        if getattr(self, "_skill_service", None) is None or not getattr(
+            self, "_intent_skill_map", None
+        ):
+            return 0
+        seen: set[tuple[str, str]] = set()
+        reinforced = 0
+        for ep in episodes:
+            # Episode shape varies; tolerate dict + dataclass + namedtuple.
+            agent_ids = getattr(ep, "agent_ids", None)
+            if agent_ids is None and isinstance(ep, dict):
+                agent_ids = ep.get("agent_ids") or ep.get("agent_id")
+            if isinstance(agent_ids, str):
+                agent_ids = [agent_ids]
+            if not agent_ids:
+                continue
+            intent_type = getattr(ep, "intent_type", None)
+            if intent_type is None and isinstance(ep, dict):
+                intent_type = ep.get("intent_type") or ep.get("intent")
+            if not intent_type:
+                continue
+            skill_id = self._intent_skill_map.get(intent_type)
+            if skill_id is None:
+                continue
+            for aid in agent_ids:
+                key = (aid, skill_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                try:
+                    await self._skill_service.record_exercise(aid, skill_id)
+                    reinforced += 1
+                except Exception:
+                    logger.debug(
+                        "AD-428b: record_exercise failed for %s/%s",
+                        aid, skill_id, exc_info=True,
+                    )
+        return reinforced
 
     def _consolidate_trust(self, episodes: list[Episode]) -> int:
         """Adjust trust based on agent track records in recent episodes.
