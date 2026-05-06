@@ -1016,7 +1016,7 @@ waves:
       - "prompts/ad-594d-delivery-pipeline-v1.md"
     builder_required: true
     issues_to_close: [163]
-    status: pending
+    status: done
     notes: |
       Closes GH #163 (AD-594d Delivery Pipeline). Full v1 scope in one wave
       per Captain rule (don't defer unless no choice). Module shape:
@@ -1032,3 +1032,38 @@ waves:
       PDF rendering deferred behind FormatTransformer Protocol seam (mirrors
       AD-594a InputProcessor precedent). Baseline 11498 -> target 11523-11528
       (+25 floor). No HXI surface. No new EventType. No new Intent. OSS only.
+
+  - id: "80"
+    title: "AD-594c v1 Parallel Execution Dispatch (full-scope)"
+    kind: single
+    depends_on: ["79"]
+    dispatch_prompt: "prompts/WAVE-80-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-594c-parallel-dispatch-v1.md"
+    builder_required: true
+    issues_to_close: [162]
+    status: pending
+    notes: |
+      Closes GH #162 (AD-594c Parallel Execution Dispatch). Full v1 scope in
+      one wave per Captain rule (don't defer unless no choice). Module shape:
+      WorkItemSpec frozen dataclass + PlanDecomposer Protocol +
+      MarkdownPlanDecomposer (structured ATX-2 markdown; LLM-driven decomposers
+      plug in behind the seam) + ConflictDetector (resource-overlap pairs,
+      stateless) + ParallelDispatcher orchestrator (dispatch -> registers
+      WorkItems via runtime.work_item_store + tags=["consultation",
+      "workspace:<id>"], mirrors specs into workspace.add_work_item, transitions
+      APPROVED -> EXECUTING; get_progress aggregates by status; check_completion
+      -> EXECUTING -> COMPLETED idempotent; detect_blockers emits
+      PARALLEL_DISPATCH_BLOCKED with per-spec dedup ring; revoke for teardown).
+      Conflict resolution = synthetic depends_on edges injected in original
+      spec list order. 3 new EventTypes (PARALLEL_DISPATCH_STARTED / _PROGRESS
+      / _BLOCKED). Pydantic ConsultationDispatchConfig + finalize wirer
+      (gated on runtime.consultation_workspaces AND runtime.work_item_store).
+      LLM-driven semantic decomposition deferred behind PlanDecomposer Protocol
+      seam (mirrors AD-594a InputProcessor + AD-594d FormatTransformer
+      precedent). AD-594b (#161 consultation primitive) NOT a build dependency
+      — verified zero coupling at HEAD. AD-581 Hybrid Dispatch wiring NOT in
+      scope (assigned_to=spec.agent writes a string; ASA hand-off is AD-581's
+      surface). Baseline 11528 -> target >= 11553 (+25 floor; 36 tests planned).
+      No HXI surface. No new Intent. No router. OSS only.
