@@ -46,6 +46,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# AD-635f: Per-domain recency caps for clinical telemetry context injection.
+# Module-level constants (NOT config) — signal-density tuning for LLM context.
+_DREAM_RECENT_LIMIT = 5
+_CHAIN_TRACE_RECENT_LIMIT = 5
+_BREAKER_RECENT_LIMIT = 5
+
+
 def collect_notebook_metrics(runtime: Any, agent_id: str = "") -> dict[str, Any]:
     """AD-553: Collect standardized metrics snapshot for notebook attachment.
 
@@ -1813,6 +1820,90 @@ class ProactiveCognitiveLoop:
                         context["subordinate_stats"] = sub_stats
             except Exception:
                 logger.debug("AD-630: Subordinate stats fetch failed for %s", agent.id, exc_info=True)
+
+        # AD-635f: Clinical telemetry summary for clinical agents (Chapel, Echo)
+        try:
+            from probos.cognitive.clinical_telemetry import CLINICAL_ROLES
+            _clinical_service = getattr(rt, "clinical_telemetry", None)
+            if (
+                _clinical_service is not None
+                and getattr(agent, "agent_type", "") in CLINICAL_ROLES
+            ):
+                _clin: dict[str, Any] = {}
+
+                # Dreams (most recent N)
+                try:
+                    _dreams = await _clinical_service.query_dream_history(
+                        requester_agent_id=agent.id,
+                        limit=_DREAM_RECENT_LIMIT,
+                    )
+                    if _dreams:
+                        _latest = _dreams[0] if isinstance(_dreams, list) else None
+                        _clin["dreams"] = {
+                            "count": len(_dreams),
+                            "latest_ts": (_latest or {}).get("ts"),
+                        }
+                except Exception:
+                    logger.debug(
+                        "AD-635f: dream summary fetch failed for %s", agent.id,
+                        exc_info=True,
+                    )
+
+                # Chain traces (self-targeted)
+                try:
+                    _traces = await _clinical_service.query_agent_chain_traces(
+                        requester_agent_id=agent.id,
+                        target_agent_id=agent.id,
+                        limit=_CHAIN_TRACE_RECENT_LIMIT,
+                    )
+                    if _traces:
+                        _latest = _traces[0] if isinstance(_traces, list) else None
+                        _clin["chain_traces"] = {
+                            "count": len(_traces),
+                            "latest_ts": (_latest or {}).get("ts"),
+                            "latest_outcome": (_latest or {}).get("outcome"),
+                        }
+                except Exception:
+                    logger.debug(
+                        "AD-635f: chain trace summary fetch failed for %s", agent.id,
+                        exc_info=True,
+                    )
+
+                # Circuit breakers (fleet-wide)
+                try:
+                    _breakers = await _clinical_service.query_circuit_breaker_history(
+                        requester_agent_id=agent.id,
+                        target_agent_id=None,
+                        limit=_BREAKER_RECENT_LIMIT,
+                    )
+                    if _breakers:
+                        _recent: list[dict[str, Any]] = []
+                        for row in _breakers[:_BREAKER_RECENT_LIMIT]:
+                            if not isinstance(row, dict):
+                                continue
+                            _recent.append({
+                                "agent": row.get("agent_id") or row.get("target_agent_id"),
+                                "from": row.get("from_zone") or row.get("from"),
+                                "to": row.get("to_zone") or row.get("to"),
+                                "ts": row.get("ts"),
+                            })
+                        _clin["breakers"] = {
+                            "count": len(_breakers),
+                            "recent_transitions": _recent,
+                        }
+                except Exception:
+                    logger.debug(
+                        "AD-635f: breaker summary fetch failed for %s", agent.id,
+                        exc_info=True,
+                    )
+
+                if _clin:
+                    context["clinical_telemetry"] = _clin
+        except Exception:
+            logger.debug(
+                "AD-635f: clinical telemetry injection failed for %s", agent.id,
+                exc_info=True,
+            )
 
         # AD-504: Self-monitoring context
         try:

@@ -4083,6 +4083,38 @@ class CognitiveAgent(BaseAgent):
             sub_lines.append("</subordinate_activity>")
             state["_subordinate_stats"] = "\n".join(sub_lines)
 
+        # 5b. Clinical telemetry (AD-635f) — Chapel, Echo only
+        clin = context_parts.get("clinical_telemetry")
+        if clin:
+            clin_lines = ["<clinical_telemetry>"]
+            _dreams = clin.get("dreams")
+            if isinstance(_dreams, dict):
+                clin_lines.append(
+                    f"  dreams: {_dreams.get('count', 0)} recent"
+                )
+            _traces = clin.get("chain_traces")
+            if isinstance(_traces, dict):
+                clin_lines.append(
+                    f"  chain_traces: {_traces.get('count', 0)} self "
+                    f"(latest_outcome={_traces.get('latest_outcome', 'unknown')})"
+                )
+            _breakers = clin.get("breakers")
+            if isinstance(_breakers, dict):
+                _recent = _breakers.get("recent_transitions") or []
+                clin_lines.append(
+                    f"  breakers: {_breakers.get('count', 0)} transitions "
+                    f"(recent={len(_recent)})"
+                )
+                for tr in _recent:
+                    if not isinstance(tr, dict):
+                        continue
+                    clin_lines.append(
+                        f"    - {tr.get('agent', '?')}: "
+                        f"{tr.get('from', '?')}->{tr.get('to', '?')}"
+                    )
+            clin_lines.append("</clinical_telemetry>")
+            state["_clinical_telemetry"] = "\n".join(clin_lines)
+
         # 6. Cold-start system note (BF-034)
         system_note = context_parts.get("system_note")
         if system_note:

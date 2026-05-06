@@ -544,6 +544,11 @@ def _build_user_prompt(
     if _sub_stats:
         parts.append(f"## Subordinate Activity\n\n{_sub_stats}")
 
+    # AD-635f: Clinical telemetry section for Chapel / Echo
+    _clinical = context.get("_clinical_telemetry", "")
+    if _clinical:
+        parts.append(f"## Clinical Telemetry\n\n{_clinical}")
+
     _cold_start = context.get("_cold_start_note", "")
     if _cold_start:
         parts.append(_cold_start)

@@ -271,6 +271,11 @@ def _build_situation_review_prompt(
     if _sub_stats:
         situation_parts.append(_sub_stats)
 
+    # Clinical telemetry (AD-635f) — Chapel, Echo
+    _clinical = context.get("_clinical_telemetry", "")
+    if _clinical:
+        situation_parts.append(_clinical)
+
     # Active game (BF-110)
     _game = context.get("_active_game", "")
     if _game:
