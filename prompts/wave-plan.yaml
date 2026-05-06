@@ -739,7 +739,7 @@ waves:
       - "prompts/ad-635e-clinical-shell-v1.md"
     builder_required: true
     issues_to_close: [394]
-    status: pending
+    status: done
 
   - id: "66"
     title: "AD-635f v1 Clinical Telemetry Proactive Context Injection"
