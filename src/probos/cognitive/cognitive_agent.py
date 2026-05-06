@@ -1721,6 +1721,74 @@ class CognitiveAgent(BaseAgent):
             return False
         return True
 
+    async def _maybe_dispatch_oracle_lookup(
+        self, triage_results: list, observation: dict,
+    ) -> None:
+        """AD-696: Dispatch a one-shot oracle_lookup QUERY between triage and execute phases.
+
+        Reads ``oracle_query_text`` from the latest ANALYZE result, builds a
+        single-step QUERY chain, executes it, and writes the formatted result
+        to ``observation["_oracle_context"]`` (the existing rendering key
+        used by COMPOSE / ANALYZE — DLog #1). Once per chain (DLog #4).
+        """
+        if observation.get("_oracle_lookup_fired"):
+            return
+
+        # Extract oracle_query_text from the latest ANALYZE result
+        from probos.cognitive.sub_task import (
+            SubTaskChain, SubTaskSpec, SubTaskType,
+        )
+        query_text = ""
+        for r in reversed(triage_results):
+            if r.sub_task_type == SubTaskType.ANALYZE and r.success and r.result:
+                query_text = (r.result.get("oracle_query_text") or "").strip()
+                break
+        if not query_text:
+            return
+
+        observation["oracle_query_text"] = query_text
+        observation["_oracle_lookup_fired"] = True  # set BEFORE dispatch (idempotent)
+
+        if self._sub_task_executor is None:
+            return
+
+        oracle_chain = SubTaskChain(
+            steps=[
+                SubTaskSpec(
+                    sub_task_type=SubTaskType.QUERY,
+                    name="oracle-agentic-lookup",
+                    context_keys=("oracle_lookup",),
+                ),
+            ],
+            chain_timeout_ms=30000,
+            fallback="skip",
+            source="ad696:oracle_query",
+        )
+
+        try:
+            results = await self._sub_task_executor.execute(
+                oracle_chain,
+                observation,
+                agent_id=self.id,
+                agent_type=self.agent_type,
+                intent=observation.get("intent", ""),
+                intent_id=observation.get("intent_id", ""),
+                journal=self._cognitive_journal,
+            )
+        except Exception:
+            logger.warning(
+                "AD-696: oracle_lookup chain failed for %s", self.agent_type,
+                exc_info=True,
+            )
+            return
+
+        for r in results:
+            if r.sub_task_type == SubTaskType.QUERY and r.success and r.result:
+                formatted = r.result.get("oracle_lookup", "")
+                if formatted:
+                    observation["_oracle_context"] = formatted
+                break
+
     @staticmethod
     def _extract_intended_actions(chain_results: list) -> list[str]:
         """AD-643a: Extract intended_actions from ANALYZE step results.
@@ -2110,6 +2178,31 @@ class CognitiveAgent(BaseAgent):
         observation["_skill_profile"] = getattr(self, '_skill_profile', None)
         observation["_crew_manifest"] = self._compose_dm_instructions()
 
+        # AD-696: Resolve recall tier for the agentic-oracle gate (DLog #6).
+        # Mirrors the existing AD-620 resolver call at cognitive_agent.py:5007-5019
+        # line-for-line — same import, same narrowed args (ontology + clearance_grant_store,
+        # NOT _rt itself).
+        try:
+            from probos.earned_agency import (
+                effective_recall_tier, resolve_billet_clearance,
+                resolve_active_grants, RecallTier,
+            )
+            _rank = getattr(self, "rank", None)
+            _billet_clearance = resolve_billet_clearance(
+                getattr(self, "agent_type", ""),
+                getattr(_rt, "ontology", None) if _rt else None,
+            )
+            _active_grants = resolve_active_grants(
+                getattr(self, "sovereign_id", None) or self.id,
+                getattr(_rt, "clearance_grant_store", None) if _rt else None,
+            )
+            observation["_recall_tier"] = effective_recall_tier(
+                _rank, _billet_clearance, _active_grants,
+            )
+        except Exception:
+            observation["_recall_tier"] = None  # Gate-closed by default
+        observation["_oracle_lookup_fired"] = False  # AD-696 (DLog #4)
+
         # AD-644 Phase 1: Duty context for chain prompts
         _duty = _params.get("duty")
         if _duty:
@@ -2189,6 +2282,10 @@ class CognitiveAgent(BaseAgent):
 
         # --- Extract intended_actions ---
         intended_actions = self._extract_intended_actions(triage_results)
+
+        # AD-696: Agentic Oracle retrieval — once per chain (DLog #4)
+        if "oracle_query" in intended_actions:
+            await self._maybe_dispatch_oracle_lookup(triage_results, observation)
 
         if not intended_actions:
             # ANALYZE didn't produce intended_actions — fall back to pre-AD-643 behavior
@@ -5006,7 +5103,15 @@ class CognitiveAgent(BaseAgent):
             # AD-620: Resolve recall tier from rank + billet clearance
             from probos.earned_agency import effective_recall_tier, resolve_billet_clearance, resolve_active_grants, RecallTier
             from probos.cognitive.episodic import resolve_recall_tier_params
-            _rank = getattr(self, 'rank', None)
+            # BF-263: Compute rank from live trust score, not stale self.rank
+            # (self.rank is never set on agents; was always None → ENHANCED default)
+            _trust_net = getattr(self._runtime, 'trust_network', None)
+            if _trust_net is not None:
+                from probos.crew_profile import Rank
+                _live_trust = _trust_net.get_score(self.id)
+                _rank = Rank.from_trust(_live_trust)
+            else:
+                _rank = getattr(self, 'rank', None)
             _billet_clearance = resolve_billet_clearance(
                 getattr(self, 'agent_type', ''),
                 getattr(self._runtime, 'ontology', None),

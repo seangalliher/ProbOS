@@ -512,20 +512,20 @@ class TestAnalyzePromptUpdates:
         assert "endorse" in user
 
     def test_situation_review_says_6_keys(self):
-        """Situation review prompt says '6 keys'."""
+        """Situation review prompt says '7 keys' (AD-696 added oracle_query_text optional)."""
         from probos.cognitive.sub_tasks.analyze import _build_situation_review_prompt
         _, user = _build_situation_review_prompt(
             {"context": "test"}, [], "TestAgent", "Science",
         )
-        assert "6 keys" in user
+        assert "7 keys" in user
 
     def test_thread_analysis_says_7_keys(self):
-        """Thread analysis prompt says '7 keys'."""
+        """Thread analysis prompt says '8 keys' (AD-696 added oracle_query_text optional)."""
         from probos.cognitive.sub_tasks.analyze import _build_thread_analysis_prompt
         _, user = _build_thread_analysis_prompt(
             {"context": "test", "params": {}}, [], "TestAgent", "Science",
         )
-        assert "7 keys" in user
+        assert "8 keys" in user
 
 
 # ===========================================================================

@@ -235,6 +235,77 @@ async def _query_self_monitoring(
     return {"self_monitoring": "\n".join(result_parts) if result_parts else ""}
 
 
+async def _query_oracle_lookup(
+    runtime: Any, spec: SubTaskSpec, context: dict,
+) -> dict:
+    """AD-696: Agentic Oracle retrieval — on-demand Ship's Records query.
+
+    Reads ``oracle_query_text`` (required) and optional ``oracle_tiers`` from
+    context. Returns ``{"oracle_lookup": <formatted str>}``. Tier-2
+    log-and-degrade: returns empty string on any of four failure modes:
+    (1) ``runtime.oracle`` not attached, (2) ``oracle_query_text`` empty,
+    (3) ``context["_recall_tier"]`` below ``RecallTier.ORACLE``, (4) Oracle
+    raises. Emits ``ORACLE_LOOKUP_DISPATCHED`` only on a non-empty dispatch.
+    """
+    # Empty-input short-circuit (DLog #11)
+    query_text = (context.get("oracle_query_text") or "").strip()
+    if not query_text:
+        return {"oracle_lookup": ""}
+
+    # Recall-tier gate (DLog #5)
+    from probos.earned_agency import RecallTier
+    tier = context.get("_recall_tier")
+    if tier != RecallTier.ORACLE:
+        logger.debug(
+            "AD-696: oracle_lookup denied — recall_tier=%s (need ORACLE)", tier,
+        )
+        return {"oracle_lookup": ""}
+
+    # Public Oracle seam (DLog #7)
+    oracle = getattr(runtime, "oracle", None)
+    if oracle is None:
+        logger.debug("AD-696: oracle_lookup — runtime.oracle not attached")
+        return {"oracle_lookup": ""}
+
+    tiers = context.get("oracle_tiers")  # optional list[str] | None
+    agent_id = context.get("_agent_id", "") or _ctx(context, "agent_id")
+
+    try:
+        formatted = await oracle.query_formatted(
+            query_text=query_text,
+            agent_id=agent_id,
+            k_per_tier=3,
+            tiers=tiers,
+            max_chars=2000,
+        )
+    except Exception:
+        logger.warning(
+            "AD-696: oracle_lookup query failed for agent %s", agent_id,
+            exc_info=True,
+        )
+        return {"oracle_lookup": ""}
+
+    if not formatted:
+        return {"oracle_lookup": ""}
+
+    # Emit on successful non-empty dispatch (DLog #11)
+    emit_fn = context.get("_emit_event_fn")
+    if emit_fn is not None:
+        try:
+            from probos.events import EventType
+            emit_fn(EventType.ORACLE_LOOKUP_DISPATCHED, {
+                "agent_id": agent_id,
+                "agent_type": context.get("_agent_type", ""),
+                "query_text": query_text,
+                "tiers": tiers or [],
+                "result_chars": len(formatted),
+            })
+        except Exception:
+            logger.warning("AD-696: ORACLE_LOOKUP_DISPATCHED emit failed", exc_info=True)
+
+    return {"oracle_lookup": formatted}
+
+
 async def _query_introspective_telemetry(
     runtime: Any, spec: SubTaskSpec, context: dict,
 ) -> dict:
@@ -285,6 +356,7 @@ _QUERY_OPERATIONS: dict[str, QueryOperation] = {
     "posts_by_author": _query_posts_by_author,
     "self_monitoring": _query_self_monitoring,                   # AD-646b
     "introspective_telemetry": _query_introspective_telemetry,  # AD-646b
+    "oracle_lookup": _query_oracle_lookup,                       # AD-696
 }
 
 
