@@ -913,3 +913,38 @@ waves:
       AD-571c-i (default flip of social_decay_rate to 0.999, forcing function
       AD-557 benchmark), AD-571c-ii (per-rel_type prune semantic review).
       Baseline 11463 → +16 target (window [+14, +20]).
+  - id: "75"
+    title: "AD-428b v1 Agent Skill Framework: Advanced Features (5-feature OSS v1)"
+    kind: single
+    depends_on: ["74"]
+    dispatch_prompt: "prompts/WAVE-75-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-428b-skill-framework-advanced-v1.md"
+    builder_required: true
+    issues_to_close: [38]
+    status: drafted
+    notes: |
+      Closes GH #38 (umbrella AD-428b "Advanced Features"). Five of nine
+      AD-428b roadmap rows ship in v1: (1) composite skills + synergy
+      bonuses (SkillDefinition.composite_skill_ids + synergy_partners,
+      SkillProfile.has_composite_capability + synergy_bonus); (2)
+      development goals (new agent_development_goals table + 3
+      AgentSkillService methods + proactive.py:1796 surfacing); (3)
+      Earned Agency proficiency-informed rank (new pure inspector
+      proficiency_promotion_eligibility in earned_agency.py — does NOT
+      modify Rank.from_trust per Wave-74 DLog #5 precedent); (4)
+      skill-weighted routing OSS basic (HebbianRouter.set_skill_service
+      + set_intent_skill_map + async score_with_skill_weight, new
+      MeshConfig.intent_skill_map dict default empty); (5) dream
+      consolidation reinforcement (DreamCycle ctor accepts skill_service
+      + intent_skill_map, new _reinforce_skills_for_episodes helper at
+      _consolidate_trust integration point with per-cluster dedup).
+      Force-deferred (no choice): AD-428b-i (Holodeck-based assessment +
+      assessment_criteria per level — Holodeck does not exist at HEAD,
+      grep "class Holodeck" returns 0 hits); AD-428b-ii (Model-Skill
+      Alignment + INNATE category — per-agent ModelDescriptor assignment
+      incomplete per AD-463 partial status, ProviderABC/HebbianRouter
+      integration deferred to AD-463b/c/d/e/f). Both forcing functions
+      file new GH tracking issues at close-comment. Baseline 11480 →
+      +18 target (window [+15, +22]).
