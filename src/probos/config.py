@@ -2131,6 +2131,56 @@ class ConsultationDispatchConfig(BaseModel):
     progress_subscription_enabled: bool = True
 
 
+class HybridDispatchConfig(BaseModel):
+    """AD-581 v1: Hybrid dispatch routing policy (581a + 581d).
+
+    Default-True is intentional — DepartmentDispatcher construction is
+    read-only on boot (no IO; only resolves runtime.hebbian_router +
+    runtime.ontology references). The WorkItemRouter side-effect path
+    activates only when a WORK_ITEM_CREATED event fires. Same precedent
+    as ConsultationDispatchConfig / ConsultationDeliveryConfig.
+
+    AD-581b order protocol additions are unconditional — declining or
+    refusing an order is always available on OrderManager regardless of
+    this config; the gate here governs the auto-routing layer only.
+    """
+
+    enabled: bool = True
+
+    # AD-581d: Routing confidence thresholds.
+    confidence_threshold: float = 0.4
+    confidence_margin: float = 0.05
+    min_hebbian_weight: float = 0.05
+
+    # AD-581d: Per-(intent_type, agent_id) success-rate ring buffer.
+    success_rate_window: int = 50
+    min_samples_for_routing: int = 3
+
+    # AD-581a: WorkItemRouter activation criteria.
+    dispatchable_tags: list[str] = Field(default_factory=lambda: ["consultation"])
+
+    @field_validator("confidence_threshold", "confidence_margin", "min_hebbian_weight")
+    @classmethod
+    def _weight_in_unit(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("weight must be in [0.0, 1.0]")
+        return v
+
+    @field_validator("success_rate_window")
+    @classmethod
+    def _window_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("success_rate_window must be >= 1")
+        return v
+
+    @field_validator("min_samples_for_routing")
+    @classmethod
+    def _min_samples_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("min_samples_for_routing must be >= 1")
+        return v
+
+
 class CommunicationsConfig(BaseModel):
     """Communications settings (AD-485)."""
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
@@ -2496,6 +2546,9 @@ class SystemConfig(BaseModel):
     consultation_dispatch: ConsultationDispatchConfig = Field(
         default_factory=ConsultationDispatchConfig
     )  # AD-594c
+    hybrid_dispatch: HybridDispatchConfig = Field(
+        default_factory=HybridDispatchConfig
+    )  # AD-581 v1 (sub-ADs 581a/b/d)
     process_chain_registry: ProcessChainRegistryConfig = Field(
         default_factory=ProcessChainRegistryConfig
     )  # AD-647b

@@ -759,6 +759,81 @@ def _wire_consultation_dispatch(*, runtime: Any, config: "SystemConfig") -> bool
     return True
 
 
+def _wire_hybrid_dispatch(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-581 v1: Wire DepartmentDispatcher + WorkItemRouter.
+
+    Requires ``runtime.hebbian_router``, ``runtime.ontology``,
+    ``runtime.work_item_store``, AND ``runtime.dispatcher`` (AD-654c).
+    Tier-2 log-and-degrade: missing any dependency -> no-op + INFO log.
+    """
+    cfg = getattr(config, "hybrid_dispatch", None)
+    if not cfg or not cfg.enabled:
+        return False
+    hebbian = getattr(runtime, "hebbian_router", None)
+    if hebbian is None:
+        logger.info(
+            "AD-581: hebbian_router unavailable; hybrid_dispatch skipped"
+        )
+        return False
+    ontology = getattr(runtime, "ontology", None)
+    if ontology is None:
+        logger.info(
+            "AD-581: ontology unavailable; hybrid_dispatch skipped"
+        )
+        return False
+    dispatcher = getattr(runtime, "dispatcher", None)
+    if dispatcher is None:
+        logger.info(
+            "AD-581: dispatcher (AD-654c) unavailable; hybrid_dispatch skipped"
+        )
+        return False
+    registry = getattr(runtime, "registry", None)
+    if registry is None:
+        logger.info(
+            "AD-581: registry unavailable; hybrid_dispatch skipped"
+        )
+        return False
+
+    from probos.mesh.department_dispatcher import DepartmentDispatcher
+    from probos.mesh.work_item_router import WorkItemRouter
+
+    runtime.department_dispatcher = DepartmentDispatcher(  # public attr (Wave 5 conv #1)
+        hebbian_router=hebbian,
+        ontology=ontology,
+        config=cfg,
+    )
+    emit_fn = getattr(runtime, "emit_event", None)
+    runtime.work_item_router = WorkItemRouter(  # public attr (Wave 5 conv #1)
+        dispatcher=dispatcher,
+        department_dispatcher=runtime.department_dispatcher,
+        registry=registry,
+        config=cfg,
+        emit_event=emit_fn,
+    )
+
+    # AD-581a: register WorkItemRouter as listener for WORK_ITEM_CREATED.
+    # runtime.add_event_listener handles async callables via asyncio.create_task.
+    add_listener = getattr(runtime, "add_event_listener", None)
+    if add_listener is not None:
+        try:
+            add_listener(
+                runtime.work_item_router.on_work_item_created,
+                event_types=["work_item_created"],
+            )
+        except Exception:
+            logger.warning(
+                "AD-581a: add_event_listener failed; WorkItemRouter inactive",
+                exc_info=True,
+            )
+
+    logger.info(
+        "AD-581 v1: HybridDispatch wired "
+        "(threshold=%.2f, margin=%.2f, floor=%.2f)",
+        cfg.confidence_threshold, cfg.confidence_margin, cfg.min_hebbian_weight,
+    )
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -2232,6 +2307,11 @@ async def finalize_startup(
                 runtime.work_item_store.attach_dispatcher(runtime.dispatcher)
             if runtime.ward_room:
                 runtime.ward_room.attach_dispatcher(runtime.dispatcher, runtime.callsign_registry)
+
+            # AD-581 v1: HybridDispatch -- must follow AD-654c so runtime.dispatcher
+            # is available. _wire_hybrid_dispatch is tier-2 log-and-degrade.
+            if _wire_hybrid_dispatch(runtime=runtime, config=config):
+                logger.info("AD-581 v1: HybridDispatch wired during finalization")
 
             # BF-223: Create per-agent JetStream dispatch consumers AFTER ship
             # commissioning has set the stable DID-based NATS prefix. During

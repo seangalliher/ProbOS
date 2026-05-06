@@ -171,6 +171,8 @@ class EventType(str, Enum):
     ORDER_ISSUED = "order_issued"  # AD-440
     ORDER_REJECTED = "order_rejected"  # AD-440
     ORDER_ACKNOWLEDGED = "order_acknowledged"  # AD-440
+    ORDER_DECLINED = "order_declined"  # AD-581b
+    ORDER_REFUSED = "order_refused"  # AD-581b
     SENSORIUM_BUDGET_EXCEEDED = "sensorium_budget_exceeded"  # AD-666: sensorium injection over char threshold
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
     TOOL_INVOKED = "tool_invoked"  # AD-448
@@ -308,6 +310,10 @@ class EventType(str, Enum):
     PARALLEL_DISPATCH_STARTED = "parallel_dispatch_started"
     PARALLEL_DISPATCH_PROGRESS = "parallel_dispatch_progress"
     PARALLEL_DISPATCH_BLOCKED = "parallel_dispatch_blocked"
+
+    # Hybrid dispatch routing decisions (AD-581a)
+    HYBRID_DISPATCH_DIRECT = "hybrid_dispatch_direct"
+    HYBRID_DISPATCH_BROADCAST = "hybrid_dispatch_broadcast"
 
     # Billet management (AD-595a)
     BILLET_ASSIGNED = "billet_assigned"
