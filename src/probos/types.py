@@ -664,7 +664,8 @@ class NodeSelfModel:
 class FederationMessage:
     """Wire protocol message between nodes."""
 
-    type: str  # "intent_request", "intent_response", "gossip_self_model", "ping", "pong"
+    type: str  # "intent_request", "intent_response", "gossip_self_model", "ping", "pong",
+    # AD-443e: "transfer_request", "transfer_response", "chain_request", "chain_response"
     source_node: str
     message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     payload: dict[str, Any] = field(default_factory=dict)

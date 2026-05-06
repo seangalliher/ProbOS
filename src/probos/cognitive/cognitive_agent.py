@@ -1121,7 +1121,8 @@ class CognitiveAgent(BaseAgent):
         agent_type = getattr(self, "agent_type", "")
         trust_score = 0.5
         if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
-            trust_score = _rt.trust_network.get_score(agent_type)
+            # BF-263: Use self.id, not agent_type — TrustNetwork keyed by agent_id
+            trust_score = _rt.trust_network.get_score(self.id)
         if trust_score < TEACHING_MIN_TRUST:
             logger.debug("AD-537: Trust %.2f below teaching threshold %.2f", trust_score, TEACHING_MIN_TRUST)
             return False
@@ -2046,7 +2047,9 @@ class CognitiveAgent(BaseAgent):
                 _agent_type = getattr(self, "agent_type", "")
                 _trust = 0.5
                 if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
-                    _trust = _rt.trust_network.get_score(_agent_type)
+                                        # BF-263: Use self.id (deterministic agent_id), not agent_type.
+                    # TrustNetwork._records is keyed by agent_id, not agent_type.
+                    _trust = _rt.trust_network.get_score(self.id)
                 observation["_trust_score"] = _trust
                 if _trust < _chain_cfg.low_trust_ceiling:
                     observation["_chain_trust_band"] = "low"
@@ -2234,7 +2237,9 @@ class CognitiveAgent(BaseAgent):
                 _agent_type = getattr(self, "agent_type", "")
                 _trust = 0.5
                 if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
-                    _trust = _rt.trust_network.get_score(_agent_type)
+                                        # BF-263: Use self.id (deterministic agent_id), not agent_type.
+                    # TrustNetwork._records is keyed by agent_id, not agent_type.
+                    _trust = _rt.trust_network.get_score(self.id)
                 observation["_trust_score"] = _trust
                 if _trust < _chain_cfg.low_trust_ceiling:
                     observation["_chain_trust_band"] = "low"

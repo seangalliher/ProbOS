@@ -15,7 +15,9 @@ from probos.types import FederationMessage, IntentMessage, IntentResult, NodeSel
 
 if TYPE_CHECKING:
     from probos.federation.mock_transport import MockFederationTransport
+    from probos.identity import AgentIdentityRegistry
     from probos.mesh.intent import IntentBus
+    from probos.mobility import TransferCertificate
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ class FederationBridge:
         config: FederationConfig,
         self_model_fn: Callable[[], NodeSelfModel],
         validate_fn: Callable[..., Awaitable[bool]] | None = None,
+        identity_registry: "AgentIdentityRegistry | None" = None,
     ) -> None:
         self._node_id = node_id
         self._transport = transport
@@ -45,12 +48,17 @@ class FederationBridge:
         self._config = config
         self._self_model_fn = self_model_fn
         self._validate_fn = validate_fn
+        # AD-443e: Identity registry handle — required for transfer/chain
+        # message handling; None disables the mobility wire types.
+        self._identity_registry = identity_registry
         self._gossip_task: asyncio.Task[None] | None = None
         self._stopped = False
         self._stats = {
             "intents_forwarded": 0,
             "intents_received": 0,
             "results_collected": 0,
+            "transfers_sent": 0,
+            "transfers_received": 0,
         }
 
     async def start(self) -> None:
@@ -158,6 +166,14 @@ class FederationBridge:
                 timestamp=time.monotonic(),
             )
             await self._transport.send_to_peer(message.source_node, pong)
+        elif message.type == "chain_request":
+            await self._handle_chain_request(message)
+        elif message.type == "chain_response":
+            await self._transport.deliver_response(message.source_node, message)
+        elif message.type == "transfer_request":
+            await self._handle_transfer_request(message)
+        elif message.type == "transfer_response":
+            await self._transport.deliver_response(message.source_node, message)
 
     async def _handle_intent_request(self, message: FederationMessage) -> None:
         """Handle an inbound intent request from a peer."""
@@ -210,6 +226,153 @@ class FederationBridge:
             timestamp=payload.get("timestamp", 0.0),
         )
         self._router.update_peer_model(model)
+
+    # ── AD-443e: Mobility wire-protocol handlers ──────────────────────────
+
+    async def _handle_chain_request(self, message: FederationMessage) -> None:
+        """Peer asks for our exported Identity Ledger chain."""
+        if self._identity_registry is None:
+            response = FederationMessage(
+                type="chain_response",
+                source_node=self._node_id,
+                message_id=message.message_id,
+                payload={"blocks": [], "error": "identity_registry not wired"},
+                timestamp=time.monotonic(),
+            )
+        else:
+            blocks = await self._identity_registry.export_chain()
+            response = FederationMessage(
+                type="chain_response",
+                source_node=self._node_id,
+                message_id=message.message_id,
+                payload={"blocks": blocks},
+                timestamp=time.monotonic(),
+            )
+        await self._transport.send_to_peer(message.source_node, response)
+
+    async def _handle_transfer_request(self, message: FederationMessage) -> None:
+        """Peer wants to transfer an agent to us.
+
+        Pipeline: import_chain (validates) -> import_transfer_certificate
+        (validates). Slot reassignment is NOT performed automatically.
+        """
+        from probos.mobility import TransferCertificate
+
+        if self._identity_registry is None:
+            response = FederationMessage(
+                type="transfer_response",
+                source_node=self._node_id,
+                message_id=message.message_id,
+                payload={
+                    "accepted": False,
+                    "message": "identity_registry not wired",
+                    "agent_uuid": None,
+                },
+                timestamp=time.monotonic(),
+            )
+            await self._transport.send_to_peer(message.source_node, response)
+            return
+
+        cert_dict = message.payload.get("cert_dict") or {}
+        chain_blocks = message.payload.get("chain_blocks") or []
+        try:
+            cert = TransferCertificate.from_dict(cert_dict)
+        except (KeyError, TypeError) as exc:
+            response = FederationMessage(
+                type="transfer_response",
+                source_node=self._node_id,
+                message_id=message.message_id,
+                payload={
+                    "accepted": False,
+                    "message": f"malformed cert_dict: {exc!s}",
+                    "agent_uuid": None,
+                },
+                timestamp=time.monotonic(),
+            )
+            await self._transport.send_to_peer(message.source_node, response)
+            return
+
+        chain_ok, chain_msg = await self._identity_registry.import_chain(chain_blocks)
+        if not chain_ok:
+            response = FederationMessage(
+                type="transfer_response",
+                source_node=self._node_id,
+                message_id=message.message_id,
+                payload={
+                    "accepted": False,
+                    "message": f"chain rejected: {chain_msg}",
+                    "agent_uuid": None,
+                },
+                timestamp=time.monotonic(),
+            )
+            await self._transport.send_to_peer(message.source_node, response)
+            return
+
+        cert_ok, cert_msg = await self._identity_registry.import_transfer_certificate(cert)
+        if cert_ok:
+            self._stats["transfers_received"] += 1
+        response = FederationMessage(
+            type="transfer_response",
+            source_node=self._node_id,
+            message_id=message.message_id,
+            payload={
+                "accepted": cert_ok,
+                "message": cert_msg,
+                "agent_uuid": cert.agent_uuid if cert_ok else None,
+            },
+            timestamp=time.monotonic(),
+        )
+        await self._transport.send_to_peer(message.source_node, response)
+
+    async def request_chain(self, peer_node_id: str) -> list[dict[str, Any]]:
+        """Outbound: ask a specific peer for its exported chain."""
+        msg = FederationMessage(
+            type="chain_request",
+            source_node=self._node_id,
+            payload={},
+            timestamp=time.monotonic(),
+        )
+        await self._transport.send_to_peer(peer_node_id, msg)
+        response = await self._transport.receive_with_timeout(
+            peer_node_id, self._config.forward_timeout_ms
+        )
+        if response is None:
+            logger.warning(
+                "Chain request to %s timed out; returning empty chain", peer_node_id,
+            )
+            return []
+        return list(response.payload.get("blocks", []))
+
+    async def request_transfer(
+        self,
+        peer_node_id: str,
+        certificate: "TransferCertificate",
+        chain_blocks: list[dict[str, Any]],
+    ) -> tuple[bool, str]:
+        """Outbound: ship an agent's transfer cert + supporting chain to a peer."""
+        msg = FederationMessage(
+            type="transfer_request",
+            source_node=self._node_id,
+            payload={
+                "cert_dict": certificate.to_dict(),
+                "chain_blocks": chain_blocks,
+            },
+            timestamp=time.monotonic(),
+        )
+        await self._transport.send_to_peer(peer_node_id, msg)
+        self._stats["transfers_sent"] += 1
+        response = await self._transport.receive_with_timeout(
+            peer_node_id, self._config.forward_timeout_ms
+        )
+        if response is None:
+            logger.warning(
+                "Transfer request to %s timed out; agent %s remains on origin ship",
+                peer_node_id, certificate.did,
+            )
+            return False, "timeout"
+        accepted = bool(response.payload.get("accepted", False))
+        message_text = str(response.payload.get("message", ""))
+        return accepted, message_text
 
     async def _gossip_loop(self) -> None:
         """Periodically broadcast this node's self-model to all peers."""

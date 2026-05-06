@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from probos.protocols import ConnectionFactory, DatabaseConnection
+from probos.mobility import TransferCertificate
 
 logger = logging.getLogger(__name__)
 
@@ -341,8 +342,9 @@ CREATE TABLE IF NOT EXISTS ship_birth_certificate (
 
 CREATE TABLE IF NOT EXISTS slot_mappings (
     slot_id TEXT PRIMARY KEY,
-    agent_uuid TEXT NOT NULL,
-    FOREIGN KEY (agent_uuid) REFERENCES birth_certificates(agent_uuid)
+    agent_uuid TEXT NOT NULL
+    -- AD-443d: FOREIGN KEY removed so foreign agent_uuids (held in
+    -- foreign_birth_certificates) can be assigned to a slot via reassign_slot.
 );
 
 CREATE TABLE IF NOT EXISTS asset_tags (
@@ -354,12 +356,47 @@ CREATE TABLE IF NOT EXISTS asset_tags (
     tier TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS foreign_birth_certificates (
+    agent_uuid TEXT PRIMARY KEY,
+    did TEXT UNIQUE NOT NULL,
+    agent_type TEXT NOT NULL,
+    callsign TEXT NOT NULL,
+    instance_id TEXT NOT NULL,
+    vessel_name TEXT NOT NULL,
+    birth_timestamp REAL NOT NULL,
+    department TEXT NOT NULL,
+    post_id TEXT NOT NULL,
+    baseline_version TEXT NOT NULL,
+    certificate_hash TEXT NOT NULL,
+    certificate_vc_json TEXT NOT NULL,
+    origin_ship_did TEXT NOT NULL,
+    imported_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS foreign_chains (
+    origin_ship_did TEXT PRIMARY KEY,
+    chain_json TEXT NOT NULL,
+    imported_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS transfer_certificates (
+    did TEXT NOT NULL,
+    transfer_timestamp REAL NOT NULL,
+    direction TEXT NOT NULL,
+    certificate_hash TEXT UNIQUE NOT NULL,
+    certificate_vc_json TEXT NOT NULL,
+    PRIMARY KEY (did, transfer_timestamp, direction)
+);
+
 CREATE INDEX IF NOT EXISTS idx_cert_agent_type ON birth_certificates(agent_type);
 CREATE INDEX IF NOT EXISTS idx_cert_did ON birth_certificates(did);
 CREATE INDEX IF NOT EXISTS idx_ledger_did ON identity_ledger(agent_did);
 CREATE INDEX IF NOT EXISTS idx_asset_type ON asset_tags(asset_type);
 CREATE INDEX IF NOT EXISTS idx_asset_slot ON asset_tags(slot_id);
 CREATE INDEX IF NOT EXISTS idx_slot_agent ON slot_mappings(agent_uuid);
+CREATE INDEX IF NOT EXISTS idx_foreign_did ON foreign_birth_certificates(did);
+CREATE INDEX IF NOT EXISTS idx_foreign_origin ON foreign_birth_certificates(origin_ship_did);
+CREATE INDEX IF NOT EXISTS idx_xfer_did ON transfer_certificates(did);
 """
 
 
@@ -381,6 +418,9 @@ class AgentIdentityRegistry:
         self._slot_cache: dict[str, AgentBirthCertificate] = {}  # slot_id -> cert
         self._ship_certificate: ShipBirthCertificate | None = None
         self._asset_cache: dict[str, AssetTag] = {}  # slot_id -> AssetTag
+        # AD-443: Foreign certificates and chain snapshots imported from peer ships.
+        self._foreign_uuid_cache: dict[str, AgentBirthCertificate] = {}  # foreign agent_uuid -> cert
+        self._foreign_chain_cache: dict[str, list[dict[str, Any]]] = {}  # origin_ship_did -> chain blocks
         self._ledger_lock = asyncio.Lock()
         self._connection_factory = connection_factory
         if self._connection_factory is None:
@@ -437,8 +477,42 @@ class AgentIdentityRegistry:
                     )
                     self._asset_cache[tag.slot_id] = tag
 
-            logger.info("Identity registry loaded %d certificates, %d asset tags",
-                        len(self._uuid_cache), len(self._asset_cache))
+            # AD-443b: Load foreign birth certificates imported from peer ships.
+            async with self._db.execute(
+                "SELECT agent_uuid, did, agent_type, callsign, instance_id, "
+                "vessel_name, birth_timestamp, department, post_id, "
+                "baseline_version, certificate_hash FROM foreign_birth_certificates"
+            ) as cursor:
+                async for row in cursor:
+                    fcert = AgentBirthCertificate(
+                        agent_uuid=row[0], did=row[1], agent_type=row[2],
+                        callsign=row[3], instance_id=row[4], vessel_name=row[5],
+                        birth_timestamp=row[6], department=row[7], post_id=row[8],
+                        baseline_version=row[9], certificate_hash=row[10],
+                    )
+                    self._foreign_uuid_cache[fcert.agent_uuid] = fcert
+
+            # AD-443d: Load slot mappings that point at foreign certs.
+            async with self._db.execute(
+                "SELECT slot_id, agent_uuid FROM slot_mappings"
+            ) as cursor:
+                async for row in cursor:
+                    if row[1] in self._foreign_uuid_cache and row[0] not in self._slot_cache:
+                        self._slot_cache[row[0]] = self._foreign_uuid_cache[row[1]]
+
+            # AD-443b: Load foreign-chain snapshots.
+            async with self._db.execute(
+                "SELECT origin_ship_did, chain_json FROM foreign_chains"
+            ) as cursor:
+                async for row in cursor:
+                    self._foreign_chain_cache[row[0]] = json.loads(row[1])
+
+            logger.info(
+                "Identity registry loaded %d certificates, %d asset tags, "
+                "%d foreign certificates, %d foreign chain snapshots",
+                len(self._uuid_cache), len(self._asset_cache),
+                len(self._foreign_uuid_cache), len(self._foreign_chain_cache),
+            )
 
         # Load or create ship birth certificate (if instance_id provided)
         if instance_id and not self._ship_certificate:
@@ -539,8 +613,18 @@ class AgentIdentityRegistry:
     # ── Lookup ──────────────────────────────────────────────────────
 
     def get_by_uuid(self, agent_uuid: str) -> AgentBirthCertificate | None:
-        """Look up a birth certificate by agent UUID."""
-        return self._uuid_cache.get(agent_uuid)
+        """Look up a birth certificate by agent UUID.
+
+        AD-443d: After a transfer, foreign certs accepted via
+        `import_transfer_certificate` are returned alongside native ones —
+        callers do not need to know whether an agent was born here or arrived
+        via mobility. Native certs win on UUID collision (defensive — DIDs
+        prevent collision in practice).
+        """
+        cert = self._uuid_cache.get(agent_uuid)
+        if cert is not None:
+            return cert
+        return self._foreign_uuid_cache.get(agent_uuid)
 
     def get_by_slot(self, slot_id: str) -> AgentBirthCertificate | None:
         """Look up a birth certificate by deployment slot ID.
@@ -911,3 +995,322 @@ class AgentIdentityRegistry:
             blocks[0]["credential"] = self._ship_certificate.to_verifiable_credential()
 
         return blocks
+
+    # ── AD-443: Mobility (Transfer Certificates + Foreign Chains) ─────────
+
+    async def verify_remote_chain(self, blocks: list[dict[str, Any]]) -> tuple[bool, str]:
+        """AD-443b: Pure local validation of a foreign Identity Ledger snapshot.
+
+        Mirrors the local `verify_chain()` shape: walks blocks in order,
+        recomputes each block_hash, verifies previous_hash linkage, verifies
+        genesis previous_hash is all zeros. Does not require a started DB.
+        """
+        if not blocks:
+            return False, "Empty chain"
+
+        for i, b in enumerate(blocks):
+            try:
+                block = LedgerBlock(
+                    index=b["index"],
+                    timestamp=b["timestamp"],
+                    certificate_hash=b["certificate_hash"],
+                    agent_did=b["agent_did"],
+                    previous_hash=b["previous_hash"],
+                    block_hash=b["block_hash"],
+                )
+            except KeyError as exc:
+                return False, f"Block {i}: missing field {exc!s}"
+
+            expected_hash = block.compute_hash()
+            if block.block_hash != expected_hash:
+                return False, f"Block {block.index}: hash mismatch"
+
+            if i == 0:
+                if block.previous_hash != "0" * 64:
+                    return False, "Genesis block: invalid previous_hash (expected all zeros)"
+            else:
+                prev_block_hash = blocks[i - 1]["block_hash"]
+                if block.previous_hash != prev_block_hash:
+                    return False, f"Block {block.index}: chain linkage broken"
+
+        return True, f"Chain valid: {len(blocks)} blocks"
+
+    async def import_chain(self, blocks: list[dict[str, Any]]) -> tuple[bool, str]:
+        """AD-443b: Accept a remote ship's exported Identity Ledger and persist it.
+
+        Validates the chain via verify_remote_chain BEFORE persisting; rejects
+        on any integrity failure. Latest-wins on repeated import for the same
+        origin_ship_did.
+        """
+        if not self._db:
+            return False, "Registry not started"
+
+        valid, message = await self.verify_remote_chain(blocks)
+        if not valid:
+            logger.warning(
+                "Import chain rejected: %s; foreign chain not persisted", message,
+            )
+            return False, message
+
+        origin_ship_did = blocks[0]["agent_did"]
+        await self._db.execute(
+            "INSERT OR REPLACE INTO foreign_chains "
+            "(origin_ship_did, chain_json, imported_at) VALUES (?, ?, ?)",
+            (origin_ship_did, json.dumps(blocks), time.time()),
+        )
+        await self._db.commit()
+        self._foreign_chain_cache[origin_ship_did] = list(blocks)
+        logger.info(
+            "Foreign chain imported: %d blocks from %s; available for transfer verification",
+            len(blocks), origin_ship_did,
+        )
+        return True, f"Chain imported: {len(blocks)} blocks from {origin_ship_did}"
+
+    async def issue_transfer_certificate(
+        self,
+        agent_uuid: str,
+        target_instance_did: str,
+        qualification_credentials: list[str] | None = None,
+    ) -> TransferCertificate:
+        """AD-443a: Issue a Transfer Certificate at the origin ship.
+
+        Looks up local birth cert by agent_uuid, freezes assignment history,
+        constructs and persists a TransferCertificate under direction='outgoing'.
+        Rejects foreign UUIDs (re-transfer is a v2 concern).
+        """
+        if not self._db:
+            raise RuntimeError("Registry not started")
+
+        cert = self._uuid_cache.get(agent_uuid)
+        if cert is None:
+            raise ValueError(
+                f"Cannot issue transfer certificate: agent_uuid {agent_uuid} "
+                "not found in local birth certificates"
+            )
+
+        now = time.time()
+        assignment_history = [
+            {
+                "instance_did": generate_ship_did(cert.instance_id),
+                "vessel_name": cert.vessel_name,
+                "joined_at": cert.birth_timestamp,
+                "departed_at": now,
+            }
+        ]
+        xfer = TransferCertificate(
+            did=cert.did,
+            agent_uuid=cert.agent_uuid,
+            agent_type=cert.agent_type,
+            callsign=cert.callsign,
+            origin_ship_did=generate_ship_did(cert.instance_id),
+            origin_vessel_name=cert.vessel_name,
+            origin_instance_id=cert.instance_id,
+            origin_birth_timestamp=cert.birth_timestamp,
+            transfer_timestamp=now,
+            target_instance_did=target_instance_did,
+            baseline_version=cert.baseline_version,
+            qualification_credentials=list(qualification_credentials or []),
+            assignment_history=assignment_history,
+        )
+        xfer.certificate_hash = xfer.compute_hash()
+
+        await self._db.execute(
+            "INSERT INTO transfer_certificates "
+            "(did, transfer_timestamp, direction, certificate_hash, certificate_vc_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                xfer.did,
+                xfer.transfer_timestamp,
+                "outgoing",
+                xfer.certificate_hash,
+                json.dumps(xfer.to_verifiable_credential()),
+            ),
+        )
+        await self._db.commit()
+        logger.info(
+            "Transfer certificate issued: %s (%s) -> %s; ready for delivery to destination",
+            xfer.callsign, xfer.did, target_instance_did,
+        )
+        return xfer
+
+    async def import_transfer_certificate(
+        self,
+        cert: TransferCertificate,
+    ) -> tuple[bool, str]:
+        """AD-443a + 443b + 443d: Accept an incoming Transfer Certificate.
+
+        Validation chain: cert hash integrity -> origin chain imported ->
+        cert claim consistent with chain. On success, persists a foreign
+        birth certificate (cache + DB) plus the cert under direction='incoming'.
+        Does NOT reassign a slot — caller must call reassign_slot explicitly.
+        """
+        if not self._db:
+            return False, "Registry not started"
+
+        expected_hash = cert.compute_hash()
+        if expected_hash != cert.certificate_hash:
+            logger.warning(
+                "Transfer certificate rejected: hash mismatch on %s; "
+                "cert not imported",
+                cert.did,
+            )
+            return False, "Certificate hash mismatch"
+
+        chain = self._foreign_chain_cache.get(cert.origin_ship_did)
+        if chain is None:
+            logger.warning(
+                "Transfer certificate rejected: origin chain %s not imported; "
+                "call import_chain first",
+                cert.origin_ship_did,
+            )
+            return False, f"Origin chain {cert.origin_ship_did} not imported"
+
+        # Confirm the cert claims an agent the origin ship's ledger actually issued.
+        chain_match = False
+        for block in chain:
+            credential = block.get("credential")
+            if not credential:
+                continue
+            subject = credential.get("credentialSubject") or {}
+            block_did = subject.get("id") or subject.get("did")
+            if block_did != cert.did:
+                continue
+            chain_match = True
+            break
+
+        if not chain_match:
+            logger.warning(
+                "Transfer certificate rejected: cert subject %s not present "
+                "in origin chain %s",
+                cert.did, cert.origin_ship_did,
+            )
+            return False, (
+                f"Certificate subject {cert.did} not found in origin chain"
+            )
+
+        # Build a foreign AgentBirthCertificate from the cert + chain VC.
+        # Department / post_id / certificate_hash come from the chain VC subject;
+        # cert carries the canonical sovereign fields.
+        fcert: AgentBirthCertificate | None = None
+        for block in chain:
+            credential = block.get("credential")
+            if not credential:
+                continue
+            subject = credential.get("credentialSubject") or {}
+            block_did = subject.get("id") or subject.get("did")
+            if block_did != cert.did:
+                continue
+            fcert = AgentBirthCertificate(
+                agent_uuid=cert.agent_uuid,
+                did=cert.did,
+                agent_type=cert.agent_type,
+                callsign=cert.callsign,
+                instance_id=cert.origin_instance_id,
+                vessel_name=cert.origin_vessel_name,
+                birth_timestamp=cert.origin_birth_timestamp,
+                department=subject.get("department", ""),
+                post_id=subject.get("postId", subject.get("post_id", "")),
+                baseline_version=cert.baseline_version,
+                certificate_hash=block.get("certificate_hash", ""),
+            )
+            break
+
+        if fcert is None:
+            return False, "Failed to reconstruct foreign birth certificate"
+
+        await self._db.execute(
+            "INSERT OR REPLACE INTO foreign_birth_certificates "
+            "(agent_uuid, did, agent_type, callsign, instance_id, vessel_name, "
+            "birth_timestamp, department, post_id, baseline_version, "
+            "certificate_hash, certificate_vc_json, origin_ship_did, imported_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                fcert.agent_uuid, fcert.did, fcert.agent_type, fcert.callsign,
+                fcert.instance_id, fcert.vessel_name, fcert.birth_timestamp,
+                fcert.department, fcert.post_id, fcert.baseline_version,
+                fcert.certificate_hash,
+                json.dumps(cert.to_verifiable_credential()),
+                cert.origin_ship_did, time.time(),
+            ),
+        )
+        await self._db.execute(
+            "INSERT OR REPLACE INTO transfer_certificates "
+            "(did, transfer_timestamp, direction, certificate_hash, certificate_vc_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                cert.did, cert.transfer_timestamp, "incoming",
+                cert.certificate_hash,
+                json.dumps(cert.to_verifiable_credential()),
+            ),
+        )
+        await self._db.commit()
+        self._foreign_uuid_cache[fcert.agent_uuid] = fcert
+        logger.info(
+            "Transfer certificate imported: %s (%s) from %s; "
+            "available via get_by_uuid (caller must reassign_slot)",
+            cert.callsign, cert.did, cert.origin_vessel_name,
+        )
+        return True, f"Certificate imported: {cert.did}"
+
+    async def reassign_slot(
+        self,
+        agent_uuid: str,
+        new_slot_id: str,
+    ) -> tuple[bool, str]:
+        """AD-443d: Reassign a deployment slot to a foreign or native agent.
+
+        Birth provenance (vessel_name) preserved automatically per AD-499.
+        """
+        if not self._db:
+            return False, "Registry not started"
+        if not new_slot_id:
+            return False, "new_slot_id must be non-empty"
+
+        cert = self.get_by_uuid(agent_uuid)
+        if cert is None:
+            return False, f"agent_uuid {agent_uuid} not found"
+
+        prior = self._slot_cache.get(new_slot_id)
+        await self._db.execute(
+            "INSERT OR REPLACE INTO slot_mappings (slot_id, agent_uuid) VALUES (?, ?)",
+            (new_slot_id, agent_uuid),
+        )
+        await self._db.commit()
+        self._slot_cache[new_slot_id] = cert
+        logger.info(
+            "Slot reassigned: %s -> %s (%s [%s]); prior occupant %s; "
+            "birth provenance preserved per AD-499",
+            new_slot_id, cert.did, cert.callsign, cert.vessel_name,
+            prior.did if prior else "none",
+        )
+        return True, f"Slot {new_slot_id} reassigned to {cert.did}"
+
+    def get_foreign_chain(self, origin_ship_did: str) -> list[dict[str, Any]] | None:
+        """Return the imported chain snapshot for a peer ship, or None."""
+        return self._foreign_chain_cache.get(origin_ship_did)
+
+    async def get_transfer_certificates_for(
+        self, agent_did: str
+    ) -> list[dict[str, Any]]:
+        """Return all stored Transfer Certificates (incoming + outgoing) for an agent DID.
+
+        Read-only audit accessor. Returns dict form suitable for HXI rendering.
+        """
+        if not self._db:
+            return []
+        out: list[dict[str, Any]] = []
+        async with self._db.execute(
+            "SELECT did, transfer_timestamp, direction, certificate_hash, "
+            "certificate_vc_json FROM transfer_certificates WHERE did = ? "
+            "ORDER BY transfer_timestamp ASC",
+            (agent_did,),
+        ) as cursor:
+            async for row in cursor:
+                out.append({
+                    "did": row[0],
+                    "transfer_timestamp": row[1],
+                    "direction": row[2],
+                    "certificate_hash": row[3],
+                    "credential": json.loads(row[4]),
+                })
+        return out

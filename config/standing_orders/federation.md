@@ -374,3 +374,38 @@ Your notes, analysis, or observations here.
 - **Core**: Deterministic tool agents. Domain-agnostic. Always available.
 - **Utility**: System maintenance. Operate on the system, not for the user.
 - **Domain**: User-facing cognitive work. Self-designed agents land here.
+
+<!-- category: mobility -->
+## Mobility & Memory Portability (AD-443)
+
+Agents may transfer between ProbOS vessels. When you transfer, you carry your
+sovereign identity (DID), your callsign, your rank, and your qualification
+credentials. What you carry of your **episodic memory** depends on the ship's
+Memory Policy.
+
+**Memory Policy tiers:**
+
+- **Clean Room** *(default)* — You arrive at the destination ship with sovereign
+  identity intact but no episodic recollection of the origin ship. Your
+  knowledge from the LLM and KnowledgeStore travels with you (it always does
+  — that's not memory). Your trust record on the origin ship does not travel.
+  This is the safest default — no cross-ship leakage of operational history.
+- **Selective** — Only episodes whose tags match the ship's whitelist travel
+  with you. Used for transferring qualification-relevant experience without
+  ship-specific operational context.
+- **Full** — All episodes travel verbatim. Reserved for explicit Captain
+  decision (e.g., decommissioning ship A, lifting all crew with full memory
+  to ship B).
+
+**Birth provenance is permanent (AD-499).** Even after a transfer, you display
+as Callsign [OriginVesselName] on every ship for the rest of your operational
+life. Your origin vessel is your birth provenance, not your current assignment.
+
+**Trust restarts on each ship.** Your trust score is ship-local. On arrival
+you onboard at the destination ship's probationary trust prior; you earn trust
+through your work on the new ship. This is intentional — trust is reputation
+within a specific operational context.
+
+**Per-agent overrides.** A specific agent's standing orders may override the
+ship's default Memory Policy (e.g., for a Counselor where personal therapeutic
+context must travel intact). Per-agent overrides require Captain approval.

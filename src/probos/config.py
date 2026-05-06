@@ -804,6 +804,25 @@ class FederationConfig(BaseModel):
     forward_timeout_ms: int = 5000  # Timeout waiting for peer responses
     gossip_interval_seconds: float = 10.0  # How often to broadcast self-model to peers
     validate_remote_results: bool = True  # Pass remote results through local consensus
+    # AD-443c: Memory portability tier for incoming agent transfers.
+    # CLEAN_ROOM (default) means foreign agents arrive with sovereign identity
+    # but zero episodic memory — safest default. SELECTIVE filters by tag.
+    # FULL accepts all episodes verbatim. Per-agent overrides via Standing Orders.
+    memory_policy: str = "clean_room"
+    # AD-443c: Tag whitelist for SELECTIVE memory policy. Ignored for the
+    # other two policies. Empty list with SELECTIVE means no episodes pass.
+    memory_policy_selective_tags: list[str] = []
+
+    @field_validator("memory_policy")
+    @classmethod
+    def _validate_memory_policy(cls, v: str) -> str:
+        from probos.mobility import MemoryPolicy
+        valid = {p.value for p in MemoryPolicy}
+        if v not in valid:
+            raise ValueError(
+                f"memory_policy must be one of {sorted(valid)}; got {v!r}"
+            )
+        return v
 
 
 class SelfModConfig(BaseModel):
