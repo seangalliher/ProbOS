@@ -965,3 +965,19 @@ waves:
       All 5 phases shipped earlier (Phases 1-4 in commit f10369d;
       Phase 5 deprecation in Wave 71 / AD-644b commit 8a20695).
       No-build close.
+
+  - id: "77"
+    title: "AD-523a/b/c Combo Ward Room Overhaul (3->1 reframe)"
+    kind: combo
+    depends_on: ["76"]
+    dispatch_prompt: "prompts/archive/WAVE-77-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/archive/ad-523b-crew-notebooks-browser.md"
+    builder_required: true
+    issues_to_close: [98]
+    status: done
+    notes: |
+      AD-523a shipped via BF-080 (verify-only). AD-523b shipped this wave
+      (HXI Notebooks panel, +8 vitest). AD-523c superseded by AD-562
+      Knowledge Browser (planned).
