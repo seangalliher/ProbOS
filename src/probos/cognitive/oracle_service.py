@@ -182,6 +182,7 @@ class OracleService:
         self._semantic_layer = semantic_layer  # AD-686 (Tier 5)
         self._knowledge_graph = knowledge_graph  # AD-688 (Tier 6)
         self._health_provider = health_provider  # AD-695 (Tier 7)
+        self._callsign_registry: Any = None  # BF-264 (callsign→agent_type expansion)
         # AD-462f: Instance-scoped LRU for resolve_ref(). Bounded by
         # _MEMORY_REF_CACHE_SIZE; OrderedDict eviction (oldest first).
         self._ref_cache: OrderedDict[str, OracleResult] = OrderedDict()
@@ -204,6 +205,15 @@ class OracleService:
         `attach_semantic_layer` shape exactly.
         """
         self._knowledge_graph = knowledge_graph
+
+    def attach_callsign_registry(self, callsign_registry: Any) -> None:
+        """BF-264: Late-bind the CallsignRegistry.
+
+        Used to expand query tokens from callsigns (e.g., "wesley") to
+        agent_types (e.g., "scout") so Tier 6 graph queries match edges
+        which are keyed by agent_type. Idempotent — last write wins.
+        """
+        self._callsign_registry = callsign_registry
 
     def attach_health_provider(self, health_provider: Any) -> None:
         """AD-695: Late-bind the runtime health provider.
@@ -709,6 +719,30 @@ class OracleService:
         tokens = _extract_entity_tokens(query_text)
         if not tokens:
             return []
+
+        # BF-264: Expand callsign tokens → agent_type equivalents.
+        # Graph edges use agent_type as identifiers (e.g., "scout"), but user
+        # queries use callsigns (e.g., "Wesley"). Resolve via CallsignRegistry
+        # so "Who does Wesley report to?" matches edges keyed by "scout".
+        reg = self._callsign_registry
+        if reg is not None:
+            expanded: list[str] = []
+            seen = set(tokens)
+            for token in tokens:
+                expanded.append(token)
+                # callsign → agent_type  (e.g., "wesley" → "scout")
+                agent_type = getattr(reg, '_callsign_to_type', {}).get(token, "")
+                if agent_type and agent_type not in seen:
+                    expanded.append(agent_type)
+                    seen.add(agent_type)
+                # agent_type → callsign  (e.g., "scout" → "wesley")
+                callsign = getattr(reg, '_type_to_callsign', {}).get(token, "")
+                if callsign:
+                    cs_lower = callsign.lower()
+                    if cs_lower not in seen:
+                        expanded.append(cs_lower)
+                        seen.add(cs_lower)
+            tokens = expanded
 
         # edge.id -> (best_score, edge, hop_proximity, source_token, source_dir)
         scored: dict[str, tuple[float, Any, float, str, str]] = {}

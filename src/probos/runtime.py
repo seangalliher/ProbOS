@@ -1669,6 +1669,12 @@ class ProbOSRuntime:
                     "Tier 6 graph queries will return [] until restart",
                     exc_info=True,
                 )
+        # BF-264: Stitch CallsignRegistry onto Oracle for callsign→agent_type expansion.
+        if self._oracle_service is not None:
+            try:
+                self._oracle_service.attach_callsign_registry(self.callsign_registry)
+            except Exception:
+                logger.debug("BF-264: failed to attach callsign_registry to Oracle", exc_info=True)
         self.skill_registry = comm.skill_registry
         self.skill_service = comm.skill_service
         # AD-566f: Qualification → Skill Bridge
