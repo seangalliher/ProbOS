@@ -1413,6 +1413,80 @@ class CognitiveAgent(BaseAgent):
         Builds messages, calls LLM, records to journal.
         Returns decision dict. Does NOT check decision cache or procedural memory.
         """
+        # AD-633d: Pre-LLM speculation cache check.
+        # If a SpeculationCache hit is available, prepend pre-computed analysis
+        # to observation as `_speculation_prefetch`. The LLM still runs — the
+        # prefetch is observation context, not a decision.
+        runtime = getattr(self, "_runtime", None)
+        cache = getattr(runtime, "speculation_cache", None) if runtime is not None else None
+        engine = getattr(runtime, "prediction_engine", None) if runtime is not None else None
+        # Defensive isinstance check: test rigs that pass MagicMock runtimes
+        # auto-vivify attribute access; without this guard the hook would fire
+        # on every mocked runtime and mutate the observation dict.
+        from probos.cognitive.predictive_branching.cache import SpeculationCache as _SpecCache
+        if isinstance(cache, _SpecCache) and engine is not None:
+            try:
+                from probos.cognitive.predictive_branching.engine import compute_signature
+                signature = compute_signature(
+                    agent_id=self.id,
+                    intent_type=str(observation.get("intent", "")),
+                    observation=observation,
+                )
+                payload = cache.lookup(signature)
+                if payload is not None:
+                    observation["_speculation_prefetch"] = payload
+                    tracker = getattr(runtime, "accuracy_tracker", None)
+                    if tracker is not None:
+                        from probos.cognitive.predictive_branching.accuracy import (
+                            PredictionOutcome,
+                        )
+                        try:
+                            tracker.record(
+                                agent_id=self.id, outcome=PredictionOutcome.HIT
+                            )
+                        except Exception:
+                            logger.warning(
+                                "AD-633e: tracker.record(HIT) failed for %s",
+                                self.id, exc_info=True,
+                            )
+                else:
+                    # Miss is interesting too — track it
+                    tracker = getattr(runtime, "accuracy_tracker", None)
+                    if tracker is not None:
+                        from probos.cognitive.predictive_branching.accuracy import (
+                            PredictionOutcome,
+                        )
+                        try:
+                            tracker.record(
+                                agent_id=self.id, outcome=PredictionOutcome.MISS
+                            )
+                        except Exception:
+                            logger.warning(
+                                "AD-633e: tracker.record(MISS) failed for %s",
+                                self.id, exc_info=True,
+                            )
+                    emit = getattr(runtime, "emit_event", None)
+                    if emit is not None:
+                        try:
+                            emit(
+                                "prediction_miss",
+                                {
+                                    "signature": signature,
+                                    "agent_id": self.id,
+                                    "intent_type": str(observation.get("intent", "")),
+                                },
+                            )
+                        except Exception:
+                            logger.warning(
+                                "AD-633d: emit prediction_miss failed", exc_info=True
+                            )
+            except Exception:
+                logger.warning(
+                    "AD-633d: speculation cache check failed for %s; "
+                    "proceeding with normal LLM path",
+                    self.id, exc_info=True,
+                )
+
         # AD-626: Load augmentation skills BEFORE building user message
         # so _build_user_message() can frame tasks with skill instructions.
         # Skip if already loaded by decide() for chain activation (AD-632f).

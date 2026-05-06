@@ -1058,6 +1058,27 @@ class ObservableStateConfig(BaseModel):
     max_claims_per_thread: int = 10
 
 
+class PredictiveBranchingConfig(BaseModel):
+    """AD-633 v1: Predictive Cognitive Branching.
+
+    Default-False — speculation actually consumes tokens (separate budget pool,
+    but still real LLM cost when SpeculationExecutor dispatches). Operator
+    opt-in. AD-695 default-False precedent applies.
+    """
+
+    enabled: bool = False
+    cache_ttl_seconds: float = Field(default=60.0, ge=1.0)
+    cache_max_entries: int = Field(default=128, ge=1)
+    speculation_tokens_per_window: int = Field(default=2000, ge=0)
+    speculation_window_seconds: float = Field(default=300.0, ge=1.0)
+    flush_rate_feedback_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
+    flush_rate_window_seconds: float = Field(default=3600.0, ge=1.0)
+    accuracy_ring_size: int = Field(default=100, ge=10)
+    cheap_tier_min_confidence: float = Field(default=0.30, ge=0.0, le=1.0)
+    standard_tier_min_confidence: float = Field(default=0.70, ge=0.0, le=1.0)
+    anticipatory_tier_min_confidence: float = Field(default=0.85, ge=0.0, le=1.0)
+
+
 class WorkingMemoryConfig(BaseModel):
     """AD-573: Unified agent working memory configuration."""
 
@@ -2506,6 +2527,7 @@ class SystemConfig(BaseModel):
     social_verification: SocialVerificationConfig = SocialVerificationConfig()
     anomaly_window: AnomalyWindowConfig = AnomalyWindowConfig()  # AD-673
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
+    predictive_branching: PredictiveBranchingConfig = PredictiveBranchingConfig()  # AD-633
     memory_budget: MemoryBudgetConfig = MemoryBudgetConfig()  # AD-573
     metabolism: MetabolismConfig = MetabolismConfig()  # AD-670
     pinned_knowledge: PinnedKnowledgeConfig = PinnedKnowledgeConfig()  # AD-579a

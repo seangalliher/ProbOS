@@ -315,6 +315,12 @@ class EventType(str, Enum):
     HYBRID_DISPATCH_DIRECT = "hybrid_dispatch_direct"
     HYBRID_DISPATCH_BROADCAST = "hybrid_dispatch_broadcast"
 
+    # Predictive cognitive branching (AD-633)
+    PREDICTION_HIT = "prediction_hit"  # AD-633b cache served pre-computed analysis
+    PREDICTION_MISS = "prediction_miss"  # AD-633d cache miss; fell to LLM
+    PREDICTION_FLUSHED = "prediction_flushed"  # AD-633b cache entry evicted (TTL or capacity)
+    PREDICTION_ERROR_RECORDED = "prediction_error_recorded"  # AD-633h prediction diverged from outcome
+
     # Billet management (AD-595a)
     BILLET_ASSIGNED = "billet_assigned"
     BILLET_VACATED = "billet_vacated"    # Reserved for AD-595b's vacate() — added now to keep enum changes atomic with BILLET_ASSIGNED

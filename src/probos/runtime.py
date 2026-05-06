@@ -548,6 +548,12 @@ class ProbOSRuntime:
 
         # --- Emergence metrics (AD-557) ---
         self._emergence_metrics_engine: Any = None
+        # AD-633: Predictive cognitive branching (set by _wire_predictive_branching)
+        self.prediction_engine: Any = None
+        self.speculation_cache: Any = None
+        self.speculation_executor: Any = None
+        self.speculation_budget: Any = None
+        self.accuracy_tracker: Any = None
         self._behavioral_metrics_engine: Any = None  # AD-569
 
         # --- Structural Integrity Field (AD-370) ---

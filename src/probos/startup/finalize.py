@@ -759,6 +759,79 @@ def _wire_consultation_dispatch(*, runtime: Any, config: "SystemConfig") -> bool
     return True
 
 
+def _wire_predictive_branching(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-633 v1: Wire PredictionEngine + SpeculationCache + SpeculationExecutor
+    + SpeculationBudget + AccuracyTracker.
+
+    Requires ``runtime.hebbian_router`` AND ``runtime.ontology``. Optional:
+    ``runtime._sub_task_executor`` (AD-632) — speculation cannot dispatch
+    chains without it but the engine + cache still operate. Tier-2
+    log-and-degrade: missing required deps -> no-op + INFO log.
+    """
+    cfg = getattr(config, "predictive_branching", None)
+    if not cfg or not cfg.enabled:
+        return False
+    hebbian = getattr(runtime, "hebbian_router", None)
+    if hebbian is None:
+        logger.info("AD-633: hebbian_router unavailable; predictive_branching skipped")
+        return False
+    ontology = getattr(runtime, "ontology", None)
+    if ontology is None:
+        logger.info("AD-633: ontology unavailable; predictive_branching skipped")
+        return False
+
+    from probos.cognitive.predictive_branching import (
+        AccuracyTracker,
+        PredictionEngine,
+        SpeculationBudget,
+        SpeculationCache,
+        SpeculationExecutor,
+    )
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    # AD-633a v1 deliberately does NOT integrate the AD-488 circuit breaker.
+    # ProactiveCognitiveLoop's `_circuit_breaker` is a private attribute;
+    # accessing it from this wirer would be a cross-module Demeter violation
+    # per `.github/copilot-instructions.md`. Forcing function: AD-633a-1 ships
+    # a public `ProactiveCognitiveLoop.circuit_breaker` property and re-wires
+    # circuit-breaker gating into PredictionEngine.
+
+    runtime.prediction_engine = PredictionEngine(
+        hebbian_router=hebbian,
+        ontology=ontology,
+        config=cfg,
+        circuit_breaker=None,
+    )
+    runtime.speculation_cache = SpeculationCache(
+        max_entries=cfg.cache_max_entries,
+        ttl_seconds=cfg.cache_ttl_seconds,
+        emit_event=emit_fn,
+    )
+    runtime.speculation_budget = SpeculationBudget(
+        tokens_per_window=cfg.speculation_tokens_per_window,
+        window_seconds=cfg.speculation_window_seconds,
+        flush_rate_threshold=cfg.flush_rate_feedback_threshold,
+        flush_rate_window_seconds=cfg.flush_rate_window_seconds,
+    )
+    runtime.accuracy_tracker = AccuracyTracker(ring_size=cfg.accuracy_ring_size)
+    runtime.speculation_executor = SpeculationExecutor(
+        sub_task_executor=getattr(runtime, "_sub_task_executor", None),
+        cache=runtime.speculation_cache,
+        budget=runtime.speculation_budget,
+        accuracy_tracker=runtime.accuracy_tracker,
+        emit_event=emit_fn,
+    )
+    logger.info(
+        "AD-633: PredictiveBranching v1 initialized "
+        "(cache_max=%d, ttl=%.0fs, tokens_per_window=%d, ring=%d)",
+        cfg.cache_max_entries,
+        cfg.cache_ttl_seconds,
+        cfg.speculation_tokens_per_window,
+        cfg.accuracy_ring_size,
+    )
+    return True
+
+
 def _wire_hybrid_dispatch(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-581 v1: Wire DepartmentDispatcher + WorkItemRouter.
 
@@ -2441,6 +2514,16 @@ async def finalize_startup(
             exc_info=True,
         )
         runtime._sub_task_executor = None
+
+    # AD-633: Wire PredictiveBranching after SubTaskExecutor so speculation
+    # can dispatch chains. Tier-2 log-and-degrade.
+    try:
+        _wire_predictive_branching(runtime=runtime, config=config)
+    except Exception:
+        logger.warning(
+            "AD-633: _wire_predictive_branching raised; predictive_branching disabled",
+            exc_info=True,
+        )
 
     # --- AD-594: Crew consultation handler wiring ---
     if consultation_protocol:
