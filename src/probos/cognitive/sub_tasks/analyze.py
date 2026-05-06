@@ -581,6 +581,22 @@ class AnalyzeHandler:
                 error=f"LLM call failed: {exc}",
             )
 
+        # Check for LLM-level errors (rate limit, provider unavailable)
+        if response.error:
+            duration = (time.monotonic() - start) * 1000
+            logger.warning("AD-632c: LLM error (not a parse failure): %s", response.error)
+            return SubTaskResult(
+                sub_task_type=SubTaskType.ANALYZE,
+                name=spec.name,
+                result={},
+                tokens_used=response.tokens_used,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                duration_ms=duration,
+                success=False,
+                error=f"LLM error: {response.error}",
+            )
+
         # Parse structured JSON from response
         try:
             analysis = extract_json(response.content)

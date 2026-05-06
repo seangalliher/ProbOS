@@ -56,10 +56,10 @@ describe('AD-574b WardRoomThreadDetail sync DM', () => {
     fireEvent.click(send);
 
     await waitFor(() => {
-      const calls = fetchMock.mock.calls.map(c => String(c[0]));
+      const calls = fetchMock.mock.calls.map((c: unknown[]) => String(c[0]));
       expect(calls).toContain('/api/agent/agent-a-001-full/chat');
       // Dual-write: at least one ward room post call after chat.
-      expect(calls.filter(u => u.includes('/api/wardroom/threads/t1/posts')).length).toBeGreaterThanOrEqual(2);
+      expect(calls.filter((u: string) => u.includes('/api/wardroom/threads/t1/posts')).length).toBeGreaterThanOrEqual(2);
     });
   });
 
