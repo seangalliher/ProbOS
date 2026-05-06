@@ -821,7 +821,7 @@ waves:
     dispatch_prompt: "prompts/WAVE-70-DISPATCH.md"
     prompts_already_drafted: false
     prompt_paths:
-      - "prompts/ad-526c-h-recreation-combo.md"
+      - "prompts/ad-526e-spectator-registry.md"
     builder_required: true
     issues_to_close: [101]
-    status: pending
+    status: done
