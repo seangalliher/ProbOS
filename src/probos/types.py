@@ -408,6 +408,34 @@ class RecallScore:
 
 
 @dataclass(frozen=True)
+class MemoryRef:
+    """AD-462f: Lightweight projection of an OracleResult — retrieval-as-pointers.
+
+    A ``MemoryRef`` is the surface representation of a memory-tier hit:
+    enough information to render a one-line preview in a prompt and to
+    resolve the full ``OracleResult`` later via
+    ``OracleService.resolve_ref(ref_id)``. Refs are token-efficient (≤200
+    char snippet vs. full content), stable within an OracleService
+    instance's LRU cache lifetime, and hashable so consumers can dedupe.
+
+    See ``decisions-era-4-evolution.md`` AD-462f for design rationale and
+    the deferral chain (462f-b/c/d).
+    """
+
+    ref_id: str               # f"{tier}:{stable_key}" — see AD-462f DLog #3
+    tier: str                 # "episodic" | "records" | "operational" | "archive" | "semantic" | "graph" | "health"
+    score: float              # 0.0–1.0 (mirrors OracleResult.score)
+    snippet: str              # ≤200 chars (truncated content preview)
+    provenance: str           # human-readable tag (e.g. "[episodic memory]")
+    timestamp: float = 0.0    # original event timestamp (0.0 if tier-irrelevant)
+    # AD-462f DLog #12: metadata is excluded from hash/eq so the dataclass
+    # remains hashable despite carrying a dict. Identity is driven by
+    # (ref_id, tier, score, snippet, provenance, timestamp) — same-ref_id
+    # refs from the same query compare equal regardless of metadata churn.
+    metadata: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
+
+
+@dataclass(frozen=True)
 class Episode:
     """A recorded episode from the cognitive pipeline."""
 

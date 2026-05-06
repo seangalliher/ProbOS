@@ -306,6 +306,78 @@ async def _query_oracle_lookup(
     return {"oracle_lookup": formatted}
 
 
+async def _query_oracle_refs(
+    runtime: Any, spec: SubTaskSpec, context: dict,
+) -> dict:
+    """AD-462f: Memory-refs retrieval — lightweight projection of Oracle results.
+
+    Reads ``oracle_query_text`` (required) and optional ``oracle_tiers`` from
+    context. Returns ``{"oracle_refs": <formatted refs str>}``. Tier-2
+    log-and-degrade: returns empty string on (1) ``runtime.oracle`` not
+    attached, (2) ``oracle_query_text`` empty, (3) ``context["_recall_tier"]``
+    below ``RecallTier.ENHANCED``, (4) Oracle raises. Emits
+    ``MEMORY_REFS_DISPATCHED`` only on a non-empty dispatch.
+
+    Tier gate is intentionally lower than ``oracle_lookup`` (AD-696, ORACLE
+    only) — refs are cheaper than full lookups, so Lieutenant+ rank can
+    query refs as an early-screen step. Per AD-462f DLog #7.
+    """
+    query_text = (context.get("oracle_query_text") or "").strip()
+    if not query_text:
+        return {"oracle_refs": ""}
+
+    from probos.earned_agency import RecallTier, _TIER_ORDER
+    tier = context.get("_recall_tier")
+    if tier is None or _TIER_ORDER.get(tier, -1) < _TIER_ORDER[RecallTier.ENHANCED]:
+        logger.debug(
+            "AD-462f: oracle_refs denied — recall_tier=%s (need ENHANCED+)", tier,
+        )
+        return {"oracle_refs": ""}
+
+    oracle = getattr(runtime, "oracle", None)
+    if oracle is None:
+        logger.debug("AD-462f: oracle_refs — runtime.oracle not attached")
+        return {"oracle_refs": ""}
+
+    tiers = context.get("oracle_tiers")
+    agent_id = context.get("_agent_id", "") or _ctx(context, "agent_id")
+
+    try:
+        refs = await oracle.query_refs(
+            query_text=query_text,
+            agent_id=agent_id,
+            k_per_tier=3,
+            tiers=tiers,
+        )
+    except Exception:
+        logger.warning(
+            "AD-462f: oracle_refs query failed for agent %s", agent_id,
+            exc_info=True,
+        )
+        return {"oracle_refs": ""}
+
+    if not refs:
+        return {"oracle_refs": ""}
+
+    formatted = oracle.format_refs(refs)
+
+    emit_fn = context.get("_emit_event_fn")
+    if emit_fn is not None:
+        try:
+            from probos.events import EventType
+            emit_fn(EventType.MEMORY_REFS_DISPATCHED, {
+                "agent_id": agent_id,
+                "agent_type": context.get("_agent_type", ""),
+                "query_text": query_text,
+                "tiers": tiers or [],
+                "ref_count": len(refs),
+            })
+        except Exception:
+            logger.warning("AD-462f: MEMORY_REFS_DISPATCHED emit failed", exc_info=True)
+
+    return {"oracle_refs": formatted}
+
+
 async def _query_introspective_telemetry(
     runtime: Any, spec: SubTaskSpec, context: dict,
 ) -> dict:
@@ -357,6 +429,7 @@ _QUERY_OPERATIONS: dict[str, QueryOperation] = {
     "self_monitoring": _query_self_monitoring,                   # AD-646b
     "introspective_telemetry": _query_introspective_telemetry,  # AD-646b
     "oracle_lookup": _query_oracle_lookup,                       # AD-696
+    "oracle_refs": _query_oracle_refs,                           # AD-462f
 }
 
 

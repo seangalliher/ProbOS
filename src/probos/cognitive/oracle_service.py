@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
+
+from probos.types import MemoryRef  # AD-462f (types.py has no reverse dep on oracle_service)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,12 @@ _GRAPH_HOP_PROXIMITY_DIRECT = 1.0
 _GRAPH_HOP_PROXIMITY_TWO_HOP = 0.6
 _GRAPH_EXPANSION_DISCOUNT = 0.7  # parent_score × this × edge.weight × edge.confidence
 _GRAPH_MIN_TOKEN_LEN = 3
+
+# AD-462f: Memory-ref projection tunables — inline caps, NOT config (AD-462f DLog #10).
+_MEMORY_REF_CACHE_SIZE = 256          # OracleService instance-scoped LRU bound
+_MEMORY_REF_SNIPPET_CHARS = 200       # MemoryRef.snippet cap
+_FORMAT_REFS_DEFAULT_LINES = 10       # default cap for format_refs() output
+_FORMAT_REFS_LINE_CHAR_CAP = 120      # per-line cap inside format_refs()
 
 # Small inline stopword set — keeps _extract_entity_tokens self-contained
 # (no nltk / no external corpus). Lowercase only.
@@ -110,6 +119,37 @@ def _format_age(timestamp: float) -> str:
     return f"{int(delta / 86400)}d ago"
 
 
+def _derive_ref_id(result: OracleResult, fallback_index: int) -> str:
+    """AD-462f: Derive a stable ``ref_id`` from a tier result's metadata.
+
+    Format: ``f"{tier}:{stable_key}"``. Per AD-462f DLog #3, each tier
+    has a designated metadata key. Empty/missing keys fall back to
+    ``f"{tier}:idx{fallback_index}"`` so collisions within a single
+    ``query_refs()`` call are avoided.
+    """
+    md = result.metadata or {}
+    tier = result.source_tier
+    if tier == "episodic":
+        key = md.get("episode_id", "")
+    elif tier in ("records", "operational"):
+        key = md.get("path", "")
+    elif tier == "archive":
+        key = md.get("archive_id") or md.get("path", "")
+    elif tier == "semantic":
+        coll = md.get("collection", "?")
+        sid = md.get("id", "")
+        key = f"{coll}:{sid}" if sid else ""
+    elif tier == "graph":
+        key = md.get("edge_id", "")
+    elif tier == "health":
+        key = md.get("snapshot_key", "")
+    else:
+        key = ""
+    if not key:
+        key = f"idx{fallback_index}"
+    return f"{tier}:{key}"
+
+
 class OracleService:
     """Cross-tier unified memory query service (AD-462e).
 
@@ -142,6 +182,9 @@ class OracleService:
         self._semantic_layer = semantic_layer  # AD-686 (Tier 5)
         self._knowledge_graph = knowledge_graph  # AD-688 (Tier 6)
         self._health_provider = health_provider  # AD-695 (Tier 7)
+        # AD-462f: Instance-scoped LRU for resolve_ref(). Bounded by
+        # _MEMORY_REF_CACHE_SIZE; OrderedDict eviction (oldest first).
+        self._ref_cache: OrderedDict[str, OracleResult] = OrderedDict()
 
     def attach_semantic_layer(self, semantic_layer: Any) -> None:
         """AD-686: Late-bind the SemanticKnowledgeLayer.
@@ -376,6 +419,101 @@ class OracleService:
 
         lines.append("=== END ORACLE RESULTS ===")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # AD-462f: Retrieval-as-pointers — lightweight projection layer.
+    # ------------------------------------------------------------------
+    async def query_refs(
+        self,
+        query_text: str,
+        *,
+        agent_id: str = "",
+        intent_type: str = "",
+        k_per_tier: int = 3,
+        tiers: list[str] | None = None,
+    ) -> list["MemoryRef"]:
+        """AD-462f: Query and return lightweight ``MemoryRef`` projections.
+
+        Calls the existing :meth:`query` pipeline and projects each
+        ``OracleResult`` to a ``MemoryRef`` (id + tier + score + snippet
+        + provenance + metadata). Populates the instance LRU so
+        :meth:`resolve_ref` can later return the full result. Empty input
+        short-circuits to ``[]``.
+        """
+        if not query_text:
+            return []
+
+        results = await self.query(
+            query_text, agent_id=agent_id, intent_type=intent_type,
+            k_per_tier=k_per_tier, tiers=tiers,
+        )
+        if not results:
+            return []
+
+        refs: list[MemoryRef] = []
+        for i, r in enumerate(results):
+            ref_id = _derive_ref_id(r, i)
+            snippet = (r.content or "")[:_MEMORY_REF_SNIPPET_CHARS]
+            timestamp = float(r.metadata.get("timestamp", 0.0) or 0.0)
+            ref_metadata = {
+                k: v for k, v in (r.metadata or {}).items()
+                if k in ("episode_id", "path", "edge_id", "collection", "id",
+                         "archive_id", "snapshot_key", "agent_scope")
+            }
+            refs.append(MemoryRef(
+                ref_id=ref_id,
+                tier=r.source_tier,
+                score=float(r.score),
+                snippet=snippet,
+                provenance=r.provenance,
+                timestamp=timestamp,
+                metadata=ref_metadata,
+            ))
+            # LRU populate (most-recent first)
+            self._ref_cache[ref_id] = r
+            self._ref_cache.move_to_end(ref_id)
+            while len(self._ref_cache) > _MEMORY_REF_CACHE_SIZE:
+                self._ref_cache.popitem(last=False)
+
+        return refs
+
+    def resolve_ref(self, ref_id: str) -> OracleResult | None:
+        """AD-462f: Re-hydrate a ``MemoryRef`` to its full ``OracleResult``.
+
+        Cache lookup over the instance-scoped LRU populated by
+        :meth:`query_refs`. Cache miss returns ``None`` (Tier-2
+        log-and-degrade per AD-462f DLog #5). LRU updates on hit so
+        repeatedly-resolved refs stay warm.
+        """
+        if not ref_id:
+            return None
+        result = self._ref_cache.get(ref_id)
+        if result is None:
+            logger.debug("AD-462f: resolve_ref miss — ref_id=%s", ref_id)
+            return None
+        self._ref_cache.move_to_end(ref_id)
+        return result
+
+    @staticmethod
+    def format_refs(
+        refs: list["MemoryRef"], *, max_lines: int = _FORMAT_REFS_DEFAULT_LINES,
+    ) -> str:
+        """AD-462f: Render ``MemoryRef`` list as a short prompt-ready block.
+
+        Each line: ``[tier] ref_id (score: 0.NN) snippet``. Hard caps per
+        AD-462f DLog #6 — ``max_lines`` lines, ``_FORMAT_REFS_LINE_CHAR_CAP``
+        chars per line. Returns empty string for empty input.
+        """
+        if not refs:
+            return ""
+        out = ["=== MEMORY REFS ==="]
+        for ref in refs[:max_lines]:
+            line = f"[{ref.tier}] {ref.ref_id} (score: {ref.score:.2f}) {ref.snippet}"
+            if len(line) > _FORMAT_REFS_LINE_CHAR_CAP:
+                line = line[: _FORMAT_REFS_LINE_CHAR_CAP - 1] + "…"
+            out.append(line)
+        out.append("=== END MEMORY REFS ===")
+        return "\n".join(out)
 
     # -- Private tier query methods --
 
