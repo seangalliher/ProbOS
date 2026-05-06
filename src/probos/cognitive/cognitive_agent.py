@@ -5106,11 +5106,16 @@ class CognitiveAgent(BaseAgent):
             # BF-263: Compute rank from live trust score, not stale self.rank
             # (self.rank is never set on agents; was always None → ENHANCED default)
             _trust_net = getattr(self._runtime, 'trust_network', None)
+            _rank = None
             if _trust_net is not None:
-                from probos.crew_profile import Rank
-                _live_trust = _trust_net.get_score(self.id)
-                _rank = Rank.from_trust(_live_trust)
-            else:
+                try:
+                    from probos.crew_profile import Rank
+                    _live_trust = _trust_net.get_score(self.id)
+                    if isinstance(_live_trust, (int, float)):
+                        _rank = Rank.from_trust(float(_live_trust))
+                except Exception:
+                    logger.debug("BF-263: rank derivation failed; falling back to self.rank", exc_info=True)
+            if _rank is None:
                 _rank = getattr(self, 'rank', None)
             _billet_clearance = resolve_billet_clearance(
                 getattr(self, 'agent_type', ''),
