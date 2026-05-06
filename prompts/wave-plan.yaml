@@ -1005,3 +1005,30 @@ waves:
       (+9 to +12 window). Baseline 11498 -> expected 11498 pytest
       (delta = 0); vitest gate covers the new panel separately.
 
+
+  - id: "79"
+    title: "AD-594d v1 Delivery Pipeline (full-scope)"
+    kind: single
+    depends_on: ["78"]
+    dispatch_prompt: "prompts/WAVE-79-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-594d-delivery-pipeline-v1.md"
+    builder_required: true
+    issues_to_close: [163]
+    status: pending
+    notes: |
+      Closes GH #163 (AD-594d Delivery Pipeline). Full v1 scope in one wave
+      per Captain rule (don't defer unless no choice). Module shape:
+      FormatTransformer Protocol + 3 concrete transformers (Passthrough,
+      MarkdownToHTML stdlib-only, JSONToMarkdown), DeliveryAdapter Protocol
+      + LocalFileAdapter (allowed_roots-gated + rollback) + GitHubAdapter
+      (httpx + env token + injectable http_post for tests), DeliveryPipeline
+      orchestrator with approval gate (requires_approval=True ->
+      pipeline.approve/reject), atomic vs partial, revision cycle via
+      pipeline.revise -> workspace.transition_to. State-machine extension:
+      COMPLETED -> CONSULTING and COMPLETED -> EXECUTING added (ARCHIVED
+      still allowed). Pydantic ConsultationDeliveryConfig + finalize wirer.
+      PDF rendering deferred behind FormatTransformer Protocol seam (mirrors
+      AD-594a InputProcessor precedent). Baseline 11498 -> target 11523-11528
+      (+25 floor). No HXI surface. No new EventType. No new Intent. OSS only.
