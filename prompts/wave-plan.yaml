@@ -1416,3 +1416,86 @@ waves:
       umbrella is fully OSS — zero *(Commercial)* tags on roadmap.md
       line 4207; pre-commit hook banned phrases confirmed 0 hits across
       dispatch, prompt, and this notes block).
+
+  - id: "87"
+    title: "AD-443 v1 Agent Mobility — Transfer Certificates + Memory Portability + chain portability + slot reassignment"
+    kind: single
+    depends_on: ["86"]
+    dispatch_prompt: "prompts/WAVE-87-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-443-mobility-v1.md"
+    builder_required: true
+    issues_to_close: [42]
+    status: pending
+    notes: |
+      Closes GH #42 (AD-443 Agent Mobility Protocol umbrella). The identity
+      substrate AD-443 extends is fully shipped at HEAD 8252468
+      (src/probos/identity.py 913 LOC: AgentBirthCertificate VC,
+      ShipBirthCertificate VC, LedgerBlock, AgentIdentityRegistry with
+      ConnectionFactory-backed storage, _IDENTITY_SCHEMA tables, verify_chain
+      local-validation pattern at line 829, export_chain at line 872 produces
+      the JSON shape import_chain will consume), and the federation substrate
+      is fully shipped (src/probos/federation/bridge.py FederationBridge with
+      handle_inbound dispatching on message.type string at line 137,
+      transport.py send_to_peer + send_to_all_peers + deliver_response
+      message_id correlation, mock_transport.py in-process round-trip,
+      FederationMessage type:str at types.py:664 accepts new wire types
+      non-breakingly). Five OSS sub-AD letters ship concretely: 443a
+      TransferCertificate W3C VC dataclass + issue_transfer_certificate
+      (new module src/probos/mobility.py ~250 LOC, identity.py
+      transfer_certificates table, ~10 tests), 443b import_chain +
+      verify_remote_chain + foreign_chains table (identity.py +~80 LOC, ~12
+      tests), 443c MemoryPolicy StrEnum (CLEAN_ROOM default / SELECTIVE /
+      FULL) + apply_memory_policy filter + FederationConfig.memory_policy
+      Pydantic field with field_validator + config/standing_orders/federation
+      .md "Mobility & Memory Portability (AD-443)" addendum after the AD-541
+      Memory Reliability Hierarchy section, ~10 tests), 443d reassign_slot +
+      foreign_birth_certificates table + transparent get_by_slot foreign
+      fallback + birth-provenance preservation per AD-499 (~10 tests), 443e
+      FederationBridge transfer_request/transfer_response/chain_request/
+      chain_response wire types added to handle_inbound dispatch + new
+      handlers _handle_chain_request and _handle_transfer_request + outbound
+      helpers request_chain and request_transfer + identity_registry handle
+      injected via optional bridge constructor parameter (existing call
+      sites unaffected) + MockFederationTransport 2-ship round-trip end-to-
+      end test (~10 tests). Six classes total ~57 tests floor. Three future-
+      AD letters parked with explicit forcing functions (NOT v1 deferrals):
+      443f live cross-process ZMQ multi-instance demo (needs ops-tooling for
+      second-instance launch + observability — in-process MockFederation
+      Transport round-trip in v1 already proves protocol correctness end-to-
+      end), 443g trust-weighted automatic acceptance (depends on AD-479
+      federated capability map — not yet shipped), 443h A2A Agent Card
+      export of Transfer Certificates (depends on AD-480 — not yet shipped).
+      Three commercial-repo carve-outs (NOT deferrals — out-of-repo by
+      design at roadmap.md:4095 neutral language "Commercial features
+      (Global Instance Registry, fleet dashboard, compliance) tracked in
+      the commercial repository"): Global Instance Registry, fleet
+      dashboard, fleet-wide compliance auditing. Reframe rationale: the
+      original PROGRESS.md line-100 deferral (verify_remote_chain +
+      slot-reassignment paths require AD-479) is rejected on verify-first
+      against HEAD because (1) verify_remote_chain is pure local hash-chain
+      validation given a JSON snapshot, (2) slot reassignment is a local
+      SQL update against slot_mappings, (3) AD-479 capability map is for
+      "which peer can do X?" intent forwarding, not point-to-point peer-
+      addressed mobility messages, (4) MockFederationTransport is the same
+      harness already validating intent_request/response correctness today.
+      No UI surface touched — vitest unchanged at 306 (305 passing + 1
+      pre-existing WardRoomDmSync failure carried since pre-Wave-85). No
+      runtime.py boot-ordering changes — AgentIdentityRegistry and
+      FederationBridge already wire via infrastructure.py/organization.py.
+      No edits to BaseAgent, IntentMessage, IntentResult, TaskDAG, acm.py,
+      episodic.py, consensus, trust, attention, dreaming, decomposer,
+      prompt builder, shell, panels, HXI. No new EventType, no new pool, no
+      new agent, no new Intent, no router edit, no Hebbian touch. No new AD
+      numbers minted (sub-AD letters a-h organizational only — AD-474 a-h
+      Wave 86, AD-473 a-g Wave 85, AD-512 a-f Wave 84 precedents). No
+      commercial language — pre-commit hook 11 banned patterns confirmed 0
+      literal hits across dispatch + prompt + this notes block (placeholder
+      forms used: "the e-word + tier", "the private commercial-repo path
+      token", etc.; the audit text itself does NOT contain literal forms).
+      Baseline pytest 11705 -> target >= 11760 (+55 floor; ~57 tests
+      planned across six classes TestTransferCertificate ~10,
+      TestChainImportVerify ~12, TestSlotReassignment ~10, TestMemoryPolicy
+      ~10, TestFederationTransferMessages ~10, TestStandingOrdersFederation
+      Tier ~5).

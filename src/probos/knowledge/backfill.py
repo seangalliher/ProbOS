@@ -190,11 +190,30 @@ class EdgeBackfillService:
             posts = list(self._ontology.get_posts())
         except Exception:
             posts = []
+        # BF-264: Build post lookup for chain traversal
+        post_by_id: dict[str, Any] = {}
+        for p in posts:
+            post_by_id[p.id] = p
         for post in posts:
             if not getattr(post, "reports_to", None):
                 continue
             sub_agents = agent_by_post.get(post.id, [])
-            sup_agents = agent_by_post.get(post.reports_to, [])
+            # BF-264: If the reports_to target post has no agent assigned,
+            # traverse up the chain until we find one. This handles dual-hat
+            # gaps (e.g., chief_science has no assignment but reports_to
+            # first_officer which does).
+            sup_agents: list[str] = []
+            target_post_id = post.reports_to
+            seen_posts: set[str] = set()
+            while target_post_id and target_post_id not in seen_posts:
+                sup_agents = agent_by_post.get(target_post_id, [])
+                if sup_agents:
+                    break
+                seen_posts.add(target_post_id)
+                target_post = post_by_id.get(target_post_id)
+                if target_post is None:
+                    break
+                target_post_id = getattr(target_post, "reports_to", None)
             for sub in sub_agents:
                 for sup in sup_agents:
                     if sub == sup:
