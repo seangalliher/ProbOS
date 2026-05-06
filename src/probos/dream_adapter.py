@@ -36,6 +36,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# AD-573d: Dream report fields surfaced into WorkingMemory scratchpad.
+# Empty/zero reports are suppressed (caller checks for None return).
+_DREAM_SUMMARY_FIELDS: tuple[tuple[str, str], ...] = (
+    ("clusters_found", "clusters"),
+    ("procedures_extracted", "procedures"),
+    ("contradictions_found", "contradictions"),
+    ("convergence_reports_generated", "convergences"),
+    ("notebook_consolidations", "notebooks"),
+)
+
+
+def _summarize_dream_report(report: Any) -> str | None:
+    """Build a one-line summary string from a DreamReport.
+
+    Returns ``None`` when ``report`` is falsy or every tracked field is zero.
+    Pure function — no I/O, no logging, no exceptions raised on missing
+    attributes (uses ``getattr(..., 0)``).
+    """
+    if not report:
+        return None
+    parts: list[str] = []
+    for attr, label in _DREAM_SUMMARY_FIELDS:
+        value = getattr(report, attr, 0) or 0
+        if value:
+            parts.append(f"{value} {label}")
+    if not parts:
+        return None
+    return f"Dream consolidation: {', '.join(parts)}"
+
+
 class DreamAdapter:
     """Bridges dream scheduler callbacks to runtime services."""
 
@@ -60,6 +90,7 @@ class DreamAdapter:
         deliver_bridge_alert_fn: Callable | None = None,
         llm_client: Any = None,  # BF-069: LLM client for health monitoring
         identity_registry: Any = None,  # BF-103: for sovereign ID resolution
+        working_memory: Any = None,  # AD-573d: dream-to-WM pipeline
     ) -> None:
         self._dream_scheduler = dream_scheduler
         self._emergent_detector = emergent_detector
@@ -79,6 +110,7 @@ class DreamAdapter:
         self._deliver_bridge_alert_fn = deliver_bridge_alert_fn
         self._llm_client = llm_client
         self._identity_registry = identity_registry
+        self._working_memory = working_memory  # AD-573d
 
         # Runtime state references (set by runtime after creation)
         self._cold_start: bool = False
@@ -133,6 +165,18 @@ class DreamAdapter:
                     "synergy_ratio": getattr(dream_report, "synergy_ratio", 0.0),
                     "pairs_analyzed": getattr(dream_report, "pairs_analyzed", 0),
                 })
+
+        # AD-573d: surface dream summary into WorkingMemory scratchpad ring.
+        if self._working_memory is not None:
+            try:
+                summary = _summarize_dream_report(dream_report)
+                if summary:
+                    self._working_memory.add_scratchpad(summary)
+            except Exception:
+                logger.warning(
+                    "AD-573d: dream summary scratchpad write failed",
+                    exc_info=True,
+                )
 
         if not self._emergent_detector:
             return
