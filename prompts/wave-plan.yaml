@@ -1353,3 +1353,66 @@ waves:
       (AD-473 umbrella is fully OSS — zero *(Commercial)* tags on
       roadmap.md line 4205; pre-commit hook banned phrases confirmed 0
       hits across dispatch, prompt, and this notes block).
+
+  - id: "86"
+    title: "AD-474 v1 Voice (STT/TTS) — harden + hands-free (test backfill + continuous-listen + onSpeechEnd VAD)"
+    kind: single
+    depends_on: ["85"]
+    dispatch_prompt: "prompts/WAVE-86-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-474-voice-stt-tts-v1.md"
+    builder_required: true
+    issues_to_close: [68]
+    status: pending
+    notes: |
+      Closes GH #68 (AD-474 Voice Interaction umbrella). The browser-native
+      TTS + STT substrate is already shipping live in HXI at HEAD 6e46444
+      (ui/src/audio/voice.ts 90 LOC, ui/src/audio/speechInput.ts 78 LOC,
+      voice picker in DecisionSurface.tsx, mic button in IntentSurface.tsx,
+      voiceEnabled flag in store) but has zero vitest coverage. Three OSS
+      sub-AD letters ship concretely: 474a vitest backfill (new files
+      ui/src/__tests__/voice.test.ts ~11 tests, ui/src/__tests__/speechInput
+      .test.ts ~9 tests in the first describe block — locks
+      speakResponse/stopSpeaking/findPreferredVoice cascade/getAvailable
+      Voices/setPreferredVoiceName/getCurrentVoiceName for voice.ts;
+      isSpeechRecognitionSupported vendor-prefix paths, 3-arg
+      startListening defaults, abort-before-restart, onresult/onerror/
+      onend lifecycle, stopListening/isListening for speechInput.ts), 474b
+      continuous-listen mode (extend startListening to 4-arg with optional
+      ListenOptions: {continuous, interimResults, onSpeechEnd} — strictly
+      back-compatible with the 3-arg call at IntentSurface.tsx:1467; new
+      module-private _spawnRecognition + stopRequested guard + auto-restart
+      on onend until stopListening; ~6 tests in second describe block),
+      474c onSpeechEnd VAD callback (forwards opts.onSpeechEnd to
+      recognition.onspeechend; fires before onend; per-utterance in
+      continuous mode; ~4 tests in third describe block). Five future-AD
+      letters parked with explicit forcing functions (NOT v1 deferrals):
+      474d wake-word detection (needs Porcupine .ppn or OpenWakeWord ONNX
+      model file 1-3 MB + audio capture loop — AD-474b continuous mode is
+      its hook point; module-private activeOpts/activeOnResult/activeOnEnd/
+      activeOnError fields are intentional groundwork marked "AD-474d hook
+      point"), 474e SpeechRecognizer ABC + Whisper/Deepgram backends
+      (needs Python openai-whisper >100 MB local model OR deepgram-sdk +
+      API key + new /api/voice/transcribe endpoint — UI-only wave cannot
+      ship), 474f Ship's Computer custom voice (needs Python
+      VoiceProvider ABC + Piper/FishAudio/ElevenLabs dep + voice-clone
+      artifacts — UI-only wave cannot ship), 474g macOS menubar PTT (needs
+      Tauri/Electron desktop wrapper, its own AD class), 474h PWA mobile
+      mic UX (cascades from AD-473e responsive HXI mobile layout, parked
+      from Wave 85). No Python source touched — pytest delta = 0 (gate
+      must remain 11705). No new dependencies — pyproject.toml and
+      ui/package.json untouched. Baseline vitest 306 (305 passing + 1
+      pre-existing WardRoomDmSync failure NOT introduced by Wave 85 or
+      86) -> target >= 334 (+28 floor; 30 tests planned across three
+      describe groups). No HXI canvas surface touched (CognitiveCanvas,
+      animations, GlassLayer, App.tsx untouched). No edits to consumers
+      (IntentSurface.tsx, DecisionSurface.tsx, useStore.ts) — the new
+      ListenOptions parameter is optional and call-site-compatible. No
+      new EventType, agent, pool, Intent, router edit, consensus change,
+      trust scorer touch, episodic store touch. No new AD numbers minted
+      (sub-AD letters a-h organizational only — AD-473 a-g (Wave 85) and
+      AD-512 a-f (Wave 84) precedents). No commercial language (AD-474
+      umbrella is fully OSS — zero *(Commercial)* tags on roadmap.md
+      line 4207; pre-commit hook banned phrases confirmed 0 hits across
+      dispatch, prompt, and this notes block).
