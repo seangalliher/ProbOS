@@ -888,3 +888,28 @@ waves:
       AD-462f-b ANALYZE intent signal + chain dispatch seam, AD-462f-c
       cross-conversation ref persistence, AD-462f-d per-tier metadata
       contracts. Baseline 11447 → +14 target (window [+11, +15]).
+  - id: "74"
+    title: "AD-571b + AD-571c v1 Agent Tier Trust Separation (Operational Status + Hebbian Scope Reduction)"
+    kind: single
+    depends_on: ["73"]
+    dispatch_prompt: "prompts/WAVE-74-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-571b-c-tier-trust-v1.md"
+    builder_required: true
+    issues_to_close: [21]
+    status: pending
+    notes: |
+      Closes GH #21 (umbrella AD-571a-c). AD-571a already shipped at HEAD
+      4d0242a (AgentTier enum + AgentTierRegistry + crew_only filter on
+      TrustNetwork + finalize wiring + 15 tests). Wave 74 ships AD-571b v1
+      (OperationalStatus enum + ReliabilityMetrics + OperationalStatusTracker
+      in substrate/operational_status.py, in-memory ring buffer, no SQLite,
+      single v1 call site at HttpFetchAgent.handle_intent) and AD-571c v1
+      (MeshConfig.hebbian_social_decay_rate + per-rel_type decay in
+      decay_all() + utility-utility intent prune in record_interaction()).
+      Deferred: AD-571b-i (20+ Rank.from_trust call-site sweep, Wave-10 6+
+      rule), AD-571b-ii (HXI surfacing, HXI fragility per copilot-instructions),
+      AD-571c-i (default flip of social_decay_rate to 0.999, forcing function
+      AD-557 benchmark), AD-571c-ii (per-rel_type prune semantic review).
+      Baseline 11463 → +16 target (window [+14, +20]).
