@@ -754,16 +754,28 @@ waves:
     status: done
 
   - id: "67"
-    title: "AD-573b-f Combo Working Memory Extensions"
-    kind: combo
+    title: "AD-573d v1 Dream-to-Working-Memory Pipeline (combo reframe → single AD)"
+    kind: single
     depends_on: ["66"]
     dispatch_prompt: "prompts/WAVE-67-DISPATCH.md"
-    prompts_already_drafted: false
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-573b-f-working-memory-combo.md"
+      - "prompts/ad-573d-dream-to-working-memory.md"
     builder_required: true
     issues_to_close: [8]
-    status: pending
+    status: drafted
+    notes: |
+      Wave-10 reframe applied at AD scoping. Of the original 5-AD combo
+      (AD-573b/c/d/e/f), four are NOT outstanding work at HEAD fa6d83d:
+        - AD-573b shipped Wave 8 (Combo A)
+        - AD-573c shipped Wave 13 (Combo C, commit ffda515)
+        - AD-573e wholesale-deferred to AD-573e-i (forcing function:
+          cognitive/journal.py needs recency-ordered per-agent recall API)
+        - AD-573f shipped Wave 13 (Combo C, commit ffda515)
+      AD-573d alone is buildable; its forcing function (runtime.dream_scheduler
+      exposing summaries) is satisfied by DreamScheduler.last_dream_report
+      property at dreaming.py:2807. Issue #8 closes via partial-completion
+      summary table in the close comment.
 
   - id: "68"
     title: "AD-572b-e Combo Captain Engagement Extensions"
