@@ -1499,3 +1499,105 @@ waves:
       TestChainImportVerify ~12, TestSlotReassignment ~10, TestMemoryPolicy
       ~10, TestFederationTransferMessages ~10, TestStandingOrdersFederation
       Tier ~5).
+
+  - id: "88"
+    title: "AD-481 v1 Extension-First Architecture — Sealed Core + 8 extension types + skill manifest + toggle + profiles + /extensions slash"
+    kind: single
+    depends_on: ["87"]
+    dispatch_prompt: "prompts/WAVE-88-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-481-extension-first-v1.md"
+    builder_required: true
+    issues_to_close: [75]
+    status: pending
+    notes: |
+      Closes GH #75 (AD-481 Extension-First Architecture umbrella). All eight
+      extension points roadmap.md:3604-3611 enumerates already live at HEAD
+      e39e262: AgentRegistry at src/probos/substrate/registry.py:17,
+      ToolRegistry at src/probos/tools/registry.py:49 (AD-423a/b),
+      SkillRegistry at src/probos/skill_framework.py:427 (AD-428),
+      ChannelAdapter ABC at src/probos/channels/base.py:34 (Phase 24),
+      IntentBus at src/probos/mesh/intent.py:72, ModelProvider analogue via
+      LLMTier config.py:230 (AD-463), EventHook via runtime _emit_event +
+      add_event_listener (AD-637d), PerceptionPipeline registry not yet
+      shipped (manifest-only declaration in v1). What's missing: the meta-
+      layer above the eight points + the on-disk skill.yaml manifest format +
+      sealed-core boundary list + extension toggle/profile/persistence
+      surface + /extensions slash command. Eight OSS sub-AD letters ship
+      concretely: 481a Extension protocol substrate (Extension ABC +
+      ExtensionType / ExtensionRiskLevel / ExtensionState StrEnums +
+      ExtensionManifest Pydantic + EXTENSION_API_VERSION 1.0.0 semver
+      constant + ExtensionsConfig Pydantic, master extensions.enabled flag
+      default-False per AD-695 precedent), 481b ExtensionRegistry
+      (register/get/list/enable/disable/remove + lifecycle dispatch + LOW
+      auto-approve / MEDIUM staged PENDING_APPROVAL / HIGH refused with
+      forcing function to AD-482 BuildSpec gate), 481c ExtensionDiscovery
+      (filesystem scan over src/probos/extensions/{agents,channels,hooks,
+      skills,tools}/ + ExtensionManifest validation + semver major-version
+      compatibility check), 481d ExtensionStateStore (extension_states
+      SQLite table via ConnectionFactory + load-on-startup state restoration),
+      481e Skill manifest format (skill.yaml SkillManifest Pydantic +
+      load_skill_from_manifest pure adapter to existing SkillDefinition,
+      no breaking change to SkillRegistry, register_from_manifest helper
+      added above existing register_skill at line 505), 481f Sealed Core
+      boundary (config/sealed_modules.yaml path globs + is_sealed_path
+      helper in src/probos/extensions/sealed_core.py + warn-only Builder
+      pre-write check at four sites cognitive/builder.py:2585/2604/
+      2724/2729, default-False enforce_sealed_core flag per AD-695, hard-
+      block deferred to AD-481l), 481g Extension Profiles (three preset
+      YAMLs config/extension_profiles/{minimal,developer,full}.yaml +
+      ExtensionProfile Pydantic + apply_profile returning enable-list),
+      481h /extensions slash command (list/enable/disable/remove/profile/
+      info subcommands in commands_extensions.py + two-line shell.py
+      wiring at lines 104+290 mirroring AD-596d /skill precedent). 5 future-
+      AD letters parked w/ explicit forcing functions: 481i HXI extension
+      toggle panel UI (control surface lands at 481h slash command - UI
+      follow-up own vitest-budget wave), 481j probos init --profile wizard
+      prompt (depends on AD-484c onboarding wizard partial at HEAD per
+      roadmap.md:7042), 481k auto-installation of declared skill
+      dependencies (touches pip subprocess + needs sandboxing under AD-456
+      security_infra - manifest schema declares dependencies field so
+      producers record contract, 481k consumer resolves), 481l Builder
+      hard-block on sealed paths (default-False flag flip - AD-695
+      grandchild precedent - depends on AD-482 v1 RedTeam baseline before
+      flipping enforcement), 481m Marketplace publishing/discovery wire
+      protocol (depends on AD-480 A2A + AD-479 federation hardening,
+      neither shipped - manifest is on-disk substrate that 481m publishes).
+      4 commercial-repo carve-outs out-of-repo per roadmap.md:3478 +
+      :3595: commercial Agent Marketplace, centralized extension
+      distribution / CDN, hosted/managed extension trust scoring +
+      revocation registry, paid extension catalog + billing surface.
+      Reframe rationale: roadmap line-7033 framing implicitly framed
+      AD-482 as a precondition consumer; verify-first against HEAD shows
+      the eight extension points already exist - AD-481 is "build the
+      meta-layer above the registries", not "build the registries" -
+      meta-layer is purely additive substrate landing non-breakingly with
+      default-False enforcement flags. Builder pre-write check is pure
+      observation hook in v1 (logger.warning only, gated by default-False
+      config flag and default-False BuildSpec flag). skill.yaml ships on-
+      disk format only, not auto-installation. /extensions slash command
+      is same pattern as /skill (AD-596d) - new commands_extensions.py
+      module + two-line shell.py wiring. Profiles are three YAML files +
+      one Pydantic + one helper function. extension_states SQLite table
+      follows established ConnectionFactory pattern (cloud-ready storage
+      convention preserved). No UI surface touched - vitest unchanged at
+      306 (305 passing + 1 pre-existing WardRoomDmSync failure carried
+      since pre-Wave-85). No runtime.py boot-ordering changes - registry
+      wires via existing finalize phase. No edits to BaseAgent,
+      IntentMessage, IntentResult, TaskDAG, acm.py, episodic.py,
+      consensus, trust, attention, dreaming, decomposer, prompt builder.
+      No new EventType, no new pool, no new agent, no new Intent, no
+      router edit, no Hebbian touch. No new AD numbers minted (sub-AD
+      letters a-m organizational only - AD-443 a-h Wave 87, AD-474 a-h
+      Wave 86, AD-473 a-g Wave 85, AD-512 a-f Wave 84 precedents). No
+      banned-pattern language - pre-commit hook 11 banned patterns
+      confirmed 0 literal hits across dispatch + prompt + this notes block
+      (placeholder forms used: "the e-word + tier", "the private
+      commercial-repo path token", etc.; the audit text itself does NOT
+      contain literal forms). Baseline pytest 11762 -> target >= 11842
+      (+80 floor; ~80 tests planned across eight classes
+      TestExtensionProtocol ~10, TestExtensionRegistry ~12,
+      TestExtensionDiscovery ~10, TestExtensionStateStore ~10,
+      TestSkillManifest ~8, TestSealedCore ~10, TestExtensionProfiles ~8,
+      TestSlashExtensionsCommand ~12).
