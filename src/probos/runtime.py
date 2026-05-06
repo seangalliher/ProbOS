@@ -221,6 +221,13 @@ class ProbOSRuntime:
     pool_scaler: PoolScaler | None
     federation_bridge: FederationBridge | None
     self_mod_pipeline: SelfModificationPipeline | None
+    proposal_store: Any | None  # AD-482b ProposalStore
+    approval_gate: Any | None  # AD-482c ApprovalGate
+    evolution_store: Any | None  # AD-482d EvolutionStore
+    qa_agent_pool: Any | None  # AD-482f QAAgentPool
+    agent_version_store: Any | None  # AD-482g AgentVersionStore
+    agent_persistence: Any | None  # AD-482h LocalDiskPersistence
+    shadow_deployment_policy: Any | None  # AD-482i NoOpShadowDeploymentPolicy
     behavioral_monitor: BehavioralMonitor | None
     onboarding: AgentOnboardingService | None
     warm_boot: WarmBootService | None
@@ -501,6 +508,13 @@ class ProbOSRuntime:
 
         # --- Self-modification ---
         self.self_mod_pipeline: SelfModificationPipeline | None = None
+        self.proposal_store: Any | None = None  # AD-482b
+        self.approval_gate: Any | None = None  # AD-482c
+        self.evolution_store: Any | None = None  # AD-482d
+        self.qa_agent_pool: Any | None = None  # AD-482f
+        self.agent_version_store: Any | None = None  # AD-482g
+        self.agent_persistence: Any | None = None  # AD-482h
+        self.shadow_deployment_policy: Any | None = None  # AD-482i
         self.behavioral_monitor: BehavioralMonitor | None = None
 
         # AD-515: Extracted service instances (created in start())

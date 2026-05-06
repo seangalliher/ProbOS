@@ -1079,6 +1079,22 @@ class PredictiveBranchingConfig(BaseModel):
     anticipatory_tier_min_confidence: float = Field(default=0.85, ge=0.0, le=1.0)
 
 
+class SelfImprovementConfig(BaseModel):
+    """AD-482 v1: Self-improvement pipeline (proposal -> approval -> QA -> evolution -> versioning).
+
+    Default-False -- operator opt-in. The pipeline spawns real QA agents, opens a
+    new ChromaDB collection, and writes promoted agents to
+    ``src/probos/agents/designed/``. AD-633 / AD-695 default-False precedent.
+    """
+
+    enabled: bool = False
+    qa_pool_size: int = Field(default=3, ge=1, le=8)
+    iteration_cap: int = Field(default=5, ge=1, le=20)
+    evolution_half_life_seconds: float = Field(default=2592000.0, ge=1.0)  # 30 days
+    evolution_collection_name: str = "self_improvement_lessons"
+    persistence_root_dir: str = "src/probos/agents/designed"
+
+
 class WorkingMemoryConfig(BaseModel):
     """AD-573: Unified agent working memory configuration."""
 
@@ -2528,6 +2544,7 @@ class SystemConfig(BaseModel):
     anomaly_window: AnomalyWindowConfig = AnomalyWindowConfig()  # AD-673
     working_memory: WorkingMemoryConfig = WorkingMemoryConfig()
     predictive_branching: PredictiveBranchingConfig = PredictiveBranchingConfig()  # AD-633
+    self_improvement: SelfImprovementConfig = SelfImprovementConfig()  # AD-482
     memory_budget: MemoryBudgetConfig = MemoryBudgetConfig()  # AD-573
     metabolism: MetabolismConfig = MetabolismConfig()  # AD-670
     pinned_knowledge: PinnedKnowledgeConfig = PinnedKnowledgeConfig()  # AD-579a

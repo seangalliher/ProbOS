@@ -759,6 +759,133 @@ def _wire_consultation_dispatch(*, runtime: Any, config: "SystemConfig") -> bool
     return True
 
 
+def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-482 v1: wire the self-improvement pipeline.
+
+    Constructs and attaches:
+    * ``runtime.proposal_store`` -- ProposalStore with evolution-store callback.
+    * ``runtime.approval_gate`` -- ApprovalGate over ProposalStore.
+    * ``runtime.evolution_store`` -- EvolutionStore (chroma if available).
+    * ``runtime.qa_agent_pool`` -- QAAgentPool over up to N SystemQAAgent
+      instances pulled from the spawner.
+    * ``runtime.agent_version_store`` -- AgentVersionStore.
+    * ``runtime.agent_persistence`` -- LocalDiskPersistence default impl.
+    * ``runtime.shadow_deployment_policy`` -- NoOpShadowDeploymentPolicy default.
+
+    Tier-2 log-and-degrade: missing chroma_client downgrades EvolutionStore to
+    in-memory fallback; missing spawner downgrades QAAgentPool to a single
+    in-process SystemQAAgent (Shapley still produces equal contributions).
+    """
+    cfg = config.self_improvement
+    if not cfg.enabled:
+        logger.info("AD-482: self_improvement disabled -- skipping wiring")
+        return False
+
+    try:
+        from probos.cognitive.self_improvement import (
+            ApprovalGate,
+            EvolutionStore,
+            LocalDiskPersistence,
+            NoOpShadowDeploymentPolicy,
+            ProposalStore,
+            QAAgentPool,
+            AgentVersionStore,
+        )
+    except Exception:
+        logger.warning(
+            "AD-482: self_improvement package import failed -- skipping wiring",
+            exc_info=True,
+        )
+        return False
+
+    emit = getattr(runtime, "emit_event", None)
+    chroma_client = getattr(runtime, "_chroma_client", None)
+
+    evolution_store = EvolutionStore(
+        chroma_client=chroma_client,
+        collection_name=cfg.evolution_collection_name,
+        half_life_seconds=cfg.evolution_half_life_seconds,
+        event_emit_fn=emit,
+    )
+    try:
+        evolution_store.start()
+    except Exception:
+        logger.warning(
+            "AD-482d: EvolutionStore.start raised; continuing in fallback mode",
+            exc_info=True,
+        )
+
+    proposal_store = ProposalStore(
+        evolution_store_callback=evolution_store.record_lesson,
+        event_emit_fn=emit,
+        iteration_cap=cfg.iteration_cap,
+    )
+
+    approval_gate = ApprovalGate(
+        proposal_store=proposal_store,
+        event_emit_fn=emit,
+    )
+
+    # Pull QA agents from the spawner. Degrade to single in-process agent on absence.
+    qa_agents: list[Any] = []
+    spawner = getattr(runtime, "spawner", None)
+    if spawner is not None:
+        for _ in range(cfg.qa_pool_size):
+            try:
+                agent = spawner.spawn("system_qa")
+                qa_agents.append(agent)
+            except Exception:
+                logger.warning(
+                    "AD-482f: spawner.spawn('system_qa') failed; pool size %d short",
+                    cfg.qa_pool_size,
+                    exc_info=True,
+                )
+                break
+    if not qa_agents:
+        try:
+            from probos.agents.system_qa import SystemQAAgent
+
+            qa_agents = [SystemQAAgent(agent_id="qa_default_0")]
+        except Exception:
+            logger.warning(
+                "AD-482f: fallback SystemQAAgent construction failed; QAAgentPool disabled",
+                exc_info=True,
+            )
+            qa_agents = []
+
+    qa_agent_pool: Any = None
+    if qa_agents:
+        try:
+            qa_agent_pool = QAAgentPool(qa_agents=qa_agents)
+        except Exception:
+            logger.warning(
+                "AD-482f: QAAgentPool construction failed",
+                exc_info=True,
+            )
+            qa_agent_pool = None
+
+    agent_version_store = AgentVersionStore(event_emit_fn=emit)
+    agent_persistence = LocalDiskPersistence(root_dir=cfg.persistence_root_dir)
+    shadow_deployment_policy = NoOpShadowDeploymentPolicy()
+
+    runtime.proposal_store = proposal_store
+    runtime.approval_gate = approval_gate
+    runtime.evolution_store = evolution_store
+    runtime.qa_agent_pool = qa_agent_pool
+    runtime.agent_version_store = agent_version_store
+    runtime.agent_persistence = agent_persistence
+    runtime.shadow_deployment_policy = shadow_deployment_policy
+
+    logger.info(
+        "AD-482: self_improvement wired -- qa_pool_size=%d, iteration_cap=%d, "
+        "evolution_collection=%r",
+        len(qa_agents) if qa_agents else 0,
+        cfg.iteration_cap,
+        cfg.evolution_collection_name,
+    )
+    return True
+
+
 def _wire_predictive_branching(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-633 v1: Wire PredictionEngine + SpeculationCache + SpeculationExecutor
     + SpeculationBudget + AccuracyTracker.
@@ -2522,6 +2649,16 @@ async def finalize_startup(
     except Exception:
         logger.warning(
             "AD-633: _wire_predictive_branching raised; predictive_branching disabled",
+            exc_info=True,
+        )
+
+    # AD-482: Wire SelfImprovementPipeline after PredictiveBranching. Default-False;
+    # operator opt-in. Tier-2 log-and-degrade.
+    try:
+        _wire_self_improvement(runtime=runtime, config=config)
+    except Exception:
+        logger.warning(
+            "AD-482: _wire_self_improvement raised; self_improvement disabled",
             exc_info=True,
         )
 

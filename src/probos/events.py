@@ -321,6 +321,14 @@ class EventType(str, Enum):
     PREDICTION_FLUSHED = "prediction_flushed"  # AD-633b cache entry evicted (TTL or capacity)
     PREDICTION_ERROR_RECORDED = "prediction_error_recorded"  # AD-633h prediction diverged from outcome
 
+    # Self-improvement pipeline (AD-482)
+    CAPABILITY_PROPOSAL_CREATED = "capability_proposal_created"  # AD-482b ProposalStore.submit
+    CAPABILITY_PROPOSAL_APPROVED = "capability_proposal_approved"  # AD-482c ApprovalGate.approve
+    CAPABILITY_PROPOSAL_REJECTED = "capability_proposal_rejected"  # AD-482c ApprovalGate.reject
+    PIVOT_REFINE_DECIDED = "pivot_refine_decided"  # AD-482e ProposalStore.transition
+    EVOLUTION_LESSON_RECORDED = "evolution_lesson_recorded"  # AD-482d EvolutionStore.record_lesson
+    AGENT_VERSION_PROMOTED = "agent_version_promoted"  # AD-482g AgentVersionStore.register_version + 482h promote
+
     # Billet management (AD-595a)
     BILLET_ASSIGNED = "billet_assigned"
     BILLET_VACATED = "billet_vacated"    # Reserved for AD-595b's vacate() — added now to keep enum changes atomic with BILLET_ASSIGNED
