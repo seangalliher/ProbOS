@@ -1222,3 +1222,82 @@ waves:
       router. No LLM call inside any v1 module. No commercial language
       (AD-482 umbrella is fully OSS — zero *(Commercial)* tags on any
       sub-AD letter in roadmap.md:3665-3732; pre-commit hook banned phrases (the e-word + tier and the private repo path token) confirmed 0 hits across dispatch, prompt, and this notes block).
+
+  - id: "84"
+    title: "AD-512 v1 Discovery-Based Capability Building (6 OSS sub-AD letters concrete)"
+    kind: single
+    depends_on: ["83"]
+    dispatch_prompt: "prompts/WAVE-84-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-512-discovery-learning-v1.md"
+    builder_required: true
+    issues_to_close: [94]
+    status: pending
+    notes: |
+      Closes GH #94 (AD-512 Discovery-Based Capability Building umbrella).
+      Six OSS sub-AD letters ship as observational substrate following the
+      AD-507/509/511 v1 precedent: 512a DiscoveryScenarioRegistry (read-only
+      catalog of 8 scenarios across 5 capability categories — analysis,
+      communication, coordination, construction, diagnosis; mirrors AD-507
+      CoreKnowledgeCurriculumRegistry shape; emits DISCOVERY_SCENARIO_OFFERED
+      on lookup), 512b StrengthMap (per-agent rolling aggregate;
+      record_outcome / get_strengths / get_struggles / success_rate /
+      to_episode_payload — payload shape only, substrate NEVER calls
+      EpisodicMemory.store; emits DISCOVERY_OUTCOME_RECORDED +
+      STRENGTH_MAP_UPDATED; importance=8 baked into payload helper for
+      future Holodeck consumer), 512c suggest_routing pure function
+      returning CrossFunctionalSuggestion(source, target, success, rel_type,
+      rationale) tuple shape — substrate NEVER calls
+      HebbianRouter.record_interaction (caller-driven by design; layer
+      discipline rationale), 512d frame_as_growth + frame_as_discovery pure
+      helpers (idempotent string transforms; "you can't" → "you have not yet
+      developed"; Dweck growth-mindset framing), 512e
+      CapabilityConfidenceScorer (per-(agent, capability) Beta(α,β)
+      accumulator; stores RAW (alpha, beta) per ProbOS trust principle —
+      mean = α/(α+β) is computed property; default prior Beta(1,1); emits
+      CAPABILITY_CONFIDENCE_UPDATED), 512f ZPDCalibrator (Vygotsky Zone of
+      Proximal Development band; compute_band anchors on
+      confidence.mean + caller-supplied lower/upper offsets; select_scenarios
+      filters by category + difficulty band; scaffolding hint
+      high/medium/low/none from confidence mean; emits
+      ZPD_SCENARIO_CALIBRATED). ZERO hard-deferrals — every capability
+      listed in roadmap line 6407 ships as substrate. ZERO Protocol seams
+      needed (consumer wave AD-486 Holodeck wires existing public APIs
+      HebbianRouter.record_interaction at routing.py:177 + EpisodicMemory.store
+      at episodic.py:942 — Protocol seam would be redundant). 5 new
+      EventTypes (DISCOVERY_SCENARIO_OFFERED, DISCOVERY_OUTCOME_RECORDED,
+      STRENGTH_MAP_UPDATED, CAPABILITY_CONFIDENCE_UPDATED,
+      ZPD_SCENARIO_CALIBRATED) inserted adjacent to BOOT_CAMP_PHASE_ADVANCED
+      at events.py:357. New sub-package
+      src/probos/crew_development/discovery/ with 6 modules + __init__.py
+      re-exports. Pydantic DiscoveryLearningConfig (default-True;
+      AD-507/509/511 precedent — observational substrate, zero resource
+      creation, zero I/O, zero LLM calls; model_validator(mode='after')
+      enforces zpd_lower_bound < zpd_upper_bound). Finalize wirer
+      _wire_discovery_learning invoked immediately after AD-509
+      _wire_boot_camp_tracker at finalize.py:1311 — keeps Crew
+      Development substrate together. 4 public typed runtime attributes
+      (discovery_scenario_registry, strength_map,
+      capability_confidence_scorer, zpd_calibrator) set by wirer; no
+      runtime.__init__ declarations needed (mirrors AD-507/509/511 v1
+      precedent). Hebbian writes and episodic encoding are caller
+      responsibilities by design (AD-486 Holodeck wave's job) — out of
+      scope, NOT deferred. PersonalOntologyProber (AD-487 v1 at
+      cognitive/self_distillation/prober.py:66) is a future subscriber to
+      STRENGTH_MAP_UPDATED but does NOT subscribe in v1 (AD-487b
+      territory). Baseline 11673 -> target >= 11703 (+30 floor; 32 tests
+      planned across 8 test classes — DiscoveryScenarioRegistry 4,
+      StrengthMap 6, CrossFunctionalSuggestion 3, GrowthMindsetFraming 4,
+      CapabilityConfidenceScorer 5, ZPDCalibrator 4, DiscoveryLearningConfig
+      3, WiringIntegration 3). No HXI surface. No router. No new Intent.
+      No LLM call inside any v1 module. No new agent class. No new pool.
+      No persistence (in-memory only; AD-512h territory). No federation
+      export (AD-512g territory). No HolodeckRunner module (AD-486 wave's
+      job). No edits to AD-507/509/511 v1 substrate. No new AD numbers
+      minted (sub-AD letters a-f organizational only — AD-507/509/511 v1
+      precedent). No commercial language (AD-512 umbrella is fully OSS —
+      zero *(Commercial)* tags on roadmap.md line 6407; pre-commit hook
+      banned phrases (the e-word + tier and the private commercial repo
+      path token) confirmed 0 hits across dispatch, prompt, and this
+      notes block).
