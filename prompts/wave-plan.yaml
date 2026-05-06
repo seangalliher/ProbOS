@@ -872,7 +872,7 @@ waves:
       - "prompts/ad-462f-memory-refs-v1.md"
     builder_required: true
     issues_to_close: [58]
-    status: pending
+    status: done
     notes: |
       Full-closure v1 per GH #58. Pillars 1+2 (structured metadata, concept
       graphs) already shipped via prior ADs — pillar 1 by AD-567a/541/598/579b,
