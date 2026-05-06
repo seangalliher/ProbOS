@@ -54,7 +54,13 @@ _ALLOWED_TRANSITIONS: dict[WorkspaceLifecycleState, frozenset[WorkspaceLifecycle
     }),
     WorkspaceLifecycleState.APPROVED: frozenset({WorkspaceLifecycleState.EXECUTING}),
     WorkspaceLifecycleState.EXECUTING: frozenset({WorkspaceLifecycleState.COMPLETED}),
-    WorkspaceLifecycleState.COMPLETED: frozenset({WorkspaceLifecycleState.ARCHIVED}),
+    # AD-594d v1: revision cycle — COMPLETED can return to CONSULTING (re-deliberation)
+    # or EXECUTING (re-work plan items) on captain feedback before final ARCHIVE.
+    WorkspaceLifecycleState.COMPLETED: frozenset({
+        WorkspaceLifecycleState.ARCHIVED,
+        WorkspaceLifecycleState.CONSULTING,
+        WorkspaceLifecycleState.EXECUTING,
+    }),
     WorkspaceLifecycleState.ARCHIVED: frozenset(),  # terminal
 }
 

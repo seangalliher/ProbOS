@@ -660,6 +660,58 @@ def _wire_consultation_workspaces(*, runtime: Any, config: "SystemConfig") -> bo
     return True
 
 
+def _wire_consultation_delivery(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-594d v1: Wire DeliveryPipeline + built-in adapters.
+
+    Requires ``runtime.consultation_workspaces`` (the registry from AD-594a).
+    Tier-2 log-and-degrade: missing registry -> no-op + INFO log. Adapter
+    construction failures (e.g. LocalFileAdapter with bogus allowed_roots)
+    are caught per-adapter so a single bad adapter does not disable the
+    pipeline.
+    """
+    cfg = getattr(config, "consultation_delivery", None)
+    if not cfg or not cfg.enabled:
+        return False
+    registry = getattr(runtime, "consultation_workspaces", None)
+    if registry is None:
+        logger.info(
+            "AD-594d: consultation_workspaces unavailable; consultation_delivery skipped"
+        )
+        return False
+
+    from pathlib import Path
+    from probos.consultation.delivery import (
+        DeliveryPipeline, GitHubAdapter, LocalFileAdapter,
+    )
+
+    pipeline = DeliveryPipeline(registry)
+
+    if cfg.local_file_enabled:
+        try:
+            roots = [Path(r).expanduser().resolve() for r in cfg.local_file_allowed_roots]
+            pipeline.register_adapter(LocalFileAdapter(allowed_roots=roots))
+        except Exception:
+            logger.warning(
+                "AD-594d: LocalFileAdapter ctor failed; adapter not registered",
+                exc_info=True,
+            )
+    if cfg.github_enabled:
+        try:
+            pipeline.register_adapter(GitHubAdapter(token_env=cfg.github_token_env))
+        except Exception:
+            logger.warning(
+                "AD-594d: GitHubAdapter ctor failed; adapter not registered",
+                exc_info=True,
+            )
+
+    runtime.consultation_delivery = pipeline  # public attribute (Wave 5 conv #1)
+    logger.info(
+        "AD-594d: DeliveryPipeline v1 initialized (adapters=%s, default_requires_approval=%s)",
+        pipeline.list_adapters(), cfg.default_requires_approval,
+    )
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -978,6 +1030,9 @@ async def finalize_startup(
 
     if _wire_consultation_workspaces(runtime=runtime, config=config):
         logger.info("AD-594a: WorkspaceRegistry v1 wired during finalization")
+
+    if _wire_consultation_delivery(runtime=runtime, config=config):
+        logger.info("AD-594d: DeliveryPipeline v1 wired during finalization")
 
     if _wire_workspace_ontology(runtime=runtime, config=config):
         logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")

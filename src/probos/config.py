@@ -2083,6 +2083,30 @@ class ConsultationWorkspaceConfig(BaseModel):
     input_processor: str = "passthrough"
 
 
+class ConsultationDeliveryConfig(BaseModel):
+    """AD-594d v1: Consultation delivery pipeline.
+
+    Default-True is intentional — pipeline construction is read-only on boot
+    (registers built-in adapters into an in-memory dict; no IO). Workspaces
+    consume the pipeline only when an agent calls ``runtime.consultation_delivery
+    .deliver(...)``. Same precedent as ``ConsultationWorkspaceConfig``.
+    """
+    enabled: bool = True
+    # Adapter enablement — operators can disable individual adapters without
+    # disabling the pipeline. Disabled adapters are not registered.
+    local_file_enabled: bool = True
+    github_enabled: bool = True
+    # LocalFileAdapter: list of allowed destination root paths (absolute or
+    # tilde-expandable). Empty = LocalFileAdapter registered with no roots
+    # (rejects every delivery with "no allowed_roots configured").
+    local_file_allowed_roots: list[str] = Field(default_factory=list)
+    # GitHubAdapter: env var name from which the token is read at delivery time.
+    github_token_env: str = "GITHUB_TOKEN"
+    # Default approval requirement — used when a request does not specify
+    # requires_approval explicitly via the dataclass default of False.
+    default_requires_approval: bool = False
+
+
 class CommunicationsConfig(BaseModel):
     """Communications settings (AD-485)."""
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
@@ -2442,6 +2466,9 @@ class SystemConfig(BaseModel):
     consultation_workspaces: ConsultationWorkspaceConfig = Field(
         default_factory=ConsultationWorkspaceConfig
     )  # AD-594a
+    consultation_delivery: ConsultationDeliveryConfig = Field(
+        default_factory=ConsultationDeliveryConfig
+    )  # AD-594d
     process_chain_registry: ProcessChainRegistryConfig = Field(
         default_factory=ProcessChainRegistryConfig
     )  # AD-647b
