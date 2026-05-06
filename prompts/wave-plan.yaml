@@ -786,7 +786,7 @@ waves:
     prompt_paths: []
     builder_required: false
     issues_to_close: [109]
-    status: pending
+    status: done
     notes: |
       Wave-10 reframe applied at AD scoping (4→0). Every child of the
       AD-572 family is already resolved at HEAD 266391c:
