@@ -748,10 +748,10 @@ waves:
     dispatch_prompt: "prompts/WAVE-66-DISPATCH.md"
     prompts_already_drafted: false
     prompt_paths:
-      - "prompts/ad-635f-clinical-proactive-v1.md"
+      - "prompts/ad-635f-clinical-proactive-context-v1.md"
     builder_required: true
     issues_to_close: [395]
-    status: pending
+    status: done
 
   - id: "67"
     title: "AD-573b-f Combo Working Memory Extensions"
