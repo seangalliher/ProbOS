@@ -1301,3 +1301,55 @@ waves:
       banned phrases (the e-word + tier and the private commercial repo
       path token) confirmed 0 hits across dispatch, prompt, and this
       notes block).
+  - id: "85"
+    title: "AD-473 v1 Mobile PWA (HXI installable shell — manifest + SW + InstallPrompt)"
+    kind: single
+    depends_on: ["84"]
+    dispatch_prompt: "prompts/WAVE-85-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-473-mobile-pwa-v1.md"
+    builder_required: true
+    issues_to_close: [67]
+    status: pending
+    notes: |
+      Closes GH #67 (AD-473 Mobile Companion umbrella). Three OSS sub-AD
+      letters ship concretely: 473a Web App Manifest at
+      ui/public/manifest.webmanifest (7 PWA-required fields, three icons —
+      192/512/512-maskable), 473b hand-rolled service worker at
+      ui/public/sw.js (~38 LOC; install/activate/fetch listeners; versioned
+      CACHE_VERSION; skips /api/ and /ws; cache-first app-shell; no Workbox,
+      no vite-plugin-pwa), 473c registration helper ui/src/pwa/register.ts
+      (returns Promise<ServiceWorkerRegistration | null>; tier-2
+      log-and-degrade; carries inline AD-473d Web Push integration-point
+      comment) + InstallPrompt component ui/src/components/InstallPrompt.tsx
+      (listens for beforeinstallprompt, surfaces stroke-based SVG install
+      button matching HXI principle #3 — zero emoji; principle #5
+      progressive disclosure — does NOT auto-render). Four future-AD
+      letters parked with explicit forcing functions (NOT v1 deferrals):
+      473d Web Push (needs Python VAPID + push-subscription endpoints +
+      pywebpush dep — UI-only wave cannot ship), 473e Responsive HXI
+      mobile layout (Captain UX decisions on chat/canvas/swipe pending —
+      HXI principle #1 forbids guessing), 473f mDNS auto-discovery (needs
+      Python zeroconf dep + cross-platform startup wiring — UI-only wave
+      cannot ship publisher side), 473g native-app wrappers (roadmap
+      already says "future stretch" — honoring existing framing).
+      ui/index.html gains four <head> entries (manifest link, theme-color
+      meta, two apple-mobile-web-app-* metas, apple-touch-icon link)
+      adjacent to existing <link rel="icon">. ui/src/main.tsx gains import
+      InstallPrompt + import registerServiceWorker + <InstallPrompt />
+      sibling render + void registerServiceWorker() fire-and-forget. No
+      Python source touched — pytest delta = 0 (gate must remain 11705).
+      No new dependencies — pyproject.toml and ui/package.json untouched.
+      Baseline vitest 292 (291 passing + 1 pre-existing WardRoomDmSync
+      failure NOT introduced by Wave 85) -> target >= 305 (+14 floor; 14
+      vitest tests across 4 describe blocks — manifest JSON shape 4,
+      registerServiceWorker 4, InstallPrompt 5, viewport-meta verification
+      1). No HXI canvas surface touched (CognitiveCanvas, animations,
+      GlassLayer, App.tsx untouched). No new EventType, agent, pool,
+      Intent, router edit, consensus change, trust scorer touch, episodic
+      store touch. No new AD numbers minted (sub-AD letters a-g
+      organizational only — AD-512 v1 precedent). No commercial language
+      (AD-473 umbrella is fully OSS — zero *(Commercial)* tags on
+      roadmap.md line 4205; pre-commit hook banned phrases confirmed 0
+      hits across dispatch, prompt, and this notes block).
