@@ -356,6 +356,13 @@ class EventType(str, Enum):
     # ── Boot Camp Phase Tracker (AD-509) ───────────────────────────
     BOOT_CAMP_PHASE_ADVANCED = "boot_camp_phase_advanced"  # AD-509
 
+    # ── Discovery-Based Capability Building (AD-512) ───────────────
+    DISCOVERY_SCENARIO_OFFERED = "discovery_scenario_offered"  # AD-512a registry
+    DISCOVERY_OUTCOME_RECORDED = "discovery_outcome_recorded"  # AD-512b StrengthMap
+    STRENGTH_MAP_UPDATED = "strength_map_updated"  # AD-512b StrengthMap
+    CAPABILITY_CONFIDENCE_UPDATED = "capability_confidence_updated"  # AD-512e
+    ZPD_SCENARIO_CALIBRATED = "zpd_scenario_calibrated"  # AD-512f
+
     # ── Statistical Process Control (AD-522) ───────────────────────
     SPC_RULE_VIOLATED = "spc_rule_violated"  # AD-522 v1
 

@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.agent_onboarding import AgentOnboardingService
+from probos.config import DiscoveryLearningConfig
 
 
 @pytest.fixture(autouse=True)
@@ -208,6 +209,7 @@ class TestAutoWelcome:
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
+        config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
 
         from probos.startup.finalize import finalize_startup
         await finalize_startup(runtime=runtime, config=config)
@@ -277,6 +279,7 @@ class TestAutoWelcome:
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
+        config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
 
         from probos.startup.finalize import finalize_startup
         await finalize_startup(runtime=runtime, config=config)
@@ -336,6 +339,7 @@ class TestAutoWelcome:
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
+        config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
 
         from probos.startup.finalize import finalize_startup
         await finalize_startup(runtime=runtime, config=config)
@@ -394,6 +398,7 @@ class TestAutoWelcome:
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
+        config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
 
         from probos.startup.finalize import finalize_startup
         await finalize_startup(runtime=runtime, config=config)

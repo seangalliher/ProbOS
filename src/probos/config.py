@@ -2429,6 +2429,34 @@ class BootCampPhaseConfig(BaseModel):
     # to AD-509b/c/d/e.
 
 
+class DiscoveryLearningConfig(BaseModel):
+    """AD-512 v1: Discovery-Based Capability Building substrate (observational).
+
+    Default-True follows AD-507/509/511 v1 precedent — substrate is in-memory
+    only, emits events, no resource creation, no I/O, no LLM calls. The
+    eventual AD-486 Holodeck wave is the consumer that drives outcomes
+    through this substrate; v1 ships the registry + per-agent maps + ZPD
+    calibrator without that consumer.
+    """
+
+    enabled: bool = True
+    # v1: 8 default scenarios + Beta(1,1) confidence priors + scaffolding
+    # heuristic. Hebbian writes, episode storage, and Holodeck wiring are
+    # caller responsibilities and are deferred to AD-486 / AD-510.
+    confidence_prior_alpha: float = Field(default=1.0, ge=0.01)
+    confidence_prior_beta: float = Field(default=1.0, ge=0.01)
+    zpd_lower_bound: float = Field(default=0.40, ge=0.0, le=1.0)
+    zpd_upper_bound: float = Field(default=0.75, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _validate_zpd_band(self) -> "DiscoveryLearningConfig":
+        if self.zpd_lower_bound >= self.zpd_upper_bound:
+            raise ValueError(
+                "zpd_lower_bound must be strictly less than zpd_upper_bound"
+            )
+        return self
+
+
 class ScopedCognitionConfig(BaseModel):
     """AD-508 v1: Duty Scope helper (read-only observational)."""
 
@@ -2606,6 +2634,7 @@ class SystemConfig(BaseModel):
     autonomy_boundaries: AutonomyBoundariesConfig = Field(default_factory=AutonomyBoundariesConfig)  # AD-511
     crew_development: CrewDevelopmentConfig = Field(default_factory=CrewDevelopmentConfig)  # AD-507
     boot_camp_phase: BootCampPhaseConfig = Field(default_factory=BootCampPhaseConfig)  # AD-509
+    discovery_learning: DiscoveryLearningConfig = Field(default_factory=DiscoveryLearningConfig)  # AD-512
     scoped_cognition: ScopedCognitionConfig = Field(default_factory=ScopedCognitionConfig)  # AD-508
     workspace_ontology: WorkspaceOntologyConfig = Field(default_factory=WorkspaceOntologyConfig)  # AD-478
     gap_pipeline_extensions: GapPipelineExtensionsConfig = Field(default_factory=GapPipelineExtensionsConfig)  # AD-539c/d

@@ -19,6 +19,20 @@ from probos.crew_development.boot_camp import (
     BootCampPhase,
     BootCampPhaseTracker,
 )
+from probos.crew_development.discovery import (
+    CapabilityConfidence,
+    CapabilityConfidenceScorer,
+    CrossFunctionalSuggestion,
+    DiscoveryScenario,
+    DiscoveryScenarioRegistry,
+    StrengthMap,
+    StrengthRecord,
+    ZPDBand,
+    ZPDCalibrator,
+    frame_as_discovery,
+    frame_as_growth,
+    suggest_routing,
+)
 
 __all__ = [
     "CoreKnowledgeCurriculumRegistry",
@@ -26,4 +40,16 @@ __all__ = [
     "AgentBootCampRecord",
     "BootCampPhase",
     "BootCampPhaseTracker",
+    "CapabilityConfidence",
+    "CapabilityConfidenceScorer",
+    "CrossFunctionalSuggestion",
+    "DiscoveryScenario",
+    "DiscoveryScenarioRegistry",
+    "StrengthMap",
+    "StrengthRecord",
+    "ZPDBand",
+    "ZPDCalibrator",
+    "frame_as_discovery",
+    "frame_as_growth",
+    "suggest_routing",
 ]

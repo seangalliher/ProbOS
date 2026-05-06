@@ -156,6 +156,57 @@ def _wire_boot_camp_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_discovery_learning(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-512 v1: Wire DiscoveryScenarioRegistry, StrengthMap,
+    CapabilityConfidenceScorer, and ZPDCalibrator (observational substrate).
+    """
+    cfg = getattr(config, "discovery_learning", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.crew_development.discovery import (
+        CapabilityConfidenceScorer,
+        DiscoveryScenarioRegistry,
+        StrengthMap,
+        ZPDCalibrator,
+    )
+
+    emit_fn = getattr(runtime, "emit_event", None)
+
+    scenario_registry = DiscoveryScenarioRegistry()
+    scenario_registry.emit_event = emit_fn
+    runtime.discovery_scenario_registry = scenario_registry  # public (Wave 5 conv #1)
+
+    strength_map = StrengthMap()
+    strength_map.emit_event = emit_fn
+    runtime.strength_map = strength_map  # public (Wave 5 conv #1)
+
+    confidence_scorer = CapabilityConfidenceScorer(
+        prior_alpha=cfg.confidence_prior_alpha,
+        prior_beta=cfg.confidence_prior_beta,
+    )
+    confidence_scorer.emit_event = emit_fn
+    runtime.capability_confidence_scorer = confidence_scorer  # public (Wave 5 conv #1)
+
+    zpd_calibrator = ZPDCalibrator(
+        lower_offset=cfg.zpd_lower_bound,
+        upper_offset=cfg.zpd_upper_bound,
+    )
+    zpd_calibrator.emit_event = emit_fn
+    runtime.zpd_calibrator = zpd_calibrator  # public (Wave 5 conv #1)
+
+    logger.info(
+        "AD-512: Discovery Learning v1 initialized "
+        "(%d scenarios; Beta(α=%.2f, β=%.2f) priors; ZPD band [%.2f, %.2f])",
+        len(scenario_registry.list_scenarios()),
+        cfg.confidence_prior_alpha,
+        cfg.confidence_prior_beta,
+        cfg.zpd_lower_bound,
+        cfg.zpd_upper_bound,
+    )
+    return True
+
+
 def _wire_ship_state_snapshot(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-683 v1: Wire ShipStateSnapshotBuilder (cold-start onboarding)."""
     cfg = getattr(config, "ship_state_snapshot", None)
@@ -1309,6 +1360,9 @@ async def finalize_startup(
 
     if _wire_boot_camp_tracker(runtime=runtime, config=config):
         logger.info("AD-509: Boot Camp Phase Tracker v1 wired during finalization")
+
+    if _wire_discovery_learning(runtime=runtime, config=config):
+        logger.info("AD-512: Discovery Learning v1 wired during finalization")
 
     if _wire_ship_state_snapshot(runtime=runtime, config=config):
         logger.info("AD-683: Ship State Snapshot v1 wired during finalization")

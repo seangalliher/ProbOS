@@ -15,6 +15,7 @@ from probos.cognitive.deliberation import (
 )
 from probos.cognitive.deliberation.protocol import DeliberationArgument
 from probos.config import DeliberationConfig
+from probos.config import DiscoveryLearningConfig
 from probos.events import EventType
 from probos.ward_room.service import WardRoomService
 
@@ -298,6 +299,7 @@ async def test_runtime_deliberation_protocol_is_none_when_disabled() -> None:
     config = MagicMock()
     config.proactive_cognitive.enabled = False
     config.deliberation = DeliberationConfig(enabled=False)
+    config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
     runtime.config = config
 
     await finalize_startup(runtime=runtime, config=config)
