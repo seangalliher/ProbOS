@@ -99,6 +99,8 @@ class HttpFetchAgent(BaseAgent):
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
+        import time as _time
+        _start = _time.monotonic()
         observation = await self.perceive(intent.__dict__)
         if observation is None:
             return None
@@ -112,6 +114,18 @@ class HttpFetchAgent(BaseAgent):
 
         success = report.get("success", False)
         self.update_confidence(success)
+
+        # AD-571b: record operational call outcome on the runtime tracker.
+        # self._runtime can be None in sandbox per repo-notes; in production it
+        # is the live runtime and operational_status_tracker is guaranteed by
+        # runtime.py:304. Telemetry must never break a fetch (swallow tier).
+        _rt = getattr(self, "_runtime", None)
+        if _rt is not None:
+            try:
+                _latency_ms = (_time.monotonic() - _start) * 1000.0
+                _rt.operational_status_tracker.record_call(self.id, bool(success), _latency_ms)
+            except Exception:
+                pass  # AD-571b: telemetry must never break a fetch.
 
         return IntentResult(
             intent_id=intent.id,

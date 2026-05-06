@@ -127,6 +127,10 @@ class MeshConfig(BaseModel):
 
     gossip_interval_ms: int = 1000
     hebbian_decay_rate: float = 0.995
+    # AD-571c v1: per-rel_type decay. SOCIAL weights persist longer than intent-routing
+    # weights. Default falls back to hebbian_decay_rate so v1 is behavior-equivalent;
+    # AD-571c-i forcing function flips this to 0.999 once AD-557 benchmarks land.
+    hebbian_social_decay_rate: float = 0.995
     hebbian_reward: float = 0.05
     signal_ttl_seconds: float = 30.0
     capability_broadcast_interval_seconds: float = 5.0
@@ -2211,6 +2215,19 @@ class AgentTierConfig(BaseModel):
     core_types: list[str] = Field(default_factory=lambda: ["event_log", "vitals_monitor", "introspect"])
 
 
+class OperationalStatusConfig(BaseModel):
+    """Operational status tracker configuration (AD-571b)."""
+
+    # Number of recent calls retained per agent for rolling metrics.
+    sample_window_size: int = 50
+    # Minimum success rate to be considered AVAILABLE. Below this → DEGRADED.
+    available_success_rate: float = 0.85
+    # p95 latency (ms) above which an otherwise-healthy agent is DEGRADED.
+    degraded_p95_latency_ms: float = 5000.0
+    # Consecutive error count that flips an agent to OFFLINE.
+    offline_consecutive_errors: int = 5
+
+
 class BridgeConfig(BaseModel):
     """Episodic-procedural bridge configuration (AD-572)."""
 
@@ -2427,6 +2444,7 @@ class SystemConfig(BaseModel):
     knowledge_loading: KnowledgeLoadingConfig = KnowledgeLoadingConfig()  # AD-585
     step_instruction: StepInstructionConfig = StepInstructionConfig()  # AD-651
     agent_tiers: AgentTierConfig = AgentTierConfig()  # AD-571
+    operational_status: OperationalStatusConfig = OperationalStatusConfig()  # AD-571b
     risk_tiers: RiskTierConfig = RiskTierConfig()  # AD-676
     procedural_bridge: BridgeConfig = BridgeConfig()  # AD-572
     nats: NatsConfig = NatsConfig()  # AD-637

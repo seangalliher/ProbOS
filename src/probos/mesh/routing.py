@@ -54,8 +54,13 @@ class HebbianRouter:
         reward: float = 0.05,
         db_path: str | Path | None = None,
         connection_factory: ConnectionFactory | None = None,
+        social_decay_rate: float | None = None,
     ) -> None:
         self.decay_rate = decay_rate
+        # AD-571c v1: per-rel_type decay. None -> fall back to decay_rate (v1 default).
+        self.social_decay_rate = (
+            social_decay_rate if social_decay_rate is not None else decay_rate
+        )
         self.reward = reward
         self.db_path = str(db_path) if db_path else None
         # Full key: (source, target, rel_type)
@@ -72,6 +77,12 @@ class HebbianRouter:
     def set_tier_registry(self, registry: Any) -> None:
         """Inject agent tier registry for tier-aware reporting (AD-571)."""
         self._tier_registry = registry
+
+    def _decay_rate_for(self, rel_type: str) -> float:
+        """AD-571c: route per-rel_type to the right decay rate."""
+        if rel_type == REL_SOCIAL:
+            return self.social_decay_rate
+        return self.decay_rate
 
     async def start(self) -> None:
         """Initialize — load weights from SQLite if configured."""
@@ -106,21 +117,52 @@ class HebbianRouter:
         """Update connection weight after an interaction.
 
         Returns the new weight.
+
+        AD-571c v1: utility-utility prune for REL_INTENT only -- when both
+        endpoints are AgentTier.UTILITY, the edge is collaborative noise
+        (tools don't form intent-routing relationships with each other).
+        CORE_INFRASTRUCTURE pairs and any crew-touching edge always record.
         """
+        if (
+            self._tier_registry is not None
+            and rel_type == REL_INTENT
+            and self._is_utility_pair(source, target)
+        ):
+            return 0.0
         full_key = (source, target, rel_type)
         compat_key = (source, target)
         current = self._weights.get(full_key, 0.0)
+        rate = self._decay_rate_for(rel_type)
 
         if success:
-            new_weight = current * self.decay_rate + self.reward
+            new_weight = current * rate + self.reward
         else:
-            new_weight = current * self.decay_rate
+            new_weight = current * rate
 
         # Clamp to [0.0, 1.0]
         new_weight = max(0.0, min(1.0, new_weight))
         self._weights[full_key] = new_weight
         self._compat_weights[compat_key] = new_weight
         return new_weight
+
+    def _is_utility_pair(self, source: AgentID, target: AgentID) -> bool:
+        """AD-571c: True only when BOTH endpoints are exact-AgentTier.UTILITY.
+
+        Only fires when both source AND target are explicitly registered.
+        REL_INTENT source is typically an intent-name string (not an agent_id),
+        which would default to UTILITY via get_tier() and incorrectly trigger
+        the prune. Requiring registration keeps intent-name sources unaffected.
+        """
+        from probos.substrate.agent_tier import AgentTier
+        try:
+            registered = self._tier_registry.all_registered()
+            if source not in registered or target not in registered:
+                return False
+            src_tier = registered[source]
+            tgt_tier = registered[target]
+        except Exception:
+            return False
+        return src_tier == AgentTier.UTILITY and tgt_tier == AgentTier.UTILITY
 
     def record_verification(
         self,
@@ -186,11 +228,16 @@ class HebbianRouter:
         return result
 
     def decay_all(self) -> int:
-        """Apply decay to all weights. Returns count of pruned zero-weights."""
+        """Apply decay to all weights. Returns count of pruned zero-weights.
+
+        AD-571c v1: per-rel_type decay. REL_SOCIAL uses social_decay_rate
+        (slow); all other rel_types use decay_rate (existing default).
+        """
         pruned = 0
         keys_to_remove = []
         for key, weight in self._weights.items():
-            new_weight = weight * self.decay_rate
+            rel_type = key[2]
+            new_weight = weight * self._decay_rate_for(rel_type)
             if new_weight < 0.001:
                 keys_to_remove.append(key)
                 pruned += 1

@@ -861,6 +861,10 @@ def _populate_agent_tiers(*, runtime: Any, config: "SystemConfig") -> int:
     if router and hasattr(router, "set_tier_registry"):
         router.set_tier_registry(registry)
 
+    op_tracker = getattr(runtime, "operational_status_tracker", None)
+    if op_tracker and hasattr(op_tracker, "set_tier_registry"):
+        op_tracker.set_tier_registry(registry)
+
     runtime._tier_registry = registry
     return len(registry.all_registered())
 

@@ -305,6 +305,12 @@ class ProbOSRuntime:
             decay_rate=self.config.mesh.hebbian_decay_rate,
             reward=self.config.mesh.hebbian_reward,
             db_path=self._data_dir / "hebbian_weights.db",
+            social_decay_rate=self.config.mesh.hebbian_social_decay_rate,  # AD-571c
+        )
+        # AD-571b: operational status for non-crew agents (in-memory tracker).
+        from probos.substrate.operational_status import OperationalStatusTracker
+        self.operational_status_tracker = OperationalStatusTracker(
+            config=self.config.operational_status,  # AD-571b: SystemConfig.operational_status (singular)
         )
         self.gossip = GossipProtocol(
             interval_seconds=self.config.mesh.gossip_interval_ms / 1000.0,
