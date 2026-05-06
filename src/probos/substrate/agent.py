@@ -158,6 +158,13 @@ class BaseAgent(ABC):
 
     def info(self) -> dict[str, Any]:
         """Return a snapshot of this agent's state."""
+        # BF-263: Read live trust from TrustNetwork, not stale self.trust_score
+        _trust = self.trust_score
+        _rt = getattr(self, '_runtime', None)
+        if _rt is not None:
+            _tn = getattr(_rt, 'trust_network', None)
+            if _tn is not None:
+                _trust = _tn.get_score(self.id)
         return {
             "id": self.id,
             "type": self.agent_type,
@@ -165,7 +172,7 @@ class BaseAgent(ABC):
             "pool": self.pool,
             "state": self.state.value,
             "confidence": format_trust(self.confidence),
-            "trust_score": format_trust(self.trust_score),
+            "trust_score": format_trust(_trust),
             "capabilities": [c.can for c in self.capabilities],
             "operations": self.meta.total_operations,
             "success_rate": (
