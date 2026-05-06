@@ -304,6 +304,11 @@ class EventType(str, Enum):
     CONSULTATION_TIMEOUT = "consultation_timeout"
     CONSULTATION_FAILED = "consultation_failed"
 
+    # Parallel execution dispatch (AD-594c)
+    PARALLEL_DISPATCH_STARTED = "parallel_dispatch_started"
+    PARALLEL_DISPATCH_PROGRESS = "parallel_dispatch_progress"
+    PARALLEL_DISPATCH_BLOCKED = "parallel_dispatch_blocked"
+
     # Billet management (AD-595a)
     BILLET_ASSIGNED = "billet_assigned"
     BILLET_VACATED = "billet_vacated"    # Reserved for AD-595b's vacate() — added now to keep enum changes atomic with BILLET_ASSIGNED

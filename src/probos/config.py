@@ -2107,6 +2107,30 @@ class ConsultationDeliveryConfig(BaseModel):
     default_requires_approval: bool = False
 
 
+class ConsultationDispatchConfig(BaseModel):
+    """AD-594c v1: Parallel execution dispatch.
+
+    Default-True is intentional — dispatcher construction is read-only on boot
+    (no IO; only resolves runtime.work_item_store + runtime.consultation_workspaces
+    references). Side effects only fire when an agent calls
+    ``runtime.consultation_dispatcher.dispatch(...)``. Same precedent as
+    ``ConsultationWorkspaceConfig`` / ``ConsultationDeliveryConfig``.
+    """
+    enabled: bool = True
+    # Default work_type used for WorkItems created by the dispatcher when a
+    # plan spec does not specify one. "duty" is registered in the WorkTypeRegistry.
+    default_work_type: str = "duty"
+    # Tags applied to every dispatched WorkItem in addition to the workspace_id
+    # tag — used by get_progress to scope list_work_items queries.
+    default_tags: list[str] = Field(default_factory=lambda: ["consultation"])
+    # Blocker escalation: emit PARALLEL_DISPATCH_BLOCKED when a spec's depends_on
+    # set has been unmet for at least this many seconds since dispatch.
+    blocker_threshold_seconds: float = 600.0
+    # Progress event emission cadence (caller-driven; no internal timer in v1).
+    # When True, get_progress() emits PARALLEL_DISPATCH_PROGRESS on each call.
+    progress_subscription_enabled: bool = True
+
+
 class CommunicationsConfig(BaseModel):
     """Communications settings (AD-485)."""
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
@@ -2469,6 +2493,9 @@ class SystemConfig(BaseModel):
     consultation_delivery: ConsultationDeliveryConfig = Field(
         default_factory=ConsultationDeliveryConfig
     )  # AD-594d
+    consultation_dispatch: ConsultationDispatchConfig = Field(
+        default_factory=ConsultationDispatchConfig
+    )  # AD-594c
     process_chain_registry: ProcessChainRegistryConfig = Field(
         default_factory=ProcessChainRegistryConfig
     )  # AD-647b

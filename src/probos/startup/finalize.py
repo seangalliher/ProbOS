@@ -712,6 +712,53 @@ def _wire_consultation_delivery(*, runtime: Any, config: "SystemConfig") -> bool
     return True
 
 
+def _wire_consultation_dispatch(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-594c v1: Wire ParallelDispatcher.
+
+    Requires ``runtime.consultation_workspaces`` (AD-594a),
+    ``runtime.work_item_store`` (AD-496), AND ``runtime.records_store`` (for
+    plan-file reads). Tier-2 log-and-degrade: missing any dependency -> no-op
+    + INFO log.
+    """
+    cfg = getattr(config, "consultation_dispatch", None)
+    if not cfg or not cfg.enabled:
+        return False
+    registry = getattr(runtime, "consultation_workspaces", None)
+    if registry is None:
+        logger.info(
+            "AD-594c: consultation_workspaces unavailable; consultation_dispatch skipped"
+        )
+        return False
+    work_item_store = getattr(runtime, "work_item_store", None)
+    if work_item_store is None:
+        logger.info(
+            "AD-594c: work_item_store unavailable; consultation_dispatch skipped"
+        )
+        return False
+    records_store = getattr(runtime, "records_store", None)
+    if records_store is None:
+        logger.info(
+            "AD-594c: records_store unavailable; consultation_dispatch skipped"
+        )
+        return False
+
+    from probos.consultation.dispatch import ParallelDispatcher
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    runtime.consultation_dispatcher = ParallelDispatcher(  # public attr (Wave 5 conv #1)
+        workspace_registry=registry,
+        work_item_store=work_item_store,
+        records_store=records_store,
+        config=cfg,
+        emit_event=emit_fn,
+    )
+    logger.info(
+        "AD-594c: ParallelDispatcher v1 initialized (default_work_type=%s, blocker_threshold=%.1fs)",
+        cfg.default_work_type, cfg.blocker_threshold_seconds,
+    )
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -1033,6 +1080,9 @@ async def finalize_startup(
 
     if _wire_consultation_delivery(runtime=runtime, config=config):
         logger.info("AD-594d: DeliveryPipeline v1 wired during finalization")
+
+    if _wire_consultation_dispatch(runtime=runtime, config=config):
+        logger.info("AD-594c: ParallelDispatcher v1 wired during finalization")
 
     if _wire_workspace_ontology(runtime=runtime, config=config):
         logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")

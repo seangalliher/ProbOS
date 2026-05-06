@@ -1043,7 +1043,7 @@ waves:
       - "prompts/ad-594c-parallel-dispatch-v1.md"
     builder_required: true
     issues_to_close: [162]
-    status: pending
+    status: done
     notes: |
       Closes GH #162 (AD-594c Parallel Execution Dispatch). Full v1 scope in
       one wave per Captain rule (don't defer unless no choice). Module shape:
