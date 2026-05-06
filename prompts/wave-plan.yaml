@@ -778,16 +778,29 @@ waves:
       summary table in the close comment.
 
   - id: "68"
-    title: "AD-572b-e Combo Captain Engagement Extensions"
+    title: "AD-572b-e Combo Captain Engagement Extensions (no-build close, 4→0 reframe)"
     kind: combo
     depends_on: ["67"]
     dispatch_prompt: "prompts/WAVE-68-DISPATCH.md"
-    prompts_already_drafted: false
-    prompt_paths:
-      - "prompts/ad-572b-e-captain-engagement-combo.md"
-    builder_required: true
+    prompts_already_drafted: true
+    prompt_paths: []
+    builder_required: false
     issues_to_close: [109]
     status: pending
+    notes: |
+      Wave-10 reframe applied at AD scoping (4→0). Every child of the
+      AD-572 family is already resolved at HEAD 266391c:
+        - AD-572b shipped Wave 8 (Combo A, commit 16c4ea4)
+        - AD-572c shipped Wave 13 (Combo C, commit ffda515)
+        - AD-572d wholesale-deferred to AD-572d-i (forcing function:
+          interruptible-wait infra on proactive.py _think_loop at line 477;
+          verified zero asyncio.Event/wait_for in proactive.py at HEAD;
+          documented at DECISIONS.md:597 and roadmap.md:4582)
+        - AD-572e shipped Wave 18 (commit 9ff7fed)
+      No code shipped this wave. Issue #109 closes via partial-completion
+      summary in the close comment. The per-AD combo prompt
+      (prompts/ad-572b-e-captain-engagement-combo.md) was never drafted
+      and is intentionally absent from prompt_paths.
 
   - id: "69"
     title: "AD-574b-c Combo DM Reply Extensions"
