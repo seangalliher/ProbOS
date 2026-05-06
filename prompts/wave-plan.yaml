@@ -923,7 +923,7 @@ waves:
       - "prompts/ad-428b-skill-framework-advanced-v1.md"
     builder_required: true
     issues_to_close: [38]
-    status: drafted
+    status: done
     notes: |
       Closes GH #38 (umbrella AD-428b "Advanced Features"). Five of nine
       AD-428b roadmap rows ship in v1: (1) composite skills + synergy
