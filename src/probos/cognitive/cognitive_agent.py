@@ -5414,6 +5414,29 @@ class CognitiveAgent(BaseAgent):
                             observation["_oracle_context"] = oracle_text
                     except Exception:
                         logger.debug("AD-568a: Oracle query failed, continuing without")
+                elif (
+                    _recall_tier in (RecallTier.FULL, RecallTier.ENHANCED)
+                    and hasattr(self, '_runtime')
+                    and hasattr(self._runtime, '_oracle_service')
+                    and self._runtime._oracle_service
+                ):
+                    # BF-265: Non-ORACLE agents still get knowledge graph (Tier 6)
+                    # access. Graph contains structural facts (reports_to, member_of,
+                    # competent_in) that any crew agent should see — it's organizational
+                    # structure, not classified intelligence.
+                    try:
+                        oracle = self._runtime._oracle_service
+                        graph_text = await oracle.query_formatted(
+                            query_text=query,
+                            agent_id=_mem_id,
+                            k_per_tier=3,
+                            max_chars=1000,
+                            tiers=["graph"],
+                        )
+                        if graph_text:
+                            observation["_oracle_context"] = graph_text
+                    except Exception:
+                        logger.debug("BF-265: graph-only Oracle query failed, continuing without")
 
             # AD-568c: Compute source priority framing
             _framing = None
