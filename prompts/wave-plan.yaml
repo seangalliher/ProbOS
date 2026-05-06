@@ -841,3 +841,24 @@ waves:
       already gone from the codebase (sub_task.py is now 620 lines, was 3607).
       Likely removed during AD-644 Phases 1-4 (commit f10369d) or the AD-647
       chain restructure. No-build close.
+
+  - id: "72"
+    title: "AD-696 v1 Agentic Oracle Retrieval (on-demand Ship's Records query)"
+    kind: single
+    depends_on: ["71"]
+    dispatch_prompt: "prompts/WAVE-72-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-696-agentic-oracle-retrieval-v1.md"
+    builder_required: true
+    issues_to_close: [416]
+    status: pending
+    notes: |
+      Full-scope v1 per GH #416: oracle_lookup QUERY op + ToolRegistry
+      registration (READ, RecallTier.ORACLE gate) + ANALYZE intent signal
+      (oracle_query token + oracle_query_text field) + chain dispatch seam
+      between triage and execute phases (once per chain via
+      _oracle_lookup_fired flag). Reuses existing _oracle_context rendering
+      key. Deferred: AD-696b temporal decay, AD-696c query intent
+      classification, AD-696d multi-turn retrieval. Baseline 11433 → +13
+      target (window [+10, +14]).
