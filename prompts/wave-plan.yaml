@@ -898,7 +898,7 @@ waves:
       - "prompts/ad-571b-c-tier-trust-v1.md"
     builder_required: true
     issues_to_close: [21]
-    status: pending
+    status: done
     notes: |
       Closes GH #21 (umbrella AD-571a-c). AD-571a already shipped at HEAD
       4d0242a (AgentTier enum + AgentTierRegistry + crew_only filter on
