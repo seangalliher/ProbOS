@@ -1067,3 +1067,35 @@ waves:
       scope (assigned_to=spec.agent writes a string; ASA hand-off is AD-581's
       surface). Baseline 11528 -> target >= 11553 (+25 floor; 36 tests planned).
       No HXI surface. No new Intent. No router. OSS only.
+
+  - id: "81"
+    title: "AD-581 v1 Hybrid Dispatch (3 OSS sub-ADs in one build)"
+    kind: single
+    depends_on: ["80"]
+    dispatch_prompt: "prompts/WAVE-81-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-581-hybrid-dispatch-v1.md"
+    builder_required: true
+    issues_to_close: [113]
+    status: pending
+    notes: |
+      Closes GH #113 (AD-581 Hybrid Dispatch). 3 OSS sub-ADs in one wave per
+      Captain rule (don't defer unless no choice). 581a DepartmentDispatcher
+      (pure decision layer; Hebbian + ontology + cold-start floor +
+      confidence threshold + runner-up margin), 581a WorkItemRouter (bridges
+      WORK_ITEM_CREATED -> AD-654c Dispatcher; consumes AD-594c WorkItems),
+      581b OrderState DECLINED/REFUSED + decline()/refuse() + StandingOrder
+      Predicate Protocol seam + reassignment_callback hook, 581d
+      HybridDispatchConfig + per-(intent, agent_id) success-rate ring buffer.
+      4 new EventTypes (ORDER_DECLINED, ORDER_REFUSED, HYBRID_DISPATCH_DIRECT,
+      HYBRID_DISPATCH_BROADCAST). Pydantic config + finalize wirer
+      (_wire_hybrid_dispatch; gated on hebbian_router + ontology + dispatcher
+      + registry; tier-2 log-and-degrade). Commercial sub-ADs 581c (ASA
+      Bridge) and 581e (Project Team Dispatch) explicitly out of scope —
+      they live in private commercial repo as extension points on top of
+      OSS DepartmentDispatcher + OrderProtocol primitives. Standing-Order
+      predicate and dream-cycle auto-tuning ship as Protocol seams; concrete
+      implementations follow when consumer signal arrives. Baseline 11565 ->
+      target >= 11595 (+30 floor; 30 tests planned). No HXI surface. No new
+      Intent. No router. No LLM call. No commercial language.
