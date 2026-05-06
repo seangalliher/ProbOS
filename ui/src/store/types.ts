@@ -346,6 +346,13 @@ export interface WardRoomChannel {
   description: string;
 }
 
+// AD-574b: in-flight indicator for synchronous DM replies via /api/agent/{id}/chat.
+export interface WardRoomDmPending {
+  threadId: string;
+  captainText: string;
+  startedAt: number;
+}
+
 export interface WardRoomThread {
   id: string;
   channel_id: string;

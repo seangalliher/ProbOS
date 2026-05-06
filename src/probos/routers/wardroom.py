@@ -20,6 +20,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wardroom", tags=["wardroom"])
 
 
+def _resolve_dm_target_agent_id(channel_name: str, runtime: Any) -> str | None:
+    """AD-574b: Resolve the non-Captain participant agent_id from a DM channel name.
+
+    DM channel names use one of two formats:
+      - ``dm-captain-{agent_id[:8]}`` (Captain DMs, ``proactive.py:3599``)
+      - ``dm-{sorted_ids[0][:8]}-{sorted_ids[1][:8]}`` (agent-to-agent, ``ward_room/channels.py:203``)
+
+    The UI's DM panel needs the FULL agent_id (not the 8-char prefix) to call
+    ``POST /api/agent/{id}/chat``. Resolve by scanning ``runtime.registry.all()``
+    for an alive crew agent whose id starts with the non-Captain prefix.
+
+    Returns ``None`` when no live agent matches (deleted/renamed/lookup failure).
+    Tier-2 log-and-degrade: any unexpected error is caught, logged at warning,
+    and returns ``None`` so the UI falls back to the async post-only path.
+    """
+    if not channel_name.startswith("dm-"):
+        return None
+    try:
+        registry = getattr(runtime, "registry", None)
+        if registry is None:
+            return None
+        parts = channel_name.split("-")  # ["dm", "<a>", "<b>"] or ["dm", "captain", "<b>"]
+        if len(parts) != 3:
+            return None
+        # The non-Captain prefix is the part that is not literally "captain".
+        candidates = [p for p in parts[1:] if p != "captain"]
+        if not candidates:
+            return None
+        prefix = candidates[0]
+        for agent in registry.all():
+            if not getattr(agent, "is_alive", False):
+                continue
+            agent_id = getattr(agent, "id", "")
+            if agent_id and agent_id.startswith(prefix):
+                return agent_id
+        return None
+    except Exception as exc:  # noqa: BLE001 — Tier-2 log-and-degrade
+        logger.warning(
+            "AD-574b: failed to resolve DM target agent_id for channel %r: %s",
+            channel_name, exc,
+        )
+        return None
+
+
 # ── DMs (AD-453/AD-485) ──────────────────────────────────────────
 
 
@@ -43,6 +87,7 @@ async def list_dm_channels(runtime: Any = Depends(get_runtime)):
             },
             "latest_thread": threads[0] if threads else None,
             "thread_count": thread_count,
+            "target_agent_id": _resolve_dm_target_agent_id(ch.name, runtime),
         })
     return result
 
@@ -78,6 +123,7 @@ async def list_captain_dms(runtime: Any = Depends(get_runtime)):
                         "created_at": ch.created_at},
             "threads": threads,
             "thread_count": thread_count,
+            "target_agent_id": _resolve_dm_target_agent_id(ch.name, runtime),
         })
     return result
 

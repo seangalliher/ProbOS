@@ -4603,7 +4603,9 @@ Phase 3 — **Hebbian Scope Reduction** (AD-571c):
 
 **AD-574: DM Reply Agent Notification** *(complete, OSS)* — Fixed two independent gaps that caused Captain DM replies to be silently lost. (1) `WardRoomRouter.find_targets()` had no `dm` channel type case — added `elif channel.channel_type == "dm"` matching `agent.id[:8]` against channel name, no Earned Agency gating (DMs are 1:1 targeted). (2) `get_unread_dms()` only found threads where agent had zero posts — rewrote query to use LEFT JOIN subquery with `COALESCE(lp.last_author, t.author_id) != agent_id` so thread is "unread" if the last author is someone other than the agent. 2 files modified, 9 tests.
 
-**Deferred:** AD-574b (synchronous DM response in HXI — `/api/agent/{id}/chat` from DM panel with "agent is thinking..." indicator), AD-574c (DM conversation convergence — unify ProfileChatTab and Ward Room DM into single conversation store).
+**AD-574b: complete via Wave 69.** `WardRoomThreadDetail.submitReply` routes through `/api/agent/{id}/chat` for DM views, displays a "thinking…" placeholder via `wardRoomDmPending` store slice, and dual-writes Captain message + agent response back into the Ward Room thread. Backend `/api/wardroom/dms` + `/api/wardroom/captain-dms` gain `target_agent_id` field. Falls back to async post-only path when target unresolvable or chat call fails.
+
+**Deferred:** AD-574c (DM conversation convergence — unify ProfileChatTab and Ward Room DM into single conversation store) **wholesale-deferred to AD-574c-i**. Forcing function: AD-574b dual-write must be live before ProfileChatTab data-source swap.
 
 ### Unified Self-Awareness (AD-575)
 

@@ -6,6 +6,20 @@ import { EndorsementButtons } from './WardRoomEndorsement';
 import { WardRoomPostItem } from './WardRoomPostItem';
 import { timeAgo } from './timeAgo';
 
+// AD-574b: Resolve the target agent_id for the active DM thread by scanning
+// the wardRoomDmChannels listing for the channel that owns this thread.
+// Returns null when not in a DM view, when the thread has no resolvable
+// channel, or when the backend could not resolve the participant.
+function resolveDmTargetAgentId(
+  view: 'channels' | 'dms' | 'dm-detail',
+  activeChannel: string | null,
+  dmChannels: { channel: { id: string }; target_agent_id: string | null }[]
+): string | null {
+  if (view !== 'dm-detail' || !activeChannel) return null;
+  const entry = dmChannels.find(c => c.channel.id === activeChannel);
+  return entry?.target_agent_id ?? null;
+}
+
 /** AD-612: Recursively flatten a post tree into chronological order. */
 function flattenPosts(posts: WardRoomPost[]): WardRoomPost[] {
   const result: WardRoomPost[] = [];
@@ -24,6 +38,9 @@ export function WardRoomThreadDetail() {
   const detail = useStore(s => s.wardRoomThreadDetail);
   const activeThread = useStore(s => s.wardRoomActiveThread);
   const view = useStore(s => s.wardRoomView);
+  const activeChannel = useStore(s => s.wardRoomActiveChannel);
+  const dmChannels = useStore(s => s.wardRoomDmChannels);
+  const dmPending = useStore(s => s.wardRoomDmPending);
   const [replyText, setReplyText] = useState('');
 
   if (!detail || !activeThread) return null;
@@ -31,22 +48,73 @@ export function WardRoomThreadDetail() {
   const { thread, posts } = detail;
   const isDm = view === 'dm-detail';
   const flatPosts = isDm ? flattenPosts(posts) : null;
+  const targetAgentId = resolveDmTargetAgentId(view, activeChannel, dmChannels);
+  const isThinking = dmPending?.threadId === activeThread;
 
+  // AD-574b: Synchronous DM reply via /api/agent/{id}/chat with dual-write to
+  // Ward Room. Falls back to async post-only path when not a DM view, when
+  // target agent cannot be resolved, or when the chat call fails.
   const submitReply = async () => {
-    if (!replyText.trim()) return;
+    const text = replyText.trim();
+    if (!text || isThinking) return;
+    setReplyText('');
+
+    const postCaptain = () => fetch(`/api/wardroom/threads/${activeThread}/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        author_id: 'captain',
+        body: text,
+        author_callsign: 'Captain',
+      }),
+    });
+
+    if (!isDm || !targetAgentId) {
+      // Existing async path — proactive cycle responds.
+      try { await postCaptain(); } catch { /* swallow */ }
+      useStore.getState().selectWardRoomThread(activeThread);
+      return;
+    }
+
+    // Synchronous DM path with thinking indicator + dual-write.
+    useStore.getState().setWardRoomDmPending({
+      threadId: activeThread,
+      captainText: text,
+      startedAt: Date.now(),
+    });
     try {
+      const history = (flatPosts ?? []).slice(-20).map(p => ({
+        role: p.author_id === 'captain' ? 'user' : 'agent',
+        text: p.body,
+      }));
+      const res = await fetch(`/api/agent/${targetAgentId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, history }),
+      });
+      if (!res.ok) throw new Error(`chat ${res.status}`);
+      const data = await res.json();
+      const responseText = data.response || '(no response)';
+
+      // Dual-write: post Captain message, then agent response. Sequential to
+      // preserve created_at ordering.
+      await postCaptain();
       await fetch(`/api/wardroom/threads/${activeThread}/posts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          author_id: 'captain',
-          body: replyText.trim(),
-          author_callsign: 'Captain',
+          author_id: targetAgentId,
+          body: responseText,
         }),
       });
-      setReplyText('');
+    } catch {
+      // Fallback: ensure the user message lands so the proactive cycle can
+      // still respond on the next think tick.
+      try { await postCaptain(); } catch { /* swallow */ }
+    } finally {
+      useStore.getState().setWardRoomDmPending(null);
       useStore.getState().selectWardRoomThread(activeThread);
-    } catch { /* swallow */ }
+    }
   };
 
   return (
@@ -76,9 +144,17 @@ export function WardRoomThreadDetail() {
             <EndorsementButtons targetId={thread.id} targetType="thread" netScore={thread.net_score} />
           </div>
         )}
-        {posts.length === 0 && (
+        {posts.length === 0 && !isThinking && (
           <div style={{ padding: 16, color: '#666680', fontSize: 12, textAlign: 'center' as const }}>
             No replies yet
+          </div>
+        )}
+        {isThinking && (
+          <div
+            data-testid="dm-thinking-indicator"
+            style={{ padding: '12px 8px', color: '#8888a0', fontSize: 12, fontStyle: 'italic' }}
+          >
+            agent is thinking…
           </div>
         )}
         {isDm && flatPosts
@@ -109,11 +185,17 @@ export function WardRoomThreadDetail() {
             fontFamily: "'Inter', sans-serif", outline: 'none', resize: 'none',
           }}
         />
-        <button onClick={submitReply} style={{
-          background: 'rgba(240,176,96,0.15)', border: '1px solid rgba(240,176,96,0.3)',
-          borderRadius: 4, color: '#f0b060', fontSize: 11, cursor: 'pointer', padding: '4px 10px',
-          fontFamily: "'JetBrains Mono', monospace", alignSelf: 'flex-end',
-        }}>Send</button>
+        <button
+          onClick={submitReply}
+          disabled={isThinking}
+          style={{
+            background: 'rgba(240,176,96,0.15)', border: '1px solid rgba(240,176,96,0.3)',
+            borderRadius: 4, color: isThinking ? '#666680' : '#f0b060', fontSize: 11,
+            cursor: isThinking ? 'not-allowed' : 'pointer', padding: '4px 10px',
+            fontFamily: "'JetBrains Mono', monospace", alignSelf: 'flex-end',
+            opacity: isThinking ? 0.5 : 1,
+          }}
+        >Send</button>
       </div>
     </div>
   );

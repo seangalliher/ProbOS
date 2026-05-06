@@ -250,7 +250,12 @@ export interface HXIState {
   wardRoomThreadDetail: { thread: WardRoomThread; posts: WardRoomPost[] } | null;
   wardRoomUnread: Record<string, number>;
   wardRoomView: 'channels' | 'dms' | 'dm-detail';
-  wardRoomDmChannels: { channel: { id: string; name: string; description: string; created_at: number }; latest_thread: any; thread_count: number }[];
+  // AD-574b: target_agent_id added to per-channel entry; null when participant
+  // cannot be resolved by backend (deleted/renamed agent → UI falls back to
+  // existing async post-only path).
+  wardRoomDmChannels: { channel: { id: string; name: string; description: string; created_at: number }; latest_thread: any; thread_count: number; target_agent_id: string | null }[];
+  // AD-574b: in-flight indicator for synchronous DM chat. null when idle.
+  wardRoomDmPending: import('./types').WardRoomDmPending | null;
   _wardRoomThreadCache: Map<string, { threads: any[]; fetchedAt: number }>;  // Crew Manifest (AD-513)
   crewManifestOpen: boolean;
   crewManifest: CrewManifestEntry[] | null;
@@ -306,6 +311,7 @@ export interface HXIState {
   refreshWardRoomThreads: () => void;
   refreshWardRoomUnread: () => void;
   setWardRoomView: (view: 'channels' | 'dms' | 'dm-detail') => void;
+  setWardRoomDmPending: (pending: import('./types').WardRoomDmPending | null) => void;
   selectDmChannel: (channelId: string) => void;
   refreshWardRoomDmChannels: () => void;
   // Communications settings (AD-485)
@@ -462,6 +468,7 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomThreadDetail: null,
   wardRoomUnread: {},
   wardRoomView: 'channels' as const,
+  wardRoomDmPending: null,
   wardRoomDmChannels: [],
   _wardRoomThreadCache: new Map(),
   communicationsSettings: { dm_min_rank: 'ensign', recreation_min_rank: 'ensign' },
@@ -659,6 +666,7 @@ export const useStore = create<HXIState>((set, get) => ({
     } catch { /* swallow */ }
   },
   setWardRoomView: (view: 'channels' | 'dms' | 'dm-detail') => set({ wardRoomView: view }),
+  setWardRoomDmPending: (pending: import('./types').WardRoomDmPending | null) => set({ wardRoomDmPending: pending }),
   selectDmChannel: async (channelId: string) => {
     await get().selectWardRoomChannel(channelId);
     set({ wardRoomView: 'dm-detail' as const });

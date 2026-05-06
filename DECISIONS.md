@@ -4,6 +4,23 @@ Append-only log of architectural decisions made during ProbOS development. Each 
 
 See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap.md](docs/development/roadmap.md) for future plans.
 
+### AD-574b: Synchronous DM Reply with Thinking Indicator + Ward Room Dual-Write (2026-05-05)
+
+**Context.** AD-574 (Wave 33, decisions-era-4-evolution.md:2888) wired Captain-in-DM into `WardRoomRouter.find_targets` so an agent eventually responds to Captain DMs on its next proactive think cycle. The DM panel UX remained asymmetric with `ProfileChatTab`: Captain types into a Ward Room DM, the input clears, and an empty thread sits there for ~30s. AD-574b closes that gap by routing DM submits through `/api/agent/{id}/chat` synchronously and dual-writing the exchange back into the Ward Room thread for record-keeping.
+
+**Decision.** `WardRoomThreadDetail.submitReply` branches on `view === 'dm-detail'` plus a backend-supplied `target_agent_id`. Synchronous path: set `wardRoomDmPending` slice, POST to `/api/agent/{id}/chat`, on success dual-write Captain message + agent response to the Ward Room thread, on failure fall back to existing async-post path. Backend `/api/wardroom/dms` and `/api/wardroom/captain-dms` gain a `target_agent_id` field via private `_resolve_dm_target_agent_id` helper that resolves channel-name participant prefix against `runtime.registry.all()` and returns `null` on miss (tier-2 log-and-degrade).
+
+**Wholesale-deferred sibling.** AD-574c (DM conversation convergence — unify `ProfileChatTab.agentConversations` Map with Ward Room DM threads into a single conversation store) is wholesale-deferred to AD-574c-i. Forcing function: AD-574b establishes Ward Room as the canonical write surface for DM via dual-write; AD-574c-i then refactors ProfileChatTab to read from `/api/wardroom/dms/{channel_id}/threads` + `/api/wardroom/threads/{id}` instead of the standalone Map. Cannot land in Wave 69 because doing so would conflate two architectural changes (foreground sync UX + canonical-store swap) into one prompt — exact pattern Wave 67 (5→1) and Wave 68 (4→0) avoided.
+
+**Architect calls.** `target_agent_id` lives on the API response not in UI parsing (DLog #1: keeps frontend ignorant of channel-name format mutation history). Dual-write client-side (DLog #2: keeps `/api/agent/{id}/chat` reusable by ProfileChatTab without thread-state coupling). `target_agent_id=null` fallback (DLog #3: graceful degradation when channel encodes a deleted/renamed agent). `wardRoomDmPending` lives in store not local state (DLog #4: survives panel re-mounts during in-flight chat). Existing AD-574 proactive ambient-response path unchanged (DLog #5: belt-and-suspenders; if sync fails the proactive cycle still picks up the unread Captain post).
+
+**Out of scope.** Streaming "thinking…" with periodic LLM-thought updates (defer AD-574b-1, requires SSE/WebSocket on `/api/agent/{id}/chat`). Captain typing-indicator surface to the agent (defer AD-574b-2). Multi-Captain coordination (*(Commercial)* AD-574b-3, OSS surface stays single-Captain). DM convergence into single store (deferred AD-574c-i, see Forcing function above).
+
+**Tests.** 8 pytest at `tests/test_ad574b_dm_sync_chat.py` (helper unit tests covering captain DM resolution, agent-to-agent DM resolution, dead-agent skip, unresolvable prefix → None, non-DM channel → None, runtime without registry → None, registry exception → None tier-2). 6 Vitest at `ui/src/__tests__/WardRoomDmSync.test.tsx` (idle render, sync DM submit + dual-write, thinking placeholder during in-flight, fallback on null target, fallback on chat 500, Send disabled while thinking).
+
+**Cross-links:** AD-574 (DM reply agent notification — predecessor, decisions-era-4-evolution.md:2888), AD-574c-i (DM conversation convergence — wholesale-deferred successor, no GH issue v1; forcing function: this AD's dual-write must be live before ProfileChatTab data-source swap). Wave 69. Closes GH issue #110 (partial — AD-574c remains as deferred-with-forcing-function).
+
+
 **Archives:** [Era I — Genesis](decisions-era-1-genesis.md) | [Era II — Emergence](decisions-era-2-emergence.md) | [Era III — Product](decisions-era-3-product.md) | [Era IV — Evolution](decisions-era-4-evolution.md)
 
 ---
