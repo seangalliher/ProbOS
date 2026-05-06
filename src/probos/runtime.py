@@ -460,6 +460,11 @@ class ProbOSRuntime:
         )
         self.recreation_preference_tracker.set_event_callback(self.emit_event)
 
+        # --- Recreation Spectator Registry (AD-526e) ---
+        from probos.recreation.spectators import SpectatorRegistry
+        self.recreation_spectator_registry: SpectatorRegistry = SpectatorRegistry()
+        self.recreation_spectator_registry.set_event_callback(self.emit_event)
+
         # --- TaskEvent Dispatcher (AD-654c) ---
         self.dispatcher: Any | None = None
 

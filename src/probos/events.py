@@ -230,6 +230,8 @@ class EventType(str, Enum):
     DREAM_MANIFEST_UPDATED = "dream_manifest_updated"  # AD-538b
     CAPTAIN_DM_PRIORITY_QUEUED = "captain_dm_priority_queued"  # AD-572b
     RECREATION_GAME_REGISTERED = "recreation_game_registered"  # AD-526c
+    RECREATION_SPECTATOR_JOINED = "recreation_spectator_joined"  # AD-526e
+    RECREATION_SPECTATOR_COMMENTARY = "recreation_spectator_commentary"  # AD-526e
     CONTRASTIVE_RECALL = "contrastive_recall"  # AD-655
     DEPT_PROFILE_APPLIED = "dept_profile_applied"  # AD-656
     EPS_BUDGET_EXCEEDED = "eps_budget_exceeded"  # AD-469
