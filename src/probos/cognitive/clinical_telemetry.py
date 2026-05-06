@@ -95,13 +95,22 @@ class ClinicalTelemetryService:
         *,
         requester_agent_id: str,
         limit: int = 20,
+        captain_override: bool = False,
     ) -> list[dict[str, Any]]:
         """Return up to `limit` recent dream reports, most recent first.
 
         Returns [] (not raises) if requester lacks clearance or if the
         EmergentDetector is unavailable. Every call is logged to the audit ring.
+
+        AD-635e: when `captain_override=True`, the clearance gate is bypassed
+        and the audit-ring entry is stamped `by_captain=True`. This kwarg is
+        kwarg-only and not exposed via the AD-635d REST router (callers there
+        cannot reach it). Used only by the in-process `/clinical` shell command.
         """
-        granted = self._authorize_clinical_query(requester_agent_id)
+        if captain_override:
+            granted = True
+        else:
+            granted = self._authorize_clinical_query(requester_agent_id)
         if not granted:
             self._record_audit(
                 requester_agent_id, "dream_history", granted=False, result_count=0
@@ -132,7 +141,8 @@ class ClinicalTelemetryService:
             return []
 
         self._record_audit(
-            requester_agent_id, "dream_history", granted=True, result_count=len(rows)
+            requester_agent_id, "dream_history", granted=True,
+            result_count=len(rows), by_captain=captain_override,
         )
         return rows
 
@@ -142,13 +152,21 @@ class ClinicalTelemetryService:
         requester_agent_id: str,
         target_agent_id: str,
         limit: int = 20,
+        captain_override: bool = False,
     ) -> list[dict[str, Any]]:
         """Return up to `limit` recent chain traces for `target_agent_id`.
 
         Returns [] (not raises) if requester lacks clearance, if the journal
         is unavailable, or on any underlying failure.
+
+        AD-635e: when `captain_override=True`, the clearance gate is bypassed
+        and the audit-ring entry is stamped `by_captain=True` (see
+        `query_dream_history` for the policy rationale).
         """
-        granted = self._authorize_clinical_query(requester_agent_id)
+        if captain_override:
+            granted = True
+        else:
+            granted = self._authorize_clinical_query(requester_agent_id)
         if not granted:
             self._record_audit(
                 requester_agent_id,
@@ -200,6 +218,7 @@ class ClinicalTelemetryService:
             granted=True,
             result_count=len(rows),
             target_agent_id=target_agent_id,
+            by_captain=captain_override,
         )
         return rows
 
@@ -214,6 +233,7 @@ class ClinicalTelemetryService:
         requester_agent_id: str,
         target_agent_id: str | None = None,
         limit: int = 50,
+        captain_override: bool = False,
     ) -> list[dict[str, Any]]:
         """AD-635c: Return up to `limit` recent breaker transitions.
 
@@ -222,8 +242,14 @@ class ClinicalTelemetryService:
         first). Returns [] (not raises) if requester lacks clearance,
         if the store is unavailable, or on any underlying failure.
         Every call is logged to the audit ring.
+
+        AD-635e: when `captain_override=True`, the clearance gate is bypassed
+        and the audit-ring entry is stamped `by_captain=True`.
         """
-        granted = self._authorize_clinical_query(requester_agent_id)
+        if captain_override:
+            granted = True
+        else:
+            granted = self._authorize_clinical_query(requester_agent_id)
         if not granted:
             self._record_audit(
                 requester_agent_id,
@@ -276,6 +302,7 @@ class ClinicalTelemetryService:
             granted=True,
             result_count=len(rows),
             target_agent_id=target_agent_id,
+            by_captain=captain_override,
         )
         return rows
 
@@ -345,6 +372,7 @@ class ClinicalTelemetryService:
         granted: bool,
         result_count: int,
         target_agent_id: str | None = None,
+        by_captain: bool = False,
     ) -> None:
         entry: dict[str, Any] = {
             "ts": time.time(),
@@ -355,6 +383,8 @@ class ClinicalTelemetryService:
         }
         if target_agent_id is not None:
             entry["target_agent_id"] = target_agent_id
+        if by_captain:
+            entry["by_captain"] = True
         # In-memory ring append happens FIRST. A write-through-side failure
         # MUST NOT prevent the in-memory record (DLog #11). Tier-2 log-and-
         # degrade applies to the persistence side, not the ring.

@@ -1166,3 +1166,152 @@ def render_dag_proposal(
         )
 
     return Panel(table, title=title, border_style="cyan")
+
+
+# ---------------------------------------------------------------------------
+# Clinical telemetry panels (AD-635e)
+# ---------------------------------------------------------------------------
+
+def render_clinical_dreams_panel(rows: list[dict[str, Any]]) -> Panel:
+    """AD-635e: Render dream-history rows from ClinicalTelemetryService.
+
+    Each row is a dict produced by `EmergentDetector.recent_dreams(limit=...)`.
+    Empty list renders an explanatory dim line.
+    """
+    if not rows:
+        return Panel(
+            "[dim]No dream cycles recorded.[/dim]",
+            title="Clinical: Dreams",
+            border_style="magenta",
+        )
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("Time", style="dim")
+    table.add_column("Episodes", justify="right")
+    table.add_column("Strengthened", justify="right")
+    table.add_column("Pruned", justify="right")
+    table.add_column("Trust adj.", justify="right")
+    for row in rows:
+        ts_raw = row.get("ts") or row.get("timestamp")
+        ts = (
+            datetime.fromtimestamp(float(ts_raw), tz=timezone.utc).strftime("%H:%M:%S")
+            if isinstance(ts_raw, (int, float))
+            else "?"
+        )
+        table.add_row(
+            ts,
+            str(row.get("episodes_replayed", "-")),
+            str(row.get("weights_strengthened", "-")),
+            str(row.get("weights_pruned", "-")),
+            str(row.get("trust_adjustments", "-")),
+        )
+    return Panel(table, title="Clinical: Dreams", border_style="magenta")
+
+
+def render_clinical_traces_panel(
+    rows: list[dict[str, Any]], target_agent_id: str
+) -> Panel:
+    """AD-635e: Render cognitive-chain-trace rows for one target agent."""
+    if not rows:
+        return Panel(
+            f"[dim]No chain traces for {target_agent_id}.[/dim]",
+            title=f"Clinical: Chain Traces ({target_agent_id})",
+            border_style="cyan",
+        )
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("Time", style="dim")
+    table.add_column("Chain", max_width=20)
+    table.add_column("Outcome")
+    table.add_column("Steps", justify="right")
+    for row in rows:
+        ts_raw = row.get("ts") or row.get("timestamp")
+        ts = (
+            datetime.fromtimestamp(float(ts_raw), tz=timezone.utc).strftime("%H:%M:%S")
+            if isinstance(ts_raw, (int, float))
+            else "?"
+        )
+        chain = str(row.get("chain_id") or row.get("trace_id") or "?")[:20]
+        outcome = str(row.get("outcome") or row.get("status") or "-")
+        steps = row.get("step_count") or len(row.get("steps") or []) or "-"
+        table.add_row(ts, chain, outcome, str(steps))
+    return Panel(
+        table,
+        title=f"Clinical: Chain Traces ({target_agent_id})",
+        border_style="cyan",
+    )
+
+
+def render_clinical_breakers_panel(
+    rows: list[dict[str, Any]], target_agent_id: str | None
+) -> Panel:
+    """AD-635e: Render circuit-breaker history rows.
+
+    `target_agent_id=None` indicates fleet-wide query.
+    """
+    label = target_agent_id or "fleet-wide"
+    if not rows:
+        return Panel(
+            f"[dim]No breaker transitions ({label}).[/dim]",
+            title=f"Clinical: Circuit Breakers ({label})",
+            border_style="yellow",
+        )
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("Time", style="dim")
+    table.add_column("Agent")
+    table.add_column("State")
+    table.add_column("Zone")
+    table.add_column("Reason", max_width=30)
+    for row in rows:
+        ts_raw = row.get("ts") or row.get("timestamp")
+        ts = (
+            datetime.fromtimestamp(float(ts_raw), tz=timezone.utc).strftime("%H:%M:%S")
+            if isinstance(ts_raw, (int, float))
+            else "?"
+        )
+        table.add_row(
+            ts,
+            str(row.get("agent_id", "-")),
+            str(row.get("state", "-")),
+            str(row.get("zone", "-")),
+            str(row.get("reason", ""))[:30],
+        )
+    return Panel(
+        table,
+        title=f"Clinical: Circuit Breakers ({label})",
+        border_style="yellow",
+    )
+
+
+def render_clinical_audit_panel(rows: list[dict[str, Any]]) -> Panel:
+    """AD-635e: Render audit-ring snapshot."""
+    if not rows:
+        return Panel(
+            "[dim]Audit ring is empty.[/dim]",
+            title="Clinical: Audit",
+            border_style="cyan",
+        )
+    table = Table(show_header=True, show_lines=False)
+    table.add_column("Time", style="dim")
+    table.add_column("Requester")
+    table.add_column("Query")
+    table.add_column("Granted", justify="right")
+    table.add_column("Rows", justify="right")
+    table.add_column("By Captain", justify="right")
+    for row in rows:
+        ts_raw = row.get("ts")
+        ts = (
+            datetime.fromtimestamp(float(ts_raw), tz=timezone.utc).strftime("%H:%M:%S")
+            if isinstance(ts_raw, (int, float))
+            else "?"
+        )
+        granted = "[green]yes[/green]" if row.get("granted") else "[red]no[/red]"
+        by_cap = "[bold]yes[/bold]" if row.get("by_captain") else "-"
+        table.add_row(
+            ts,
+            str(row.get("requester_agent_id", "-")),
+            str(row.get("query_type", "-")),
+            granted,
+            str(row.get("result_count", "-")),
+            by_cap,
+        )
+    return Panel(table, title="Clinical: Audit", border_style="cyan")
+

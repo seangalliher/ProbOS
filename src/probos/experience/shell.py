@@ -22,6 +22,7 @@ from probos.experience.commands import (
     commands_introspection,
     commands_alert,
     commands_clearance,
+    commands_clinical,
     commands_config,
     commands_tool_access,
     commands_skill,
@@ -101,6 +102,7 @@ class ProbOSShell:
         "/grant":     "Manage clearance grants (issue/revoke/list)",
         "/tool-access": "Manage tool permissions (grant/restrict/revoke/break-lock/list/check)",
         "/skill":     "Manage cognitive skills (list/discover/import/info/enrich/remove)",
+        "/clinical":  "Clinical telemetry (dreams/traces/breakers/audit) — Captain authority",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
         "/quit":      "Exit ProbOS",
@@ -286,6 +288,7 @@ class ProbOSShell:
             "/grant":      lambda: commands_clearance.cmd_grant(rt, con, arg),
             "/tool-access": lambda: commands_tool_access.cmd_tool_access(rt, con, arg),
             "/skill":      lambda: commands_skill.cmd_skill(rt, con, arg),
+            "/clinical":   lambda: commands_clinical.cmd_clinical(rt, con, arg),
 
             "/config":     lambda: commands_config.cmd_config(rt, con, arg),
             "/explain":    lambda: self._handle_nl("what just happened?"),
@@ -505,6 +508,9 @@ class ProbOSShell:
 
     async def _cmd_cache(self, arg: str) -> None:
         await commands_introspection.cmd_cache(self.runtime, self.console, arg)
+
+    async def _cmd_clinical(self, arg: str) -> None:
+        await commands_clinical.cmd_clinical(self.runtime, self.console, arg)
 
     async def _cmd_explain(self, arg: str) -> None:
         await self._handle_nl("what just happened?")
