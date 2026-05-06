@@ -1099,3 +1099,55 @@ waves:
       implementations follow when consumer signal arrives. Baseline 11565 ->
       target >= 11595 (+30 floor; 30 tests planned). No HXI surface. No new
       Intent. No router. No LLM call. No commercial language.
+
+  - id: "82"
+    title: "AD-633 v1 Predictive Cognitive Branching (6 OSS sub-ADs concrete + 2 Protocol seams)"
+    kind: single
+    depends_on: ["81"]
+    dispatch_prompt: "prompts/WAVE-82-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-633-predictive-branching-v1.md"
+    builder_required: true
+    issues_to_close: [228]
+    status: pending
+    notes: |
+      Closes GH #228 (AD-633 Predictive Cognitive Branching umbrella). Six
+      OSS sub-ADs ship concretely: 633a PredictionEngine (deterministic
+      confidence scoring from Hebbian + thread activity + ontology dept +
+      working-memory engagement; ConfidenceTier ZERO_COST/CHEAP/STANDARD/
+      ANTICIPATORY; circuit-breaker hard gate), 633b SpeculationCache (TTL +
+      FIFO bounded; emits PREDICTION_HIT/FLUSHED) + SpeculationExecutor
+      (wraps SubTaskExecutor; speculation-tagged source; emits
+      PREDICTION_ERROR_RECORDED on intent-divergence), 633c SpeculationBudget
+      (per-agent rolling-window pool separate from operational AD-617;
+      Standard-tier requires EarnedAgency >= EXECUTING; flush-rate feedback
+      halves budget when 1-hour rolling flush rate >= 30%), 633d
+      _decide_via_llm pre-LLM cache check (mirrors AD-585 _knowledge_ambient
+      injection shape; tier-2 log-and-degrade; emits PREDICTION_MISS), 633e
+      AccuracyTracker (per-agent ring buffer + AccuracyRates), 633h
+      PREDICTION_ERROR_RECORDED event-emit (AD-557 listener integration is
+      AD-633h-1 follow-on; EmergenceMetricsEngine has no record_signal API
+      at HEAD). Two Protocol seams ship with NoOp default impls: 633f
+      IdleSpeculationPolicy (concrete impl is AD-633f-1 once accuracy data
+      shows >= 10% hit rate), 633g PreplayHook (concrete impl is AD-633g-1
+      once dream pipeline exposes step registry). One sub-AD hard-deferred:
+      633i Cognitive JIT compilation — consumer (AD-531-539 JIT) absent at
+      HEAD; learned_shortcuts/protocol.py:18 documents 'cognitive_jit' as
+      future identifier; v1 emits PREDICTION_HIT events JIT will subscribe
+      to; no producer-without-consumer code shipped. 4 new EventTypes
+      (PREDICTION_HIT, PREDICTION_MISS, PREDICTION_FLUSHED,
+      PREDICTION_ERROR_RECORDED). New package
+      src/probos/cognitive/predictive_branching/ with 6 modules (engine,
+      cache, executor, budget, accuracy, policy). Pydantic
+      PredictiveBranchingConfig (default-False, AD-695 precedent — speculation
+      consumes real tokens). Finalize wirer _wire_predictive_branching
+      invoked immediately after AD-632 SubTaskExecutor wiring; gated on
+      hebbian_router + ontology; tier-2 log-and-degrade. Single
+      _decide_via_llm modification at the head of the function. Baseline
+      11580 -> target >= 11615 (+35 floor; 35 tests planned across 8 test
+      classes — engine 8, cache 7, budget 6, accuracy 4, executor 4, policy
+      seams 3, config+wiring 2, decision-pipeline integration 1). No HXI
+      surface. No new Intent. No router. No LLM call inside engine. No
+      commercial language (AD-633 umbrella is fully OSS — zero commercial
+      sub-ADs).
