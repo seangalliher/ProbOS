@@ -618,3 +618,39 @@ export interface BillStepStateView {
   completed_at: number | null;
   error: string | null;
 }
+
+// AD-523b: Crew Notebooks Browser
+export interface NotebookFrontmatter {
+  author?: string;
+  department?: string;
+  topic?: string;
+  tags?: string[];
+  classification?: 'private' | 'department' | 'ship' | 'fleet';
+  created?: string;
+  updated?: string;
+  status?: string;
+}
+
+export interface NotebookEntry {
+  path: string;                     // e.g. "notebooks/atlas/topic-slug.md"
+  frontmatter: NotebookFrontmatter;
+}
+
+export interface NotebookAuthor {
+  callsign: string;                 // path segment after "notebooks/"
+  department: string;               // most common department in this author's entries
+  entryCount: number;
+}
+
+export interface NotebookDetail {
+  path: string;
+  frontmatter: NotebookFrontmatter;
+  content: string;                  // markdown body
+}
+
+export interface NotebookSearchResult {
+  path: string;
+  frontmatter: NotebookFrontmatter;
+  score: number;
+  snippet: string;
+}

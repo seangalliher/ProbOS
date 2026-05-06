@@ -17,6 +17,10 @@ import type {
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
   GameState,  // AD-526b
   CrewManifestEntry,  // AD-513
+  NotebookEntry,      // AD-523b
+  NotebookAuthor,     // AD-523b
+  NotebookDetail,     // AD-523b
+  NotebookSearchResult,  // AD-523b
   BillDefinitionView, BillInstanceView,  // AD-618d
 } from './types';
 
@@ -259,6 +263,15 @@ export interface HXIState {
   _wardRoomThreadCache: Map<string, { threads: any[]; fetchedAt: number }>;  // Crew Manifest (AD-513)
   crewManifestOpen: boolean;
   crewManifest: CrewManifestEntry[] | null;
+  // AD-523b: Crew Notebooks Browser
+  notebooksOpen: boolean;
+  notebooksAuthors: NotebookAuthor[];
+  notebooksEntries: NotebookEntry[];          // entries for currently selected author
+  notebooksSelectedAuthor: string | null;     // callsign or null
+  notebooksSelectedEntry: NotebookDetail | null;
+  notebooksSearchQuery: string;
+  notebooksSearchResults: NotebookSearchResult[] | null;  // null = not in search mode
+  notebooksLoading: boolean;
   // Assignments (AD-408)
   assignments: Assignment[];
   // Scheduled Tasks (Phase 25a)
@@ -302,6 +315,14 @@ export interface HXIState {
   // Crew Manifest actions (AD-513)
   openCrewManifest: () => void;
   closeCrewManifest: () => void;
+  // AD-523b
+  openNotebooks: () => Promise<void>;
+  closeNotebooks: () => void;
+  selectNotebookAuthor: (callsign: string) => Promise<void>;
+  selectNotebookEntry: (path: string) => Promise<void>;
+  setNotebookSearchQuery: (q: string) => void;
+  runNotebookSearch: () => Promise<void>;
+  clearNotebookSearch: () => void;
   // Ward Room HXI actions (AD-407c)
   openWardRoom: (channelId?: string) => void;
   closeWardRoom: () => void;
@@ -475,6 +496,15 @@ export const useStore = create<HXIState>((set, get) => ({
   // Crew Manifest (AD-513)
   crewManifestOpen: false,
   crewManifest: null,
+  // AD-523b
+  notebooksOpen: false,
+  notebooksAuthors: [],
+  notebooksEntries: [],
+  notebooksSelectedAuthor: null,
+  notebooksSelectedEntry: null,
+  notebooksSearchQuery: '',
+  notebooksSearchResults: null,
+  notebooksLoading: false,
   // Assignments (AD-408)
   assignments: [],
   // Scheduled Tasks (Phase 25a)
@@ -540,6 +570,132 @@ export const useStore = create<HXIState>((set, get) => ({
     } catch { /* non-critical */ }
   },
   closeCrewManifest: () => set({ crewManifestOpen: false }),
+  // AD-523b: Crew Notebooks Browser
+  openNotebooks: async () => {
+    set({ notebooksOpen: true, notebooksLoading: true });
+    try {
+      const res = await fetch('/api/records/documents?directory=notebooks');
+      if (!res.ok) {
+        set({ notebooksLoading: false });
+        return;
+      }
+      const data = await res.json();
+      const docs: NotebookEntry[] = (data.documents || []).map((d: any) => ({
+        path: d.path || '',
+        frontmatter: (d.frontmatter || {}) as any,
+      }));
+      // Group by author callsign (path = "notebooks/<callsign>/<file>.md")
+      const groups = new Map<string, { count: number; depts: Map<string, number> }>();
+      for (const e of docs) {
+        const parts = e.path.split('/');
+        if (parts.length < 3 || parts[0] !== 'notebooks') continue;
+        const cs = parts[1];
+        if (!groups.has(cs)) groups.set(cs, { count: 0, depts: new Map() });
+        const g = groups.get(cs)!;
+        g.count += 1;
+        const dept = e.frontmatter.department || '';
+        if (dept) g.depts.set(dept, (g.depts.get(dept) || 0) + 1);
+      }
+      const authors: NotebookAuthor[] = Array.from(groups.entries()).map(([cs, g]) => {
+        let topDept = '';
+        let topCount = 0;
+        for (const [d, c] of g.depts.entries()) {
+          if (c > topCount) { topDept = d; topCount = c; }
+        }
+        return { callsign: cs, department: topDept, entryCount: g.count };
+      }).sort((a, b) => a.callsign.localeCompare(b.callsign));
+      set({ notebooksAuthors: authors, notebooksLoading: false });
+    } catch {
+      set({ notebooksLoading: false });
+    }
+  },
+  closeNotebooks: () => set({
+    notebooksOpen: false,
+    notebooksSelectedAuthor: null,
+    notebooksSelectedEntry: null,
+    notebooksEntries: [],
+    notebooksSearchQuery: '',
+    notebooksSearchResults: null,
+  }),
+  selectNotebookAuthor: async (callsign: string) => {
+    set({
+      notebooksSelectedAuthor: callsign,
+      notebooksSelectedEntry: null,
+      notebooksLoading: true,
+      notebooksSearchResults: null,
+    });
+    try {
+      const res = await fetch(`/api/records/documents?directory=notebooks/${encodeURIComponent(callsign)}`);
+      if (!res.ok) {
+        set({ notebooksEntries: [], notebooksLoading: false });
+        return;
+      }
+      const data = await res.json();
+      const entries: NotebookEntry[] = (data.documents || []).map((d: any) => ({
+        path: d.path || '',
+        frontmatter: (d.frontmatter || {}) as any,
+      }));
+      // Sort newest first by frontmatter.updated || created
+      entries.sort((a, b) => {
+        const ta = a.frontmatter.updated || a.frontmatter.created || '';
+        const tb = b.frontmatter.updated || b.frontmatter.created || '';
+        return tb.localeCompare(ta);
+      });
+      set({ notebooksEntries: entries, notebooksLoading: false });
+    } catch {
+      set({ notebooksEntries: [], notebooksLoading: false });
+    }
+  },
+  selectNotebookEntry: async (path: string) => {
+    set({ notebooksLoading: true });
+    try {
+      const res = await fetch(`/api/records/documents/${path.split('/').map(encodeURIComponent).join('/')}?reader=captain`);
+      if (!res.ok) {
+        set({ notebooksSelectedEntry: null, notebooksLoading: false });
+        return;
+      }
+      const data = await res.json();
+      set({
+        notebooksSelectedEntry: {
+          path: data.path || path,
+          frontmatter: (data.frontmatter || {}) as any,
+          content: data.content || '',
+        },
+        notebooksLoading: false,
+      });
+    } catch {
+      set({ notebooksSelectedEntry: null, notebooksLoading: false });
+    }
+  },
+  setNotebookSearchQuery: (q: string) => set({ notebooksSearchQuery: q }),
+  runNotebookSearch: async () => {
+    const q = get().notebooksSearchQuery.trim();
+    if (!q) {
+      set({ notebooksSearchResults: null });
+      return;
+    }
+    set({ notebooksLoading: true });
+    try {
+      const res = await fetch(`/api/records/search?q=${encodeURIComponent(q)}&scope=ship`);
+      if (!res.ok) {
+        set({ notebooksSearchResults: [], notebooksLoading: false });
+        return;
+      }
+      const data = await res.json();
+      const all: NotebookSearchResult[] = (data.results || []).map((r: any) => ({
+        path: r.path || '',
+        frontmatter: (r.frontmatter || {}) as any,
+        score: r.score || 0,
+        snippet: r.snippet || '',
+      }));
+      // Filter to notebooks/* only — search runs over all records
+      const filtered = all.filter(r => r.path.startsWith('notebooks/'));
+      set({ notebooksSearchResults: filtered, notebooksLoading: false });
+    } catch {
+      set({ notebooksSearchResults: [], notebooksLoading: false });
+    }
+  },
+  clearNotebookSearch: () => set({ notebooksSearchQuery: '', notebooksSearchResults: null }),
   minimizeAgentProfile: () => {
     const agentId = get().activeProfileAgent;
     if (!agentId) return;
