@@ -11,29 +11,7 @@
 
 import { useEffect } from 'react';
 import { useStore } from '../store/useStore';
-
-const DEPT_COLORS: Record<string, string> = {
-  engineering: '#b0a050',
-  science: '#50b0a0',
-  medical: '#5090d0',
-  security: '#d05050',
-  bridge: '#d0a030',
-};
-
-const CLASS_COLORS: Record<string, string> = {
-  private: '#7060a8',
-  department: '#88a4c8',
-  ship: '#f0b060',
-  fleet: '#e0c070',
-};
-
-function deptColor(dept: string): string {
-  return DEPT_COLORS[(dept || '').toLowerCase()] || '#8888a0';
-}
-
-function classColor(cls: string): string {
-  return CLASS_COLORS[(cls || '').toLowerCase()] || '#8888a0';
-}
+import { deptColor, classColor } from './knowledge/colors';
 
 function formatTimestamp(iso: string): string {
   if (!iso) return '';

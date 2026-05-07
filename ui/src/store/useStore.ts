@@ -26,6 +26,15 @@ import type {
   BillDefinitionView, BillInstanceView,  // AD-618d
 } from './types';
 
+// AD-562: Knowledge Browser types
+import type {
+  KnowledgeBrowserEntry, KnowledgeBrowserDoc, KnowledgeBrowserBacklinks,
+  KnowledgeBrowserGraphData, KnowledgeBrowserTimeline, KnowledgeBrowserFilters,
+} from '../components/knowledge/types';
+import { DEFAULT_KNOWLEDGE_BROWSER_FILTERS } from '../components/knowledge/types';
+
+export type KnowledgeBrowserView = 'list' | 'reader' | 'graph' | 'timeline';
+
 export interface GroupCenter {
   center: [number, number, number];
   radius: number;
@@ -286,6 +295,17 @@ export interface HXIState {
   spatialSelectedNode: SpatialSelection | null;
   spatialGraphData: SpatialGraphData | null;
   spatialLayoutData: SpatialLayoutData | null;
+  // AD-562: Ship's Records Knowledge Browser
+  knowledgeBrowserOpen: boolean;
+  knowledgeBrowserView: KnowledgeBrowserView;
+  knowledgeBrowserSelectedPath: string | null;
+  knowledgeBrowserFilters: KnowledgeBrowserFilters;
+  knowledgeBrowserEntries: KnowledgeBrowserEntry[];
+  knowledgeBrowserSelectedDoc: KnowledgeBrowserDoc | null;
+  knowledgeBrowserBacklinks: KnowledgeBrowserBacklinks | null;
+  knowledgeBrowserGraphData: KnowledgeBrowserGraphData | null;
+  knowledgeBrowserTimeline: KnowledgeBrowserTimeline | null;
+  knowledgeBrowserLoading: boolean;
   // Assignments (AD-408)
   assignments: Assignment[];
   // Scheduled Tasks (Phase 25a)
@@ -348,6 +368,13 @@ export interface HXIState {
   setSpatialSelectedNode: (sel: SpatialSelection | null) => void;
   setSpatialGraphData: (data: SpatialGraphData | null) => void;
   setSpatialLayoutData: (data: SpatialLayoutData | null) => void;
+  // AD-562: Ship's Records Knowledge Browser
+  openKnowledgeBrowser: () => Promise<void>;
+  closeKnowledgeBrowser: () => void;
+  setKnowledgeBrowserView: (view: KnowledgeBrowserView) => void;
+  setKnowledgeBrowserFilters: (partial: Partial<KnowledgeBrowserFilters>) => void;
+  selectKnowledgeBrowserEntry: (path: string) => Promise<void>;
+  refreshKnowledgeBrowser: () => Promise<void>;
   // Ward Room HXI actions (AD-407c)
   openWardRoom: (channelId?: string) => void;
   closeWardRoom: () => void;
@@ -542,6 +569,17 @@ export const useStore = create<HXIState>((set, get) => ({
   spatialSelectedNode: null,
   spatialGraphData: null,
   spatialLayoutData: null,
+  // AD-562: Ship's Records Knowledge Browser
+  knowledgeBrowserOpen: false,
+  knowledgeBrowserView: 'list' as KnowledgeBrowserView,
+  knowledgeBrowserSelectedPath: null,
+  knowledgeBrowserFilters: { ...DEFAULT_KNOWLEDGE_BROWSER_FILTERS },
+  knowledgeBrowserEntries: [],
+  knowledgeBrowserSelectedDoc: null,
+  knowledgeBrowserBacklinks: null,
+  knowledgeBrowserGraphData: null,
+  knowledgeBrowserTimeline: null,
+  knowledgeBrowserLoading: false,
   // Assignments (AD-408)
   assignments: [],
   // Scheduled Tasks (Phase 25a)
@@ -775,6 +813,71 @@ export const useStore = create<HXIState>((set, get) => ({
   setSpatialSelectedNode: (sel) => set({ spatialSelectedNode: sel }),
   setSpatialGraphData: (data) => set({ spatialGraphData: data }),
   setSpatialLayoutData: (data) => set({ spatialLayoutData: data }),
+  // AD-562: Ship's Records Knowledge Browser
+  openKnowledgeBrowser: async () => {
+    set({ knowledgeBrowserOpen: true });
+    await get().refreshKnowledgeBrowser();
+  },
+  closeKnowledgeBrowser: () => set({
+    knowledgeBrowserOpen: false,
+    knowledgeBrowserSelectedPath: null,
+    knowledgeBrowserSelectedDoc: null,
+    knowledgeBrowserBacklinks: null,
+  }),
+  setKnowledgeBrowserView: (view) => set({ knowledgeBrowserView: view }),
+  setKnowledgeBrowserFilters: (partial) => {
+    const next = { ...get().knowledgeBrowserFilters, ...partial };
+    set({ knowledgeBrowserFilters: next });
+    void get().refreshKnowledgeBrowser();
+  },
+  refreshKnowledgeBrowser: async () => {
+    set({ knowledgeBrowserLoading: true });
+    try {
+      const f = get().knowledgeBrowserFilters;
+      const qs = new URLSearchParams();
+      for (const k of Object.keys(f) as Array<keyof KnowledgeBrowserFilters>) {
+        const v = f[k];
+        if (v) qs.set(k, v);
+      }
+      const browseUrl = `/api/records/browse${qs.toString() ? '?' + qs.toString() : ''}`;
+      const [browseR, graphR, tlR] = await Promise.all([
+        fetch(browseUrl).catch(() => null),
+        fetch('/api/records/graph?include_quality=true&include_suggested=true').catch(() => null),
+        fetch('/api/records/timeline?bucket=day').catch(() => null),
+      ]);
+      const browse = browseR && browseR.ok ? await browseR.json() : null;
+      const graph = graphR && graphR.ok ? await graphR.json() : null;
+      const timeline = tlR && tlR.ok ? await tlR.json() : null;
+      set({
+        knowledgeBrowserEntries: (browse?.documents || []) as KnowledgeBrowserEntry[],
+        knowledgeBrowserGraphData: graph as KnowledgeBrowserGraphData | null,
+        knowledgeBrowserTimeline: timeline as KnowledgeBrowserTimeline | null,
+        knowledgeBrowserLoading: false,
+      });
+    } catch {
+      set({ knowledgeBrowserLoading: false });
+    }
+  },
+  selectKnowledgeBrowserEntry: async (path: string) => {
+    set({ knowledgeBrowserSelectedPath: path, knowledgeBrowserLoading: true });
+    try {
+      const enc = encodeURIComponent(path);
+      const [docR, blR] = await Promise.all([
+        fetch(`/api/records/documents/${enc}?reader=captain`).catch(() => null),
+        fetch(`/api/records/backlinks/${enc}?include_suggested=true`).catch(() => null),
+      ]);
+      const doc = docR && docR.ok ? await docR.json() : null;
+      const bl = blR && blR.ok ? await blR.json() : null;
+      set({
+        knowledgeBrowserSelectedDoc: doc as KnowledgeBrowserDoc | null,
+        knowledgeBrowserBacklinks: bl as KnowledgeBrowserBacklinks | null,
+        knowledgeBrowserView: 'reader',
+        knowledgeBrowserLoading: false,
+      });
+    } catch {
+      set({ knowledgeBrowserLoading: false });
+    }
+  },
   minimizeAgentProfile: () => {
     const agentId = get().activeProfileAgent;
     if (!agentId) return;

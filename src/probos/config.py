@@ -818,6 +818,16 @@ class FederationMCPServerConfig(BaseModel):
     path_prefix: str = "/mcp"
 
 
+class KnowledgeBrowserConfig(BaseModel):
+    """AD-562: Ship's Records Knowledge Browser (Phases 1-4 OSS)."""
+    enabled: bool = False
+    max_graph_nodes: int = Field(default=500, ge=0, le=2000)
+    max_graph_edges: int = Field(default=1000, ge=0, le=5000)
+    jaccard_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
+    max_suggestions_per_entry: int = Field(default=5, ge=0, le=50)
+    index_refresh_seconds: int = Field(default=300, ge=10, le=3600)
+
+
 class SpatialExplorerConfig(BaseModel):
     """AD-520: Spatial Knowledge Explorer (Phase 1 Knowledge Graph View + Phase 2 Spatial Ship Layout).
 
@@ -2916,6 +2926,7 @@ class SystemConfig(BaseModel):
     mcp: MCPConfig = MCPConfig()  # AD-449
     mcp_app_host: MCPAppHostConfig = Field(default_factory=MCPAppHostConfig)  # AD-597
     spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
+    knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
     threshold_alerts: ThresholdAlertConfig = Field(default_factory=ThresholdAlertConfig)  # AD-695

@@ -137,3 +137,127 @@ async def get_record_history(path: str, limit: int = 20, runtime: Any = Depends(
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"path": path, "history": history}
+
+
+# AD-562: Knowledge Browser endpoints (Phases 1-4 OSS)
+
+
+@router.get("/browse")
+async def browse_records(
+    author: str = "",
+    department: str = "",
+    classification: str = "",
+    directory: str = "",
+    tags: str = "",
+    since: str = "",
+    until: str = "",
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """AD-562 Phase 1: unified entry list across all Ship's Records sub-directories."""
+    if not runtime._records_store:
+        return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+    tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()] if tags else []
+    try:
+        entries = await runtime._records_store.list_entries(
+            directory=directory,
+            author=author,
+            classification=classification,
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception:
+        logger.warning("AD-562: browse list_entries failed; returning empty", exc_info=True)
+        entries = []
+    filtered = []
+    for e in entries:
+        fm = e.get("frontmatter") or {}
+        if department and (fm.get("department") or "").lower() != department.lower():
+            continue
+        if tag_list:
+            entry_tags = {str(t).lower() for t in (fm.get("tags") or [])}
+            if not set(tag_list).issubset(entry_tags):
+                continue
+        created = fm.get("created", "")
+        if since and isinstance(created, str) and created and created[:10] < since:
+            continue
+        if until and isinstance(created, str) and created and created[:10] > until:
+            continue
+        filtered.append(e)
+    return {
+        "documents": filtered,
+        "count": len(filtered),
+        "filters_applied": {
+            "author": author, "department": department, "classification": classification,
+            "directory": directory, "tags": tag_list, "since": since, "until": until,
+        },
+    }
+
+
+@router.get("/backlinks/{path:path}")
+async def get_backlinks(
+    path: str,
+    include_suggested: bool = True,
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """AD-562 Phase 2: backlinks for a single entry."""
+    service = getattr(runtime, "knowledge_browser", None)
+    if service is None:
+        return JSONResponse({"error": "Knowledge Browser not available"}, status_code=503)
+    try:
+        result = await service.get_backlinks(path, include_suggested=include_suggested)
+    except Exception:
+        logger.warning("AD-562: get_backlinks failed for %s", path, exc_info=True)
+        return JSONResponse({"error": "backlink lookup failed"}, status_code=500)
+    if result is None:
+        return JSONResponse({"error": "Not found in index"}, status_code=404)
+    return result
+
+
+@router.get("/graph")
+async def get_records_graph(
+    max_nodes: int = 500,
+    max_edges: int = 1000,
+    include_suggested: bool = False,
+    include_quality: bool = False,
+    department: str = "",
+    classification: str = "",
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """AD-562 Phase 3+4: 3D force-directed knowledge graph payload."""
+    service = getattr(runtime, "knowledge_browser", None)
+    if service is None:
+        return JSONResponse({"error": "Knowledge Browser not available"}, status_code=503)
+    capped_nodes = max(0, min(max_nodes, 2000))
+    capped_edges = max(0, min(max_edges, 5000))
+    try:
+        return await service.get_graph(
+            max_nodes=capped_nodes,
+            max_edges=capped_edges,
+            include_suggested=include_suggested,
+            include_quality=include_quality,
+            department_filter=department,
+            classification_filter=classification,
+        )
+    except Exception:
+        logger.warning("AD-562: get_graph failed", exc_info=True)
+        return JSONResponse({"error": "graph assembly failed"}, status_code=500)
+
+
+@router.get("/timeline")
+async def get_records_timeline(
+    bucket: str = "day",
+    since: str = "",
+    until: str = "",
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """AD-562 Phase 1: entry-creation timeline (day-buckets, dept-stacked)."""
+    service = getattr(runtime, "knowledge_browser", None)
+    if service is None:
+        return JSONResponse({"error": "Knowledge Browser not available"}, status_code=503)
+    try:
+        return await service.get_timeline(bucket=bucket, since=since, until=until)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception:
+        logger.warning("AD-562: get_timeline failed", exc_info=True)
+        return JSONResponse({"error": "timeline assembly failed"}, status_code=500)

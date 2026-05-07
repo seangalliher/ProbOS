@@ -860,6 +860,34 @@ def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_knowledge_browser(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-562: Construct runtime.knowledge_browser if records_store available.
+
+    Default-False per AD-695 transitional precedent. Pure sync wirer —
+    no asyncio task creation. Returns False if records store unavailable
+    (tier-2 WARNING).
+    """
+    cfg = getattr(config, "knowledge_browser", None)
+    if cfg is None or not getattr(cfg, "enabled", False):
+        return False
+    store = getattr(runtime, "_records_store", None)
+    if store is None:
+        logger.warning("AD-562: knowledge_browser enabled but _records_store unavailable")
+        return False
+    from probos.knowledge.backlinks import KnowledgeBrowserService
+    quality_engine = getattr(runtime, "_notebook_quality_engine", None)
+    runtime.knowledge_browser = KnowledgeBrowserService(
+        records_store=store,
+        notebook_quality_engine=quality_engine,
+        max_graph_nodes=cfg.max_graph_nodes,
+        max_graph_edges=cfg.max_graph_edges,
+        jaccard_threshold=cfg.jaccard_threshold,
+        max_suggestions_per_entry=cfg.max_suggestions_per_entry,
+        index_refresh_seconds=cfg.index_refresh_seconds,
+    )
+    return True
+
+
 def _wire_spatial_explorer(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-520: Construct runtime.spatial_layout from YAML or default.
 
@@ -3046,6 +3074,12 @@ async def finalize_startup(
         _wire_spatial_explorer(runtime=runtime, config=config)
     except Exception:
         logger.warning("AD-520: _wire_spatial_explorer failed", exc_info=True)
+
+    # AD-562: Wire Knowledge Browser service (default-False; constructs runtime.knowledge_browser)
+    try:
+        _wire_knowledge_browser(runtime=runtime, config=config)
+    except Exception:
+        logger.warning("AD-562: _wire_knowledge_browser failed", exc_info=True)
 
     # AD-632b: Wire SubTaskExecutor + QueryHandler for Level 3 cognitive escalation
     try:
