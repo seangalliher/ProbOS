@@ -234,6 +234,9 @@ class LLMRequest:
     top_p: float | None = None
     max_tokens: int = 2048
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # AD-543: Tool-aware completion (None preserves byte-for-byte text-only behaviour).
+    tools: list[dict] | None = None
+    tool_choice: str = "auto"
 
 
 @dataclass
@@ -249,6 +252,9 @@ class LLMResponse:
     cached: bool = False
     error: str | None = None
     request_id: str = ""
+    # AD-543: Structured content blocks when tools are active (empty when text-only).
+    content_blocks: list = field(default_factory=list)
+    stop_reason: str = "stop"
 
 
 class EscalationTier(Enum):

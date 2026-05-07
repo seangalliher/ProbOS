@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from abc import ABC, abstractmethod
 from collections import OrderedDict, deque
 from collections.abc import Callable
@@ -679,6 +680,11 @@ class OpenAICompatibleClient(BaseLLMClient):
         if effective_top_p is not None:
             payload["top_p"] = effective_top_p
 
+        # AD-543: Forward tools + tool_choice when caller requested tool-aware completion.
+        if request.tools is not None:
+            payload["tools"] = request.tools
+            payload["tool_choice"] = request.tool_choice
+
         logger.debug("LLM request payload (openai): %s", json.dumps(payload, indent=2))
 
         resp = await client.post("chat/completions", json=payload, timeout=timeout)
@@ -697,6 +703,44 @@ class OpenAICompatibleClient(BaseLLMClient):
             logger.debug("content empty, falling back to reasoning field")
             content = message["reasoning"]
 
+        # AD-543: Parse tool_calls into ContentBlock list when tools were active.
+        content_blocks_list: list = []
+        stop_reason_value = data["choices"][0].get("finish_reason", "stop") or "stop"
+        if request.tools is not None:
+            from probos.cognitive.swe_harness.tool_call import (
+                TextBlock,
+                ToolCallRequest,
+                ToolUseBlock,
+            )
+            raw_tool_calls = message.get("tool_calls") or []
+            if content:
+                content_blocks_list.append(TextBlock(text=content))
+            for tc in raw_tool_calls:
+                fn = tc.get("function", {}) or {}
+                args_raw = fn.get("arguments", "{}")
+                try:
+                    args_parsed = (
+                        json.loads(args_raw)
+                        if isinstance(args_raw, str)
+                        else (args_raw or {})
+                    )
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "AD-543: Failed to parse tool_call.function.arguments for tool=%s; "
+                        "treating as empty dict",
+                        fn.get("name", "<unknown>"),
+                    )
+                    args_parsed = {}
+                content_blocks_list.append(
+                    ToolUseBlock(
+                        tool_call=ToolCallRequest(
+                            id=tc.get("id", uuid.uuid4().hex),
+                            name=fn.get("name", ""),
+                            arguments=args_parsed,
+                        )
+                    )
+                )
+
         usage = data.get("usage", {})
         tokens_used = usage.get("total_tokens", 0)
         prompt_tokens = usage.get("prompt_tokens", 0)
@@ -711,6 +755,8 @@ class OpenAICompatibleClient(BaseLLMClient):
             completion_tokens=completion_tokens,
             cached=False,
             request_id=request.id,
+            content_blocks=content_blocks_list,
+            stop_reason=stop_reason_value,
         )
 
     async def _call_ollama_native(
@@ -868,7 +914,19 @@ class MockLLMClient(BaseLLMClient):
         self._patterns: list[tuple[str, str]] = []
         self._call_log: list[LLMRequest] = []
         self._default_response: str = '{"intents": []}'
+        # AD-543: Scripted ContentBlock sequences for tool-aware tests.
+        self._scripted_content_blocks: list[list] = []
         self._register_defaults()
+
+    def script_content_blocks(self, blocks: list) -> None:
+        """AD-543: Queue a scripted ContentBlock-list response for the next complete() call.
+
+        Tests call this before invoking a code path that issues a tool-aware
+        LLMRequest. The next complete() call returns content_blocks=blocks.
+        Calls beyond the queue length fall back to the existing scripted/default
+        text response.
+        """
+        self._scripted_content_blocks.append(list(blocks))
 
     def get_health_status(self) -> dict[str, Any]:
         """BF-108: Report honestly — MockLLMClient has no real LLM."""
@@ -1060,6 +1118,31 @@ class MockLLMClient(BaseLLMClient):
     async def complete(self, request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
         """Match input against patterns and return canned response."""
         self._call_log.append(request)
+
+        # AD-543: Scripted content_blocks queue takes precedence when tools active.
+        if request.tools is not None and self._scripted_content_blocks:
+            from probos.cognitive.swe_harness.tool_call import (
+                TextBlock,
+                ToolUseBlock,
+            )
+            blocks = self._scripted_content_blocks.pop(0)
+            text_parts = [b.text for b in blocks if isinstance(b, TextBlock)]
+            content = "\n".join(text_parts)
+            stop_reason = (
+                "tool_use"
+                if any(isinstance(b, ToolUseBlock) for b in blocks)
+                else "stop"
+            )
+            return LLMResponse(
+                content=content,
+                model="mock",
+                tier=request.tier,
+                tokens_used=max(1, len(content) // 4),
+                cached=False,
+                request_id=request.id,
+                content_blocks=list(blocks),
+                stop_reason=stop_reason,
+            )
 
         # Detect escalation arbitration requests
         if (

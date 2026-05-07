@@ -195,6 +195,9 @@ class EventType(str, Enum):
     SENSORIUM_BUDGET_EXCEEDED = "sensorium_budget_exceeded"  # AD-666: sensorium injection over char threshold
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
     TOOL_INVOKED = "tool_invoked"  # AD-448
+    AGENTIC_TOOL_CALL_STARTED = "agentic_tool_call_started"      # AD-545
+    AGENTIC_TOOL_CALL_COMPLETED = "agentic_tool_call_completed"  # AD-545
+    AGENTIC_LOOP_ITERATION = "agentic_loop_iteration"            # AD-545
     ACTION_RISK_DENIED = "action_risk_denied"  # AD-676
     DECISION_QUEUE_PAUSED = "decision_queue_paused"  # AD-445
     COMPENSATION_TRIGGERED = "compensation_triggered"  # AD-446

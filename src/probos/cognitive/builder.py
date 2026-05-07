@@ -173,7 +173,10 @@ class BuildResult:
     fix_attempts: int = 0
     review_result: str = ""
     review_issues: list[str] = field(default_factory=list)
-    builder_source: str = "native"  # "native" or "visiting" (AD-353)
+    builder_source: str = "native"  # "native" | "visiting" | "native_harness" (AD-353/546)
+    # AD-549: Structured execution metadata. Populated by NativeBuilderHarness with
+    # builder_type / iterations / tools_used / compactions / stopped_reason / total_tokens.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -2139,6 +2142,58 @@ Rules for MODIFY blocks:
             except Exception as exc:
                 logger.warning("Builder: Transporter failed (%s), falling back to single-pass", exc)
 
+        # AD-546: Native SWE Harness routing branch (default-False, modify-only).
+        if self._runtime is not None:
+            cfg_root = getattr(self._runtime, "config", None)
+            harness_cfg = getattr(cfg_root, "native_swe_harness", None) if cfg_root is not None else None
+            harness = getattr(self._runtime, "native_builder_harness", None)
+            if (
+                harness is not None
+                and harness_cfg is not None
+                and getattr(harness_cfg, "enabled", False)
+            ):
+                eligibility_modify_only = getattr(harness_cfg, "eligibility_modify_only", True)
+                eligible = True
+                if eligibility_modify_only:
+                    if not target_files:
+                        eligible = False
+                    else:
+                        for tf in target_files:
+                            tp = Path(tf)
+                            if not tp.is_absolute():
+                                tp = _PROJECT_ROOT / tf
+                            if not tp.exists():
+                                eligible = False
+                                break
+                if eligible:
+                    try:
+                        result = await harness.run_build(
+                            spec,
+                            work_dir=str(_PROJECT_ROOT),
+                            agent_id=self.id,
+                            department="engineering",
+                            rank="lieutenant",
+                        )
+                        self._transporter_result = {
+                            "action": "transporter_complete",
+                            "file_changes": result.get("file_changes", []),
+                            "llm_output": result.get("llm_output", ""),
+                            "builder_source": "native_harness",
+                        }
+                        self._native_harness_metadata = result.get("metadata", {})
+                        logger.info(
+                            "AD-546: Native SWE harness produced %d file blocks (iterations=%d)",
+                            len(result.get("file_changes", [])),
+                            result.get("metadata", {}).get("iterations", 0),
+                        )
+                        return obs
+                    except Exception as exc:
+                        logger.warning(
+                            "AD-546: Native SWE harness failed (%s); falling back to single-pass",
+                            exc,
+                            exc_info=True,
+                        )
+
         return obs
 
     async def decide(self, observation: dict) -> dict:
@@ -2199,14 +2254,20 @@ Rules for MODIFY blocks:
         # Transporter Pattern result — blocks already parsed
         if decision.get("action") == "transporter_complete":
             file_changes = decision.get("file_changes", [])
+            result_dict: dict[str, Any] = {
+                "file_changes": file_changes,
+                "llm_output": decision.get("llm_output", ""),
+                "change_count": len(file_changes),
+                "builder_source": decision.get("builder_source", "native"),
+            }
+            # AD-546/549: Propagate native-harness metadata when present.
+            metadata = getattr(self, "_native_harness_metadata", None)
+            if metadata:
+                result_dict["metadata"] = metadata
+                self._native_harness_metadata = None  # consume once
             return {
                 "success": True,
-                "result": {
-                    "file_changes": file_changes,
-                    "llm_output": decision.get("llm_output", ""),
-                    "change_count": len(file_changes),
-                    "builder_source": decision.get("builder_source", "native"),
-                },
+                "result": result_dict,
             }
 
         llm_output = decision.get("llm_output", "")

@@ -1808,6 +1808,36 @@ class SoftwareEngineerSpecialistsConfig(BaseModel):
         return v
 
 
+class NativeSWEHarnessConfig(BaseModel):
+    """AD-549: Configuration for the native SWE agentic harness.
+
+    Default-False on ``enabled`` per AD-695 transitional-flag precedent —
+    pool wiring + tool registration happen unconditionally, but route
+    selection in ``SoftwareEngineerAgent.perceive()`` requires opt-in.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Master gate. When False, builds route to existing native/visiting paths.",
+    )
+    eligibility_modify_only: bool = Field(
+        default=True,
+        description="Phase α default. Only modify-only builds (all targets exist) eligible.",
+    )
+    max_iterations: int = Field(default=25, ge=1, le=200)
+    max_fix_iterations: int = Field(default=5, ge=1, le=20)
+    token_budget: int | None = Field(default=None, ge=1024)
+    compaction_threshold_pct: float = Field(default=0.8, ge=0.1, le=0.95)
+    blocked_paths: list[str] = Field(
+        default_factory=lambda: [
+            "src/probos/security/",
+            ".env",
+            "config/sealed_modules.yaml",
+        ],
+        description="AD-548: Pre-hook denies tool calls touching these path substrings.",
+    )
+
+
 class WardRoomConfig(BaseModel):
     """Ward Room communication fabric configuration (AD-407)."""
 
@@ -2733,6 +2763,10 @@ class SystemConfig(BaseModel):
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
     swe_specialists: SoftwareEngineerSpecialistsConfig = Field(
         default_factory=SoftwareEngineerSpecialistsConfig
+    )
+    native_swe_harness: NativeSWEHarnessConfig = Field(
+        default_factory=NativeSWEHarnessConfig,
+        description="AD-549: Native SWE agentic harness configuration.",
     )
     ward_room: WardRoomConfig = WardRoomConfig()
     assignments: AssignmentConfig = AssignmentConfig()

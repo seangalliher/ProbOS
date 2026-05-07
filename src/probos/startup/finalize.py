@@ -673,6 +673,75 @@ def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_native_swe_harness(
+    *,
+    runtime: Any,
+    config: "SystemConfig",
+    tool_executor: Any,
+) -> bool:
+    """AD-543/544/548/549: Register native SWE tools, attach blocked-paths hook,
+    construct ``NativeBuilderHarness``, expose on runtime.
+
+    Tool registration is unconditional (cheap, observable). Harness construction
+    happens regardless; route selection in ``SoftwareEngineerAgent.perceive()``
+    gates by ``config.native_swe_harness.enabled``.
+    """
+    try:
+        from probos.cognitive.swe_harness.tools import register_native_swe_tools
+        from probos.cognitive.swe_harness.policies import make_blocked_paths_hook
+        from probos.cognitive.swe_harness.native_builder import NativeBuilderHarness
+        from probos.cognitive.swe_harness.session_compactor import SessionCompactor
+
+        registry = getattr(runtime, "tool_registry", None)
+        if registry is None or tool_executor is None:
+            logger.info(
+                "AD-549: tool_registry / tool_executor missing on runtime; "
+                "skipping native SWE harness wire-up"
+            )
+            return False
+
+        cfg = getattr(config, "native_swe_harness", None)
+        if cfg is None:
+            return False
+
+        count = register_native_swe_tools(registry, runtime)
+        if cfg.blocked_paths:
+            tool_executor.add_pre_hook(make_blocked_paths_hook(cfg.blocked_paths))
+
+        llm_client = getattr(runtime, "llm_client", None)
+        if llm_client is None:
+            logger.info(
+                "AD-549: llm_client missing; skipping NativeBuilderHarness construction"
+            )
+            return False
+
+        harness = NativeBuilderHarness(
+            runtime=runtime,
+            llm_client=llm_client,
+            tool_executor=tool_executor,
+            tool_registry=registry,
+            max_iterations=cfg.max_iterations,
+            max_fix_iterations=cfg.max_fix_iterations,
+            token_budget=cfg.token_budget,
+            compactor=SessionCompactor(),
+            compaction_threshold=int(cfg.compaction_threshold_pct * 100_000),
+        )
+        runtime.native_builder_harness = harness
+        logger.info(
+            "AD-549: Native SWE harness wired (tools=%d, enabled=%s, blocked_paths=%d)",
+            count,
+            cfg.enabled,
+            len(cfg.blocked_paths),
+        )
+        return True
+    except Exception:
+        logger.warning(
+            "AD-549: Native SWE harness wire-up failed; route selection will degrade to visiting/legacy",
+            exc_info=True,
+        )
+        return False
+
+
 def _wire_process_chain_registry(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-647b v1: Initialize ProcessChainRegistry and register built-in chains.
 
@@ -2671,6 +2740,9 @@ async def finalize_startup(
         tool_executor.add_post_hook(audit_hook)
         runtime._tool_executor = tool_executor
         logger.info("AD-448: ToolExecutor initialized with %d hooks", tool_executor.hook_count)
+
+        # AD-543/544/548/549: Wire native SWE harness (tools + blocked-paths hook + harness)
+        _wire_native_swe_harness(runtime=runtime, config=config, tool_executor=tool_executor)
 
     # AD-596b: Wire cognitive skill catalog into onboarding service
     if runtime.cognitive_skill_catalog:
