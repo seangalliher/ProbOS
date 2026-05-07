@@ -42,6 +42,12 @@ _AGENT_DEPARTMENTS: dict[str, str] = {
     "builder": "engineering",
     "code_reviewer": "engineering",
     "engineering_officer": "engineering",
+    # SWE specialists (AD-476) — all map to engineering for standing orders
+    "backend_swe": "engineering",
+    "frontend_swe": "engineering",
+    "test_swe": "engineering",
+    "infrastructure_swe": "engineering",
+    "data_swe": "engineering",
     # Science
     "architect": "science",
     "emergent_detector": "science",

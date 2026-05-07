@@ -1767,6 +1767,47 @@ class UtilityAgentsConfig(BaseModel):
     enabled: bool = True  # Create utility CognitiveAgent pools at boot
 
 
+class SoftwareEngineerSpecialistsConfig(BaseModel):
+    """AD-476 v1 — opt-in pool registration for the five SWE specialists.
+
+    Default ``enabled=False`` per AD-695 transitional-flag precedent: pool
+    creation is a real cognitive-budget side-effect (five new agents at
+    boot), so v1 ships dormant. Operators flip ``enabled=True`` after
+    AD-546 wires the production chunk-routing call site.
+    """
+
+    enabled: bool = False
+    pool_size_per_specialty: int = 1
+    model_tier_overrides: dict[str, str] = Field(
+        default_factory=lambda: {
+            "backend": "deep",
+            "frontend": "standard",
+            "test": "fast",
+            "infrastructure": "standard",
+            "data": "deep",
+        }
+    )
+
+    @field_validator("pool_size_per_specialty")
+    @classmethod
+    def _pool_size_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("pool_size_per_specialty must be >= 1")
+        return v
+
+    @field_validator("model_tier_overrides")
+    @classmethod
+    def _tier_values_valid(cls, v: dict[str, str]) -> dict[str, str]:
+        valid_tiers = {"fast", "standard", "deep"}
+        for specialty, tier in v.items():
+            if tier not in valid_tiers:
+                raise ValueError(
+                    f"AD-476 model_tier_overrides[{specialty!r}]={tier!r} "
+                    f"not in {sorted(valid_tiers)}"
+                )
+        return v
+
+
 class WardRoomConfig(BaseModel):
     """Ward Room communication fabric configuration (AD-407)."""
 
@@ -2690,6 +2731,9 @@ class SystemConfig(BaseModel):
     naming: NamingConfig = NamingConfig()  # AD-499
     runtime_overrides: RuntimeOverridesConfig = RuntimeOverridesConfig()  # AD-468
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
+    swe_specialists: SoftwareEngineerSpecialistsConfig = Field(
+        default_factory=SoftwareEngineerSpecialistsConfig
+    )
     ward_room: WardRoomConfig = WardRoomConfig()
     assignments: AssignmentConfig = AssignmentConfig()
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()

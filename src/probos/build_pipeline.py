@@ -63,6 +63,7 @@ class BuildPipeline:
         llm_client: BaseLLMClient | None = None,
         escalation_hook: Callable | None = None,
         builder_source: str = "native",
+        specialty: str = "general",
     ) -> BuildResult:
         """Execute an approved build (write files, run tests, create git branch).
 
@@ -80,6 +81,11 @@ class BuildPipeline:
             execute_approved_build as _legacy_execute_approved_build,
         )
 
+        logger.info(
+            "AD-476: BuildPipeline routing build '%s' as specialty=%s "
+            "(builder_source=%s)",
+            getattr(spec, "title", "<unknown>"), specialty, builder_source,
+        )
         return await _legacy_execute_approved_build(
             file_changes=file_changes,
             spec=spec,
@@ -90,6 +96,7 @@ class BuildPipeline:
             escalation_hook=escalation_hook,
             builder_source=builder_source,
             runtime=self._runtime,
+            specialty=specialty,
         )
 
     @staticmethod

@@ -2539,6 +2539,7 @@ async def execute_approved_build(
     escalation_hook: Callable | None = None,
     builder_source: str = "native",
     runtime: ProbOSRuntime | None = None,
+    specialty: str = "general",
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 

@@ -100,6 +100,40 @@ async def create_agent_fleet(
             agent_ids=ids, llm_client=llm_client, runtime=runtime,
         )
 
+    # AD-476 — opt-in SWE specialist pools.
+    if (
+        getattr(config, "swe_specialists", None)
+        and config.swe_specialists.enabled
+    ):
+        pool_size = config.swe_specialists.pool_size_per_specialty
+        for specialty_template in (
+            "backend_swe", "frontend_swe", "test_swe",
+            "infrastructure_swe", "data_swe",
+        ):
+            try:
+                ids = generate_pool_ids(specialty_template, specialty_template, pool_size)
+                await create_pool_fn(
+                    specialty_template, specialty_template,
+                    target_size=pool_size,
+                    agent_ids=ids,
+                    llm_client=llm_client,
+                    runtime=runtime,
+                )
+                logger.info(
+                    "AD-476: spawned %s pool (target_size=%d)",
+                    specialty_template, pool_size,
+                )
+            except Exception as exc:  # tier-2 log-and-degrade
+                logger.warning(
+                    "AD-476: failed to spawn %s pool: %s — continuing",
+                    specialty_template, exc,
+                )
+    else:
+        logger.info(
+            "AD-476: SWE specialist pools disabled "
+            "(config.swe_specialists.enabled=False)"
+        )
+
     # Science team — Architect Agent (AD-307)
     if config.utility_agents.enabled:
         ids = generate_pool_ids("architect", "architect", 1)

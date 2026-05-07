@@ -54,6 +54,13 @@ from probos.agents.science import (
     ResearchSpecialistAgent,
 )
 from probos.cognitive.builder import BuilderAgent
+from probos.cognitive.builder_specialists import (
+    BackendSWEAgent,
+    DataSWEAgent,
+    FrontendSWEAgent,
+    InfrastructureSWEAgent,
+    TestSWEAgent,
+)
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.scout import ScoutAgent
 from probos.cognitive.counselor import CounselorAgent
@@ -704,6 +711,13 @@ class ProbOSRuntime:
         self.spawner.register_template("pathologist", PathologistAgent)
         # Engineering team (AD-302)
         self.spawner.register_template("builder", BuilderAgent)
+        # AD-476 — five SWE specialist templates (pools created in
+        # startup/agent_fleet.py only when config.swe_specialists.enabled).
+        self.spawner.register_template("backend_swe", BackendSWEAgent)
+        self.spawner.register_template("frontend_swe", FrontendSWEAgent)
+        self.spawner.register_template("test_swe", TestSWEAgent)
+        self.spawner.register_template("infrastructure_swe", InfrastructureSWEAgent)
+        self.spawner.register_template("data_swe", DataSWEAgent)
         # Science team (AD-306)
         self.spawner.register_template("architect", ArchitectAgent)
         self.spawner.register_template("scout", ScoutAgent)
