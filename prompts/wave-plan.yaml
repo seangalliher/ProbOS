@@ -2680,3 +2680,15 @@ waves:
     builder_required: true
     issues_to_close: [95]
     status: pending
+
+  - id: "104"
+    title: "AD-562 v1 Ship's Records Knowledge Browser: Obsidian-Style HXI with 3D Knowledge Graph (closes #9)"
+    kind: single
+    depends_on: ["103"]
+    dispatch_prompt: "prompts/WAVE-104-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-562-records-knowledge-browser-v1.md"
+    builder_required: true
+    issues_to_close: [9]
+    status: pending
