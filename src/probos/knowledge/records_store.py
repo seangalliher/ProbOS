@@ -714,16 +714,17 @@ class RecordsStore:
         raw = file_path.read_text(encoding="utf-8")
         frontmatter, content = self._parse_document(raw)
 
-        # Classification check
-        doc_class = frontmatter.get("classification", "ship")
-        doc_author = frontmatter.get("author", "")
-        doc_dept = frontmatter.get("department", "")
+        # Classification check — Captain has unrestricted read access
+        if reader_id != "captain":
+            doc_class = frontmatter.get("classification", "ship")
+            doc_author = frontmatter.get("author", "")
+            doc_dept = frontmatter.get("department", "")
 
-        if doc_class == "private" and reader_id != doc_author:
-            return None
-        if doc_class == "department" and reader_department != doc_dept and reader_id != doc_author:
-            return None
-        # ship and fleet are readable by all crew
+            if doc_class == "private" and reader_id != doc_author:
+                return None
+            if doc_class == "department" and reader_department != doc_dept and reader_id != doc_author:
+                return None
+            # ship and fleet are readable by all crew
 
         return {"frontmatter": frontmatter, "content": content, "path": path}
 
