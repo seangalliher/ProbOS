@@ -1805,3 +1805,174 @@ waves:
       no source touched, full gate as belt-and-braces should pass at
       11916 unchanged, gh issue close 111 with the canonical paragraph
       provided in Section 4 of the per-AD prompt.
+
+  - id: "91"
+    title: "AD-479 v1 Federation Hardening — capability-aware routing + federated recall + designed-agent sharing + cluster health + multicast discovery + TLS surface"
+    kind: single
+    depends_on: ["90"]
+    dispatch_prompt: "prompts/WAVE-91-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-479-federation-hardening-v1.md"
+    builder_required: true
+    issues_to_close: [73]
+    status: pending
+    notes: |
+      AD-479 Federation Hardening v1 — closes GH #73. HEAD 4f18c7d
+      (Captain reference 86a9fe5 origin/main, equivalent for verify-
+      first since the BF between them does not touch federation files).
+      Baseline pytest 11897 -> target >= 11960 (+63 floor; ~71 tests
+      planned across nine classes: TestCapabilityAwareSelectPeers ~6,
+      TestTrustWeightedRanking ~8, TestFederationHebbianRouting ~8,
+      TestRecallFederated ~10, TestShareDesignedAgent ~8,
+      TestFederationTLSConfig ~5, TestClusterHealthMonitor ~8,
+      TestMulticastDiscovery ~8, TestSlashFederationRoutingCommand ~6,
+      plus ~4 startup/runtime wiring tests).
+
+      Nine concrete v1 sub-AD letters: 479a capability-aware
+      FederationRouter.select_peers (replaces Phase-9 placeholder
+      "return all available_peers" at router.py:32 with peer_has_
+      capability filter; bootstrap fall-through preserves W87/W89 zero-
+      data behavior); 479b trust-weighted peer ranking (optional
+      trust_network on FederationRouter; min_trust_score gate; per-
+      result outcome update wired from FederationBridge.forward_intent
+      via new _record_zmq_peer_outcome helper; trust record id
+      namespaced federation_peer:{node_id} to avoid AD-480f mcp-peer:/
+      a2a-peer: collision); 479c FederationHebbianMap (intent x peer
+      keyed Hebbian weights mirroring AD-271/274 HebbianRouter
+      ConnectionFactory pattern at routing.py:39; persists to separate
+      federation_hebbian_weights SQLite table per Hard-stop W91-3); 479d
+      recall_federated IntentDescriptor + FederationRecallAgent core
+      agent (read-only no-consensus, broadcasts via existing bridge.
+      forward_intent, aggregates Episode snapshots, dedupes by
+      episode_id); 479e share_designed_agent (extends AD-443e
+      transfer_request payload with optional designed_agent_payload
+      field; receiver runs CodeValidator.validate_text gate before
+      AgentDesigner.register_designed_template_from_payload; new
+      EventType FEDERATION_DESIGNED_AGENT_RECEIVED); 479f
+      FederationTLSConfig Pydantic model on FederationConfig (default-
+      False enabled, cert/key/ca/verify_peer fields; NATS path passes
+      through to nats-py TLS context via existing NATSBus.config.tls
+      injection; ZMQ CURVE parked as AD-479l forcing function); 479g
+      FederationClusterMonitor (polls bridge._router._peer_models every
+      gossip_interval_seconds * 3 and flips peers older than peer_
+      unreachable_seconds=60.0 to unreachable; select_peers filters
+      unreachable peers; new EventTypes FEDERATION_PEER_UNREACHABLE +
+      FEDERATION_PEER_RECOVERED; auto-recovery is gossip arriving
+      again); 479h MulticastDiscovery (opt-in default-False per
+      AD-695/W82/W88 precedent; raw UDP multicast announce + listen;
+      new FederationBridge.add_peer public method + transport.add_peer
+      extension on Mock + NATS + ZMQ transports; new EventType
+      FEDERATION_PEER_DISCOVERED; networking-bound tests gated by
+      pytest.mark.skipif(not _multicast_available()) per Hard-stop
+      W91-2); 479i /federation routing slash subcommand (extends
+      AD-480i cmd_federation dispatcher with routing arg; new
+      panels.render_federation_routing_panel showing capability /
+      trust / Hebbian / unreachable per peer; existing /federation no-
+      arg + /federation peers AD-480i preserved verbatim).
+
+      Four future sub-AD letters with crisp upstream blockers (NOT
+      scope cuts): 479j mDNS cross-LAN discovery via optional zeroconf
+      package (forcing function: cross-LAN multi-instance demo wave;
+      v1 raw UDP multicast covers local broadcast domain only); 479k
+      cross-protocol Hebbian routing for MCP/A2A peers (forcing
+      function: AD-480l revival paired with AD-479c substrate now that
+      W91 has shipped it; the W89 archive line 19 explicitly parked
+      AD-480l depending on AD-479c shipping); 479l ZeroMQ CURVE
+      encryption + TLS hot rotation (forcing function: ZMQ becomes
+      production transport again after AD-637e moved default federation
+      traffic to NATS; v1 surfaces FederationTLSConfig + wires NATS
+      path that handles 100% of NATS-based deployments); 479m
+      distributed ChromaDB sharding for federated recall scale-out
+      (forcing function: scale-out wave once federation has >100 ships
+      where v1 round-trip-full-Episode-summaries-per-peer hits NATS
+      payload limits; for <=100 ships and k<=20 the v1 approach works).
+
+      Three commercial-repo carve-outs (out-of-repo by roadmap design,
+      NOT v1 deferrals): hosted multi-tenant cross-fleet trust scoring
+      service (per roadmap.md:4111 cross-fleet line), fleet management
+      dashboard (per roadmap.md:4095 fleet dashboard line), fleet-wide
+      compliance + the recurring-revenue acronym surface + the
+      patterns-to-absorb phrase + the GTM-pattern phrase + outcome-
+      style pricing phrase tied to centralized agent marketplace (per
+      roadmap.md:3478 + :3595 + :4111). Tracked in the private
+      commercial-repo path token. Audit prose in dispatch + per-AD
+      prompt + this notes block uses descriptor-only language.
+
+      Reframe rationale: every roadmap.md:7027 component above un-
+      shipped substrate ships in v1. The four AD-479j/k/l/m deferrals
+      all have crisp upstream blockers documented above. Captain rule
+      "don't defer unless no choice" satisfied — the unblocked-
+      substrate carve-out is empty. Every roadmap.md:3202 - :3207
+      component (peer discovery / cross-node memory / cross-node agent
+      sharing / smart capability routing / federation TLS-auth /
+      cluster management) is addressed by at least one shipped 479
+      sub-AD letter. Substrate already at HEAD verified by 16 grep-
+      evidence lines in the per-AD prompt's Section 12 Verified
+      Against Codebase footer. AD-637e NATS federation transport is
+      COMPLETE at HEAD - W91 TLS work flows through NATS + parks ZMQ
+      CURVE because NATS is the production transport now. AD-443e
+      mobility chain transfer wire types already exist - W91 479e is
+      a thin extension adding designed_agent_payload field + Code
+      Validator gate, NOT a new wire protocol. AD-271/274 HebbianRouter
+      ConnectionFactory pattern reused verbatim - W91 479c uses the
+      same default_factory + sqlite_factory.default_factory + table-
+      with-CREATE-IF-NOT-EXISTS pattern, separate table name per
+      Hard-stop W91-3.
+
+      EventType audit: 4 new types collision-free against HEAD
+      (Select-String -Path src/probos/events.py -Pattern '^\s+([A-Z_]+)\s*='
+      returned no FEDERATION_* matches): FEDERATION_PEER_UNREACHABLE,
+      FEDERATION_PEER_RECOVERED, FEDERATION_PEER_DISCOVERED,
+      FEDERATION_DESIGNED_AGENT_RECEIVED.
+
+      AD numbering: highest stem at HEAD remains AD-696 (Wave 72,
+      verified 2026-05-06 by Select-String over PROGRESS.md +
+      DECISIONS.md + roadmap.md returning 696/695/694). AD-479 pre-
+      allocated by docs/development/roadmap.md:3202 + :7027. Sub-AD
+      letters a-m organizational catalog markers only, mirroring
+      AD-480 a-m Wave 89, AD-481 a-m Wave 88, AD-443 a-h Wave 87
+      precedents - no new AD numbers minted.
+
+      Hard-stop conditions specific to W91: W91-1 CodeValidator
+      rejecting every test designed-agent payload in 479e (Builder
+      must NOT loosen validator gate, surface back to Architect);
+      W91-2 UDP multicast bind failing on test runner (skip
+      networking tests, do not disable feature); W91-3 SQLite schema
+      collision with AD-271/274 hebbian_weights table (Builder must
+      use separate federation_hebbian_weights table). Standard W87/
+      W89 hard-stops also apply.
+
+      Banned-pattern audit on dispatch + per-AD prompt + this notes
+      block: 11 patterns checked, 0 literal hits per pattern.
+      Placeholder forms used throughout: "the e-word + tier phrase",
+      "the private commercial-repo path token", "the e-word overlay
+      phrase", "the e-word-prefixed repo token", "monthly-price
+      regex", "per-month abbreviation regex", "rev-proj phrase", "the
+      recurring-revenue acronym", "outcome-style pricing phrase",
+      "the GTM-pattern phrase", "the patterns-to-absorb phrase". Pre-
+      commit-hook simulation Select-String -Path prompts/WAVE-91-
+      DISPATCH.md, prompts/ad-479-federation-hardening-v1.md -Pattern
+      <pattern> -SimpleMatch returns zero hits per pattern.
+
+      4 review passes recorded in this draft session: P1 (initial
+      draft against HEAD 4f18c7d - structure mirrored on W89 + W90),
+      P2 (verify-first sweep - all 16 grep-evidence lines confirmed
+      against HEAD, AD-637e NATS-completeness flagged and 479f scope
+      revised to NATS-only with 479l forcing function), P3 (dispatch
+      reframe table - confirmed 9-letter v1 + 4-letter forcing-
+      function deferred + 3 commercial carve-outs + 0 hard-deferrals
+      satisfies Captain rule), P4 (banned-pattern audit on full text
+      + per-section consistency check between dispatch + prompt +
+      this entry; AD numbering verified 696 highest, no collision).
+
+      Builder execution: read prompt top-to-bottom, apply nine
+      sections in order (479a -> 479b -> 479c -> 479d -> 479e -> 479f
+      -> 479g -> 479h -> 479i), focused per-section pytest gate after
+      each section, full parallel gate before commit. Tracker updates
+      land in roadmap.md (AD-479 entry flipped from planned to partial
+      with sub-AD letter breakdown) + decisions-era-4-evolution.md
+      (new ### AD-479 section appended before AD-636) + this wave-plan
+      entry. gh issue close 73 with the canonical paragraph in
+      Section 9 of the per-AD prompt (Section 11 Acceptance Criteria
+      item 10).
