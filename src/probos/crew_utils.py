@@ -10,6 +10,7 @@ from typing import Any
 _WARD_ROOM_CREW = {
     "architect", "scout", "counselor",
     "security_officer", "operations_officer", "engineering_officer",
+    "training_officer",  # AD-628 Tucker
     "diagnostician",  # Bones — CMO / Medical Chief
     "surgeon", "pathologist", "pharmacist",  # Medical crew
     "builder",  # Scotty — SWE officer, uses build pipeline as tool

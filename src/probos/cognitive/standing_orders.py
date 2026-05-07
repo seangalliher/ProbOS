@@ -68,6 +68,7 @@ _AGENT_DEPARTMENTS: dict[str, str] = {
     "security_officer": "security",
     # Operations
     "operations_officer": "operations",
+    "training_officer": "operations",  # AD-628 Tucker
     # Bridge
     "counselor": "bridge",
 }

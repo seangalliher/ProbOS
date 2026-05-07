@@ -737,6 +737,9 @@ class ProbOSRuntime:
         self.spawner.register_template("security_officer", SecurityAgent)
         # Operations team (AD-398)
         self.spawner.register_template("operations_officer", OperationsAgent)
+        # Training (AD-628) — Tucker
+        from probos.cognitive.training_officer import TrainingAgent
+        self.spawner.register_template("training_officer", TrainingAgent)
         # Engineering team (AD-398)
         self.spawner.register_template("engineering_officer", EngineeringAgent)
 

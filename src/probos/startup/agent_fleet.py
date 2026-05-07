@@ -183,6 +183,14 @@ async def create_agent_fleet(
             agent_ids=ids, llm_client=llm_client, runtime=runtime,
         )
 
+    # Training (AD-628) — Tucker
+    if config.utility_agents.enabled:
+        ids = generate_pool_ids("training_officer", "training_officer", 1)
+        await create_pool_fn(
+            "training_officer", "training_officer", target_size=1,
+            agent_ids=ids, llm_client=llm_client, runtime=runtime,
+        )
+
     # Engineering team — Engineering Officer (AD-398)
     if config.utility_agents.enabled:
         ids = generate_pool_ids("engineering_officer", "engineering_officer", 1)
