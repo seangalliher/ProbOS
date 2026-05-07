@@ -317,6 +317,11 @@ class TestHttpFetchAgent:
                 return MockResponse()
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
+        # Mock DNS so SSRF validation passes on CI runners without resolution.
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("93.184.216.34", 0))],
+        )
 
         agent = HttpFetchAgent()
         intent = IntentMessage(
