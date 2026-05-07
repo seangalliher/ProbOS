@@ -9,8 +9,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import manifestRaw from '../../public/manifest.webmanifest?raw';
+import indexHtmlRaw from '../../index.html?raw';
 
 import { InstallPrompt } from '../components/InstallPrompt';
 import { registerServiceWorker } from '../pwa/register';
@@ -18,8 +18,7 @@ import { registerServiceWorker } from '../pwa/register';
 // ---------- Manifest ----------
 
 describe('manifest.webmanifest', () => {
-  const manifestPath = resolve(__dirname, '../../public/manifest.webmanifest');
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const manifest = JSON.parse(manifestRaw);
 
   it('declares all 7 required PWA fields', () => {
     expect(manifest.name).toBe('ProbOS HXI');
@@ -173,7 +172,6 @@ describe('InstallPrompt', () => {
 
 describe('index.html viewport meta', () => {
   it('declares mobile-friendly viewport (responsive viewport already shipped per roadmap line 1544)', () => {
-    const indexHtml = readFileSync(resolve(__dirname, '../../index.html'), 'utf8');
-    expect(indexHtml).toMatch(/<meta\s+name="viewport"\s+content="width=device-width,\s*initial-scale=1\.0"\s*\/?>/);
+    expect(indexHtmlRaw).toMatch(/<meta\s+name="viewport"\s+content="width=device-width,\s*initial-scale=1\.0"\s*\/?>/);
   });
 });
