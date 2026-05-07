@@ -2150,3 +2150,119 @@ waves:
       section appended before AD-636) + this wave-plan entry. gh
       issue close 183 with the canonical paragraph in Section 10E of
       the per-AD prompt (Section 11 Acceptance Criteria item 13).
+
+  - id: "93"
+    title: "AD-628 v1 Crew Skill Readiness Monitoring + Training Officer Role — skill telemetry events + readiness profile + TRAINO crew agent + drill calendar + onboarding mentor + readiness reporter + LIMDU protocol + /readiness slash command"
+    kind: single
+    depends_on: ["92"]
+    dispatch_prompt: "prompts/WAVE-93-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-628-crew-skill-readiness-v1.md"
+    builder_required: true
+    issues_to_close: [223]
+    status: pending
+    notes: |
+      AD-628 Crew Skill Readiness Monitoring + Training Officer Role v1
+      — closes GH #223. HEAD c6c38ec (Captain reference c6c38ec
+      origin/main, exact match — no upstream BF commits between Captain
+      HEAD and draft HEAD). Baseline pytest 12041 -> target >= 12107
+      (+66 floor; ~70 tests planned across nine classes:
+      TestSkillTelemetryEvents ~10, TestSkillReadinessProfile ~8,
+      TestTrainingOfficerCrewProfile ~6, TestDrillCalendar ~10,
+      TestOnboardingMentorAnnouncer ~6, TestReadinessReporter ~10,
+      TestLIMDUProtocol ~10, TestReadinessSlashCommand ~6,
+      TestStartupWiring ~4).
+
+      Eight concrete v1 sub-AD letters: 628a skill telemetry events
+      (six new EventType values SKILL_LOADED/BLOCKED/EXERCISED/
+      REGRESSION/DECAY/ACQUIRED + AgentSkillService.set_event_emitter
+      setter mirroring AD-526d _emit_event_fn precedent +
+      emission inside acquire_skill/update_proficiency/record_exercise/
+      check_decay mutation methods at skill_framework.py:624/689/
+      712/722 — tier-2 log-and-degrade); 628b AgentSkillReadinessProfile
+      + AgentSkillReadinessService in new module
+      cognitive/skill_readiness.py — pure read-side aggregator over
+      existing SkillFramework + qual_skill_bridge.SkillAdvancement
+      history + new internal SkillRegressionEvent ring; 628c Training
+      Officer crew agent — config-only crew profile per AD-339
+      standing-orders precedent (new training_officer.yaml + chief_
+      training post + Tucker assignment in organization.yaml; 15th
+      assignment); 628d DrillCalendar in new module
+      cognitive/drill_calendar.py — qualification-test scheduling
+      queue layered atop AD-477 QualificationHarness, NO Holodeck
+      dependency; 628e mentor-announcer hook into AD-515
+      AgentOnboardingService via register_mentor_announcer setter +
+      invocation just before the AD-499 self-naming event-log block at
+      agent_onboarding.py:233; 628f ReadinessReporter in new module cognitive/
+      readiness_reporter.py with DepartmentReadinessReport +
+      ShipReadinessReport + C-rating mapping (C1/C2/C3/C4 thresholds
+      0.85/0.70/0.50); 628g LIMDUService in new module
+      cognitive/limdu.py — joint-authority via two required
+      keyword-only parameters medical_callsign + traino_callsign;
+      auto-populated remediation plan via DrillCalendar; new
+      LIMDU_RECOMMENDED EventType; consumes AD-506a CognitiveZone
+      enum; 628h /readiness slash command in commands_status.py per
+      cmd_status precedent — minted in v1 to keep operator surface
+      honest.
+
+      Three future sub-AD letters parked w/ forcing functions: 628d-1
+      Holodeck Scenario Selection (forcing function: AD-486 Birth
+      Chamber + AD-539b Holodeck scenarios ship the Holodeck primitive
+      — verified absent at HEAD by grep returning zero implementation
+      hits), 628e-1 Birth Chamber Mentor Embodiment (forcing function:
+      AD-486 ships Birth Chamber substrate), 628i Durable LIMDU +
+      DrillCalendar persistence (forcing function: 30 days of
+      in-memory operation reveals access patterns OR
+      hosted-deployment opt-in justifies durable schema). Three
+      commercial-repo carve-outs out-of-repo per roadmap.md:4095/4111
+      — fleet-wide cross-ship readiness rollup, customer-facing
+      PQS-board examination service, outcome-style
+      readiness-improvement consulting overlay.
+
+      Reframe: TWO letters reframed mid-spec to avoid AD-486/AD-539b
+      substrate gap — 628d Holodeck-scenario framing replaced by
+      qualification-test scheduling on top of shipped AD-477
+      QualificationHarness; 628e Birth-Chamber-embodied mentorship
+      replaced by DM-style announcement at the existing post-naming-
+      ceremony block. Neither reframe drops scope from issue #223
+      sub-AD list a-g. Eight letters ship in v1 + three forcing-
+      function future-AD letters. Captain rule "don't defer unless no
+      choice" satisfied — every issue-#223 sub-AD letter ships and
+      every deferral has a crisp upstream blocker.
+
+      Banned-pattern audit: 0 literal hits across all 11 patterns on
+      WAVE-93-DISPATCH.md + ad-628-crew-skill-readiness-v1.md +
+      this wave-plan entry. Pre-commit-hook simulation
+      Select-String -SimpleMatch returns zero per pattern.
+      Descriptor-only language used throughout the audit prose itself.
+
+      4 review passes caught: (P1) AD-628c crew-agent registration
+      assumption — initial draft proposed src/probos/agents/
+      training_officer.py file; corrected to config-only YAML pattern
+      after grep showed 14 existing crew profiles all use the
+      crew_profiles/{role}.yaml + organization.yaml posts/assignments
+      pattern with NO src/probos/agents/{role}.py file;
+      (P2) AD-628d Holodeck dependency assumption — initial draft
+      followed AD-628 spec verbatim with "TRAINO Holodeck Integration"
+      framing; corrected to qualification-test scheduling after grep
+      confirmed AD-486 + AD-539b substrate is genuinely absent at HEAD
+      (zero implementation hits, only deferral-pointer comments);
+      (P3) AD-628g joint-authority enforcement — initial draft
+      proposed runtime role-validation; simplified to required
+      keyword-only parameters at the call signature level (joint
+      authority enforced at type level, not runtime; per-callsign role
+      validation deferred to calling-agent layer);
+      (P4) verify-first footer line-number drift — final pass
+      grep-confirmed all 16 cited line numbers against HEAD c6c38ec.
+
+      Builder execution: read prompt top-to-bottom, apply eight
+      sections in order (628a -> 628b -> 628c -> 628d -> 628e ->
+      628f -> 628g -> 628h) with focused per-section pytest gate
+      after each section, full parallel gate before commit.
+      Tracker updates land in roadmap.md (AD-628 entry flipped from
+      SCOPED to complete with 8-letter sub-AD breakdown) +
+      decisions-era-4-evolution.md (existing ### AD-628 SCOPED entry
+      converted to COMPLETE with implementation-section table
+      appended) + this wave-plan entry. gh issue close 223 with the
+      canonical paragraph in Section 12 of the per-AD prompt.
