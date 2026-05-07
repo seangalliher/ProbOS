@@ -2656,3 +2656,15 @@ waves:
     builder_required: true
     issues_to_close: [92]
     status: pending
+
+  - id: "102"
+    title: "AD-597 v1 MCP App Host Infrastructure + Interactive Games (closes #167)"
+    kind: single
+    depends_on: ["101"]
+    dispatch_prompt: "prompts/WAVE-102-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-597-mcp-app-host-v1.md"
+    builder_required: true
+    issues_to_close: [167]
+    status: pending
