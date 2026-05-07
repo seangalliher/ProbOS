@@ -847,6 +847,45 @@ def render_federation_peers_panel(peers: list, trust_network) -> Panel:
     return Panel(body, title="Federation Peers", border_style="cyan")
 
 
+def render_federation_routing_panel(
+    *, bridge, trust_network, hebbian_map, cluster_monitor,
+) -> Panel:
+    """AD-479i: ZeroMQ routing breakdown — capability, trust, Hebbian, unreachable."""
+    status = bridge.federation_status()
+    peer_models = status.get("peer_models", {})
+    if not peer_models:
+        return Panel(
+            "[dim]No ZeroMQ peer models received yet.[/dim]",
+            title="Federation Routing", border_style="cyan",
+        )
+    lines = []
+    lines.append(f"{'PEER':<20} {'TRUST':>6} {'STATE':<12}  CAPABILITIES")
+    for node_id, model in peer_models.items():
+        score = (
+            float(trust_network.get_score(f"federation_peer:{node_id}"))
+            if trust_network is not None else 0.0
+        )
+        state = "unreachable" if (
+            cluster_monitor is not None and cluster_monitor.is_unreachable(node_id)
+        ) else "reachable"
+        capabilities = list(model.get("capabilities", []))
+        caps = ",".join(capabilities[:3])
+        if len(capabilities) > 3:
+            caps += f" (+{len(capabilities) - 3})"
+        lines.append(f"{node_id:<20} {score:>6.3f} {state:<12}  {caps}")
+
+    if hebbian_map is not None:
+        weights = hebbian_map.all_weights()
+        if weights:
+            lines.append("")
+            lines.append("Top Hebbian weights (intent × peer):")
+            top = sorted(weights.items(), key=lambda kv: -kv[1])[:5]
+            for (intent_name, peer_node_id), weight in top:
+                lines.append(f"  {intent_name:<24} {peer_node_id:<20} {weight:.3f}")
+
+    return Panel("\n".join(lines), title="Federation Routing", border_style="cyan")
+
+
 def render_peers_panel(peer_models: dict) -> Panel:
     """Render peer self-models as a Rich Panel with table."""
     if not peer_models:

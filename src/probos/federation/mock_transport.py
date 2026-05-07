@@ -84,6 +84,22 @@ class MockFederationTransport:
         """Stop the mock transport."""
         self._running = False
 
+    async def add_peer(self, peer_config: Any) -> bool:
+        """AD-479h: idempotent peer add hook for runtime discovery.
+
+        Mock returns True for any new peer registration; the actual transport
+        bus does its own peer tracking via ``register()``. Returns False when
+        the peer is already known.
+        """
+        node_id = getattr(peer_config, "node_id", None)
+        if node_id is None and isinstance(peer_config, dict):
+            node_id = peer_config.get("node_id")
+        if node_id is None:
+            return False
+        if node_id in self.connected_peers or node_id == self._node_id:
+            return False
+        return True
+
     async def send_to_peer(self, peer_node_id: str, message: FederationMessage) -> None:
         """Send a message to a specific peer via the bus."""
         await self._bus.deliver(peer_node_id, message)

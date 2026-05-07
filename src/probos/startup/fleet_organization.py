@@ -166,6 +166,16 @@ async def organize_fleet(
                     peer_node_ids=peer_node_ids,
                 )
                 await transport.start()
+                # AD-479f: TLS pass-through surface — NATSBus consumes config.tls
+                # at start. v1 logs whether TLS is requested for observability;
+                # actual TLS context is configured on NATSBus during AD-637a startup.
+                if config.federation.tls.enabled:
+                    logger.info(
+                        "AD-479f: Federation TLS requested (NATS path); cert_file=%s ca_file=%s verify_peer=%s",
+                        config.federation.tls.cert_file,
+                        config.federation.tls.ca_file,
+                        config.federation.tls.verify_peer,
+                    )
                 logger.info("AD-637e: Federation using NATS transport")
             except Exception as e:
                 logger.warning("AD-637e: NATS federation transport failed, falling back to ZeroMQ: %s", e)

@@ -827,6 +827,48 @@ class FederationPeerTrustConfig(BaseModel):
     probationary_beta: float = Field(default=3.0, gt=0.0)
 
 
+class FederationTLSConfig(BaseModel):
+    """AD-479f: Federation TLS surface (NATS pass-through in v1).
+
+    Default-False. v1 wires the NATS path via ``nats_bus.config.tls``.
+    ZeroMQ CURVE encryption is parked as AD-479l with explicit forcing
+    function — AD-637e moved default federation traffic to NATS, so ZMQ
+    TLS is downstream of "ZMQ becomes production transport again".
+    """
+
+    enabled: bool = False
+    cert_file: str | None = None
+    key_file: str | None = None
+    ca_file: str | None = None
+    verify_peer: bool = True
+
+
+class FederationDiscoveryConfig(BaseModel):
+    """AD-479h: Multicast peer discovery (opt-in, default-False).
+
+    Raw UDP multicast on the local broadcast domain. Cross-LAN mDNS via
+    ``zeroconf`` is parked as AD-479j.
+    """
+
+    multicast_enabled: bool = False
+    multicast_group: str = "239.255.42.99"
+    multicast_port: int = 5556
+    announce_interval_seconds: float = 5.0
+
+
+class FederationClusterMonitorConfig(BaseModel):
+    """AD-479g: Cluster health monitor.
+
+    Default-True (the gossip-driven liveness flag is purely additive — peers
+    that never fall silent never get flagged unreachable). The two trip-wire
+    EventTypes (``FEDERATION_PEER_UNREACHABLE`` / ``FEDERATION_PEER_RECOVERED``)
+    are always-on observability when federation is enabled.
+    """
+
+    enabled: bool = True
+    peer_unreachable_seconds: float = 60.0
+
+
 class FederationConfig(BaseModel):
     """Multi-node federation configuration."""
 
@@ -854,6 +896,17 @@ class FederationConfig(BaseModel):
     peer_trust: FederationPeerTrustConfig = Field(
         default_factory=FederationPeerTrustConfig
     )
+    # AD-479f / AD-479g / AD-479h: hardening surfaces (all default-False or
+    # additive-only).
+    tls: FederationTLSConfig = Field(default_factory=FederationTLSConfig)
+    discovery: FederationDiscoveryConfig = Field(
+        default_factory=FederationDiscoveryConfig
+    )
+    cluster_monitor: FederationClusterMonitorConfig = Field(
+        default_factory=FederationClusterMonitorConfig
+    )
+    # AD-479b ranking gate (default 0.0 keeps W87/W89 baseline behavior).
+    min_peer_trust_score: float = 0.0
 
     @field_validator("memory_policy")
     @classmethod

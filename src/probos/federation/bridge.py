@@ -40,6 +40,8 @@ class FederationBridge:
         self_model_fn: Callable[[], NodeSelfModel],
         validate_fn: Callable[..., Awaitable[bool]] | None = None,
         identity_registry: "AgentIdentityRegistry | None" = None,
+        trust_network: Any | None = None,
+        hebbian_map: Any | None = None,
     ) -> None:
         self._node_id = node_id
         self._transport = transport
@@ -51,8 +53,12 @@ class FederationBridge:
         # AD-443e: Identity registry handle — required for transfer/chain
         # message handling; None disables the mobility wire types.
         self._identity_registry = identity_registry
+        # AD-479b/c: optional trust + Hebbian handles for per-result outcome wiring.
+        self._trust_network = trust_network
+        self._hebbian_map = hebbian_map
         self._gossip_task: asyncio.Task[None] | None = None
         self._stopped = False
+        self._runtime_ref: Any = None
         self._stats = {
             "intents_forwarded": 0,
             "intents_received": 0,
@@ -68,6 +74,14 @@ class FederationBridge:
         self._gossip_task = asyncio.create_task(
             self._gossip_loop(), name="federation-gossip"
         )
+
+    def set_runtime_ref(self, runtime: Any) -> None:
+        """AD-479e: late-bind a runtime handle for designed-agent reconstruction.
+
+        Optional. None disables AD-479e designed-agent payload handling — the
+        chain transfer still completes via the AD-443e wire types.
+        """
+        self._runtime_ref = runtime
 
     async def stop(self) -> None:
         """Stop gossip loop."""
@@ -139,6 +153,12 @@ class FederationBridge:
                         logger.warning("Federation message validator failed — message passed without validation", exc_info=True)
                 results.append(ir)
                 self._stats["results_collected"] += 1
+                # AD-479b: record per-result trust outcome on the ZeroMQ peer record.
+                self._record_zmq_peer_outcome(
+                    peer_node_id=peer_id,
+                    success=bool(ir.success),
+                    intent_type=intent.intent,
+                )
 
         return results
 
@@ -311,6 +331,16 @@ class FederationBridge:
         cert_ok, cert_msg = await self._identity_registry.import_transfer_certificate(cert)
         if cert_ok:
             self._stats["transfers_received"] += 1
+
+            # AD-479e: optional designed-agent template reconstruction.
+            designed_payload = message.payload.get("designed_agent_payload")
+            if designed_payload:
+                designed_msg = await self._reconstruct_designed_agent(
+                    designed_payload, source_node=message.source_node,
+                )
+                if designed_msg is not None:
+                    cert_msg = f"{cert_msg}; designed_agent_note={designed_msg}"
+
         response = FederationMessage(
             type="transfer_response",
             source_node=self._node_id,
@@ -348,15 +378,24 @@ class FederationBridge:
         peer_node_id: str,
         certificate: "TransferCertificate",
         chain_blocks: list[dict[str, Any]],
+        designed_agent_payload: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
-        """Outbound: ship an agent's transfer cert + supporting chain to a peer."""
+        """Outbound: ship an agent's transfer cert + supporting chain to a peer.
+
+        AD-479e: optional ``designed_agent_payload`` carries the agent's
+        ``instructions`` string + designed-template metadata so the destination
+        ship can rehydrate the designed template via CodeValidator + AgentDesigner.
+        """
+        outbound_payload: dict[str, Any] = {
+            "cert_dict": certificate.to_dict(),
+            "chain_blocks": chain_blocks,
+        }
+        if designed_agent_payload is not None:
+            outbound_payload["designed_agent_payload"] = designed_agent_payload
         msg = FederationMessage(
             type="transfer_request",
             source_node=self._node_id,
-            payload={
-                "cert_dict": certificate.to_dict(),
-                "chain_blocks": chain_blocks,
-            },
+            payload=outbound_payload,
             timestamp=time.monotonic(),
         )
         await self._transport.send_to_peer(peer_node_id, msg)
@@ -399,6 +438,131 @@ class FederationBridge:
                 break
             except Exception as e:
                 logger.debug("Gossip loop error: %s", e)
+
+    def _record_zmq_peer_outcome(
+        self,
+        *,
+        peer_node_id: str,
+        success: bool,
+        intent_type: str,
+    ) -> None:
+        """AD-479b: update TrustNetwork + AD-479c FederationHebbianMap for a ZMQ peer.
+
+        Idempotent on missing trust_network / hebbian_map. The trust record id
+        is namespaced ``federation_peer:{node_id}`` to keep ZMQ peer records
+        from colliding with AD-480f MCP/A2A peer records (which use the
+        ``mcp-peer:`` / ``a2a-peer:`` namespaces per peer.py + AD-480g).
+        """
+        trust_network = self._trust_network
+        if trust_network is not None:
+            record_id = f"federation_peer:{peer_node_id}"
+            try:
+                trust_network.record_outcome(
+                    record_id,
+                    success=success,
+                    weight=1.0,
+                    intent_type=intent_type,
+                    source="federation_outcome",
+                )
+            except Exception as exc:
+                logger.debug("AD-479b: trust_network.record_outcome raised: %s", exc)
+        hebbian_map = self._hebbian_map
+        if hebbian_map is not None:
+            try:
+                hebbian_map.record_outcome(
+                    intent_name=intent_type,
+                    peer_node_id=peer_node_id,
+                    success=success,
+                )
+            except Exception as exc:
+                logger.debug("AD-479c: hebbian_map.record_outcome raised: %s", exc)
+
+    async def _reconstruct_designed_agent(
+        self,
+        payload: dict[str, Any],
+        *,
+        source_node: str,
+    ) -> str | None:
+        """AD-479e: rehydrate an incoming designed-agent template.
+
+        Pipeline: CodeValidator static-analysis gate → AgentDesigner.
+        register_designed_template_from_payload(...). On validator rejection
+        the chain is rolled back and an event is emitted; otherwise the
+        designed template is registered locally and FEDERATION_DESIGNED_AGENT_
+        RECEIVED fires.
+        """
+        runtime = self._runtime_ref
+        if runtime is None:
+            return "no_runtime_handle"
+        designer = getattr(runtime, "agent_designer", None)
+        validator = getattr(runtime, "code_validator", None)
+        if designer is None or validator is None:
+            return "no_designer_or_validator"
+        instructions = str(payload.get("instructions", ""))
+        if not instructions:
+            return "empty_instructions"
+        validate_text = getattr(validator, "validate_text", None)
+        if callable(validate_text):
+            ok, reason = validate_text(instructions)
+        else:
+            errors = validator.validate(instructions)
+            ok = not errors
+            reason = "; ".join(errors) if errors else ""
+        if not ok:
+            logger.warning(
+                "AD-479e: incoming designed agent rejected by CodeValidator from %s: %s",
+                source_node, reason,
+            )
+            return f"validator_rejected:{reason}"
+        try:
+            register = getattr(
+                designer, "register_designed_template_from_payload", None,
+            )
+            if not callable(register):
+                return "no_designer_or_validator"
+            await register(payload)
+        except Exception as exc:
+            logger.warning(
+                "AD-479e: register_designed_template_from_payload failed for %s: %s",
+                source_node, exc,
+            )
+            return f"registration_failed:{exc!s}"
+        emit = getattr(runtime, "emit_event", None)
+        if callable(emit):
+            try:
+                from probos.events import EventType
+                emit(
+                    EventType.FEDERATION_DESIGNED_AGENT_RECEIVED,
+                    {
+                        "source_node": source_node,
+                        "template_name": payload.get("template_name"),
+                    },
+                )
+            except Exception as exc:
+                logger.debug("AD-479e: emit_event raised: %s", exc)
+        return "registered"
+
+    async def add_peer(self, peer_config: Any) -> bool:
+        """AD-479h: register a runtime-discovered peer.
+
+        Returns True if newly registered, False if already known. Idempotent
+        on the underlying transport.
+        """
+        add = getattr(self._transport, "add_peer", None)
+        if not callable(add):
+            logger.debug(
+                "AD-479h: transport %s has no add_peer hook",
+                type(self._transport).__name__,
+            )
+            return False
+        try:
+            result = add(peer_config)
+            if asyncio.iscoroutine(result):
+                result = await result
+            return bool(result)
+        except Exception as exc:
+            logger.warning("AD-479h: transport.add_peer raised: %s", exc)
+            return False
 
     def federation_status(self) -> dict[str, Any]:
         """Return federation status for shell/panels."""

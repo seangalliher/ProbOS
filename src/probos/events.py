@@ -127,6 +127,11 @@ class EventType(str, Enum):
     SELF_MONITORING_CONCERN = "self_monitoring_concern"  # AD-506a: amber zone
     ZONE_RECOVERY = "zone_recovery"  # AD-506b: agent zone improved
     PEER_REPETITION_DETECTED = "peer_repetition_detected"  # AD-506b
+    # AD-479: Federation hardening event types (Wave 91)
+    FEDERATION_PEER_UNREACHABLE = "federation_peer_unreachable"  # AD-479g
+    FEDERATION_PEER_RECOVERED = "federation_peer_recovered"  # AD-479g
+    FEDERATION_PEER_DISCOVERED = "federation_peer_discovered"  # AD-479h
+    FEDERATION_DESIGNED_AGENT_RECEIVED = "federation_designed_agent_received"  # AD-479e
     TASK_EXECUTION_COMPLETE = "task_execution_complete"  # AD-532e: reactive trigger
     PROCEDURE_FALLBACK_LEARNING = "procedure_fallback_learning"  # AD-534b: fallback evidence
     GAP_IDENTIFIED = "gap_identified"  # AD-539: gap → qualification pipeline

@@ -543,6 +543,10 @@ class ProbOSRuntime:
         # AD-480a / AD-480d: inbound servers — None until startup wires them.
         self.federation_mcp_server: "FederationMCPServer | None" = None
         self.federation_a2a_server: "FederationA2AServer | None" = None
+        # AD-479c / AD-479g: federation routing observability handles —
+        # None when federation is disabled or features unwired.
+        self.federation_hebbian_map: Any | None = None
+        self.federation_cluster_monitor: Any | None = None
         self._start_time: float = time.monotonic()
         self._recent_errors: list[str] = []    # last 5 error summaries (AD-318)
         self._last_capability_gap: str = ""    # last unhandled intent (AD-318)

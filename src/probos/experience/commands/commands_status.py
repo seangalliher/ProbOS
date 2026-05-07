@@ -100,8 +100,10 @@ async def cmd_scaling(runtime: ProbOSRuntime, console: Console, args: str) -> No
 async def cmd_federation(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /federation command.
 
-    AD-480i: subcommand dispatch. ``""`` (no arg) → existing federation panel.
-    ``"peers"`` → cross-protocol peer list with trust scores.
+    AD-480i + AD-479i: subcommand dispatch.
+    - ``""`` (no arg) → existing federation panel.
+    - ``"peers"`` → cross-protocol peer list with trust scores (AD-480i).
+    - ``"routing"`` → ZeroMQ routing breakdown (AD-479i).
     """
     from probos.experience import panels
 
@@ -113,6 +115,19 @@ async def cmd_federation(runtime: ProbOSRuntime, console: Console, args: str) ->
         trust_network = runtime.trust_network
         console.print(panels.render_federation_peers_panel(
             registry.list_peers(), trust_network,
+        ))
+        return
+
+    if subcommand == "routing":
+        bridge = runtime.federation_bridge
+        if not bridge:
+            console.print("[yellow]Federation is not enabled.[/yellow]")
+            return
+        console.print(panels.render_federation_routing_panel(
+            bridge=bridge,
+            trust_network=runtime.trust_network,
+            hebbian_map=getattr(runtime, "federation_hebbian_map", None),
+            cluster_monitor=getattr(runtime, "federation_cluster_monitor", None),
         ))
         return
 
