@@ -554,6 +554,11 @@ def _wire_edge_classification(*, runtime: Any, config: "SystemConfig") -> bool:
 
     def _resolve_tier(agent_id: str) -> str:
         try:
+            # BF-265: System services get ORACLE tier (full graph access).
+            from probos.cognitive.oracle_service import ORACLE_SYSTEM_AGENT_ID
+            if agent_id == ORACLE_SYSTEM_AGENT_ID:
+                return "oracle"
+
             registry = getattr(runtime, "registry", None)
             agent = registry.get(agent_id) if registry else None
             agent_type = getattr(agent, "agent_type", agent_id) if agent else agent_id

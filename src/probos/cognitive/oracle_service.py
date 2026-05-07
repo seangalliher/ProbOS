@@ -21,6 +21,11 @@ from probos.types import MemoryRef  # AD-462f (types.py has no reverse dep on or
 
 logger = logging.getLogger(__name__)
 
+# BF-265: Oracle is a privileged system service with full graph access.
+# Used as requester_agent_id so the classification gate grants ORACLE tier
+# instead of relying on an empty-string bypass.
+ORACLE_SYSTEM_AGENT_ID = "__oracle_service__"
+
 
 @dataclass(frozen=True)
 class OracleResult:
@@ -356,11 +361,12 @@ class OracleService:
             try:
                 # BF-265: Oracle is a privileged system service — it
                 # curates context before delivering to agents, so
-                # double-gating through classification is redundant and
-                # blocks org-chart edges for most crew tiers.  Pass
-                # empty requester_agent_id to skip classification gate.
+                # double-gating through classification is redundant.
+                # Pass ORACLE_SYSTEM_AGENT_ID so the classification gate
+                # grants ORACLE tier (full access) via the tier resolver.
                 tier_results = await self._query_graph(
-                    query_text, k=k_per_tier, requester_agent_id="",
+                    query_text, k=k_per_tier,
+                    requester_agent_id=ORACLE_SYSTEM_AGENT_ID,
                 )
                 all_results.extend(tier_results)
             except Exception:
