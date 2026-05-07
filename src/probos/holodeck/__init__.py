@@ -17,6 +17,14 @@ from probos.holodeck.affect import (
 )
 from probos.holodeck.chamber import BirthChamber, BirthChamberRecord
 from probos.holodeck.phases import HolodeckPhase
+from probos.holodeck.scenarios import (
+    GapScenarioGenerator,
+    HolodeckGapBridge,
+    HolodeckGapDrill,
+    HolodeckScenarioStore,
+    ScenarioGapLink,
+    ScenarioOutcome,
+)
 from probos.holodeck.scheduler import DepartmentActivationScheduler
 
 __all__ = [
@@ -25,6 +33,12 @@ __all__ = [
     "BirthChamber",
     "BirthChamberRecord",
     "DepartmentActivationScheduler",
+    "GapScenarioGenerator",
+    "HolodeckGapBridge",
+    "HolodeckGapDrill",
     "HolodeckPhase",
+    "HolodeckScenarioStore",
     "NoOpAffectiveBaselineCheck",
+    "ScenarioGapLink",
+    "ScenarioOutcome",
 ]

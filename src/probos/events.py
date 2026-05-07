@@ -392,6 +392,12 @@ class EventType(str, Enum):
     HOLODECK_GRADUATION = "holodeck_graduation"
     HOLODECK_AFFECTIVE_BASELINE_OBSERVED = "holodeck_affective_baseline_observed"
 
+    # AD-539b: Holodeck scenario generation from skill gaps
+    HOLODECK_SCENARIO_GENERATED = "holodeck_scenario_generated"
+    HOLODECK_SCENARIO_REGISTERED = "holodeck_scenario_registered"
+    HOLODECK_SCENARIO_GAP_LINKED = "holodeck_scenario_gap_linked"
+    HOLODECK_SCENARIO_OUTCOME_RECORDED = "holodeck_scenario_outcome_recorded"
+
     # ── Discovery-Based Capability Building (AD-512) ───────────────
     DISCOVERY_SCENARIO_OFFERED = "discovery_scenario_offered"  # AD-512a registry
     DISCOVERY_OUTCOME_RECORDED = "discovery_outcome_recorded"  # AD-512b StrengthMap

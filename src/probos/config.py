@@ -1788,6 +1788,27 @@ class HolodeckBirthChamberConfig(BaseModel):
         return [d.lower() for d in v]
 
 
+class HolodeckScenarioConfig(BaseModel):
+    """AD-539b: Holodeck scenario generation from skill gaps.
+
+    Default-False per AD-695 transitional-flag precedent: enabling the
+    bridge causes ``HolodeckGapBridge.bridge_gap_to_holodeck`` to
+    register a runnable ``HolodeckGapDrill`` with the AD-477
+    ``QualificationHarness`` for every classified knowledge gap that
+    has a ``mapped_skill_id``. v1 ships dormant — operators flip
+    ``enabled=True`` once an AD-486 cohort produces real ``GapReport``
+    instances with non-empty ``mapped_skill_id`` to bridge against.
+    """
+
+    enabled: bool = False
+    auto_register_with_harness: bool = True
+    default_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    default_tier: int = Field(default=2, ge=1, le=3)
+    category_fallback: str = "construction"
+    persist_to_sqlite: bool = False
+    data_subdir: str = "holodeck_scenarios"
+
+
 class NamingConfig(BaseModel):
     """Ship & crew naming conventions (AD-499)."""
 
@@ -2794,6 +2815,7 @@ class SystemConfig(BaseModel):
     quality_router: QualityRouterConfig = QualityRouterConfig()  # AD-565
     onboarding: OnboardingConfig = OnboardingConfig()
     holodeck_birth_chamber: HolodeckBirthChamberConfig = HolodeckBirthChamberConfig()
+    holodeck_scenarios: HolodeckScenarioConfig = HolodeckScenarioConfig()
     naming: NamingConfig = NamingConfig()  # AD-499
     runtime_overrides: RuntimeOverridesConfig = RuntimeOverridesConfig()  # AD-468
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()

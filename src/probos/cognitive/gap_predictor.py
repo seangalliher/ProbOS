@@ -474,8 +474,18 @@ async def map_gap_to_skill(
 async def trigger_qualification_if_needed(
     gap: GapReport,
     skill_service: Any,
+    *,
+    holodeck_bridge: Any = None,
 ) -> GapReport:
-    """If the gap reveals proficiency below target, start a qualification path."""
+    """If the gap reveals proficiency below target, start a qualification path.
+
+    AD-539b: when ``holodeck_bridge`` is supplied (typically
+    ``runtime.holodeck_gap_bridge`` from the AD-539b wirer), also call
+    ``holodeck_bridge.bridge_gap_to_holodeck(gap)`` AFTER the existing
+    skill-service path. The bridge is idempotent against gap.id, so
+    multiple invocations are safe. Errors are logged-and-degraded —
+    failure to bridge does NOT propagate.
+    """
     if not skill_service:
         return gap
     if not gap.mapped_skill_id:
@@ -495,13 +505,23 @@ async def trigger_qualification_if_needed(
         )
         if existing:
             gap.qualification_path_id = path_id
-            return gap
-
-        # Start new qualification
-        await skill_service.start_qualification(gap.agent_id, path_id)
-        gap.qualification_path_id = path_id
+        else:
+            # Start new qualification
+            await skill_service.start_qualification(gap.agent_id, path_id)
+            gap.qualification_path_id = path_id
     except Exception:
         pass
+
+    # AD-539b: optional Holodeck-scenario bridging
+    if holodeck_bridge is not None:
+        try:
+            await holodeck_bridge.bridge_gap_to_holodeck(gap)
+        except Exception:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "AD-539b: holodeck_bridge.bridge_gap_to_holodeck raised for "
+                "gap %s; continuing without scenario", gap.id, exc_info=True,
+            )
 
     return gap
 

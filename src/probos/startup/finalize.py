@@ -239,6 +239,58 @@ def _wire_birth_chamber(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_holodeck_scenarios(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-539b v1: Wire HolodeckGapBridge — gap-driven scenario generation.
+
+    Default-False per AD-695 transitional-flag precedent. When disabled,
+    no bridge is constructed; ``runtime.holodeck_gap_bridge`` is not set
+    and AD-539 ``trigger_qualification_if_needed`` continues to run with
+    its default ``holodeck_bridge=None`` behavior (byte-for-byte
+    identical to pre-AD-539b semantics).
+    """
+    cfg = getattr(config, "holodeck_scenarios", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.holodeck.scenarios import (
+        GapScenarioGenerator,
+        HolodeckGapBridge,
+        HolodeckScenarioStore,
+    )
+
+    emit_fn = getattr(runtime, "emit_event", None)
+
+    data_dir: Any = None
+    if cfg.persist_to_sqlite:
+        ship_data_dir = getattr(runtime, "data_dir", None)
+        if ship_data_dir is not None:
+            from pathlib import Path as _Path
+            data_dir = _Path(ship_data_dir) / cfg.data_subdir
+            data_dir.mkdir(parents=True, exist_ok=True)
+
+    generator = GapScenarioGenerator(category_fallback=cfg.category_fallback)
+    store = HolodeckScenarioStore(data_dir=data_dir)
+
+    bridge = HolodeckGapBridge(
+        config=cfg,
+        generator=generator,
+        store=store,
+        emit_event_fn=emit_fn,
+        qualification_harness=getattr(runtime, "qualification_harness", None),
+        scenario_registry=getattr(runtime, "discovery_scenario_registry", None),
+    )
+    runtime.holodeck_gap_bridge = bridge  # public attr (Wave 5 conv #1)
+
+    logger.info(
+        "AD-539b: Holodeck scenario generation v1 initialized "
+        "(harness=%s, registry=%s, persist=%s)",
+        bridge.qualification_harness is not None,
+        bridge.scenario_registry is not None,
+        cfg.persist_to_sqlite,
+    )
+    return True
+
+
 def _wire_discovery_learning(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-512 v1: Wire DiscoveryScenarioRegistry, StrengthMap,
     CapabilityConfidenceScorer, and ZPDCalibrator (observational substrate).
@@ -1542,6 +1594,9 @@ async def finalize_startup(
 
     if _wire_birth_chamber(runtime=runtime, config=config):
         logger.info("AD-486: Holodeck Birth Chamber v1 wired during finalization")
+
+    if _wire_holodeck_scenarios(runtime=runtime, config=config):
+        logger.info("AD-539b: Holodeck Scenario Generation v1 wired during finalization")
 
     if _wire_discovery_learning(runtime=runtime, config=config):
         logger.info("AD-512: Discovery Learning v1 wired during finalization")
