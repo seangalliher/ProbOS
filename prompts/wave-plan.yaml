@@ -2668,3 +2668,15 @@ waves:
     builder_required: true
     issues_to_close: [167]
     status: pending
+
+  - id: "103"
+    title: "AD-520 v1 Spatial Knowledge Explorer: Digital Twin & 3D Ontology Visualization (closes #95)"
+    kind: single
+    depends_on: ["102"]
+    dispatch_prompt: "prompts/WAVE-103-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-520-spatial-knowledge-explorer-v1.md"
+    builder_required: true
+    issues_to_close: [95]
+    status: pending
