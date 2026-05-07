@@ -2644,3 +2644,15 @@ waves:
     builder_required: true
     issues_to_close: [12]
     status: pending
+
+  - id: "101"
+    title: "AD-510 v1 Holodeck Team Simulations: Group Discovery & Collaboration (closes #92)"
+    kind: single
+    depends_on: ["100"]
+    dispatch_prompt: "prompts/WAVE-101-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-510-holodeck-team-simulations-v1.md"
+    builder_required: true
+    issues_to_close: [92]
+    status: pending
