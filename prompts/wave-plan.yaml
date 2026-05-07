@@ -2497,3 +2497,103 @@ waves:
       Cognitive Code-Switching umbrella close — tracker reconciliation
       (no-build, +0 tests)". Archive both prompts. gh issue close 302
       with the canonical paragraph in Section 5 of the per-AD prompt.
+
+  - id: "96"
+    title: "AD-521 v1 SWE/Build Pipeline Separation — Model A"
+    kind: single
+    depends_on: ["95"]
+    dispatch_prompt: "prompts/WAVE-96-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-521-swe-build-pipeline-separation-v1.md"
+    builder_required: true
+    issues_to_close: [96]
+    status: pending
+    notes: |
+      Source-modifying v1 of AD-521 (DECIDED 2026-03-29 at
+      decisions-era-4-evolution.md:1427-1467). Five sections applied
+      top-to-bottom: (1) new module src/probos/build_pipeline.py
+      (~180 lines, BuildPipeline Ship's Computer service with
+      execute_approved_build + parse_file_blocks instance methods,
+      constructor injection of runtime, defensive getattr lookups for
+      pre_flight_runner / emit_event / llm_client at invocation time);
+      (2) cognitive/builder.py rename — class BuilderAgent renamed to
+      SoftwareEngineerAgent, module-level BuilderAgent =
+      SoftwareEngineerAgent alias preserves the 16 test files importing
+      the old name, class docstring updated to reflect SWE crew role;
+      (3) runtime.py wiring — self.build_pipeline declared in __init__
+      alongside warm_boot / dream_adapter (runtime.py:567-569), the
+      BuildPipeline import added alongside other Ship's Computer service
+      imports, instantiation in start() with no ordering constraint vs
+      pre_flight_runner because BuildPipeline reads the runtime
+      attribute via getattr at invocation time (same pattern as the
+      current cognitive/builder.py:2548 lookup); (4) new test file
+      tests/test_ad521_swe_pipeline_separation.py with 12 boundary
+      tests across BuildPipeline service shape (4), SoftwareEngineerAgent
+      class identity (3), BuilderAgent alias (1), module-level shim (1),
+      runtime wiring (2), crew identity continuity (1); (5) tracker
+      reconciliation — decisions-era-4-evolution.md:1467 status flip
+      from DECIDED to v1 COMPLETE, docs/development/roadmap.md:6628
+      bullet flip from decided to v1 complete with realisation summary,
+      PROGRESS.md INSERT new status note after AD-652 line at :331
+      (zero existing AD-521 matches at HEAD), wave-plan.yaml W96 entry
+      appended.
+
+      Crew identity continuity preserved: agent_type "builder" unchanged
+      (16+ allow-list / spawner / standing-orders / skill-framework
+      sites untouched), callsign Scotty unchanged, pool name "builder"
+      unchanged at runtime.py:697, standing-orders mapping
+      builder→engineering unchanged at cognitive/standing_orders.py:42,
+      _WARD_ROOM_CREW "builder" entry unchanged at crew_utils.py:15.
+
+      The agentic-loop tooling (AD-543 ToolCall protocol + ToolExecutor,
+      AD-544 native tool suite, AD-545 agentic loop, AD-546
+      BuildPipeline integration, AD-547 session compaction, AD-548
+      trust-tier permissions, AD-549 visiting-builder migration) is the
+      next wave (GH #13). AD-521 v1 unblocks AD-546 which depends on
+      it explicitly per docs/development/roadmap.md:6768.
+
+      The closed-source SWE-tier overlay (AD-452 class-extension
+      plug-in point) is out-of-repo. v1 ships zero closed-source
+      content — the OSS class structure is the architectural surface
+      and the overlay slots in via the placeholder-tier licensing AD
+      that lives in the private commercial-repo path token surface.
+      Banned-pattern audit on this dispatch + per-AD prompt + this
+      notes block: zero hits across all 11 patterns (the e-word + tier
+      phrase, the private commercial-repo path token, the e-word
+      overlay phrase, the e-word-prefixed repo token, monthly-price
+      regex, per-month abbreviation regex, rev-proj phrase, the
+      recurring-revenue acronym, outcome-style pricing phrase, the
+      GTM-pattern phrase, the patterns-to-absorb phrase). Pre-commit
+      hook simulation Select-String -SimpleMatch returns zero per
+      pattern across all artefacts.
+
+      4 review passes recorded: P1 (initial draft against HEAD 08bfc7f
+      — five-section structure, 12-test plan, AD-521 spec mapping
+      verified against decisions-era-4-evolution.md:1427-1467); P2
+      (verify-first sweep — caught two phantom claims: PROGRESS.md
+      had zero AD-521 matches so Section 5c is INSERT not flip,
+      pre_flight_runner is set in startup/finalize.py:1644 not
+      runtime.__init__ so getattr defensive pattern is canonical and
+      no ordering constraint matters; both fixed in dispatch); P3
+      (reframe table — build v1 not defer, AD-543-549 deps tracked
+      under GH #13, Captain rule satisfied non-vacuously by AD-546
+      forcing function); P4 (banned-pattern audit + SEARCH/REPLACE
+      block uniqueness check across 6 MODIFY blocks; AD numbering
+      verified AD-696 highest no collision; the 16-test-file import
+      path coverage cross-checked).
+
+      Builder execution: read prompt top-to-bottom, apply 6
+      SEARCH/REPLACE pairs across 6 MODIFY blocks plus the 2 new file
+      creates (build_pipeline.py + test_ad521_swe_pipeline_separation
+      .py). Verify git diff --stat shows 4 modified trackers (DECISIONS
+      era-4, roadmap.md, PROGRESS.md, wave-plan.yaml) plus 1 modified
+      runtime.py plus 1 modified cognitive/builder.py plus 2 new
+      files plus this prompt + dispatch (which Builder will archive
+      after commit). Pre-commit hook runs naturally on commit. Full
+      pytest gate (expected ≥12142 passed; minimum gate is +12).
+      Commit with "AD-521 v1: SWE/Build Pipeline Separation — Model A
+      (extract BuildPipeline service, rename BuilderAgent →
+      SoftwareEngineerAgent + alias, runtime wiring, +12 tests)".
+      Archive both prompts. gh issue close 96 with the canonical
+      paragraph in Section 6 of the per-AD prompt.
