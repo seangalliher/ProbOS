@@ -77,6 +77,7 @@ def _make_edge(
         id=_deterministic_edge_id(source_type, source_id, relation, target_type, target_id),
         confidence=max(0.0, min(1.0, confidence)),
         weight=max(0.0, min(1.0, weight)),
+        classification="ship",  # BF-265: backfilled edges are organizational facts visible to all crew
         source_agent="edge_backfill",
         source_duty=source_duty,
     )

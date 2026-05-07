@@ -613,10 +613,16 @@ def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
         # opted in. Default cfg.audit_persistence_enabled=False keeps the
         # AD-635 v1 in-memory-only contract.
         from probos.cognitive.clinical_audit_store import ClinicalAuditStore
-        audit_store = ClinicalAuditStore(db_path=cfg.audit_db_path)
+        from pathlib import Path as _Path
+        _data_dir = getattr(runtime, "data_dir", None)
+        _audit_db = (
+            str(_Path(_data_dir) / _Path(cfg.audit_db_path).name)
+            if _data_dir is not None else cfg.audit_db_path
+        )
+        audit_store = ClinicalAuditStore(db_path=_audit_db)
         logger.info(
             "AD-635b: ClinicalAuditStore wired (db_path=%s)",
-            cfg.audit_db_path,
+            _audit_db,
         )
 
     breaker_history_store = None
@@ -627,12 +633,18 @@ def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
         from probos.cognitive.circuit_breaker_history_store import (
             CircuitBreakerHistoryStore,
         )
+        from pathlib import Path as _Path2
+        _data_dir2 = getattr(runtime, "data_dir", None)
+        _breaker_db = (
+            str(_Path2(_data_dir2) / _Path2(cfg.circuit_breaker_history_db_path).name)
+            if _data_dir2 is not None else cfg.circuit_breaker_history_db_path
+        )
         breaker_history_store = CircuitBreakerHistoryStore(
-            db_path=cfg.circuit_breaker_history_db_path,
+            db_path=_breaker_db,
         )
         logger.info(
             "AD-635c: CircuitBreakerHistoryStore wired (db_path=%s)",
-            cfg.circuit_breaker_history_db_path,
+            _breaker_db,
         )
 
     service = ClinicalTelemetryService(
@@ -1181,6 +1193,16 @@ async def _wire_self_distillation(*, runtime: Any, config: "SystemConfig") -> bo
         return False
 
     from probos.cognitive.self_distillation.prober import PersonalOntologyProber
+
+    # BF: rebase the configured db_path filename under runtime.data_dir so
+    # tmp_path-based tests (and CI runners with a non-writable CWD) can open
+    # the SQLite file. The default `data/agent_probes.db` is a project-root
+    # relative path that fails on Linux CI when CWD differs.
+    from pathlib import Path
+    data_dir = getattr(runtime, "data_dir", None)
+    if data_dir is not None:
+        rebased_db_path = Path(data_dir) / Path(sd_cfg.db_path).name
+        sd_cfg = sd_cfg.model_copy(update={"db_path": rebased_db_path})
 
     prober = PersonalOntologyProber(
         runtime=runtime,

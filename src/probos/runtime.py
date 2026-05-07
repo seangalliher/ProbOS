@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import sys
 import time
 import uuid as _uuid
 from collections.abc import Awaitable, Callable, Iterable
@@ -158,7 +160,29 @@ logger = logging.getLogger(__name__)
 # Default paths (relative to project root)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_CONFIG = _PROJECT_ROOT / "config" / "system.yaml"
-_DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
+
+
+def _platform_data_dir() -> Path:
+    """BF-265: Platform-appropriate data directory, matching __main__._default_data_dir().
+
+    Prevents split-brain where runtime.py defaults to repo-relative ``data/``
+    while ``__main__.py`` uses AppData/XDG. Environment variable
+    ``PROBOS_DATA_DIR`` overrides for testing.
+    """
+    override = os.environ.get("PROBOS_DATA_DIR")
+    if override:
+        return Path(override)
+    if sys.platform == "win32":
+        base = Path.home() / "AppData" / "Local" / "ProbOS"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support" / "ProbOS"
+    else:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        base = Path(xdg) / "ProbOS" if xdg else Path.home() / ".local" / "share" / "ProbOS"
+    return base / "data"
+
+
+_DEFAULT_DATA_DIR = _platform_data_dir()
 
 
 class ProbOSRuntime:

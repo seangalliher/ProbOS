@@ -4559,14 +4559,27 @@ class CognitiveAgent(BaseAgent):
 
             # AD-568a: Oracle Service cross-tier context (ORACLE tier + DEEP strategy only)
             if observation.get("_oracle_context"):
+                logger.warning(
+                    "BF-265: Rendering oracle_context in DM prompt for %s (%d chars)",
+                    self.callsign or self.agent_type,
+                    len(observation["_oracle_context"]),
+                )
                 parts.append(
                     "=== CROSS-TIER KNOWLEDGE (Ship's Records + Operational State) ===\n"
                     "These are NOT your personal experiences. They are from the ship's shared "
-                    "knowledge stores. Treat as reference material, not memory."
+                    "knowledge stores. Treat as reference material, not memory.\n"
+                    "IMPORTANT: When answering questions, prioritize information from this section "
+                    "over your general training knowledge. Cite specific relationships shown here."
                 )
                 parts.append(observation["_oracle_context"])
                 parts.append("=== END CROSS-TIER KNOWLEDGE ===")
                 parts.append("")
+            else:
+                logger.warning(
+                    "BF-265: No oracle_context in DM observation for %s (keys: %s)",
+                    self.callsign or self.agent_type,
+                    [k for k in observation if k.startswith("_oracle")],
+                )
 
             # AD-568d: Ambient source attribution tag (cognitive proprioception)
             _attr = observation.get("_source_attribution")
@@ -4685,7 +4698,7 @@ class CognitiveAgent(BaseAgent):
 
             # AD-568a: Oracle Service cross-tier context
             if observation.get("_oracle_context"):
-                logger.info(
+                logger.warning(
                     "BF-265: Rendering oracle_context in WR prompt for %s (%d chars)",
                     getattr(self, 'agent_type', '?'), len(observation["_oracle_context"]),
                 )
@@ -5400,7 +5413,7 @@ class CognitiveAgent(BaseAgent):
 
                 # AD-620: Oracle Service — clearance-based access
                 # Agents with ORACLE tier (via rank or billet clearance) get Oracle on any strategy.
-                logger.info(
+                logger.warning(
                     "BF-265: recall_tier=%s for %s (query=%s)",
                     _recall_tier.value, self.agent_type, query[:80],
                 )
@@ -5420,14 +5433,14 @@ class CognitiveAgent(BaseAgent):
                         )
                         if oracle_text:
                             observation["_oracle_context"] = oracle_text
-                            logger.info(
-                                "BF-265: Oracle context populated for %s (%d chars)",
-                                self.agent_type, len(oracle_text),
+                            logger.warning(
+                                "BF-265: Oracle context populated for %s (%d chars): %.200s",
+                                self.agent_type, len(oracle_text), oracle_text,
                             )
                         else:
-                            logger.info("BF-265: Oracle returned empty for %s", self.agent_type)
+                            logger.warning("BF-265: Oracle returned empty for %s", self.agent_type)
                     except Exception:
-                        logger.debug("AD-568a: Oracle query failed, continuing without", exc_info=True)
+                        logger.warning("AD-568a: Oracle query failed, continuing without", exc_info=True)
                 elif (
                     _recall_tier in (RecallTier.FULL, RecallTier.ENHANCED)
                     and hasattr(self, '_runtime')

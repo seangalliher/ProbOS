@@ -359,7 +359,7 @@ class OracleService:
                 )
                 all_results.extend(tier_results)
             except Exception:
-                logger.debug("Oracle: Tier 6 (graph) query failed", exc_info=True)
+                logger.warning("BF-265: Tier 6 (graph) query FAILED", exc_info=True)
 
         # Tier 7: Ship Health (AD-695) — observable runtime telemetry
         # (vitals, pools, attention, degradation) as queryable OracleResults.
@@ -718,6 +718,7 @@ class OracleService:
 
         tokens = _extract_entity_tokens(query_text)
         if not tokens:
+            logger.warning("BF-265: graph query — no tokens from: %s", query_text[:80])
             return []
 
         # BF-264: Expand callsign tokens → agent_type equivalents.
@@ -743,6 +744,8 @@ class OracleService:
                         expanded.append(cs_lower)
                         seen.add(cs_lower)
             tokens = expanded
+
+        logger.warning("BF-265: graph tokens=%s for query=%s", tokens, query_text[:60])
 
         # edge.id -> (best_score, edge, hop_proximity, source_token, source_dir)
         scored: dict[str, tuple[float, Any, float, str, str]] = {}
@@ -798,15 +801,18 @@ class OracleService:
                         )
 
         if not scored:
+            logger.warning("BF-265: graph found 0 edges for tokens=%s", tokens)
             return []
+
+        logger.warning("BF-265: graph found %d edges for tokens=%s", len(scored), tokens)
 
         results: list[OracleResult] = []
         for edge_id, (score, edge, hop_prox, source_token, source_dir) in scored.items():
-            content = (
-                f"{edge.source_type.value}:{edge.source_id} "
-                f"--[{edge.relation.value}]--> "
-                f"{edge.target_type.value}:{edge.target_id}"
-            )
+            # BF-265: Format graph relationships as natural language so LLMs
+            # can connect them to conversational queries.  Fall back to
+            # machine-readable triple notation when no natural phrasing exists.
+            content = self._format_graph_content(edge, reg)
+
             results.append(OracleResult(
                 source_tier="graph",
                 content=content,
@@ -829,6 +835,42 @@ class OracleService:
 
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:k]
+
+    @staticmethod
+    def _format_graph_content(edge: Any, callsign_registry: Any) -> str:
+        """BF-265: Format a graph edge as natural language.
+
+        Translates ``agent:scout --[reports_to]--> agent:architect`` into
+        ``Wesley (scout) reports to Meridian (architect)`` so the LLM can
+        connect structured graph triples to conversational questions like
+        "Who does Wesley report to?".
+        """
+        reg = callsign_registry
+
+        def _label(entity_type: str, entity_id: str) -> str:
+            """Return 'Callsign (type)' if available, else 'type:id'."""
+            if reg is not None and entity_type == "agent":
+                cs = getattr(reg, '_type_to_callsign', {}).get(entity_id, "")
+                if cs:
+                    return f"{cs} ({entity_id})"
+            return f"{entity_type}:{entity_id}"
+
+        src = _label(edge.source_type.value, edge.source_id)
+        tgt = _label(edge.target_type.value, edge.target_id)
+        rel = edge.relation.value
+
+        # Natural-language phrasing for common relations
+        _NL = {
+            "reports_to": f"FACT: {src} reports to {tgt}",
+            "member_of": f"FACT: {src} is a member of {tgt}",
+            "commands": f"FACT: {src} commands {tgt}",
+            "competent_in": f"FACT: {src} is competent in {tgt}",
+            "trusts": f"FACT: {src} trusts {tgt}",
+            "collaborates_with": f"FACT: {src} collaborates with {tgt}",
+            "mentors": f"FACT: {src} mentors {tgt}",
+            "assigned_to": f"FACT: {src} is assigned to {tgt}",
+        }
+        return _NL.get(rel, f"FACT: {src} --[{rel}]--> {tgt}")
 
     async def _graph_find_edges(
         self,
