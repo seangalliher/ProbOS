@@ -2252,11 +2252,12 @@ Phase 3 — Prompt injection:
 
 ### AD-652 — Cognitive Code-Switching: Unified Pipeline with Contextual Modulation
 
-**Date:** 2026-04-20
-**Status:** Design Principle (adopted)
+**Date:** 2026-04-20 (adopted); 2026-05-07 (Wave 95 umbrella close)
+**Status:** Realised (Wave 95 close — all six principles delivered across shipped child ADs)
 **Issue:** #302
 **Parent:** AD-632 (Cognitive Chain Architecture)
 **Related:** AD-651 (Billet Instructions), AD-639 (Chain Personality Tuning), AD-647 (Process Chains)
+**Realised in:** AD-632 (unified pipeline substrate), AD-649 (channel/recipient → register inference), AD-639 (chain trust band modulation), AD-650 (analytical depth field), AD-651 (standing order decomposition), AD-651a (compose billet — proposal/duty format), AD-647 / AD-647c (process chains — variable chain depth + process-specific composition), AD-653 Layer 1 (speak-freely register shifting). Downstream consumers AD-655 / AD-656 / AD-657 / AD-658 / AD-659 / AD-660 all complete and reference AD-652 modulation parameters. Trackers reconciled in Wave 95.
 
 **Decision:** The cognitive chain is a single unified pipeline, not parallel pipelines for different communication types. Different cognitive tasks (duty reports vs. casual observations vs. DM responses) are handled through contextual modulation of the same pipeline — variable chain depth, tenor-aware compose framing, and structured format overlays — not by branching into separate architectures.
 
