@@ -2394,3 +2394,106 @@ waves:
       "AD-579: Memory Architecture umbrella close — tracker reconciliation
       (no-build, +0 tests)". Archive both prompts. gh issue close 37 with
       the canonical paragraph in Section 4 of the per-AD prompt.
+  - id: "95"
+    title: "AD-652 Cognitive Code-Switching — Umbrella Close (no-build, tracker reconciliation)"
+    kind: single
+    depends_on: ["94"]
+    dispatch_prompt: "prompts/WAVE-95-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-652-cognitive-code-switching-umbrella-close.md"
+    builder_required: true
+    issues_to_close: [302]
+    status: pending
+    notes: |
+      No-build close of GH #302 (AD-652 umbrella). AD-652 is an
+      architectural design principle adopted 2026-04-20 (DECISIONS.md:
+      2253-2280) governing the cognitive chain pipeline — six rules:
+      unified pipeline, contextual modulation (Halliday field/tenor/mode),
+      structured format overlays (billet instructions), variable chain
+      depth, character-driven self-monitoring, process-specific chains.
+      AD-652 is a principle that governs OTHER ADs, not a discrete module.
+      All six principles are fully realised at HEAD b02a9a4 across already
+      shipped child ADs: AD-632 SubTaskExecutor unified-pipeline substrate
+      at cognitive/sub_task.py:172; AD-649 derive_communication_context at
+      cognitive_agent.py:59 with 5 channel registers (private_conversation,
+      bridge_briefing, casual_social, ship_wide, department_discussion)
+      setting observation _communication_context at cognitive_agent.py:
+      2223 — channel/recipient → field/mode register inference; AD-639
+      chain trust band at cognitive_agent.py:2055-2062 — tenor weighting
+      of personality block in EVALUATE/REFLECT; AD-650 analytical_reasoning
+      narrative field on ANALYZE composition brief — depth modulation;
+      AD-651 StepInstructionRouter slicing composed standing orders by
+      category markers — billet instructions as cognitive scaffolding;
+      AD-651a [PROPOSAL] block syntax injected into compose plus Findings/
+      Assessment/Recommendation duty report format — first practical
+      billet application; AD-647 / AD-647c process chains framework
+      (QUERY/TRANSFORM/STORE/NOTIFY step types) distinct from
+      communication chain — variable depth plus process-specific
+      composition; AD-653 Layer 1 speak_freely intended_action with
+      trust-gated authorization (>=0.7 auto-granted, 0.4-0.7 flagged,
+      <0.4 denied) and Counselor REGISTER_SHIFT_GRANTED/DENIED event
+      subscription — character-driven register shifting. Downstream
+      consumers AD-655 contrastive memory, AD-656 department cognitive
+      profiles, AD-657 dream trace preservation, AD-658 chain harness
+      metrics, AD-659 v1 chain self-optimization, AD-660 causal reasoning
+      all complete and reference AD-652 modulation parameters. The AD-658
+      archive prompt itself (prompts/archive/ad-658-chain-harness-metrics
+      -v1.md:11-19) documents the realised-not-shipped status: AD-652
+      dependency satisfied as-is, no wiring changes required. Wave 95
+      reconciles four trackers: DECISIONS.md:2253-2280 (status: Design
+      Principle adopted -> Realised, append Realised in subsection),
+      docs/development/roadmap.md:7105 (bullet: Design Principle, OSS,
+      Issue #302 -> Realised, OSS, Issue #302 with realisation list),
+      PROGRESS.md:331 (DESIGN PRINCIPLE adopted -> REALISED with one-line
+      realisation summary), prompts/wave-plan.yaml (this entry). Total: 4
+      SEARCH/REPLACE pairs across 4 MODIFY blocks. There is no AD-652
+      paragraph in decisions-era-4-evolution.md (grep returns zero matches)
+      — W95 does NOT touch era-4 content; canonical decision record lives
+      at DECISIONS.md:2253-2280. No code touched, no tests added, no
+      pytest delta (target 12130 -> 12130). No source changes, no test
+      changes, no notebook/qualification/journal changes. No new GH issues
+      minted — downstream consumer ADs remain attached to the Meta-Harness
+      Research Wave's own tracking; W95 cites them as realisation evidence
+      not as new deferrals. No commercial leak — AD-652 is purely OSS
+      cognitive-architecture work (cognitive science research foundation:
+      Levelt, Halliday, Giles, Snyder, Weick/Sutcliffe; HRO research;
+      cognitive chain pipeline modulation via field/tenor/mode parameters;
+      structured format overlays via billet instructions; trust-gated
+      register shifting). Zero tier-noun phrase / pricing-token regex /
+      SaaS-overlay descriptor surface anywhere in the umbrella.
+      Banned-pattern audit on WAVE-95-DISPATCH.md + ad-652-cognitive-code-
+      switching-umbrella-close.md + this notes block: 11 patterns checked,
+      0 literal hits per pattern. Placeholder forms used throughout: the
+      e-word + tier phrase, the private commercial-repo path token, the
+      e-word overlay phrase, the e-word-prefixed repo token, monthly-price
+      regex, per-month abbreviation regex, rev-proj phrase, the
+      recurring-revenue acronym, outcome-style pricing phrase, the
+      GTM-pattern phrase, the patterns-to-absorb phrase. Pre-commit-hook
+      simulation Select-String -SimpleMatch returns zero per pattern across
+      all three artefacts. Reframe rationale: there is genuinely nothing
+      to defer because there is nothing to add — AD-652 is a principle not
+      a module, all six principles realised at HEAD. Captain rule "don't
+      defer unless no choice" satisfied vacuously. Wave 95 structurally
+      identical to W71 (#415), W76 (#285), W90 (#111 AD-462), and W94
+      (#37 AD-579) no-build umbrella closes. 4 review passes recorded:
+      P1 (initial draft against HEAD b02a9a4 — structure mirrored on
+      W90/W94 patterns; Realised in mapping verified against DECISIONS.md
+      principles 1-6); P2 (verify-first sweep — 8 grep-anchored claims
+      confirmed: DECISIONS.md:2253-2280, roadmap.md:7105, PROGRESS.md:331,
+      cognitive_agent.py:59 + 2223 + 2055-2062, decisions-era-4-evolution
+      .md zero AD-652 matches, AD-658 archive prompt :11-19, AD-651/651a
+      /653/647/647c/650 all Complete, AD-655/656/657/658/659/660 all
+      Complete or v1 complete); P3 (reframe table — no reframe needed,
+      principle is fully realised, only trackers lag); P4 (banned-pattern
+      audit + SEARCH/REPLACE block uniqueness verified across all 4
+      MODIFY blocks). Builder execution: read prompt top-to-bottom, apply
+      4 SEARCH/REPLACE pairs across 4 MODIFY blocks. Verify git diff
+      --stat shows exactly 4 modified trackers (DECISIONS.md, roadmap.md,
+      PROGRESS.md, wave-plan.yaml) plus the 2 new prompt files. Verify
+      git diff decisions-era-4-evolution.md shows zero changes.
+      Pre-commit hook runs naturally on commit. Full pytest gate
+      belt-and-braces (expected 12130 passed). Commit with "AD-652:
+      Cognitive Code-Switching umbrella close — tracker reconciliation
+      (no-build, +0 tests)". Archive both prompts. gh issue close 302
+      with the canonical paragraph in Section 5 of the per-AD prompt.
