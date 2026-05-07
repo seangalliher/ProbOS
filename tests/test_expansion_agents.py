@@ -299,6 +299,10 @@ class TestHttpFetchAgent:
     async def test_fetch_with_mock(self, monkeypatch):
         """Mock httpx to avoid network calls in unit tests."""
         import httpx
+        # AD-456b leak guard: clear ClassVar egress policy left set by prior
+        # security tests in the same xdist worker.
+        from probos.agents.http_fetch import HttpFetchAgent as _HFA
+        monkeypatch.setattr(_HFA, "_egress_policy", None)
 
         class MockResponse:
             status_code = 200
