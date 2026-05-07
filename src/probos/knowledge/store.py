@@ -499,7 +499,34 @@ class KnowledgeStore:
             return
 
         try:
-            await self._git_run("add", "-A")
+            result_add = await self._git_run("add", "-A")
+            if (
+                result_add.returncode != 0
+                and "index file corrupt" in (result_add.stderr or "")
+            ):
+                # BF: rebuild the index in place when concurrent writes have
+                # corrupted it. `git read-tree HEAD` regenerates `.git/index`
+                # from the last commit, which is safe because all worktree
+                # changes are reapplied by the subsequent `git add -A`.
+                log.warning(
+                    "Git index corrupt at %s; rebuilding from HEAD",
+                    self._repo_path,
+                )
+                idx = self._repo_path / ".git" / "index"
+                try:
+                    idx.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                rebuild = await self._git_run("read-tree", "HEAD")
+                if rebuild.returncode != 0:
+                    log.warning(
+                        "Git index rebuild failed: %s", rebuild.stderr.strip()
+                    )
+                    return
+                result_add = await self._git_run("add", "-A")
+            if result_add.returncode != 0:
+                log.warning("Git add failed: %s", result_add.stderr.strip())
+                return
             result = await self._git_run("commit", "-m", message, "--allow-empty")
             if result.returncode != 0 and "nothing to commit" not in result.stdout:
                 log.warning("Git commit failed: %s", result.stderr.strip())
