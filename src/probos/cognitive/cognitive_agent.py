@@ -4559,8 +4559,8 @@ class CognitiveAgent(BaseAgent):
 
             # AD-568a: Oracle Service cross-tier context (ORACLE tier + DEEP strategy only)
             if observation.get("_oracle_context"):
-                logger.warning(
-                    "BF-265: Rendering oracle_context in DM prompt for %s (%d chars)",
+                logger.debug(
+                    "Rendering oracle_context in DM prompt for %s (%d chars)",
                     self.callsign or self.agent_type,
                     len(observation["_oracle_context"]),
                 )
@@ -4575,8 +4575,8 @@ class CognitiveAgent(BaseAgent):
                 parts.append("=== END CROSS-TIER KNOWLEDGE ===")
                 parts.append("")
             else:
-                logger.warning(
-                    "BF-265: No oracle_context in DM observation for %s (keys: %s)",
+                logger.debug(
+                    "No oracle_context in DM observation for %s (keys: %s)",
                     self.callsign or self.agent_type,
                     [k for k in observation if k.startswith("_oracle")],
                 )
@@ -4698,8 +4698,8 @@ class CognitiveAgent(BaseAgent):
 
             # AD-568a: Oracle Service cross-tier context
             if observation.get("_oracle_context"):
-                logger.warning(
-                    "BF-265: Rendering oracle_context in WR prompt for %s (%d chars)",
+                logger.debug(
+                    "Rendering oracle_context in WR prompt for %s (%d chars)",
                     getattr(self, 'agent_type', '?'), len(observation["_oracle_context"]),
                 )
                 wr_parts.append("")
@@ -5413,8 +5413,8 @@ class CognitiveAgent(BaseAgent):
 
                 # AD-620: Oracle Service — clearance-based access
                 # Agents with ORACLE tier (via rank or billet clearance) get Oracle on any strategy.
-                logger.warning(
-                    "BF-265: recall_tier=%s for %s (query=%s)",
+                logger.debug(
+                    "recall_tier=%s for %s (query=%s)",
                     _recall_tier.value, self.agent_type, query[:80],
                 )
                 if (
@@ -5433,8 +5433,8 @@ class CognitiveAgent(BaseAgent):
                         )
                         if oracle_text:
                             observation["_oracle_context"] = oracle_text
-                            logger.warning(
-                                "BF-265: Oracle context populated for %s (%d chars): %.200s",
+                            logger.debug(
+                                "Oracle context populated for %s (%d chars): %.200s",
                                 self.agent_type, len(oracle_text), oracle_text,
                             )
                         else:
