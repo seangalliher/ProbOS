@@ -2597,3 +2597,14 @@ waves:
       SoftwareEngineerAgent + alias, runtime wiring, +12 tests)".
       Archive both prompts. gh issue close 96 with the canonical
       paragraph in Section 6 of the per-AD prompt.
+
+  - id: "97"
+    title: "AD-476 v1 Specialized Builders ΓÇö Cognitive Division of Labor for SWE"
+    kind: single
+    depends_on: ["96"]
+    dispatch_prompt: "prompts/WAVE-97-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-476-specialized-builders-v1.md"
+    builder_required: true
+    issues_to_close: [70]
