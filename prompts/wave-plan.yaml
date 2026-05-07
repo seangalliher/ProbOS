@@ -1976,3 +1976,177 @@ waves:
       entry. gh issue close 73 with the canonical paragraph in
       Section 9 of the per-AD prompt (Section 11 Acceptance Criteria
       item 10).
+
+  - id: "92"
+    title: "AD-607 v1 Memory Security Framework — extraction & poisoning defense (retrieval / response / privacy layers + store-time prompt-injection + DP aggregation + /security memory)"
+    kind: single
+    depends_on: ["91"]
+    dispatch_prompt: "prompts/WAVE-92-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-607-memory-security-framework-v1.md"
+    builder_required: true
+    issues_to_close: [183]
+    status: pending
+    notes: |
+      AD-607 Memory Security Framework v1 — closes GH #183. HEAD 255c52a
+      (matches Captain reference origin/main exactly; no upstream BFs).
+      Baseline pytest 11963 -> target >= 12035 (+72 floor; ~75 tests
+      planned across ten classes: TestRecallAnomalyValidation ~8,
+      TestProvenanceIntegrity ~7, TestAnchorMismatch ~6,
+      TestMemoryLeakageGuard ~8, TestOracleAccessPolicy ~10,
+      TestFederationInboundSanitization ~8, TestFederationOutboundPrivacy ~8,
+      TestPromptInjectionStoreGate ~8, TestDifferentialPrivacyAggregation ~6,
+      TestSecurityMemorySlashCommand ~6, plus ~3 startup/runtime wiring
+      tests on the new MemorySecurityRegistry).
+
+      Ten concrete v1 sub-AD letters: 607a validate_recall_result anomaly
+      gate (new module memory_security.py; observational by default;
+      hooked into EpisodicMemory.recall + recall_by_anchor_scored +
+      OracleService._query_episodic; emits MEMORY_RECALL_ANOMALY); 607b
+      validate_provenance integrity check (Episode.agent_ids non-empty
+      + source in known MemorySource enum + correlation_id non-empty
+      when source=direct; emits MEMORY_PROVENANCE_GAP); 607c
+      score_anchor_mismatch (reuses AD-567c anchor_dimension_weights
+      inverted as anomaly signal; emits MEMORY_ANCHOR_MISMATCH above
+      anchor_mismatch_threshold default 0.7); 607d check_memory_leakage
+      response-based guard (slotted alongside AD-589
+      IntrospectiveFaithfulness in cognitive_agent.py post-decision
+      block; flags responses with >=20-char overlap with foreign-shard
+      episodes; emits MEMORY_LEAK_SUSPECTED; observational v1, no
+      response mutation); 607e MemoryAccessPolicy enum
+      (PERMISSIVE/OWN_SHARD_ONLY/OWN_SHARD_PLUS_PUBLIC) on
+      OracleService.query via new caller_sovereign_id + access_policy
+      kwargs (default PERMISSIVE preserves AD-462c cross-shard recall
+      behavior); 607f federated-recall inbound sanitization
+      (FederationRecallAgent.act runs validate_recall_result +
+      validate_provenance + new validate_inbound_classification on
+      every incoming peer episode unconditionally; emits
+      FEDERATION_EPISODE_REJECTED; receiver always owns its boundary
+      so no opt-out); 607g federated-recall outbound privacy filter
+      (FederationConfig.memory_access_policy: public | shared_trust |
+      private; default shared_trust drops private-classified episodes
+      while honoring AD-479b peer trust ranking shipped by W91; public
+      mode applies AD-607i DP redaction); 607h store-time prompt-
+      injection detection (MemorySecurityGate evaluate_store mirrors
+      AD-610 _storage_gate slot pattern at episodic.py:949; pattern
+      set covers ignore_previous + role_swap + tool_spoof +
+      system_prompt_leak shapes; emits MEMORY_INJECTION_SUSPECTED;
+      enforce_store=False default observational); 607i aggregate_with_dp
+      pure helper (blanks Episode.user_input + dag_summary when fewer
+      than min_cohort_size=3 unique sovereign_ids contributed; wired
+      ONLY through 607g federated-outbound public path per W92-4
+      hard-stop — local consumers see episodes verbatim); 607j
+      /security memory slash subcommand (MemorySecurityRegistry
+      24h-window counter aggregator surfaces 7-EventType counts;
+      extends cmd_security via the AD-479i /federation routing
+      precedent; existing /security subcommands preserved verbatim).
+
+      Three future sub-AD letters with crisp upstream blockers (NOT
+      scope cuts): 607k ML-based extraction-attack classifier
+      (forcing function: 90 days of MEMORY_RECALL_ANOMALY accumulation
+      + AD-466-style red-team campaign generates labeled adversarial
+      query corpus); 607l hardware-attested memory bank via TEE / SGX
+      / SEV-SNP (forcing function: hosted deployment that opts into a
+      TEE platform; outside zero-config OSS boot promise); 607m
+      cross-fleet privacy-budget tracker (forcing function: cross-
+      fleet operations becoming a deployed surface beyond single-
+      cluster federation; this is the hosted-multi-tenant carve-out
+      path, not a public-runtime concern).
+
+      Three commercial-repo carve-outs (out-of-repo by roadmap design,
+      NOT v1 deferrals): hosted memory-security-as-a-service offering
+      centralized adversarial-query corpus + ML-classifier model
+      distribution (per roadmap.md:3478 + :4111), fleet-wide
+      compliance + audit trail aggregation across customer fleets
+      (per roadmap.md:4095 + :4111), customer-isolation memory-
+      classification overlay built on the v1 MemoryAccessPolicy enum
+      (per roadmap.md:3595 + :4111). Tracked in the private
+      commercial-repo path token. Audit prose in dispatch + per-AD
+      prompt + this notes block uses descriptor-only language only.
+
+      Reframe rationale: every survey-Section-8 + roadmap.md:5266
+      design-bullet ships in v1. The three AD-607k/l/m deferrals all
+      have crisp upstream blockers (labeled-adversarial-corpus / TEE-
+      platform-infra / cross-fleet hosted surface) documented above.
+      Captain rule "don't defer unless no choice" satisfied — the
+      unblocked-substrate carve-out is empty. Substrate already at
+      HEAD verified by 16+ grep-evidence lines in the per-AD prompt's
+      Section 12 Verified Against Codebase footer. AD-479
+      FederationRecallAgent shipped Wave 91 — W92 607f/g extend it
+      without touching the transport layer. AD-589 IntrospectiveFaith-
+      fulness pipeline shipped already — W92 607d slots alongside as
+      a sibling check, NOT a replacement. AD-610 _storage_gate slot
+      pattern at episodic.py:949 is the canonical extension point for
+      607h — same evaluate() contract, separate concern.
+
+      EventType audit: 7 new types collision-free against HEAD
+      (Select-String -Path src/probos/events.py -Pattern
+      'MEMORY_RECALL_ANOMALY|MEMORY_PROVENANCE_GAP|MEMORY_ANCHOR_MISMATCH|MEMORY_LEAK_SUSPECTED|MEMORY_INJECTION_SUSPECTED|FEDERATION_EPISODE_REJECTED|FEDERATION_RECALL_DP_REDACTED'
+      returned no matches): MEMORY_RECALL_ANOMALY,
+      MEMORY_PROVENANCE_GAP, MEMORY_ANCHOR_MISMATCH,
+      MEMORY_LEAK_SUSPECTED, MEMORY_INJECTION_SUSPECTED,
+      FEDERATION_EPISODE_REJECTED, FEDERATION_RECALL_DP_REDACTED.
+
+      AD numbering: highest stem at HEAD remains AD-696 (Wave 72,
+      verified 2026-05-07 by Select-String over PROGRESS.md +
+      DECISIONS.md + decisions-era-*.md + roadmap.md returning
+      696/695/694). AD-607 pre-allocated by docs/development/
+      roadmap.md:5266 + decisions-era-4-evolution.md:4005. Sub-AD
+      letters a-m organizational catalog markers only, mirroring
+      AD-479 a-m Wave 91, AD-480 a-m Wave 89, AD-481 a-m Wave 88,
+      AD-443 a-h Wave 87 precedents — no new AD numbers minted.
+
+      Hard-stop conditions specific to W92: W92-1 prompt-injection
+      patterns produce >5% FP on legitimate test fixtures (Builder
+      surfaces back to Architect, do not loosen patterns); W92-2
+      OWN_SHARD_ONLY breaks an existing test that depended on cross-
+      shard recall (Builder makes failing test pass explicit
+      access_policy= kwarg, do not change default away from
+      PERMISSIVE); W92-3 federation inbound rejects every test peer
+      episode in tests/test_ad479_federation_hardening.py (Builder
+      updates fixture quality to satisfy provenance integrity, do
+      not loosen validator); W92-4 DP redaction blanks Episode.user_input
+      that local consumer tests assert on (Builder wires DP redaction
+      ONLY through 607g federated outbound path, NOT through
+      Oracle.query or local recall). Standard W87/W89/W91 hard-stops
+      also apply.
+
+      Banned-pattern audit on dispatch + per-AD prompt + this notes
+      block: 11 patterns checked, 0 literal hits per pattern.
+      Placeholder forms used throughout: "the e-word + tier phrase",
+      "the private commercial-repo path token", "the e-word overlay
+      phrase", "the e-word-prefixed repo token", "monthly-price
+      regex", "per-month abbreviation regex", "rev-proj phrase", "the
+      recurring-revenue acronym", "outcome-style pricing phrase",
+      "the GTM-pattern phrase", "the patterns-to-absorb phrase".
+      Pre-commit-hook simulation Select-String -Path
+      prompts/WAVE-92-DISPATCH.md, prompts/ad-607-memory-security-
+      framework-v1.md -Pattern <pattern> -SimpleMatch returns zero
+      hits per pattern.
+
+      4 review passes recorded in this draft session: P1 (initial
+      draft against HEAD 255c52a — structure mirrored on W91), P2
+      (verify-first sweep — all 16+ grep-evidence lines confirmed
+      against HEAD; FederationRecallAgent at agents/federation_recall_agent.py:23
+      confirmed shipped W91; AD-589 IntrospectiveFaithfulness post-
+      decision block confirmed shipped via cognitive_agent.py +
+      memory_probes.py consumers), P3 (reframe table — confirmed
+      10-letter v1 + 3-letter forcing-function deferred + 3
+      commercial carve-outs + 0 hard-deferrals satisfies Captain
+      rule), P4 (banned-pattern audit on full text + per-section
+      consistency check between dispatch + prompt + this entry; AD
+      numbering verified 696 highest, no collision; 7 EventType names
+      verified collision-free).
+
+      Builder execution: read prompt top-to-bottom, apply ten
+      sections in order (607a -> 607b -> 607c -> 607d -> 607e -> 607f
+      -> 607g+607i -> 607h -> 607j; 607g and 607i ship together in
+      Section 7) with focused per-section
+      pytest gate after each section, full parallel gate before
+      commit. Tracker updates land in roadmap.md (AD-607 entry
+      flipped from planned to complete with 10-letter sub-AD
+      breakdown) + decisions-era-4-evolution.md (new ### AD-607
+      section appended before AD-636) + this wave-plan entry. gh
+      issue close 183 with the canonical paragraph in Section 10E of
+      the per-AD prompt (Section 11 Acceptance Criteria item 13).
