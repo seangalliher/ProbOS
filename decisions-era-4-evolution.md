@@ -2687,7 +2687,7 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 **Status:** Complete
 **Scope:** Medium | **Type:** Cognitive Architecture
 
-**Decision:** Three final Memory Architecture sub-ADs delivered together. (1) **AD-462c Variable Recall Tiers** — `RecallTier` enum (`BASIC`/`ENHANCED`/`FULL`/`ORACLE`) parallels `AgencyLevel` (Ensign=BASIC, Lieutenant=ENHANCED, Commander=FULL, Senior=ORACLE). `resolve_recall_tier_params()` DRY helper centralizes tier→parameter mapping (k, context_budget, anchor_confidence_gate, cross_agent_access). Wired into both `_recall_relevant_memories()` and `_gather_context()` in cognitive_agent.py. (2) **AD-462d Social Memory** — `SocialMemoryService` implements "does anyone remember?" protocol via Ward Room `thread_mode="memory_query"`. Agents detect memory queries in proactive cycle and respond from their sovereign episodic shard. Protocol-based, not infrastructure — uses existing Ward Room + recall pipeline. (3) **AD-462e Oracle Service** — `OracleService` aggregates all 3 knowledge tiers (EpisodicMemory vector search, RecordsStore keyword search, KnowledgeStore filesystem search) with normalized scoring and source provenance tags. Trust-gated: only ORACLE tier (Senior officers) gets Oracle access. Ward Room wiring done in runtime.py (not cognitive_services.py) due to startup phase ordering — Ward Room initializes in finalize.py (Phase 7), cognitive services initialize in Phase 5. AD-462f (concept graphs) deferred — AnchorFrame (AD-567a) covers near-term structured metadata needs.
+**Decision:** Three final Memory Architecture sub-ADs delivered together. (1) **AD-462c Variable Recall Tiers** — `RecallTier` enum (`BASIC`/`ENHANCED`/`FULL`/`ORACLE`) parallels `AgencyLevel` (Ensign=BASIC, Lieutenant=ENHANCED, Commander=FULL, Senior=ORACLE). `resolve_recall_tier_params()` DRY helper centralizes tier→parameter mapping (k, context_budget, anchor_confidence_gate, cross_agent_access). Wired into both `_recall_relevant_memories()` and `_gather_context()` in cognitive_agent.py. (2) **AD-462d Social Memory** — `SocialMemoryService` implements "does anyone remember?" protocol via Ward Room `thread_mode="memory_query"`. Agents detect memory queries in proactive cycle and respond from their sovereign episodic shard. Protocol-based, not infrastructure — uses existing Ward Room + recall pipeline. (3) **AD-462e Oracle Service** — `OracleService` aggregates all 3 knowledge tiers (EpisodicMemory vector search, RecordsStore keyword search, KnowledgeStore filesystem search) with normalized scoring and source provenance tags. Trust-gated: only ORACLE tier (Senior officers) gets Oracle access. Ward Room wiring done in runtime.py (not cognitive_services.py) due to startup phase ordering — Ward Room initializes in finalize.py (Phase 7), cognitive services initialize in Phase 5. AD-462f (retrieval-as-pointers) shipped subsequently in Wave 73 — see the AD-462f closure paragraph below.
 
 | AD | Decision |
 |----|----------|
@@ -2696,7 +2696,31 @@ Ebbinghaus-inspired forgetting curve for procedures. Unused knowledge decays, st
 | AD-462c | RecallTier enum mirrors AgencyLevel; DRY helper over per-callsite duplication |
 | AD-462d | Ward Room thread protocol over dedicated query bus — leverages existing fabric |
 | AD-462e | Normalized scoring across heterogeneous tiers over separate query endpoints |
-| AD-462f | DEFERRED — concept graphs, AnchorFrame sufficient for now |
+| AD-462f | COMPLETE (Wave 73, 2026-05-05) — `MemoryRef` retrieval-as-pointers projection over OracleService; pillars 1+2 covered by AnchorFrame (AD-567a) + KnowledgeEdge graph (AD-688/692) |
+
+### AD-462f: Optimized Memory Representation — Retrieval-as-Pointers (Wave 73 closure)
+
+**Date:** 2026-05-05 (W73 build commit `f5bd612`); tracker reconciliation 2026-05-06 (Wave 90).
+**Status:** Complete. Closes the AD-462 umbrella (GH #111) together with the previously-shipped AD-462a (absorbed by AD-567b), AD-462b (absorbed by AD-567d), and AD-462c/d/e cluster above.
+**Scope:** Small | **Type:** Cognitive Architecture
+
+**Decision:** Pillar 3 of AD-462 ("Optimized Memory Representation") shipped as a stateless lightweight projection over `OracleService` results rather than a new index or storage tier. `MemoryRef` is a frozen dataclass (`types.py:412-431`) carrying `ref_id = f"{tier}:{stable_key}"` with `metadata` excluded from hash/eq (DLog #12 — projections must be stable across re-queries). `OracleService.query_refs()` (`oracle_service.py:436`) returns `list[MemoryRef]` from the same per-tier search the existing `query()` and `query_formatted()` paths use; `resolve_ref()` (`:491`) re-hydrates a `MemoryRef` to its full `OracleResult` via an instance-scoped LRU bounded by inline caps (DLog #10 — caps NOT in config); `format_refs()` (`:511`) renders a prompt-ready block with line/char limits. `oracle_refs` QUERY op (`cognitive/sub_tasks/query.py:312-432`) is gated to RecallTier.ENHANCED+ and emits `MEMORY_REFS_DISPATCHED` (`events.py:238`) for telemetry. Pillars 1 + 2 (structured metadata, concept graphs) were re-mapped against HEAD before W73 build: pillar 1 covered by `AnchorFrame` (AD-567a) + AD-541/598/579b; pillar 2 covered by `KnowledgeEdge` graph (AD-688/692). 16 focused tests at `tests/test_ad462f_memory_refs.py`. Existing `query()` / `query_formatted()` contracts preserved byte-for-byte (DLog #1 — refs are an opt-in projection); AD-696's `oracle_lookup` QUERY op continues using `query_formatted` unchanged.
+
+**Carry-forward children (W73 forcing functions, NOT W90 deferrals):**
+
+| Child | Forcing function (per `prompts/archive/WAVE-73-DISPATCH.md`) |
+|---|---|
+| AD-462f-1 — `ToolRegistry` registration of `oracle_refs` | Same root cause as AD-696-1 — gated on `init_communication()` startup signature gaining a `runtime` parameter. |
+| AD-462f-b — ANALYZE intent signal + chain dispatch seam | Gated on a chain dispatch seam between triage and execute phases existing for non-trivial chains; skill agents and slash commands already call `runtime.oracle.query_refs(...)` directly. |
+| AD-462f-c — Cross-conversation `ref_id` persistence | Gated on a use case for re-resolving refs across runtime restarts; v1 LRU is per-instance. |
+| AD-462f-d — Per-tier `MemoryRef.metadata` contract documentation | Gated on a second consumer surface beyond the chain — the contract is currently single-consumer (the formatter). |
+
+**Architect calls:**
+
+| AD | Decision |
+|----|----------|
+| AD-462f umbrella close | Wave 73 Builder skipped tracker updates (`docs/development/roadmap.md`, `decisions-era-4-evolution.md`, `PROGRESS.md` per W73 dispatch §"Final Tracker Updates"). Wave 90 reconciles by flipping the umbrella + sub-AD entries and appending this closure paragraph. No code, no tests, zero pytest delta. |
+| Carry-forward children | NOT minted as W90 deferrals — they remain attached to the W73 archive. Citing them in the umbrella close gives #111 readers a single trace point; the forcing functions live in `prompts/archive/WAVE-73-DISPATCH.md` lines 31, 49, 64, 90. |
 
 ### AD-570b: Episode Participant Index
 

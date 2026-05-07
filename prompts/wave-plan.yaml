@@ -1738,3 +1738,70 @@ waves:
       TestProbationaryTrustWiring ~6, TestFederationRouterPolymorphism
       ~6, TestFederationConfigSchema ~4, TestSlashFederationPeersCommand
       ~6, TestStartupWiring ~6).
+  - id: "90"
+    title: "AD-462 Biological Memory Model — Umbrella Close (no-build, tracker reconciliation)"
+    kind: single
+    depends_on: ["89"]
+    dispatch_prompt: "prompts/WAVE-90-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-462-biological-memory-umbrella-close.md"
+    builder_required: true
+    issues_to_close: [111]
+    status: pending
+    notes: |
+      No-build close of GH #111 (AD-462 umbrella). All six sub-ADs
+      shipped at HEAD 89d4fa7: AD-462a absorbed by AD-567b
+      (salience-weighted recall), AD-462b absorbed by AD-567d
+      (ActivationTracker), AD-462c (RecallTier enum), AD-462d
+      (SocialMemoryService — also absorbed by AD-567f), AD-462e
+      (OracleService cross-tier unified query), AD-462f (MemoryRef
+      retrieval-as-pointers, Wave 73 commit f5bd612). Pillar 1
+      biological memory staging is the conceptual frame realised across
+      EpisodicMemory.recent_for_agent (sensory buffer at episodic.py:
+      1815), ChromaDB store (short-term), and ProcedureStore + Records
+      Store consolidated by DreamingEngine (long-term, dreaming.py:72,
+      78, 105, 114) — no separate sub-AD. Wave 73 Builder shipped AD-
+      462f code but skipped the tracker updates required by the W73
+      dispatch — at HEAD roadmap.md:4168 still says AD-462 *(planned)*,
+      roadmap.md:4177 still says AD-462f *(planned)*, decisions-era-4-
+      evolution.md:2699 still says "AD-462f DEFERRED", decisions-era-4-
+      evolution.md:2690 still says "AD-462f (concept graphs) deferred".
+      Wave 90 reconciles by flipping the umbrella status to *(complete
+      via AD-462a-f)*, refreshing the AD-462f sub-AD bullet to
+      *(COMPLETE — Wave 73, 2026-05-05)* with a one-line summary,
+      flipping the era-4 table row at :2699, updating the era-4 prose
+      at :2690, and appending a new ### AD-462f closure paragraph
+      between the existing AD-462c/d/e cluster and the AD-570b heading
+      at :2701. Carry-forward children AD-462f-1 (ToolRegistry
+      registration), AD-462f-b (ANALYZE intent signal + chain dispatch
+      seam), AD-462f-c (cross-conversation ref persistence), AD-462f-d
+      (per-tier metadata contracts) are W73 deferrals NOT W90 deferrals
+      — their forcing functions live in prompts/archive/WAVE-73-
+      DISPATCH.md lines 31, 49, 64, 90. The umbrella close cites them
+      so #111 readers can trace the story; W90 mints zero new GH
+      issues. No code touched, no tests added, no pytest delta (target
+      11916 -> 11916). No commercial leak — AD-462 is purely OSS
+      cognitive architecture (10-bit bottleneck principle, biological
+      memory staging, ACT-R activation model, ward-room social memory,
+      oracle cross-tier query, retrieval-as-pointers projection); zero
+      tier/pricing/SaaS surface anywhere in the umbrella. Pre-commit-
+      hook 11 banned-pattern audit on dispatch + prompt + this notes
+      block: 0 literal hits across all forms (Wave 87/88/89 placeholder
+      convention applied — audit prose uses descriptor-only language,
+      e.g. "tier-noun phrase" / "private commercial-repo path token" /
+      "monthly-price regex" without invoking the literal forms).
+      Reframe rationale: there is genuinely nothing to defer because
+      there is nothing to add — the entire umbrella is already
+      shipped. Captain rule "don't defer unless no choice" satisfied
+      vacuously. Wave 90 is structurally identical to Wave 71 (#415
+      AD-644b) and Wave 76 (#285 AD-644 SA architecture) — both clean
+      no-build closes flipping tracker entries to reflect work that
+      already shipped under earlier ADs. Builder cycle: read prompt,
+      apply 6 SEARCH/REPLACE pairs grouped into 3 MODIFY blocks (2
+      pairs in roadmap.md, 3 sequential pairs in decisions-era-4-
+      evolution.md, 1 pair in wave-plan.yaml — the wave-plan one is
+      this entry attached to the W89 tail), no test runs needed since
+      no source touched, full gate as belt-and-braces should pass at
+      11916 unchanged, gh issue close 111 with the canonical paragraph
+      provided in Section 4 of the per-AD prompt.
