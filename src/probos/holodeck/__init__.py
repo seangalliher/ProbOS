@@ -26,12 +26,23 @@ from probos.holodeck.scenarios import (
     ScenarioOutcome,
 )
 from probos.holodeck.scheduler import DepartmentActivationScheduler
+from probos.holodeck.team_simulations import (
+    DebriefRecord,
+    TeamScenario,
+    TeamScenarioRegistry,
+    TeamSimulationDrill,
+    TeamSimulationOrchestrator,
+    TeamSimulationParticipant,
+    TeamSimulationRecord,
+    TeamSimulationStore,
+)
 
 __all__ = [
     "AffectiveBaselineCheck",
     "AffectiveObservation",
     "BirthChamber",
     "BirthChamberRecord",
+    "DebriefRecord",
     "DepartmentActivationScheduler",
     "GapScenarioGenerator",
     "HolodeckGapBridge",
@@ -41,4 +52,11 @@ __all__ = [
     "NoOpAffectiveBaselineCheck",
     "ScenarioGapLink",
     "ScenarioOutcome",
+    "TeamScenario",
+    "TeamScenarioRegistry",
+    "TeamSimulationDrill",
+    "TeamSimulationOrchestrator",
+    "TeamSimulationParticipant",
+    "TeamSimulationRecord",
+    "TeamSimulationStore",
 ]

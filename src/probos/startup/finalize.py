@@ -239,6 +239,58 @@ def _wire_birth_chamber(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_holodeck_team_simulations(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-510 v1: Wire TeamSimulationOrchestrator + TeamScenarioRegistry.
+
+    Default-False per AD-695 transitional-flag precedent. When disabled,
+    no orchestrator is constructed; ``runtime.team_simulation_orchestrator``
+    and ``runtime.team_scenario_registry`` are NOT set.
+    """
+    cfg = getattr(config, "team_simulations", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.holodeck.team_simulations import (
+        TeamScenarioRegistry,
+        TeamSimulationOrchestrator,
+        TeamSimulationStore,
+    )
+
+    emit_fn = getattr(runtime, "emit_event", None)
+
+    data_dir: Any = None
+    if cfg.persist_to_sqlite:
+        ship_data_dir = getattr(runtime, "data_dir", None)
+        if ship_data_dir is not None:
+            from pathlib import Path as _Path
+            data_dir = _Path(ship_data_dir) / cfg.data_subdir
+            data_dir.mkdir(parents=True, exist_ok=True)
+
+    registry = TeamScenarioRegistry()
+    registry.emit_event = emit_fn
+    runtime.team_scenario_registry = registry  # public (Wave 5 conv #1)
+
+    store = TeamSimulationStore(data_dir=data_dir)
+
+    orchestrator = TeamSimulationOrchestrator(
+        config=cfg,
+        store=store,
+        emit_event_fn=emit_fn,
+        qualification_harness=getattr(runtime, "qualification_harness", None),
+        team_scenario_registry=registry,
+    )
+    runtime.team_simulation_orchestrator = orchestrator  # public (Wave 5 conv #1)
+
+    logger.info(
+        "AD-510: Holodeck team simulations v1 initialized "
+        "(harness=%s, registry=%s, persist=%s)",
+        orchestrator.qualification_harness is not None,
+        orchestrator.team_scenario_registry is not None,
+        cfg.persist_to_sqlite,
+    )
+    return True
+
+
 def _wire_holodeck_scenarios(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-539b v1: Wire HolodeckGapBridge — gap-driven scenario generation.
 
@@ -1597,6 +1649,9 @@ async def finalize_startup(
 
     if _wire_holodeck_scenarios(runtime=runtime, config=config):
         logger.info("AD-539b: Holodeck Scenario Generation v1 wired during finalization")
+
+    if _wire_holodeck_team_simulations(runtime=runtime, config=config):
+        logger.info("AD-510: Holodeck Team Simulations v1 wired during finalization")
 
     if _wire_discovery_learning(runtime=runtime, config=config):
         logger.info("AD-512: Discovery Learning v1 wired during finalization")

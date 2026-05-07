@@ -1809,6 +1809,27 @@ class HolodeckScenarioConfig(BaseModel):
     data_subdir: str = "holodeck_scenarios"
 
 
+class HolodeckTeamSimulationConfig(BaseModel):
+    """AD-510: Holodeck team simulations — group discovery & collaboration.
+
+    Default-False per AD-695 transitional-flag precedent: enabling the
+    orchestrator causes ``TeamSimulationOrchestrator.start_simulation``
+    to register a runnable ``TeamSimulationDrill`` with the AD-477
+    ``QualificationHarness`` for every started simulation. v1 ships
+    dormant — operators flip ``enabled=True`` once an AD-486 cohort
+    reaches Phase α with crew-tier agents available across >=2
+    departments to populate team rosters.
+    """
+
+    enabled: bool = False
+    auto_register_with_harness: bool = True
+    default_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    default_tier: int = Field(default=2, ge=1, le=3)
+    enforce_required_departments: bool = True
+    persist_to_sqlite: bool = False
+    data_subdir: str = "team_simulations"
+
+
 class NamingConfig(BaseModel):
     """Ship & crew naming conventions (AD-499)."""
 
@@ -2816,6 +2837,7 @@ class SystemConfig(BaseModel):
     onboarding: OnboardingConfig = OnboardingConfig()
     holodeck_birth_chamber: HolodeckBirthChamberConfig = HolodeckBirthChamberConfig()
     holodeck_scenarios: HolodeckScenarioConfig = HolodeckScenarioConfig()
+    team_simulations: HolodeckTeamSimulationConfig = HolodeckTeamSimulationConfig()
     naming: NamingConfig = NamingConfig()  # AD-499
     runtime_overrides: RuntimeOverridesConfig = RuntimeOverridesConfig()  # AD-468
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()

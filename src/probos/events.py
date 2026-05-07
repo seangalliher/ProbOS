@@ -398,6 +398,14 @@ class EventType(str, Enum):
     HOLODECK_SCENARIO_GAP_LINKED = "holodeck_scenario_gap_linked"
     HOLODECK_SCENARIO_OUTCOME_RECORDED = "holodeck_scenario_outcome_recorded"
 
+    # AD-510: Holodeck team simulations — group discovery & collaboration
+    TEAM_SCENARIO_REGISTERED = "team_scenario_registered"
+    TEAM_SIMULATION_STARTED = "team_simulation_started"
+    TEAM_SIMULATION_ROLE_ROTATED = "team_simulation_role_rotated"
+    TEAM_SIMULATION_COMMUNICATION_CONSTRAINT_APPLIED = "team_simulation_communication_constraint_applied"
+    TEAM_SIMULATION_DEBRIEF_RECORDED = "team_simulation_debrief_recorded"
+    TEAM_SIMULATION_COMPLETED = "team_simulation_completed"
+
     # ── Discovery-Based Capability Building (AD-512) ───────────────
     DISCOVERY_SCENARIO_OFFERED = "discovery_scenario_offered"  # AD-512a registry
     DISCOVERY_OUTCOME_RECORDED = "discovery_outcome_recorded"  # AD-512b StrengthMap
