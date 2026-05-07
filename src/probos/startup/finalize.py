@@ -2152,6 +2152,38 @@ async def finalize_startup(
     else:
         runtime.mcp_bridge = None
 
+    # AD-480: inbound MCP / A2A servers (default-False — opt-in).
+    if config.federation.mcp_server.enabled:
+        try:
+            from probos.federation.mcp_server import FederationMCPServer
+            runtime.federation_mcp_server = FederationMCPServer(
+                runtime=runtime, config=config.federation.mcp_server,
+            )
+            await runtime.federation_mcp_server.start()
+            logger.info(
+                "AD-480a: MCP server started on %s:%d",
+                config.federation.mcp_server.bind_host,
+                config.federation.mcp_server.bind_port,
+            )
+        except Exception as exc:
+            logger.warning("AD-480a: MCP server start failed: %s", exc)
+            runtime.federation_mcp_server = None
+    if config.federation.a2a.enabled:
+        try:
+            from probos.federation.a2a.server import FederationA2AServer
+            runtime.federation_a2a_server = FederationA2AServer(
+                runtime=runtime, config=config.federation.a2a,
+            )
+            await runtime.federation_a2a_server.start()
+            logger.info(
+                "AD-480d: A2A server started on %s:%d",
+                config.federation.a2a.bind_host,
+                config.federation.a2a.bind_port,
+            )
+        except Exception as exc:
+            logger.warning("AD-480d: A2A server start failed: %s", exc)
+            runtime.federation_a2a_server = None
+
     # AD-641a: Observability Bridge
     ob_cfg = getattr(getattr(runtime, "config", None), "observability_bridge", None)
     if ob_cfg is not None and ob_cfg.enabled:

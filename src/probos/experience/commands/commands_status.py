@@ -98,8 +98,23 @@ async def cmd_scaling(runtime: ProbOSRuntime, console: Console, args: str) -> No
 
 
 async def cmd_federation(runtime: ProbOSRuntime, console: Console, args: str) -> None:
-    """Handle /federation command."""
+    """Handle /federation command.
+
+    AD-480i: subcommand dispatch. ``""`` (no arg) → existing federation panel.
+    ``"peers"`` → cross-protocol peer list with trust scores.
+    """
     from probos.experience import panels
+
+    sub = (args or "").strip().split(maxsplit=1)
+    subcommand = sub[0].lower() if sub else ""
+
+    if subcommand == "peers":
+        registry = runtime.federation_peer_registry
+        trust_network = runtime.trust_network
+        console.print(panels.render_federation_peers_panel(
+            registry.list_peers(), trust_network,
+        ))
+        return
 
     bridge = runtime.federation_bridge
     if not bridge:

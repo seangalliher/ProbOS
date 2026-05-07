@@ -135,6 +135,9 @@ if TYPE_CHECKING:
     from probos.sop.runtime import BillRuntime  # AD-618d
     from probos.federation.bridge import FederationBridge
     from probos.federation.transport import FederationTransport
+    from probos.federation.peer import FederationPeerRegistry
+    from probos.federation.mcp_server import FederationMCPServer
+    from probos.federation.a2a.server import FederationA2AServer
     from probos.identity import AgentIdentityRegistry
     from probos.knowledge.records_store import RecordsStore
     from probos.knowledge.store import KnowledgeStore
@@ -220,6 +223,9 @@ class ProbOSRuntime:
     identity_registry: AgentIdentityRegistry | None
     pool_scaler: PoolScaler | None
     federation_bridge: FederationBridge | None
+    federation_peer_registry: "FederationPeerRegistry"
+    federation_mcp_server: "FederationMCPServer | None"
+    federation_a2a_server: "FederationA2AServer | None"
     self_mod_pipeline: SelfModificationPipeline | None
     proposal_store: Any | None  # AD-482b ProposalStore
     approval_gate: Any | None  # AD-482c ApprovalGate
@@ -502,6 +508,17 @@ class ProbOSRuntime:
         # --- Federation ---
         self.federation_bridge: FederationBridge | None = None
         self._federation_transport: FederationTransport | None = None
+        # AD-480f: cross-protocol peer registry — initialized eagerly so
+        # ZeroMQ peers can be auto-registered via the existing gossip path.
+        from probos.federation.peer import FederationPeerRegistry
+        self.federation_peer_registry: FederationPeerRegistry = FederationPeerRegistry(
+            trust_network=self.trust_network,
+            probationary_alpha=self.config.federation.peer_trust.probationary_alpha,
+            probationary_beta=self.config.federation.peer_trust.probationary_beta,
+        )
+        # AD-480a / AD-480d: inbound servers — None until startup wires them.
+        self.federation_mcp_server: "FederationMCPServer | None" = None
+        self.federation_a2a_server: "FederationA2AServer | None" = None
         self._start_time: float = time.monotonic()
         self._recent_errors: list[str] = []    # last 5 error summaries (AD-318)
         self._last_capability_gap: str = ""    # last unhandled intent (AD-318)

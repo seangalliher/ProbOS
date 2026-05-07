@@ -794,6 +794,39 @@ class PeerConfig(BaseModel):
     address: str  # e.g. "tcp://127.0.0.1:5556"
 
 
+class FederationMCPServerConfig(BaseModel):
+    """AD-480a: Inbound MCP server — exposes ProbOS capabilities as MCP tools."""
+
+    enabled: bool = False  # Default-False per AD-695 + W82 + W88 precedent
+    bind_host: str = "127.0.0.1"
+    bind_port: int = Field(default=8765, ge=1, le=65535)
+    path_prefix: str = "/mcp"
+
+
+class A2APeerConfig(BaseModel):
+    """AD-480e: Outbound A2A peer registration entry."""
+
+    peer_url: str
+    auth_token: str = ""
+
+
+class FederationA2AConfig(BaseModel):
+    """AD-480d / AD-480e: Inbound A2A server + outbound A2A clients."""
+
+    enabled: bool = False  # Default-False per AD-695 + W82 + W88 precedent
+    bind_host: str = "127.0.0.1"
+    bind_port: int = Field(default=8766, ge=1, le=65535)
+    agent_card_path: str = "/.well-known/agent.json"
+    outbound_peers: list[A2APeerConfig] = Field(default_factory=list)
+
+
+class FederationPeerTrustConfig(BaseModel):
+    """AD-480g: Probationary trust prior for federated peers."""
+
+    probationary_alpha: float = Field(default=1.0, gt=0.0)
+    probationary_beta: float = Field(default=3.0, gt=0.0)
+
+
 class FederationConfig(BaseModel):
     """Multi-node federation configuration."""
 
@@ -812,6 +845,15 @@ class FederationConfig(BaseModel):
     # AD-443c: Tag whitelist for SELECTIVE memory policy. Ignored for the
     # other two policies. Empty list with SELECTIVE means no episodes pass.
     memory_policy_selective_tags: list[str] = []
+
+    # AD-480: Cross-ecosystem federation adapters.
+    mcp_server: FederationMCPServerConfig = Field(
+        default_factory=FederationMCPServerConfig
+    )
+    a2a: FederationA2AConfig = Field(default_factory=FederationA2AConfig)
+    peer_trust: FederationPeerTrustConfig = Field(
+        default_factory=FederationPeerTrustConfig
+    )
 
     @field_validator("memory_policy")
     @classmethod

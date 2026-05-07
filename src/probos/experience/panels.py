@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import statistics
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
@@ -813,6 +814,37 @@ def render_federation_panel(federation_status: dict) -> Panel:
     lines.append(f"[bold]Results collected:[/bold] {federation_status.get('results_collected', 0)}")
 
     return Panel("\n".join(lines), title="Federation", border_style="cyan")
+
+
+def render_federation_peers_panel(peers: list, trust_network) -> Panel:
+    """AD-480i: render cross-protocol federation peers with trust scores.
+
+    Columns: protocol / peer_id / trust_score / last_outcome / capabilities.
+    """
+    if not peers:
+        return Panel(
+            "[dim]No federated peers registered.[/dim]",
+            title="Federation Peers", border_style="cyan",
+        )
+    lines = []
+    lines.append(
+        f"{'PROTO':<6} {'PEER':<40} {'TRUST':>6} {'OUTCOME':<14}  CAPS"
+    )
+    for p in peers:
+        score = trust_network.get_score(p.trust_record_id) if trust_network else 0.0
+        last_outcome = (
+            time.strftime("%H:%M:%S", time.localtime(p.last_outcome_at))
+            if p.last_outcome_at else "-"
+        )
+        peer_short = (p.peer_id[:38] + "..") if len(p.peer_id) > 40 else p.peer_id
+        caps_short = ",".join(p.capabilities[:3])
+        if len(p.capabilities) > 3:
+            caps_short += f" (+{len(p.capabilities) - 3})"
+        lines.append(
+            f"{p.protocol:<6} {peer_short:<40} {score:>6.3f} {last_outcome:<14}  {caps_short}"
+        )
+    body = "\n".join(lines)
+    return Panel(body, title="Federation Peers", border_style="cyan")
 
 
 def render_peers_panel(peer_models: dict) -> Panel:
