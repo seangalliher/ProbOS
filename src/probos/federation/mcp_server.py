@@ -142,6 +142,8 @@ class FederationMCPServer:
                 return await self._handle_tools_call(
                     request_id, params, session_id
                 )
+            if method == "resources/read":
+                return await self._handle_resources_read(request_id, params)
             return self._error_envelope(
                 request_id, -32601, f"Method not found: {method}"
             )
@@ -173,10 +175,37 @@ class FederationMCPServer:
 
     async def _handle_tools_list(self, request_id: Any) -> dict[str, Any]:
         tools = self._project_tools_from_descriptors()
+        # AD-597b: merge app-registry tools (internal + external)
+        registry = getattr(self._runtime, "mcp_app_registry", None)
+        if registry is not None:
+            tools.extend(registry.list_tools())
         return {
             "jsonrpc": JSONRPC_VERSION,
             "id": request_id,
             "result": {"tools": tools},
+        }
+
+    async def _handle_resources_read(
+        self, request_id: Any, params: dict
+    ) -> dict[str, Any]:
+        # AD-597a: ui:// resource lookup via runtime.mcp_app_registry
+        uri = params.get("uri", "")
+        if not uri:
+            return self._error_envelope(request_id, -32602, "uri required")
+        registry = getattr(self._runtime, "mcp_app_registry", None)
+        if registry is None:
+            return self._error_envelope(
+                request_id, -32000, "mcp_app_registry not available"
+            )
+        result = await registry.read_resource(uri)
+        if result is None:
+            return self._error_envelope(
+                request_id, -32000, f"resource not found: {uri}"
+            )
+        return {
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "result": result,
         }
 
     async def _handle_tools_call(
@@ -200,6 +229,30 @@ class FederationMCPServer:
             else f"mcp-anon:{request_id}"
         )
         await self._ensure_peer_registered(peer_id)
+
+        # AD-597b: app-registry tools take precedence over intent dispatch.
+        # App tools use hyphenated names (game-move, game-state) which never
+        # collide with IntentDescriptor.name (system_status, file_read, ...).
+        registry = getattr(self._runtime, "mcp_app_registry", None)
+        if registry is not None and registry.has_tool(tool_name):
+            try:
+                app_result = await registry.call_tool(tool_name, arguments)
+            except Exception as exc:
+                self._record_outcome(peer_id, False, intent_type=tool_name)
+                return self._error_envelope(
+                    request_id, -32000, f"app tool failed: {exc}"
+                )
+            self._record_outcome(
+                peer_id,
+                not app_result.get("isError", False),
+                intent_type=tool_name,
+            )
+            self._emit_invoke(method="tools/call", tool=tool_name)
+            return {
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": app_result,
+            }
 
         intent = IntentMessage(
             intent=tool_name,

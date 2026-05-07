@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from probos.api_models import ShutdownRequest
@@ -472,3 +472,41 @@ async def alerts_suppressed(
     if not bas:
         return {"status": "no_data", "suppressed": []}
     return {"status": "ok", "suppressed": bas.list_suppressed()}
+
+# --- AD-597: MCP App Host endpoints ---
+
+
+@router.post("/mcp/jsonrpc")
+async def mcp_jsonrpc(request: Request, runtime: Any = Depends(get_runtime)):
+    """AD-597a: forward MCP JSON-RPC payload to FederationMCPServer."""
+    if getattr(runtime, "federation_mcp_server", None) is None:
+        raise HTTPException(status_code=503, detail="MCP server not running")
+    payload = await request.json()
+    session_id = request.headers.get("mcp-session-id", "")
+    response = await runtime.federation_mcp_server.handle_jsonrpc(
+        payload, session_id=session_id
+    )
+    headers: dict[str, str] = {}
+    assigned = response.pop("_assigned_session", None) if isinstance(response, dict) else None
+    if assigned:
+        headers["Mcp-Session-Id"] = assigned
+    return JSONResponse(response, headers=headers)
+
+
+@router.get("/mcp/resource")
+async def mcp_resource(uri: str, runtime: Any = Depends(get_runtime)):
+    """AD-597a: serve ui:// resource as HTTP for iframe embedding."""
+    registry = getattr(runtime, "mcp_app_registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="MCP App registry not running")
+    result = await registry.read_resource(uri)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"resource not found: {uri}")
+    contents = result.get("contents", []) if isinstance(result, dict) else []
+    if not contents:
+        raise HTTPException(status_code=404, detail="empty resource")
+    body = contents[0].get("text", "") or ""
+    mime = registry.get_resource_mime(uri) or "text/html"
+    csp = registry.get_resource_csp(uri)
+    headers = {"Content-Security-Policy": csp} if csp else {}
+    return Response(content=body, media_type=mime, headers=headers)

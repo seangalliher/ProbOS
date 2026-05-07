@@ -860,6 +860,54 @@ def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_mcp_app_host(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-597: install MCPAppRegistry, register internal games, schedule external discovery."""
+    cfg = config.mcp_app_host
+    if not cfg.enabled:
+        return False
+    from pathlib import Path
+    from probos.mcp_apps.registry import MCPAppRegistry
+    from probos.mcp_apps.game_app import (
+        register_game_resources,
+        register_game_tools,
+    )
+    registry = MCPAppRegistry(
+        internal_default_csp=cfg.internal_default_csp,
+        external_default_csp=cfg.external_default_csp,
+    )
+    if hasattr(runtime, "emit_event"):
+        registry.set_event_callback(runtime.emit_event)
+    runtime.mcp_app_registry = registry
+
+    if cfg.serve_internal_games and getattr(runtime, "recreation_service", None):
+        try:
+            register_game_tools(registry, runtime.recreation_service)
+        except Exception:
+            logger.warning("AD-597b: register_game_tools failed", exc_info=True)
+        bundles_dir = (
+            Path(cfg.bundles_dir)
+            if cfg.bundles_dir
+            else Path(__file__).resolve().parent.parent / "mcp_apps" / "bundles"
+        )
+        try:
+            register_game_resources(registry, bundles_dir)
+        except Exception:
+            logger.warning("AD-597b: register_game_resources failed", exc_info=True)
+
+    if cfg.discover_external_apps and getattr(runtime, "mcp_bridge", None):
+        from probos.mcp_apps.external_discovery import discover_external_apps
+
+        async def _bg() -> None:
+            try:
+                await discover_external_apps(registry, runtime.mcp_bridge)
+            except Exception:
+                logger.warning("AD-597f: external discovery failed", exc_info=True)
+
+        task = asyncio.create_task(_bg(), name="mcp-app-external-discovery")
+        runtime._mcp_app_external_discovery_task = task
+    return True
+
+
 def _wire_native_swe_harness(
     *,
     runtime: Any,
@@ -2965,6 +3013,12 @@ async def finalize_startup(
         dispatcher=runtime.dispatcher,                # AD-654d
         callsign_registry=runtime.callsign_registry,  # AD-654d
     )
+
+    # AD-597: Wire MCP App Host registry (default-False; serves internal games when enabled)
+    try:
+        _wire_mcp_app_host(runtime=runtime, config=config)
+    except Exception:
+        logger.warning("AD-597: _wire_mcp_app_host failed", exc_info=True)
 
     # AD-632b: Wire SubTaskExecutor + QueryHandler for Level 3 cognitive escalation
     try:

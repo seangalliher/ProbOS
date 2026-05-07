@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ProbOS Tic-Tac-Toe</title>
+<style>
+body { margin: 0; padding: 12px; font-family: system-ui, sans-serif; background: #0a0a14; color: #ddd; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.board { display: grid; grid-template-columns: repeat(3, 80px); grid-template-rows: repeat(3, 80px); gap: 4px; }
+.cell { background: #1a1a2a; display: flex; align-items: center; justify-content: center; font-size: 48px; cursor: pointer; user-select: none; border: 1px solid #444; }
+.cell.x { color: #f0b060; }
+.cell.o { color: #6090f0; }
+</style>
+</head>
+<body>
+<div class="board" id="board"></div>
+<script>
+(function () {
+  let state = null;
+  let gameId = '';
+
+  function render() {
+    const root = document.getElementById('board');
+    root.innerHTML = '';
+    const board = (state && state.board) || ['', '', '', '', '', '', '', '', ''];
+    for (let i = 0; i < 9; i++) {
+      const c = document.createElement('div');
+      c.className = 'cell';
+      const v = board[i];
+      if (v === 'X' || v === 'x') { c.classList.add('x'); c.textContent = 'X'; }
+      else if (v === 'O' || v === 'o') { c.classList.add('o'); c.textContent = 'O'; }
+      c.onclick = () => onCellClick(i);
+      root.appendChild(c);
+    }
+  }
+
+  function onCellClick(i) {
+    parent.postMessage({
+      jsonrpc: '2.0', id: Date.now(), method: 'tools/call',
+      params: {
+        name: 'game-move',
+        arguments: { game_id: gameId, player: state ? state.current_player : '', move: String(i) },
+      },
+    }, '*');
+  }
+
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (!data || data.jsonrpc !== '2.0') return;
+    if (data.method === 'ui/notifications/tool-input') {
+      const input = data.params && data.params.input;
+      if (input && input.game_id) gameId = input.game_id;
+      return;
+    }
+    if (data.method === 'ui/notifications/tool-result') {
+      const result = data.params && data.params.result;
+      if (result && result.content && result.content[0]) {
+        try {
+          const payload = JSON.parse(result.content[0].text);
+          if (payload.board) state = payload;
+          render();
+        } catch (e) { /* ignore */ }
+      }
+    }
+  });
+  render();
+})();
+</script>
+</body>
+</html>

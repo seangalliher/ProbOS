@@ -99,6 +99,14 @@ class MCPClient:
         )
         return result if isinstance(result, dict) else {}
 
+    async def read_resource(self, uri: str) -> dict:
+        """AD-597f: Issue resources/read JSON-RPC call. Returns the result envelope."""
+        result = await self._call(
+            method="resources/read",
+            params={"uri": uri},
+        )
+        return result if isinstance(result, dict) else {}
+
     async def close(self) -> None:
         http = getattr(self, "_http", None)
         if http is not None:

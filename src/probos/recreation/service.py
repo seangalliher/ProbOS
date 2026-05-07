@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 from probos.recreation.engine import GameEngine, TicTacToeEngine
+from probos.recreation.chess_engine import ChessEngine
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class RecreationService:
 
         # Register default engines
         self.register_engine(TicTacToeEngine())
+        self.register_engine(ChessEngine())
 
     @property
     def default_game(self) -> str:

@@ -157,6 +157,7 @@ if TYPE_CHECKING:
     from probos.cognitive.skill_catalog import CognitiveSkillCatalog
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.mesh.nats_bus import NATSBus
+    from probos.mcp_apps.registry import MCPAppRegistry
     from probos.tools.permissions import ToolPermissionStore
     from probos.tools.registry import ToolRegistry
     from probos.ward_room import WardRoomService
@@ -259,6 +260,7 @@ class ProbOSRuntime:
     federation_mcp_server: "FederationMCPServer | None"
     federation_a2a_server: "FederationA2AServer | None"
     self_mod_pipeline: SelfModificationPipeline | None
+    mcp_app_registry: "MCPAppRegistry | None"  # AD-597
     proposal_store: Any | None  # AD-482b ProposalStore
     approval_gate: Any | None  # AD-482c ApprovalGate
     evolution_store: Any | None  # AD-482d EvolutionStore
@@ -551,6 +553,9 @@ class ProbOSRuntime:
         # AD-480a / AD-480d: inbound servers — None until startup wires them.
         self.federation_mcp_server: "FederationMCPServer | None" = None
         self.federation_a2a_server: "FederationA2AServer | None" = None
+        # AD-597: MCP App Host registry — installed by _wire_mcp_app_host.
+        self.mcp_app_registry: "MCPAppRegistry | None" = None
+        self._mcp_app_external_discovery_task: asyncio.Task | None = None
         # AD-479c / AD-479g: federation routing observability handles —
         # None when federation is disabled or features unwired.
         self.federation_hebbian_map: Any | None = None

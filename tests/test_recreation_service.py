@@ -59,7 +59,7 @@ class TestCreateGame:
     @pytest.mark.asyncio
     async def test_create_game_unknown_type(self, service):
         with pytest.raises(ValueError, match="Unknown game type"):
-            await service.create_game("chess", "alice", "bob")
+            await service.create_game("nonexistent_game", "alice", "bob")
 
     @pytest.mark.asyncio
     async def test_active_games_tracked(self, service):

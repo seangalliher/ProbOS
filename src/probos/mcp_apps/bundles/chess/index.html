@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ProbOS Chess</title>
+<style>
+body { margin: 0; padding: 12px; font-family: system-ui, sans-serif; background: #0a0a14; color: #ddd; }
+.layout { display: flex; gap: 12px; }
+.board { display: grid; grid-template-columns: repeat(8, 1fr); aspect-ratio: 1; width: min(80vw, 480px); border: 1px solid #444; }
+.sq { display: flex; align-items: center; justify-content: center; font-size: 32px; cursor: pointer; user-select: none; }
+.sq.light { background: #b58863; }
+.sq.dark { background: #f0d9b5; color: #222; }
+.sq.selected { outline: 3px solid #ffd700; }
+.sq.target { box-shadow: inset 0 0 0 4px rgba(255, 215, 0, 0.5); }
+.sq.check { background: #b00; }
+.history { width: 200px; border: 1px solid #333; padding: 8px; font-size: 12px; max-height: 480px; overflow-y: auto; }
+.captured { font-size: 18px; min-height: 28px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <div>
+    <div class="captured" id="captured-black"></div>
+    <div class="board" id="board"></div>
+    <div class="captured" id="captured-white"></div>
+  </div>
+  <div class="history" id="history"><b>Move history</b><br></div>
+</div>
+<script>
+(function () {
+  const PIECE_GLYPH = {
+    P: '\u2659', N: '\u2658', B: '\u2657', R: '\u2656', Q: '\u2655', K: '\u2654',
+    p: '\u265F', n: '\u265E', b: '\u265D', r: '\u265C', q: '\u265B', k: '\u265A',
+  };
+  let state = null;
+  let validMoves = [];
+  let selected = null;
+  let gameId = '';
+
+  function render() {
+    const board = document.getElementById('board');
+    board.innerHTML = '';
+    if (!state) return;
+    const targets = selected ?
+      validMoves.filter(m => m.startsWith(selected)).map(m => m.slice(2, 4)) : [];
+    for (let r = 7; r >= 0; r--) {
+      for (let f = 0; f < 8; f++) {
+        const sq = document.createElement('div');
+        sq.className = 'sq ' + (((r + f) % 2 === 0) ? 'light' : 'dark');
+        const algebraic = String.fromCharCode(97 + f) + (r + 1);
+        sq.dataset.sq = algebraic;
+        const piece = state.board[r][f];
+        if (piece) sq.textContent = PIECE_GLYPH[piece] || piece;
+        if (selected === algebraic) sq.classList.add('selected');
+        if (targets.includes(algebraic)) sq.classList.add('target');
+        sq.onclick = () => onSquareClick(algebraic);
+        board.appendChild(sq);
+      }
+    }
+    const hist = document.getElementById('history');
+    hist.innerHTML = '<b>Move history</b><br>' +
+      (state.last_move ? 'Last: ' + state.last_move : '');
+  }
+
+  function onSquareClick(sq) {
+    if (!state) return;
+    if (selected) {
+      const candidate = selected + sq;
+      const match = validMoves.find(m => m === candidate || m.startsWith(candidate));
+      if (match) {
+        send('game-move', { game_id: gameId, player: state.current_player, move: match });
+        selected = null;
+        return;
+      }
+      selected = null;
+    } else {
+      selected = sq;
+    }
+    render();
+  }
+
+  function send(name, args) {
+    parent.postMessage({
+      jsonrpc: '2.0', id: Date.now(), method: 'tools/call',
+      params: { name: name, arguments: args },
+    }, '*');
+  }
+
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (!data || data.jsonrpc !== '2.0') return;
+    if (data.method === 'ui/initialize') {
+      // Request initial state if we have a game_id.
+      return;
+    }
+    if (data.method === 'ui/notifications/tool-input') {
+      const input = data.params && data.params.input;
+      if (input && input.game_id) gameId = input.game_id;
+      return;
+    }
+    if (data.method === 'ui/notifications/tool-result') {
+      const result = data.params && data.params.result;
+      if (result && result.content && result.content[0]) {
+        try {
+          const payload = JSON.parse(result.content[0].text);
+          if (Array.isArray(payload)) {
+            validMoves = payload;
+          } else if (payload.board) {
+            state = payload;
+          }
+          render();
+        } catch (e) { /* ignore */ }
+      }
+    }
+  });
+})();
+</script>
+</body>
+</html>

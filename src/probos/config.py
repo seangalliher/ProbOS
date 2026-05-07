@@ -818,6 +818,25 @@ class FederationMCPServerConfig(BaseModel):
     path_prefix: str = "/mcp"
 
 
+class MCPAppHostConfig(BaseModel):
+    """AD-597 — MCP App Host configuration."""
+
+    enabled: bool = False
+    serve_internal_games: bool = True
+    discover_external_apps: bool = False
+    internal_default_csp: str = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'"
+    )
+    external_default_csp: str = (
+        "default-src 'none'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'"
+    )
+    bundles_dir: str = ""
+
+
 class A2APeerConfig(BaseModel):
     """AD-480e: Outbound A2A peer registration entry."""
 
@@ -2882,6 +2901,7 @@ class SystemConfig(BaseModel):
     dept_profiles: DepartmentProfilesConfig = DepartmentProfilesConfig()  # AD-656
     eps: EPSConfig = EPSConfig()  # AD-469
     mcp: MCPConfig = MCPConfig()  # AD-449
+    mcp_app_host: MCPAppHostConfig = Field(default_factory=MCPAppHostConfig)  # AD-597
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
     threshold_alerts: ThresholdAlertConfig = Field(default_factory=ThresholdAlertConfig)  # AD-695

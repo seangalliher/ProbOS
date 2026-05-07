@@ -270,6 +270,11 @@ class EventType(str, Enum):
     EPS_REALLOCATION = "eps_reallocation"  # AD-469
     MCP_BRIDGE_INVOKE = "mcp_bridge_invoke"  # AD-449
     MCP_BRIDGE_FAILED = "mcp_bridge_failed"  # AD-449
+    # AD-597: MCP App Host events
+    MCP_APP_TOOL_REGISTERED = "mcp_app_tool_registered"
+    MCP_APP_RESOURCE_READ = "mcp_app_resource_read"
+    MCP_APP_TOOL_INVOKED = "mcp_app_tool_invoked"
+    MCP_APP_EXTERNAL_DISCOVERED = "mcp_app_external_discovered"
     OPTIMIZATION_PROPOSAL_APPLIED = "optimization_proposal_applied"  # AD-659c
     OPTIMIZATION_PROPOSAL_REVERTED = "optimization_proposal_reverted"  # AD-659c
     OPTIMIZATION_REGRESSION_DETECTED = "optimization_regression_detected"  # AD-659c
