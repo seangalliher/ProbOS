@@ -655,6 +655,34 @@ export interface NotebookSearchResult {
   snippet: string;
 }
 
+// AD-520: Spatial Knowledge Explorer
+export type SpatialViewMode = 'graph' | 'ship';
+
+export interface SpatialSelection {
+  kind: 'agent' | 'department' | 'edge';
+  id: string;
+  payload: Record<string, unknown>;
+}
+
+export interface SpatialGraphData {
+  nodes: Array<Record<string, unknown>>;
+  edges: Array<Record<string, unknown>>;
+  generated_at: number;
+}
+
+export interface SpatialLayoutData {
+  schema_version: number;
+  decks: Array<{
+    deck_id: string;
+    name: string;
+    department_id: string | null;
+    position: [number, number, number];
+    dimensions: [number, number, number];
+    accent_color: string;
+    post_offsets: Record<string, [number, number, number]>;
+  }>;
+}
+
 // AD-569g: Behavioral Metrics Dashboard
 export interface BehavioralSnapshot {
   timestamp: number;

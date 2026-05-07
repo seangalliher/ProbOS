@@ -1,0 +1,125 @@
+schema_version: 1
+decks:
+- deck_id: bridge
+  name: Bridge
+  department_id: command
+  position:
+  - 0.0
+  - 6.0
+  - 0.0
+  dimensions:
+  - 8.0
+  - 1.5
+  - 6.0
+  accent_color: '#f0b060'
+  post_offsets:
+    captain:
+    - 0.0
+    - 0.0
+    - -1.0
+    first_officer:
+    - -1.5
+    - 0.0
+    - 0.0
+    counselor:
+    - 1.5
+    - 0.0
+    - 0.0
+    yeoman:
+    - 0.0
+    - 0.0
+    - 1.5
+- deck_id: engineering
+  name: Engineering
+  department_id: engineering
+  position:
+  - 0.0
+  - 0.0
+  - 6.0
+  dimensions:
+  - 8.0
+  - 2.0
+  - 6.0
+  accent_color: '#d8742a'
+  post_offsets:
+    chief_engineer:
+    - 0.0
+    - 0.0
+    - 0.0
+- deck_id: sickbay
+  name: Sickbay
+  department_id: medical
+  position:
+  - -6.0
+  - 3.0
+  - 0.0
+  dimensions:
+  - 6.0
+  - 1.5
+  - 6.0
+  accent_color: '#54c474'
+  post_offsets:
+    chief_medical_officer:
+    - 0.0
+    - 0.0
+    - 0.0
+- deck_id: tactical
+  name: Tactical
+  department_id: security
+  position:
+  - 6.0
+  - 3.0
+  - 0.0
+  dimensions:
+  - 6.0
+  - 1.5
+  - 6.0
+  accent_color: '#c84858'
+  post_offsets:
+    chief_of_security:
+    - 0.0
+    - 0.0
+    - 0.0
+- deck_id: science_lab
+  name: Science Lab
+  department_id: science
+  position:
+  - 0.0
+  - 3.0
+  - -6.0
+  dimensions:
+  - 6.0
+  - 1.5
+  - 6.0
+  accent_color: '#5ca0d4'
+  post_offsets:
+    chief_science_officer:
+    - 0.0
+    - 0.0
+    - 0.0
+- deck_id: computer_core
+  name: Computer Core
+  department_id: ship-systems
+  position:
+  - 0.0
+  - -3.0
+  - 0.0
+  dimensions:
+  - 6.0
+  - 2.0
+  - 6.0
+  accent_color: '#8870c4'
+  post_offsets: {}
+- deck_id: common_areas
+  name: Common Areas
+  department_id: null
+  position:
+  - 0.0
+  - 1.0
+  - 0.0
+  dimensions:
+  - 10.0
+  - 1.0
+  - 10.0
+  accent_color: '#666680'
+  post_offsets: {}

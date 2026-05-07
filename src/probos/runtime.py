@@ -480,6 +480,7 @@ class ProbOSRuntime:
 
         # --- Knowledge Edge Store (AD-687) ---
         self.knowledge_edges: Any = None  # SQLiteKnowledgeEdgeStore | None — Any to avoid circular import
+        self.spatial_layout: Any = None  # AD-520: SpatialLayout | None — set by _wire_spatial_explorer
         self.rejection_cache: Any = None  # AD-690: SQLiteRejectionCache | None — Any to avoid circular import
 
         # --- Edge Backfill Service (AD-689) ---

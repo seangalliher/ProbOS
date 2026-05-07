@@ -860,6 +860,27 @@ def _wire_clinical_telemetry(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_spatial_explorer(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-520: Construct runtime.spatial_layout from YAML or default.
+
+    Default-False per AD-695 transitional precedent. Pure sync wirer —
+    no asyncio task creation, no other side-effects. The explorer is a
+    read-only HXI surface backed by REST consumption of existing data.
+    """
+    cfg = getattr(config, "spatial_explorer", None)
+    if cfg is None or not getattr(cfg, "enabled", False):
+        return False
+    from probos.ontology.spatial import load_spatial_layout
+
+    path = cfg.spatial_layout_path or "config/ontology/spatial.yaml"
+    layout = load_spatial_layout(path)
+    runtime.spatial_layout = layout
+    logger.info(
+        "AD-520: spatial explorer wired with %d decks (path=%s)", len(layout.decks), path
+    )
+    return True
+
+
 def _wire_mcp_app_host(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-597: install MCPAppRegistry, register internal games, schedule external discovery."""
     cfg = config.mcp_app_host
@@ -3019,6 +3040,12 @@ async def finalize_startup(
         _wire_mcp_app_host(runtime=runtime, config=config)
     except Exception:
         logger.warning("AD-597: _wire_mcp_app_host failed", exc_info=True)
+
+    # AD-520: Wire Spatial Knowledge Explorer (default-False; constructs runtime.spatial_layout)
+    try:
+        _wire_spatial_explorer(runtime=runtime, config=config)
+    except Exception:
+        logger.warning("AD-520: _wire_spatial_explorer failed", exc_info=True)
 
     # AD-632b: Wire SubTaskExecutor + QueryHandler for Level 3 cognitive escalation
     try:

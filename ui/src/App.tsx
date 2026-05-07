@@ -19,6 +19,7 @@ import { GamePanel } from './components/GamePanel';
 import CrewRosterPanel from './components/CrewRosterPanel';
 import NotebooksPanel from './components/NotebooksPanel';
 import BehavioralMetricsPanel from './components/BehavioralMetricsPanel';
+import SpatialExplorerPanel from './components/SpatialExplorerPanel';
 
 function NotebooksToggle() {
   const open = useStore(s => s.notebooksOpen);
@@ -50,6 +51,40 @@ function NotebooksToggle() {
       }}
     >
       NOTEBOOKS
+    </div>
+  );
+}
+
+function SpatialExplorerToggle() {
+  const open = useStore(s => s.spatialExplorerOpen);
+  const openExplorer = useStore(s => s.openSpatialExplorer);
+
+  if (open) return null;
+
+  return (
+    <div
+      onClick={() => openExplorer()}
+      data-testid="spatial-explorer-toggle"
+      style={{
+        position: 'fixed',
+        top: 12, left: 340,
+        zIndex: 25,
+        padding: '6px 12px',
+        background: 'rgba(10, 10, 18, 0.75)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid rgba(240, 176, 96, 0.15)',
+        borderRadius: 6,
+        cursor: 'pointer',
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: 1.5,
+        fontFamily: "'JetBrains Mono', monospace",
+        color: '#8888a0',
+        userSelect: 'none' as const,
+      }}
+    >
+      EXPLORER
     </div>
   );
 }
@@ -206,6 +241,8 @@ export default function App() {
       <NotebooksToggle />
       <BehavioralMetricsPanel />
       <BehavioralMetricsToggle />
+      <SpatialExplorerPanel />
+      <SpatialExplorerToggle />
       <WelcomeOverlay />
     </div>
   );

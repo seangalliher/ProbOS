@@ -22,6 +22,7 @@ import type {
   NotebookDetail,     // AD-523b
   NotebookSearchResult,  // AD-523b
   BehavioralSnapshot,  // AD-569g
+  SpatialViewMode, SpatialSelection, SpatialGraphData, SpatialLayoutData,  // AD-520
   BillDefinitionView, BillInstanceView,  // AD-618d
 } from './types';
 
@@ -279,6 +280,12 @@ export interface HXIState {
   behavioralMetricsLatest: BehavioralSnapshot | null;
   behavioralMetricsHistory: BehavioralSnapshot[];
   behavioralMetricsError: string | null;
+  // AD-520: Spatial Knowledge Explorer
+  spatialExplorerOpen: boolean;
+  spatialViewMode: SpatialViewMode;
+  spatialSelectedNode: SpatialSelection | null;
+  spatialGraphData: SpatialGraphData | null;
+  spatialLayoutData: SpatialLayoutData | null;
   // Assignments (AD-408)
   assignments: Assignment[];
   // Scheduled Tasks (Phase 25a)
@@ -334,6 +341,13 @@ export interface HXIState {
   openBehavioralMetrics: () => Promise<void>;
   closeBehavioralMetrics: () => void;
   refreshBehavioralMetrics: () => Promise<void>;
+  // AD-520: Spatial Knowledge Explorer
+  openSpatialExplorer: () => void;
+  closeSpatialExplorer: () => void;
+  setSpatialViewMode: (mode: SpatialViewMode) => void;
+  setSpatialSelectedNode: (sel: SpatialSelection | null) => void;
+  setSpatialGraphData: (data: SpatialGraphData | null) => void;
+  setSpatialLayoutData: (data: SpatialLayoutData | null) => void;
   // Ward Room HXI actions (AD-407c)
   openWardRoom: (channelId?: string) => void;
   closeWardRoom: () => void;
@@ -522,6 +536,12 @@ export const useStore = create<HXIState>((set, get) => ({
   behavioralMetricsLatest: null,
   behavioralMetricsHistory: [],
   behavioralMetricsError: null,
+  // AD-520: Spatial Knowledge Explorer
+  spatialExplorerOpen: false,
+  spatialViewMode: 'graph' as SpatialViewMode,
+  spatialSelectedNode: null,
+  spatialGraphData: null,
+  spatialLayoutData: null,
   // Assignments (AD-408)
   assignments: [],
   // Scheduled Tasks (Phase 25a)
@@ -748,6 +768,13 @@ export const useStore = create<HXIState>((set, get) => ({
       });
     }
   },
+  // AD-520: Spatial Knowledge Explorer
+  openSpatialExplorer: () => set({ spatialExplorerOpen: true }),
+  closeSpatialExplorer: () => set({ spatialExplorerOpen: false, spatialSelectedNode: null }),
+  setSpatialViewMode: (mode) => set({ spatialViewMode: mode }),
+  setSpatialSelectedNode: (sel) => set({ spatialSelectedNode: sel }),
+  setSpatialGraphData: (data) => set({ spatialGraphData: data }),
+  setSpatialLayoutData: (data) => set({ spatialLayoutData: data }),
   minimizeAgentProfile: () => {
     const agentId = get().activeProfileAgent;
     if (!agentId) return;

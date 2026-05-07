@@ -818,6 +818,19 @@ class FederationMCPServerConfig(BaseModel):
     path_prefix: str = "/mcp"
 
 
+class SpatialExplorerConfig(BaseModel):
+    """AD-520: Spatial Knowledge Explorer (Phase 1 Knowledge Graph View + Phase 2 Spatial Ship Layout).
+
+    Default-False per AD-695 transitional precedent — wirer reads YAML and
+    constructs an in-memory layout, not zero-cost on boot. Operator opt-in.
+    """
+
+    enabled: bool = False
+    max_graph_edges: int = Field(default=500, ge=0, le=5000)
+    max_graph_nodes: int = Field(default=200, ge=0, le=2000)
+    spatial_layout_path: str = ""  # empty → resolves to config/ontology/spatial.yaml then to _DEFAULT_LAYOUT
+
+
 class MCPAppHostConfig(BaseModel):
     """AD-597 — MCP App Host configuration."""
 
@@ -2902,6 +2915,7 @@ class SystemConfig(BaseModel):
     eps: EPSConfig = EPSConfig()  # AD-469
     mcp: MCPConfig = MCPConfig()  # AD-449
     mcp_app_host: MCPAppHostConfig = Field(default_factory=MCPAppHostConfig)  # AD-597
+    spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
     threshold_alerts: ThresholdAlertConfig = Field(default_factory=ThresholdAlertConfig)  # AD-695
