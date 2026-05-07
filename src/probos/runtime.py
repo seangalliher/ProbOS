@@ -400,7 +400,7 @@ class ProbOSRuntime:
             timeout=cog_cfg.decomposition_timeout_seconds,
             workflow_cache=self.workflow_cache,
         )
-        self.decomposer._callsign_map = self.callsign_registry.all_callsigns()  # BF-013
+        self.decomposer._callsign_map = self.callsign_registry.live_callsign_map  # BF-013: live ref updates after onboarding
         self.attention = AttentionManager(
             max_concurrent=cog_cfg.max_concurrent_tasks,
             decay_rate=cog_cfg.attention_decay_rate,

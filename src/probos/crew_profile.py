@@ -377,8 +377,18 @@ class CallsignRegistry:
         return self._type_to_callsign.get(agent_type, "")
 
     def all_callsigns(self) -> dict[str, str]:
-        """Return {agent_type: display_callsign} for all registered callsigns."""
+        """Return {agent_type: display_callsign} snapshot for all registered callsigns."""
         return dict(self._type_to_callsign)
+
+    @property
+    def live_callsign_map(self) -> dict[str, str]:
+        """Return the live {agent_type: callsign} dict (not a copy).
+
+        Consumers holding this reference see updates from ``set_callsign``
+        automatically.  Used by the decomposer so it always has the
+        post-onboarding callsigns without needing a refresh call.
+        """
+        return self._type_to_callsign
 
     def set_callsign(self, agent_type: str, callsign: str) -> None:
         """Update callsign mapping after naming ceremony (AD-442)."""
