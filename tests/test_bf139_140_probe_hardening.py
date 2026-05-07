@@ -223,7 +223,10 @@ class TestTemporalEpisodeSemanticGapBF143:
         except ImportError:
             pytest.skip("sentence_transformers not installed")
 
-        model = SentenceTransformer("multi-qa-MiniLM-L6-cos-v1")
+        try:
+            model = SentenceTransformer("multi-qa-MiniLM-L6-cos-v1")
+        except (OSError, ConnectionError) as exc:
+            pytest.skip(f"sentence-transformers model unavailable (offline CI): {exc}")
 
         question = "What happened during first watch?"
         with_prefix = "During first watch: Pool health dropped to 45% during the monitoring sweep"
@@ -253,7 +256,10 @@ class TestTemporalEpisodeSemanticGapBF143:
         except ImportError:
             pytest.skip("sentence_transformers not installed")
 
-        model = SentenceTransformer("multi-qa-MiniLM-L6-cos-v1")
+        try:
+            model = SentenceTransformer("multi-qa-MiniLM-L6-cos-v1")
+        except (OSError, ConnectionError) as exc:
+            pytest.skip(f"sentence-transformers model unavailable (offline CI): {exc}")
 
         question = "What happened during first watch?"
         prefixed = "During first watch: Pool health dropped to 45% during the monitoring sweep"
