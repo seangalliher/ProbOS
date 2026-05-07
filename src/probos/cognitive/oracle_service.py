@@ -354,8 +354,13 @@ class OracleService:
         # classification-gated when ``agent_id`` is supplied.
         if "graph" in active_tiers:
             try:
+                # BF-265: Oracle is a privileged system service — it
+                # curates context before delivering to agents, so
+                # double-gating through classification is redundant and
+                # blocks org-chart edges for most crew tiers.  Pass
+                # empty requester_agent_id to skip classification gate.
                 tier_results = await self._query_graph(
-                    query_text, k=k_per_tier, requester_agent_id=agent_id,
+                    query_text, k=k_per_tier, requester_agent_id="",
                 )
                 all_results.extend(tier_results)
             except Exception:
@@ -718,7 +723,7 @@ class OracleService:
 
         tokens = _extract_entity_tokens(query_text)
         if not tokens:
-            logger.warning("BF-265: graph query — no tokens from: %s", query_text[:80])
+            logger.debug("Oracle graph: no tokens from: %s", query_text[:80])
             return []
 
         # BF-264: Expand callsign tokens → agent_type equivalents.
@@ -745,7 +750,7 @@ class OracleService:
                         seen.add(cs_lower)
             tokens = expanded
 
-        logger.warning("BF-265: graph tokens=%s for query=%s", tokens, query_text[:60])
+        logger.debug("Oracle graph: tokens=%s for query=%s", tokens, query_text[:60])
 
         # edge.id -> (best_score, edge, hop_proximity, source_token, source_dir)
         scored: dict[str, tuple[float, Any, float, str, str]] = {}
@@ -801,10 +806,10 @@ class OracleService:
                         )
 
         if not scored:
-            logger.warning("BF-265: graph found 0 edges for tokens=%s", tokens)
+            logger.debug("Oracle graph: 0 edges for tokens=%s", tokens)
             return []
 
-        logger.warning("BF-265: graph found %d edges for tokens=%s", len(scored), tokens)
+        logger.debug("Oracle graph: %d edges for tokens=%s", len(scored), tokens)
 
         results: list[OracleResult] = []
         for edge_id, (score, edge, hop_prox, source_token, source_dir) in scored.items():

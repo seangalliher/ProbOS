@@ -5438,7 +5438,7 @@ class CognitiveAgent(BaseAgent):
                                 self.agent_type, len(oracle_text), oracle_text,
                             )
                         else:
-                            logger.warning("BF-265: Oracle returned empty for %s", self.agent_type)
+                            logger.debug("Oracle returned empty for %s", self.agent_type)
                     except Exception:
                         logger.warning("AD-568a: Oracle query failed, continuing without", exc_info=True)
                 elif (

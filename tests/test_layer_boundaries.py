@@ -76,6 +76,13 @@ ALLOWED_EXCEPTIONS = {
     # for filtering Hebbian weights during edge backfill. Pure constant, no
     # behavioral coupling.
     ("knowledge/backfill.py", "probos.mesh.routing"),
+    # AD-482 (Wave 83): cognitive.self_improvement.qa_pool → consensus.shapley
+    # — pure function import for Shapley aggregation across QA agents.
+    ("cognitive/self_improvement/qa_pool.py", "probos.consensus.shapley"),
+    # AD-482 (Wave 83): cognitive.self_improvement.qa_pool → agents.system_qa
+    # — TYPE_CHECKING-only import for SystemQAAgent type annotations; runtime
+    # access via injected pool.
+    ("cognitive/self_improvement/qa_pool.py", "probos.agents.system_qa"),
 }
 
 
