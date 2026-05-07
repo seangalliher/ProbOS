@@ -81,6 +81,12 @@ class AgentOnboardingService:
         self._billet_registry: Any = None  # AD-595b: Late-bound
         # AD-628e: TRAINO mentor announcer (post-naming-ceremony hook)
         self._mentor_announcer: Callable[[str, str], Any] | None = None
+        # AD-486: Birth Chamber (late-bound by finalize._wire_birth_chamber)
+        self._birth_chamber: Any = None
+
+    def set_birth_chamber(self, chamber: Any) -> None:
+        """AD-486: Set the Birth Chamber (public setter for LoD)."""
+        self._birth_chamber = chamber
 
     def register_mentor_announcer(
         self,
@@ -272,6 +278,33 @@ class AgentOnboardingService:
                     agent._newly_commissioned = True
                 except Exception as e:
                     logger.warning("AD-442: Naming ceremony error for %s: %s", agent.agent_type, e)
+
+        # AD-486: Birth Chamber admission (post-naming, pre-orientation-context).
+        # Tier-2 log-and-degrade — chamber failures must not block onboarding.
+        if (
+            is_crew
+            and self._birth_chamber is not None
+            and self._config.holodeck_birth_chamber.enabled
+            and not (
+                self._config.holodeck_birth_chamber.bypass_for_existing_agents
+                and _existing_identity_callsign
+            )
+        ):
+            try:
+                department = ""
+                if self._ontology is not None:
+                    try:
+                        department = (
+                            self._ontology.get_agent_department(agent.agent_type) or ""
+                        )
+                    except Exception:
+                        department = ""
+                await self._birth_chamber.admit(agent, department=department)
+            except Exception:
+                logger.warning(
+                    "AD-486: birth_chamber.admit failed for %s; continuing without chamber",
+                    agent.agent_type, exc_info=True,
+                )
 
         # AD-567g: Cognitive re-localization — set orientation context after naming
         if is_crew and self._orientation_service and self._config.orientation.enabled:

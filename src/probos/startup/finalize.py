@@ -156,6 +156,89 @@ def _wire_boot_camp_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_birth_chamber(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-486 v1: Wire Holodeck Birth Chamber + Department scheduler.
+
+    Default-False per AD-695 transitional-flag precedent. When disabled,
+    no chamber is constructed; production graduation gates short-circuit
+    to ``True`` via the ``runtime.birth_chamber is None`` check.
+    """
+    cfg = getattr(config, "holodeck_birth_chamber", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    import asyncio as _asyncio
+
+    from probos.holodeck import BirthChamber, DepartmentActivationScheduler
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    chamber = BirthChamber(config=cfg, emit_event_fn=emit_fn)
+    chamber.set_personal_ontology_prober(
+        getattr(runtime, "personal_ontology_prober", None)
+    )
+    chamber.set_curriculum_registry(
+        getattr(runtime, "curriculum_registry", None)
+    )
+    # AD-488 circuit_breaker is a leading-underscore attr on
+    # ProactiveCognitiveLoop (predates Wave 5 convention #1). Demeter
+    # exception documented; promote to public in a later wave.
+    proactive = getattr(runtime, "proactive_loop", None)
+    if proactive is not None:
+        chamber.set_circuit_breaker(getattr(proactive, "_circuit_breaker", None))
+    chamber.set_callsign_registry(getattr(runtime, "callsign_registry", None))
+    chamber.set_episodic_memory(getattr(runtime, "episodic_memory", None))
+
+    runtime.birth_chamber = chamber  # public attribute (Wave 5 convention #1)
+
+    scheduler = DepartmentActivationScheduler(
+        department_order=list(cfg.department_order),
+        get_phase_fn=chamber.get_current_phase,
+    )
+    runtime.department_activation_scheduler = scheduler  # public attribute
+
+    # Late-bind onto onboarding service so wire_agent can admit agents
+    if getattr(runtime, "onboarding", None) is not None:
+        try:
+            runtime.onboarding.set_birth_chamber(chamber)
+        except AttributeError:
+            logger.warning(
+                "AD-486: onboarding.set_birth_chamber not available; chamber will not auto-admit"
+            )
+
+    # AD-486: Late-bind onto AssignmentService for Ward Room subscription gating
+    _assn = getattr(runtime, "assignment_service", None)
+    if _assn is not None:
+        try:
+            _assn.set_birth_chamber(chamber)
+        except AttributeError:
+            logger.warning(
+                "AD-486: assignment_service.set_birth_chamber not available; "
+                "Ward Room subscription will not be deferred"
+            )
+
+    if cfg.auto_advance_enabled:
+        try:
+            runtime.birth_chamber_advance_task = _asyncio.create_task(
+                chamber.run_advance_loop()
+            )
+        except RuntimeError:
+            # No running loop yet (cold-start before serve()) — finalize
+            # is invoked from an async context in normal boot, so this
+            # branch is defensive only.
+            logger.warning(
+                "AD-486: no running event loop; advance task not started"
+            )
+            runtime.birth_chamber_advance_task = None
+    else:
+        runtime.birth_chamber_advance_task = None
+
+    logger.info(
+        "AD-486: Birth Chamber initialized (auto_advance=%s, departments=%s)",
+        cfg.auto_advance_enabled, list(cfg.department_order),
+    )
+    return True
+
+
 def _wire_discovery_learning(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-512 v1: Wire DiscoveryScenarioRegistry, StrengthMap,
     CapabilityConfidenceScorer, and ZPDCalibrator (observational substrate).
@@ -1456,6 +1539,9 @@ async def finalize_startup(
 
     if _wire_boot_camp_tracker(runtime=runtime, config=config):
         logger.info("AD-509: Boot Camp Phase Tracker v1 wired during finalization")
+
+    if _wire_birth_chamber(runtime=runtime, config=config):
+        logger.info("AD-486: Holodeck Birth Chamber v1 wired during finalization")
 
     if _wire_discovery_learning(runtime=runtime, config=config):
         logger.info("AD-512: Discovery Learning v1 wired during finalization")

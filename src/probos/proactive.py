@@ -501,6 +501,12 @@ class ProactiveCognitiveLoop:
                 continue
             if not agent.is_alive:
                 continue
+            # AD-486: Skip agents still in Birth Chamber (pre-graduation).
+            # Default-disabled chamber (no runtime.birth_chamber) treats
+            # all agents as graduated → zero behavior change.
+            chamber = getattr(rt, "birth_chamber", None)
+            if chamber is not None and not chamber.is_graduated(agent.id):
+                continue
             eligible_agents.append(agent)
 
         # AD-636: Calculate stagger delay

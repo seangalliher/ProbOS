@@ -384,6 +384,14 @@ class EventType(str, Enum):
     # ── Boot Camp Phase Tracker (AD-509) ───────────────────────────
     BOOT_CAMP_PHASE_ADVANCED = "boot_camp_phase_advanced"  # AD-509
 
+    # AD-486: Holodeck Birth Chamber phase events
+    HOLODECK_AGENT_ADMITTED = "holodeck_agent_admitted"
+    HOLODECK_PHASE_ENTERED = "holodeck_phase_entered"
+    HOLODECK_PHASE_GATE_PASSED = "holodeck_phase_gate_passed"
+    HOLODECK_PHASE_GATE_BLOCKED = "holodeck_phase_gate_blocked"
+    HOLODECK_GRADUATION = "holodeck_graduation"
+    HOLODECK_AFFECTIVE_BASELINE_OBSERVED = "holodeck_affective_baseline_observed"
+
     # ── Discovery-Based Capability Building (AD-512) ───────────────
     DISCOVERY_SCENARIO_OFFERED = "discovery_scenario_offered"  # AD-512a registry
     DISCOVERY_OUTCOME_RECORDED = "discovery_outcome_recorded"  # AD-512b StrengthMap

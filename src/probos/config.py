@@ -1753,6 +1753,41 @@ class OnboardingConfig(BaseModel):
     naming_ceremony: bool = True  # If False, agents keep seed callsigns
 
 
+class HolodeckBirthChamberConfig(BaseModel):
+    """AD-486: Holodeck Birth Chamber — graduated cognitive onboarding.
+
+    Default-False per AD-695 transitional-flag precedent: enabling the
+    chamber gates Ward Room subscription and proactive-loop dispatch
+    behind 5-phase graduation, which is a meaningful behavior change.
+    Operators flip ``enabled=True`` after Phase α validation (manual
+    cohort under observation).
+    """
+
+    enabled: bool = False
+    bypass_for_existing_agents: bool = True
+    department_order: list[str] = Field(
+        default_factory=lambda: [
+            "security",
+            "operations",
+            "engineering",
+            "science",
+            "medical",
+        ]
+    )
+    calibration_min_episodes: int = Field(default=5, ge=1)
+    affective_baseline_check_enabled: bool = True
+    auto_advance_enabled: bool = True
+    auto_advance_poll_interval_seconds: float = Field(
+        default=2.0, ge=0.1, le=30.0
+    )
+    max_self_discovery_probe_attempts: int = Field(default=3, ge=1)
+
+    @field_validator("department_order")
+    @classmethod
+    def _department_order_lowercase(cls, v: list[str]) -> list[str]:
+        return [d.lower() for d in v]
+
+
 class NamingConfig(BaseModel):
     """Ship & crew naming conventions (AD-499)."""
 
@@ -2758,6 +2793,7 @@ class SystemConfig(BaseModel):
     quality_trigger: QualityTriggerConfig = QualityTriggerConfig()  # AD-564
     quality_router: QualityRouterConfig = QualityRouterConfig()  # AD-565
     onboarding: OnboardingConfig = OnboardingConfig()
+    holodeck_birth_chamber: HolodeckBirthChamberConfig = HolodeckBirthChamberConfig()
     naming: NamingConfig = NamingConfig()  # AD-499
     runtime_overrides: RuntimeOverridesConfig = RuntimeOverridesConfig()  # AD-468
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()
