@@ -2632,3 +2632,15 @@ waves:
     builder_required: true
     issues_to_close: [24]
     status: pending
+
+  - id: "100"
+    title: "AD-539b v1 Holodeck Scenario Generation from Skill Gaps (closes #12)"
+    kind: single
+    depends_on: ["99"]
+    dispatch_prompt: "prompts/WAVE-100-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-539b-holodeck-scenario-generation-v1.md"
+    builder_required: true
+    issues_to_close: [12]
+    status: pending
