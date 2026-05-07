@@ -18,7 +18,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 HELPER = REPO_ROOT / "scripts" / "phantom_api_ast_helper.py"
 WRAPPER = REPO_ROOT / "scripts" / "phantom-api-precheck.ps1"
 SRC_ROOT = REPO_ROOT / "src" / "probos"
-PYTHON_EXE = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
+# Cross-platform: use the active interpreter (Windows venv has Scripts/python.exe,
+# Linux venv has bin/python; CI uses uv which lacks both layouts entirely).
+PYTHON_EXE = Path(sys.executable)
 
 
 def _run_helper(body: str) -> dict:
