@@ -2266,3 +2266,131 @@ waves:
       converted to COMPLETE with implementation-section table
       appended) + this wave-plan entry. gh issue close 223 with the
       canonical paragraph in Section 12 of the per-AD prompt.
+
+  - id: "94"
+    title: "AD-579 v1 Memory Architecture: Tiered Context Loading & Temporal Knowledge Validity — umbrella close — no-build tracker reconciliation flipping Memory Anchoring Build order line + AD-579 umbrella section header + AD-579 umbrella entry status field from planned/deferred to complete and inserting Issues anchor after Absorption paragraph (all three sub-ADs AD-579a/b/c shipped pre-W94)"
+    kind: single
+    depends_on: ["93"]
+    dispatch_prompt: "prompts/WAVE-94-DISPATCH.md"
+    prompts_already_drafted: true
+    expected_outputs:
+      - "prompts/ad-579-memory-architecture-umbrella-close.md"
+    builder_required: true
+    issues_to_close: [37]
+    status: draft
+    notes: |
+      AD-579 v1 umbrella close — single AD, no-build, no new sub-AD letters,
+      no new GH issues, no source/test changes. HEAD at draft 4649e61.
+      Baseline pytest 12113 -> target 12113 (delta = 0).
+
+      Verify-first against HEAD 4649e61 confirms all three sub-ADs shipped
+      pre-W94: AD-579a Pinned Knowledge Buffer (PROGRESS.md:383, DECISIONS.md:1201,
+      PinnedKnowledgeConfig at config.py:1372 + MemoryConfig.pinned_knowledge at
+      config.py:2755, 12 focused tests in baseline); AD-579b Temporal Validity
+      Windows (PROGRESS.md:385, DECISIONS.md:1208, TemporalValidityConfig at
+      config.py:1381 + MemoryConfig.temporal_validity at config.py:2756,
+      valid_from/valid_until comments at types.py:386 + types.py:461, 10
+      focused tests in baseline); AD-579c Validity-Aware Dream Consolidation
+      (PROGRESS.md:222, DECISIONS.md:1215, 8 focused tests in baseline). 30
+      tests already in the 12113 baseline. Sub-AD bullets at
+      roadmap.md:5996-5998 already read *(complete, OSS, ...)* — only the
+      umbrella header/entry status field and the Memory Anchoring lineage
+      Build order paragraph reference remain stale.
+
+      Three SEARCH/REPLACE pairs in one MODIFY block on
+      docs/development/roadmap.md: (1) :4360 Memory Anchoring Build order
+      paragraph "Deferred: AD-579a/b/c (tiered memory loading + temporal
+      validity, MemPalace absorption)." flips to "Complete: AD-579a/b/c
+      checkmark (tiered memory loading + temporal validity, MemPalace
+      absorption — Wave 94 umbrella close)." with explicit checkmark glyph;
+      (2) :5984 + :5986 umbrella section header *(planned, OSS)* and
+      umbrella entry status field *(planned, OSS, depends: ...)* both flip
+      to *(complete, OSS, ...)* in a single SEARCH/REPLACE pair anchored on
+      the header line + blank line + entry first-line bold + " — Two
+      complementary enhancements" trailing-substring uniqueness; (3) :6000
+      inserts a new "Issues: hash-37 (AD-579 umbrella close, Wave 94 — ...)."
+      line between the Absorption italic paragraph and the existing ---
+      separator, mirroring the AD-612 catalogue convention at :5969
+      "Issues: hash-193 (AD-612).".
+
+      Reframe rationale: original user-facing request to draft "AD-579 v1
+      build" reframed to no-build umbrella close after verify-first. Captain
+      rule "don't defer unless no choice" satisfied vacuously - nothing to
+      defer, nothing to add, all three sub-ADs already shipped. Structurally
+      identical to W90 (#111 AD-462 biological memory umbrella close), W76
+      (#285 AD-644 SA architecture, no-build close), W71 (#415 AD-644b
+      deprecation, no-build close).
+
+      Forward-looking carve-outs in existing AD-579{a,b,c} bullet text remain
+      forward-looking: AD-579a "Future ADs may wire Counselor/dream
+      auto-pinning and event emission"; AD-579b "No automatic validity
+      inference, notebook validity, anchor-recall filtering, retroactive
+      propagation, or dream consolidation changes"; AD-579c "No LLM validity
+      inference, validity UI/API, retroactive stored-episode propagation, or
+      micro_dream changes". W94 mints zero new GH issues for these — same
+      shape as W90's AD-462f-1/b/c/d Wave 73 carry-forward children which
+      W90 explicitly chose not to convert into new GH issues.
+
+      AD numbering: highest AD stem at HEAD remains AD-696 (Wave 72,
+      verified 2026-05-07 in W92 dispatch notes block; W93 AD-628 did not
+      bump highest). W94 mints zero new AD numbers.
+
+      No commercial leak: AD-579 is purely OSS cognitive-architecture work
+      (tiered context loading, pinned knowledge buffer, temporal validity
+      windows, validity-aware dream consolidation). Zero tier-noun /
+      pricing-token / SaaS-overlay surface in the umbrella, in either of
+      the two new prompt files, or in this notes block. Banned-pattern
+      audit on WAVE-94-DISPATCH.md + ad-579-memory-architecture-umbrella-close.md
+      + this notes block: 11 patterns checked, 0 literal hits per pattern.
+      Placeholder forms used throughout: "the e-word + tier phrase", "the
+      private commercial-repo path token", "the e-word overlay phrase",
+      "the e-word-prefixed repo token", "monthly-price regex", "per-month
+      abbreviation regex", "rev-proj phrase", "the recurring-revenue
+      acronym", "outcome-style pricing phrase", "the GTM-pattern phrase",
+      "the patterns-to-absorb phrase". Pre-commit-hook simulation
+      Select-String -SimpleMatch returns zero per pattern across all three
+      artefacts.
+
+      Hard-stops specific to W94: W94-1 any of the 3 SEARCH blocks fails
+      to match (anchor drift since draft) -> Builder surfaces back to
+      Architect, do not improvise; W94-2 pytest gate returns anything other
+      than 12113 (tracker-only changes cannot move count; any delta means
+      unrelated regression entered between draft and build); W94-3
+      pre-commit hook flags banned literal in any of the modified surfaces;
+      W94-4 Builder elects to ship a fresh AD-579{d,e,...} sub-AD letter
+      "while we're here" -> out of scope; W94-5 Builder elects to mint a
+      new GH issue for any of the AD-579 forward-looking carve-outs ->
+      out of scope, umbrella close cites them not re-tracks them; W94-6
+      Builder elects to add a ### AD-579 paragraph to
+      decisions-era-4-evolution.md -> out of scope, canonical decision
+      record lives at DECISIONS.md:1201-1224; W94-7 Builder elects to flip
+      the AD-579{a,b,c} sub-AD bullets at roadmap.md:5996-5998 -> already
+      correct, touching them is unnecessary churn.
+
+      4 review passes recorded in this draft session: P1 (initial draft
+      against HEAD 4649e61 — structure mirrored on W90 no-build umbrella
+      close); P2 (verify-first sweep — confirmed all 3 stale anchors at
+      the asserted line numbers, confirmed all 3 sub-AD bullets already
+      read *(complete, OSS, ...)*, confirmed all 3 DECISIONS.md entries
+      already read Status: Implemented, confirmed PinnedKnowledgeConfig +
+      TemporalValidityConfig present in config.py at the asserted lines,
+      no decisions-era-4-evolution.md AD-579 paragraph exists therefore
+      none to update); P3 (reframe table — confirmed no-build is correct
+      path, no sub-AD letter mintable without inventing forcing function,
+      Captain rule "don't defer unless no choice" satisfied vacuously);
+      P4 (banned-pattern audit on full text + per-section consistency
+      check between dispatch + prompt + this entry; AD numbering verified
+      696 highest no collision; SEARCH/REPLACE block uniqueness verified
+      by including the "Memory Anchoring" Build order context for Pair 1,
+      the " — Two complementary enhancements" substring for Pair 2, the
+      AD-612-style "Issues:" placement context for Pair 3).
+
+      Builder execution: read prompt top-to-bottom, apply 3 SEARCH/REPLACE
+      pairs in 1 MODIFY block on docs/development/roadmap.md, append W94
+      entry to prompts/wave-plan.yaml. Verify git diff --stat shows
+      exactly 2 modified trackers (roadmap.md, wave-plan.yaml) plus the 2
+      new prompt files. Pre-commit hook runs naturally on commit. Full
+      pytest gate belt-and-braces (expected 12113 passed). Commit with
+      "AD-579: Memory Architecture umbrella close — tracker reconciliation
+      (no-build, +0 tests)". Archive both prompts. gh issue close 37 with
+      the canonical paragraph in Section 4 of the per-AD prompt.
