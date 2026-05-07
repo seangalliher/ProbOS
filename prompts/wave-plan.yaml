@@ -2620,3 +2620,15 @@ waves:
     builder_required: true
     issues_to_close: [13]
     status: pending
+
+  - id: "99"
+    title: "AD-486 v1 Holodeck Birth Chamber — Graduated Cognitive Onboarding (closes #24)"
+    kind: single
+    depends_on: ["98"]
+    dispatch_prompt: "prompts/WAVE-99-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-486-holodeck-birth-chamber-v1.md"
+    builder_required: true
+    issues_to_close: [24]
+    status: pending
