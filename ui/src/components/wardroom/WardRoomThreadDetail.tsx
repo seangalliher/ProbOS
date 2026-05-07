@@ -46,6 +46,7 @@ export function WardRoomThreadDetail() {
   if (!detail || !activeThread) return null;
 
   const { thread, posts } = detail;
+  if (!thread) return null;
   const isDm = view === 'dm-detail';
   const flatPosts = isDm ? flattenPosts(posts) : null;
   const targetAgentId = resolveDmTargetAgentId(view, activeChannel, dmChannels);

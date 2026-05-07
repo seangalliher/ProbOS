@@ -22,7 +22,22 @@ from probos.types import CapabilityDescriptor, IntentDescriptor
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
+
+def _default_platform_data_dir() -> Path:
+    """BF-265: Platform-appropriate data directory (duplicated from runtime.py to avoid circular import)."""
+    import os as _os
+    import sys as _sys
+    override = _os.environ.get("PROBOS_DATA_DIR")
+    if override:
+        return Path(override)
+    if _sys.platform == "win32":
+        base = Path.home() / "AppData" / "Local" / "ProbOS"
+    elif _sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support" / "ProbOS"
+    else:
+        xdg = _os.environ.get("XDG_DATA_HOME")
+        base = Path(xdg) / "ProbOS" if xdg else Path.home() / ".local" / "share" / "ProbOS"
+    return base / "data"
 
 _INSTRUCTIONS = (
     "You are the ProbOS Scout, a Science department officer responsible for "
@@ -365,7 +380,7 @@ class ScoutAgent(CognitiveAgent):
         """Resolve data directory from runtime, falling back to project default."""
         if self._runtime and hasattr(self._runtime, "_data_dir"):
             return Path(self._runtime._data_dir)
-        return _DEFAULT_DATA_DIR
+        return _default_platform_data_dir()
 
     @property
     def _seen_file(self) -> Path:

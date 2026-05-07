@@ -83,10 +83,13 @@ class TestScoutDataDirectory:
         agent = ScoutAgent(runtime=mock_runtime)
         assert agent._data_dir == tmp_path / "data"
 
-    def test_scout_falls_back_to_default(self):
-        """ScoutAgent falls back to project default when runtime is None."""
+    def test_scout_falls_back_to_default(self, monkeypatch):
+        """ScoutAgent falls back to platform data dir when runtime is None (BF-265)."""
+        monkeypatch.delenv("PROBOS_DATA_DIR", raising=False)
         agent = ScoutAgent(runtime=None)
+        # BF-265: now resolves to platform AppData, not repo-relative data/
         assert agent._data_dir.name == "data"
+        assert "ProbOS" in str(agent._data_dir)
 
     def test_seen_file_uses_data_dir(self, tmp_path: Path):
         """_load_seen and _save_seen use provided path."""

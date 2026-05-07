@@ -105,7 +105,11 @@ describe('BF-080: DM Channel Viewer', () => {
     expect(useStore.getState().wardRoomView).toBe('dms');
   });
 
-  it('ward_room_post_created event refreshes DM channels', () => {
+  it('ward_room_post_created event refreshes DM channels', async () => {
+    // AD-613 debounce is module-private; drain any pending refresh timer
+    // scheduled by prior tests so our schedule actually runs against our patch.
+    await new Promise(resolve => setTimeout(resolve, 400));
+
     // Spy on refreshWardRoomDmChannels
     const calls: string[] = [];
     const original = useStore.getState().refreshWardRoomDmChannels;
@@ -118,6 +122,11 @@ describe('BF-080: DM Channel Viewer', () => {
       data: { thread_id: 't1', channel_id: 'ch1' },
       timestamp: Date.now() / 1000,
     });
+
+    // AD-613: ward-room refreshes are debounced ~300ms; wait for the
+    // timer to fire and any microtasks (refresh fns are async).
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await Promise.resolve();
 
     expect(calls).toContain('refreshed');
     // Restore
