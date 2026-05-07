@@ -1601,3 +1601,140 @@ waves:
       TestExtensionDiscovery ~10, TestExtensionStateStore ~10,
       TestSkillManifest ~8, TestSealedCore ~10, TestExtensionProfiles ~8,
       TestSlashExtensionsCommand ~12).
+
+  - id: "89"
+    title: "AD-480 v1 Federation Protocol Adapters — MCP server + A2A both directions"
+    kind: single
+    depends_on: ["88"]
+    dispatch_prompt: "prompts/WAVE-89-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-480-federation-mcp-a2a-v1.md"
+    builder_required: true
+    issues_to_close: [74]
+    status: pending
+    notes: |
+      Closes GH #74 (AD-480 Federation Protocol Adapters umbrella). The
+      substrate AD-480 extends is fully shipped at HEAD 03937cb: outbound
+      MCP client at AD-449 (MCPClient/MCPSession/MCPBridge/MCPToolAdapter +
+      MCP_BRIDGE_INVOKE/FAILED EventTypes + JSONRPC_VERSION 2.0 +
+      MCP_PROTOCOL_VERSION 2025-03-26 constants), federation transport
+      (FederationBridge handle_inbound dispatch on message.type string at
+      bridge.py:145, FederationRouter.select_peers at router.py:29,
+      MockFederationTransport in-process round-trip, FederationMessage
+      type:str at types.py:664), IntentBus.broadcast(federated=False) loop
+      guard at mesh/intent.py:502, TrustNetwork.create_with_prior at
+      consensus/trust.py:195 + record_outcome at line 209, IntentDescriptor
+      at types.py:609 with decomposer catalog at runtime.py:2216,
+      AgentIdentityRegistry.get_ship_certificate at identity.py:609
+      returning ShipBirthCertificate with vessel_name + ship_did, existing
+      /federation slash at commands_status.py:100. Nine OSS sub-AD letters
+      ship concretely: 480a FederationMCPServer (inbound MCP server -
+      JSON-RPC 2.0 over Streamable HTTP, initialize/tools/list/tools/call,
+      ASGI via Starlette+uvicorn, governance pass-through via
+      IntentBus.broadcast federated-False), 480b Capability-to-MCP-tool
+      translator (every IntentDescriptor projected as MCP tool entry with
+      JSON-Schema-ish input from descriptor.params), 480c AgentCard
+      dataclass (A2A 0.2.0 schema with vessel_name flowing into name +
+      ship_did flowing into provider.url per AD-441 / AD-499 connection at
+      roadmap.md:7013), 480d FederationA2AServer (inbound A2A server -
+      GET /.well-known/agent.json + JSON-RPC tasks/send + tasks/get
+      synchronous-only - tasks/sendSubscribe / tasks/cancel /
+      tasks/pushNotification/* return -32601 Method not found), 480e
+      A2AClient (outbound - discover/send_task/get_task/close, structured
+      analogously to existing MCPClient, EgressPolicy-gated), 480f
+      FederationPeer + FederationPeerRegistry (protocol literal
+      zmq|mcp|a2a discriminator + parallel structure to
+      FederationRouter._peer_models - additive, no behavior change for
+      single-node or ZeroMQ-only deployments), 480g probationary trust
+      wiring (TrustNetwork.create_with_prior peer_id alpha=1.0 beta=3.0 on
+      first registration + record_outcome on every forwarded intent +
+      destructive intents always require full consensus regardless of
+      accumulated trust), 480h config additions
+      (FederationMCPServerConfig + FederationA2AConfig + A2APeerConfig +
+      FederationPeerTrustConfig - all default-False per AD-695 + W82 +
+      W88 default-False precedent), 480i /federation peers slash
+      subcommand (extends existing cmd_federation dispatch on first arg -
+      no new slash registration, existing /federation panel preserved
+      verbatim) + render_federation_peers_panel helper. Nine classes
+      total ~72 tests floor. Four future-AD letters parked with explicit
+      forcing functions (NOT v1 deferrals): 480j A2A SSE streaming
+      tasks/sendSubscribe (depends on observability streaming +
+      backpressure substrate unbuilt at HEAD), 480k inbound MCP/A2A
+      OAuth 2.1 (depends on AD-449d parked at HEAD per PROGRESS.md:98 -
+      v1 accepts opaque bearer tokens via static auth_token config -
+      mismatch returns -32600 Invalid Request), 480l cross-protocol
+      Hebbian routing (depends on AD-479 federation hardening unshipped
+      at HEAD per roadmap.md:3201 - v1 ships trust integration at 480g -
+      Hebbian feedback loop is consumer story), 480m A2A push-
+      notification callbacks tasks/pushNotification/* (depends on
+      outbound webhook delivery substrate unbuilt at HEAD - v1 returns
+      -32601 Method not found). Four commercial-repo carve-outs (NOT
+      deferrals - out-of-repo by design at roadmap.md:3478 + :3595 +
+      :4111 neutral language): hosted multi-tenant MCP/A2A directory
+      service, fleet-wide MCP marketplace + paid catalog + billing
+      surface, managed cross-fleet A2A trust scoring + signed revocation
+      registry, paid pre-built vendor-specific MCP server packs (per
+      AD-450 ERP carve-out + AD-449 commercial pack carve-out at
+      roadmap.md:4111). Reframe rationale: roadmap line-3247 framing
+      (which implicitly framed full Google A2A spec including streaming
+      + push notifications + multi-modality as preconditions) revisited
+      and rejected on verify-first against HEAD - the substrate AD-480
+      extends already exists at HEAD, AD-480 is not "build the federation
+      layer" but "build the cross-ecosystem federation surface above the
+      existing transports", synchronous-only A2A is feasible and correct
+      for v1 (Google A2A spec explicitly distinguishes tasks/send sync
+      from tasks/sendSubscribe streaming - sync covers single-shot
+      delegation + capability invocation + hailing-frequencies-open
+      patterns), MCP server reuses JSON-RPC + Streamable HTTP machinery
+      from AD-449 client verbatim (same constants, same envelope, same
+      error codes), trust integration reuses TrustNetwork.create_with_
+      prior verbatim (no new trust schema, no new dampening config, no
+      new tier - external peers are first-class citizens of existing
+      Beta(alpha,beta) network with same probationary prior the self-
+      mod path uses), FederationPeer discriminator is purely additive
+      (FederationRouter.select_peers signature unchanged, parallel
+      registry structure, ZeroMQ peers auto-registered via existing
+      gossip path, zero behavior change for ZeroMQ-only deployments),
+      /federation peers is one-line dispatch extension on existing
+      cmd_federation (no new slash registration, no new shell.py
+      wiring). No UI surface touched - vitest unchanged at 306 (305
+      passing + 1 pre-existing WardRoomDmSync failure carried since
+      pre-Wave-85). No runtime.py boot-ordering changes -
+      federation_peer_registry initialized eagerly in __init__ adjacent
+      to existing self.federation_bridge None init, MCP/A2A servers
+      None until startup wires them per default-False enable flags. No
+      edits to BaseAgent, IntentMessage, IntentResult, IntentDescriptor,
+      TaskDAG, acm.py, episodic.py, consensus, attention, dreaming,
+      decomposer, prompt builder, cognitive/standing_orders.py,
+      cognitive/builder.py, cognitive/architect.py, HXI, existing
+      MCPClient/MCPSession/MCPBridge/MCPToolAdapter (AD-449 surface
+      preserved verbatim), existing FederationBridge / FederationRouter
+      / FederationTransport / MockFederationTransport /
+      NATSFederationTransport (Phase 9 + Wave 87 surface preserved
+      verbatim). No new EventType (480a/480d emit existing
+      MCP_BRIDGE_INVOKE/FAILED with neutral semantics - "an MCP method
+      was invoked" whether server or client - and emit via runtime
+      _emit_event for free-form A2A audit log), no new pool, no new
+      agent, no new Intent, no router transport rewrite, no Hebbian
+      touch, no new SQLite tables (trust scores reuse existing trust_
+      scores table, peer registry is in-memory only - operator-driven
+      re-registration on boot via static config). No new AD numbers
+      minted (sub-AD letters a-m organizational only - AD-481 a-m Wave
+      88, AD-443 a-h Wave 87, AD-474 a-h Wave 86, AD-473 a-g Wave 85,
+      AD-512 a-f Wave 84 precedents). No banned-pattern language - pre-
+      commit hook 11 banned patterns confirmed 0 literal hits across
+      dispatch + prompt + this notes block (placeholder forms used:
+      "the e-word + tier phrase", "the private commercial-repo path
+      token", "the e-word overlay phrase", "the e-word-prefixed repo
+      token", "monthly-price regex", "per-month abbreviation regex",
+      "rev-proj phrase", "the recurring-revenue acronym", "outcome-
+      style pricing phrase", "the GTM-pattern phrase", "the patterns-
+      to-absorb phrase"; the audit text itself does NOT contain
+      literal forms). Baseline pytest 11843 -> target >= 11913 (+70
+      floor; ~72 tests planned across nine classes
+      TestFederationPeerRegistry ~6, TestAgentCard ~8, TestA2AClient
+      ~8, TestA2AServerInbound ~10, TestMCPServerInbound ~12,
+      TestProbationaryTrustWiring ~6, TestFederationRouterPolymorphism
+      ~6, TestFederationConfigSchema ~4, TestSlashFederationPeersCommand
+      ~6, TestStartupWiring ~6).
