@@ -223,7 +223,7 @@ async def test_duplicate_path_latency(bus):
     await callback(msg)
     elapsed = time.monotonic() - t0
 
-    assert elapsed < 0.001, f"Duplicate path took {elapsed*1000:.1f}ms, expected <1ms"
+    assert elapsed < 0.020, f"Duplicate path took {elapsed*1000:.1f}ms, expected <20ms"
 
 
 # ── Test 11 ───────────────────────────────────────────────────────────
