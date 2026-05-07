@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
+      - name: Clear stale chroma onnx cache
+        run: rm -rf ~/.cache/chroma/onnx_models || true
+
       - name: Run tests
         run: uv run pytest tests/ -x -q --tb=short
 
