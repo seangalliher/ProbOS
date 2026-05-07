@@ -2608,3 +2608,15 @@ waves:
       - "prompts/ad-476-specialized-builders-v1.md"
     builder_required: true
     issues_to_close: [70]
+
+  - id: "98"
+    title: "AD-543/544/545/546/547/548/549 v1 Native SWE Harness ΓÇö Agentic Tool Loop (combined; closes #13)"
+    kind: combo
+    depends_on: ["97"]
+    dispatch_prompt: "prompts/WAVE-98-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-543-549-native-swe-harness-v1.md"
+    builder_required: true
+    issues_to_close: [13]
+    status: pending
