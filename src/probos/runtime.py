@@ -117,6 +117,7 @@ from probos.crew_utils import is_crew_agent
 from probos.dream_adapter import DreamAdapter
 from probos.self_mod_manager import SelfModManager
 from probos.ward_room_router import WardRoomRouter
+from probos.build_pipeline import BuildPipeline
 from probos.warm_boot import WarmBootService
 
 if TYPE_CHECKING:
@@ -565,6 +566,14 @@ class ProbOSRuntime:
         # AD-515: Extracted service instances (created in start())
         self.onboarding: AgentOnboardingService | None = None
         self.warm_boot: WarmBootService | None = None
+        # AD-521: BuildPipeline Ship's Computer service. Owns no agent
+        # identity; SoftwareEngineerAgent (Scotty) delegates to this
+        # service for build execution. Constructor-injected with the
+        # runtime handle so it can read pre_flight_runner / emit_event
+        # / llm_client via defensive `getattr` lookups at invocation
+        # time (the runtime attributes are populated by
+        # startup/finalize.py and other startup modules).
+        self.build_pipeline: BuildPipeline | None = None
         self.self_mod_manager: SelfModManager | None = None
         self.dream_adapter: DreamAdapter | None = None
 
@@ -1874,6 +1883,8 @@ class ProbOSRuntime:
         self.ward_room_router = fin.ward_room_router
         self.self_mod_manager = fin.self_mod_manager
         self.dream_adapter = fin.dream_adapter
+        # AD-521: BuildPipeline Ship's Computer service.
+        self.build_pipeline = BuildPipeline(runtime=self)
 
         # AD-654a: Wire up WardRoomPostPipeline for agent self-posting
         # BF-238: Construct PostBudgetTelemetry first so the pipeline can

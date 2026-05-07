@@ -1687,8 +1687,22 @@ async def _git_checkout_main(work_dir: str) -> tuple[bool, str]:
 # BuilderAgent (AD-302)
 # ---------------------------------------------------------------------------
 
-class BuilderAgent(CognitiveAgent):
-    """Engineering agent that generates code from build specifications."""
+class SoftwareEngineerAgent(CognitiveAgent):
+    """SWE crew agent (Scotty) — engineering judgment, quality gates, tool delegation (AD-521).
+
+    Per AD-521 SWE/Build Pipeline Separation Model A, this agent is
+    the sovereign crew member that owns build output quality. It
+    receives build specs from the Architect, applies engineering
+    judgment, selects a tool (native BuildPipeline service, visiting
+    Copilot builder, or future agentic-loop harness from AD-543–549),
+    validates output against standing-orders quality gates, and
+    reports up.
+
+    Identity continuity: agent_type, callsign, pool name, and
+    standing-orders mapping are preserved — the rename is class-only.
+    `BuilderAgent` is kept as a module-level alias for back-compat
+    (16 test files import the name; all keep working unchanged).
+    """
 
     agent_type = "builder"
     tier = "domain"
@@ -2507,6 +2521,12 @@ def _check_sealed_path(target_path: "Path", runtime: "ProbOSRuntime | None") -> 
             "hard-block ships at AD-481l",
             target_path,
         )
+
+
+# AD-521: Back-compat alias. Existing imports
+# (`from probos.cognitive.builder import BuilderAgent`) continue to resolve.
+# 16 test files use the BuilderAgent name; all keep working unchanged.
+BuilderAgent = SoftwareEngineerAgent
 
 
 async def execute_approved_build(
