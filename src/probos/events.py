@@ -131,6 +131,9 @@ class EventType(str, Enum):
     FEDERATION_PEER_UNREACHABLE = "federation_peer_unreachable"  # AD-479g
     FEDERATION_PEER_RECOVERED = "federation_peer_recovered"  # AD-479g
     FEDERATION_PEER_DISCOVERED = "federation_peer_discovered"  # AD-479h
+    # AD-607: Federation memory security event types (Wave 92)
+    FEDERATION_EPISODE_REJECTED = "federation_episode_rejected"  # AD-607f
+    FEDERATION_RECALL_DP_REDACTED = "federation_recall_dp_redacted"  # AD-607i
     FEDERATION_DESIGNED_AGENT_RECEIVED = "federation_designed_agent_received"  # AD-479e
     TASK_EXECUTION_COMPLETE = "task_execution_complete"  # AD-532e: reactive trigger
     PROCEDURE_FALLBACK_LEARNING = "procedure_fallback_learning"  # AD-534b: fallback evidence
@@ -241,6 +244,12 @@ class EventType(str, Enum):
     RECREATION_SPECTATOR_COMMENTARY = "recreation_spectator_commentary"  # AD-526e
     ORACLE_LOOKUP_DISPATCHED = "oracle_lookup_dispatched"  # AD-696
     MEMORY_REFS_DISPATCHED = "memory_refs_dispatched"  # AD-462f
+    # AD-607: Memory security framework event types (Wave 92)
+    MEMORY_RECALL_ANOMALY = "memory_recall_anomaly"  # AD-607a
+    MEMORY_PROVENANCE_GAP = "memory_provenance_gap"  # AD-607b
+    MEMORY_ANCHOR_MISMATCH = "memory_anchor_mismatch"  # AD-607c
+    MEMORY_LEAK_SUSPECTED = "memory_leak_suspected"  # AD-607d
+    MEMORY_INJECTION_SUSPECTED = "memory_injection_suspected"  # AD-607h
     CONTRASTIVE_RECALL = "contrastive_recall"  # AD-655
     DEPT_PROFILE_APPLIED = "dept_profile_applied"  # AD-656
     EPS_BUDGET_EXCEEDED = "eps_budget_exceeded"  # AD-469

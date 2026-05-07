@@ -174,6 +174,45 @@ async def cmd_debug(runtime: ProbOSRuntime, console: Console, args: str, *, shel
     console.print(f"Debug mode: [bold]{state}[/bold]")
 
 
+async def cmd_security(runtime: ProbOSRuntime, console: Console, args: str) -> None:
+    """Handle /security command.
+
+    AD-607j: subcommand dispatch.
+    - ``"memory"`` → memory-security event counters over a 24h window.
+    - ``""`` (no arg) → usage hint.
+    """
+    sub = (args or "").strip().split(maxsplit=1)
+    subcommand = sub[0].lower() if sub else ""
+
+    if subcommand == "memory":
+        registry = getattr(runtime, "memory_security_registry", None)
+        if registry is None:
+            console.print(
+                "[yellow]Memory security registry not available.[/yellow]"
+            )
+            return
+        counts = registry.counts()
+        # Render the seven AD-607 EventTypes; show 0 for those unseen.
+        ordered = [
+            "memory_recall_anomaly",
+            "memory_provenance_gap",
+            "memory_anchor_mismatch",
+            "memory_leak_suspected",
+            "memory_injection_suspected",
+            "federation_episode_rejected",
+            "federation_recall_dp_redacted",
+        ]
+        table = Table(title="Memory Security (24h)", show_header=True)
+        table.add_column("Event", style="bold cyan")
+        table.add_column("Count", style="bold")
+        for name in ordered:
+            table.add_row(name, str(counts.get(name, 0)))
+        console.print(table)
+        return
+
+    console.print("Usage: /security memory")
+
+
 async def cmd_help(console: Console, commands_dict: dict[str, str]) -> None:
     """Handle /help command."""
     table = Table(title="Commands", show_header=False)

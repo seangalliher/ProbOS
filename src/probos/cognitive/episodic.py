@@ -33,6 +33,28 @@ def _episode_validity_check(episode: Episode, at_time: float) -> bool:
     return True
 
 
+@dataclasses.dataclass(frozen=True)
+class _AnchorQueryView:
+    """AD-607c: lightweight anchor-query shim for the recall anomaly gate.
+
+    Mirrors the AnchorFrame attribute shape so ``score_anchor_mismatch`` can
+    compare query anchors against ``Episode.anchors`` without coupling to the
+    full AnchorFrame type.
+    """
+    watch_section: str = ""
+    channel: str = ""
+    department: str = ""
+    trigger_agent: str = ""
+    trigger_type: str = ""
+    thread_id: str = ""
+    # Backward-compatible dimension attrs (used by tests/helpers that pass
+    # generic dimension names rather than AnchorFrame attribute names).
+    temporal: str = ""
+    spatial: str = ""
+    social: str = ""
+    causal: str = ""
+    evidential: str = ""
+
 # ---------------------------------------------------------------------------
 # BF-103: Sovereign ID resolution helpers (DRY — one place for all callers)
 # ---------------------------------------------------------------------------
@@ -687,6 +709,9 @@ class EpisodicMemory:
         self._tcm: Any = None  # AD-601: Temporal Context Model engine
         self._tcm_weight: float = 0.0             # AD-601: set by set_tcm() when wired
         self._tcm_fallback_watch_weight: float = 0.0   # AD-601: set by set_tcm() when wired
+        self._security_config: Any = None  # AD-607: memory security config (validates recall)
+        self._security_gate: Any = None  # AD-607h: store-time prompt-injection gate
+        self._security_event_emitter: Any = None  # AD-607: emit hook for security events
 
     def set_activation_tracker(self, tracker: Any) -> None:
         """AD-567d: Wire the activation tracker after construction."""
@@ -699,6 +724,95 @@ class EpisodicMemory:
     def set_storage_gate(self, gate: Any) -> None:
         """AD-610: Wire the storage gate for write-time validation."""
         self._storage_gate = gate
+
+    def set_security_config(self, config: Any) -> None:
+        """AD-607: Wire the memory security config (validates recall + emits anomaly events)."""
+        self._security_config = config
+
+    def set_security_gate(self, gate: Any) -> None:
+        """AD-607h: Wire the memory security gate for store-time validation."""
+        self._security_gate = gate
+
+    def set_security_event_emitter(self, emitter: Any) -> None:
+        """AD-607: Wire emit hook for memory security events.
+
+        ``emitter`` is a callable ``(event_type, payload) -> None``. Failures
+        are swallowed so security-event emission never breaks the memory path.
+        """
+        self._security_event_emitter = emitter
+
+    def _emit_security_event(self, event_type: Any, payload: dict) -> None:
+        """AD-607: emit a security event through the wired emitter (if any).
+
+        Tier-1 swallow — security event emission must not break the memory
+        path. Logged at debug level for diagnostics.
+        """
+        emit = getattr(self, "_security_event_emitter", None)
+        if emit is None:
+            return
+        try:
+            emit(event_type, payload)
+        except Exception:
+            logger.debug(
+                "AD-607: security event emit failed for %s",
+                event_type,
+                exc_info=True,
+            )
+
+    def _security_anomaly_drop(
+        self,
+        episode: Episode,
+        *,
+        query: str = "",
+        anchor_query: Any = None,
+    ) -> bool:
+        """AD-607a/b/c: recall-time anomaly gate. Returns True if caller
+        should drop the episode under enforcement; emits the appropriate
+        EventType when an anomaly fires (observational mode).
+        """
+        config = getattr(self, "_security_config", None)
+        if config is None:
+            return False
+        try:
+            from probos.cognitive.memory_security import (
+                validate_recall_result,
+                validate_provenance,
+            )
+            from probos.events import EventType
+
+            validation = validate_recall_result(
+                episode, query=query, anchor_query=anchor_query, config=config,
+            )
+            if not validation.anomalies:
+                return False
+
+            self._emit_security_event(EventType.MEMORY_RECALL_ANOMALY, {
+                "episode_id": getattr(episode, "id", ""),
+                "anomalies": list(validation.anomalies),
+                "score": float(validation.score),
+            })
+            # Provenance-specific event (separate audit channel)
+            ok, reason = validate_provenance(episode)
+            if not ok:
+                self._emit_security_event(EventType.MEMORY_PROVENANCE_GAP, {
+                    "episode_id": getattr(episode, "id", ""),
+                    "reason": reason,
+                })
+                if bool(getattr(config, "enforce_provenance", False)):
+                    return True
+            # Anchor-specific event when relevant
+            if "anchor_mismatch" in validation.anomalies:
+                self._emit_security_event(EventType.MEMORY_ANCHOR_MISMATCH, {
+                    "episode_id": getattr(episode, "id", ""),
+                    "score": float(validation.score),
+                })
+
+            if bool(getattr(config, "enforce_recall", False)):
+                return True
+            return False
+        except Exception:
+            logger.debug("AD-607: recall anomaly gate failed", exc_info=True)
+            return False
 
     def set_retroactive_evolver(self, evolver: Any) -> None:
         """AD-608: Wire the retroactive evolver for store-time evolution."""
@@ -966,6 +1080,32 @@ class EpisodicMemory:
             except Exception:
                 logger.debug(
                     "AD-610: Storage gate evaluation failed for %s; allowing episode to preserve memory continuity",
+                    episode.id,
+                    exc_info=True,
+                )
+
+        # AD-607h: store-time prompt-injection detection
+        _security_gate = getattr(self, "_security_gate", None)
+        if _security_gate is not None:
+            try:
+                from probos.events import EventType
+                decision = _security_gate.evaluate_store(episode)
+                if decision.matched_pattern:
+                    self._emit_security_event(EventType.MEMORY_INJECTION_SUSPECTED, {
+                        "episode_id": episode.id,
+                        "pattern": decision.matched_pattern,
+                        "reason": decision.reason,
+                    })
+                    if decision.action == "REJECT":
+                        logger.warning(
+                            "AD-607h: Episode %s rejected by memory security gate: %s; skipping persistence",
+                            episode.id,
+                            decision.matched_pattern,
+                        )
+                        return
+            except Exception:
+                logger.debug(
+                    "AD-607h: Memory security gate evaluation failed for %s; allowing episode",
                     episode.id,
                     exc_info=True,
                 )
@@ -1539,6 +1679,11 @@ class EpisodicMemory:
             metadata = result["metadatas"][0][i] if result["metadatas"] else {}
             document = result["documents"][0][i] if result["documents"] else ""
             ep = self._metadata_to_episode(doc_id, document, metadata)
+
+            # AD-607a: recall-time anomaly gate (observational by default)
+            if self._security_anomaly_drop(ep, query=query, anchor_query=None):
+                continue
+
             episodes.append(ep)
 
             if len(episodes) >= k:
@@ -2562,6 +2707,24 @@ class EpisodicMemory:
             except Exception:
                 logger.debug("AD-567d: Activation tracking failed", exc_info=True)
 
+        # AD-607a/c: anchor-aware recall anomaly gate over scored results
+        if getattr(self, "_security_config", None) is not None and budgeted:
+            _aq = _AnchorQueryView(
+                watch_section=query_watch_section or watch_section,
+                channel=channel,
+                department=department,
+                trigger_agent=trigger_agent or agent_id,
+                trigger_type=intent_type or trigger_type,
+            )
+            filtered_rs: list[RecallScore] = []
+            for rs in budgeted:
+                if self._security_anomaly_drop(
+                    rs.episode, query=semantic_query, anchor_query=_aq,
+                ):
+                    continue
+                filtered_rs.append(rs)
+            budgeted = filtered_rs
+
         return budgeted
 
     async def recall_valid_at(
@@ -2760,5 +2923,23 @@ class EpisodicMemory:
                 )
             except Exception:
                 logger.debug("AD-567d: Activation tracking failed", exc_info=True)
+
+        # AD-607a/c: anchor-aware recall anomaly gate
+        if getattr(self, "_security_config", None) is not None and episodes:
+            _aq = _AnchorQueryView(
+                watch_section=watch_section,
+                channel=channel,
+                department=department,
+                trigger_agent=trigger_agent or agent_id,
+                trigger_type=trigger_type,
+            )
+            filtered: list[Episode] = []
+            for ep in episodes:
+                if self._security_anomaly_drop(
+                    ep, query=semantic_query, anchor_query=_aq,
+                ):
+                    continue
+                filtered.append(ep)
+            episodes = filtered
 
         return episodes

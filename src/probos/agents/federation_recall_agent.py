@@ -93,10 +93,14 @@ class FederationRecallAgent(BaseAgent):
                     query, exc,
                 )
                 episodes = []
+
+            # AD-607g: outbound privacy filter — apply BEFORE returning to peer.
+            episodes = self._apply_outbound_privacy(episodes, runtime)
+
             for e in episodes:
                 local_results.append({
-                    "episode_id": getattr(e, "episode_id", None),
-                    "summary": getattr(e, "summary", None),
+                    "episode_id": getattr(e, "episode_id", None) or getattr(e, "id", None),
+                    "summary": getattr(e, "summary", None) or getattr(e, "user_input", None),
                     "score": float(getattr(e, "score", 0.0)),
                     "source_node": node_id,
                 })
@@ -119,6 +123,81 @@ class FederationRecallAgent(BaseAgent):
             error=None,
             confidence=0.6,
         )
+
+    def _apply_outbound_privacy(
+        self, episodes: list, runtime: Any,
+    ) -> list:
+        """AD-607g: filter local episodes through ``FederationConfig.memory_access_policy``
+        before returning to the requesting peer. AD-607i: apply DP redaction
+        on the public outbound path."""
+        if runtime is None or not episodes:
+            return episodes
+        try:
+            fed_config = runtime.config.federation
+        except AttributeError:
+            return episodes
+
+        policy_str = getattr(fed_config, "memory_access_policy", "shared_trust")
+
+        if policy_str == "private":
+            return []
+
+        def _classification(ep: Any) -> str:
+            return (getattr(ep, "dag_summary", {}) or {}).get(
+                "classification", "private",
+            )
+
+        if policy_str == "shared_trust":
+            return [ep for ep in episodes if _classification(ep) != "private"]
+
+        if policy_str == "public":
+            filtered = [
+                ep for ep in episodes
+                if _classification(ep) in {"ship", "fleet"}
+            ]
+            if not filtered:
+                return filtered
+            try:
+                from probos.cognitive.memory_security import aggregate_with_dp
+                from probos.events import EventType
+
+                dp_min = int(getattr(fed_config, "dp_min_cohort_size", 3))
+                before_count = len(filtered)
+                redacted = aggregate_with_dp(filtered, min_cohort_size=dp_min)
+                # Detect whether DP redacted (content blanked) by comparing
+                # any user_input that became empty.
+                was_redacted = any(
+                    (getattr(orig, "user_input", "") or "")
+                    and not (getattr(red, "user_input", "") or "")
+                    for orig, red in zip(filtered, redacted)
+                )
+                if was_redacted:
+                    emit_fn = getattr(runtime, "_emit_event", None) or getattr(
+                        runtime, "emit_event", None,
+                    )
+                    if emit_fn is not None:
+                        try:
+                            emit_fn(EventType.FEDERATION_RECALL_DP_REDACTED, {
+                                "before_count": before_count,
+                                "after_count": len(redacted),
+                                "min_cohort_size": dp_min,
+                            })
+                        except Exception:
+                            logger.debug(
+                                "AD-607i: DP redacted event emit failed",
+                                exc_info=True,
+                            )
+                return redacted
+            except Exception:
+                logger.debug(
+                    "AD-607i: DP aggregation failed; returning filtered episodes",
+                    exc_info=True,
+                )
+                return filtered
+
+        # Unknown policy: fall through to permissive behavior (validator catches at config-load time).
+        return episodes
+
 
     async def report(self, result: IntentResult) -> dict[str, Any]:
         """Pass through — IntentResult already shaped for the bus."""

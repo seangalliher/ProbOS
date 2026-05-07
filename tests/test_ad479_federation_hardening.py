@@ -392,9 +392,9 @@ class TestRecallFederated:
     async def test_happy_path_top_k(self):
         from probos.agents.federation_recall_agent import FederationRecallAgent
         eps = [
-            SimpleNamespace(episode_id="e1", summary="s1", score=0.9),
-            SimpleNamespace(episode_id="e2", summary="s2", score=0.5),
-            SimpleNamespace(episode_id="e3", summary="s3", score=0.7),
+            SimpleNamespace(episode_id="e1", summary="s1", score=0.9, dag_summary={"classification": "ship"}),
+            SimpleNamespace(episode_id="e2", summary="s2", score=0.5, dag_summary={"classification": "ship"}),
+            SimpleNamespace(episode_id="e3", summary="s3", score=0.7, dag_summary={"classification": "ship"}),
         ]
         runtime = SimpleNamespace(
             episodic_memory=SimpleNamespace(recall=AsyncMock(return_value=eps)),
@@ -411,8 +411,8 @@ class TestRecallFederated:
     async def test_deduplication_keeps_higher_score(self):
         from probos.agents.federation_recall_agent import FederationRecallAgent
         eps = [
-            SimpleNamespace(episode_id="dup", summary="low", score=0.3),
-            SimpleNamespace(episode_id="dup", summary="hi", score=0.9),
+            SimpleNamespace(episode_id="dup", summary="low", score=0.3, dag_summary={"classification": "ship"}),
+            SimpleNamespace(episode_id="dup", summary="hi", score=0.9, dag_summary={"classification": "ship"}),
         ]
         runtime = SimpleNamespace(
             episodic_memory=SimpleNamespace(recall=AsyncMock(return_value=eps)),
@@ -453,7 +453,7 @@ class TestRecallFederated:
     @pytest.mark.asyncio
     async def test_source_node_populated(self):
         from probos.agents.federation_recall_agent import FederationRecallAgent
-        eps = [SimpleNamespace(episode_id="e1", summary="s", score=0.5)]
+        eps = [SimpleNamespace(episode_id="e1", summary="s", score=0.5, dag_summary={"classification": "ship"})]
         runtime = SimpleNamespace(
             episodic_memory=SimpleNamespace(recall=AsyncMock(return_value=eps)),
             config=SimpleNamespace(federation=SimpleNamespace(node_id="alpha")),
@@ -467,7 +467,7 @@ class TestRecallFederated:
     async def test_result_count_matches(self):
         from probos.agents.federation_recall_agent import FederationRecallAgent
         eps = [
-            SimpleNamespace(episode_id=f"e{i}", summary="", score=float(i))
+            SimpleNamespace(episode_id=f"e{i}", summary="", score=float(i), dag_summary={"classification": "ship"})
             for i in range(5)
         ]
         runtime = SimpleNamespace(

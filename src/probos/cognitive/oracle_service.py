@@ -273,6 +273,8 @@ class OracleService:
         intent_type: str = "",
         k_per_tier: int = 5,
         tiers: list[str] | None = None,
+        caller_sovereign_id: str = "",
+        access_policy: Any = None,
     ) -> list[OracleResult]:
         """Query across all configured knowledge tiers.
 
@@ -282,6 +284,13 @@ class OracleService:
             intent_type: Optional intent type for recall weighting.
             k_per_tier: Max results per tier.
             tiers: Tier filter list (None = all available tiers).
+            caller_sovereign_id: AD-607e — sovereign id of the caller used for
+                cross-shard access policy enforcement. Empty (default)
+                disables filtering even when ``access_policy`` is set.
+            access_policy: AD-607e — ``MemoryAccessPolicy`` controlling
+                cross-shard episode visibility. ``None`` (default) =
+                PERMISSIVE, preserving the AD-462c cross-shard recall
+                behavior verbatim.
 
         Returns:
             Merged, score-sorted list of OracleResult.
@@ -393,6 +402,13 @@ class OracleService:
         # Merge & sort by score descending
         all_results.sort(key=lambda r: r.score, reverse=True)
         max_results = k_per_tier * len(active_tiers)
+
+        # AD-607e: Cross-shard access policy filter (default PERMISSIVE = no-op).
+        if access_policy is not None and caller_sovereign_id:
+            all_results = self._apply_access_policy(
+                all_results, caller_sovereign_id, access_policy,
+            )
+
         return all_results[:max_results]
 
     async def query_formatted(
@@ -535,6 +551,51 @@ class OracleService:
             out.append(line)
         out.append("=== END MEMORY REFS ===")
         return "\n".join(out)
+
+    def _apply_access_policy(
+        self,
+        results: list[OracleResult],
+        caller_sovereign_id: str,
+        access_policy: Any,
+    ) -> list[OracleResult]:
+        """AD-607e: filter results to caller's shard per MemoryAccessPolicy.
+
+        Non-episodic results (records, semantic, graph, health) pass through
+        unchanged because they are not associated with a sovereign shard.
+        ``MemoryAccessPolicy.PERMISSIVE`` (or any unrecognized policy) returns
+        the input list unchanged.
+        """
+        try:
+            from probos.cognitive.memory_security import MemoryAccessPolicy
+        except Exception:
+            return results
+
+        if access_policy == MemoryAccessPolicy.PERMISSIVE:
+            return results
+        if access_policy not in (
+            MemoryAccessPolicy.OWN_SHARD_ONLY,
+            MemoryAccessPolicy.OWN_SHARD_PLUS_PUBLIC,
+        ):
+            return results
+
+        filtered: list[OracleResult] = []
+        for r in results:
+            if r.source_tier != "episodic":
+                # Non-episodic tiers don't carry sovereign provenance.
+                filtered.append(r)
+                continue
+            agent_ids = r.metadata.get("agent_ids", []) or []
+            owns = caller_sovereign_id in agent_ids
+            if access_policy == MemoryAccessPolicy.OWN_SHARD_ONLY:
+                if owns:
+                    filtered.append(r)
+                continue
+            if access_policy == MemoryAccessPolicy.OWN_SHARD_PLUS_PUBLIC:
+                classification = (r.metadata.get("classification") or "private")
+                if owns or classification in {"ship", "fleet"}:
+                    filtered.append(r)
+                continue
+        return filtered
 
     # -- Private tier query methods --
 

@@ -603,6 +603,10 @@ class MemoryConfig(BaseModel):
 
     collection_name: str = "probos_episodes"
     max_episodes: int = 100000
+    # AD-607e: Cross-shard recall access policy. PERMISSIVE preserves the
+    # AD-462c cross-shard recall behavior verbatim. Opt-in tightening via
+    # OWN_SHARD_ONLY or OWN_SHARD_PLUS_PUBLIC.
+    access_policy: str = "permissive"
     relevance_threshold: float = 0.7
     # BF-134 / AD-593: Agent-scoped recall threshold.
     # MiniLM QA-trained model cosine similarity for question-vs-statement is typically 0.20-0.45.
@@ -701,6 +705,17 @@ class MemoryConfig(BaseModel):
             "cross_department_anchors": True,
         },
     }
+
+    @field_validator("access_policy")
+    @classmethod
+    def _validate_access_policy(cls, v: str) -> str:
+        """AD-607e: Validate cross-shard access policy values."""
+        valid = {"permissive", "own_shard_only", "own_shard_plus_public"}
+        if v not in valid:
+            raise ValueError(
+                f"access_policy must be one of {sorted(valid)}; got {v!r}"
+            )
+        return v
 
 
 class DreamingConfig(BaseModel):
@@ -907,6 +922,22 @@ class FederationConfig(BaseModel):
     )
     # AD-479b ranking gate (default 0.0 keeps W87/W89 baseline behavior).
     min_peer_trust_score: float = 0.0
+    # AD-607g federation outbound privacy filter. Default ``shared_trust``
+    # honors the AD-479b peer-trust ranking surface that W91 shipped.
+    memory_access_policy: str = "shared_trust"
+    shared_trust_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    dp_min_cohort_size: int = Field(default=3, ge=1)
+
+    @field_validator("memory_access_policy")
+    @classmethod
+    def _validate_memory_access_policy(cls, v: str) -> str:
+        """AD-607g: validate federation outbound privacy policy values."""
+        valid = {"public", "shared_trust", "private"}
+        if v not in valid:
+            raise ValueError(
+                f"memory_access_policy must be one of {sorted(valid)}; got {v!r}"
+            )
+        return v
 
     @field_validator("memory_policy")
     @classmethod
@@ -1695,6 +1726,23 @@ class SecurityConfig(BaseModel):
     burst_window_seconds: float = Field(default=60.0, ge=1.0)
     burst_threshold: int = Field(default=20, ge=2)
     campaign_interval_seconds: float = Field(default=3600.0, ge=60.0)
+    # AD-607: Memory security framework (Wave 92).
+    memory: "MemorySecurityConfig" = Field(default_factory=lambda: MemorySecurityConfig())
+
+
+class MemorySecurityConfig(BaseModel):
+    """AD-607: Memory security framework configuration.
+
+    All ``enforce_*`` flags default-False per the AD-695 + W82 + W88 + W91
+    default-False precedent — v1 ships observational by default.
+    """
+
+    enforce_recall: bool = False        # AD-607a opt-in: drop anomalous episodes from recall
+    enforce_provenance: bool = False    # AD-607b opt-in: reject provenance-gap episodes from recall
+    enforce_leak_guard: bool = False    # AD-607d opt-in: redact response when leak suspected
+    enforce_store: bool = False         # AD-607h opt-in: reject prompt-injection at store time
+    anchor_mismatch_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    dp_min_cohort_size: int = Field(default=3, ge=1)
 
 
 class OnboardingConfig(BaseModel):

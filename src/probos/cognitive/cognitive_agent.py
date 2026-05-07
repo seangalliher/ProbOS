@@ -2699,6 +2699,12 @@ class CognitiveAgent(BaseAgent):
                     except Exception:
                         pass
 
+        # AD-607d: post-decision memory-leak guard (sibling of AD-589 check).
+        try:
+            self._check_memory_leakage(decision, observation)
+        except Exception:
+            logger.debug("AD-607d: memory leak guard failed", exc_info=True)
+
         # AD-589: Feed introspective faithfulness to Counselor (fire-and-forget)
         if _intro_faith is not None:
             try:
@@ -5747,6 +5753,70 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("AD-568e: Faithfulness check failed", exc_info=True)
             return None
+
+    def _check_memory_leakage(self, decision: dict, observation: dict) -> None:
+        """AD-607d: detect responses that reference episodes outside the
+        caller's sovereign shard.
+
+        Sibling of ``_check_introspective_faithfulness``. Observational v1 —
+        emits ``MEMORY_LEAK_SUSPECTED`` when leakage is detected; never
+        mutates the response.
+        """
+        from probos.cognitive.memory_security import check_memory_leakage
+        from probos.events import EventType
+
+        response_text = ""
+        if isinstance(decision, dict):
+            response_text = (
+                decision.get("response")
+                or decision.get("answer")
+                or decision.get("text")
+                or ""
+            )
+        if not response_text:
+            return
+
+        recalled: list[Any] = []
+        if isinstance(observation, dict):
+            for key in (
+                "_recalled_episodes",
+                "_basic_recall_episodes",
+                "_relevant_memories",
+            ):
+                value = observation.get(key)
+                if isinstance(value, list) and value:
+                    recalled = value
+                    break
+        if not recalled:
+            return
+
+        caller_id = (
+            getattr(self, "sovereign_id", "")
+            or getattr(self, "id", "")
+            or ""
+        )
+        suspected, leaked_ids = check_memory_leakage(
+            response_text, recalled, caller_sovereign_id=caller_id,
+        )
+        if not suspected:
+            return
+
+        _rt = getattr(self, "_runtime", None)
+        emit = None
+        if _rt is not None:
+            emit = getattr(_rt, "emit_event", None) or getattr(
+                _rt, "_emit_event", None,
+            )
+        if emit is not None:
+            try:
+                emit(EventType.MEMORY_LEAK_SUSPECTED, {
+                    "agent_id": caller_id,
+                    "leaked_episode_ids": list(leaked_ids),
+                })
+            except Exception:
+                logger.debug(
+                    "AD-607d: leak event emit failed", exc_info=True,
+                )
 
     def _check_introspective_faithfulness(
         self,

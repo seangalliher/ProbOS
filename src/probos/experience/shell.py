@@ -239,6 +239,7 @@ class ProbOSShell:
             "/peers":      lambda: commands_status.cmd_peers(rt, con, arg),
             "/credentials": lambda: commands_status.cmd_credentials(rt, con, arg),
             "/debug":      lambda: commands_status.cmd_debug(rt, con, arg, shell=self),
+            "/security":   lambda: commands_status.cmd_security(rt, con, arg),
             "/help":       lambda: commands_status.cmd_help(con, self.COMMANDS),
 
             "/plan":       lambda: commands_plan.cmd_plan(rt, con, rnd, arg),
