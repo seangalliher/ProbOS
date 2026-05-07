@@ -468,7 +468,11 @@ class EmergentDetector:
         # BF-165: Skip cluster detection if no cognitive activity within window.
         # Hebbian weights are persistent — without recent interactions, any
         # clusters found are stale reruns of historical cooperation patterns.
+        # When _last_activity_time is 0.0 (never recorded), suppress regardless
+        # of monotonic() value (which may be small on freshly-booted CI runners).
         if self._cluster_activity_window > 0:
+            if self._last_activity_time <= 0.0:
+                return []
             since_activity = time.monotonic() - self._last_activity_time
             if since_activity > self._cluster_activity_window:
                 return []
