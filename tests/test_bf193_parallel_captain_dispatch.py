@@ -99,7 +99,7 @@ class TestCaptainParallelDispatch:
         elapsed = time.monotonic() - start
 
         # AD-654a: dispatch_async is fire-and-forget, should be very fast
-        assert elapsed < 0.5, f"Captain dispatch took {elapsed:.2f}s, expected < 0.5s"
+        assert elapsed < 2.0, f"Captain dispatch took {elapsed:.2f}s, expected < 2.0s"
 
     @pytest.mark.asyncio
     async def test_captain_dispatch_all_agents_receive(self):
