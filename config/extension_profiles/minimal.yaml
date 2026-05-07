@@ -1,0 +1,5 @@
+profile_name: minimal
+description: |
+  Safest preset — chat-only experience. No file-write extensions, no shell
+  access, no self-improvement extensions enabled. New users start here.
+enabled_extensions: []

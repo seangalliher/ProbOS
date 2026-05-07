@@ -26,6 +26,7 @@ from probos.experience.commands import (
     commands_config,
     commands_tool_access,
     commands_skill,
+    commands_extensions,
     commands_manifest,
 )
 from probos.experience.commands.approval_callbacks import (
@@ -102,6 +103,7 @@ class ProbOSShell:
         "/grant":     "Manage clearance grants (issue/revoke/list)",
         "/tool-access": "Manage tool permissions (grant/restrict/revoke/break-lock/list/check)",
         "/skill":     "Manage cognitive skills (list/discover/import/info/enrich/remove)",
+        "/extensions": "Manage extensions (list/enable/disable/remove/profile/info) — AD-481",
         "/clinical":  "Clinical telemetry (dreams/traces/breakers/audit) — Captain authority",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
@@ -288,6 +290,7 @@ class ProbOSShell:
             "/grant":      lambda: commands_clearance.cmd_grant(rt, con, arg),
             "/tool-access": lambda: commands_tool_access.cmd_tool_access(rt, con, arg),
             "/skill":      lambda: commands_skill.cmd_skill(rt, con, arg),
+            "/extensions": lambda: commands_extensions.cmd_extensions(rt, con, arg),
             "/clinical":   lambda: commands_clinical.cmd_clinical(rt, con, arg),
 
             "/config":     lambda: commands_config.cmd_config(rt, con, arg),

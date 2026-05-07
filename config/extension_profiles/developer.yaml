@@ -1,0 +1,6 @@
+profile_name: developer
+description: |
+  Developer preset — chat + build pipeline + code tools. File-write
+  extensions enabled; shell access enabled; self-improvement extensions
+  remain MEDIUM-risk pending Captain approval per extension.
+enabled_extensions: []

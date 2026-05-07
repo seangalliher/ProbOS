@@ -2504,6 +2504,20 @@ class SPCConfig(BaseModel):
     sample_window: int = 100
 
 
+class ExtensionsConfig(BaseModel):
+    """AD-481: Extension subsystem master config.
+
+    Mirrors src/probos/extensions/protocol.py:ExtensionsConfig — duplicated here
+    to avoid circular import (config.py is imported very early; the extensions/
+    package imports config indirectly via runtime).
+    """
+
+    enabled: bool = False
+    enforce_sealed_core: bool = False
+    default_profile: str = "minimal"
+    extensions_dir: str = "src/probos/extensions"
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -2567,6 +2581,7 @@ class SystemConfig(BaseModel):
     dept_profiles: DepartmentProfilesConfig = DepartmentProfilesConfig()  # AD-656
     eps: EPSConfig = EPSConfig()  # AD-469
     mcp: MCPConfig = MCPConfig()  # AD-449
+    extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
     threshold_alerts: ThresholdAlertConfig = Field(default_factory=ThresholdAlertConfig)  # AD-695
     ward_room_hebbian: WardRoomHebbianConfig = Field(default_factory=WardRoomHebbianConfig)  # AD-641b

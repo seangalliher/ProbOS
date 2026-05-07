@@ -1,0 +1,5 @@
+profile_name: full
+description: |
+  Power-user preset — every shipped extension enabled. Use only after
+  reviewing the extension list and risk levels.
+enabled_extensions: []

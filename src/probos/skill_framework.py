@@ -10,6 +10,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -501,6 +502,17 @@ class SkillRegistry:
             composite_skill_ids=json.loads(composite_raw or "[]"),
             synergy_partners=json.loads(synergy_raw or "[]"),
         )
+
+    async def register_from_manifest(self, yaml_path: "Path") -> SkillDefinition:
+        """AD-481e: load skill.yaml + register the resulting SkillDefinition.
+
+        Thin composition helper — equivalent to:
+            defn = load_skill_from_manifest(yaml_path)
+            return await self.register_skill(defn)
+        """
+        from probos.extensions.skill_manifest import load_skill_from_manifest
+        defn = load_skill_from_manifest(yaml_path)
+        return await self.register_skill(defn)
 
     async def register_skill(self, defn: SkillDefinition) -> SkillDefinition:
         """Register or update a skill definition."""

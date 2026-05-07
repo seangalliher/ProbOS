@@ -2479,6 +2479,36 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
         return False  # git not available
 
 
+def _check_sealed_path(target_path: "Path", runtime: "ProbOSRuntime | None") -> None:
+    """AD-481f: warn-only sealed-core pre-write check.
+
+    Reads `runtime.config.extensions.enforce_sealed_core` (default False).
+    When True, emits `logger.warning(...)` — never raises in v1. Hard-block
+    ships at AD-481l after AD-482 RedTeam baseline establishes false-
+    positive rate. Per-BuildSpec override (`core_modification` flag) is
+    intentionally NOT introduced in v1 — that knob lands with AD-481l when
+    the warn becomes a raise.
+
+    `runtime.config.extensions` is guaranteed by
+    `SystemConfig.extensions = Field(default_factory=ExtensionsConfig)`.
+    """
+    if runtime is None:
+        return
+    try:
+        if not runtime.config.extensions.enforce_sealed_core:
+            return
+    except AttributeError:
+        return
+    from probos.extensions.sealed_core import is_sealed_path
+    if is_sealed_path(target_path):
+        logger.warning(
+            "AD-481f: Builder writing to sealed-core path %s "
+            "(enforce_sealed_core=True); v1 is observation-only — "
+            "hard-block ships at AD-481l",
+            target_path,
+        )
+
+
 async def execute_approved_build(
     file_changes: list[dict[str, Any]],
     spec: BuildSpec,
@@ -2582,6 +2612,7 @@ async def execute_approved_build(
                     modified = modified.replace(search_text, replace_text, 1)
 
                 if modified != original:
+                    _check_sealed_path(path, runtime)
                     path.write_text(modified, encoding="utf-8")
                     modified_files.append(change["path"])
                     logger.info(
@@ -2601,6 +2632,7 @@ async def execute_approved_build(
                 continue
 
             path.parent.mkdir(parents=True, exist_ok=True)
+            _check_sealed_path(path, runtime)
             path.write_text(change["content"], encoding="utf-8")
             written.append(change["path"])
             logger.info("BuilderAgent: wrote %s", change["path"])
@@ -2721,11 +2753,13 @@ async def execute_approved_build(
                                         repl["search"], repl["replace"], 1,
                                     )
                             if mod != original:
+                                _check_sealed_path(path, runtime)
                                 path.write_text(mod, encoding="utf-8")
                                 if change["path"] not in modified_files:
                                     modified_files.append(change["path"])
                         else:
                             path.parent.mkdir(parents=True, exist_ok=True)
+                            _check_sealed_path(path, runtime)
                             path.write_text(
                                 change["content"], encoding="utf-8",
                             )

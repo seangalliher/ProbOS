@@ -1,0 +1,21 @@
+# AD-481f: Sealed-Core Boundary
+#
+# Path globs (relative to repo root) that are read-only to the Builder
+# under the sealed-core convention. The Builder's pre-write helper
+# _check_sealed_path consults this list when
+# runtime.config.extensions.enforce_sealed_core is True.
+#
+# v1 emits logger.warning(...) only — hard-block ships at AD-481l.
+
+sealed_globs:
+  - "src/probos/substrate/**"
+  - "src/probos/consensus/**"
+  - "src/probos/mesh/**"
+  - "src/probos/identity.py"
+  - "src/probos/runtime.py"
+  - "src/probos/cognitive/builder.py"
+  - "src/probos/cognitive/llm_client.py"
+  - "src/probos/cognitive/architect.py"
+  - "src/probos/extensions/protocol.py"
+  - "src/probos/extensions/registry.py"
+  - "src/probos/extensions/sealed_core.py"
