@@ -323,6 +323,27 @@ posts:
       - "direct system control or infrastructure management (Ship's Computer manages infrastructure)"
       - "external communications or networking equipment"
 
+  - id: chief_training
+    title: "Training Officer"
+    department: operations
+    reports_to: chief_operations
+    authority_over: []
+    tier: crew
+    clearance: ENHANCED
+    capabilities:
+      - id: training_schedule
+        summary: "Schedule qualification drills via DrillCalendar (AD-628d)"
+      - id: training_readiness
+        summary: "Compute ship-wide and per-department skill readiness reports (AD-628f)"
+      - id: training_onboarding
+        summary: "Mentor newly-named crew agents through the AD-515 onboarding mentorship hook (AD-628e)"
+      - id: training_limdu
+        summary: "Joint-author LIMDU recommendations with Medical (AD-628g)"
+    does_not_have:
+      - "fitness-for-duty determination (Medical owns FFFD)"
+      - "behavioral observation (Counselor owns COSC)"
+      - "department-level career development board advancement (Department Chiefs)"
+
 # Agent-to-post assignments (which agent_type fills which post)
 # watches: which watch rotations the agent stands (alpha/beta/gamma).
 #   Omit to default to [alpha]. Essential roles stand all watches.
@@ -383,3 +404,7 @@ assignments:
     post_id: research_specialist_officer
     callsign: "Brahms"
     watches: [alpha]
+  - agent_type: training_officer
+    post_id: chief_training
+    callsign: "Tucker"
+    watches: [alpha, beta]

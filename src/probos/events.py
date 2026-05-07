@@ -68,6 +68,17 @@ class EventType(str, Enum):
     WARD_ROOM_POST_CREATED = "ward_room_post_created"
     WARD_ROOM_ENDORSEMENT = "ward_room_endorsement"
 
+    # Skill telemetry (AD-628a)
+    SKILL_LOADED = "skill_loaded"
+    SKILL_BLOCKED = "skill_blocked"
+    SKILL_EXERCISED = "skill_exercised"
+    SKILL_REGRESSION = "skill_regression"
+    SKILL_DECAY = "skill_decay"
+    SKILL_ACQUIRED = "skill_acquired"
+
+    # Limited duty (AD-628g)
+    LIMDU_RECOMMENDED = "limdu_recommended"
+
     # Dream / system mode
     SYSTEM_MODE = "system_mode"
     CAPABILITY_GAP_PREDICTED = "capability_gap_predicted"

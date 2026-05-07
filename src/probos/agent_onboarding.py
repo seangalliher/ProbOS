@@ -5,6 +5,7 @@ Handles wiring agents to mesh infrastructure and running naming ceremonies.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 import re
@@ -78,6 +79,21 @@ class AgentOnboardingService:
         self._cognitive_skill_catalog: Any = None  # AD-596b: Late-bound
         self._skill_bridge: Any = None  # AD-596c: Late-bound
         self._billet_registry: Any = None  # AD-595b: Late-bound
+        # AD-628e: TRAINO mentor announcer (post-naming-ceremony hook)
+        self._mentor_announcer: Callable[[str, str], Any] | None = None
+
+    def register_mentor_announcer(
+        self,
+        announcer: "Callable[[str, str], Any] | None",
+    ) -> None:
+        """Register a TRAINO mentor announcer (AD-628e).
+
+        The announcer is called as ``await announcer(new_agent_callsign, post_id)``
+        just before the AD-499 self-naming event-log block. Tier-2
+        log-and-degrade — exceptions are caught and logged at warning.
+        Pass ``None`` to unregister.
+        """
+        self._mentor_announcer = announcer
 
     def set_orientation_service(self, svc: Any) -> None:
         """AD-567g / BF-113: Set orientation service (public setter for LoD)."""
@@ -230,6 +246,17 @@ class AgentOnboardingService:
                         if self._ontology:
                             self._ontology.update_assignment_callsign(agent.agent_type, chosen_callsign)
                         logger.info("AD-442: %s renamed from '%s' to '%s'", agent.agent_type, old_callsign, chosen_callsign)
+                        # AD-628e: TRAINO mentor announcement (post-naming-ceremony)
+                        if self._mentor_announcer is not None and asyncio.iscoroutinefunction(self._mentor_announcer):
+                            try:
+                                await self._mentor_announcer(agent.callsign, getattr(agent, "post_id", ""))
+                            except Exception:
+                                logger.warning(
+                                    "AD-628e: mentor announcer failed for %s",
+                                    agent.callsign,
+                                    exc_info=True,
+                                )
+
                         # AD-499: emit self-naming event
                         if self._event_log:
                             try:

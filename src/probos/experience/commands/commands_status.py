@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from rich.box import ROUNDED
 from rich.console import Console
 from rich.table import Table
 
@@ -25,6 +26,41 @@ async def cmd_status(runtime: ProbOSRuntime, console: Console, args: str) -> Non
         except Exception:
             logger.debug("Status command context failed", exc_info=True)
     console.print(panels.render_status_panel(status))
+
+
+async def cmd_readiness(runtime: ProbOSRuntime, console: Console, args: str) -> None:
+    """Handle /readiness command — render ship readiness report (AD-628h)."""
+    reporter = getattr(runtime, "readiness_reporter", None)
+    if reporter is None:
+        console.print("[yellow]ReadinessReporter not wired on runtime[/yellow]")
+        return
+    try:
+        report = await reporter.compute_ship_readiness()
+    except Exception:
+        logger.warning("AD-628h: readiness report failed", exc_info=True)
+        console.print("[red]Readiness report unavailable[/red]")
+        return
+    table = Table(
+        title=f"Ship Readiness — {report.c_rating} (composite {report.composite_score:.2f})",
+        box=ROUNDED,
+        expand=False,
+    )
+    table.add_column("Department")
+    table.add_column("Members", justify="right")
+    table.add_column("Coverage", justify="right")
+    table.add_column("Proficiency", justify="right")
+    table.add_column("Regressions 24h", justify="right")
+    table.add_column("Decay 24h", justify="right")
+    for dept in report.departments:
+        table.add_row(
+            dept.department,
+            str(dept.member_count),
+            f"{dept.qualified_skill_coverage:.2f}",
+            f"{dept.proficiency_mean:.2f}",
+            str(dept.regression_count_24h),
+            str(dept.decay_count_24h),
+        )
+    console.print(table)
 
 
 async def cmd_agents(runtime: ProbOSRuntime, console: Console, args: str) -> None:

@@ -1772,6 +1772,93 @@ class ProbOSRuntime:
             except Exception:
                 logger.warning("AD-596c: Skill bridge sync failed", exc_info=True)
 
+        # AD-628 v1: Crew skill readiness monitoring + Training Officer wiring
+        self.skill_readiness_service = None
+        self.drill_calendar = None
+        self.readiness_reporter = None
+        self.limdu_service = None
+        if self.skill_service is not None:
+            from probos.cognitive.skill_readiness import (
+                AgentSkillReadinessService,
+                SkillRegressionEvent,
+            )
+            advancement_log = (
+                getattr(self._qual_skill_bridge, "_advancement_history", None)
+                if self._qual_skill_bridge is not None else None
+            )
+            self.skill_readiness_service = AgentSkillReadinessService(
+                self.skill_service,
+                advancement_log=advancement_log,
+                registry=self.skill_registry,
+            )
+
+            # AD-628a: feed SKILL_REGRESSION + SKILL_DECAY events into the
+            # readiness service ring AND forward to the runtime emitter.
+            _readiness = self.skill_readiness_service
+            _runtime_emit = self._emit_event
+            from probos.events import EventType as _ET
+
+            def _skill_telemetry_emitter(event_type: Any, payload: dict[str, Any]) -> None:
+                try:
+                    if event_type in (_ET.SKILL_REGRESSION, _ET.SKILL_DECAY):
+                        _readiness.record_regression(SkillRegressionEvent(
+                            agent_id=payload.get("agent_id", ""),
+                            skill_id=payload.get("skill_id", ""),
+                            from_level=int(payload.get("from_level") or 0),
+                            to_level=int(payload.get("to_level") or 0),
+                            timestamp=float(payload.get("timestamp") or 0.0),
+                            reason=payload.get("reason", ""),
+                        ))
+                except Exception:
+                    logger.warning("AD-628a: regression-ring forward failed", exc_info=True)
+                try:
+                    _runtime_emit(event_type, payload)
+                except Exception:
+                    logger.debug("AD-628a: runtime event forward failed", exc_info=True)
+
+            self.skill_service.set_event_emitter(_skill_telemetry_emitter)
+
+            if self._qualification_harness is not None:
+                from probos.cognitive.drill_calendar import DrillCalendar
+                self.drill_calendar = DrillCalendar(
+                    self._qualification_harness, runtime=self,
+                )
+
+            from probos.cognitive.readiness_reporter import ReadinessReporter
+            self.readiness_reporter = ReadinessReporter(
+                self.skill_readiness_service,
+                self.ontology,
+                self.registry,
+                skill_registry=self.skill_registry,
+            )
+
+            if self.drill_calendar is not None:
+                from probos.cognitive.limdu import LIMDUService
+
+                _bridge = self._qual_skill_bridge
+
+                def _test_for_skill(skill_id: str) -> str | None:
+                    if _bridge is None:
+                        return None
+                    try:
+                        for test_name, mapped_skill in (
+                            _bridge._test_skill_map.items()
+                        ):
+                            if mapped_skill == skill_id:
+                                return test_name
+                    except Exception:
+                        return None
+                    return None
+
+                self.limdu_service = LIMDUService(
+                    self.skill_readiness_service,
+                    self.drill_calendar,
+                    circuit_breaker=getattr(self, "circuit_breaker", None),
+                    test_for_skill=_test_for_skill,
+                )
+                self.limdu_service.set_event_emitter(self._emit_event)
+            logger.info("AD-628: crew skill readiness services wired")
+
         # PATCH(AD-517): Wire ontology into WardRoom (constructed before ontology init)
         if self.ontology and self.ward_room:
             self.ward_room.set_ontology(self.ontology)

@@ -11,7 +11,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aiosqlite
 
@@ -594,6 +594,30 @@ class AgentSkillService:
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
             self._connection_factory = default_factory
+        # AD-628a: skill telemetry emitter slot (registered via set_event_emitter)
+        self._event_emitter: Callable[[Any, dict[str, Any]], None] | None = None
+
+    def set_event_emitter(self, emitter: "Callable[[Any, dict[str, Any]], None] | None") -> None:
+        """Register an event emitter for skill telemetry (AD-628a).
+
+        The emitter is called with ``(EventType, payload_dict)`` on each
+        mutation. Tier-2 log-and-degrade — emitter exceptions are caught
+        and logged at warning level. Pass ``None`` to unregister.
+        """
+        self._event_emitter = emitter
+
+    def _emit(self, event_type: Any, payload: dict[str, Any]) -> None:
+        """AD-628a: tier-2 log-and-degrade emission helper."""
+        if self._event_emitter is None:
+            return
+        try:
+            self._event_emitter(event_type, payload)
+        except Exception:
+            logger.warning(
+                "AD-628a: skill telemetry emit failed for %s",
+                event_type,
+                exc_info=True,
+            )
 
     async def start(self) -> None:
         if self._db_path:
@@ -656,6 +680,16 @@ class AgentSkillService:
             acquisition_source=source,
         )
         await self._upsert_record(record)
+        # AD-628a: SKILL_ACQUIRED telemetry
+        from probos.events import EventType as _ET
+        self._emit(_ET.SKILL_ACQUIRED, {
+            "agent_id": agent_id,
+            "skill_id": skill_id,
+            "to_level": record.proficiency.value,
+            "source": source,
+            "timestamp": now,
+            "reason": "acquired",
+        })
         return record
 
     async def commission_agent(self, agent_id: str, agent_type: str) -> SkillProfile:
@@ -698,6 +732,8 @@ class AgentSkillService:
         record = await self._get_record(agent_id, skill_id)
         if not record:
             return None
+        from_level = record.proficiency
+        to_level = new_level
         record.proficiency = new_level
         record.last_exercised = time.time()
         record.assessment_history.append({
@@ -707,6 +743,18 @@ class AgentSkillService:
             "notes": notes,
         })
         await self._upsert_record(record)
+        # AD-628a: SKILL_REGRESSION on downward, SKILL_EXERCISED otherwise
+        from probos.events import EventType as _ET
+        _evt = _ET.SKILL_REGRESSION if to_level.value < from_level.value else _ET.SKILL_EXERCISED
+        self._emit(_evt, {
+            "agent_id": agent_id,
+            "skill_id": skill_id,
+            "from_level": from_level.value,
+            "to_level": to_level.value,
+            "source": source,
+            "timestamp": time.time(),
+            "reason": notes or "proficiency_update",
+        })
         return record
 
     async def record_exercise(self, agent_id: str, skill_id: str) -> AgentSkillRecord | None:
@@ -717,6 +765,16 @@ class AgentSkillService:
         record.last_exercised = time.time()
         record.exercise_count += 1
         await self._upsert_record(record)
+        # AD-628a: SKILL_EXERCISED telemetry
+        from probos.events import EventType as _ET
+        self._emit(_ET.SKILL_EXERCISED, {
+            "agent_id": agent_id,
+            "skill_id": skill_id,
+            "to_level": record.proficiency.value,
+            "source": "exercise",
+            "timestamp": record.last_exercised,
+            "reason": "recorded_exercise",
+        })
         return record
 
     async def check_decay(self, now: float | None = None) -> list[AgentSkillRecord]:
@@ -744,6 +802,7 @@ class AgentSkillService:
                     levels_dropped = int(idle_days / decay_days)
                     new_level = max(1, record.proficiency.value - levels_dropped)
                     if new_level < record.proficiency.value:
+                        from_level_value = record.proficiency.value
                         record.proficiency = ProficiencyLevel(new_level)
                         record.assessment_history.append({
                             "timestamp": now,
@@ -753,6 +812,17 @@ class AgentSkillService:
                         })
                         await self._upsert_record(record)
                         decayed.append(record)
+                        # AD-628a: SKILL_DECAY telemetry per decayed record
+                        from probos.events import EventType as _ET
+                        self._emit(_ET.SKILL_DECAY, {
+                            "agent_id": record.agent_id,
+                            "skill_id": record.skill_id,
+                            "from_level": from_level_value,
+                            "to_level": new_level,
+                            "source": "decay",
+                            "timestamp": now,
+                            "reason": "idle_decay",
+                        })
         return decayed
 
     async def get_profile(self, agent_id: str) -> SkillProfile:

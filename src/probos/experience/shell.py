@@ -53,6 +53,7 @@ class ProbOSShell:
 
     COMMANDS: dict[str, str] = {
         "/status":    "Show system status overview",
+        "/readiness": "Show ship readiness report (AD-628h)",
         "/agents":    "List all agents with trust scores",
         "/manifest":  "Show crew manifest (/manifest [<dept>] [watch:<name>] | /manifest --ship)",
         "/weights":   "Show Hebbian connection weights",
@@ -231,6 +232,7 @@ class ProbOSShell:
 
         handlers: dict[str, Any] = {
             "/status":     lambda: commands_status.cmd_status(rt, con, arg),
+            "/readiness":  lambda: commands_status.cmd_readiness(rt, con, arg),
             "/agents":     lambda: commands_status.cmd_agents(rt, con, arg),
             "/manifest":   lambda: commands_manifest.cmd_manifest(rt, con, arg),
             "/ping":       lambda: commands_status.cmd_ping(rt, con, arg),
