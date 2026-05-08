@@ -2622,6 +2622,17 @@ async def finalize_startup(
     else:
         runtime.workflow_cron = None
 
+    # Memvid pattern 1: QueryPlanner for relational query routing.
+    from probos.config import QueryPlannerConfig as _QPConfig
+    qp_cfg = getattr(config, "query_planner", None)
+    if isinstance(qp_cfg, _QPConfig) and qp_cfg.enabled:
+        from probos.cognitive.query_planner import QueryPlanner
+
+        runtime.query_planner = QueryPlanner()
+        logger.info("Memvid pattern 1: QueryPlanner wired (relational query routing)")
+    else:
+        runtime.query_planner = None
+
     # AD-480: inbound MCP / A2A servers (default-False — opt-in).
     if config.federation.mcp_server.enabled:
         try:

@@ -1388,3 +1388,24 @@ Adds a `WorkflowCronScheduler` that re-fires cached workflows on cron schedules.
 
 **Status:** SHIPPED. Issue [#483](https://github.com/seangalliher/ProbOS/issues/483).
 **Files:** `src/probos/cognitive/workflow_cron.py` (new), `src/probos/config.py` (additive), `src/probos/startup/finalize.py` (wiring), `src/probos/startup/shutdown.py` (symmetric stop). Tests: `tests/test_ad707_workflow_cron_trigger.py` (11 cases, all passing).
+
+
+### AD-712 — Memvid pattern 1: QueryPlanner relational lookup
+**Date:** 2026-05-08
+**Type:** Architecture Decision (cognitive — recall pipeline routing)
+**Wave:** 130
+
+Adds a deterministic regex-driven query classifier (`QueryPlanner`) that detects relational queries (`who works at X`, `where is Y`, `when did Z happen`) and routes them through `EpisodicMemory.recall_by_anchor` before falling back to vector similarity. Absorbs Memvid pattern 1 from Olow304/memvid; patterns 2 (`VersionRelation` enum) and 3 (per-engine-version anchoring) remain explicit follow-ups.
+
+**Implementation:**
+- `src/probos/cognitive/query_planner.py` (new): `QueryPlan` frozen dataclass + `QueryPlanner.classify()` (sub-millisecond regex; no LLM) + `QueryPlanner.recall_with_fallback(episodic, query, k)` async helper that runs the structured lookup, falls back on empty result OR exception (logged at warning level), and never raises on classification.
+- `src/probos/config.py`: new `QueryPlannerConfig` (default `enabled=False`, `fall_through_on_empty=True`); wired on top-level `SystemConfig`.
+- `src/probos/startup/finalize.py`: wires `runtime.query_planner` after AD-707 cron scheduler; isinstance-gated.
+
+**In scope:** classifier + routing helper + runtime exposure.
+**Out of scope:** `VersionRelation` enum (memvid-versionrelation-v1), per-engine-version enrichment (memvid-engineversion-v1), `EpisodicMemoryProtocol` widening, setter-injection on `EpisodicMemory.__init__` (memvid-qp-injection-v1 if benchmarks justify).
+
+**AD-numbering note:** prompt did not cite an AD number. Builder grepped `PROGRESS.md` / `DECISIONS.md` / `roadmap.md` and assigned AD-712 (next free above the post-AD-711 ceiling; AD-711-1 is reserved as the runtime-enforcement forward marker for AD-711 claude-bootstrap).
+
+**Status:** SHIPPED. Issue [#490](https://github.com/seangalliher/ProbOS/issues/490).
+**Files:** `src/probos/cognitive/query_planner.py` (new), `src/probos/config.py` (additive), `src/probos/startup/finalize.py` (wiring). Tests: `tests/test_memvid_queryplanner_relational.py` (13 cases, all passing).

@@ -2037,6 +2037,19 @@ class WorkflowCronTriggerConfig(BaseModel):
     initial_triggers: list[dict[str, str]] = Field(default_factory=list)
 
 
+class QueryPlannerConfig(BaseModel):
+    """Memvid pattern 1: relational query routing for the recall pipeline.
+
+    Default-False per Wave 10 convention #14: opt-in until coverage proves
+    out the regex classifier on real production traffic. When enabled, the
+    runtime exposes a ``query_planner`` attribute that recall consumers can
+    use via ``QueryPlanner.recall_with_fallback(episodic, query, k)``.
+    """
+
+    enabled: bool = False
+    fall_through_on_empty: bool = True
+
+
 class BridgeAlertConfig(BaseModel):
     """Bridge Alerts — proactive Captain & crew notifications (AD-410)."""
     enabled: bool = False
@@ -2948,6 +2961,7 @@ class SystemConfig(BaseModel):
     ward_room: WardRoomConfig = WardRoomConfig()
     visiting_officers: VisitingOfficersConfig = VisitingOfficersConfig()  # AD-701
     workflow_cron: WorkflowCronTriggerConfig = WorkflowCronTriggerConfig()  # AD-707
+    query_planner: QueryPlannerConfig = QueryPlannerConfig()  # Memvid pattern 1
     assignments: AssignmentConfig = AssignmentConfig()
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
     firewall: FirewallConfig = FirewallConfig()
