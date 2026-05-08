@@ -24,6 +24,7 @@ from probos.experience.commands import (
     commands_clearance,
     commands_clinical,
     commands_config,
+    commands_diagnostic,
     commands_tool_access,
     commands_skill,
     commands_extensions,
@@ -106,6 +107,7 @@ class ProbOSShell:
         "/skill":     "Manage cognitive skills (list/discover/import/info/enrich/remove)",
         "/extensions": "Manage extensions (list/enable/disable/remove/profile/info) — AD-481",
         "/clinical":  "Clinical telemetry (dreams/traces/breakers/audit) — Captain authority",
+        "/diagnostic": "Run a multi-level system diagnostic (/diagnostic [<level>] [<focus>]) — AD-700a",
         "/debug":     "Toggle debug mode (/debug on|off)",
         "/help":      "Show this help message",
         "/quit":      "Exit ProbOS",
@@ -299,6 +301,7 @@ class ProbOSShell:
             "/skill":      lambda: commands_skill.cmd_skill(rt, con, arg),
             "/extensions": lambda: commands_extensions.cmd_extensions(rt, con, arg),
             "/clinical":   lambda: commands_clinical.cmd_clinical(rt, con, arg),
+            "/diagnostic": lambda: commands_diagnostic.cmd_diagnostic(rt, con, arg),
 
             "/config":     lambda: commands_config.cmd_config(rt, con, arg),
             "/explain":    lambda: self._handle_nl("what just happened?"),

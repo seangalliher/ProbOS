@@ -1313,3 +1313,18 @@ Adds `CognitiveAgent._resolve_tier_for_observation(observation)` honoring an `ob
 **Status:** SHIPPED. Issue [#509](https://github.com/seangalliher/ProbOS/issues/509).
 **Files:** `src/probos/cognitive/cognitive_agent.py` (helper + short-circuit + tier rewire). Tests: `tests/test_ad700c_diagnostician_tier_routing.py` (10 cases, all passing).
 
+
+### AD-700a - `/diagnostic` Slash Command for Multi-Level Diagnostics
+**Date:** 2026-05-08  `n**Type:** Architecture Decision (HXI surface for AD-700)  `n**Wave:** 129
+
+Adds a new HXI shell slash command `/diagnostic [<level>] [<focus>]` for the Captain to invoke AD-700 multi-level diagnostics directly. Implementation:
+- New module `src/probos/experience/commands/commands_diagnostic.py` with `cmd_diagnostic()` async handler. Parses the level token via the canonical module-level `parse_level()` from `probos.agents.medical.diagnostic_levels` (graceful L3 fallback). Issues a `diagnose_system` intent through the canonical Captain dispatch path: pool lookup (`medical_diagnostician`) -> `pool.healthy_agents[0]` -> `agent.handle_intent(IntentMessage(...))` -- no `intent_bus` indirection.
+- New panel renderer `render_diagnostic_result(result, *, level)` in `experience/panels.py`: severity-tinted Rich Panel with header showing level name, depth_rank/5, and `expected_duration_label`; structured fields rendered in a Table with `--` placeholders for missing keys.
+- `shell.py` wired: import added, `COMMANDS` registry entry, `_dispatch_slash` handler.
+- `test_layer_boundaries.py` updated: added `commands_diagnostic.py -> agents.medical.diagnostic_levels` to `ALLOWED_EXCEPTIONS` (precedented by `experience/qa_panel.py -> probos.agents.system_qa`); pure enum + parse helper, no behavioral coupling.
+
+**In scope:** slash command, command module, panel renderer, layer-boundary exception.
+**Out of scope:** DiagnosticianAgent changes, `parse_level`/`DiagnosticLevel` changes, new EventType, HXI React UI surface.
+**Status:** SHIPPED. Issue [#507](https://github.com/seangalliher/seangalliher/ProbOS/issues/507).
+**Files:** `src/probos/experience/commands/commands_diagnostic.py` (new), `src/probos/experience/panels.py` (additive renderer), `src/probos/experience/shell.py` (3 hooks), `tests/test_layer_boundaries.py` (one ALLOWED_EXCEPTIONS entry). Tests: `tests/test_ad700a_diagnostic_slash_command.py` (9 cases, all passing).
+

@@ -61,6 +61,11 @@ ALLOWED_EXCEPTIONS = {
     ("substrate/scaler.py", "probos.mesh.intent"),
     # experience → agents (QA panel renders agent reports)
     ("experience/qa_panel.py", "probos.agents.system_qa"),
+    # AD-700a: experience → agents.medical.diagnostic_levels — pure enum +
+    # parse_level helper for the /diagnostic slash command. No behavioral
+    # coupling (the agent invocation goes through the canonical pool lookup +
+    # agent.handle_intent path).
+    ("experience/commands/commands_diagnostic.py", "probos.agents.medical.diagnostic_levels"),
     # BF-085: cognitive → consensus.escalation — TYPE_CHECKING-only type annotation
     ("cognitive/decomposer.py", "probos.consensus.escalation"),
     # AD-451: cognitive → agents.red_team — TYPE_CHECKING-only type annotation

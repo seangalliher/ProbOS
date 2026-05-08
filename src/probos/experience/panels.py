@@ -622,6 +622,69 @@ def _format_result(data: Any, max_items: int = 30) -> list[str]:
     return [f"      {preview}"]
 
 
+def render_diagnostic_result(
+    result: dict[str, Any],
+    *,
+    level: Any,
+) -> Panel:
+    """AD-700a: Render a `diagnose_system` result for the HXI shell.
+
+    ``result`` is the structured diagnosis dict produced by
+    DiagnosticianAgent. ``level`` is a ``DiagnosticLevel`` instance.
+    Header shows the level name and ``expected_duration_label``.
+    Missing keys render as ``--`` placeholders so the panel never
+    crashes on partial results.
+    """
+    severity = str(result.get("severity") or "--").lower()
+    severity_color = {
+        "low": "green",
+        "medium": "yellow",
+        "high": "orange1",
+        "critical": "red",
+    }.get(severity, "white")
+
+    depth_rank = getattr(level, "depth_rank", "?")
+    duration = getattr(level, "expected_duration_label", "")
+    level_name = getattr(level, "value", str(level))
+
+    header = (
+        f"Diagnostic [bold]{level_name}[/bold] "
+        f"(depth: {depth_rank}/5, {duration})"
+    )
+
+    table = Table(show_header=False, box=None, padding=(0, 1))
+    table.add_column("Field", style="cyan", no_wrap=True)
+    table.add_column("Value", overflow="fold")
+
+    table.add_row("Severity", f"[{severity_color}]{severity}[/{severity_color}]")
+    table.add_row("Category", str(result.get("category") or "--"))
+
+    affected = result.get("affected_components") or []
+    if isinstance(affected, list):
+        affected_str = ", ".join(str(a) for a in affected) if affected else "--"
+    else:
+        affected_str = str(affected)
+    table.add_row("Affected", affected_str)
+
+    table.add_row("Root cause", str(result.get("root_cause") or "--"))
+    table.add_row("Evidence", str(result.get("evidence") or "--"))
+    table.add_row(
+        "Recommended treatment",
+        str(result.get("recommended_treatment") or "--"),
+    )
+    table.add_row(
+        "Treatment intent",
+        str(result.get("treatment_intent") or "--"),
+    )
+
+    return Panel(
+        table,
+        title=header,
+        title_align="left",
+        border_style=severity_color,
+    )
+
+
 def render_dag_result(result: dict[str, Any], debug: bool = False) -> Panel:
     """Render the result of ``process_natural_language()``."""
     lines: list[str] = []
