@@ -542,16 +542,27 @@ class KnowledgeStore:
                 # reflog still has the last good SHA — recover by
                 # rewriting the ref from `git reflog` and retrying.
                 log.warning(
-                    "Git ref broken at %s; attempting reflog recovery",
+                    "Git ref broken at %s; attempting recovery",
                     self._repo_path,
                 )
-                reflog = await self._git_run(
-                    "reflog", "--format=%H", "-n", "1"
-                )
-                sha = (reflog.stdout or "").strip().splitlines()[:1]
-                if reflog.returncode == 0 and sha and len(sha[0]) == 40:
+                sha = await self._recover_last_commit_sha()
+                if sha:
+                    # `git update-ref` refuses to overwrite a "reference
+                    # broken" ref — delete the corrupt loose ref files
+                    # first so update-ref can write a clean one.
+                    git_dir = self._repo_path / ".git"
+                    for rel in (
+                        "refs/heads/master",
+                        "refs/heads/main",
+                    ):
+                        p = git_dir / rel
+                        try:
+                            if p.is_file():
+                                p.unlink()
+                        except OSError:
+                            pass
                     update = await self._git_run(
-                        "update-ref", "HEAD", sha[0]
+                        "update-ref", "refs/heads/master", sha
                     )
                     if update.returncode == 0:
                         retry = await self._git_run(
@@ -573,7 +584,8 @@ class KnowledgeStore:
                     )
                     return
                 log.warning(
-                    "Git ref recovery failed: no usable reflog entry"
+                    "Git ref recovery failed: no recoverable commit "
+                    "(reflog empty and no detached HEAD)"
                 )
                 return
             log.warning("Git commit failed: %s", stderr.strip())
@@ -615,6 +627,70 @@ class KnowledgeStore:
                 timeout=30,
             ),
         )
+
+    async def _recover_last_commit_sha(self) -> str | None:
+        """Find the most recent commit SHA when refs are corrupt.
+
+        Tries in order:
+          1. ``git reflog --format=%H -n 1`` (works only if HEAD resolves)
+          2. Parse ``.git/logs/refs/heads/<branch>`` directly (last entry's
+             "new" sha — survives a zeroed branch ref)
+          3. Parse ``.git/logs/HEAD`` directly
+          4. ``git fsck --lost-found`` and pick the youngest commit object
+        """
+        # 1. Standard reflog lookup.
+        reflog = await self._git_run("reflog", "--format=%H", "-n", "1")
+        if reflog.returncode == 0:
+            line = (reflog.stdout or "").strip().splitlines()[:1]
+            if line and len(line[0]) == 40:
+                return line[0]
+
+        git_dir = self._repo_path / ".git"
+
+        # 2. Parse per-branch reflog file directly.
+        # 3. Fall back to HEAD reflog file.
+        for rel in ("logs/refs/heads/master", "logs/refs/heads/main", "logs/HEAD"):
+            log_path = git_dir / rel
+            if not log_path.is_file():
+                continue
+            try:
+                # Read as bytes — corrupted reflogs sometimes contain NUL
+                # padding that confuses Python's text-mode line splitter.
+                data = log_path.read_bytes()
+                last = ""
+                for raw in data.split(b"\n"):
+                    stripped = raw.strip(b"\x00 \t\r")
+                    if stripped:
+                        last = stripped.decode("utf-8", errors="replace")
+                if last:
+                    parts = last.split(" ", 2)
+                    if len(parts) >= 2 and len(parts[1]) == 40:
+                        # Confirm the object exists.
+                        check = await self._git_run("cat-file", "-t", parts[1])
+                        if check.returncode == 0 and check.stdout.strip() == "commit":
+                            return parts[1]
+            except OSError:
+                continue
+
+        # 4. Last resort: fsck the object DB and pick the most recent
+        # dangling commit by mtime of its loose-object file.
+        fsck = await self._git_run("fsck", "--lost-found", "--no-progress")
+        candidates: list[tuple[float, str]] = []
+        for line in (fsck.stdout or "").splitlines():
+            # "dangling commit <sha>" — and similarly under fsck stderr.
+            if line.startswith("dangling commit "):
+                sha = line.split(" ", 2)[-1].strip()
+                if len(sha) == 40:
+                    obj = git_dir / "objects" / sha[:2] / sha[2:]
+                    try:
+                        candidates.append((obj.stat().st_mtime, sha))
+                    except OSError:
+                        candidates.append((0.0, sha))
+        if candidates:
+            candidates.sort(reverse=True)
+            return candidates[0][1]
+
+        return None
 
     # ------------------------------------------------------------------
     # Rollback (Step 5)
