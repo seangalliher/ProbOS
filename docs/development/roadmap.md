@@ -1173,7 +1173,7 @@ Dependencies: AD-434 (Ship's Records backend), AD-532 (produces procedures to st
 
 Dependencies: AD-533 ✅ (procedure store to query), AD-431 ✅ (Cognitive Journal for recording replays).
 
-**AD-534b: Fallback Learning** *(planned, OSS, depends: AD-534, AD-532b)* — When a procedure replay fails and the LLM succeeds, compare the LLM's approach to the failed procedure. If the procedure was wrong (postcondition permanently changed), trigger FIX evolution (AD-532b). If the procedure was right but preconditions weren't met, annotate preconditions. Also includes step-by-step postcondition validation during replay — currently replay returns formatted steps as a unit; AD-534b adds per-step execution with `expected_output` validation and mid-replay abort on postcondition failure. Depends on AD-532b (FIX evolution actions) and AD-534 (replay infrastructure).
+**AD-534b: Fallback Learning** *(SHIPPED, OSS — see line 1121 for the canonical entry)* — When a procedure replay fails and the LLM succeeds, compare the LLM's approach to the failed procedure. If the procedure was wrong (postcondition permanently changed), trigger FIX evolution (AD-532b). If the procedure was right but preconditions weren't met, annotate preconditions. Also includes step-by-step postcondition validation during replay — currently replay returns formatted steps as a unit; AD-534b adds per-step execution with `expected_output` validation and mid-replay abort on postcondition failure. Depends on AD-532b (FIX evolution actions) and AD-534 (replay infrastructure).
 
 ---
 
@@ -6525,7 +6525,7 @@ Motivated by findings in ["Agents of Chaos"](https://arxiv.org/abs/2602.20021) (
 
 **AD-528c: Ground-Truth Verification — Trust-Network Feedback** *(Scoped, OSS, Issue #402)* — Feed ground-truth verification outcomes into the trust network. Verified completions increase trust; failed verifications decrease trust with graduated severity (honest mistakes vs. systematic deception). Provides the closed loop between task verification and trust evolution. *Depends on: AD-528 v1 (COMPLETE), AD-528b. Related: TrustNetwork, AD-558 (Trust Cascade Dampening).*
 
-**AD-529: Communication Contagion Firewall** *(planned, OSS)* — The study found "cross-agent propagation of unsafe practices" — one compromised agent spreading harmful patterns through multi-agent communication. ProbOS's Ward Room is an open communication fabric with no content-level security filtering between agents.
+**AD-529: Communication Contagion Firewall** *(SHIPPED, OSS, Wave 117 — `src/probos/security/contagion.py`)* — The study found "cross-agent propagation of unsafe practices" — one compromised agent spreading harmful patterns through multi-agent communication. ProbOS's Ward Room is an open communication fabric with no content-level security filtering between agents.
 
 **(1) Problem:** If an agent is compromised (prompt injection via external input, adversarial self-mod, or imported agent), it can post to Ward Room channels. Other agents reading those posts could adopt unsafe patterns, execute suggested actions, or propagate the compromise further. The Trust Network constrains *who* is listened to, but not *what* is said.
 
@@ -7504,3 +7504,4 @@ Bugs found during development or testing. Squash as found when possible; queue h
 
 !!! info "Want to contribute?"
     See the [Contributing guide](contributing.md) for how to get involved.
+
