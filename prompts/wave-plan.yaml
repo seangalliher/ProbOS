@@ -2962,7 +2962,7 @@ waves:
       - "prompts/ad-522c-graduated-response-v1.md"
     builder_required: true
     issues_to_close: [450, 451]
-    status: pending
+    status: done
 
   - id: "124"
     title: "AD-583f-g + AD-574c-i UI/echo work (closes #464 #458)"
