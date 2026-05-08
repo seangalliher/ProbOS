@@ -2860,7 +2860,7 @@ waves:
       - "prompts/ad-443-agent-mobility-v1.md"
     builder_required: true
     issues_to_close: [433]
-    status: pending
+    status: done
 
   - id: "116"
     title: "AD-482: Self-Improvement Pipeline (closes #434)"
