@@ -213,3 +213,42 @@ async def test_graph_member_of_resolves_to_instance_and_department_when_posts_av
     }
     reports = [e for e in res["edges"] if e["relation"] == "reports_to"]
     assert ("scout-1", "arch-1") in {(e["source"], e["target"]) for e in reports}
+
+
+@pytest.mark.asyncio
+async def test_graph_reports_to_walks_through_unfilled_manager_post() -> None:
+    """When a chain post is unfilled (e.g. chief_science), reports_to should walk up to the next filled post (first_officer)."""
+    @dataclass
+    class _Post:
+        id: str
+        department_id: str
+        reports_to: str | None = None
+
+    class _OntWithPosts(_FakeOntology):
+        def __init__(self, depts, manifest, assignments, posts):
+            super().__init__(depts, manifest, assignments)
+            self._posts = posts
+
+        def get_posts(self):
+            return self._posts
+
+    manifest = [
+        {"agent_type": "scout", "agent_id": "scout-1", "department": "science", "rank": "ensign", "post": "scout-post", "trust": 0.5, "on_watch": True},
+        {"agent_type": "architect", "agent_id": "arch-1", "department": "bridge", "rank": "lieutenant", "post": "first-officer-post", "trust": 0.7, "on_watch": True},
+    ]
+    assignments = [
+        _FakeAssignment(agent_type="scout", post_id="scout-post"),
+        _FakeAssignment(agent_type="architect", post_id="first-officer-post"),
+        # NOTE: no agent assigned to chief-science-post; architect is dual-hatted on first_officer.
+    ]
+    posts = [
+        _Post(id="scout-post", department_id="science", reports_to="chief-science-post"),
+        _Post(id="chief-science-post", department_id="science", reports_to="first-officer-post"),
+        _Post(id="first-officer-post", department_id="bridge", reports_to=None),
+    ]
+    ont = _OntWithPosts([_FakeDept(id="science", name="Science"), _FakeDept(id="bridge", name="Bridge")], manifest, assignments, posts)
+    rt = _make_runtime(ontology=ont)
+    res = await get_ontology_graph(runtime=rt)
+    rep = [(e["source"], e["target"]) for e in res["edges"] if e["relation"] == "reports_to"]
+    # scout-1 -> arch-1 (walked through unfilled chief-science-post)
+    assert ("scout-1", "arch-1") in rep

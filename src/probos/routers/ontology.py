@@ -153,8 +153,38 @@ async def get_ontology_graph(
         except Exception:
             posts_by_id = {}
 
+    # post_id -> [agent_instance_ids] of any agents assigned to that post.
+    # Used to walk up reports_to until we find a filled manager post (e.g.
+    # chief_science is unfilled but rolls up to first_officer where the
+    # architect — Number One — is dual-hatted).
+    assignments_list = list(ont.get_all_assignments())
+    post_to_agent_ids: dict[str, list[str]] = {}
+    for a in assignments_list:
+        ad = asdict(a)
+        at = ad.get("agent_type")
+        pid = ad.get("post_id")
+        if at and pid:
+            post_to_agent_ids.setdefault(pid, []).extend(
+                agent_ids_by_type.get(at, [at])
+            )
+
+    def _resolve_manager_agent_ids(starting_post_id: str) -> list[str]:
+        """Walk reports_to chain until we find a post with assigned agents."""
+        seen: set[str] = set()
+        cur = starting_post_id
+        while cur and cur not in seen:
+            seen.add(cur)
+            ids = post_to_agent_ids.get(cur)
+            if ids:
+                return ids
+            mp = posts_by_id.get(cur)
+            if mp is None:
+                return []
+            cur = getattr(mp, "reports_to", None) or ""
+        return []
+
     edges: list[dict[str, Any]] = []
-    for a in ont.get_all_assignments():
+    for a in assignments_list:
         ad = asdict(a)
         agent_type = ad.get("agent_type")
         post_id = ad.get("post_id")
@@ -189,22 +219,7 @@ async def get_ontology_graph(
                     }
                 )
             if manager_post_id:
-                manager_post = posts_by_id.get(manager_post_id)
-                manager_agent_type = None
-                if manager_post is not None:
-                    manager_agent_type = next(
-                        (
-                            ma.agent_type
-                            for ma in ont.get_all_assignments()
-                            if ma.post_id == manager_post_id
-                        ),
-                        None,
-                    )
-                manager_ids = (
-                    agent_ids_by_type.get(manager_agent_type, [])
-                    if manager_agent_type
-                    else []
-                )
+                manager_ids = _resolve_manager_agent_ids(manager_post_id)
                 for mid in manager_ids:
                     if mid == aid:
                         continue
