@@ -231,6 +231,9 @@ async def init_dreaming(
         adaptive_z_threshold=_edc.adaptive_z_threshold,
         adaptive_debounce_count=_edc.adaptive_debounce_count,
         adaptive_min_history=_edc.adaptive_min_history,
+        # BF #498: stamp lifecycle phase on every detected pattern so EventLog
+        # consumers can causally order patterns across stasis/warm-boot windows.
+        phase_tag_getter=(lambda rt=runtime: getattr(rt, "_lifecycle_state", None)) if runtime is not None else None,
     )
     # Provide live agent roster so detector filters out defunct agents
     refresh_emergent_detector_roster_fn()

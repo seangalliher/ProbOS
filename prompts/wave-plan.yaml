@@ -3026,3 +3026,20 @@ waves:
     builder_required: true
     issues_to_close: [466]
     status: done
+
+
+  - id: "129"
+    title: "5-pack — AD-490 hash-chain, AD-491 gitagent interop, AD-700a/b/c follow-ups (4 prompts trimmed as moot wipe-artifacts on 2026-05-08)"
+    kind: main
+    depends_on: ["128"]
+    dispatch_prompt: "prompts/WAVE-129-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-490-eventlog-hash-chain-v1.md"
+      - "prompts/ad-491-gitagent-interop-adapter-v1.md"
+      - "prompts/ad-700a-diagnostic-slash-command-v1.md"
+      - "prompts/ad-700b-cognitive-journal-level-tagging-v1.md"
+      - "prompts/ad-700c-diagnostician-tier-routing-v1.md"
+    builder_required: true
+    issues_to_close: [506, 507, 508, 509, 491]
+    status: pending

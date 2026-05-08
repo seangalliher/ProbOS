@@ -3728,6 +3728,80 @@ class CognitiveAgent(BaseAgent):
             reasoning_summary=reasoning,
         )
 
+    async def consult(
+        self,
+        question: str,
+        *,
+        topic: str = "",
+        context: dict | None = None,
+        required_expertise: str | None = None,
+        target_agent_id: str | None = None,
+        urgency: str = "medium",
+    ) -> "ConsultationResponse | None":
+        """AD-594b: Initiate an expert consultation.
+
+        Thin convenience wrapper: builds a ``ConsultationRequest`` from this
+        agent's identity + the supplied ``(question, context)``, then routes
+        it through the wired ``ConsultationProtocol``. Returns the
+        ``ConsultationResponse`` (or ``None`` on rate-limit, no expert,
+        timeout, or handler error -- the protocol logs the reason).
+
+        Counterpart to ``handle_consultation_request`` -- agents now have
+        both halves of the protocol surface on a single class.
+
+        Args:
+            question: The question to ask. Required.
+            topic: Optional short topic; defaults to the question if absent.
+            context: Optional structured context dict passed verbatim.
+            required_expertise: Optional capability string for expert selection.
+            target_agent_id: Optional direct target; bypasses expert selection.
+            urgency: One of "low" / "medium" / "high"; defaults to "medium".
+
+        Returns:
+            ``ConsultationResponse`` on success; ``None`` if the protocol
+            rejected the request or no response was produced.
+        """
+        from probos.cognitive.consultation import (
+            ConsultationRequest,
+            ConsultationResponse,  # re-exported for the return type
+            ConsultationUrgency,
+        )
+
+        protocol = self._consultation_protocol
+        if protocol is None:
+            logger.debug(
+                "AD-594b: %s tried to consult but no protocol is wired; returning None",
+                getattr(self, "callsign", None) or self.agent_type,
+            )
+            return None
+
+        if not question:
+            logger.warning(
+                "AD-594b: %s called consult() with empty question; refusing",
+                getattr(self, "callsign", None) or self.agent_type,
+            )
+            return None
+
+        try:
+            urgency_value = ConsultationUrgency(urgency)
+        except ValueError:
+            logger.warning(
+                "AD-594b: invalid urgency=%r; defaulting to medium", urgency,
+            )
+            urgency_value = ConsultationUrgency.MEDIUM
+
+        request = ConsultationRequest(
+            requester_id=self.id,
+            requester_callsign=getattr(self, "callsign", None) or self.agent_type,
+            topic=topic or question,
+            question=question,
+            required_expertise=required_expertise,
+            target_agent_id=target_agent_id,
+            urgency=urgency_value,
+            context=context or {},
+        )
+        return await protocol.request_consultation(request)
+
     def _build_temporal_context(self) -> str:
         """AD-502: Build temporal awareness header for agent prompts."""
         # Respect config if available

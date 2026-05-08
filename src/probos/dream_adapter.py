@@ -262,7 +262,14 @@ class DreamAdapter:
                         pass
 
     async def _event_log_emergent(self, pattern: Any, correlation_id: str | None = None) -> None:
-        """Log emergent pattern to event log with structured payload (AD-664)."""
+        """Log emergent pattern to event log with structured payload (AD-664).
+
+        BF #498: Always include `phase_tag` (lifecycle state at detection time)
+        and `wall_time` (unix-epoch seconds) in the data dict so EventLog
+        consumers can causally order patterns across stasis/warm-boot windows.
+        The `timestamp` column on the EventLog row is the *write* time; these
+        fields capture the *detection* time and runtime phase.
+        """
         if self._event_log:
             await self._event_log.log(
                 category="emergent",
@@ -274,6 +281,8 @@ class DreamAdapter:
                     "severity": pattern.severity,
                     "evidence": pattern.evidence,
                     "pattern_type": pattern.pattern_type,
+                    "phase_tag": getattr(pattern, "phase_tag", None),
+                    "wall_time": getattr(pattern, "wall_time", 0.0) or None,
                 },
             )
 

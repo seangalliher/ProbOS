@@ -47,8 +47,13 @@ class DiagnosticianAgent(CognitiveAgent):
         ),
         IntentDescriptor(
             name="diagnose_system",
-            params={"focus": "optional area to focus diagnosis on"},
-            description="On-demand system diagnosis",
+            params={
+                "focus": "optional area to focus diagnosis on",
+                # AD-700: LCARS multi-level diagnostic depth (L5 shallow ... L1 deepest).
+                # Default L3 if absent. Accepts 'L5'/'L4'/'L3'/'L2'/'L1' or 1-5.
+                "level": "optional diagnostic depth L5|L4|L3|L2|L1 (default L3)",
+            },
+            description="On-demand system diagnosis with optional L1-L5 depth",
         ),
     ]
     _handled_intents = {"medical_alert", "diagnose_system"}
@@ -59,28 +64,85 @@ class DiagnosticianAgent(CognitiveAgent):
         self._runtime = kwargs.get("runtime")
 
     async def perceive(self, intent: dict[str, Any]) -> dict[str, Any]:
-        """Enrich diagnose_system intents with live metrics from VitalsMonitor (AD-350)."""
+        """Enrich diagnose_system intents with live metrics from VitalsMonitor (AD-350).
+
+        AD-700: Honor the ``level`` parameter (L5..L1). Shallower levels skip
+        the VitalsMonitor scan entirely; deeper levels add an instruction
+        hint so the LLM knows to widen its scope. The Diagnostician's
+        ``instructions`` already do the analysis -- this method only
+        prepares the right shape of context for the chosen depth.
+        """
+        from probos.agents.medical.diagnostic_levels import (
+            DiagnosticLevel,
+            parse_level,
+        )
+
         result = await super().perceive(intent)
 
-        if result.get("intent") == "diagnose_system" and self._runtime:
-            # Find the VitalsMonitor agent
-            vitals_agent = None
-            for agent in self._runtime.registry.all():
-                if getattr(agent, "agent_type", None) == "vitals_monitor":
-                    vitals_agent = agent
-                    break
+        if result.get("intent") == "diagnose_system":
+            level = parse_level(intent.get("level"))
+            result["level"] = level.value
+            result["level_rank"] = level.depth_rank
+            result["level_llm_tier"] = level.llm_tier
+            # Skip metric enrichment for the shallowest tier -- L5 is "current
+            # value only", which the VitalsMonitor already provides via its
+            # own heartbeat pulse and there is no need to invoke a scan here.
+            if self._runtime and level is not DiagnosticLevel.L5:
+                # Find the VitalsMonitor agent
+                vitals_agent = None
+                for agent in self._runtime.registry.all():
+                    if getattr(agent, "agent_type", None) == "vitals_monitor":
+                        vitals_agent = agent
+                        break
 
-            if vitals_agent is not None:
-                try:
-                    metrics = await vitals_agent.scan_now()
+                if vitals_agent is not None:
+                    try:
+                        metrics = await vitals_agent.scan_now()
+                        result["context"] = (
+                            f"LIVE SYSTEM METRICS (from Vitals Monitor scan):\n"
+                            f"{json.dumps(metrics, indent=2, default=str)}"
+                        )
+                    except Exception as e:
+                        logger.warning("Diagnostician: VitalsMonitor scan failed: %s", e)
+                        result["context"] = (
+                            "VitalsMonitor scan failed -- diagnose based on available information."
+                        )
+                else:
                     result["context"] = (
-                        f"LIVE SYSTEM METRICS (from Vitals Monitor scan):\n"
-                        f"{json.dumps(metrics, indent=2, default=str)}"
+                        "VitalsMonitor not found -- diagnose based on available information."
                     )
-                except Exception as e:
-                    logger.warning("Diagnostician: VitalsMonitor scan failed: %s", e)
-                    result["context"] = "VitalsMonitor scan failed — diagnose based on available information."
-            else:
-                result["context"] = "VitalsMonitor not found — diagnose based on available information."
+
+            # Append a depth-shaped instruction hint that the LLM-driven
+            # decide() path will see in its perception payload. Each band
+            # widens the scope per the AD-700 spec.
+            scope_hint = {
+                DiagnosticLevel.L5: (
+                    "Diagnostic depth: L5 (single-metric, current value only). "
+                    "Report the current value and an immediate red/amber/green call. "
+                    "Do not analyze trends or root cause."
+                ),
+                DiagnosticLevel.L4: (
+                    "Diagnostic depth: L4 (subsystem, current + recent trend). "
+                    "Compare current values to recent history; flag anomalies. "
+                    "No root-cause hypothesis required."
+                ),
+                DiagnosticLevel.L3: (
+                    "Diagnostic depth: L3 (target system, historical + anomaly detection). "
+                    "Look for anomalies vs history, list candidate causes, recommend next "
+                    "steps. Default depth for on-demand diagnostics."
+                ),
+                DiagnosticLevel.L2: (
+                    "Diagnostic depth: L2 (full-department sweep). Survey every "
+                    "subsystem in the named department; surface every anomaly; "
+                    "rank by severity."
+                ),
+                DiagnosticLevel.L1: (
+                    "Diagnostic depth: L1 (ship-wide root cause). Multi-turn "
+                    "analysis: cross-department correlation, causal chain, "
+                    "structured post-mortem. Captain-authorized depth."
+                ),
+            }[level]
+            existing = result.get("context") or ""
+            result["context"] = (existing + "\n\n" + scope_hint).strip()
 
         return result

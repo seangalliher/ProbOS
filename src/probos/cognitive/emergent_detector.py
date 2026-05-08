@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from collections.abc import Callable
+
 from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — reads trust for emergent pattern detection
 from probos.mesh.routing import HebbianRouter, REL_INTENT, REL_SOCIAL
 
@@ -40,8 +42,15 @@ class EmergentPattern:
     description: str        # Human-readable description
     confidence: float       # 0.0-1.0
     evidence: dict = field(default_factory=dict)  # Supporting data
-    timestamp: float = 0.0  # time.monotonic() when detected
+    timestamp: float = 0.0  # time.monotonic() — for in-memory dedup/cooldown
     severity: str = "info"  # "info", "notable", "significant"
+    # BF #498: wall-clock timestamp + lifecycle phase for EventLog correlation.
+    # `timestamp` (above) is monotonic and useless across processes/restarts;
+    # `wall_time` is unix-epoch seconds and `phase_tag` records the runtime
+    # lifecycle state ("first_boot", "reset", "stasis_recovery", "restart")
+    # at detection time so consumers can causally order patterns.
+    wall_time: float = 0.0
+    phase_tag: str | None = None
 
 
 @dataclass
@@ -135,12 +144,19 @@ class EmergentDetector:
         dream_anomaly_min_strengthened: int = 10,
         dream_anomaly_min_pruned: int = 5,
         dream_anomaly_min_trust_adj: int = 10,
+        # BF #498: lifecycle phase getter for EventLog correlation.
+        # Returns runtime._lifecycle_state (e.g. "first_boot", "reset",
+        # "stasis_recovery", "restart") or None if unavailable. Used to stamp
+        # phase_tag on every emitted EmergentPattern so warm-boot fragmentation
+        # investigations can causally order patterns across stasis windows.
+        phase_tag_getter: Callable[[], str | None] | None = None,
     ) -> None:
         self._router = hebbian_router
         self._trust = trust_network
         self._episodic_memory = episodic_memory
         self._max_history = max_history
         self._trend_threshold = trend_threshold
+        self._phase_tag_getter = phase_tag_getter
 
         # BF-089: Trust anomaly detection thresholds
         self._trust_sigma_threshold = trust_sigma_threshold
@@ -385,6 +401,17 @@ class EmergentDetector:
             ))
 
         # Store all detected patterns
+        # BF #498: stamp wall_time + phase_tag on every pattern so EventLog
+        # consumers can causally order them across processes/restarts. The
+        # in-memory `timestamp` field is monotonic and useless across boots.
+        _phase = self._phase_tag_getter() if self._phase_tag_getter else None
+        _wall = time.time()
+        for _p in patterns:
+            if _p.wall_time == 0.0:
+                _p.wall_time = _wall
+            if _p.phase_tag is None:
+                _p.phase_tag = _phase
+
         self._all_patterns.extend(patterns)
         # Cap pattern history
         if len(self._all_patterns) > 500:
