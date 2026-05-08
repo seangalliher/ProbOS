@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS journal (
     dag_node_id      TEXT NOT NULL DEFAULT '',
     response_hash    TEXT NOT NULL DEFAULT '',
     procedure_id     TEXT NOT NULL DEFAULT '',
-    correlation_id   TEXT NOT NULL DEFAULT ''
+    correlation_id   TEXT NOT NULL DEFAULT '',
+    level            TEXT NOT NULL DEFAULT '',
+    level_rank       INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_journal_agent ON journal(agent_id);
@@ -51,6 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_journal_intent ON journal(intent);
 _SCHEMA_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_journal_intent_id ON journal(intent_id);
 CREATE INDEX IF NOT EXISTS idx_journal_correlation_id ON journal(correlation_id);
+CREATE INDEX IF NOT EXISTS idx_journal_level ON journal(level);
 """
 
 _SCHEMA_CHAIN_TRACES = """
@@ -207,6 +210,8 @@ class CognitiveJournal:
             except sqlite3.OperationalError:
                 pass  # Column already exists — migration idempotency
         await self._db.commit()
+        # AD-700b: level + level_rank columns for diagnose_system tagging
+        await self._migrate_ad700b()
         # Now create indexes that depend on migrated columns
         await self._db.executescript(_SCHEMA_INDEXES)
         # AD-658: chain harness traces (separate from per-LLM-call journal rows)
@@ -230,6 +235,33 @@ class CognitiveJournal:
         # AD-659c: OptimizationCounselor watchdog decisions (idempotent CREATE).
         await self._db.executescript(_SCHEMA_OPTIMIZATION_DECISIONS)
         await self._db.commit()
+
+    async def _migrate_ad700b(self) -> None:
+        """AD-700b: Add level + level_rank columns to journal if missing."""
+        if not self._db:
+            return
+        try:
+            async with self._db.execute("PRAGMA table_info(journal)") as cursor:
+                columns = {row[1] async for row in cursor}
+            migrations = []
+            if "level" not in columns:
+                migrations.append(
+                    "ALTER TABLE journal ADD COLUMN level TEXT NOT NULL DEFAULT ''"
+                )
+            if "level_rank" not in columns:
+                migrations.append(
+                    "ALTER TABLE journal ADD COLUMN level_rank INTEGER NOT NULL DEFAULT 0"
+                )
+            for sql in migrations:
+                await self._db.execute(sql)
+            if migrations:
+                await self._db.commit()
+                logger.info(
+                    "AD-700b: Migrated CognitiveJournal level tags (%d columns added)",
+                    len(migrations),
+                )
+        except Exception:
+            logger.debug("AD-700b: CognitiveJournal migration check failed", exc_info=True)
 
     async def stop(self) -> None:
         if self._db:
@@ -349,6 +381,8 @@ class CognitiveJournal:
         response_hash: str = "",
         procedure_id: str = "",  # AD-534: procedure ID if this was a replay
         correlation_id: str = "",  # AD-492: cognitive cycle correlation ID
+        level: str = "",  # AD-700b: diagnostic level tag ("L1".."L5"), empty for non-diagnostic intents
+        level_rank: int = 0,  # AD-700b: ordinal 1..5; 0 for non-diagnostic intents
     ) -> None:
         """Append a journal entry. Fire-and-forget — never raises."""
         if not self._db:
@@ -361,8 +395,8 @@ class CognitiveJournal:
                     latency_ms, intent, success, cached, request_id,
                     prompt_hash, response_length,
                     intent_id, dag_node_id, response_hash, procedure_id,
-                    correlation_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    correlation_id, level, level_rank)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry_id, timestamp, agent_id, agent_type, tier, model,
                     prompt_tokens, completion_tokens, total_tokens,
@@ -370,7 +404,7 @@ class CognitiveJournal:
                     1 if cached else 0, request_id,
                     prompt_hash, response_length,
                     intent_id, dag_node_id, response_hash, procedure_id,
-                    correlation_id,
+                    correlation_id, level, level_rank,
                 ),
             )
             await self._db.commit()

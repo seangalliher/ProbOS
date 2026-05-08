@@ -1743,6 +1743,8 @@ class CognitiveAgent(BaseAgent):
                     intent_id=observation.get("intent_id", ""),
                     response_hash=hashlib.md5(response.content[:500].encode()).hexdigest()[:12],
                     correlation_id=observation.get("correlation_id", ""),
+                    level=str(observation.get("level", "")) if observation.get("intent") == "diagnose_system" else "",
+                    level_rank=int(observation.get("level_rank", 0)) if observation.get("intent") == "diagnose_system" else 0,
                 )
             except Exception:
                 logger.debug("Journal recording failed", exc_info=True)  # Non-critical — never block agent cognition

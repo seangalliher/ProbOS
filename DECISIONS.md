@@ -1291,3 +1291,14 @@ Greenfield `src/probos/interop/` package with `gitagent.py` exposing two pure bo
 **Status:** SHIPPED. Issue [#491](https://github.com/seangalliher/ProbOS/issues/491).
 **Files:** `src/probos/interop/__init__.py` (new), `src/probos/interop/gitagent.py` (new). Tests: `tests/test_ad491_gitagent_interop.py` (8 cases, all passing).
 
+
+### AD-700b - CognitiveJournal Level Tagging for `diagnose_system`
+**Date:** 2026-05-08  `n**Type:** Architecture Decision (telemetry / single-field addition)  `n**Wave:** 129
+
+Adds two columns (`level TEXT`, `level_rank INTEGER`) and one index (`idx_journal_level`) to the CognitiveJournal `journal` table. Migration `_migrate_ad700b()` runs after the AD-432/AD-492 ALTER block and before `_SCHEMA_INDEXES`. `record()` accepts new `level: str = ''` / `level_rank: int = 0` kwargs. The single populating call site is `cognitive_agent._decide_via_llm` at `cognitive_agent.py:1722-1748`, gated on `observation.get('intent') == 'diagnose_system'`; non-diagnostic rows persist empty/zero defaults so journal readability is preserved.
+
+**In scope:** schema migration, `record()` signature, single populating call site.
+**Out of scope:** query API for level-filtering, free-form metadata, Diagnostician changes (already populates `level`/`level_rank` in `perceive()`).
+**Status:** SHIPPED. Issue [#508](https://github.com/seangalliher/ProbOS/issues/508).
+**Files:** `src/probos/cognitive/journal.py` (schema + migration + record), `src/probos/cognitive/cognitive_agent.py` (one block at `:1722-1748`). Tests: `tests/test_ad700b_journal_level_tag.py` (6 cases, all passing).
+
