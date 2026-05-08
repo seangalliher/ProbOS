@@ -3013,7 +3013,7 @@ waves:
       - "prompts/wave-127-priority-4-cleanup-v1.md"
     builder_required: true
     issues_to_close: [442, 444, 445, 447, 449, 452, 453, 461, 462]
-    status: pending
+    status: done
 
   - id: "128"
     title: "BF: Stabilize xdist worker-crash flakes (closes #466)"
