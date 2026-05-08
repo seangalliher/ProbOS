@@ -2848,7 +2848,7 @@ waves:
       - "prompts/bf-roadmap-reconciliation-v1.md"
     builder_required: true
     issues_to_close: [465]
-    status: pending
+    status: done
 
   - id: "115"
     title: "AD-443: Agent Mobility Protocol - Transfer Certificates + Memory Portability (closes #433)"
