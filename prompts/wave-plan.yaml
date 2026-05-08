@@ -2923,7 +2923,7 @@ waves:
       - "prompts/ad-539d-i-federation-gap-aggregation-v1.md"
     builder_required: true
     issues_to_close: [454, 455]
-    status: pending
+    status: done
 
   - id: "121"
     title: "AD-509b/c/d Boot Camp continuations + AD-507b progression (closes #439 #440 #441 #443)"

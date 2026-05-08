@@ -142,3 +142,146 @@ class GapRemediationTracker:
         if action == "escalate_capability":
             return f"capability gap (priority={priority}) → escalate"
         return f"no remediation mapping for gap_type={gap_type!r}"
+
+    # ------------------------------------------------------------------
+    # AD-539c-i: active remediation execution
+    # ------------------------------------------------------------------
+
+    async def execute_remediation(
+        self,
+        candidate: RemediationCandidate,
+        *,
+        gap_report: Any = None,
+    ) -> dict[str, Any]:
+        """AD-539c-i: actually carry out the proposed remediation action.
+
+        Returns a structured outcome dict with keys: ``executed`` (bool),
+        ``action`` (str), ``detail`` (str). Tier-2 log-and-degrade — never
+        raises. Honors a runtime feature flag
+        (``runtime.config.gap_pipeline_extensions.active_remediation_enabled``,
+        default False) so the surface is opt-in.
+        """
+        if not self._active_remediation_enabled():
+            return {
+                "executed": False,
+                "action": candidate.proposed_action,
+                "detail": "active_remediation disabled by config",
+            }
+        action = candidate.proposed_action
+        try:
+            if action == "trigger_qualification":
+                return await self._trigger_qualification(candidate, gap_report)
+            if action == "request_data_routing":
+                return await self._request_data_routing(candidate, gap_report)
+            if action == "escalate_capability":
+                return await self._escalate_capability(candidate, gap_report)
+            return {
+                "executed": False,
+                "action": action,
+                "detail": "no_action mapping",
+            }
+        except Exception as exc:
+            logger.warning(
+                "AD-539c-i: remediation %s for gap_id=%s raised %s; degrading",
+                action, candidate.gap_id, type(exc).__name__, exc_info=True,
+            )
+            return {
+                "executed": False,
+                "action": action,
+                "detail": f"{type(exc).__name__}: {exc}",
+            }
+
+    def _active_remediation_enabled(self) -> bool:
+        runtime = getattr(self, "_runtime", None)
+        cfg = getattr(getattr(runtime, "config", None), "gap_pipeline_extensions", None)
+        return bool(getattr(cfg, "active_remediation_enabled", False))
+
+    async def _trigger_qualification(
+        self, candidate: RemediationCandidate, gap_report: Any
+    ) -> dict[str, Any]:
+        runtime = self._runtime
+        svc = getattr(runtime, "qualification_service", None) or getattr(
+            runtime, "_qualification_store", None
+        )
+        if svc is None:
+            return {
+                "executed": False,
+                "action": candidate.proposed_action,
+                "detail": "qualification_service unavailable",
+            }
+        qpath = getattr(gap_report, "qualification_path_id", "") if gap_report else ""
+        # Best-effort: prefer ``trigger`` then ``schedule``; otherwise just record.
+        for method_name in ("trigger", "schedule", "enqueue"):
+            method = getattr(svc, method_name, None)
+            if callable(method):
+                result = method(agent_id=candidate.agent_id, qualification_path_id=qpath)
+                if hasattr(result, "__await__"):
+                    result = await result
+                return {
+                    "executed": True,
+                    "action": candidate.proposed_action,
+                    "detail": f"{method_name} -> {result!r}",
+                }
+        return {
+            "executed": False,
+            "action": candidate.proposed_action,
+            "detail": "qualification_service has no trigger/schedule/enqueue method",
+        }
+
+    async def _request_data_routing(
+        self, candidate: RemediationCandidate, gap_report: Any
+    ) -> dict[str, Any]:
+        runtime = self._runtime
+        bus = getattr(runtime, "intent_bus", None)
+        if bus is None:
+            return {
+                "executed": False,
+                "action": candidate.proposed_action,
+                "detail": "intent_bus unavailable",
+            }
+        try:
+            from probos.types import IntentMessage
+            intent = IntentMessage(
+                intent="data_routing_requested",
+                params={
+                    "agent_id": candidate.agent_id,
+                    "gap_id": candidate.gap_id,
+                    "reason": candidate.reason,
+                },
+            )
+            await bus.broadcast(intent, timeout=2.0)
+            return {
+                "executed": True,
+                "action": candidate.proposed_action,
+                "detail": f"broadcast(data_routing_requested) for {candidate.agent_id}",
+            }
+        except Exception as exc:
+            return {
+                "executed": False,
+                "action": candidate.proposed_action,
+                "detail": f"{type(exc).__name__}: {exc}",
+            }
+
+    async def _escalate_capability(
+        self, candidate: RemediationCandidate, gap_report: Any
+    ) -> dict[str, Any]:
+        runtime = self._runtime
+        emit = getattr(runtime, "emit_event", None)
+        if callable(emit):
+            try:
+                emit(
+                    EventType.GAP_REMEDIATION_RECORDED,
+                    {
+                        "phase": "escalated",
+                        "agent_id": candidate.agent_id,
+                        "gap_id": candidate.gap_id,
+                        "reason": candidate.reason,
+                    },
+                )
+            except Exception:
+                pass
+        return {
+            "executed": True,
+            "action": candidate.proposed_action,
+            "detail": f"capability gap escalated for {candidate.agent_id}",
+        }

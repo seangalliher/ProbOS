@@ -2830,6 +2830,10 @@ class GapPipelineExtensionsConfig(BaseModel):
     remediation_tracker_enabled: bool = True
     fleet_aggregator_enabled: bool = True
     remediation_max_history: int = 100
+    # AD-539c-i: opt-in active remediation. Default-False keeps observational
+    # mode the default; flip to True to actually trigger qualifications,
+    # request data routing, and escalate capability gaps.
+    active_remediation_enabled: bool = False
 
 
 class SPCConfig(BaseModel):

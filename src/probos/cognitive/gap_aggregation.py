@@ -33,6 +33,81 @@ class FleetGapSnapshot:
     top_intents: tuple[tuple[str, int], ...]  # top 5 most-affected intents (intent → gap count)
 
 
+@dataclass(frozen=True)
+class FederatedGapSnapshot:
+    """AD-539d-i: cross-ship federated rollup over per-ship FleetGapSnapshots.
+
+    Pure aggregation surface. The fetch protocol (how peer snapshots are
+    obtained — direct NATS request, persisted ship-records mirror, etc.)
+    is deferred to a successor AD; this struct is the merge target.
+    """
+
+    aggregated_at: float
+    contributing_ships: tuple[str, ...]
+    total_gaps: int
+    by_gap_type: dict[str, int]
+    by_priority: dict[str, int]
+    by_department: dict[str, int]
+    top_intents: tuple[tuple[str, int], ...]
+    per_ship: dict[str, dict[str, int]]  # ship_id -> {"total_gaps", per type/priority counts}
+
+
+def merge_fleet_snapshots(
+    local_ship_id: str,
+    local: FleetGapSnapshot | None,
+    peer_snapshots: dict[str, FleetGapSnapshot],
+    *,
+    top_intent_limit: int = 5,
+) -> FederatedGapSnapshot:
+    """AD-539d-i: merge a local snapshot with peer-ship snapshots into a fleet rollup.
+
+    All inputs are ``FleetGapSnapshot`` instances (counts only — privacy
+    invariant from AD-539d preserved). The output mirrors the AD-539d
+    summary surface plus a ``per_ship`` map for callers that want to
+    drill down.
+    """
+    contributing: list[str] = []
+    by_gap_type: Counter[str] = Counter()
+    by_priority: Counter[str] = Counter()
+    by_department: Counter[str] = Counter()
+    intents: Counter[str] = Counter()
+    per_ship: dict[str, dict[str, int]] = {}
+    total = 0
+
+    def _add(ship_id: str, snap: FleetGapSnapshot) -> None:
+        nonlocal total
+        contributing.append(ship_id)
+        total += snap.total_gaps
+        by_gap_type.update(snap.by_gap_type)
+        by_priority.update(snap.by_priority)
+        by_department.update(snap.by_department)
+        for intent, count in snap.top_intents:
+            intents[intent] += count
+        per_ship[ship_id] = {
+            "total_gaps": snap.total_gaps,
+            **{f"type_{k}": v for k, v in snap.by_gap_type.items()},
+            **{f"priority_{k}": v for k, v in snap.by_priority.items()},
+        }
+
+    if local is not None:
+        _add(local_ship_id, local)
+    for ship_id, snap in peer_snapshots.items():
+        if ship_id == local_ship_id:
+            continue  # avoid double-counting if caller passed local in both args
+        _add(ship_id, snap)
+
+    return FederatedGapSnapshot(
+        aggregated_at=time.time(),
+        contributing_ships=tuple(sorted(set(contributing))),
+        total_gaps=total,
+        by_gap_type=dict(by_gap_type),
+        by_priority=dict(by_priority),
+        by_department=dict(by_department),
+        top_intents=tuple(intents.most_common(top_intent_limit)),
+        per_ship=per_ship,
+    )
+
+
 class FleetGapAggregator:
     """v1 local-ship aggregator. AD-539d.
 
