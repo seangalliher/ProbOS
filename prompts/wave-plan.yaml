@@ -2692,3 +2692,101 @@ waves:
     builder_required: true
     issues_to_close: [9]
     status: pending
+
+  - id: "105"
+    title: "AD-641g v1 NATS Cognitive Chain Pipeline (foundation -- publish-side only, closes #403)"
+    kind: single
+    depends_on: ["104"]
+    dispatch_prompt: "prompts/WAVE-105-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-641g-async-cognitive-pipeline-v1.md"
+    builder_required: true
+    issues_to_close: [403]
+    status: pending
+    notes: |
+      Foundation cut: subject schema + ChainNATSBridge publish-side + opt-in
+      config flag. No consumer logic, no executor flip. Synchronous chain
+      remains live path. Unblocks AD-644, AD-645 Phase 5, AD-646, AD-647,
+      AD-651 (forward dependencies on chain.{agent}.{step}.complete subjects).
+      Decoupled-execution flip deferred to AD-641g-1.
+
+  - id: "106"
+    title: "BF #423 knowledge/store git-recovery test coverage"
+    kind: bf
+    depends_on: ["105"]
+    dispatch_prompt: "prompts/WAVE-106-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/bf-knowledge-store-recovery-tests-v1.md"
+    builder_required: true
+    issues_to_close: [423]
+    status: pending
+    notes: |
+      Add tests/test_knowledge_store_git_recovery.py covering the 4-tier
+      recovery (corrupt index, broken refs, reflog file parse, fsck fallback).
+      No source changes; tests exercise existing recovery branches added
+      this week (commits a96a774, 23ae043, e272533).
+
+  - id: "107"
+    title: "AD-694a Extract /api/ontology/graph edge logic to ontology service (#424)"
+    kind: single
+    depends_on: ["106"]
+    dispatch_prompt: "prompts/WAVE-107-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-694a-ontology-graph-snapshot-v1.md"
+    builder_required: true
+    issues_to_close: [424]
+    status: pending
+    notes: |
+      Move ~200 lines of edge-construction out of routers/ontology.py into
+      probos.ontology. Route handler reduces to validate + delegate. SRP +
+      Layer architecture compliance. AD-520 tests pass unchanged; new builder
+      gets direct unit tests.
+
+  - id: "108"
+    title: "BF #426 KnowledgeGraphView TRUST mode O(n^2) edge cap"
+    kind: bf
+    depends_on: ["107"]
+    dispatch_prompt: "prompts/WAVE-108-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/bf-trust-edge-cap-v1.md"
+    builder_required: true
+    issues_to_close: [426]
+    status: pending
+    notes: |
+      Cap synthesized trust edges at 200 with trust>0.6 filter. Add Vitest
+      for cap behavior. UI-only change.
+
+  - id: "109"
+    title: "BF #425 wave-plan.yaml status drift reconciliation + tooling AD"
+    kind: bf
+    depends_on: ["108"]
+    dispatch_prompt: "prompts/WAVE-109-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/bf-wave-plan-status-drift-v1.md"
+    builder_required: true
+    issues_to_close: [425]
+    status: pending
+    notes: |
+      Decision: orchestrator close-stage writes status:done back to YAML.
+      One-shot reconciliation pass to fix waves 91-104. Pre-commit guard
+      optional. Document choice in DECISIONS.md.
+
+  - id: "110"
+    title: "Nit #427 TrainingAgent _runtime override removal"
+    kind: bf
+    depends_on: ["109"]
+    dispatch_prompt: "prompts/WAVE-110-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/nit-training-agent-runtime-v1.md"
+    builder_required: true
+    issues_to_close: [427]
+    status: pending
+    notes: |
+      Delete redundant self._runtime = kwargs.get('runtime') in
+      TrainingAgent.__init__ — already set by CognitiveAgent base.

@@ -73,7 +73,20 @@ async def init_nats(config: "SystemConfig") -> "NATSBus | None":
                 max_msgs=10000,
                 max_age=300,       # 5 min retention — stale notifications are worthless
             )
-            logger.info("Startup [nats]: JetStream streams recreated (SYSTEM_EVENTS, WARDROOM, INTENT_DISPATCH)")
+            # AD-641g: cognitive chain step lifecycle stream. Recreate so a
+            # subject-set change between boots is honored (parity with the
+            # SYSTEM_EVENTS / WARDROOM / INTENT_DISPATCH streams above).
+            from probos.cognitive.chain_subjects import (
+                CHAIN_STREAM,
+                chain_stream_subjects,
+            )
+            await bus.recreate_stream(
+                CHAIN_STREAM,
+                chain_stream_subjects(),
+                max_msgs=20000,
+                max_age=3600,
+            )
+            logger.info("Startup [nats]: JetStream streams recreated (SYSTEM_EVENTS, WARDROOM, INTENT_DISPATCH, COGNITIVE_CHAIN)")
     else:
         logger.warning(
             "Startup [nats]: connection failed — system will operate without NATS. "

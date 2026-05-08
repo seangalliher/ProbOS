@@ -184,9 +184,11 @@ class SubTaskExecutor:
         *,
         config: Any = None,
         emit_event_fn: Callable | None = None,
+        nats_bridge: Any = None,  # AD-641g: ChainNATSBridge | None — typed Any to avoid import cycle
     ) -> None:
         self._config = config
         self._emit_event_fn = emit_event_fn
+        self._nats_bridge = nats_bridge
         self._handlers: dict[SubTaskType, SubTaskHandler] = {}
 
         # AD-636: Global semaphore limiting concurrent chain executions
@@ -204,6 +206,35 @@ class SubTaskExecutor:
                 f"Handler already registered for {sub_task_type.value}"
             )
         self._handlers[sub_task_type] = handler
+
+    def _publish_step_to_nats(
+        self,
+        *,
+        agent_id: str,
+        spec: SubTaskSpec,
+        result: SubTaskResult,
+        intent_id: str,
+    ) -> None:
+        """AD-641g: forward a finalized step result to the NATS bridge.
+
+        No-op when the bridge is unset or disabled. Must never raise — the
+        synchronous chain owns its own success/failure semantics.
+        """
+        bridge = self._nats_bridge
+        if bridge is None:
+            return
+        try:
+            bridge.publish_step_complete(
+                agent_id=agent_id,
+                step=spec.sub_task_type,
+                result=result,
+                intent_id=intent_id,
+            )
+        except Exception:
+            logger.debug(
+                "AD-641g: chain bridge publish_step_complete raised; ignoring",
+                exc_info=True,
+            )
 
     @property
     def enabled(self) -> bool:
@@ -374,6 +405,9 @@ class SubTaskExecutor:
                 )
                 results.append(result)
                 completed.add(spec.name)
+                self._publish_step_to_nats(
+                    agent_id=agent_id, spec=spec, result=result, intent_id=intent_id,
+                )
                 if not result.success and spec.required:
                     raise SubTaskStepError(
                         spec.name, spec.sub_task_type, result.error,
@@ -422,6 +456,9 @@ class SubTaskExecutor:
                             )
                     results.append(result)
                     completed.add(spec.name)
+                    self._publish_step_to_nats(
+                        agent_id=agent_id, spec=spec, result=result, intent_id=intent_id,
+                    )
 
                 if required_failure is not None:
                     raise required_failure

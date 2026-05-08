@@ -288,6 +288,8 @@ class SubTaskConfig(BaseModel):
     max_chain_steps: int = 6                   # Maximum steps per chain (defense in depth)
     fallback_on_timeout: str = "single_call"   # Degradation strategy
     max_concurrent_chains: int = 4             # AD-636: Cap simultaneous chain executions
+    nats_publish_enabled: bool = False         # AD-641g: opt-in chain step publish to NATS
+    nats_payload_max_bytes: int = 16384        # AD-641g: cap on result-dict serialized size
 
 
 class BootCampConfig(BaseModel):

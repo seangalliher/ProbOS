@@ -3087,11 +3087,20 @@ async def finalize_startup(
         from probos.cognitive.sub_tasks import (
             AnalyzeHandler, ComposeHandler, EvaluateHandler, QueryHandler, ReflectHandler,
         )
+        from probos.cognitive.chain_nats_bridge import ChainNATSBridge
 
         sub_task_config = config.sub_task
+        # AD-641g: publish-side bridge — no-op when nats_publish_enabled=False.
+        # Stream provisioning happens in startup/nats.py (canonical location).
+        chain_nats_bridge = ChainNATSBridge(
+            nats_bus=getattr(runtime, "nats_bus", None),
+            config=sub_task_config,
+        )
+        runtime.chain_nats_bridge = chain_nats_bridge
         executor = SubTaskExecutor(
             config=sub_task_config,
             emit_event_fn=runtime.emit_event,
+            nats_bridge=chain_nats_bridge,
         )
         query_handler = QueryHandler(runtime)
         executor.register_handler(SubTaskType.QUERY, query_handler)
