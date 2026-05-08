@@ -2812,3 +2812,217 @@ waves:
       entry-point discovery, finalize hook runner, runtime predicate. Commercial
       repo ships entry point separately. No RBAC/SSO/license logic here.
 
+
+  - id: "112"
+    title: "AD-641g-1: Flip SubTaskExecutor to consume NATS chain subjects (Phase 3, closes #430)"
+    kind: single
+    depends_on: ["111"]
+    dispatch_prompt: "prompts/WAVE-112-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-641g-1-decoupled-execution-v1.md"
+    builder_required: true
+    issues_to_close: [430]
+    status: pending
+
+  - id: "113"
+    title: "AD-697-1 + AD-698: Overlay seam validation (HXI badge + first hook, closes #431 #432)"
+    kind: combo
+    depends_on: ["112"]
+    dispatch_prompt: "prompts/WAVE-113-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-697-1-hxi-badge-v1.md"
+      - "prompts/ad-698-pre-intent-auth-hook-v1.md"
+    builder_required: true
+    issues_to_close: [431, 432]
+    status: pending
+
+  - id: "114"
+    title: "BF: Roadmap reconciliation - flip shipped (planned) tags to COMPLETE (closes #465)"
+    kind: bf
+    depends_on: ["113"]
+    dispatch_prompt: "prompts/WAVE-114-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/bf-roadmap-reconciliation-v1.md"
+    builder_required: true
+    issues_to_close: [465]
+    status: pending
+
+  - id: "115"
+    title: "AD-443: Agent Mobility Protocol - Transfer Certificates + Memory Portability (closes #433)"
+    kind: single
+    depends_on: ["114"]
+    dispatch_prompt: "prompts/WAVE-115-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-443-agent-mobility-v1.md"
+    builder_required: true
+    issues_to_close: [433]
+    status: pending
+
+  - id: "116"
+    title: "AD-482: Self-Improvement Pipeline (closes #434)"
+    kind: single
+    depends_on: ["115"]
+    dispatch_prompt: "prompts/WAVE-116-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-482-self-improvement-pipeline-v1.md"
+    builder_required: true
+    issues_to_close: [434]
+    status: pending
+
+  - id: "117"
+    title: "AD-529 + AD-568: Communication Contagion Firewall + Source Governance (closes #437 #438)"
+    kind: combo
+    depends_on: ["116"]
+    dispatch_prompt: "prompts/WAVE-117-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-529-comm-contagion-firewall-v1.md"
+      - "prompts/ad-568-source-governance-v1.md"
+    builder_required: true
+    issues_to_close: [437, 438]
+    status: pending
+
+  - id: "118"
+    title: "AD-660b: Causal reasoning ranking + emergence wiring (closes #460)"
+    kind: single
+    depends_on: ["117"]
+    dispatch_prompt: "prompts/WAVE-118-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-660b-causal-ranking-v1.md"
+    builder_required: true
+    issues_to_close: [460]
+    status: pending
+
+  - id: "119"
+    title: "AD-572d-i + AD-573e-i: Forcing-function infra (closes #456 #457)"
+    kind: combo
+    depends_on: ["118"]
+    dispatch_prompt: "prompts/WAVE-119-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-572d-i-interruptible-wait-v1.md"
+      - "prompts/ad-573e-i-journal-recall-v1.md"
+    builder_required: true
+    issues_to_close: [456, 457]
+    status: pending
+
+  - id: "120"
+    title: "AD-539c-i + AD-539d-i: Active gap remediation + federation aggregation (closes #454 #455)"
+    kind: combo
+    depends_on: ["119"]
+    dispatch_prompt: "prompts/WAVE-120-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-539c-i-active-remediation-v1.md"
+      - "prompts/ad-539d-i-federation-gap-aggregation-v1.md"
+    builder_required: true
+    issues_to_close: [454, 455]
+    status: pending
+
+  - id: "121"
+    title: "AD-509b/c/d Boot Camp continuations + AD-507b progression (closes #439 #440 #441 #443)"
+    kind: combo
+    depends_on: ["120"]
+    dispatch_prompt: "prompts/WAVE-121-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-509b-c-d-bootcamp-continuations-v1.md"
+      - "prompts/ad-507b-curriculum-progression-v1.md"
+    builder_required: true
+    issues_to_close: [439, 440, 441, 443]
+    status: pending
+
+  - id: "122"
+    title: "AD-511b/d Boundary continuations (closes #446 #448)"
+    kind: combo
+    depends_on: ["121"]
+    dispatch_prompt: "prompts/WAVE-122-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-511b-protective-disengagement-v1.md"
+      - "prompts/ad-511d-probing-detection-v1.md"
+    builder_required: true
+    issues_to_close: [446, 448]
+    status: pending
+
+  - id: "123"
+    title: "AD-522b/c SPC capability + graduated response (closes #450 #451)"
+    kind: combo
+    depends_on: ["122"]
+    dispatch_prompt: "prompts/WAVE-123-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-522b-cpk-v1.md"
+      - "prompts/ad-522c-graduated-response-v1.md"
+    builder_required: true
+    issues_to_close: [450, 451]
+    status: pending
+
+  - id: "124"
+    title: "AD-583f-g + AD-574c-i UI/echo work (closes #464 #458)"
+    kind: combo
+    depends_on: ["123"]
+    dispatch_prompt: "prompts/WAVE-124-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-583f-g-observable-state-v1.md"
+      - "prompts/ad-574c-i-dm-convergence-v1.md"
+    builder_required: true
+    issues_to_close: [464, 458]
+    status: pending
+
+  - id: "125"
+    title: "AD-686c + AD-647d hygiene (closes #463 #459)"
+    kind: combo
+    depends_on: ["124"]
+    dispatch_prompt: "prompts/WAVE-125-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-686c-semantic-internal-v1.md"
+      - "prompts/ad-647d-consult-resume-v1.md"
+    builder_required: true
+    issues_to_close: [463, 459]
+    status: pending
+
+  - id: "126"
+    title: "AD-473 PWA + AD-474 Voice (large UX wave, closes #435 #436)"
+    kind: combo
+    depends_on: ["125"]
+    dispatch_prompt: "prompts/WAVE-126-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-473-pwa-mobile-v1.md"
+      - "prompts/ad-474-voice-stack-v1.md"
+    builder_required: true
+    issues_to_close: [435, 436]
+    status: pending
+
+  - id: "127"
+    title: "Priority-4 cleanup combo: AD-509e/507c/507d/511c/511e/522d/522e/660c/660d (closes #442 #444 #445 #447 #449 #452 #453 #461 #462)"
+    kind: combo
+    depends_on: ["126"]
+    dispatch_prompt: "prompts/WAVE-127-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/wave-127-priority-4-cleanup-v1.md"
+    builder_required: true
+    issues_to_close: [442, 444, 445, 447, 449, 452, 453, 461, 462]
+    status: pending
+
+  - id: "128"
+    title: "BF: Stabilize xdist worker-crash flakes (closes #466)"
+    kind: bf
+    depends_on: ["127"]
+    dispatch_prompt: "prompts/WAVE-128-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/bf-xdist-flakes-v1.md"
+    builder_required: true
+    issues_to_close: [466]
+    status: pending
