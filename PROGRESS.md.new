@@ -8,7 +8,7 @@ back to OSS).
 
 **Authoritative state.**
 - `prompts/wave-plan.yaml` — wave roster (current wave: 128 done; next slot is 129).
-- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-698).
+- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-698; AD-696 was the most recent OSS-coordination decision).
 - `tests/` — 11000+ tests at HEAD; gate runs `-n 16 --dist=loadfile`.
 
 **Recent eras (archived):**
@@ -32,23 +32,23 @@ back to OSS).
 | 108 | BF #426 | `KnowledgeGraphView` TRUST mode O(n²) edge cap |
 | 109 | BF #425 / AD-696 | wave-plan status drift reconciliation + convention docs |
 | 110 | Nit #427 | `TrainingAgent` redundant `_runtime` override removed |
-| 111 | AD-697 v1 | commercial overlay extension-point registry |
+| 111 | AD-697 v1 | commercial overlay extension-point registry (entry-point group, finalize hook runner, runtime predicate, `/api/system/extensions`) |
 | 112 | AD-641g-1 | chain NATS consumer foundation (subscriber side, opt-in) |
 | 113 | AD-697-1 + AD-698 | overlay seam validation: HXI badge + pre-intent authorization hook |
 | 114 | BF #465 | roadmap reconciliation — flip 27 shipped `(planned, OSS)` tags |
-| 115 | AD-443 (drift) | mobility protocol — already shipped |
-| 116 | AD-482 (drift) | self-improvement pipeline — already shipped |
-| 117 | AD-529 + AD-568 | comm contagion firewall + source governance |
+| 115 | AD-443 (drift) | mobility protocol — already shipped; closed as roadmap drift |
+| 116 | AD-482 (drift) | self-improvement pipeline — already shipped; closed as drift |
+| 117 | AD-529 + AD-568 | comm contagion firewall + source governance (568 already shipped) |
 | 118 | AD-660b | `/api/causal-templates` router |
-| 119 | AD-572d-i + AD-573e-i | interruptible-wait + `recent_for_agent` infra |
-| 120 | AD-539c-i + AD-539d-i | active gap remediation + federated aggregation |
+| 119 | AD-572d-i + AD-573e-i | interruptible-wait + `recent_for_agent` forcing-function infra |
+| 120 | AD-539c-i + AD-539d-i | active gap remediation + federated cross-ship aggregation |
 | 121 | AD-509b/c/d + AD-507b | boot-camp continuations + curriculum progression |
 | 122 | AD-511b + AD-511d | protective disengagement + boundary-probing detection |
 | 123 | AD-522b + AD-522c | Cp/Cpk capability indices + graduated-response zone mapping |
 | 124 | AD-583f/g (drift); AD-574c-i partial | observable state already shipped; DM convergence partial-deferred |
 | 125 | AD-686c + AD-647d | `oracle.semantic_stats()` + chain CONSULT checkpoint store |
 | 126 | AD-473 + AD-474 | PWA Web Push subscription registry + voice STT/TTS substrate |
-| 127 | priority-4 cleanup combo | AD-509e/507c/507d/511c/511e/522d/522e/660c/660d |
+| 127 | priority-4 cleanup combo | AD-509e/507c/507d/511c/511e/522d/522e/660c/660d (+23 tests) |
 | 128 | BF #466 | xdist stabilization: `-n 16 --dist=loadfile` |
 | BF | BF #467 | distinguish leading @callsign (DM) from embedded mention (broadcast) |
 
@@ -59,7 +59,8 @@ back to OSS).
 | AD | Forcing function |
 |----|------------------|
 | AD-574c-ii | DM conversation convergence (full ProfileChatTab refactor — substrate now ready) |
-| AD-641g-1-1 | flip executor to `await` ANALYZE results from NATS (depends on AD-641g-1 consumer in production use) |
+| AD-641g-1-1 | flip executor to `await` ANALYZE results from NATS subjects (depends on AD-641g-1 consumer in production use) |
+| AD-687 backlog | UAAA / federation knowledge sync / Kùzu migration (commercial-tagged) |
 
 ----
 
