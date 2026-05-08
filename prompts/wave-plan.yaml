@@ -3001,7 +3001,7 @@ waves:
       - "prompts/ad-474-voice-stack-v1.md"
     builder_required: true
     issues_to_close: [435, 436]
-    status: pending
+    status: done
 
   - id: "127"
     title: "Priority-4 cleanup combo: AD-509e/507c/507d/511c/511e/522d/522e/660c/660d (closes #442 #444 #445 #447 #449 #452 #453 #461 #462)"

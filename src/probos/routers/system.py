@@ -83,6 +83,55 @@ async def causal_templates(
     return {"templates": list(rows or []), "count": len(rows or [])}
 
 
+# AD-473d: Web Push subscription registry (lazy module-level singleton)
+_PUSH_REGISTRY: Any = None
+
+
+def _get_push_registry() -> Any:
+    global _PUSH_REGISTRY
+    if _PUSH_REGISTRY is None:
+        from probos.web_push import PushSubscriptionRegistry
+        _PUSH_REGISTRY = PushSubscriptionRegistry()
+    return _PUSH_REGISTRY
+
+
+@router.post("/push/subscribe")
+async def push_subscribe(payload: dict[str, Any]) -> dict[str, Any]:
+    """AD-473d: register a Web Push subscription.
+
+    Expects W3C-shaped body: ``{endpoint, keys: {p256dh, auth}, subscriber_id?}``.
+    Returns the registered subscription as a structured echo.
+    """
+    endpoint = (payload or {}).get("endpoint", "")
+    keys = (payload or {}).get("keys", {}) or {}
+    subscriber_id = (payload or {}).get("subscriber_id", "") or ""
+    if not endpoint:
+        return JSONResponse({"error": "endpoint required"}, status_code=400)
+    registry = _get_push_registry()
+    try:
+        sub = registry.register(endpoint=endpoint, keys=keys, subscriber_id=subscriber_id)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"endpoint": sub.endpoint, "subscriber_id": sub.subscriber_id, "created_at": sub.created_at}
+
+
+@router.post("/push/unsubscribe")
+async def push_unsubscribe(payload: dict[str, Any]) -> dict[str, Any]:
+    endpoint = (payload or {}).get("endpoint", "")
+    if not endpoint:
+        return JSONResponse({"error": "endpoint required"}, status_code=400)
+    registry = _get_push_registry()
+    removed = registry.unregister(endpoint)
+    return {"removed": removed}
+
+
+@router.get("/push/subscriptions")
+async def push_list_subscriptions() -> dict[str, Any]:
+    """AD-473d: count of active push subscriptions (no PII returned)."""
+    registry = _get_push_registry()
+    return {"count": registry.count()}
+
+
 @router.get("/telemetry")
 async def get_telemetry(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Return current telemetry report (AD-461)."""
