@@ -96,4 +96,5 @@ class TrainingAgent(CognitiveAgent):
     def __init__(self, **kwargs: Any) -> None:
         kwargs.setdefault("pool", "training_officer")
         super().__init__(**kwargs)
-        self._runtime = kwargs.get("runtime")
+        # Nit #427: do NOT reassign self._runtime — CognitiveAgent.__init__
+        # already does ``self._runtime = kwargs.get("runtime")``.
