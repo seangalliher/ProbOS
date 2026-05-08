@@ -2775,7 +2775,7 @@ waves:
       - "prompts/bf-wave-plan-status-drift-v1.md"
     builder_required: true
     issues_to_close: [425]
-    status: pending
+    status: done
     notes: |
       Decision: orchestrator close-stage writes status:done back to YAML.
       One-shot reconciliation pass to fix waves 91-104. Pre-commit guard
@@ -2791,7 +2791,7 @@ waves:
       - "prompts/nit-training-agent-runtime-v1.md"
     builder_required: true
     issues_to_close: [427]
-    status: pending
+    status: done
     notes: |
       Delete redundant self._runtime = kwargs.get('runtime') in
       TrainingAgent.__init__ — already set by CognitiveAgent base.
