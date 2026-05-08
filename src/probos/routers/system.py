@@ -40,6 +40,22 @@ async def status(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     return runtime.status()
 
 
+@router.get("/extensions")
+async def extensions(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-697: read-only snapshot of overlay extensions registered with the runtime.
+
+    HXI / external clients use this to gate UI affordances ("show
+    upgrade prompt", "render Admin tab") without needing to import any
+    commercial symbol.
+    """
+    from probos.extensions.overlay import registered_hook_names
+    return {
+        "commercial_loaded": runtime.commercial_overlay_loaded,
+        "providers": list(runtime.loaded_extension_providers),
+        "hooks": list(registered_hook_names()),
+    }
+
+
 @router.get("/telemetry")
 async def get_telemetry(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Return current telemetry report (AD-461)."""

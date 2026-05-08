@@ -2795,3 +2795,20 @@ waves:
     notes: |
       Delete redundant self._runtime = kwargs.get('runtime') in
       TrainingAgent.__init__ — already set by CognitiveAgent base.
+
+  - id: "111"
+    title: "AD-697 v1 Commercial Overlay Extension-Point Registry (OSS plumbing, closes #429)"
+    kind: single
+    depends_on: ["110"]
+    dispatch_prompt: "prompts/WAVE-111-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-697-extension-registry-v1.md"
+    builder_required: true
+    issues_to_close: [429]
+    status: done
+    notes: |
+      Foundation for OSS<->Commercial overlay flip. Pure plumbing: registry,
+      entry-point discovery, finalize hook runner, runtime predicate. Commercial
+      repo ships entry point separately. No RBAC/SSO/license logic here.
+

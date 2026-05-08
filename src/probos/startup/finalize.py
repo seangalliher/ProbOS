@@ -3666,6 +3666,20 @@ async def finalize_startup(
         logger.info("AD-637d: SYSTEM_EVENTS %d listeners wired to NATS",
                     len(runtime._event_listeners))
 
+    # AD-697: discover and run any installed overlay extensions.
+    # Pure OSS plumbing — no-op when no overlay is installed. Failures
+    # degrade silently so a broken overlay can never block the OSS
+    # runtime from finishing finalize.
+    try:
+        from probos.extensions.overlay import discover_extensions, run_finalize_hooks
+        discover_extensions()
+        await run_finalize_hooks(runtime, config)
+    except Exception:
+        logger.warning(
+            "AD-697: extension finalize phase failed; continuing OSS-only",
+            exc_info=True,
+        )
+
     logger.info("Startup [finalize]: complete")
     return FinalizationResult(
         conn_manager=conn_manager,

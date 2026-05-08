@@ -1090,6 +1090,18 @@ class ProbOSRuntime:
         return type(self.llm_client).__name__ == "MockLLMClient"
 
     @property
+    def commercial_overlay_loaded(self) -> bool:
+        """AD-697: True iff a commercial overlay registered any extension hooks."""
+        from probos.extensions.overlay import is_commercial_loaded
+        return is_commercial_loaded()
+
+    @property
+    def loaded_extension_providers(self) -> tuple[str, ...]:
+        """AD-697: provider names that registered extension hooks (sorted)."""
+        from probos.extensions.overlay import loaded_providers
+        return loaded_providers()
+
+    @property
     def billet_registry(self) -> Any:
         """AD-595a: Billet resolution facade (delegates to ontology)."""
         if self.ontology is None:

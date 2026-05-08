@@ -75,6 +75,13 @@ dev = [
 [project.scripts]
 probos = "probos.__main__:main"
 
+# AD-697: Commercial overlay extension-point group. Reserved for any
+# private a third-party overlay (and any future third-party
+# extensions) to register against. The OSS package itself ships zero
+# entry points here — discovery is no-op until an overlay is installed.
+[project.entry-points."probos.extensions"]
+# (intentionally empty)
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
