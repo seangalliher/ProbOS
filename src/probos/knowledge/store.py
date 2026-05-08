@@ -494,7 +494,12 @@ class KnowledgeStore:
         await self._git_commit(combined)
 
     async def _git_commit(self, message: str) -> None:
-        """Run git add + commit in thread executor (AD-166)."""
+        """Run git add + commit in thread executor (AD-166).
+
+        BF: Concurrent processes touching the same repo can leave the
+        index or HEAD ref in a half-written state. Detect both classes
+        and recover in place rather than just logging a warning.
+        """
         if not self._git_available:
             return
 
@@ -504,10 +509,6 @@ class KnowledgeStore:
                 result_add.returncode != 0
                 and "index file corrupt" in (result_add.stderr or "")
             ):
-                # BF: rebuild the index in place when concurrent writes have
-                # corrupted it. `git read-tree HEAD` regenerates `.git/index`
-                # from the last commit, which is safe because all worktree
-                # changes are reapplied by the subsequent `git add -A`.
                 log.warning(
                     "Git index corrupt at %s; rebuilding from HEAD",
                     self._repo_path,
@@ -528,8 +529,54 @@ class KnowledgeStore:
                 log.warning("Git add failed: %s", result_add.stderr.strip())
                 return
             result = await self._git_run("commit", "-m", message, "--allow-empty")
-            if result.returncode != 0 and "nothing to commit" not in result.stdout:
-                log.warning("Git commit failed: %s", result.stderr.strip())
+            if result.returncode == 0 or "nothing to commit" in result.stdout:
+                return
+            stderr = result.stderr or ""
+            if (
+                "reference broken" in stderr
+                or "unable to resolve reference" in stderr
+                or "cannot lock ref" in stderr
+            ):
+                # BF: a broken HEAD ref (zero-length or truncated
+                # `.git/refs/heads/<branch>`) blocks every commit. The
+                # reflog still has the last good SHA — recover by
+                # rewriting the ref from `git reflog` and retrying.
+                log.warning(
+                    "Git ref broken at %s; attempting reflog recovery",
+                    self._repo_path,
+                )
+                reflog = await self._git_run(
+                    "reflog", "--format=%H", "-n", "1"
+                )
+                sha = (reflog.stdout or "").strip().splitlines()[:1]
+                if reflog.returncode == 0 and sha and len(sha[0]) == 40:
+                    update = await self._git_run(
+                        "update-ref", "HEAD", sha[0]
+                    )
+                    if update.returncode == 0:
+                        retry = await self._git_run(
+                            "commit", "-m", message, "--allow-empty"
+                        )
+                        if (
+                            retry.returncode == 0
+                            or "nothing to commit" in retry.stdout
+                        ):
+                            return
+                        log.warning(
+                            "Git commit retry failed after ref recovery: %s",
+                            retry.stderr.strip(),
+                        )
+                        return
+                    log.warning(
+                        "Git update-ref failed: %s",
+                        update.stderr.strip(),
+                    )
+                    return
+                log.warning(
+                    "Git ref recovery failed: no usable reflog entry"
+                )
+                return
+            log.warning("Git commit failed: %s", stderr.strip())
         except Exception as exc:
             log.warning("Git commit error: %s", exc)
 
