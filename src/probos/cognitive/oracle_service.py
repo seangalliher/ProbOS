@@ -201,6 +201,23 @@ class OracleService:
         """
         self._semantic_layer = semantic_layer
 
+    def semantic_stats(self) -> dict[str, Any]:
+        """AD-686c: public stats accessor over the attached SemanticKnowledgeLayer.
+
+        Returns the layer's ``stats()`` payload when attached, or
+        ``{"enabled": False}`` otherwise. Lets callers (e.g. the runtime
+        ``status()`` panel and ``/system`` shell command) read semantic
+        statistics without reaching into ``runtime._semantic_layer``.
+        """
+        layer = self._semantic_layer
+        if layer is None:
+            return {"enabled": False}
+        try:
+            stats = layer.stats()
+        except Exception:
+            return {"enabled": True, "error": "stats_unavailable"}
+        return stats if isinstance(stats, dict) else {"enabled": True}
+
     def attach_knowledge_graph(self, knowledge_graph: Any) -> None:
         """AD-688: Late-bind the KnowledgeEdgeStorage.
 

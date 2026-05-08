@@ -2988,7 +2988,7 @@ waves:
       - "prompts/ad-647d-consult-resume-v1.md"
     builder_required: true
     issues_to_close: [463, 459]
-    status: pending
+    status: done
 
   - id: "126"
     title: "AD-473 PWA + AD-474 Voice (large UX wave, closes #435 #436)"

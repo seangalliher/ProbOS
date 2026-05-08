@@ -136,9 +136,11 @@ class ProcessChainExecutor:
         *,
         emit_event: Callable[[str, dict], Any] | None = None,
         bill_runtime: Any = None,  # AD-647c: optional BillRuntime for step lifecycle recording
+        checkpoint_store: Any = None,  # AD-647d: optional ChainCheckpointStore for CONSULT suspend
     ) -> None:
         self._emit_event = emit_event
         self._bill_runtime = bill_runtime
+        self._checkpoint_store = checkpoint_store
 
     async def run(
         self,
@@ -174,6 +176,38 @@ class ProcessChainExecutor:
             try:
                 step_output = await step.handler(running)
             except Exception as exc:
+                # AD-647d: SuspendChain at any step writes a checkpoint and
+                # re-raises ChainSuspended. Caller can resume by loading the
+                # checkpoint and resubmitting with the captured context.
+                from probos.cognitive.chain_checkpoint import (
+                    ChainSuspended, SuspendChain, write_checkpoint,
+                )
+                if isinstance(exc, SuspendChain):
+                    if self._checkpoint_store is None:
+                        logger.warning(
+                            "AD-647d: chain '%s' step '%s' raised SuspendChain "
+                            "but no checkpoint_store wired; surfacing as failure",
+                            definition.name, step.name,
+                        )
+                    else:
+                        merged = dict(running)
+                        merged.update(exc.context_extra)
+                        cp = write_checkpoint(
+                            self._checkpoint_store,
+                            chain_name=definition.name,
+                            step_name=step.name,
+                            running_context=merged,
+                            reason=exc.reason,
+                        )
+                        logger.info(
+                            "AD-647d: chain '%s' suspended at step '%s' (checkpoint=%s, reason=%r)",
+                            definition.name, step.name, cp.checkpoint_id, exc.reason,
+                        )
+                        raise ChainSuspended(
+                            chain_name=definition.name,
+                            step_name=step.name,
+                            checkpoint_id=cp.checkpoint_id,
+                        ) from None
                 logger.warning(
                     "AD-647: process chain '%s' step '%s' (%s) raised %s",
                     definition.name, step.name, step.kind.value, type(exc).__name__,

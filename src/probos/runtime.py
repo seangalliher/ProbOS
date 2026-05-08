@@ -3182,9 +3182,15 @@ class ProbOSRuntime:
             else {"enabled": False}
         )
         result["semantic_knowledge"] = (
-            self._semantic_layer.stats()
-            if self._semantic_layer
-            else {"enabled": False}
+            # AD-686c: route through Oracle's public surface; fall back to
+            # the legacy direct read for stub runtimes that bypass init.
+            self.oracle.semantic_stats()
+            if getattr(self, "oracle", None) is not None
+            else (
+                self._semantic_layer.stats()
+                if self._semantic_layer
+                else {"enabled": False}
+            )
         )
         if self.dream_scheduler:
             dream_status: dict[str, Any] = {
