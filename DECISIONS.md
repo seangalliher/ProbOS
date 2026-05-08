@@ -1278,3 +1278,16 @@ Extends the AD-456 AuditLog hash-chain pattern to the substrate `EventLog`. Adds
 **Status:** SHIPPED. Issue [#506](https://github.com/seangalliher/ProbOS/issues/506).
 **Files:** `src/probos/substrate/event_log.py` (additive). Tests: `tests/test_ad490_eventlog_hash_chain.py` (8 cases, all passing).
 
+
+### AD-491 - gitagent Interop Adapter (publish/install boundary only)
+**Date:** 2026-05-08  `n**Type:** Architecture Decision (interop boundary)  `n**Wave:** 129
+
+Greenfield `src/probos/interop/` package with `gitagent.py` exposing two pure boundary functions:
+- `export_agent_to_gitagent_yaml(agent) -> str` renders a ProbOS agent in gitagent YAML with a `probos` sub-section preserving `sovereign_id` / `did` / `pool`.
+- `import_gitagent_yaml(path) -> dict` parses gitagent YAML; if `runtime != 'probos'` it forces `probos.sovereign_id` and `probos.did` to `''` so foreign runtimes cannot assert ProbOS sovereign identity. Required keys: `name`, `runtime` (else ValueError).
+
+**In scope:** publish/install boundary only; no runtime wiring, no agent instantiation, no AgentIdentityRegistry writes.
+**Out of scope:** `/install` slash command, federation publishing, per-agent versioning, foreign-runtime sovereign trust.
+**Status:** SHIPPED. Issue [#491](https://github.com/seangalliher/ProbOS/issues/491).
+**Files:** `src/probos/interop/__init__.py` (new), `src/probos/interop/gitagent.py` (new). Tests: `tests/test_ad491_gitagent_interop.py` (8 cases, all passing).
+
