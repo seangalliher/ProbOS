@@ -1695,10 +1695,23 @@ class CognitiveAgent(BaseAgent):
         if _skill_instr:
             composed += f"\n\n---\n\n## Active Skill: {observation.get('cognitive_skill_name', 'Unknown')}\n\n{_skill_instr}"
 
+        # AD-700c: Per-observation LLM tier override (e.g. DiagnosticianAgent L1=deep, L2/L3=fast, L4/L5=no-LLM).
+        _per_call_tier = self._resolve_tier_for_observation(observation)
+        if _per_call_tier == "" and observation.get("intent") == "diagnose_system":
+            # L4/L5 are deterministic depth bands -- no LLM call.
+            return {
+                "action": "execute",
+                "llm_output": "",
+                "tier_used": "none",
+                "level": observation.get("level", ""),
+                "level_rank": int(observation.get("level_rank", 0)),
+                "short_circuit_reason": "ad-700c-no-llm-tier",
+            }
+
         request = LLMRequest(
             prompt=user_message,
             system_prompt=composed,
-            tier=self._resolve_tier(),
+            tier=_per_call_tier or self._resolve_tier(),
         )
 
         # AD-431: Time the LLM call for journal
@@ -6058,6 +6071,25 @@ class CognitiveAgent(BaseAgent):
         """Determine which LLM tier to use.  Default: 'standard'.
         Override in subclasses for tier-specific routing."""
         return "standard"
+
+    def _resolve_tier_for_observation(self, observation: dict) -> str:
+        """AD-700c: Per-call tier override.
+
+        If ``observation`` carries ``level_llm_tier`` (set by an agent's
+        ``perceive()`` -- currently DiagnosticianAgent for ``diagnose_system``
+        intents), use that as the LLM tier for this single call. Otherwise
+        fall back to ``self._resolve_tier()`` (the static per-agent default).
+
+        Returns ``""`` (empty string) iff the observation explicitly requests
+        no LLM call (level_llm_tier is None). Callers must check for the
+        empty return and short-circuit before constructing an ``LLMRequest``.
+        """
+        override = observation.get("level_llm_tier")
+        if override is None and "level_llm_tier" in observation:
+            return ""
+        if isinstance(override, str) and override:
+            return override
+        return self._resolve_tier()
 
     # --- Decision cache helpers (AD-272) ---
 

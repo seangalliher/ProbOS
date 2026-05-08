@@ -1302,3 +1302,14 @@ Adds two columns (`level TEXT`, `level_rank INTEGER`) and one index (`idx_journa
 **Status:** SHIPPED. Issue [#508](https://github.com/seangalliher/ProbOS/issues/508).
 **Files:** `src/probos/cognitive/journal.py` (schema + migration + record), `src/probos/cognitive/cognitive_agent.py` (one block at `:1722-1748`). Tests: `tests/test_ad700b_journal_level_tag.py` (6 cases, all passing).
 
+
+### AD-700c - Diagnostician Per-Call LLM Tier Override
+**Date:** 2026-05-08  `n**Type:** Architecture Decision (cognitive routing - narrow)  `n**Wave:** 129
+
+Adds `CognitiveAgent._resolve_tier_for_observation(observation)` honoring an `observation['level_llm_tier']` override string. Wires it into `_decide_via_llm` at the `LLMRequest` construction (replaces the static `self._resolve_tier()` call). Adds a short-circuit guard: when the resolved tier is `''` (explicit `None`) AND `intent == 'diagnose_system'`, `_decide_via_llm` returns a deterministic decision dict (`tier_used='none'`, plus `level`, `level_rank`, `short_circuit_reason`) without invoking the LLM. L4/L5 diagnostic levels burn no LLM tokens. Non-diagnostic intents fall to the static `_resolve_tier()` (defensive scoping).
+
+**In scope:** new helper, two-line change at the `LLMRequest` site, short-circuit guard.
+**Out of scope:** `_resolve_tier()` itself (preserved as static fallback), DiagnosticianAgent `perceive()` (already populates `level_llm_tier`), LLM client tier registry, journal short-circuit row write (no `response` -> no journal write, by design).
+**Status:** SHIPPED. Issue [#509](https://github.com/seangalliher/ProbOS/issues/509).
+**Files:** `src/probos/cognitive/cognitive_agent.py` (helper + short-circuit + tier rewire). Tests: `tests/test_ad700c_diagnostician_tier_routing.py` (10 cases, all passing).
+
