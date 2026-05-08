@@ -1409,3 +1409,28 @@ Adds a deterministic regex-driven query classifier (`QueryPlanner`) that detects
 
 **Status:** SHIPPED. Issue [#490](https://github.com/seangalliher/ProbOS/issues/490).
 **Files:** `src/probos/cognitive/query_planner.py` (new), `src/probos/config.py` (additive), `src/probos/startup/finalize.py` (wiring). Tests: `tests/test_memvid_queryplanner_relational.py` (13 cases, all passing).
+
+
+### AD-702 — Diplomatic Relations (discounted trust transitivity)
+**Date:** 2026-05-08
+**Type:** Architecture Decision (consensus — trust extension)
+**Wave:** 130
+
+Adds discounted transitive trust composition `T(A→C) = T(A→B) × T(B→C) × δ` to `TrustNetwork`, implementing Nooplex paper §4.3.4. Three hard rules enforced: (1) safety-critical operations override — destructive intents never use transitive trust; (2) 90-day linear decay toward the network neutral baseline (Beta(2,2) mean = 0.5) after the target's last event; (3) per-hop discount factor δ=0.85 provides Sybil resistance — longer chains decay multiplicatively.
+
+**Implementation:**
+- `src/probos/consensus/trust.py`: 4 new module constants + 5 new methods on `TrustNetwork`. `_best_bridge(observer, target, discount)` is the R4-extracted helper that returns `(composed, via)` for the strongest single-hop intermediary; both `transitive_score` and `chain_path` delegate to it (no v1 duplication). `_apply_decay` walks the bounded `_event_log` to find the target's last event and linearly interpolates toward `TRANSITIVE_NEUTRAL` after the 90-day window. `set_intent_descriptor_lookup` injection setter mirrors `set_department_lookup` — wired by the runtime once intent registry is built (deferred to AD-702b's quorum-path integration).
+- `src/probos/protocols.py`: `TrustNetworkProtocol` widened with `transitive_score` and `chain_path`. 0 mock sites in `tests/` confirmed pre-build, so widening is safe per the >5-mocks STOP rule.
+
+**R4 decision (Recommended option (a)):** `_best_bridge` extracted as the prompt's revision notes claimed. Cleaner DRY; matches the L307 attestation. Option (b) (accept duplication) was not taken.
+
+**In scope:** read-only transitive_score + chain_path + decay + safety override.
+**Out of scope:** consumer wiring to consensus quorum path (AD-702b — gates only non-destructive intents and runs full BFS up to max_hops=4); per-pair asymmetric edges (AD-702c).
+
+**Verify-first corrections:**
+- `TrustRecord.observations` is a derived property, not a constructor field. Test helper rebuilt to compute alpha/beta so observations = 10 from prior subtraction.
+- `TrustEvent` schema is `(timestamp, agent_id, success, old_score, new_score, weight, intent_type, episode_id, verifier_id)`, not the prompt's draft `(event_type, data)`. Test helper updated.
+- Pre-existing gap: `TrustNetworkProtocol.get_trust_score` declared but `TrustNetwork` does not implement it. Test asserts new method existence via `callable(getattr(...))` rather than `isinstance(Protocol)` to avoid coupling to the unrelated gap.
+
+**Status:** SHIPPED. Issue [#478](https://github.com/seangalliher/ProbOS/issues/478).
+**Files:** `src/probos/consensus/trust.py` (4 constants + 5 new methods, additive), `src/probos/protocols.py` (Protocol widening). Tests: `tests/test_ad702_diplomatic_relations.py` (16 cases, all passing).

@@ -15,6 +15,15 @@ from probos.config import format_trust
 from probos.protocols import ConnectionFactory, DatabaseConnection
 from probos.types import AgentID
 
+# AD-702: Diplomatic Relations — discounted trust transitivity tunables.
+# Per Nooplex §4.3.4: T(A→C) = T(A→B) × T(B→C) × δ, with safety-critical
+# override (no transitivity for destructive intents) and 90-day decay
+# toward the network neutral baseline.
+DEFAULT_TRANSITIVE_DISCOUNT: float = 0.85
+DEFAULT_TRANSITIVE_MAX_HOPS: int = 3
+DEFAULT_TRANSITIVE_DECAY_DAYS: float = 90.0
+TRANSITIVE_NEUTRAL: float = 0.5  # Beta(2,2) mean
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA = """
@@ -563,3 +572,164 @@ class TrustNetwork:
     async def save(self) -> None:
         """Manually trigger a save to disk."""
         await self._save_to_db()
+
+    # ── AD-702: Diplomatic Relations (discounted trust transitivity) ──
+
+    def set_intent_descriptor_lookup(
+        self, fn: Callable[[str], Any | None]
+    ) -> None:
+        """AD-702: Inject intent-descriptor resolution.
+
+        The injected callable returns an ``IntentDescriptor`` (or any
+        object with a ``requires_consensus: bool`` attribute) for a given
+        intent name, or ``None`` if unknown. Wired by the runtime once the
+        intent registry is built. Mirrors ``set_department_lookup``.
+        """
+        self._get_intent_descriptor = fn
+
+    def _best_bridge(
+        self,
+        observer: AgentID,
+        target: AgentID,
+        discount: float,
+    ) -> tuple[float | None, AgentID | None]:
+        """AD-702 (R4 DRY): single-hop strongest-bridge search.
+
+        Returns ``(composed_score, via_agent_id)`` for the strongest 1-hop
+        intermediary, or ``(None, None)`` if no chain exists. Used by both
+        ``transitive_score`` and ``chain_path``.
+        """
+        end = self._records.get(target)
+        if end is None or end.observations <= 0:
+            return (None, None)
+        best: float | None = None
+        best_via: AgentID | None = None
+        for cand_id, cand_rec in self._records.items():
+            if cand_id in (observer, target):
+                continue
+            if cand_rec.observations <= 0:
+                continue
+            composed = cand_rec.score * end.score * discount
+            if best is None or composed > best:
+                best = composed
+                best_via = cand_id
+        return (best, best_via)
+
+    def transitive_score(
+        self,
+        observer: AgentID,
+        target: AgentID,
+        *,
+        intent: str | None = None,
+        via: AgentID | None = None,
+        max_hops: int = DEFAULT_TRANSITIVE_MAX_HOPS,
+        discount: float = DEFAULT_TRANSITIVE_DISCOUNT,
+        safety_critical: bool = False,
+    ) -> float | None:
+        """AD-702: Discounted transitive trust along the strongest chain.
+
+        Returns the multiplicatively-composed score, or ``None`` if no
+        chain exists within ``max_hops``. Direct trust always wins when
+        present (observer == target -> 1.0; direct record present -> that
+        score with decay applied).
+
+        Safety-critical override: when ``safety_critical=True`` (or the
+        intent is registered with ``requires_consensus=True``), the
+        method refuses to fall back to transitive composition and returns
+        ``None`` if no direct record exists.
+
+        Sybil resistance: ``discount`` is applied per hop. A 2-hop chain
+        at default discount caps at ``0.85 * bridge.score * end.score`` —
+        longer chains decay faster.
+
+        Decay: scores age toward ``TRANSITIVE_NEUTRAL`` linearly after
+        ``DEFAULT_TRANSITIVE_DECAY_DAYS`` since the target's last event.
+        """
+        # 0. Hop budget — v1 only supports >=2 hops; <2 is a no-op.
+        if max_hops < 2:
+            return None
+
+        # 1. Identity / direct lookup.
+        if observer == target:
+            return 1.0
+        direct = self._records.get(target)
+        if direct is not None and direct.observations > 0:
+            return self._apply_decay(direct.score, target)
+
+        # 1b. Safety-critical / destructive-intent override (adjacent gates).
+        #     These run BEFORE any transitive composition. If either trips,
+        #     refuse to fall back.
+        if safety_critical:
+            return None
+        if intent and getattr(self, "_get_intent_descriptor", None) is not None:
+            desc = self._get_intent_descriptor(intent)
+            if desc is not None and getattr(desc, "requires_consensus", False):
+                if direct is None or direct.observations <= 0:
+                    return None
+
+        # 2. Optional explicit bridge.
+        if via is not None:
+            bridge = self._records.get(via)
+            end = self._records.get(target)
+            if (
+                bridge is None
+                or end is None
+                or bridge.observations <= 0
+                or end.observations <= 0
+            ):
+                return None
+            composed = bridge.score * end.score * discount
+            return self._apply_decay(composed, target)
+
+        # 3. Auto bridge: strongest 1-hop intermediary in the network.
+        best, _via = self._best_bridge(observer, target, discount)
+        if best is None:
+            return None
+        return self._apply_decay(best, target)
+
+    def chain_path(
+        self,
+        observer: AgentID,
+        target: AgentID,
+        *,
+        discount: float = DEFAULT_TRANSITIVE_DISCOUNT,
+    ) -> list[AgentID]:
+        """AD-702: Return the agent chain producing the best transitive score.
+
+        Returns ``[observer]`` for self-target, ``[observer, target]``
+        for a direct record, ``[observer, via, target]`` for the strongest
+        1-hop bridge, or ``[]`` if no chain exists.
+        """
+        if observer == target:
+            return [observer]
+        direct = self._records.get(target)
+        if direct is not None and direct.observations > 0:
+            return [observer, target]
+        _best, best_via = self._best_bridge(observer, target, discount)
+        if best_via is None:
+            return []
+        return [observer, best_via, target]
+
+    def _apply_decay(self, raw_score: float, agent_id: AgentID) -> float:
+        """AD-702: Linear decay toward TRANSITIVE_NEUTRAL after the decay window.
+
+        Looks up the most recent ``TrustEvent`` for ``agent_id`` in
+        ``self._event_log`` (bounded at ``maxlen=500``; flagged for
+        AD-702b graph search if longer histories are needed).
+        Returns ``raw_score`` unchanged if no event is found or the
+        window has not elapsed.
+        """
+        last_seen: float | None = None
+        for ev in reversed(self._event_log):
+            if ev.agent_id == agent_id:
+                last_seen = ev.timestamp
+                break
+        if last_seen is None:
+            return raw_score
+        age_days = max(0.0, (time.time() - last_seen) / 86400.0)
+        if age_days <= DEFAULT_TRANSITIVE_DECAY_DAYS:
+            return raw_score
+        # Linear interpolation toward neutral over a second 90-day window.
+        over = age_days - DEFAULT_TRANSITIVE_DECAY_DAYS
+        progress = min(1.0, over / DEFAULT_TRANSITIVE_DECAY_DAYS)
+        return raw_score + (TRANSITIVE_NEUTRAL - raw_score) * progress

@@ -55,6 +55,19 @@ class TrustNetworkProtocol(Protocol):
     def get_or_create(self, agent_id: str) -> TrustRecord: ...
     def record_outcome(self, agent_id: str, success: bool, weight: float = 1.0) -> float: ...
     def remove_agent(self, agent_id: str) -> None: ...
+    # AD-702: Diplomatic Relations — discounted transitivity surface.
+    # Pre-build verification (2026-05-08): 0 mock sites for
+    # TrustNetworkProtocol in tests/, so widening is safe per the >5-mocks
+    # STOP rule. Defaulted args omitted from Protocol body.
+    def transitive_score(
+        self,
+        observer: str,
+        target: str,
+        *,
+        intent: str | None = None,
+        safety_critical: bool = False,
+    ) -> float | None: ...
+    def chain_path(self, observer: str, target: str) -> list[str]: ...
 
 
 @runtime_checkable
