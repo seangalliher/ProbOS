@@ -2885,7 +2885,7 @@ waves:
       - "prompts/ad-568-source-governance-v1.md"
     builder_required: true
     issues_to_close: [437, 438]
-    status: pending
+    status: done
 
   - id: "118"
     title: "AD-660b: Causal reasoning ranking + emergence wiring (closes #460)"
