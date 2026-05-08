@@ -1268,3 +1268,13 @@ Three layers, each buildable independently:
 **Out of scope (deferred):** `/diagnostic <level> <target>` slash command in HXI; explicit Cognitive Journal level tagging; LLM-tier dispatch from the diagnostician's `decide()` (currently the agent uses its instructions; the level hint will guide the model). These are clean follow-ups when needed.
 **Status:** SHIPPED. Issue [#476](https://github.com/seangalliher/ProbOS/issues/476).
 **Files:** `src/probos/agents/medical/diagnostic_levels.py` (new), `src/probos/agents/medical/diagnostician.py` (perceive extended). Tests: `tests/test_ad700_multi_level_diagnostics.py` (25 cases, all passing).
+### AD-490 - EventLog Hash Chain (substrate-tier tamper detection)
+**Date:** 2026-05-08  `n**Type:** Architecture Decision (substrate hardening)  `n**Wave:** 129
+
+Extends the AD-456 AuditLog hash-chain pattern to the substrate `EventLog`. Adds two SHA-256 columns (`prev_hash`, `row_hash`) to the `events` table via additive `_migrate_ad490()`; `log()` reads the prior row's `row_hash` and chains to it (genesis = `'0' * 64`); new `verify_chain() -> tuple[bool, int | None]` walker returns `(True, None)` if intact or `(False, broken_at_id)` on first mismatch. Determinism contract: `json.dumps(..., sort_keys=True, default=str)` so identical payloads with different dict insertion order rehash equal.
+
+**In scope:** SQLite-side hash chain, on-disk migration, single new public method.
+**Out of scope:** in-memory chain, federation export, alerting on chain breaks, config gating (always-on in v1).
+**Status:** SHIPPED. Issue [#506](https://github.com/seangalliher/ProbOS/issues/506).
+**Files:** `src/probos/substrate/event_log.py` (additive). Tests: `tests/test_ad490_eventlog_hash_chain.py` (8 cases, all passing).
+

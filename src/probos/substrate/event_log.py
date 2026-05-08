@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -24,11 +25,27 @@ CREATE TABLE IF NOT EXISTS events (
     detail          TEXT,
     correlation_id  TEXT,
     parent_event_id INTEGER,
-    data            TEXT
+    data            TEXT,
+    prev_hash       TEXT NOT NULL DEFAULT '',
+    row_hash        TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_events_category ON events (category);
 CREATE INDEX IF NOT EXISTS idx_events_agent ON events (agent_id);
 """
+
+
+def _compute_row_hash(*, prev_hash: str, payload: dict[str, Any]) -> str:
+    """SHA-256 over (prev_hash || canonical_json(payload)) — AD-490.
+
+    Mirrors AD-456 AuditLog._hash() but operates on a serialized row dict.
+    Canonical form = ``json.dumps(payload, sort_keys=True, default=str)``
+    so the same row produces the same hash on rehash during verification.
+    """
+    serialized = json.dumps(payload, sort_keys=True, default=str)
+    h = hashlib.sha256()
+    h.update(prev_hash.encode("utf-8"))
+    h.update(serialized.encode("utf-8"))
+    return h.hexdigest()
 
 
 class EventLog:
@@ -38,6 +55,8 @@ class EventLog:
     mesh events (intent broadcast, intent resolved, gossip exchange),
     and system events (startup, shutdown, pool health check).
     """
+
+    GENESIS_HASH: str = "0" * 64
 
     def __init__(self, db_path: str | Path, connection_factory: ConnectionFactory | None = None) -> None:
         self.db_path = str(db_path)
@@ -55,6 +74,8 @@ class EventLog:
         await self._db.commit()
         # AD-664: Migrate existing databases — add new columns if missing
         await self._migrate_ad664()
+        # AD-490: Add hash chain columns if missing
+        await self._migrate_ad490()
         logger.info("EventLog opened: %s", self.db_path)
 
     async def _migrate_ad664(self) -> None:
@@ -85,6 +106,33 @@ class EventLog:
                 logger.info("AD-664: Migrated EventLog schema (%d columns added)", len(migrations))
         except Exception:
             logger.debug("AD-664: EventLog migration check failed", exc_info=True)
+
+    async def _migrate_ad490(self) -> None:
+        """Add prev_hash, row_hash columns if missing (AD-490)."""
+        if not self._db:
+            return
+        try:
+            async with self._db.execute("PRAGMA table_info(events)") as cursor:
+                columns = {row[1] async for row in cursor}
+            migrations = []
+            if "prev_hash" not in columns:
+                migrations.append(
+                    "ALTER TABLE events ADD COLUMN prev_hash TEXT NOT NULL DEFAULT ''"
+                )
+            if "row_hash" not in columns:
+                migrations.append(
+                    "ALTER TABLE events ADD COLUMN row_hash TEXT NOT NULL DEFAULT ''"
+                )
+            for sql in migrations:
+                await self._db.execute(sql)
+            if migrations:
+                await self._db.commit()
+                logger.info(
+                    "AD-490: Migrated EventLog hash chain (%d columns added)",
+                    len(migrations),
+                )
+        except Exception:
+            logger.debug("AD-490: EventLog migration check failed", exc_info=True)
 
     async def stop(self) -> None:
         if self._db:
@@ -117,14 +165,38 @@ class EventLog:
         if not self._db:
             return None
         now = datetime.now(timezone.utc).isoformat()
-        data_json = json.dumps(data, default=str) if data is not None else None
+        # AD-490: sort_keys=True for deterministic rehash during verify_chain()
+        data_json = json.dumps(data, sort_keys=True, default=str) if data is not None else None
+        # AD-490: Compute hash chain — read prior row_hash, then chain this row.
+        prev_hash = self.GENESIS_HASH
+        async with self._db.execute(
+            "SELECT row_hash FROM events ORDER BY id DESC LIMIT 1"
+        ) as cursor:
+            async for row in cursor:
+                prior = row[0]
+                if prior:
+                    prev_hash = prior
+                break
+        payload = {
+            "timestamp": now,
+            "category": category,
+            "event": event,
+            "agent_id": agent_id,
+            "agent_type": agent_type,
+            "pool": pool,
+            "detail": detail,
+            "correlation_id": correlation_id,
+            "parent_event_id": parent_event_id,
+            "data": data_json,
+        }
+        row_hash = _compute_row_hash(prev_hash=prev_hash, payload=payload)
         cursor = await self._db.execute(
             "INSERT INTO events "
             "(timestamp, category, event, agent_id, agent_type, pool, detail, "
-            " correlation_id, parent_event_id, data) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " correlation_id, parent_event_id, data, prev_hash, row_hash) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (now, category, event, agent_id, agent_type, pool, detail,
-             correlation_id, parent_event_id, data_json),
+             correlation_id, parent_event_id, data_json, prev_hash, row_hash),
         )
         await self._db.commit()
         return cursor.lastrowid
@@ -284,6 +356,45 @@ class EventLog:
     async def count_all(self) -> int:
         """Total event count."""
         return await self.count()
+
+    async def verify_chain(self) -> tuple[bool, int | None]:
+        """AD-490: Walk the events table by id; return (ok, broken_at).
+
+        Returns (True, None) if every row's row_hash equals the recomputed
+        hash of (prev row's row_hash || canonical_json(payload)). Returns
+        (False, broken_id) on the first mismatch. Empty table -> (True, None).
+        """
+        if not self._db:
+            return (True, None)
+        sql = (
+            "SELECT id, timestamp, category, event, agent_id, agent_type, "
+            "pool, detail, correlation_id, parent_event_id, data, "
+            "prev_hash, row_hash FROM events ORDER BY id ASC"
+        )
+        expected_prev = self.GENESIS_HASH
+        async with self._db.execute(sql) as cursor:
+            async for row in cursor:
+                payload = {
+                    "timestamp": row[1],
+                    "category": row[2],
+                    "event": row[3],
+                    "agent_id": row[4],
+                    "agent_type": row[5],
+                    "pool": row[6],
+                    "detail": row[7],
+                    "correlation_id": row[8],
+                    "parent_event_id": row[9],
+                    "data": row[10],
+                }
+                stored_prev = row[11]
+                stored_row_hash = row[12]
+                if stored_prev != expected_prev:
+                    return (False, row[0])
+                recomputed = _compute_row_hash(prev_hash=expected_prev, payload=payload)
+                if recomputed != stored_row_hash:
+                    return (False, row[0])
+                expected_prev = stored_row_hash
+        return (True, None)
 
     async def prune(self, retention_days: int = 7, max_rows: int = 100_000) -> int:
         """Delete events older than retention_days and enforce max_rows cap.
