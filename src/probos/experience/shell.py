@@ -199,9 +199,12 @@ class ProbOSShell:
         # 1:1 session mode — route to session agent (AD-397)
         if self.session.active and not line.startswith("/"):
             # BF-009: detect @callsign anywhere for session-switching
-            from probos.crew_profile import extract_callsign_mention
+            # BF #467: only treat as routing directive when @callsign is the
+            # message's leading token (DM intent) — referential mentions
+            # ("Hello @Tucker, can you help?") should fall through to NL.
+            from probos.crew_profile import extract_callsign_mention, is_directed_mention
             mention = extract_callsign_mention(line)
-            if mention:
+            if mention and is_directed_mention(line):
                 # Allow switching sessions via @callsign during a session
                 await self.session.handle_at_parsed(
                     mention[0], mention[1], self.runtime, self.console,
@@ -211,9 +214,10 @@ class ProbOSShell:
             return
 
         # BF-009: detect @callsign anywhere in the line
-        from probos.crew_profile import extract_callsign_mention as _ecm
+        # BF #467: same leading-token rule outside session mode.
+        from probos.crew_profile import extract_callsign_mention as _ecm, is_directed_mention as _idm
         mention = _ecm(line)
-        if mention:
+        if mention and _idm(line):
             await self.session.handle_at_parsed(
                 mention[0], mention[1], self.runtime, self.console,
             )

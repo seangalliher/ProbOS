@@ -92,16 +92,20 @@ class TestAPIChatCallsignRouting:
 
     @pytest.mark.asyncio
     async def test_api_callsign_embedded(self, mock_runtime):
-        """Hello @wesley → routes to direct_message intent."""
+        """BF #467: Hello @wesley → referential mention, falls through to NL.
+
+        Pre-BF-467 this routed as a DM. New contract: only leading @callsign
+        is a DM directive; embedded mentions are broadcasts about the agent.
+        """
         mock_runtime.callsign_registry.resolve.return_value = {
             "agent_type": "scout",
             "callsign": "Wesley",
             "agent_id": "scout-0",
             "department": "science",
         }
-        mock_result = MagicMock()
-        mock_result.result = "Here, sir."
-        mock_runtime.intent_bus.send = AsyncMock(return_value=mock_result)
+        mock_runtime.process_natural_language = AsyncMock(return_value={
+            "final_response": "broadcast handled",
+        })
 
         from probos.api import create_app
         app = create_app(mock_runtime)
@@ -111,8 +115,8 @@ class TestAPIChatCallsignRouting:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             r = await client.post("/api/chat", json={"message": "Hello @wesley"})
         assert r.status_code == 200
-        data = r.json()
-        assert "Wesley" in data["response"]
+        # DM path (intent_bus.send) MUST NOT have been taken.
+        mock_runtime.intent_bus.send.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_api_unknown_callsign_falls_through(self, mock_runtime):

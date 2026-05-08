@@ -93,9 +93,11 @@ async def chat(
         return await _handle_slash_command(text, runtime)
 
     # AD-397/BF-009: @callsign direct message routing
-    from probos.crew_profile import extract_callsign_mention
+    # BF #467: only treat as DM directive when @callsign is the leading token.
+    # "@Tucker hello" -> DM. "Hello @Tucker, can you help?" -> broadcast.
+    from probos.crew_profile import extract_callsign_mention, is_directed_mention
     mention = extract_callsign_mention(text)
-    if mention:
+    if mention and is_directed_mention(text):
         callsign, message_text = mention
         resolved = runtime.callsign_registry.resolve(callsign)
         if resolved is not None:

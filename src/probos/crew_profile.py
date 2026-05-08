@@ -450,3 +450,20 @@ def extract_callsign_mention(text: str) -> tuple[str, str] | None:
         remaining = re.sub(r'  +', ' ', remaining).strip()
         return (callsign, remaining)
     return None
+
+
+def is_directed_mention(text: str) -> bool:
+    """BF #467: distinguish 'message TO someone' from 'message ABOUT someone'.
+
+    A directed mention starts the message (after optional whitespace) with
+    ``@callsign``. Any earlier prose before the @ — even a single word —
+    means the @mention is referential (broadcast about the agent), not a
+    routing directive.
+
+    Returns True when the message should be DM-routed; False when it
+    should be broadcast even though it contains an @callsign.
+    """
+    if not text:
+        return False
+    stripped = text.lstrip()
+    return bool(re.match(r'@\w+', stripped))
