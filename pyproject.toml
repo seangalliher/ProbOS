@@ -89,8 +89,14 @@ where = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 timeout = 90
-addopts = "-n auto"
+# BF #466: cap xdist at 16 workers and use loadfile distribution. Heavy-fixture
+# files (test_runtime.py, test_dreaming.py, test_distribution.py, etc.) crash
+# workers under -n auto when fixtures concurrently boot ChromaDB/SQLite. The
+# 16-worker ceiling + loadfile (one file per worker) is the documented stable
+# config. Maintainers can override with `-o addopts=-n auto` for a fast local run.
+addopts = "-n 16 --dist=loadfile"
 markers = [
     "live_llm: tests requiring live LLM backends (Ollama/Copilot proxy)",
     "slow: tests with real wall-clock waits (deselect with -m 'not slow')",
+    "heavy_fixture: tests with expensive setup that should run isolated (BF #466)",
 ]
