@@ -171,7 +171,7 @@ export default function KnowledgeGraphView() {
           enableNodeDrag={true}
           warmupTicks={20}
           cooldownTime={2000}
-          dagMode={mode === 'org' ? 'td' : null}
+          dagMode={mode === 'org' ? 'td' : undefined}
         />
       </div>
     </div>

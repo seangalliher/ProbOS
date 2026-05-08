@@ -146,8 +146,8 @@ describe('McpAppBridge', () => {
     });
     window.dispatchEvent(evt);
     await new Promise(r => setTimeout(r, 0));
-    const calls = postSpy.mock.calls.map(c => c[0] as any);
-    const errCall = calls.find(c => c.method === 'ui/notifications/tool-result');
+    const calls = postSpy.mock.calls.map((c: any[]) => c[0] as any);
+    const errCall = calls.find((c: any) => c.method === 'ui/notifications/tool-result');
     expect(errCall).toBeDefined();
     expect((errCall.params as any).error).toBeDefined();
   });

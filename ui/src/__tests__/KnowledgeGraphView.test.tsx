@@ -96,7 +96,7 @@ describe('KnowledgeGraphView (AD-520)', () => {
     fireEvent.click(screen.getByTestId('graph-mode-department'));
     expect(screen.getByTestId('mock-force-graph-3d').getAttribute('data-links')).toBe('4');
     // dagMode disabled (only 'org' uses td)
-    expect(lastProps.dagMode).toBeNull();
+    expect(lastProps.dagMode).toBeUndefined();
   });
 
   it('department filter chip toggles agent visibility', () => {
