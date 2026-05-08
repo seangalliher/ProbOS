@@ -2705,7 +2705,7 @@ waves:
     dispatch_prompt: "prompts/WAVE-105-DISPATCH.md"
     prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-641g-async-cognitive-pipeline-v1.md"
+      - "prompts/archive/ad-641g-async-cognitive-pipeline-v1.md"
     builder_required: true
     issues_to_close: [403]
     status: done
@@ -2803,7 +2803,7 @@ waves:
     dispatch_prompt: "prompts/WAVE-111-DISPATCH.md"
     prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-697-extension-registry-v1.md"
+      - "prompts/archive/ad-697-extension-registry-v1.md"
     builder_required: true
     issues_to_close: [429]
     status: done
