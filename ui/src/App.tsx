@@ -22,20 +22,26 @@ import BehavioralMetricsPanel from './components/BehavioralMetricsPanel';
 import SpatialExplorerPanel from './components/SpatialExplorerPanel';
 import KnowledgeBrowserPanel from './components/KnowledgeBrowserPanel';
 
-function NotebooksToggle() {
-  const open = useStore(s => s.notebooksOpen);
-  const openNotebooks = useStore(s => s.openNotebooks);
+// ── Top navigation ───────────────────────────────────────────────
+// One flex container instead of 6 abs-positioned toggles. Items
+// self-arrange so labels can grow without colliding. Visual hairline
+// separators group items by purpose (people / knowledge / metrics).
 
-  if (open) return null;
+interface NavButtonProps {
+  label: string;
+  active: boolean;
+  onOpen: () => void;
+  badge?: number;
+  testId?: string;
+}
 
+function NavButton({ label, active, onOpen, badge, testId }: NavButtonProps) {
+  if (active) return null;
   return (
     <div
-      onClick={() => openNotebooks()}
-      data-testid="notebooks-toggle"
+      onClick={onOpen}
+      data-testid={testId}
       style={{
-        position: 'fixed',
-        top: 12, left: 200,
-        zIndex: 25,
         padding: '6px 12px',
         background: 'rgba(10, 10, 18, 0.75)',
         backdropFilter: 'blur(8px)',
@@ -48,185 +54,15 @@ function NotebooksToggle() {
         letterSpacing: 1.5,
         fontFamily: "'JetBrains Mono', monospace",
         color: '#8888a0',
-        userSelect: 'none' as const,
-      }}
-    >
-      NOTEBOOKS
-    </div>
-  );
-}
-
-function SpatialExplorerToggle() {
-  const open = useStore(s => s.spatialExplorerOpen);
-  const openExplorer = useStore(s => s.openSpatialExplorer);
-
-  if (open) return null;
-
-  return (
-    <div
-      onClick={() => openExplorer()}
-      data-testid="spatial-explorer-toggle"
-      style={{
-        position: 'fixed',
-        top: 12, left: 340,
-        zIndex: 25,
-        padding: '6px 12px',
-        background: 'rgba(10, 10, 18, 0.75)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-        border: '1px solid rgba(240, 176, 96, 0.15)',
-        borderRadius: 6,
-        cursor: 'pointer',
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: 1.5,
-        fontFamily: "'JetBrains Mono', monospace",
-        color: '#8888a0',
-        userSelect: 'none' as const,
-      }}
-    >
-      EXPLORER
-    </div>
-  );
-}
-
-function KnowledgeBrowserToggle() {
-  const open = useStore(s => s.knowledgeBrowserOpen);
-  const openBrowser = useStore(s => s.openKnowledgeBrowser);
-
-  if (open) return null;
-
-  return (
-    <div
-      onClick={() => { void openBrowser(); }}
-      data-testid="knowledge-browser-toggle"
-      style={{
-        position: 'fixed',
-        top: 12, left: 410,
-        zIndex: 25,
-        padding: '6px 12px',
-        background: 'rgba(10, 10, 18, 0.75)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-        border: '1px solid rgba(240, 176, 96, 0.15)',
-        borderRadius: 6,
-        cursor: 'pointer',
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: 1.5,
-        fontFamily: "'JetBrains Mono', monospace",
-        color: '#8888a0',
-        userSelect: 'none' as const,
-      }}
-    >
-      RECORDS
-    </div>
-  );
-}
-
-function BehavioralMetricsToggle() {
-  const open = useStore(s => s.behavioralMetricsOpen);
-  const openMetrics = useStore(s => s.openBehavioralMetrics);
-
-  if (open) return null;
-
-  return (
-    <div
-      onClick={() => openMetrics()}
-      data-testid="behavioral-metrics-toggle"
-      style={{
-        position: 'fixed',
-        top: 12, left: 270,
-        zIndex: 25,
-        padding: '6px 12px',
-        background: 'rgba(10, 10, 18, 0.75)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-        border: '1px solid rgba(240, 176, 96, 0.15)',
-        borderRadius: 6,
-        cursor: 'pointer',
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: 1.5,
-        fontFamily: "'JetBrains Mono', monospace",
-        color: '#8888a0',
-        userSelect: 'none' as const,
-      }}
-    >
-      METRICS
-    </div>
-  );
-}
-
-function CrewRosterToggle() {
-  const open = useStore(s => s.crewManifestOpen);
-  const openManifest = useStore(s => s.openCrewManifest);
-
-  if (open) return null;
-
-  return (
-    <div
-      onClick={() => openManifest()}
-      style={{
-        position: 'fixed',
-        top: 12, left: 130,
-        zIndex: 25,
-        padding: '6px 12px',
-        background: 'rgba(10, 10, 18, 0.75)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-        border: '1px solid rgba(240, 176, 96, 0.15)',
-        borderRadius: 6,
-        cursor: 'pointer',
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: 1.5,
-        fontFamily: "'JetBrains Mono', monospace",
-        color: '#8888a0',
-        userSelect: 'none' as const,
-      }}
-    >
-      CREW
-    </div>
-  );
-}
-
-function WardRoomToggle() {
-  const open = useStore(s => s.wardRoomOpen);
-  const openWardRoom = useStore(s => s.openWardRoom);
-  const closeWardRoom = useStore(s => s.closeWardRoom);
-  const unread = useStore(s => s.wardRoomUnread);
-  const totalUnread = Object.values(unread).reduce((sum, n) => sum + n, 0);
-
-  if (open) return null;
-
-  return (
-    <div
-      onClick={() => openWardRoom()}
-      style={{
-        position: 'fixed',
-        top: 12, left: 12,
-        zIndex: 25,
-        padding: '6px 12px',
-        background: 'rgba(10, 10, 18, 0.75)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-        border: `1px solid rgba(240, 176, 96, ${open ? 0.35 : 0.15})`,
-        borderRadius: 6,
-        cursor: 'pointer',
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: 1.5,
-        fontFamily: "'JetBrains Mono', monospace",
-        color: open ? '#f0b060' : '#8888a0',
         userSelect: 'none' as const,
         display: 'flex',
         alignItems: 'center',
         gap: 6,
+        whiteSpace: 'nowrap' as const,
       }}
     >
-      WARD ROOM
-      {totalUnread > 0 && (
+      {label}
+      {typeof badge === 'number' && badge > 0 && (
         <span style={{
           background: '#f0b060',
           color: '#0a0a12',
@@ -234,8 +70,70 @@ function WardRoomToggle() {
           padding: '1px 6px',
           fontSize: 9,
           fontWeight: 700,
-        }}>{totalUnread}</span>
+        }}>{badge}</span>
       )}
+    </div>
+  );
+}
+
+function NavSeparator() {
+  return (
+    <div style={{
+      width: 1,
+      height: 20,
+      background: 'rgba(240, 176, 96, 0.12)',
+      margin: '0 2px',
+      alignSelf: 'center',
+    }} />
+  );
+}
+
+function TopNav() {
+  const wardRoomOpen = useStore(s => s.wardRoomOpen);
+  const openWardRoom = useStore(s => s.openWardRoom);
+  const wardRoomUnread = useStore(s => s.wardRoomUnread);
+  const totalUnread = Object.values(wardRoomUnread).reduce((sum, n) => sum + n, 0);
+
+  const crewOpen = useStore(s => s.crewManifestOpen);
+  const openCrew = useStore(s => s.openCrewManifest);
+
+  const notebooksOpen = useStore(s => s.notebooksOpen);
+  const openNotebooks = useStore(s => s.openNotebooks);
+
+  const recordsOpen = useStore(s => s.knowledgeBrowserOpen);
+  const openRecords = useStore(s => s.openKnowledgeBrowser);
+
+  const explorerOpen = useStore(s => s.spatialExplorerOpen);
+  const openExplorer = useStore(s => s.openSpatialExplorer);
+
+  const metricsOpen = useStore(s => s.behavioralMetricsOpen);
+  const openMetrics = useStore(s => s.openBehavioralMetrics);
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 12,
+        left: 12,
+        zIndex: 25,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+      }}
+      role="toolbar"
+      aria-label="HXI panels"
+    >
+      {/* People */}
+      <NavButton label="WARD ROOM" active={wardRoomOpen} onOpen={openWardRoom} badge={totalUnread} />
+      <NavButton label="CREW" active={crewOpen} onOpen={openCrew} />
+      <NavSeparator />
+      {/* Knowledge */}
+      <NavButton label="NOTEBOOKS" active={notebooksOpen} onOpen={openNotebooks} testId="notebooks-toggle" />
+      <NavButton label="RECORDS" active={recordsOpen} onOpen={() => { void openRecords(); }} testId="knowledge-browser-toggle" />
+      <NavButton label="EXPLORER" active={explorerOpen} onOpen={openExplorer} testId="spatial-explorer-toggle" />
+      <NavSeparator />
+      {/* Diagnostics */}
+      <NavButton label="METRICS" active={metricsOpen} onOpen={openMetrics} testId="behavioral-metrics-toggle" />
     </div>
   );
 }
@@ -269,17 +167,12 @@ export default function App() {
       <AgentProfilePanel />
       <GamePanel />
       <WardRoomPanel />
-      <WardRoomToggle />
       <CrewRosterPanel />
-      <CrewRosterToggle />
       <NotebooksPanel />
-      <NotebooksToggle />
       <BehavioralMetricsPanel />
-      <BehavioralMetricsToggle />
       <SpatialExplorerPanel />
-      <SpatialExplorerToggle />
       <KnowledgeBrowserPanel />
-      <KnowledgeBrowserToggle />
+      <TopNav />
       <WelcomeOverlay />
     </div>
   );
