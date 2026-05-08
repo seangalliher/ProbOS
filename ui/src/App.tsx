@@ -114,7 +114,8 @@ function TopNav() {
       style={{
         position: 'fixed',
         top: 12,
-        left: 12,
+        left: '50%',
+        transform: 'translateX(-50%)',
         zIndex: 25,
         display: 'flex',
         alignItems: 'center',
