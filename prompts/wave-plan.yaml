@@ -1,6 +1,11 @@
 # Wave Plan Schema — drives scripts/wave-orchestrator.ps1
 #
-# Each wave entry is consumed sequentially. The orchestrator pauses for
+# BF #425: The `status:` field in each wave entry is DOCUMENTATION ONLY.
+# The orchestrator (scripts/wave-orchestrator.ps1) treats
+# prompts/wave-orchestrator-state.json as the source of truth for which
+# stage of which wave is in progress. Keep `status:` accurate as a
+# courtesy to readers but do not assume the orchestrator reads it.
+#
 # architect approval at three gates: after-review, after-builder-build,
 # and before-issue-closure. State is tracked in `state.json` next to this file.
 #
@@ -992,7 +997,7 @@ waves:
       - "prompts/ad-569g-hxi-behavioral-dashboard.md"
     builder_required: true
     issues_to_close: [108]
-    status: pending
+    status: done
     notes: |
       Closes GH #108 (umbrella AD-569 a-g). Reframe 7 -> 1-build:
       AD-569a/b/c/e shipped via AD-569 main entry (PROGRESS.md:363);
@@ -1078,7 +1083,7 @@ waves:
       - "prompts/ad-581-hybrid-dispatch-v1.md"
     builder_required: true
     issues_to_close: [113]
-    status: pending
+    status: done
     notes: |
       Closes GH #113 (AD-581 Hybrid Dispatch). 3 OSS sub-ADs in one wave per
       Captain rule (don't defer unless no choice). 581a DepartmentDispatcher
@@ -1110,7 +1115,7 @@ waves:
       - "prompts/ad-633-predictive-branching-v1.md"
     builder_required: true
     issues_to_close: [228]
-    status: pending
+    status: done
     notes: |
       Closes GH #228 (AD-633 Predictive Cognitive Branching umbrella). Six
       OSS sub-ADs ship concretely: 633a PredictionEngine (deterministic
@@ -1162,7 +1167,7 @@ waves:
       - "prompts/ad-482-self-improvement-pipeline-v1.md"
     builder_required: true
     issues_to_close: [76]
-    status: pending
+    status: done
     notes: |
       Closes GH #76 (AD-482 Self-Improvement Pipeline umbrella). Eight OSS
       sub-ADs ship concretely: 482a StageContract (frozen dataclass +
@@ -1233,7 +1238,7 @@ waves:
       - "prompts/ad-512-discovery-learning-v1.md"
     builder_required: true
     issues_to_close: [94]
-    status: pending
+    status: done
     notes: |
       Closes GH #94 (AD-512 Discovery-Based Capability Building umbrella).
       Six OSS sub-AD letters ship as observational substrate following the
@@ -1311,7 +1316,7 @@ waves:
       - "prompts/ad-473-mobile-pwa-v1.md"
     builder_required: true
     issues_to_close: [67]
-    status: pending
+    status: done
     notes: |
       Closes GH #67 (AD-473 Mobile Companion umbrella). Three OSS sub-AD
       letters ship concretely: 473a Web App Manifest at
@@ -1364,7 +1369,7 @@ waves:
       - "prompts/ad-474-voice-stt-tts-v1.md"
     builder_required: true
     issues_to_close: [68]
-    status: pending
+    status: done
     notes: |
       Closes GH #68 (AD-474 Voice Interaction umbrella). The browser-native
       TTS + STT substrate is already shipping live in HXI at HEAD 6e46444
@@ -1427,7 +1432,7 @@ waves:
       - "prompts/ad-443-mobility-v1.md"
     builder_required: true
     issues_to_close: [42]
-    status: pending
+    status: done
     notes: |
       Closes GH #42 (AD-443 Agent Mobility Protocol umbrella). The identity
       substrate AD-443 extends is fully shipped at HEAD 8252468
@@ -1510,7 +1515,7 @@ waves:
       - "prompts/ad-481-extension-first-v1.md"
     builder_required: true
     issues_to_close: [75]
-    status: pending
+    status: done
     notes: |
       Closes GH #75 (AD-481 Extension-First Architecture umbrella). All eight
       extension points roadmap.md:3604-3611 enumerates already live at HEAD
@@ -1612,7 +1617,7 @@ waves:
       - "prompts/ad-480-federation-mcp-a2a-v1.md"
     builder_required: true
     issues_to_close: [74]
-    status: pending
+    status: done
     notes: |
       Closes GH #74 (AD-480 Federation Protocol Adapters umbrella). The
       substrate AD-480 extends is fully shipped at HEAD 03937cb: outbound
@@ -1748,7 +1753,7 @@ waves:
       - "prompts/ad-462-biological-memory-umbrella-close.md"
     builder_required: true
     issues_to_close: [111]
-    status: pending
+    status: done
     notes: |
       No-build close of GH #111 (AD-462 umbrella). All six sub-ADs
       shipped at HEAD 89d4fa7: AD-462a absorbed by AD-567b
@@ -1816,7 +1821,7 @@ waves:
       - "prompts/ad-479-federation-hardening-v1.md"
     builder_required: true
     issues_to_close: [73]
-    status: pending
+    status: done
     notes: |
       AD-479 Federation Hardening v1 — closes GH #73. HEAD 4f18c7d
       (Captain reference 86a9fe5 origin/main, equivalent for verify-
@@ -1987,7 +1992,7 @@ waves:
       - "prompts/ad-607-memory-security-framework-v1.md"
     builder_required: true
     issues_to_close: [183]
-    status: pending
+    status: done
     notes: |
       AD-607 Memory Security Framework v1 — closes GH #183. HEAD 255c52a
       (matches Captain reference origin/main exactly; no upstream BFs).
@@ -2161,7 +2166,7 @@ waves:
       - "prompts/ad-628-crew-skill-readiness-v1.md"
     builder_required: true
     issues_to_close: [223]
-    status: pending
+    status: done
     notes: |
       AD-628 Crew Skill Readiness Monitoring + Training Officer Role v1
       — closes GH #223. HEAD c6c38ec (Captain reference c6c38ec
@@ -2404,7 +2409,7 @@ waves:
       - "prompts/ad-652-cognitive-code-switching-umbrella-close.md"
     builder_required: true
     issues_to_close: [302]
-    status: pending
+    status: done
     notes: |
       No-build close of GH #302 (AD-652 umbrella). AD-652 is an
       architectural design principle adopted 2026-04-20 (DECISIONS.md:
@@ -2508,7 +2513,7 @@ waves:
       - "prompts/ad-521-swe-build-pipeline-separation-v1.md"
     builder_required: true
     issues_to_close: [96]
-    status: pending
+    status: done
     notes: |
       Source-modifying v1 of AD-521 (DECIDED 2026-03-29 at
       decisions-era-4-evolution.md:1427-1467). Five sections applied
@@ -2619,7 +2624,7 @@ waves:
       - "prompts/ad-543-549-native-swe-harness-v1.md"
     builder_required: true
     issues_to_close: [13]
-    status: pending
+    status: done
 
   - id: "99"
     title: "AD-486 v1 Holodeck Birth Chamber — Graduated Cognitive Onboarding (closes #24)"
@@ -2631,7 +2636,7 @@ waves:
       - "prompts/ad-486-holodeck-birth-chamber-v1.md"
     builder_required: true
     issues_to_close: [24]
-    status: pending
+    status: done
 
   - id: "100"
     title: "AD-539b v1 Holodeck Scenario Generation from Skill Gaps (closes #12)"
@@ -2643,7 +2648,7 @@ waves:
       - "prompts/ad-539b-holodeck-scenario-generation-v1.md"
     builder_required: true
     issues_to_close: [12]
-    status: pending
+    status: done
 
   - id: "101"
     title: "AD-510 v1 Holodeck Team Simulations: Group Discovery & Collaboration (closes #92)"
@@ -2655,7 +2660,7 @@ waves:
       - "prompts/ad-510-holodeck-team-simulations-v1.md"
     builder_required: true
     issues_to_close: [92]
-    status: pending
+    status: done
 
   - id: "102"
     title: "AD-597 v1 MCP App Host Infrastructure + Interactive Games (closes #167)"
@@ -2667,7 +2672,7 @@ waves:
       - "prompts/ad-597-mcp-app-host-v1.md"
     builder_required: true
     issues_to_close: [167]
-    status: pending
+    status: done
 
   - id: "103"
     title: "AD-520 v1 Spatial Knowledge Explorer: Digital Twin & 3D Ontology Visualization (closes #95)"
@@ -2679,7 +2684,7 @@ waves:
       - "prompts/ad-520-spatial-knowledge-explorer-v1.md"
     builder_required: true
     issues_to_close: [95]
-    status: pending
+    status: done
 
   - id: "104"
     title: "AD-562 v1 Ship's Records Knowledge Browser: Obsidian-Style HXI with 3D Knowledge Graph (closes #9)"
@@ -2691,7 +2696,7 @@ waves:
       - "prompts/ad-562-records-knowledge-browser-v1.md"
     builder_required: true
     issues_to_close: [9]
-    status: pending
+    status: done
 
   - id: "105"
     title: "AD-641g v1 NATS Cognitive Chain Pipeline (foundation -- publish-side only, closes #403)"
@@ -2703,7 +2708,7 @@ waves:
       - "prompts/ad-641g-async-cognitive-pipeline-v1.md"
     builder_required: true
     issues_to_close: [403]
-    status: pending
+    status: done
     notes: |
       Foundation cut: subject schema + ChainNATSBridge publish-side + opt-in
       config flag. No consumer logic, no executor flip. Synchronous chain
@@ -2721,7 +2726,7 @@ waves:
       - "prompts/bf-knowledge-store-recovery-tests-v1.md"
     builder_required: true
     issues_to_close: [423]
-    status: pending
+    status: done
     notes: |
       Add tests/test_knowledge_store_git_recovery.py covering the 4-tier
       recovery (corrupt index, broken refs, reflog file parse, fsck fallback).
@@ -2738,7 +2743,7 @@ waves:
       - "prompts/ad-694a-ontology-graph-snapshot-v1.md"
     builder_required: true
     issues_to_close: [424]
-    status: pending
+    status: done
     notes: |
       Move ~200 lines of edge-construction out of routers/ontology.py into
       probos.ontology. Route handler reduces to validate + delegate. SRP +
@@ -2755,7 +2760,7 @@ waves:
       - "prompts/bf-trust-edge-cap-v1.md"
     builder_required: true
     issues_to_close: [426]
-    status: pending
+    status: done
     notes: |
       Cap synthesized trust edges at 200 with trust>0.6 filter. Add Vitest
       for cap behavior. UI-only change.

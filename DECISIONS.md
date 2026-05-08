@@ -4,6 +4,16 @@ Append-only log of architectural decisions made during ProbOS development. Each 
 
 See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap.md](docs/development/roadmap.md) for future plans.
 
+### AD-696 — Wave-Plan Status Field is Documentation Only (2026-05-07)
+
+**Context.** ``prompts/wave-plan.yaml`` carries a ``status:`` field on every wave entry. Up through Wave 104 the field had drifted: 23 entries marked ``pending`` were already shipped per git log. Issue #425.
+
+**Decision.** Keep the ``status:`` field but make its semantics explicit: the orchestrator (``scripts/wave-orchestrator.ps1``) treats ``prompts/wave-orchestrator-state.json`` as the source of truth — the YAML field is a courtesy for human readers. Reconciliation pass flipped 23 drifted entries (waves 78, 81-93, 95, 96, 98-104) to ``done``. A header note in ``wave-plan.yaml`` documents the convention. No orchestrator code change — option-3 close-stage write-back was rejected as too invasive for the marginal value over manual reconciliation.
+
+**Out of scope.** Pre-commit hook to enforce reconciliation. Removing the field entirely. Both deferred until a second drift recurrence justifies the tooling cost.
+
+**Cross-links:** Wave 109, BF #425. AD-695 was the previous highest AD; AD-694a (graph snapshot, Wave 107) is a sub-AD of the AD-694 family, not a peer.
+
 ### AD-574b: Synchronous DM Reply with Thinking Indicator + Ward Room Dual-Write (2026-05-05)
 
 **Context.** AD-574 (Wave 33, decisions-era-4-evolution.md:2888) wired Captain-in-DM into `WardRoomRouter.find_targets` so an agent eventually responds to Captain DMs on its next proactive think cycle. The DM panel UX remained asymmetric with `ProfileChatTab`: Captain types into a Ward Room DM, the input clears, and an empty thread sits there for ~30s. AD-574b closes that gap by routing DM submits through `/api/agent/{id}/chat` synchronously and dual-writing the exchange back into the Ward Room thread for record-keeping.
