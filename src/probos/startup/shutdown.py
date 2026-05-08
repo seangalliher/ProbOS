@@ -147,6 +147,12 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.acm.stop()
         runtime.acm = None
 
+    # Stop Visiting Officer registry (AD-701)
+    vo_registry = getattr(runtime, "visiting_officers", None)
+    if vo_registry is not None:
+        await vo_registry.stop()
+        runtime.visiting_officers = None
+
     # Stop Identity Registry (AD-441)
     if runtime.identity_registry:
         await runtime.identity_registry.stop()

@@ -2541,6 +2541,51 @@ async def finalize_startup(
     else:
         runtime.mcp_bridge = None
 
+    # AD-701: Visiting Officer registry (formal external-participant registration).
+    # Sourced from VesselIdentity (ontology) since runtime does not expose
+    # instance_id / vessel_name / version directly. Default-False per
+    # convention #14; opt-in via config.visiting_officers.enabled.
+    vo_cfg = getattr(config, "visiting_officers", None)
+    if vo_cfg is not None and vo_cfg.enabled and getattr(runtime, "identity_registry", None) is not None:
+        from probos.visiting_officers import VisitingOfficerRegistry
+        ontology = getattr(runtime, "ontology", None)
+        if ontology is not None:
+            try:
+                vi = ontology.get_vessel_identity()
+                instance_id = vi.instance_id
+                vessel_name = vi.name
+                baseline_version = vi.version or config.system.version
+            except Exception:
+                logger.warning(
+                    "AD-701: vessel-identity lookup failed; falling back to config.system.version",
+                    exc_info=True,
+                )
+                instance_id = ""
+                vessel_name = "ProbOS"
+                baseline_version = config.system.version
+        else:
+            instance_id = ""
+            vessel_name = "ProbOS"
+            baseline_version = config.system.version
+        emit_fn = getattr(runtime, "emit_event", None)
+        runtime.visiting_officers = VisitingOfficerRegistry(
+            identity_registry=runtime.identity_registry,
+            instance_id=instance_id,
+            vessel_name=vessel_name,
+            baseline_version=baseline_version,
+            emit_event=emit_fn,
+            session_ttl_seconds=vo_cfg.session_ttl_seconds,
+            sweep_interval_seconds=vo_cfg.sweep_interval_seconds,
+        )
+        await runtime.visiting_officers.start()
+        logger.info(
+            "AD-701: VisitingOfficerRegistry wired (ttl=%.0fs, sweep=%.0fs)",
+            vo_cfg.session_ttl_seconds,
+            vo_cfg.sweep_interval_seconds,
+        )
+    else:
+        runtime.visiting_officers = None
+
     # AD-480: inbound MCP / A2A servers (default-False — opt-in).
     if config.federation.mcp_server.enabled:
         try:

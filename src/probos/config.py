@@ -2004,6 +2004,24 @@ class AssignmentConfig(BaseModel):
     enabled: bool = False  # Disabled by default — enable after HXI surface is ready
 
 
+class VisitingOfficersConfig(BaseModel):
+    """AD-701: Visiting officer registry tunables.
+
+    Default-False per Wave 10 standing convention #14: this is a transitional
+    feature that must be explicitly enabled by the operator. The registry
+    issues sovereign DIDs under ``agent_type='visiting'`` and runs an async
+    sweep loop, so silently enabling it would change the substrate's
+    process-tree shape on first commit.
+    """
+
+    enabled: bool = False
+    session_ttl_seconds: float = Field(default=3600.0, gt=0.0)
+    sweep_interval_seconds: float = Field(default=60.0, gt=0.0)
+    default_capabilities: list[str] = Field(
+        default_factory=lambda: ["ward_room.post", "ward_room.read"]
+    )
+
+
 class BridgeAlertConfig(BaseModel):
     """Bridge Alerts — proactive Captain & crew notifications (AD-410)."""
     enabled: bool = False
@@ -2913,6 +2931,7 @@ class SystemConfig(BaseModel):
         description="AD-549: Native SWE agentic harness configuration.",
     )
     ward_room: WardRoomConfig = WardRoomConfig()
+    visiting_officers: VisitingOfficersConfig = VisitingOfficersConfig()  # AD-701
     assignments: AssignmentConfig = AssignmentConfig()
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
     firewall: FirewallConfig = FirewallConfig()

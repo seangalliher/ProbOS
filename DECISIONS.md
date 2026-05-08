@@ -1347,3 +1347,23 @@ Lifts the `claude-bootstrap` (alinaqi/claude-bootstrap, MIT, 607★) `settings.j
 
 **Status:** SHIPPED. Issue [#495](https://github.com/seangalliher/ProbOS/issues/495).
 **Files:** `src/probos/config.py` (additive), `src/probos/__main__.py` (init + doctor + argparse). Tests: `tests/test_claude_bootstrap_init_defaults.py` (11 cases, all passing).
+### AD-701 — Visiting Officer registry (formal external-participant Ward Room registration)
+**Date:** 2026-05-08
+**Type:** Architecture Decision (substrate — external participant registration)
+**Wave:** 130
+
+Adds a `VisitingOfficerRegistry` that mints time-bounded, capability-scoped sovereign DIDs for external AI tools (Claude Code, Copilot, etc.) under `agent_type="visiting"`. The registry is the enforcement seam: `WardRoomService` stays generic, and any consumer that wants to honor a visiting-officer post calls `has_capability(did, "ward_room.post")` first. AD-449 owns transport; AD-701 owns identity + scope.
+
+**Implementation:**
+- `src/probos/visiting_officers.py` (new): `VisitingOfficerSession` frozen dataclass + `VisitingOfficerRegistry` with public API `register / deregister / get / has_capability / active / start / stop`. In-memory storage; async sweep loop deregisters expired sessions every 60s and emits `VISITING_OFFICER_DEREGISTERED` with reason="expired".
+- `src/probos/config.py`: new `VisitingOfficersConfig` (default `enabled=False` per convention #14, `session_ttl_seconds=3600`, `sweep_interval_seconds=60`, default capabilities `["ward_room.post", "ward_room.read"]`).
+- `src/probos/startup/finalize.py`: wires registry after MCPBridge (AD-449); sources instance/vessel/version from `runtime.ontology.get_vessel_identity()` (corrected — runtime does not expose these directly).
+- `src/probos/startup/shutdown.py`: symmetric `stop()` before identity registry shutdown.
+
+**In scope:** registry + DID issuance + capability scoping + session expiry + sweep loop.
+**Out of scope:** SQLite persistence (AD-701b), HXI sidebar surface (AD-701c), inbound MCP transport that auto-registers (AD-701d).
+
+**Verify-first correction:** prompt cited `runtime.instance_id / vessel_name / baseline_version` in D3 wiring; these attributes do not exist on `ProbOSRuntime`. Builder sourced from `runtime.ontology.get_vessel_identity()` (returns `VesselIdentity(name, version, instance_id)`), falling back to `config.system.version` if ontology is unavailable.
+
+**Status:** SHIPPED. Issue [#477](https://github.com/seangalliher/ProbOS/issues/477).
+**Files:** `src/probos/visiting_officers.py` (new), `src/probos/config.py` (additive), `src/probos/startup/finalize.py` (wiring), `src/probos/startup/shutdown.py` (symmetric stop). Tests: `tests/test_ad701_visiting_officers.py` (11 cases, all passing).
