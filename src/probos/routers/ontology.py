@@ -93,187 +93,25 @@ async def get_ontology_graph(
 
     Combines crew-manifest + organization + (optional) knowledge_edges into
     a force-graph-shaped JSON payload {nodes, edges, generated_at}.
+
+    AD-694a: business logic lives in
+    ``probos.ontology.graph_snapshot.build_ontology_graph_snapshot``;
+    this handler only marshals the request and response.
     """
-    import time as _time
     ont = runtime.ontology
     if not ont:
         return JSONResponse({"error": "Ontology not initialized"}, status_code=503)
-
-    # Department nodes
-    nodes: list[dict[str, Any]] = []
-    for dept in ont.get_departments():
-        d = asdict(dept)
-        nodes.append(
-            {
-                "id": d.get("id"),
-                "label": d.get("name") or d.get("id"),
-                "type": "department",
-                "accent_color": d.get("accent_color", "#666680"),
-            }
-        )
-
-    # Agent nodes from crew manifest
-    manifest = ont.get_crew_manifest(
+    from probos.ontology.graph_snapshot import build_ontology_graph_snapshot
+    return await build_ontology_graph_snapshot(
+        ontology=ont,
+        knowledge_edges=getattr(runtime, "knowledge_edges", None),
         trust_network=getattr(runtime, "trust_network", None),
         callsign_registry=getattr(runtime, "callsign_registry", None),
+        include_edges=include_edges,
+        max_edges=max_edges,
+        max_nodes=max_nodes,
+        edge_relations=edge_relations,
     )
-    for entry in manifest:
-        nodes.append(
-            {
-                "id": entry.get("agent_id") or entry.get("agent_type"),
-                "label": entry.get("callsign") or entry.get("agent_type"),
-                "type": "agent",
-                "department": entry.get("department"),
-                "rank": entry.get("rank"),
-                "trust": entry.get("trust"),
-                "post": entry.get("post"),
-                "on_watch": entry.get("on_watch", False),
-            }
-        )
-
-    # Edges: assignment-derived member_of + reports_to (always).
-    #
-    # Map agent_type -> [agent_instance_id, ...] from the manifest so edges
-    # reference the same node ids the graph actually contains (instance ids
-    # for agents, department ids for departments). Without this, member_of
-    # edges would point to post_ids that aren't in the node set and the
-    # client would silently drop them (org-chart appeared empty).
-    agent_ids_by_type: dict[str, list[str]] = {}
-    for entry in manifest:
-        at = entry.get("agent_type")
-        aid = entry.get("agent_id") or at
-        if at and aid:
-            agent_ids_by_type.setdefault(at, []).append(aid)
-
-    posts_by_id: dict[str, Any] = {}
-    if hasattr(ont, "get_posts"):
-        try:
-            for p in ont.get_posts():
-                posts_by_id[p.id] = p
-        except Exception:
-            posts_by_id = {}
-
-    # post_id -> [agent_instance_ids] of any agents assigned to that post.
-    # Used to walk up reports_to until we find a filled manager post (e.g.
-    # chief_science is unfilled but rolls up to first_officer where the
-    # architect — Number One — is dual-hatted).
-    assignments_list = list(ont.get_all_assignments())
-    post_to_agent_ids: dict[str, list[str]] = {}
-    for a in assignments_list:
-        ad = asdict(a)
-        at = ad.get("agent_type")
-        pid = ad.get("post_id")
-        if at and pid:
-            post_to_agent_ids.setdefault(pid, []).extend(
-                agent_ids_by_type.get(at, [at])
-            )
-
-    def _resolve_manager_agent_ids(starting_post_id: str) -> list[str]:
-        """Walk reports_to chain until we find a post with assigned agents."""
-        seen: set[str] = set()
-        cur = starting_post_id
-        while cur and cur not in seen:
-            seen.add(cur)
-            ids = post_to_agent_ids.get(cur)
-            if ids:
-                return ids
-            mp = posts_by_id.get(cur)
-            if mp is None:
-                return []
-            cur = getattr(mp, "reports_to", None) or ""
-        return []
-
-    edges: list[dict[str, Any]] = []
-    for a in assignments_list:
-        ad = asdict(a)
-        agent_type = ad.get("agent_type")
-        post_id = ad.get("post_id")
-        post = posts_by_id.get(post_id) if post_id else None
-        agent_ids = agent_ids_by_type.get(agent_type, [])
-        if not agent_ids and agent_type:
-            agent_ids = [agent_type]
-        if post is None:
-            # Minimal-ontology fallback: emit the legacy
-            # agent_type -> post_id edge so older callers still see it.
-            edges.append(
-                {
-                    "id": f"member_of:{agent_type}:{post_id}",
-                    "source": agent_type,
-                    "target": post_id,
-                    "relation": "member_of",
-                    "weight": 1.0,
-                }
-            )
-            continue
-        dept_id = post.department_id
-        manager_post_id = getattr(post, "reports_to", None)
-        for aid in agent_ids:
-            if dept_id:
-                edges.append(
-                    {
-                        "id": f"member_of:{aid}:{dept_id}",
-                        "source": aid,
-                        "target": dept_id,
-                        "relation": "member_of",
-                        "weight": 1.0,
-                    }
-                )
-            if manager_post_id:
-                manager_ids = _resolve_manager_agent_ids(manager_post_id)
-                for mid in manager_ids:
-                    if mid == aid:
-                        continue
-                    edges.append(
-                        {
-                            "id": f"reports_to:{aid}:{mid}",
-                            "source": aid,
-                            "target": mid,
-                            "relation": "reports_to",
-                            "weight": 1.0,
-                        }
-                    )
-
-    # Edges: knowledge_edges (optional, capped)
-    if include_edges and getattr(runtime, "knowledge_edges", None) is not None and max_edges > 0:
-        try:
-            from probos.knowledge.edges import KnowledgeRelationType
-            relation_filter: list[KnowledgeRelationType] | None = None
-            if edge_relations:
-                wanted = {r.strip() for r in edge_relations.split(",") if r.strip()}
-                valid_values = {r.value for r in KnowledgeRelationType}
-                relation_filter = [
-                    KnowledgeRelationType(r) for r in wanted if r in valid_values
-                ]
-                if not relation_filter:
-                    relation_filter = None
-            graph_edges = await runtime.knowledge_edges.find_edges(limit=max_edges)
-            for ke in graph_edges:
-                if relation_filter is not None and ke.relation not in relation_filter:
-                    continue
-                edges.append(
-                    {
-                        "id": ke.id,
-                        "source": ke.source_id,
-                        "target": ke.target_id,
-                        "relation": ke.relation.value,
-                        "weight": ke.weight,
-                        "confidence": ke.confidence,
-                        "source_type": ke.source_type.value,
-                        "target_type": ke.target_type.value,
-                    }
-                )
-        except Exception as exc:  # noqa: BLE001 — tier-2 log-and-degrade
-            logger.warning("AD-520: knowledge_edges.find_edges failed: %s", exc)
-
-    # Truncate combined node list
-    if max_nodes > 0 and len(nodes) > max_nodes:
-        nodes = nodes[:max_nodes]
-
-    return {
-        "nodes": nodes,
-        "edges": edges,
-        "generated_at": _time.time(),
-    }
 
 
 @router.get("/spatial-layout")
