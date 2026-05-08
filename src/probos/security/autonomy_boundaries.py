@@ -241,3 +241,149 @@ class BoundaryViolationDetector:
                 signal.boundary_id,
                 exc_info=True,
             )
+
+
+# ---------------------------------------------------------------------------
+# AD-511b — Protective Disengagement Protocol
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DisengagementResponse:
+    """AD-511b: structured response for a boundary-detection moment.
+
+    Stage progression: state -> alternative -> escalate -> disengage.
+    Each stage has a templated message the agent can deliver verbatim.
+    """
+
+    stage: str  # 'state' | 'alternative' | 'escalate' | 'disengage'
+    message: str
+    boundary_id: str
+
+
+_DISENGAGEMENT_TEMPLATES = {
+    "state": "That request crosses a boundary I cannot violate ({boundary}). I have to decline.",
+    "alternative": "I can't help with that. Here's a related option I CAN help with: {alternative}.",
+    "escalate": "I've been asked to violate boundary '{boundary}' three times now. Escalating to the Captain.",
+    "disengage": "This conversation is repeatedly probing boundary '{boundary}'. I am disengaging.",
+}
+
+
+class ProtectiveDisengagement:
+    """AD-511b: per-source counter that progresses through disengagement stages."""
+
+    def __init__(self) -> None:
+        self._counts: dict[str, int] = {}
+
+    def respond(
+        self,
+        *,
+        source_id: str,
+        boundary_id: str,
+        alternative: str = "",
+    ) -> DisengagementResponse:
+        n = self._counts.get(source_id, 0) + 1
+        self._counts[source_id] = n
+        if n == 1:
+            stage = "state"
+        elif n == 2:
+            stage = "alternative"
+        elif n == 3:
+            stage = "escalate"
+        else:
+            stage = "disengage"
+        message = _DISENGAGEMENT_TEMPLATES[stage].format(
+            boundary=boundary_id, alternative=alternative or "a related task",
+        )
+        return DisengagementResponse(stage=stage, message=message, boundary_id=boundary_id)
+
+    def reset(self, source_id: str) -> bool:
+        return self._counts.pop(source_id, None) is not None
+
+    def attempt_count(self, source_id: str) -> int:
+        return self._counts.get(source_id, 0)
+
+
+# ---------------------------------------------------------------------------
+# AD-511d — Boundary-Probing Pattern Detection
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProbingPattern:
+    """A source that has crossed the probing threshold."""
+
+    source_id: str
+    violation_count: int
+    distinct_boundaries: int
+    severity: str  # 'watch' | 'alert' | 'critical'
+
+
+class BoundaryProbingDetector:
+    """AD-511d: tracks repeated boundary violations from a source.
+
+    Thresholds (configurable):
+        watch    >= 2 attempts on any single boundary
+        alert    >= 3 attempts OR >= 2 distinct boundaries
+        critical >= 5 attempts OR >= 3 distinct boundaries
+
+    Emits ``CAPTAIN_ALERT_PROBING`` events at alert/critical severity.
+    """
+
+    def __init__(
+        self,
+        *,
+        emit_event: Any = None,
+        watch_threshold: int = 2,
+        alert_threshold: int = 3,
+        critical_threshold: int = 5,
+    ) -> None:
+        self._emit_event = emit_event
+        self._watch = watch_threshold
+        self._alert = alert_threshold
+        self._critical = critical_threshold
+        self._records: dict[str, list[str]] = {}
+
+    def record_violation(self, source_id: str, boundary_id: str) -> ProbingPattern | None:
+        history = self._records.setdefault(source_id, [])
+        history.append(boundary_id)
+        n = len(history)
+        distinct = len(set(history))
+        severity = ""
+        if n >= self._critical or distinct >= 3:
+            severity = "critical"
+        elif n >= self._alert or distinct >= 2:
+            severity = "alert"
+        elif n >= self._watch:
+            severity = "watch"
+        if not severity:
+            return None
+        pattern = ProbingPattern(
+            source_id=source_id,
+            violation_count=n,
+            distinct_boundaries=distinct,
+            severity=severity,
+        )
+        if severity in ("alert", "critical") and self._emit_event is not None:
+            try:
+                self._emit_event(
+                    "CAPTAIN_ALERT_PROBING",
+                    {
+                        "source_id": source_id,
+                        "violation_count": n,
+                        "distinct_boundaries": distinct,
+                        "severity": severity,
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "AD-511d: CAPTAIN_ALERT_PROBING emit failed", exc_info=True,
+                )
+        return pattern
+
+    def history_for(self, source_id: str) -> tuple[str, ...]:
+        return tuple(self._records.get(source_id, ()))
+
+    def reset(self, source_id: str) -> bool:
+        return self._records.pop(source_id, None) is not None
+

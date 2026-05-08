@@ -2949,7 +2949,7 @@ waves:
       - "prompts/ad-511d-probing-detection-v1.md"
     builder_required: true
     issues_to_close: [446, 448]
-    status: pending
+    status: done
 
   - id: "123"
     title: "AD-522b/c SPC capability + graduated response (closes #450 #451)"
