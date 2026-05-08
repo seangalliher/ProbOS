@@ -202,8 +202,14 @@ class ProactiveCognitiveLoop:
         self._orientation_service: Any = None  # AD-567g: Late-bound
         self._novelty_gate: "NoveltyGate | None" = None  # AD-493: Set via set_novelty_gate()
         self._trait_adaptive_enabled: bool = True  # AD-494: trait-adaptive circuit breaker
-        self._qualification_config: Any = None  # AD-595e: late-bound
-        self._billet_registry: Any = None         # AD-595e: late-bound
+        self._qualification_config = None  # AD-595e: late-bound
+        self._billet_registry = None         # AD-595e: late-bound
+        # AD-572d-i: interruptible-wait — replaces bare ``asyncio.sleep`` in
+        # ``_think_loop`` so external triggers (DM arrival, Captain message,
+        # high-priority intent) can wake the loop early. ``_wakeup`` is set
+        # by callers via ``trigger_wakeup()``; the think loop awaits
+        # ``wait_for(_wakeup.wait(), interval)`` and clears the event each cycle.
+        self._wakeup: asyncio.Event | None = None
 
     def set_orientation_service(self, svc: Any) -> None:
         """AD-567g / BF-113: Set orientation service (public setter for LoD)."""
@@ -475,18 +481,53 @@ class ProactiveCognitiveLoop:
             self._task = None
 
     async def _think_loop(self) -> None:
-        """Main loop: iterate agents every interval seconds."""
+        """Main loop: iterate agents every interval seconds.
+
+        AD-572d-i: replaces ``asyncio.sleep`` with ``_interruptible_sleep``
+        so callers can wake the loop early via ``trigger_wakeup()``.
+        """
         while True:
             try:
                 await self._run_cycle()
-                await asyncio.sleep(self._interval)
+                await self._interruptible_sleep(self._interval)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("ProactiveCognitiveLoop cycle failed (fail-open)")
                 # BF-211: Sleep inside try/except so the loop survives
                 # non-cancellation errors during sleep.
-                await asyncio.sleep(self._interval)
+                await self._interruptible_sleep(self._interval)
+
+    async def _interruptible_sleep(self, seconds: float) -> None:
+        """AD-572d-i: sleep that returns early when ``trigger_wakeup`` fires.
+
+        Lazily initializes the wakeup event on first call (must happen on
+        the running loop, not in __init__). Clears the event after each
+        wake so the next cycle starts fresh.
+        """
+        # AD-572d-i: defensive getattr — some tests construct via __new__
+        # bypassing __init__, so the attribute may not exist yet.
+        wakeup = getattr(self, "_wakeup", None)
+        if wakeup is None:
+            wakeup = asyncio.Event()
+            self._wakeup = wakeup
+        try:
+            await asyncio.wait_for(wakeup.wait(), timeout=seconds)
+            # Wakeup fired — clear so the next cycle starts blank.
+            wakeup.clear()
+        except asyncio.TimeoutError:
+            # Normal path: full interval elapsed.
+            pass
+
+    def trigger_wakeup(self) -> None:
+        """AD-572d-i: signal the think loop to wake from its current sleep.
+
+        Safe to call from any thread/coroutine; idempotent within a
+        single sleep window.
+        """
+        wakeup = getattr(self, "_wakeup", None)
+        if wakeup is not None:
+            wakeup.set()
 
     async def _run_cycle(self) -> None:
         """One think cycle: iterate all crew agents with AD-636 stagger."""

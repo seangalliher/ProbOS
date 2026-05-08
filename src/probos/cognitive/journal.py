@@ -762,6 +762,24 @@ class CognitiveJournal:
             logger.debug("Journal query failed", exc_info=True)
             return []
 
+    async def recent_for_agent(
+        self,
+        agent_id: str,
+        *,
+        limit: int = 20,
+        since: float | None = None,
+        until: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """AD-573e-i: recency-ordered per-agent recall.
+
+        Thin alias over ``get_reasoning_chain`` with explicit naming for
+        callers that want a recall-style API rather than the legacy
+        ``reasoning_chain`` name. Returns most-recent-first.
+        """
+        return await self.get_reasoning_chain(
+            agent_id, limit=limit, since=since, until=until,
+        )
+
     async def get_token_usage(
         self, agent_id: str | None = None
     ) -> dict[str, Any]:

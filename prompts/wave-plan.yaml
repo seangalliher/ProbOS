@@ -2910,7 +2910,7 @@ waves:
       - "prompts/ad-573e-i-journal-recall-v1.md"
     builder_required: true
     issues_to_close: [456, 457]
-    status: pending
+    status: done
 
   - id: "120"
     title: "AD-539c-i + AD-539d-i: Active gap remediation + federation aggregation (closes #454 #455)"
