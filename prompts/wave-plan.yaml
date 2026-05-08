@@ -2936,7 +2936,7 @@ waves:
       - "prompts/ad-507b-curriculum-progression-v1.md"
     builder_required: true
     issues_to_close: [439, 440, 441, 443]
-    status: pending
+    status: done
 
   - id: "122"
     title: "AD-511b/d Boundary continuations (closes #446 #448)"
