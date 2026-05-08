@@ -147,4 +147,35 @@ describe('KnowledgeGraphView (AD-520)', () => {
     render(<KnowledgeGraphView />);
     expect(screen.getByTestId('knowledge-graph-empty')).toBeTruthy();
   });
+
+  it('TRUST mode caps synthesized edges at 200 and prefers high-trust pairs (BF #426)', () => {
+    // 30 science agents → C(30,2) = 435 pairs (above the 200 cap).
+    const agents: any[] = [];
+    for (let i = 0; i < 30; i++) {
+      // First 15 agents have HIGH trust (0.9), last 15 have LOW trust (0.2).
+      const trust = i < 15 ? 0.9 : 0.2;
+      agents.push({ id: `a${i}`, label: `A${i}`, type: 'agent', department: 'science', trust });
+    }
+    useStore.setState({
+      spatialGraphData: {
+        nodes: [{ id: 'science', label: 'Science', type: 'department' }, ...agents],
+        edges: [],
+        generated_at: 0,
+      },
+    });
+    render(<KnowledgeGraphView />);
+    fireEvent.click(screen.getByTestId('graph-mode-trust'));
+    const linkCount = parseInt(
+      screen.getByTestId('mock-force-graph-3d').getAttribute('data-links') || '0',
+      10,
+    );
+    expect(linkCount).toBeLessThanOrEqual(200);
+    // C(15,2) = 105 high-trust pairs; cap allows all of them. Filter prefers
+    // weight >= 0.6, so every kept link must be ≥ 0.6.
+    expect(lastProps.graphData.links.length).toBeGreaterThan(0);
+    for (const lk of lastProps.graphData.links) {
+      expect(typeof lk.weight).toBe('number');
+      expect(lk.weight).toBeGreaterThanOrEqual(0.6);
+    }
+  });
 });

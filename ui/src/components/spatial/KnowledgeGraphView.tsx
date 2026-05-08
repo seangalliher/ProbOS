@@ -69,24 +69,50 @@ export default function KnowledgeGraphView() {
     if (mode === 'org') {
       links = links.filter(e => ORG_RELATIONS.has(String(e.relation)));
     } else if (mode === 'trust') {
-      // Synthesized trust edges between agents sharing a department
-      links = [];
-      const agents = nodes.filter(n => n.type === 'agent');
-      for (let i = 0; i < agents.length; i++) {
-        for (let j = i + 1; j < agents.length; j++) {
-          const a = agents[i] as RawNode; const b = agents[j] as RawNode;
-          if (a.department && a.department === b.department) {
+      // BF #426: cap synthesized trust edges to keep ForceGraph3D layout fluid.
+      // Bucket agents by department first (eliminates the cross-dept early-skip);
+      // emit at most MAX_TRUST_EDGES total, prioritizing high-trust pairs.
+      const MAX_TRUST_EDGES = 200;
+      const HIGH_TRUST_THRESHOLD = 0.6;
+      const byDept = new Map<string, RawNode[]>();
+      for (const n of nodes) {
+        if (n.type !== 'agent') continue;
+        const d = typeof n.department === 'string' ? n.department : '';
+        if (!d) continue;
+        const arr = byDept.get(d);
+        if (arr) arr.push(n as unknown as RawNode); else byDept.set(d, [n as unknown as RawNode]);
+      }
+      type Synth = { id: string; source: string; target: string; relation: string; weight: number };
+      const synth: Synth[] = [];
+      let overflow = false;
+      outer: for (const agents of byDept.values()) {
+        for (let i = 0; i < agents.length; i++) {
+          for (let j = i + 1; j < agents.length; j++) {
+            const a = agents[i]; const b = agents[j];
             const ta = typeof a.trust === 'number' ? a.trust : 0.5;
             const tb = typeof b.trust === 'number' ? b.trust : 0.5;
-            links.push({
+            synth.push({
               id: `trust:${a.id}:${b.id}`,
               source: String(a.id),
               target: String(b.id),
               relation: 'trust',
               weight: (ta + tb) / 2,
             });
+            if (synth.length > MAX_TRUST_EDGES * 4) {
+              // Hard ceiling on raw construction so a 1000-agent dept doesn't
+              // allocate millions of objects before the sort below.
+              overflow = true;
+              break outer;
+            }
           }
         }
+      }
+      if (synth.length > MAX_TRUST_EDGES || overflow) {
+        synth.sort((x, y) => y.weight - x.weight);
+        const filtered = synth.filter(e => e.weight >= HIGH_TRUST_THRESHOLD);
+        links = (filtered.length > 0 ? filtered : synth).slice(0, MAX_TRUST_EDGES) as Array<Record<string, unknown>>;
+      } else {
+        links = synth as Array<Record<string, unknown>>;
       }
     }
     // KNOWLEDGE MAP: no further filter — all relations
