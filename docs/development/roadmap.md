@@ -225,37 +225,37 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | Star Trek Concept | ProbOS Equivalent | Status |
 |---|---|---|
 | Starship | Single ProbOS instance | Built |
-| Ship departments | Agent pools (crew teams) | In progress |
-| Chain of Command | Rank structure — Fleet Admiral → Captain → Bridge → Chiefs → Crew | Roadmap |
-| Ship's computer / LCARS | Runtime + CodebaseIndex + Knowledge Store + Cognitive Journal | Built (Journal: Roadmap) |
-| Internal sensors | Ship's Telemetry — LLM timing, token metering, pipeline comparison | Roadmap |
-| Alert Conditions (Red/Yellow/Green) | Ship-wide operational modes — resource/consensus/dream behavior changes | Roadmap |
-| EPS (Power Distribution) | Token/compute budget allocation across departments | Roadmap |
-| Structural Integrity Field | Proactive runtime invariant enforcement | Roadmap |
-| Multi-Level Diagnostics (L1–L5) | Formalized diagnostic depth for Medical team | Roadmap |
-| Damage Control Teams | Engineering rapid-response automated recovery | Roadmap |
-| Navigational Deflector | Pre-flight validation before expensive operations | Roadmap |
-| Saucer Separation | Graceful degradation when critical systems fail | Roadmap |
+| Ship departments | Agent pools (crew teams) | Built |
+| Chain of Command | Rank structure — Fleet Admiral → Captain → Bridge → Chiefs → Crew | Built (AD-398/440/477/595/674) |
+| Ship's computer / LCARS | Runtime + CodebaseIndex + Knowledge Store + Cognitive Journal | Built |
+| Internal sensors | Ship's Telemetry — LLM timing, token metering, pipeline comparison | Built (AD-461) |
+| Alert Conditions (Red/Yellow/Green) | Ship-wide operational modes — resource/consensus/dream behavior changes | Built (AD-503/506/695) |
+| EPS (Power Distribution) | Token/compute budget allocation across departments | Built (AD-469) |
+| Structural Integrity Field | Proactive runtime invariant enforcement | Roadmap ([#475 AD-699](https://github.com/seangalliher/ProbOS/issues/475)) |
+| Multi-Level Diagnostics (L1–L5) | Formalized diagnostic depth for Medical team | Roadmap ([#476 AD-700](https://github.com/seangalliher/ProbOS/issues/476)) |
+| Damage Control Teams | Engineering rapid-response automated recovery | Built (AD-457) |
+| Navigational Deflector | Pre-flight validation before expensive operations | Built (AD-458) |
+| Saucer Separation | Graceful degradation when critical systems fail | Built (AD-459) |
 | Transporter | Transporter Pattern — parallel code generation (AD-330–336) | **Complete** |
 | Federation | Federated ProbOS instances | Built (Phase 29) |
-| Visiting officers | External AI tools (Claude Code, Copilot, etc.) | Roadmap |
-| Diplomatic relations | Trust transitivity between nodes | Roadmap |
-| Shared intelligence | Knowledge federation + Model of Models | Roadmap |
+| Visiting officers | External AI tools (Claude Code, Copilot, etc.) | Partial (MCP bridge AD-449 ✅; formal registration [#477 AD-701](https://github.com/seangalliher/ProbOS/issues/477)) |
+| Diplomatic relations | Trust transitivity between nodes | Roadmap ([#478 AD-702](https://github.com/seangalliher/ProbOS/issues/478)) |
+| Shared intelligence | Knowledge federation + Model of Models | Partial (AD-687 Knowledge Edge Store ✅; cross-instance sync AD-693 *(Commercial)*) |
 | Prime Directive | Safety constraints, boundary rules, human gate | Built |
-| Starfleet Command | Fleet Admiral (creator) — fleet-wide policy across all instances | Roadmap |
-| Universal Translator | Channel adapters — Discord, Slack, Telegram, WhatsApp, Matrix, Teams | Roadmap (Phase 24) |
-| Subspace Communications | Voice interaction — STT, TTS, wake word, continuous talk | Roadmap (Phase 24) |
-| PADD (Personal Access Display Device) | Mobile companion — PWA, push notifications, responsive HXI | Roadmap (Phase 24) |
-| Holodeck | Browser automation — Playwright, screenshots, web interaction | Roadmap (Phase 25/35) |
-| Holodeck Simulations | Agent training environments — scenario simulation, promotion tests, skill acquisition | Long Horizon |
-| MemoryForge | Ship's Computer service — implanted birth memories, memory transfer, curated memory banks | Long Horizon |
-| Cognitive Evolution | Transfer learning, proactive initiative, service modeling, trend analysis, gap prediction | Roadmap (Phase 28b) |
-| Workflow Templates | Reusable multi-step pipelines — cron, webhooks, workflow API | Roadmap (Phase 33) |
-| Drydock | Distribution — PyPI, Docker, onboarding wizard, quickstart | Roadmap (Phase 32/35) |
-| Modular Construction | Extension-first architecture — sealed core, plugin extensions, graduated autonomy | Roadmap (Phase 30) |
-| Ready Room | Captain's strategic planning — idea capture, multi-agent sessions, architecture hierarchy | Roadmap (Phase 34) |
-| Utopia Planitia | Specialized builders — backend, frontend, test, infra, data | Roadmap (Phase 34) |
-| Captain's Yeoman | Personal AI assistant — conversational front door, crew delegation, personalization | Roadmap (Phase 36) |
+| Starfleet Command | Fleet Admiral (creator) — fleet-wide policy across all instances | Long Horizon ([#479 AD-703](https://github.com/seangalliher/ProbOS/issues/479)) |
+| Universal Translator | Channel adapters — Discord, Slack, Telegram, WhatsApp, Matrix, Teams | Partial (Discord/Slack/Webhook ✅ AD-472; remaining 4 in [#480 AD-704](https://github.com/seangalliher/ProbOS/issues/480)) |
+| Subspace Communications | Voice interaction — STT, TTS, wake word, continuous talk | Partial (substrate ✅ AD-474; backends in [#481 AD-705](https://github.com/seangalliher/ProbOS/issues/481)) |
+| PADD (Personal Access Display Device) | Mobile companion — PWA, push notifications, responsive HXI | Partial (PWA + push ✅ AD-473; responsive HXI + mDNS in [#484 AD-708](https://github.com/seangalliher/ProbOS/issues/484)) |
+| Holodeck | Browser automation — Playwright, screenshots, web interaction | Roadmap ([#482 AD-706](https://github.com/seangalliher/ProbOS/issues/482)) |
+| Holodeck Simulations | Agent training environments — scenario simulation, promotion tests, skill acquisition | Built (AD-486/510/539b) |
+| MemoryForge | Ship's Computer service — implanted birth memories, memory transfer, curated memory banks | Long Horizon ([#485 AD-709](https://github.com/seangalliher/ProbOS/issues/485)) |
+| Cognitive Evolution | Transfer learning, proactive initiative, service modeling, trend analysis, gap prediction | Built (AD-507/509/628/660/666/668-672) |
+| Workflow Templates | Reusable multi-step pipelines — cron, webhooks, workflow API | Partial (WorkflowCache ✅ AD-580; triggers in [#483 AD-707](https://github.com/seangalliher/ProbOS/issues/483)) |
+| Drydock | Distribution — PyPI, Docker, onboarding wizard, quickstart | Built (AD-465/484) |
+| Modular Construction | Extension-first architecture — sealed core, plugin extensions, graduated autonomy | Built (AD-481) |
+| Ready Room | Captain's strategic planning — idea capture, multi-agent sessions, architecture hierarchy | Built (AD-475) |
+| Utopia Planitia | Specialized builders — backend, frontend, test, infra, data | Built (AD-476) |
+| Captain's Yeoman | Personal AI assistant — conversational front door, crew delegation, personalization | Roadmap ([#486 AD-710](https://github.com/seangalliher/ProbOS/issues/486)) |
 | The Nooplex | Distributed meta-intelligence — Model of Models | Long Horizon |
 
 ---
@@ -289,8 +289,9 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 For full historical context (team details, completed phases, AD descriptions
 for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 
-The following items are tagged `(planned, OSS)` in the archive and have open
-GitHub issues tracking implementation:
+### Backlog (queued, awaiting wave-plan slot)
+
+**From the original AD backlog:**
 
 | AD | Title | Issue |
 |----|-------|-------|
@@ -302,14 +303,35 @@ GitHub issues tracking implementation:
 | AD-594b | Crew Consultation Primitive — `consult(question, context)` | [#472](https://github.com/seangalliher/ProbOS/issues/472) |
 | AD-594d | Delivery Pipeline — markdown→PDF, structured→reports | [#473](https://github.com/seangalliher/ProbOS/issues/473) |
 
-Forcing-function deferrals (forward dependencies satisfied; build when need surfaces):
+**From the 2026-05-08 Federation table audit:**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-699 | Structural Integrity Field (SIF) | [#475](https://github.com/seangalliher/ProbOS/issues/475) | 2 |
+| AD-700 | Multi-Level Diagnostics (L1–L5) | [#476](https://github.com/seangalliher/ProbOS/issues/476) | 3 |
+| AD-701 | Visiting Officers — formal external-participant Ward Room registration | [#477](https://github.com/seangalliher/ProbOS/issues/477) | 2 |
+| AD-702 | Diplomatic Relations — trust-transitivity computation | [#478](https://github.com/seangalliher/ProbOS/issues/478) | 3 |
+| AD-703 | Starfleet Command — fleet-wide policy distribution | [#479](https://github.com/seangalliher/ProbOS/issues/479) | 4 (Long Horizon) |
+| AD-704 | Universal Translator — Telegram/WhatsApp/Matrix/Teams adapters | [#480](https://github.com/seangalliher/ProbOS/issues/480) | 3 |
+| AD-705 | Voice Stack Backends — Whisper/Deepgram/Coqui/Porcupine | [#481](https://github.com/seangalliher/ProbOS/issues/481) | 3 |
+| AD-706 | Holodeck — browser automation via Playwright | [#482](https://github.com/seangalliher/ProbOS/issues/482) | 3 |
+| AD-707 | Workflow Triggers — cron + webhook + workflow API | [#483](https://github.com/seangalliher/ProbOS/issues/483) | 3 |
+| AD-708 | PADD — responsive HXI + mDNS auto-discovery | [#484](https://github.com/seangalliher/ProbOS/issues/484) | 4 |
+| AD-709 | MemoryForge — implanted birth memories | [#485](https://github.com/seangalliher/ProbOS/issues/485) | 5 (Long Horizon) |
+| AD-710 | Captain's Yeoman — personal AI assistant | [#486](https://github.com/seangalliher/ProbOS/issues/486) | 4 |
+
+### Forcing-function deferrals
+
+(Forward dependencies satisfied; build when need surfaces.)
 
 | AD | Forcing function |
 |----|------------------|
 | AD-574c-ii | DM conversation convergence (full ProfileChatTab refactor — substrate ready) |
 | AD-641g-1-1 | Flip `SubTaskExecutor` to `await` ANALYZE results from NATS subjects |
 
-Commercial-tagged items (live in private commercial repo):
+### Commercial-tagged items
+
+(Live in private commercial repo; OSS surface is the extension point only.)
 
 | AD | Title |
 |----|-------|
