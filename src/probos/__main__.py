@@ -602,6 +602,11 @@ def _cmd_init(args: argparse.Namespace) -> None:
     console = Console()
     home = Path(args.probos_home) if args.probos_home else _probos_home()
 
+    # AD-711: resolve security profile (default strict; invalid → strict).
+    profile = getattr(args, "security_profile", "strict")
+    if profile not in ("strict", "relaxed"):
+        profile = "strict"
+
     if (home / "config.yaml").exists() and not args.force:
         console.print(
             f"[yellow]Config already exists at {home / 'config.yaml'}[/yellow]\n"
@@ -671,6 +676,45 @@ knowledge:
 utility_agents:
   enabled: true
 """
+    # AD-711: claude-bootstrap-derived security profile (declarative; runtime
+    # enforcement deferred to AD-711-1). The strict profile is the secure
+    # default; relaxed is opt-in via ``--security-profile relaxed``.
+    security_block_strict = """\
+# AD-711: Security profile (claude-bootstrap-derived defaults)
+# Generated with profile=strict. Edit ONLY by adding entries to ``allow``.
+# Do NOT remove entries from ``deny`` without first reviewing the docs.
+security:
+  profile: "strict"
+  permissions:
+    allow:
+      - "shell:pytest *"
+      - "shell:git status *"
+      - "shell:git diff *"
+      - "shell:git log *"
+    deny:
+      - "shell:rm -rf *"
+      - "shell:git push --force *"
+      - "shell:git reset --hard *"
+      - "fs:write:.env"
+      - "fs:write:.env.*"
+      - "fs:write:**/credentials.json"
+"""
+    security_block_relaxed = """\
+# AD-711: Security profile (claude-bootstrap-derived defaults)
+# Generated with profile=relaxed. THIS PROFILE IS WEAKER -- explicit opt-in only.
+# To re-enable strict defaults, run: probos init --force --security-profile strict
+security:
+  profile: "relaxed"
+  permissions:
+    allow:
+      - "shell:*"
+    deny:
+      - "shell:rm -rf /"
+      - "fs:write:.env"
+"""
+    config_content = config_content + (
+        security_block_strict if profile == "strict" else security_block_relaxed
+    )
     (home / "config.yaml").write_text(config_content, encoding="utf-8")
 
     console.print()
@@ -765,6 +809,33 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     except Exception as exc:
         console.print(f"  [yellow]\u26a0[/yellow] ChromaDB import failed: {exc}")
         failures.append("chromadb_missing")
+
+    # Check 6: AD-711 security profile sanity
+    if cfg is not None:
+        sec = getattr(cfg, "security", None)
+        if sec is None:
+            failures.append(
+                "security: section missing from config.yaml -- re-run "
+                "`probos init --force --security-profile strict` to generate it"
+            )
+        else:
+            sec_profile = getattr(sec, "profile", "")
+            perms = getattr(sec, "permissions", None)
+            deny = list(getattr(perms, "deny", []) or [])
+            if sec_profile != "strict":
+                console.print(
+                    "  [yellow]![/yellow] security.profile is "
+                    f"'{sec_profile}' (not 'strict') -- review at your discretion"
+                )
+            if not deny:
+                failures.append(
+                    "security.permissions.deny is empty -- at minimum, deny "
+                    "shell:rm -rf and fs:write:.env per AD-711 defaults"
+                )
+            else:
+                console.print(
+                    f"  [green]\u2713[/green] Security profile: {sec_profile} ({len(deny)} deny rules)"
+                )
 
     console.print()
     if failures:
@@ -1271,6 +1342,12 @@ def main() -> None:
     init_parser = subparsers.add_parser("init", help="Initialize ProbOS config at ~/.probos/")
     init_parser.add_argument("--force", action="store_true", help="Overwrite existing config")
     init_parser.add_argument("--probos-home", type=str, default=None, help="Custom config directory")
+    init_parser.add_argument(
+        "--security-profile",
+        choices=("strict", "relaxed"),
+        default="strict",
+        help="Security defaults to bake into the generated config (default: strict)",
+    )
 
     # --- probos doctor (AD-484) ---
     subparsers.add_parser("doctor", help="Run a diagnostic check on the ProbOS environment")

@@ -1759,8 +1759,21 @@ class SecurityInfraConfig(BaseModel):
     audit_persistence_filename: str = "audit_log.db"
 
 
+class PermissionsConfig(BaseModel):
+    """AD-711: declarative permission lists (enforcement deferred to AD-711-1)."""
+
+    allow: list[str] = Field(default_factory=list)
+    deny: list[str] = Field(default_factory=list)
+
+
 class SecurityConfig(BaseModel):
-    """Security Team configuration (AD-455)."""
+    """Security Team configuration (AD-455).
+
+    AD-711 (Wave 130): adds ``profile`` and ``permissions`` fields for
+    claude-bootstrap-derived secure-by-default init wizard. ``profile`` is
+    a declarative marker; ``permissions.deny`` is consumed at the wizard +
+    doctor layer today and at the runtime enforcement layer in AD-711-1.
+    """
 
     enabled: bool = True
     max_payload_bytes: int = Field(default=65536, ge=1024)
@@ -1772,6 +1785,9 @@ class SecurityConfig(BaseModel):
     campaign_interval_seconds: float = Field(default=3600.0, ge=60.0)
     # AD-607: Memory security framework (Wave 92).
     memory: "MemorySecurityConfig" = Field(default_factory=lambda: MemorySecurityConfig())
+    # AD-711: claude-bootstrap-derived security profile + permissions deny-list.
+    profile: Literal["strict", "relaxed"] = "strict"
+    permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
 
 
 class MemorySecurityConfig(BaseModel):

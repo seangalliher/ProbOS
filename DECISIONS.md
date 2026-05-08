@@ -1328,3 +1328,22 @@ Adds a new HXI shell slash command `/diagnostic [<level>] [<focus>]` for the Cap
 **Status:** SHIPPED. Issue [#507](https://github.com/seangalliher/seangalliher/ProbOS/issues/507).
 **Files:** `src/probos/experience/commands/commands_diagnostic.py` (new), `src/probos/experience/panels.py` (additive renderer), `src/probos/experience/shell.py` (3 hooks), `tests/test_layer_boundaries.py` (one ALLOWED_EXCEPTIONS entry). Tests: `tests/test_ad700a_diagnostic_slash_command.py` (9 cases, all passing).
 
+
+### AD-711 — claude-bootstrap-derived `probos init` security defaults
+**Date:** 2026-05-08
+**Type:** Architecture Decision (experience — init wizard hardening)
+**Wave:** 130
+
+Lifts the `claude-bootstrap` (alinaqi/claude-bootstrap, MIT, 607★) `settings.json` permission deny-list pattern into `probos init`, generating a secure-by-default `security:` block with declarative `allow`/`deny` entries. Weakening defaults is opt-in only via `--security-profile relaxed`; the wizard never prompts interactively to weaken. `probos doctor` now flags missing/empty security sections as failures and warns on relaxed profile.
+
+**Implementation:**
+- `src/probos/config.py`: new `PermissionsConfig` model; existing `SecurityConfig` (AD-455) extended additively with `profile: Literal["strict","relaxed"] = "strict"` and `permissions: PermissionsConfig`.
+- `src/probos/__main__.py`: `_cmd_init` resolves `args.security_profile` (default "strict"; invalid → "strict") and appends a strict-or-relaxed YAML block to the generated `config.yaml`. New `--security-profile` argparse flag with `choices=("strict","relaxed")`. `_cmd_doctor` adds Check 6 (security section sanity).
+
+**In scope:** declarative security block + flag + doctor check.
+**Out of scope:** runtime enforcement of `permissions.deny` (forward marker AD-711-1); `config.local.yaml` overlay; `init --upgrade-security` migration.
+
+**AD-numbering note:** prompt cited AD-709, but `docs/development/roadmap.md` already reserves AD-709 for MemoryForge (#485). Builder reassigned to AD-711 (next free above the wave-129 ceiling) and shifted the runtime-enforcement forward marker AD-712 to AD-711-1 to avoid colliding with Memvid-QP (which now takes AD-712).
+
+**Status:** SHIPPED. Issue [#495](https://github.com/seangalliher/ProbOS/issues/495).
+**Files:** `src/probos/config.py` (additive), `src/probos/__main__.py` (init + doctor + argparse). Tests: `tests/test_claude_bootstrap_init_defaults.py` (11 cases, all passing).
