@@ -2872,7 +2872,7 @@ waves:
       - "prompts/ad-482-self-improvement-pipeline-v1.md"
     builder_required: true
     issues_to_close: [434]
-    status: pending
+    status: done
 
   - id: "117"
     title: "AD-529 + AD-568: Communication Contagion Firewall + Source Governance (closes #437 #438)"
