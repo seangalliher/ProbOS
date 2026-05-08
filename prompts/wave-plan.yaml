@@ -3042,4 +3042,4 @@ waves:
       - "prompts/ad-700c-diagnostician-tier-routing-v1.md"
     builder_required: true
     issues_to_close: [506, 507, 508, 509, 491]
-    status: pending
+    status: done
