@@ -4,7 +4,7 @@
  * Wraps react-force-graph-3d with mode chips (ORG / TRUST / KNOWLEDGE / DEPARTMENT)
  * and a department filter. Read-only — clicks dispatch setSpatialSelectedNode.
  */
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import { useStore } from '../../store/useStore';
 import type { GraphMode } from './types';
@@ -103,6 +103,23 @@ export default function KnowledgeGraphView() {
     setSelected({ kind: 'agent', id: String(node.id), payload: node });
   }, [setSelected]);
 
+  // Track container size so ForceGraph3D resizes with the panel.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setContainerSize({ w: Math.round(r.width), h: Math.round(r.height) });
+    };
+    update();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   if (!data || data.nodes.length === 0) {
     return (
       <div data-testid="knowledge-graph-empty" style={{
@@ -158,8 +175,10 @@ export default function KnowledgeGraphView() {
           ))}
         </div>
       )}
-      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+      <div ref={containerRef} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <ForceGraph3D
+          width={containerSize.w || undefined}
+          height={containerSize.h || undefined}
           graphData={filtered as any}
           nodeId="id"
           nodeVal="val"
