@@ -42,6 +42,13 @@ _FINALIZE_HOOKS: list[tuple[str, FinalizeHook]] = []
 _PROVIDERS: set[str] = set()
 _DISCOVERED = False
 
+# AD-698: pre-intent authorization hooks. Each hook receives the
+# IntentMessage and returns either True (allow) or False (deny). Hooks
+# raising exceptions are treated as deny-with-warning. Multiple hooks
+# may be registered; ALL must allow for the broadcast to proceed.
+PreIntentAuthHook = Callable[[Any], bool]
+_PRE_INTENT_AUTH_HOOKS: list[tuple[str, PreIntentAuthHook]] = []
+
 
 def register_finalize_hook(
     name: str,
@@ -162,4 +169,56 @@ def reset_for_tests() -> None:
     global _DISCOVERED
     _FINALIZE_HOOKS.clear()
     _PROVIDERS.clear()
+    _PRE_INTENT_AUTH_HOOKS.clear()
     _DISCOVERED = False
+
+
+# ---------------------------------------------------------------------------
+# AD-698 — pre-intent authorization
+# ---------------------------------------------------------------------------
+
+
+def register_pre_intent_authorization_hook(
+    name: str,
+    hook: PreIntentAuthHook,
+    *,
+    provider: str = "",
+) -> None:
+    """Register a pre-broadcast authorization hook (AD-698).
+
+    Hooks receive the ``IntentMessage`` and must return ``True`` to allow
+    or ``False`` to deny. Any exception is treated as deny + warning.
+    All registered hooks must return ``True`` for the broadcast to
+    proceed. Hooks must be fast and side-effect free — they sit on the
+    hot path of every broadcast.
+    """
+    if not name:
+        raise ValueError("AD-698: pre-intent auth hook name must be non-empty")
+    _PRE_INTENT_AUTH_HOOKS.append((name, hook))
+    if provider:
+        _PROVIDERS.add(provider)
+
+
+def evaluate_pre_intent_authorization(intent: Any) -> tuple[bool, str]:
+    """Evaluate every registered pre-intent auth hook for ``intent``.
+
+    Returns ``(allowed, reason)``. ``reason`` is empty when allowed.
+    Hooks raising exceptions are recorded as denials with their hook
+    name and exception type in the reason.
+    """
+    for name, hook in list(_PRE_INTENT_AUTH_HOOKS):
+        try:
+            allowed = bool(hook(intent))
+        except Exception as exc:
+            logger.warning(
+                "AD-698: pre-intent auth hook '%s' raised %s; denying intent",
+                name, type(exc).__name__, exc_info=True,
+            )
+            return False, f"{name}:{type(exc).__name__}"
+        if not allowed:
+            return False, name
+    return True, ""
+
+
+def registered_pre_intent_auth_hook_names() -> tuple[str, ...]:
+    return tuple(name for name, _ in _PRE_INTENT_AUTH_HOOKS)

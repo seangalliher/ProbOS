@@ -442,6 +442,20 @@ class IntentBus:
             result = await self.send(intent)
             return [result] if result else []
 
+        # AD-698: pre-intent authorization seam. Default-empty registry
+        # means zero overhead. Overlay packages register hooks for RBAC,
+        # rate limiting, etc.
+        try:
+            from probos.extensions.overlay import evaluate_pre_intent_authorization
+            allowed, reason = evaluate_pre_intent_authorization(intent)
+        except Exception:
+            allowed, reason = True, ""
+        if not allowed:
+            logger.info(
+                "AD-698: intent %s denied by pre-auth hook '%s'", intent.intent, reason,
+            )
+            return []
+
         timeout = timeout if timeout is not None else intent.ttl_seconds
         _broadcast_start = time.monotonic()  # AD-470: timing
 

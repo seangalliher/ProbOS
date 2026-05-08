@@ -19,6 +19,7 @@ import { GamePanel } from './components/GamePanel';
 import CrewRosterPanel from './components/CrewRosterPanel';
 import NotebooksPanel from './components/NotebooksPanel';
 import BehavioralMetricsPanel from './components/BehavioralMetricsPanel';
+import CommercialOverlayBadge from './components/CommercialOverlayBadge';
 import SpatialExplorerPanel from './components/SpatialExplorerPanel';
 import KnowledgeBrowserPanel from './components/KnowledgeBrowserPanel';
 
@@ -135,6 +136,8 @@ function TopNav() {
       <NavSeparator />
       {/* Diagnostics */}
       <NavButton label="METRICS" active={metricsOpen} onOpen={openMetrics} testId="behavioral-metrics-toggle" />
+      {/* AD-697-1: commercial overlay badge — invisible when no overlay loaded */}
+      <CommercialOverlayBadge />
     </div>
   );
 }

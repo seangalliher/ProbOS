@@ -2836,7 +2836,7 @@ waves:
       - "prompts/ad-698-pre-intent-auth-hook-v1.md"
     builder_required: true
     issues_to_close: [431, 432]
-    status: pending
+    status: done
 
   - id: "114"
     title: "BF: Roadmap reconciliation - flip shipped (planned) tags to COMPLETE (closes #465)"

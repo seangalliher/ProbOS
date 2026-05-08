@@ -48,11 +48,12 @@ async def extensions(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     upgrade prompt", "render Admin tab") without needing to import any
     commercial symbol.
     """
-    from probos.extensions.overlay import registered_hook_names
+    from probos.extensions.overlay import registered_hook_names, registered_pre_intent_auth_hook_names
     return {
         "commercial_loaded": runtime.commercial_overlay_loaded,
         "providers": list(runtime.loaded_extension_providers),
         "hooks": list(registered_hook_names()),
+        "pre_intent_auth_hooks": list(registered_pre_intent_auth_hook_names()),
     }
 
 
