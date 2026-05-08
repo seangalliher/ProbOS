@@ -131,19 +131,92 @@ async def get_ontology_graph(
             }
         )
 
-    # Edges: assignment-derived member_of (always)
+    # Edges: assignment-derived member_of + reports_to (always).
+    #
+    # Map agent_type -> [agent_instance_id, ...] from the manifest so edges
+    # reference the same node ids the graph actually contains (instance ids
+    # for agents, department ids for departments). Without this, member_of
+    # edges would point to post_ids that aren't in the node set and the
+    # client would silently drop them (org-chart appeared empty).
+    agent_ids_by_type: dict[str, list[str]] = {}
+    for entry in manifest:
+        at = entry.get("agent_type")
+        aid = entry.get("agent_id") or at
+        if at and aid:
+            agent_ids_by_type.setdefault(at, []).append(aid)
+
+    posts_by_id: dict[str, Any] = {}
+    if hasattr(ont, "get_posts"):
+        try:
+            for p in ont.get_posts():
+                posts_by_id[p.id] = p
+        except Exception:
+            posts_by_id = {}
+
     edges: list[dict[str, Any]] = []
     for a in ont.get_all_assignments():
         ad = asdict(a)
-        edges.append(
-            {
-                "id": f"member_of:{ad.get('agent_type')}:{ad.get('post_id')}",
-                "source": ad.get("agent_type"),
-                "target": ad.get("post_id"),
-                "relation": "member_of",
-                "weight": 1.0,
-            }
-        )
+        agent_type = ad.get("agent_type")
+        post_id = ad.get("post_id")
+        post = posts_by_id.get(post_id) if post_id else None
+        agent_ids = agent_ids_by_type.get(agent_type, [])
+        if not agent_ids and agent_type:
+            agent_ids = [agent_type]
+        if post is None:
+            # Minimal-ontology fallback: emit the legacy
+            # agent_type -> post_id edge so older callers still see it.
+            edges.append(
+                {
+                    "id": f"member_of:{agent_type}:{post_id}",
+                    "source": agent_type,
+                    "target": post_id,
+                    "relation": "member_of",
+                    "weight": 1.0,
+                }
+            )
+            continue
+        dept_id = post.department_id
+        manager_post_id = getattr(post, "reports_to", None)
+        for aid in agent_ids:
+            if dept_id:
+                edges.append(
+                    {
+                        "id": f"member_of:{aid}:{dept_id}",
+                        "source": aid,
+                        "target": dept_id,
+                        "relation": "member_of",
+                        "weight": 1.0,
+                    }
+                )
+            if manager_post_id:
+                manager_post = posts_by_id.get(manager_post_id)
+                manager_agent_type = None
+                if manager_post is not None:
+                    manager_agent_type = next(
+                        (
+                            ma.agent_type
+                            for ma in ont.get_all_assignments()
+                            if ma.post_id == manager_post_id
+                        ),
+                        None,
+                    )
+                manager_ids = (
+                    agent_ids_by_type.get(manager_agent_type, [])
+                    if manager_agent_type
+                    else []
+                )
+                for mid in manager_ids:
+                    if mid == aid:
+                        continue
+                    edges.append(
+                        {
+                            "id": f"reports_to:{aid}:{mid}",
+                            "source": aid,
+                            "target": mid,
+                            "relation": "reports_to",
+                            "weight": 1.0,
+                        }
+                    )
 
     # Edges: knowledge_edges (optional, capped)
     if include_edges and getattr(runtime, "knowledge_edges", None) is not None and max_edges > 0:

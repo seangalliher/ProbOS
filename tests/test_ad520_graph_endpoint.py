@@ -172,3 +172,44 @@ async def test_graph_max_nodes_truncates_combined_node_list() -> None:
     rt = _make_runtime(ontology=ont)
     res = await get_ontology_graph(runtime=rt, max_nodes=5)
     assert len(res["nodes"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_graph_member_of_resolves_to_instance_and_department_when_posts_available() -> None:
+    """When ontology exposes get_posts(), member_of edges connect instance ids to department ids."""
+    @dataclass
+    class _Post:
+        id: str
+        department_id: str
+        reports_to: str | None = None
+
+    class _OntWithPosts(_FakeOntology):
+        def __init__(self, depts, manifest, assignments, posts):
+            super().__init__(depts, manifest, assignments)
+            self._posts = posts
+
+        def get_posts(self):
+            return self._posts
+
+    manifest = [
+        {"agent_type": "scout", "agent_id": "scout-1", "department": "science", "rank": "ensign", "post": "scout-post", "trust": 0.8, "on_watch": True},
+        {"agent_type": "architect", "agent_id": "arch-1", "department": "science", "rank": "lieutenant", "post": "first-officer-post", "trust": 0.7, "on_watch": True},
+    ]
+    assignments = [
+        _FakeAssignment(agent_type="scout", post_id="scout-post"),
+        _FakeAssignment(agent_type="architect", post_id="first-officer-post"),
+    ]
+    posts = [
+        _Post(id="scout-post", department_id="science", reports_to="first-officer-post"),
+        _Post(id="first-officer-post", department_id="science", reports_to=None),
+    ]
+    ont = _OntWithPosts([_FakeDept(id="science", name="Science")], manifest, assignments, posts)
+    rt = _make_runtime(ontology=ont)
+    res = await get_ontology_graph(runtime=rt)
+    member = [e for e in res["edges"] if e["relation"] == "member_of"]
+    assert {(e["source"], e["target"]) for e in member} == {
+        ("scout-1", "science"),
+        ("arch-1", "science"),
+    }
+    reports = [e for e in res["edges"] if e["relation"] == "reports_to"]
+    assert ("scout-1", "arch-1") in {(e["source"], e["target"]) for e in reports}
