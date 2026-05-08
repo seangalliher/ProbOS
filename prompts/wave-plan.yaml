@@ -2975,7 +2975,7 @@ waves:
       - "prompts/ad-574c-i-dm-convergence-v1.md"
     builder_required: true
     issues_to_close: [464, 458]
-    status: pending
+    status: done
 
   - id: "125"
     title: "AD-686c + AD-647d hygiene (closes #463 #459)"
