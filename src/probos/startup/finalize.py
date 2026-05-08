@@ -3097,6 +3097,14 @@ async def finalize_startup(
             config=sub_task_config,
         )
         runtime.chain_nats_bridge = chain_nats_bridge
+        # AD-641g-1: consumer-side foundation — siblings of the bridge.
+        # Only constructed; downstream ADs register handlers + call start().
+        from probos.cognitive.chain_nats_consumer import ChainNATSConsumer
+        chain_nats_consumer = ChainNATSConsumer(
+            nats_bus=getattr(runtime, "nats_bus", None),
+            config=sub_task_config,
+        )
+        runtime.chain_nats_consumer = chain_nats_consumer
         executor = SubTaskExecutor(
             config=sub_task_config,
             emit_event_fn=runtime.emit_event,

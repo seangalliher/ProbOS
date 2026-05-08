@@ -2823,7 +2823,7 @@ waves:
       - "prompts/ad-641g-1-decoupled-execution-v1.md"
     builder_required: true
     issues_to_close: [430]
-    status: pending
+    status: done
 
   - id: "113"
     title: "AD-697-1 + AD-698: Overlay seam validation (HXI badge + first hook, closes #431 #432)"
