@@ -2897,7 +2897,7 @@ waves:
       - "prompts/ad-660b-causal-ranking-v1.md"
     builder_required: true
     issues_to_close: [460]
-    status: pending
+    status: done
 
   - id: "119"
     title: "AD-572d-i + AD-573e-i: Forcing-function infra (closes #456 #457)"

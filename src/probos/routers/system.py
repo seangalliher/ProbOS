@@ -57,6 +57,32 @@ async def extensions(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     }
 
 
+@router.get("/causal-templates")
+async def causal_templates(
+    runtime: Any = Depends(get_runtime),
+    agent_id: str | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """AD-660b: read-only access to recent causal-reasoning templates.
+
+    Returns templates most-recent-first. Optional ``agent_id`` filter
+    scopes to a single agent; otherwise ship-wide. Returns empty list
+    when the journal is unavailable or causal reasoning is disabled.
+    """
+    journal = getattr(runtime, "cognitive_journal", None)
+    if journal is None:
+        return {"templates": [], "count": 0}
+    try:
+        rows = await journal.get_recent_causal_templates(
+            limit=max(1, min(int(limit), 200)),
+            agent_id=agent_id,
+        )
+    except Exception:
+        logger.warning("AD-660b: causal-templates query failed", exc_info=True)
+        return {"templates": [], "count": 0}
+    return {"templates": list(rows or []), "count": len(rows or [])}
+
+
 @router.get("/telemetry")
 async def get_telemetry(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Return current telemetry report (AD-461)."""
