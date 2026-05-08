@@ -1367,3 +1367,24 @@ Adds a `VisitingOfficerRegistry` that mints time-bounded, capability-scoped sove
 
 **Status:** SHIPPED. Issue [#477](https://github.com/seangalliher/ProbOS/issues/477).
 **Files:** `src/probos/visiting_officers.py` (new), `src/probos/config.py` (additive), `src/probos/startup/finalize.py` (wiring), `src/probos/startup/shutdown.py` (symmetric stop). Tests: `tests/test_ad701_visiting_officers.py` (11 cases, all passing).
+
+### AD-707 — Workflow Cron Trigger (cron-only)
+**Date:** 2026-05-08
+**Type:** Architecture Decision (cognitive — workflow scheduling)
+**Wave:** 130
+
+Adds a `WorkflowCronScheduler` that re-fires cached workflows on cron schedules. Replays through `runtime.process_natural_language`, preserving the WorkflowCache fast-path (AD-580). SQLite-persistent so triggers survive restart; first cron eval uses `created_at` as the base so freshly-registered triggers do not fire instantly.
+
+**Implementation:**
+- `src/probos/cognitive/workflow_cron.py` (new): `WorkflowCronTrigger` dataclass + `WorkflowCronScheduler` with public API `start / stop / register / cancel / list_triggers`. Cron validation via `croniter.is_valid`; failed replays logged-and-degraded without bumping `fire_count`.
+- `src/probos/config.py`: new `WorkflowCronTriggerConfig` (default `enabled=False`, `db_path=""` in-memory, `tick_interval_seconds=1.0`, `initial_triggers=[]`); placed at top-level `SystemConfig` adjacent to `visiting_officers`.
+- `src/probos/startup/finalize.py`: wires after AD-701; isinstance-gated against the real config class so MagicMock-using tests do not trigger the wiring.
+- `src/probos/startup/shutdown.py`: symmetric `stop()` before identity registry shutdown.
+
+**In scope:** cron trigger only.
+**Out of scope:** webhook firing (AD-707b), REST/CLI trigger CRUD (AD-707c), per-workflow concurrency cap (AD-707d).
+
+**MagicMock contamination fix:** initial `if cfg is not None and cfg.enabled` checks matched MagicMock-spec'd test configs, starting background sweep/tick loops with MagicMock intervals. Replaced with `isinstance(cfg, RealConfigClass) and cfg.enabled` — same pattern applied retroactively to AD-701 visiting-officer wiring.
+
+**Status:** SHIPPED. Issue [#483](https://github.com/seangalliher/ProbOS/issues/483).
+**Files:** `src/probos/cognitive/workflow_cron.py` (new), `src/probos/config.py` (additive), `src/probos/startup/finalize.py` (wiring), `src/probos/startup/shutdown.py` (symmetric stop). Tests: `tests/test_ad707_workflow_cron_trigger.py` (11 cases, all passing).

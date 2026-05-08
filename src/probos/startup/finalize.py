@@ -2545,8 +2545,13 @@ async def finalize_startup(
     # Sourced from VesselIdentity (ontology) since runtime does not expose
     # instance_id / vessel_name / version directly. Default-False per
     # convention #14; opt-in via config.visiting_officers.enabled.
+    from probos.config import VisitingOfficersConfig as _VOConfig
     vo_cfg = getattr(config, "visiting_officers", None)
-    if vo_cfg is not None and vo_cfg.enabled and getattr(runtime, "identity_registry", None) is not None:
+    if (
+        isinstance(vo_cfg, _VOConfig)
+        and vo_cfg.enabled
+        and getattr(runtime, "identity_registry", None) is not None
+    ):
         from probos.visiting_officers import VisitingOfficerRegistry
         ontology = getattr(runtime, "ontology", None)
         if ontology is not None:
@@ -2585,6 +2590,37 @@ async def finalize_startup(
         )
     else:
         runtime.visiting_officers = None
+
+    # AD-707: Workflow Cron Trigger scheduler
+    from probos.config import WorkflowCronTriggerConfig as _WFCConfig
+    wfc_cfg = getattr(config, "workflow_cron", None)
+    if isinstance(wfc_cfg, _WFCConfig) and wfc_cfg.enabled:
+        from probos.cognitive.workflow_cron import WorkflowCronScheduler
+
+        runtime.workflow_cron = WorkflowCronScheduler(
+            process_nl_fn=runtime.process_natural_language,
+            db_path=wfc_cfg.db_path or None,
+            tick_interval_seconds=wfc_cfg.tick_interval_seconds,
+        )
+        await runtime.workflow_cron.start()
+        for entry in wfc_cfg.initial_triggers:
+            try:
+                await runtime.workflow_cron.register(
+                    entry["user_input"], entry["cron_expr"],
+                )
+            except Exception:
+                logger.warning(
+                    "AD-707: initial trigger failed to register: %s",
+                    entry,
+                    exc_info=True,
+                )
+        logger.info(
+            "AD-707: WorkflowCronScheduler wired (%d initial trigger(s); db=%s)",
+            len(wfc_cfg.initial_triggers),
+            wfc_cfg.db_path or "<in-memory>",
+        )
+    else:
+        runtime.workflow_cron = None
 
     # AD-480: inbound MCP / A2A servers (default-False — opt-in).
     if config.federation.mcp_server.enabled:

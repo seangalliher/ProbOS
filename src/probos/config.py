@@ -2022,6 +2022,21 @@ class VisitingOfficersConfig(BaseModel):
     )
 
 
+class WorkflowCronTriggerConfig(BaseModel):
+    """AD-707: Workflow cron-trigger scheduler configuration.
+
+    Default-False per Wave 10 convention #14. ``db_path`` empty means
+    in-memory only (triggers lost on restart); supply a path to enable
+    persistence. ``initial_triggers`` items must have keys
+    ``user_input`` and ``cron_expr``.
+    """
+
+    enabled: bool = False
+    db_path: str = ""
+    tick_interval_seconds: float = Field(default=1.0, gt=0.0)
+    initial_triggers: list[dict[str, str]] = Field(default_factory=list)
+
+
 class BridgeAlertConfig(BaseModel):
     """Bridge Alerts — proactive Captain & crew notifications (AD-410)."""
     enabled: bool = False
@@ -2932,6 +2947,7 @@ class SystemConfig(BaseModel):
     )
     ward_room: WardRoomConfig = WardRoomConfig()
     visiting_officers: VisitingOfficersConfig = VisitingOfficersConfig()  # AD-701
+    workflow_cron: WorkflowCronTriggerConfig = WorkflowCronTriggerConfig()  # AD-707
     assignments: AssignmentConfig = AssignmentConfig()
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
     firewall: FirewallConfig = FirewallConfig()

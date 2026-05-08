@@ -153,6 +153,12 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await vo_registry.stop()
         runtime.visiting_officers = None
 
+    # Stop Workflow Cron scheduler (AD-707)
+    wfc = getattr(runtime, "workflow_cron", None)
+    if wfc is not None:
+        await wfc.stop()
+        runtime.workflow_cron = None
+
     # Stop Identity Registry (AD-441)
     if runtime.identity_registry:
         await runtime.identity_registry.stop()
