@@ -7,11 +7,14 @@ import { OrbitControls } from '@react-three/drei';
 import { CrewVRM } from './CrewVRM';
 import { ParametricAvatar } from './ParametricAvatar';
 import type { AgentSignals } from './avatarSignals';
+import type { AvatarDSLDict } from '../../store/types';
 
 export interface CrewAppearance {
   vrm_url: string;
   expression_overrides: Record<string, number>;
   color_palette_hint: string;
+  // AD-721d: agent-authored DSL (optional — not yet rendered).
+  dsl?: AvatarDSLDict | null;
 }
 
 interface Props {
@@ -20,6 +23,10 @@ interface Props {
   departmentColor: string;
   agentSignals: AgentSignals;
   onClose: () => void;
+  // AD-721d: when set, surfaces the approval bar with the proposed DSL.
+  proposedDsl?: AvatarDSLDict | null;
+  onApproveDsl?: (dsl: AvatarDSLDict) => void | Promise<void>;
+  onRejectDsl?: () => void;
 }
 
 const MIN_W = 220;
@@ -33,6 +40,9 @@ export function CrewAvatarPopout({
   departmentColor,
   agentSignals,
   onClose,
+  proposedDsl,
+  onApproveDsl,
+  onRejectDsl,
 }: Props) {
   const [loadFailed, setLoadFailed] = useState(false);
   const useVRM = !!appearance?.vrm_url && !loadFailed;
@@ -200,6 +210,7 @@ export function CrewAvatarPopout({
                 expressionOverrides={appearance!.expression_overrides}
                 signals={agentSignals}
                 onLoadError={() => setLoadFailed(true)}
+                restingExpression={appearance?.dsl?.expression_resting ?? null}
               />
             ) : (
               <ParametricAvatar tint={tint} signals={agentSignals} agentId={agentId} />
@@ -209,6 +220,73 @@ export function CrewAvatarPopout({
           <OrbitControls target={[0, 1.42, 0]} enablePan={false} minDistance={0.3} maxDistance={3} />
         </Canvas>
       </div>
+
+      {/* AD-721d: Captain approval bar — only when a freshly proposed DSL is awaiting review. */}
+      {proposedDsl && (
+        <div
+          data-testid="approval-bar"
+          style={{
+            flex: '0 0 auto',
+            padding: '6px 8px',
+            background: 'rgba(240, 176, 96, 0.06)',
+            borderTop: '1px solid rgba(240, 176, 96, 0.15)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 11,
+            fontFamily: "'JetBrains Mono', monospace",
+            color: '#ccccd8',
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            Proposed: {proposedDsl.body.type} body, {proposedDsl.outfit.style} outfit,{' '}
+            {proposedDsl.expression_resting} resting
+          </span>
+          <button
+            data-testid="approve-dsl-btn"
+            onClick={() => onApproveDsl?.(proposedDsl)}
+            aria-label="Approve avatar design"
+            title="Approve"
+            style={{
+              background: 'none',
+              border: '1px solid rgba(240, 176, 96, 0.4)',
+              color: '#f0b060',
+              cursor: 'pointer',
+              padding: '2px 6px',
+              borderRadius: 3,
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                 strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 8l3.5 3.5L13 4.5" />
+            </svg>
+          </button>
+          <button
+            data-testid="reject-dsl-btn"
+            onClick={() => onRejectDsl?.()}
+            aria-label="Reject avatar design"
+            title="Reject"
+            style={{
+              background: 'none',
+              border: '1px solid rgba(136, 136, 160, 0.4)',
+              color: '#8888a0',
+              cursor: 'pointer',
+              padding: '2px 6px',
+              borderRadius: 3,
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                 strokeWidth="1.5" strokeLinecap="round">
+              <line x1="3" y1="3" x2="13" y2="13" />
+              <line x1="13" y1="3" x2="3" y2="13" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* Resize handle (bottom-right corner). */}
       <div

@@ -10,6 +10,7 @@ import os
 import re
 import time
 import uuid
+from pathlib import Path
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -2578,6 +2579,219 @@ class CognitiveAgent(BaseAgent):
     async def report(self, result: dict) -> dict:
         """Package result as a dict (compatible with BaseAgent contract)."""
         return result
+
+    # ------------------------------------------------------------------
+    # AD-721d: agent-authored appearance proposal
+    # ------------------------------------------------------------------
+
+    # Hard size cap on raw LLM output before any parser sees it.
+    _APPEARANCE_PROPOSAL_MAX_BYTES = 16 * 1024
+    # Defense-in-depth guard against parser-resource attacks.
+    _APPEARANCE_PROPOSAL_MAX_DEPTH = 8
+
+    async def propose_appearance(
+        self,
+        captain_note: str = "",
+    ) -> "AvatarDSL":  # type: ignore[name-defined]
+        """AD-721d: reflect on personality + standing orders + recent trust history,
+        return a validated ``AvatarDSL``.
+
+        The result is NOT persisted here — the caller (HXI endpoint) decides
+        whether to persist after Captain approval.
+
+        Args:
+            captain_note: Optional revision note from the Captain (≤ 280 chars)
+                appended to the prompt context for "Request revisions" flows.
+
+        Raises:
+            AppearanceProposalError: LLM call failed, response oversized,
+                contained YAML anchors/aliases, exceeded depth bounds,
+                failed to parse, or failed schema validation.
+        """
+        from probos.avatars.dsl import AppearanceProposalError, AvatarDSL
+
+        if self._llm_client is None:
+            raise AppearanceProposalError(
+                "llm_unavailable",
+                detail="CognitiveAgent has no llm_client configured",
+            )
+
+        if len(captain_note) > 280:
+            raise AppearanceProposalError(
+                "invalid_input",
+                detail=f"captain_note must be ≤ 280 chars, got {len(captain_note)}",
+            )
+
+        # ── Reflection context ──────────────────────────────────────
+        personality = getattr(self, "instructions", "") or ""
+        agent_type = getattr(self, "agent_type", "") or ""
+
+        recent_trust: list[float] = []
+        runtime = getattr(self, "_runtime", None)
+        try:
+            tn = getattr(runtime, "trust_network", None) if runtime else None
+            if tn is not None and hasattr(tn, "get_events_for_agent"):
+                events = tn.get_events_for_agent(self.id, n=5)
+                recent_trust = [
+                    float(getattr(e, "delta", 0.0)) for e in events
+                ]
+        except Exception:
+            # Tier-2 log-and-degrade: trust history is optional context.
+            logger.warning(
+                "AD-721d: failed to fetch recent trust history for %s; "
+                "proceeding without trust context",
+                self.id[:12],
+                exc_info=True,
+            )
+
+        standing_orders_text = ""
+        try:
+            so_path = Path("config/standing_orders") / f"{agent_type}.yaml"
+            if so_path.exists():
+                # Cap standing-orders size so a malformed YAML cannot blow the prompt.
+                standing_orders_text = so_path.read_text(encoding="utf-8")[:4096]
+        except OSError:
+            logger.warning(
+                "AD-721d: failed to read standing orders for %s; "
+                "proceeding without standing-orders context",
+                agent_type,
+                exc_info=True,
+            )
+
+        system_prompt = (
+            "You are designing your own avatar appearance. Output STRICT JSON "
+            "matching the AvatarDSL schema below. Output JSON ONLY — no prose, "
+            "no Markdown fences, no commentary. Do NOT use YAML anchors (&) or "
+            "aliases (*). Every field must be present.\n\n"
+            "Schema:\n"
+            "{\n"
+            '  "body": {"type": "slim|average|stocky", "height_cm": 140-210},\n'
+            '  "hair": {"style": "short|medium|long|ponytail|bun|shaved", '
+            '"color_hsl": [0-360, 0-100, 0-100]},\n'
+            '  "face": {"warmth": 0.0-1.0, "jaw": "soft|neutral|strong", '
+            '"eyes": "round|almond|narrow"},\n'
+            '  "outfit": {"style": "uniform|casual|formal|robe|tactical", '
+            '"primary_color": "#RRGGBB", "accents": ["#RRGGBB", ...max 4]},\n'
+            '  "expression_resting": "neutral|gentle_smile|focused|alert",\n'
+            '  "notes": "short rationale, ≤ 280 chars"\n'
+            "}\n"
+        )
+
+        user_message_parts = [
+            f"Agent identity: {agent_type or self.id}",
+            f"Personality / instructions:\n{personality[:2000]}",
+        ]
+        if standing_orders_text:
+            user_message_parts.append(
+                f"Standing orders:\n{standing_orders_text}"
+            )
+        if recent_trust:
+            user_message_parts.append(
+                f"Recent trust deltas (last {len(recent_trust)}): {recent_trust}"
+            )
+        if captain_note:
+            user_message_parts.append(
+                f"Captain revision note: {captain_note}"
+            )
+        user_message_parts.append(
+            "Reflect on the above and output the JSON DSL describing how YOU "
+            "want to appear. Match the schema exactly."
+        )
+        user_message = "\n\n".join(user_message_parts)
+
+        # ── LLM call (Tier-2 log-and-degrade only at this layer) ────
+        request = LLMRequest(
+            prompt=user_message,
+            system_prompt=system_prompt,
+            tier=self._resolve_tier() if hasattr(self, "_resolve_tier") else "standard",
+            max_tokens=1024,
+        )
+        try:
+            response = await self._llm_client.complete(request, priority=Priority.NORMAL)
+        except Exception as exc:
+            logger.warning(
+                "AD-721d: LLM call failed for %s appearance proposal: %s; "
+                "no DSL produced — caller may retry",
+                self.id[:12],
+                exc,
+            )
+            raise AppearanceProposalError("llm_call_failed", detail=str(exc)) from exc
+
+        text = (response.content or "").strip()
+        return self._parse_appearance_dsl(text)
+
+    @classmethod
+    def _parse_appearance_dsl(cls, text: str) -> "AvatarDSL":  # type: ignore[name-defined]
+        """Hardened parse path for AD-721d: size cap → anchor/alias reject →
+        ``yaml.safe_load`` → depth guard → Pydantic validate.
+
+        NO ``exec``/``eval``/``compile``/``importlib.import_module`` is invoked
+        on the LLM-derived artifact at any layer.
+        """
+        import yaml
+
+        from probos.avatars.dsl import AppearanceProposalError, AvatarDSL
+
+        # 1. Size cap (bytes, not chars — hostile inputs may use multi-byte).
+        encoded = text.encode("utf-8")
+        if len(encoded) > cls._APPEARANCE_PROPOSAL_MAX_BYTES:
+            raise AppearanceProposalError(
+                "response_oversized",
+                detail=f"{len(encoded)} bytes > {cls._APPEARANCE_PROPOSAL_MAX_BYTES}",
+            )
+
+        # 2. Reject YAML anchors/aliases at the byte level. JSON does not use
+        #    these tokens; rejecting them blocks alias-bomb fan-out and tag
+        #    confusion. (`&` may legitimately appear inside a quoted string;
+        #    we accept that v1 is conservative — the LLM is told to avoid them.)
+        if "&" in text or re.search(r"(?<!\\)\*[A-Za-z_]", text):
+            raise AppearanceProposalError(
+                "yaml_anchor_or_alias",
+                detail="response contains YAML anchor/alias markers",
+            )
+
+        # 3. Strip an optional Markdown fence the model may emit anyway.
+        stripped = text
+        if stripped.startswith("```"):
+            stripped = re.sub(r"^```[a-zA-Z0-9]*\n", "", stripped)
+            stripped = re.sub(r"\n```\s*$", "", stripped)
+
+        # 4. yaml.safe_load — JSON is a YAML subset; safe_load blocks tag execution.
+        try:
+            parsed = yaml.safe_load(stripped)
+        except yaml.YAMLError as exc:
+            raise AppearanceProposalError("parse_error", detail=str(exc)) from exc
+        if not isinstance(parsed, dict):
+            raise AppearanceProposalError(
+                "parse_error",
+                detail=f"expected JSON object at top level, got {type(parsed).__name__}",
+            )
+
+        # 5. Depth guard.
+        if cls._max_depth(parsed) > cls._APPEARANCE_PROPOSAL_MAX_DEPTH:
+            raise AppearanceProposalError(
+                "depth_exceeded",
+                detail=f"document nests > {cls._APPEARANCE_PROPOSAL_MAX_DEPTH} levels",
+            )
+
+        # 6. Pydantic validation.
+        try:
+            return AvatarDSL.model_validate(parsed)
+        except Exception as exc:  # pydantic.ValidationError + anything raised by validators
+            raise AppearanceProposalError("schema_violation", detail=str(exc)) from exc
+
+    @staticmethod
+    def _max_depth(obj: Any, depth: int = 1) -> int:
+        """Return the maximum nesting depth of a JSON-like Python object."""
+        if isinstance(obj, dict):
+            if not obj:
+                return depth
+            return max(CognitiveAgent._max_depth(v, depth + 1) for v in obj.values())
+        if isinstance(obj, list):
+            if not obj:
+                return depth
+            return max(CognitiveAgent._max_depth(v, depth + 1) for v in obj)
+        return depth
 
     async def _self_post_ward_room_response(
         self, intent: "IntentMessage", response_text: str,

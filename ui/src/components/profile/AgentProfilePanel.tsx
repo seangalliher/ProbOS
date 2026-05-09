@@ -7,7 +7,7 @@ import { ProfileHealthTab } from './ProfileHealthTab';
 import { ProfileMemoryTab } from './ProfileMemoryTab';
 import { CrewAvatarPopout } from './CrewAvatarPopout';
 import { deriveAgentSignals } from './avatarSignals';
-import type { AgentProfileData } from '../../store/types';
+import type { AgentProfileData, AvatarDSLDict } from '../../store/types';
 
 type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory';
 
@@ -56,6 +56,10 @@ export function AgentProfilePanel() {
   // AD-721: avatar popout state.
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [avatarsEnabled, setAvatarsEnabled] = useState(false);
+  // AD-721d: proposed (not-yet-persisted) DSL surfaced in the popout for Captain review.
+  const [proposedDsl, setProposedDsl] = useState<AvatarDSLDict | null>(null);
+  const [designInFlight, setDesignInFlight] = useState(false);
+  const [designError, setDesignError] = useState<string | null>(null);
   useEffect(() => {
     fetch('/api/config/avatars-enabled')
       .then(r => r.ok ? r.json() : null)
@@ -203,6 +207,67 @@ export function AgentProfilePanel() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
+          {/* AD-721d: Design avatar (crew only, gated on avatars.enabled). */}
+          {isCrew && avatarsEnabled && agentId && (
+            <button
+              data-testid="design-avatar-btn"
+              onClick={async () => {
+                if (designInFlight || !agentId) return;
+                setDesignInFlight(true);
+                setDesignError(null);
+                try {
+                  const r = await fetch(`/api/agent/${agentId}/appearance/propose`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ captain_note: '' }),
+                  });
+                  if (!r.ok) {
+                    setDesignError(`Proposal rejected (HTTP ${r.status})`);
+                    return;
+                  }
+                  const data = await r.json();
+                  if (data && data.dsl) {
+                    setProposedDsl(data.dsl as AvatarDSLDict);
+                    setAvatarOpen(true);
+                  }
+                } catch (e: any) {
+                  setDesignError(String(e?.message || e));
+                } finally {
+                  setDesignInFlight(false);
+                }
+              }}
+              aria-label="Design avatar"
+              title={designError || (designInFlight ? 'Designing...' : 'Design avatar')}
+              disabled={designInFlight}
+              style={{
+                background: 'none', border: 'none',
+                color: designInFlight ? '#666680' : '#8888a0',
+                cursor: designInFlight ? 'wait' : 'pointer',
+                padding: '0 4px',
+                filter: designInFlight ? 'none' : 'drop-shadow(0 0 0 transparent)',
+              }}
+              onMouseEnter={(e) => {
+                if (!designInFlight) {
+                  e.currentTarget.style.color = '#f0b060';
+                  e.currentTarget.style.filter = 'drop-shadow(0 0 4px rgba(240,176,96,0.6))';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!designInFlight) {
+                  e.currentTarget.style.color = '#8888a0';
+                  e.currentTarget.style.filter = 'drop-shadow(0 0 0 transparent)';
+                }
+              }}
+            >
+              {/* HXI Design Principle #3: stroke-based SVG, no emoji. */}
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                   stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+                   strokeLinejoin="round">
+                <path d="M3 13l2-1 6.5-6.5a1.4 1.4 0 0 0-2-2L3 10v3z" />
+                <path d="M10 4l2 2" />
+              </svg>
+            </button>
+          )}
           {/* AD-721: Show avatar (crew only, gated on avatars.enabled). */}
           {isCrew && avatarsEnabled && (
             <button
@@ -289,7 +354,24 @@ export function AgentProfilePanel() {
           appearance={profileData?.appearance ?? null}
           departmentColor={deptColor}
           agentSignals={deriveAgentSignals(agentId, useStore.getState() as any)}
-          onClose={() => setAvatarOpen(false)}
+          onClose={() => { setAvatarOpen(false); setProposedDsl(null); }}
+          proposedDsl={proposedDsl}
+          onApproveDsl={async (dsl) => {
+            const r = await fetch(`/api/agent/${agentId}/appearance`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ dsl }),
+            });
+            if (r.ok) {
+              setProposedDsl(null);
+              // Refresh profile so any cached vrm_url is picked up.
+              fetch(`/api/agent/${agentId}/profile`)
+                .then(rr => rr.ok ? rr.json() : null)
+                .then(d => { if (d) setProfileData(d); })
+                .catch(() => {});
+            }
+          }}
+          onRejectDsl={() => setProposedDsl(null)}
         />
       )}
       {/* Resize handle (bottom-right corner). */}

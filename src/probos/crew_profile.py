@@ -135,20 +135,28 @@ class AppearanceProfile:
     names to scalar offsets so a single VRM model can be re-skinned per agent
     without authoring a new ``.vrm`` file. `color_palette_hint` is consumed
     by the parametric fallback only.
+
+    AD-721d: ``dsl`` is the agent-authored ``AvatarDSL`` artifact (Pydantic
+    model serialised as a dict). ``None`` = the agent has not proposed yet
+    OR the Captain has not approved. Persisted as a JSON dict on the
+    existing ``crew_profiles.data`` JSON-blob column — no new SQLite table.
     """
     vrm_url: str = ""                                    # "" = parametric fallback
     expression_overrides: dict[str, float] = field(default_factory=dict)
     color_palette_hint: str = ""                         # any CSS color; "" = use department color
+    dsl: dict[str, Any] | None = None                    # AD-721d: agent-authored AvatarDSL (dict form)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppearanceProfile":
+        dsl_value = data.get("dsl")
         return cls(
             vrm_url=data.get("vrm_url", ""),
             expression_overrides=dict(data.get("expression_overrides", {})),
             color_palette_hint=data.get("color_palette_hint", ""),
+            dsl=dict(dsl_value) if isinstance(dsl_value, dict) else None,
         )
 
 

@@ -21,6 +21,53 @@ interface Props {
   expressionOverrides: Record<string, number>;
   signals: AgentSignals;
   onLoadError: () => void;
+  // AD-721d: agent-authored DSL resting expression. When set, the resting
+  // morph is driven across EVERY face mesh that carries the corresponding
+  // ``Fcl_*`` morph target — direct mitigation of AD-721 BF de4107b
+  // (multi-material face splits where the VRM expression manager binding
+  // only points at the first face mesh).
+  restingExpression?: string | null;
+}
+
+// AD-721d: DSL resting-expression names → ordered list of VRM morph candidates.
+// First matching morph in a mesh's morphTargetDictionary wins for that mesh.
+const RESTING_EXPRESSION_MORPHS: Record<string, readonly string[]> = {
+  neutral: [],
+  gentle_smile: ['Fcl_MTH_A', 'Fcl_ALL_Joy', 'Joy', 'happy'],
+  focused: ['Fcl_ALL_Sorrow', 'Fcl_BRW_Angry', 'angry'],
+  alert: ['Fcl_ALL_Surprised', 'Fcl_EYE_Surprised', 'surprised'],
+};
+
+/** AD-721d: Drive the DSL-specified resting expression across every face mesh
+ * carrying a matching morph target. Direct regression mitigation for the
+ * AD-721 BF de4107b multi-material face-split issue: the expression manager
+ * binding only updates the first face mesh, so we iterate all meshes whose
+ * morphTargetDictionary advertises one of the candidate morph names and write
+ * morphTargetInfluences directly.
+ *
+ * Exported for unit testing — the D9 Vitest fixture invokes this with a
+ * 3-face-mesh scene and asserts all 3 indices update.
+ */
+export function applyRestingExpressionMultiMesh(
+  scene: any,
+  restingExpression: string,
+  weight: number = 1.0,
+): number {
+  const candidates = RESTING_EXPRESSION_MORPHS[restingExpression];
+  if (!candidates || candidates.length === 0) return 0;
+  let updated = 0;
+  scene.traverse((o: any) => {
+    if (!o.isMesh || !o.morphTargetDictionary || !o.morphTargetInfluences) return;
+    for (const key of candidates) {
+      if (key in o.morphTargetDictionary) {
+        const idx = o.morphTargetDictionary[key];
+        o.morphTargetInfluences[idx] = weight;
+        updated++;
+        break;
+      }
+    }
+  });
+  return updated;
 }
 
 /** Set a relaxed A-pose so VRMs without an animation clip don't ship as
@@ -80,7 +127,7 @@ function applyExpressionsFromSignals(vrm: VRM, signals: AgentSignals, overrides:
   }
 }
 
-export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError }: Props) {
+export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError, restingExpression }: Props) {
   const vrmRef = useRef<VRM | null>(null);
   // BF: also keep VRM in state so React mounts <primitive> after load.
   // Updating a ref alone does not trigger a re-render, which previously
@@ -175,6 +222,11 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
           }
         });
         directMouthMeshesRef.current = direct;
+        // AD-721d: apply DSL resting expression across every face mesh
+        // carrying a matching morph target (multi-mesh face-split fix).
+        if (restingExpression && restingExpression !== 'neutral') {
+          applyRestingExpressionMultiMesh(vrm.scene, restingExpression, 1.0);
+        }
         vrmRef.current = vrm;
         setVrmReady(vrm);
       },

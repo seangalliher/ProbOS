@@ -341,7 +341,33 @@ export interface AgentProfileData {
     vrm_url: string;
     expression_overrides: Record<string, number>;
     color_palette_hint: string;
+    // AD-721d: agent-authored DSL artifact (dict form). Null = not yet proposed
+    // OR not yet approved. Captain reviews via CrewAvatarPopout's approval bar.
+    dsl?: AvatarDSLDict | null;
   };  // AD-721: per-agent 3D avatar
+}
+
+// AD-721d: AvatarDSL — agent-authored appearance artifact (data, not code).
+// Mirrors src/probos/avatars/dsl.py. The UI never executes any DSL value;
+// it only displays the structured fields and POSTs the dict back on approve.
+export interface AvatarDSLDict {
+  body: { type: 'slim' | 'average' | 'stocky'; height_cm: number };
+  hair: {
+    style: 'short' | 'medium' | 'long' | 'ponytail' | 'bun' | 'shaved';
+    color_hsl: [number, number, number];
+  };
+  face: {
+    warmth: number;
+    jaw: 'soft' | 'neutral' | 'strong';
+    eyes: 'round' | 'almond' | 'narrow';
+  };
+  outfit: {
+    style: 'uniform' | 'casual' | 'formal' | 'robe' | 'tactical';
+    primary_color: string;
+    accents: string[];
+  };
+  expression_resting: 'neutral' | 'gentle_smile' | 'focused' | 'alert';
+  notes: string;
 }
 
 // Ward Room types (AD-407)

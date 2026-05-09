@@ -202,6 +202,28 @@ class SetVoiceProfileRequest(BaseModel):
     volume: float = 0.8
 
 
+# ── Appearance models (AD-721d) ──────────────────────────────────
+
+class ProposeAppearanceRequest(BaseModel):
+    """AD-721d: Optional Captain revision note for "Request revisions" flows."""
+    captain_note: str = ""
+
+
+class ProposeAppearanceResponse(BaseModel):
+    """AD-721d: Validated AvatarDSL returned for Captain review (NOT yet persisted)."""
+    agent_id: str
+    dsl: dict
+
+
+class SetAppearanceRequest(BaseModel):
+    """AD-721d: Persist an approved AvatarDSL to ``AppearanceProfile.dsl``.
+
+    The endpoint re-validates ``dsl`` with ``AvatarDSL.model_validate(...)``
+    before writing. Invalid → HTTP 422.
+    """
+    dsl: dict
+
+
 # ── Assignment models (AD-408) ───────────────────────────────────
 
 class CreateAssignmentRequest(BaseModel):

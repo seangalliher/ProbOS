@@ -10,7 +10,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from probos.api_models import AgentChatRequest, SetCooldownRequest, SetVoiceProfileRequest
+from probos.api_models import (
+    AgentChatRequest,
+    ProposeAppearanceRequest,
+    ProposeAppearanceResponse,
+    SetAppearanceRequest,
+    SetCooldownRequest,
+    SetVoiceProfileRequest,
+)
 from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
@@ -133,6 +140,29 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
             "color_palette_hint": "",
         }
 
+    # AD-721d D8: synthesise vrm_url from rendered cache when DSL is set but
+    # vrm_url is empty. Pure read-path synthesis — no file write here.
+    try:
+        if (
+            not appearance_dict.get("vrm_url")
+            and isinstance(appearance_dict.get("dsl"), dict)
+            and getattr(runtime, "config", None) is not None
+            and getattr(runtime.config, "avatars", None) is not None
+        ):
+            from pathlib import Path as _Path
+            from probos.routers.system import _resolve_avatars_dir
+            avatars_dir = _resolve_avatars_dir(runtime.config.avatars.avatars_dir)
+            cached = avatars_dir / f"{agent.id}.vrm"
+            if cached.exists() and cached.is_file():
+                appearance_dict["vrm_url"] = f"{agent.id}.vrm"
+    except Exception:  # defense-in-depth: cache synthesis must never break the read path
+        logger.warning(
+            "AD-721d: avatar cache synthesis failed for %s; "
+            "falling back to parametric (vrm_url left empty)",
+            agent.id,
+            exc_info=True,
+        )
+
     profile_data = {
         "id": agent.id,
         "sovereignId": getattr(agent, 'sovereign_id', ''),
@@ -225,6 +255,101 @@ async def set_agent_voice_profile(
         )
 
     return {"agentId": agent_id, "voiceProfile": new_profile.to_dict()}
+
+
+# ── AD-721d: agent-authored appearance pipeline ─────────────────────────
+
+
+def _avatars_feature_check(runtime: Any) -> None:
+    """Raise HTTP 503 if avatars are disabled in config."""
+    cfg = getattr(runtime, "config", None)
+    enabled = bool(cfg and getattr(cfg, "avatars", None) and cfg.avatars.enabled)
+    if not enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="avatars feature disabled in config (cfg.avatars.enabled=False)",
+        )
+
+
+@router.post("/{agent_id}/appearance/propose", response_model=ProposeAppearanceResponse)
+async def propose_agent_appearance(
+    agent_id: str,
+    req: ProposeAppearanceRequest | None = None,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-721d D7: trigger ``CognitiveAgent.propose_appearance`` and return the
+    proposed DSL for Captain review. NOT persisted — caller must follow up with
+    ``PUT /{agent_id}/appearance`` once the Captain approves.
+    """
+    _avatars_feature_check(runtime)
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    if not hasattr(agent, "propose_appearance"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Agent {agent_id} does not support appearance proposal "
+                   "(not a CognitiveAgent subclass)",
+        )
+
+    from probos.avatars.dsl import AppearanceProposalError
+
+    captain_note = (req.captain_note if req else "") or ""
+    try:
+        dsl = await agent.propose_appearance(captain_note=captain_note)
+    except AppearanceProposalError as exc:
+        logger.warning(
+            "AD-721d: appearance proposal rejected for %s: reason=%s detail=%s; "
+            "no DSL persisted, Captain may retry",
+            agent_id, exc.reason, exc.detail,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": exc.reason, "detail": exc.detail},
+        )
+    return {"agent_id": agent_id, "dsl": dsl.model_dump()}
+
+
+@router.put("/{agent_id}/appearance")
+async def set_agent_appearance(
+    agent_id: str,
+    req: SetAppearanceRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-721d D7: persist an approved AvatarDSL on ``AppearanceProfile.dsl``.
+
+    Re-validates the DSL with Pydantic BEFORE writing. Round-trips through the
+    existing ``ProfileStore`` JSON-blob column — no new SQLite table.
+    """
+    _avatars_feature_check(runtime)
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    from probos.avatars.dsl import AvatarDSL
+
+    try:
+        dsl = AvatarDSL.model_validate(req.dsl)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "schema_violation", "detail": str(exc)},
+        )
+
+    if hasattr(runtime, "profile_store") and runtime.profile_store is not None:
+        crew = runtime.profile_store.get_or_create(
+            agent.id, agent_type=agent.agent_type, pool=agent.pool,
+        )
+        crew.appearance.dsl = dsl.model_dump()
+        runtime.profile_store.update(crew)
+    else:
+        logger.warning(
+            "AD-721d: profile_store not present on runtime; "
+            "appearance DSL for %s not persisted (Captain approval lost)",
+            agent_id,
+        )
+
+    return {"agentId": agent_id, "dsl": dsl.model_dump()}
 
 
 @router.post("/{agent_id}/chat")
