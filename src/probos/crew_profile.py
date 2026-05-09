@@ -126,6 +126,33 @@ class VoiceProfile:
 
 
 @dataclass
+class AppearanceProfile:
+    """AD-721: per-agent 3D avatar appearance.
+
+    `vrm_url` is a URL relative to the HXI's static-file root (served by
+    ``routers/system.py``'s avatar route, AD-721 D6). Empty `vrm_url` means
+    "use the parametric fallback". `expression_overrides` maps VRM blend-shape
+    names to scalar offsets so a single VRM model can be re-skinned per agent
+    without authoring a new ``.vrm`` file. `color_palette_hint` is consumed
+    by the parametric fallback only.
+    """
+    vrm_url: str = ""                                    # "" = parametric fallback
+    expression_overrides: dict[str, float] = field(default_factory=dict)
+    color_palette_hint: str = ""                         # any CSS color; "" = use department color
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AppearanceProfile":
+        return cls(
+            vrm_url=data.get("vrm_url", ""),
+            expression_overrides=dict(data.get("expression_overrides", {})),
+            color_palette_hint=data.get("color_palette_hint", ""),
+        )
+
+
+@dataclass
 class PerformanceReview:
     """Timestamped performance snapshot — append-only history."""
     timestamp: float = 0.0
@@ -174,6 +201,9 @@ class CrewProfile:
     # Voice (AD-718)
     voice: VoiceProfile = field(default_factory=VoiceProfile)
 
+    # Appearance (AD-721)
+    appearance: AppearanceProfile = field(default_factory=AppearanceProfile)
+
     # Performance
     reviews: list[PerformanceReview] = field(default_factory=list)
 
@@ -218,6 +248,7 @@ class CrewProfile:
             "personality": self.personality.to_dict(),
             "personality_baseline": self.personality_baseline.to_dict(),
             "voice": self.voice.to_dict(),
+            "appearance": self.appearance.to_dict(),
             "reviews": [r.to_dict() for r in self.reviews],
             "commissioned": self.commissioned,
             "last_updated": self.last_updated,
@@ -246,6 +277,8 @@ class CrewProfile:
             profile.personality_baseline = PersonalityTraits.from_dict(data["personality_baseline"])
         if "voice" in data:
             profile.voice = VoiceProfile.from_dict(data["voice"])
+        if "appearance" in data:
+            profile.appearance = AppearanceProfile.from_dict(data["appearance"])
         if "reviews" in data:
             profile.reviews = [PerformanceReview.from_dict(r) for r in data["reviews"]]
         return profile

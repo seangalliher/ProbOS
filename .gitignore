@@ -22,10 +22,14 @@ htmlcov/
 coverage.xml
 
 # Data / artifacts
-data/
+data/*
 *.db
 *.sqlite3
 MagicMock/
+
+# AD-721: avatars dir is shipped (with .gitkeep), but VRM binaries are not.
+!data/avatars/
+data/avatars/*.vrm
 
 # Environment
 .env

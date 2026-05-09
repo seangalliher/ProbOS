@@ -1,0 +1,2 @@
+# AD-721: Operators drop their own VRM files here. v1 ships no VRM binaries
+# (license + repo size). Files are served via /api/system/avatars/{filename}.

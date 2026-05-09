@@ -5,6 +5,8 @@ import { ProfileWorkTab } from './ProfileWorkTab';
 import { ProfileInfoTab } from './ProfileInfoTab';
 import { ProfileHealthTab } from './ProfileHealthTab';
 import { ProfileMemoryTab } from './ProfileMemoryTab';
+import { CrewAvatarPopout } from './CrewAvatarPopout';
+import { deriveAgentSignals } from './avatarSignals';
 import type { AgentProfileData } from '../../store/types';
 
 type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory';
@@ -34,6 +36,15 @@ export function AgentProfilePanel() {
   const [activeTab, setActiveTab] = useState<ProfileTab>('chat');
   const [profileData, setProfileData] = useState<AgentProfileData | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // AD-721: avatar popout state.
+  const [avatarOpen, setAvatarOpen] = useState(false);
+  const [avatarsEnabled, setAvatarsEnabled] = useState(false);
+  useEffect(() => {
+    fetch('/api/config/avatars-enabled')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data && typeof data.enabled === 'boolean') setAvatarsEnabled(data.enabled); })
+      .catch(() => {});
+  }, []);
   const dragOffset = useRef({ x: 0, y: 0 });
 
   const agent = agentId ? agents.get(agentId) : null;
@@ -149,6 +160,25 @@ export function AgentProfilePanel() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
+          {/* AD-721: Show avatar (crew only, gated on avatars.enabled). */}
+          {isCrew && avatarsEnabled && (
+            <button
+              onClick={() => setAvatarOpen(v => !v)}
+              aria-label={avatarOpen ? 'Hide avatar' : 'Show avatar'}
+              title={avatarOpen ? 'Hide avatar' : 'Show avatar'}
+              style={{
+                background: 'none', border: 'none',
+                color: avatarOpen ? '#f0b060' : '#8888a0',
+                cursor: 'pointer', padding: '0 4px',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                   stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <circle cx="8" cy="6" r="3" />
+                <path d="M3 14c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5" />
+              </svg>
+            </button>
+          )}
           <button
             onClick={() => useStore.getState().minimizeAgentProfile()}
             style={{
@@ -209,6 +239,16 @@ export function AgentProfilePanel() {
         {effectiveTab === 'health' && <ProfileHealthTab profileData={profileData} agent={agent} />}
         {effectiveTab === 'memory' && <ProfileMemoryTab agentId={agentId} />}
       </div>
+      {/* AD-721: 3D avatar popout. */}
+      {avatarOpen && isCrew && avatarsEnabled && (
+        <CrewAvatarPopout
+          agentId={agentId}
+          appearance={profileData?.appearance ?? null}
+          departmentColor={deptColor}
+          agentSignals={deriveAgentSignals(agentId, useStore.getState() as any)}
+          onClose={() => setAvatarOpen(false)}
+        />
+      )}
     </div>
   );
 }

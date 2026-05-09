@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from probos.api_models import ShutdownRequest
 from probos.routers.deps import get_runtime, get_task_tracker
@@ -602,3 +603,38 @@ async def mcp_resource(uri: str, runtime: Any = Depends(get_runtime)):
     csp = registry.get_resource_csp(uri)
     headers = {"Content-Security-Policy": csp} if csp else {}
     return Response(content=body, media_type=mime, headers=headers)
+
+
+# ── AD-721: 3D crew avatars ─────────────────────────────────────
+
+
+@router.get("/system/avatars/{filename}")
+async def get_avatar(filename: str, runtime: Any = Depends(get_runtime)) -> Any:
+    """AD-721 D6: Serve a .vrm model from data/avatars/.
+
+    Path-traversal defense: resolve the requested file under the configured
+    avatars dir and reject anything outside it. Reject files larger than
+    `avatars.max_vrm_size_bytes` (default 25 MB).
+    """
+    cfg = getattr(runtime, "config", None)
+    if cfg is None or not getattr(cfg, "avatars", None) or not cfg.avatars.enabled:
+        raise HTTPException(status_code=404, detail="avatars disabled")
+    avatars_dir = Path(cfg.avatars.avatars_dir).resolve()
+    target = (avatars_dir / filename).resolve()
+    try:
+        target.relative_to(avatars_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid path")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="avatar not found")
+    if target.stat().st_size > cfg.avatars.max_vrm_size_bytes:
+        raise HTTPException(status_code=413, detail="avatar exceeds size limit")
+    return FileResponse(str(target), media_type="application/octet-stream")
+
+
+@router.get("/config/avatars-enabled")
+async def avatars_enabled(runtime: Any = Depends(get_runtime)) -> dict[str, bool]:
+    """AD-721 D8: Surface the avatars feature-flag to the HXI."""
+    cfg = getattr(runtime, "config", None)
+    enabled = bool(cfg and getattr(cfg, "avatars", None) and cfg.avatars.enabled)
+    return {"enabled": enabled}

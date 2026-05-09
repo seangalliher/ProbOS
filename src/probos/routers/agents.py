@@ -120,6 +120,19 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
     else:
         voice_profile_dict = default_voice_for(agent.agent_type).to_dict()
 
+    # AD-721: per-agent appearance profile (live ProfileStore → seed → empty default).
+    appearance_dict: dict[str, Any]
+    if live_profile is not None:
+        appearance_dict = live_profile.appearance.to_dict()
+    elif seed and isinstance(seed.get("appearance"), dict):
+        appearance_dict = seed["appearance"]
+    else:
+        appearance_dict = {
+            "vrm_url": "",
+            "expression_overrides": {},
+            "color_palette_hint": "",
+        }
+
     profile_data = {
         "id": agent.id,
         "sovereignId": getattr(agent, 'sovereign_id', ''),
@@ -141,6 +154,7 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
         "hebbianConnections": hebbian_connections,
         "memoryCount": memory_count,
         "voiceProfile": voice_profile_dict,
+        "appearance": appearance_dict,
         "uptime": round(time.monotonic() - runtime._start_time, 1),
         "isCrew": is_crew,
         "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if is_crew and hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else None,

@@ -337,6 +337,11 @@ export interface AgentProfileData {
     rate: number;
     volume: number;
   };  // AD-718: per-agent TTS profile
+  appearance?: {
+    vrm_url: string;
+    expression_overrides: Record<string, number>;
+    color_palette_hint: string;
+  };  // AD-721: per-agent 3D avatar
 }
 
 // Ward Room types (AD-407)

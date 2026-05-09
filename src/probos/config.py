@@ -919,6 +919,15 @@ class BrowserToolConfig(BaseModel):
     )
 
 
+class AvatarsConfig(BaseModel):
+    """AD-721: 3D crew avatars (VRM popout)."""
+
+    enabled: bool = False                                  # Wave 10 convention #14
+    avatars_dir: str = "data/avatars"
+    max_vrm_size_bytes: int = 25 * 1024 * 1024             # 25 MB hard cap
+    fallback_to_parametric_on_error: bool = True
+
+
 class A2APeerConfig(BaseModel):
     """AD-480e: Outbound A2A peer registration entry."""
 
@@ -3070,6 +3079,7 @@ class SystemConfig(BaseModel):
     mcp: MCPConfig = MCPConfig()  # AD-449
     mcp_app_host: MCPAppHostConfig = Field(default_factory=MCPAppHostConfig)  # AD-597
     browser_tool: BrowserToolConfig = Field(default_factory=BrowserToolConfig)  # AD-706
+    avatars: AvatarsConfig = Field(default_factory=AvatarsConfig)  # AD-721
     spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481
