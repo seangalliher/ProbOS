@@ -82,7 +82,14 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
         rate: next.rate ?? 0.95,
         volume: next.volume ?? 0.8,
       }),
-    }).catch(() => {});  // Tier-2 log-and-degrade
+    })
+      .then(() => {
+        // Notify ProfileChatTab (and any other listeners) to refetch.
+        window.dispatchEvent(new CustomEvent('voice-profile-updated', {
+          detail: { agentId: agent.id },
+        }));
+      })
+      .catch(() => {});  // Tier-2 log-and-degrade
   };
 
   // Filter DM channels involving this agent (by agent ID prefix in channel name)

@@ -12,7 +12,16 @@ export function ProfileChatTab({ agentId }: Props) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [listening, setListening] = useState(false);
-  const voiceEnabled = useStore((s) => s.voiceEnabled);
+  const globalVoiceEnabled = useStore((s) => s.voiceEnabled);
+  // Per-agent TTS toggle: defaults to global setting; persisted in localStorage.
+  const ttsKey = `hxi_chat_tts_${agentId}`;
+  const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => {
+    const stored = localStorage.getItem(ttsKey);
+    return stored === null ? globalVoiceEnabled : stored === '1';
+  });
+  useEffect(() => {
+    localStorage.setItem(ttsKey, ttsEnabled ? '1' : '0');
+  }, [ttsEnabled, ttsKey]);
   const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [seedMemories, setSeedMemories] = useState<{role: string; text: string}[]>([]);
@@ -33,11 +42,25 @@ export function ProfileChatTab({ agentId }: Props) {
   }, [agentId]);
 
   // AD-718: Fetch per-agent voice profile (Tier-2 log-and-degrade on failure).
+  // Refetches when ProfileInfoTab dispatches `voice-profile-updated` for this agent.
   useEffect(() => {
-    fetch(`/api/agent/${agentId}/profile`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.voiceProfile) setVoiceProfile(data.voiceProfile); })
-      .catch(() => {});
+    let cancelled = false;
+    const load = () => {
+      fetch(`/api/agent/${agentId}/profile`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (!cancelled && data?.voiceProfile) setVoiceProfile(data.voiceProfile); })
+        .catch(() => {});
+    };
+    load();
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { agentId?: string } | undefined;
+      if (!detail || detail.agentId === agentId) load();
+    };
+    window.addEventListener('voice-profile-updated', handler);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('voice-profile-updated', handler);
+    };
   }, [agentId]);
 
   const handleSend = useCallback(async () => {
@@ -71,7 +94,7 @@ export function ProfileChatTab({ agentId }: Props) {
       const reply = data.response || '(no response)';
       useStore.getState().addAgentMessage(agentId, 'agent', reply);
       // AD-718: TTS playback for agent reply only (skip system error placeholders).
-      if (voiceEnabled && reply && !reply.startsWith('(')) {
+      if (ttsEnabled && reply && !reply.startsWith('(')) {
         speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, agentId);
       }
     } catch {
@@ -79,7 +102,7 @@ export function ProfileChatTab({ agentId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, input, sending, seedMemories, voiceEnabled, voiceProfile]);
+  }, [agentId, input, sending, seedMemories, ttsEnabled, voiceProfile]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -159,6 +182,39 @@ export function ProfileChatTab({ agentId }: Props) {
             outline: 'none',
           }}
         />
+        {/* Per-agent speaker toggle: independent of the global voice button. */}
+        <button
+          type="button"
+          onClick={() => setTtsEnabled(v => !v)}
+          title={ttsEnabled ? 'Mute this agent' : 'Speak this agent\'s replies'}
+          aria-label={ttsEnabled ? 'Mute agent voice' : 'Enable agent voice'}
+          aria-pressed={ttsEnabled}
+          style={{
+            background: ttsEnabled ? 'rgba(240, 176, 96, 0.15)' : 'transparent',
+            border: 'none',
+            color: ttsEnabled ? '#f0b060' : '#8888aa',
+            cursor: 'pointer',
+            padding: '4px',
+            borderRadius: 4,
+            flexShrink: 0,
+            filter: ttsEnabled
+              ? 'drop-shadow(0 0 4px #f0b060)'
+              : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+               stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M2 6v4l3 3h1V3H5L2 6z" />
+            {ttsEnabled ? (
+              <>
+                <path d="M9 5.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5" />
+                <path d="M11 3.5c1.2 1.2 2 2.7 2 4.5s-.8 3.3-2 4.5" />
+              </>
+            ) : (
+              <path d="M14 5l-5 6" />
+            )}
+          </svg>
+        </button>
         {/* AD-718: Mic button for STT input (parity with IntentSurface). */}
         {isSpeechRecognitionSupported() && (
           <button

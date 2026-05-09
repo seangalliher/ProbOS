@@ -10,7 +10,7 @@ import { useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
+import { VRMLoaderPlugin, VRMUtils, VRMHumanBoneName, type VRM } from '@pixiv/three-vrm';
 import { onSpeechEvent } from '../../audio/voice';
 import { _attachAnalyserOrSchedule, type FakeAnalyser } from '../../audio/speechAmplitude';
 import type { AgentSignals } from './avatarSignals';
@@ -21,6 +21,26 @@ interface Props {
   expressionOverrides: Record<string, number>;
   signals: AgentSignals;
   onLoadError: () => void;
+}
+
+/** Set a relaxed A-pose so VRMs without an animation clip don't ship as
+ *  T-pose ("arms straight out"). Most VRMs default arms ~90° outward; this
+ *  rotates upper arms ~60° down at the shoulder and adds a small elbow bend. */
+function applyAPose(vrm: VRM): void {
+  const h = vrm.humanoid;
+  if (!h) return;
+  const set = (name: VRMHumanBoneName, x: number, y: number, z: number) => {
+    const node = h.getNormalizedBoneNode(name);
+    if (node) node.rotation.set(x, y, z);
+  };
+  // Z-rotation on shoulders pulls arms down. Sign convention: +Z on left, -Z on right.
+  set(VRMHumanBoneName.LeftUpperArm, 0, 0, 1.15);
+  set(VRMHumanBoneName.RightUpperArm, 0, 0, -1.15);
+  set(VRMHumanBoneName.LeftLowerArm, 0, -0.15, 0.1);
+  set(VRMHumanBoneName.RightLowerArm, 0, 0.15, -0.1);
+  // Slight shoulder relax.
+  set(VRMHumanBoneName.LeftShoulder, 0, 0, 0.05);
+  set(VRMHumanBoneName.RightShoulder, 0, 0, -0.05);
 }
 
 function applyExpressionsFromSignals(vrm: VRM, signals: AgentSignals, overrides: Record<string, number>): void {
@@ -87,6 +107,8 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         try { VRMUtils.rotateVRM0(vrm); } catch (_e) { /* older lib versions */ }
         // Disable frustum culling — tight camera + skinned meshes can clip otherwise.
         vrm.scene.traverse((obj: any) => { obj.frustumCulled = false; });
+        // Lower the arms — VRMs ship in T-pose by default.
+        applyAPose(vrm);
         // AD-721 diagnostics: log material + texture status to console so we
         // can tell whether a "white blob" is a lighting issue vs a texture
         // decode / MToon-default-color issue.
@@ -138,6 +160,26 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     const vrm = vrmRef.current;
     if (!vrm) return;
     applyExpressionsFromSignals(vrm, signals, expressionOverrides);
+
+    // Idle body animation: breathing + gentle sway. Adds life when no clip exists.
+    const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+    const h = vrm.humanoid;
+    const head = h?.getNormalizedBoneNode(VRMHumanBoneName.Head);
+    const chest = h?.getNormalizedBoneNode(VRMHumanBoneName.Chest)
+                ?? h?.getNormalizedBoneNode(VRMHumanBoneName.UpperChest)
+                ?? h?.getNormalizedBoneNode(VRMHumanBoneName.Spine);
+    if (head) {
+      const sway = Math.sin(t * 0.6) * 0.03;
+      const bob = Math.sin(t * 1.4) * 0.015;
+      const speakBob = speakingRef.current ? Math.sin(t * 5) * 0.04 : 0;
+      head.rotation.y = sway;
+      head.rotation.x = bob + speakBob;
+    }
+    if (chest) {
+      // Subtle breathing — 0.25 Hz, ±1.5%.
+      const breathe = 1 + Math.sin(t * 2 * Math.PI * 0.25) * 0.015;
+      chest.scale.set(breathe, breathe, breathe);
+    }
 
     if (speakingRef.current && analyserRef.current) {
       const buf = new Uint8Array(analyserRef.current.frequencyBinCount);

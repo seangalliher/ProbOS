@@ -39,6 +39,9 @@ beforeEach(() => {
     voiceEnabled: false,
     agentConversations: new Map(),
   });
+  // Clear per-agent TTS preferences so localStorage persistence between tests
+  // doesn't override the global-default fallback path.
+  localStorage.clear();
 
   // fetch: chat/history, profile, then chat
   global.fetch = vi.fn((url: any, init?: any) => {
