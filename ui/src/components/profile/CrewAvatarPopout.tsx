@@ -163,12 +163,21 @@ export function CrewAvatarPopout({
         </button>
       </div>
 
-      {/* Canvas region. */}
-      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      {/* Canvas region. Explicit dimensions because R3F's ResizeObserver
+          sometimes misses the initial flex measurement after the popout-in
+          animation, leaving the avatar at 0x0 (blank frame) and freezing
+          useFrame. Falling back to width/height props keeps the renderer
+          synced with our state. */}
+      <div style={{
+        width: size.w,
+        height: Math.max(0, size.h - 22),
+        position: 'relative',
+      }}>
         <Canvas
           camera={{ position: [0, 1.45, 0.85], fov: 28 }}
           gl={{ antialias: true, toneMappingExposure: 1.0 }}
           flat
+          frameloop="always"
         >
           {/* `flat` disables ACES tone mapping which over-brightens MToon.
               Total light kept low so the model doesn't blow out. */}
