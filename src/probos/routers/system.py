@@ -615,11 +615,17 @@ async def get_avatar(filename: str, runtime: Any = Depends(get_runtime)) -> Any:
     Path-traversal defense: resolve the requested file under the configured
     avatars dir and reject anything outside it. Reject files larger than
     `avatars.max_vrm_size_bytes` (default 25 MB).
+
+    BF #539: ``avatars_dir`` is rooted under ``_platform_data_dir()`` (matches
+    BF-265 split-brain prevention) when relative, instead of process cwd. Absolute
+    paths pass through unchanged. The default ``"data/avatars"`` resolves to
+    ``<platform_data_dir>/avatars`` (since ``_platform_data_dir()`` already ends
+    in ``/data``).
     """
     cfg = getattr(runtime, "config", None)
     if cfg is None or not getattr(cfg, "avatars", None) or not cfg.avatars.enabled:
         raise HTTPException(status_code=404, detail="avatars disabled")
-    avatars_dir = Path(cfg.avatars.avatars_dir).resolve()
+    avatars_dir = _resolve_avatars_dir(cfg.avatars.avatars_dir)
     target = (avatars_dir / filename).resolve()
     try:
         target.relative_to(avatars_dir)
@@ -630,6 +636,26 @@ async def get_avatar(filename: str, runtime: Any = Depends(get_runtime)) -> Any:
     if target.stat().st_size > cfg.avatars.max_vrm_size_bytes:
         raise HTTPException(status_code=413, detail="avatar exceeds size limit")
     return FileResponse(str(target), media_type="application/octet-stream")
+
+
+def _resolve_avatars_dir(configured: str) -> Path:
+    """BF #539: resolve avatars_dir consistently with the rest of ProbOS.
+
+    Absolute path -> use as-is. Relative path -> root under the platform data
+    dir (matching the BF-265 pattern other resources use). A leading ``data/``
+    or ``data\\\\`` prefix in the configured value is stripped because
+    ``_platform_data_dir()`` already terminates in ``/data``.
+    """
+    from probos.runtime import _platform_data_dir
+
+    p = Path(configured)
+    if p.is_absolute():
+        return p.resolve()
+    parts = p.parts
+    if parts and parts[0].lower() == "data":
+        # Strip the leading "data" segment to avoid <platform>/data/data/avatars
+        parts = parts[1:]
+    return (_platform_data_dir().joinpath(*parts) if parts else _platform_data_dir()).resolve()
 
 
 @router.get("/config/avatars-enabled")
