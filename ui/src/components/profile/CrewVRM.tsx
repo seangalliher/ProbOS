@@ -241,9 +241,10 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         for (let i = 0; i < buf.length; i++) sum += buf[i];
         amp = sum / buf.length / 255;
       }
-      // Synthetic ~5 Hz mouth open/close envelope. Strong default so motion
-      // is visible even when the browser cannot expose TTS audio to Web Audio.
-      const synth = 0.5 + 0.5 * Math.abs(Math.sin(t * 2 * Math.PI * 5));
+      // Synthetic 0→1 mouth open/close envelope at ~4 Hz. Big swing so the
+      // motion is unambiguous on stylised VRoid faces; phoneme-accurate
+      // lip-sync is AD-721b territory.
+      const synth = 0.5 - 0.5 * Math.cos(t * 2 * Math.PI * 4);
       const value = Math.min(1.0, Math.max(amp * 1.4, synth));
       const em = vrm.expressionManager;
       if (em) {
@@ -269,7 +270,7 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         for (let i = 0; i < buf.length; i++) sum += buf[i];
         amp2 = sum / buf.length / 255;
       }
-      const synth2 = 0.5 + 0.5 * Math.abs(Math.sin(t2 * 2 * Math.PI * 5));
+      const synth2 = 0.5 - 0.5 * Math.cos(t2 * 2 * Math.PI * 4);
       const val2 = Math.min(1.0, Math.max(amp2 * 1.4, synth2));
       for (const { mesh, index } of directMouthMeshesRef.current) {
         if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = val2;
