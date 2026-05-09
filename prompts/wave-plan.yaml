@@ -3112,7 +3112,7 @@ waves:
       - "prompts/ad-721i-dsl-blender-renderer-v1.md"
     builder_required: true
     issues_to_close: [531, 537]
-    status: pending
+    status: done
 
   - id: "135"
     title: "Cluster A wave 2 — AD-719 multi-agent chat (M365 @-mention pattern) + AD-720 chat attachments (files/images/Computer Use)"
@@ -3139,3 +3139,5 @@ waves:
     builder_required: true
     issues_to_close: [522, 525]
     status: pending
+
+
