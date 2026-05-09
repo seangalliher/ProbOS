@@ -166,7 +166,7 @@ export function CrewAvatarPopout({
       {/* Canvas region. */}
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         <Canvas
-          camera={{ position: [0, 1.4, 0.7], fov: 30 }}
+          camera={{ position: [0, 1.45, 0.85], fov: 28 }}
           gl={{ antialias: true, toneMappingExposure: 1.0 }}
           flat
         >
@@ -188,7 +188,7 @@ export function CrewAvatarPopout({
             )}
           </Suspense>
           {/* Drag to rotate, scroll to zoom — pivot on the head. */}
-          <OrbitControls target={[0, 1.4, 0]} enablePan={false} minDistance={0.3} maxDistance={3} />
+          <OrbitControls target={[0, 1.42, 0]} enablePan={false} minDistance={0.3} maxDistance={3} />
         </Canvas>
       </div>
 

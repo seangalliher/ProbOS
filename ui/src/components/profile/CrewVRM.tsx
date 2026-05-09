@@ -84,6 +84,9 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
   const vrmRef = useRef<VRM | null>(null);
   const analyserRef = useRef<AnalyserNode | FakeAnalyser | null>(null);
   const speakingRef = useRef(false);
+  // Cache which mouth blendshape names this VRM actually exposes — different
+  // exporters use different names (preset 'aa', VRoid 'A', VRM0 'Fcl_MTH_A', etc.)
+  const mouthShapesRef = useRef<string[]>([]);
 
   // Load the VRM once per URL change.
   useEffect(() => {
@@ -130,7 +133,28 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         });
         // eslint-disable-next-line no-console
         console.log('[AD-721 VRM loaded]', { url: vrmUrl, meta: vrm.meta, materials: matSummary });
+        // Detect available mouth blendshape names. setValue() silently ignores
+        // unknown names, so we have to probe the expression manager directly.
+        const em: any = vrm.expressionManager;
+        const candidates = ['aa', 'a', 'A', 'Fcl_MTH_A', 'mouth_a', 'M_A'];
+        const found: string[] = [];
+        if (em) {
+          // VRM 1.0: em.expressions is a list with name strings.
+          // VRM 0.x: em.blendShapeGroups; @pixiv/three-vrm normalises to expressions.
+          const known = new Set<string>();
+          (em.expressions ?? []).forEach((x: any) => { if (x?.expressionName) known.add(x.expressionName); });
+          (em._expressionMap ? Object.keys(em._expressionMap) : []).forEach((n: string) => known.add(n));
+          for (const name of candidates) {
+            if (known.has(name)) found.push(name);
+          }
+        }
+        mouthShapesRef.current = found;
+        // eslint-disable-next-line no-console
+        console.log('[AD-721 VRM mouth shapes detected]', found);
         vrmRef.current = vrm;
+        // DEBUG: expose to window so tests/console can poke it.
+        (window as any).__ezriVRM = vrm;
+        (window as any).__ezriMouth = found;
       },
       undefined,
       (err: unknown) => {
@@ -152,7 +176,9 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
       } else if (e.type === 'end') {
         speakingRef.current = false;
         analyserRef.current = null;
-        vrmRef.current?.expressionManager?.setValue('aa', 0);
+        // Close all detected mouth shapes.
+        const em = vrmRef.current?.expressionManager;
+        if (em) for (const n of mouthShapesRef.current) em.setValue(n, 0);
       }
     });
     return off;
@@ -183,13 +209,28 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
       chest.scale.set(breathe, breathe, breathe);
     }
 
-    if (speakingRef.current && analyserRef.current) {
-      const buf = new Uint8Array(analyserRef.current.frequencyBinCount);
-      analyserRef.current.getByteFrequencyData(buf);
-      let sum = 0;
-      for (let i = 0; i < buf.length; i++) sum += buf[i];
-      const amp = sum / buf.length / 255;
-      vrm.expressionManager?.setValue('aa', Math.min(0.9, amp * 1.4));
+    if (speakingRef.current) {
+      // Compute mouth opening amplitude. If a real analyser is attached use
+      // its byte data; otherwise fall back to a synthetic ~6 Hz envelope so
+      // the avatar still animates when the browser doesn't expose TTS audio.
+      let amp = 0;
+      if (analyserRef.current) {
+        const buf = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i];
+        amp = sum / buf.length / 255;
+      }
+      // Synthetic ~5 Hz mouth open/close envelope. Strong default so motion
+      // is visible even when the browser cannot expose TTS audio to Web Audio.
+      const synth = 0.5 + 0.5 * Math.abs(Math.sin(t * 2 * Math.PI * 5));
+      const value = Math.min(1.0, Math.max(amp * 1.4, synth));
+      const em = vrm.expressionManager;
+      if (em) {
+        // Drive every detected mouth shape AND fall back to common names.
+        const targets = mouthShapesRef.current.length > 0 ? mouthShapesRef.current : ['aa', 'a', 'A'];
+        for (const n of targets) em.setValue(n, value);
+      }
     }
     vrm.update(delta);
   });
