@@ -82,6 +82,16 @@ export function CrewAvatarPopout({
     };
   }, [onMouseMove, onMouseUp]);
 
+  // R3F's ResizeObserver sometimes misses the initial canvas measurement
+  // (the popout-in animation puts the wrapper at the wrong size during the
+  // first observation). A synthetic window resize after mount forces R3F
+  // to re-measure and prevents the "blank until dragged" symptom.
+  useEffect(() => {
+    const t1 = setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+    const t2 = setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
+
   const startDrag = (e: React.MouseEvent) => {
     // Don't start a drag when the close button is clicked.
     if ((e.target as HTMLElement).closest('button[data-avatar-close]')) return;
@@ -114,7 +124,6 @@ export function CrewAvatarPopout({
         borderRadius: 12,
         boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
         zIndex: 1000,
-        animation: 'popout-in 220ms ease-out',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
