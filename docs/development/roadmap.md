@@ -339,6 +339,25 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-706e | Browser Tool action vocabulary v2 — drag, key_combo, mouse, upload, download, eval_js | [#520](https://github.com/seangalliher/ProbOS/issues/520) | 3 |
 | AD-706f | Browser Tool credential vault integration for authenticated flows | [#521](https://github.com/seangalliher/ProbOS/issues/521) | 3 |
 
+**From Wave 133 deferred forward markers (AD-718 voice + AD-721 avatars follow-ups):**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-718a | Agent-authored voice profile | [#522](https://github.com/seangalliher/ProbOS/issues/522) | 3 |
+| AD-718b | Coqui/ElevenLabs/Bark TTS backend via AD-705 | [#523](https://github.com/seangalliher/ProbOS/issues/523) | 3 |
+| AD-718c | Per-agent wake-word | [#524](https://github.com/seangalliher/ProbOS/issues/524) | 4 |
+| AD-718d | Emotional voice modulation (synergy with AD-721) | [#525](https://github.com/seangalliher/ProbOS/issues/525) | 3 |
+| AD-718e | Multi-language voice selection | [#526](https://github.com/seangalliher/ProbOS/issues/526) | 4 |
+| AD-718f | Per-agent volume control surface | [#527](https://github.com/seangalliher/ProbOS/issues/527) | 4 |
+| AD-721a | Captain's avatar editor UI | [#528](https://github.com/seangalliher/ProbOS/issues/528) | 3 |
+| AD-721b | Phoneme-accurate lip-sync + real-audio capture | [#529](https://github.com/seangalliher/ProbOS/issues/529) | 3 |
+| AD-721c | VR / spatial-scene avatar mode | [#530](https://github.com/seangalliher/ProbOS/issues/530) | 4 |
+| AD-721d | Agent-authored appearance pipeline | [#531](https://github.com/seangalliher/ProbOS/issues/531) | 3 |
+| AD-721e | Skeletal animation library (Mixamo) | [#532](https://github.com/seangalliher/ProbOS/issues/532) | 4 |
+| AD-721f | Cognitive-canvas avatar replacement | [#533](https://github.com/seangalliher/ProbOS/issues/533) | 4 |
+| AD-721g | Per-tier baseline VRMs | [#534](https://github.com/seangalliher/ProbOS/issues/534) | 4 |
+| AD-721h | Browser-based VRM upload UI | [#535](https://github.com/seangalliher/ProbOS/issues/535) | 3 |
+
 ### Forcing-function deferrals
 
 (Forward dependencies satisfied; build when need surfaces.)

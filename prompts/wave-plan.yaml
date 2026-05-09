@@ -3100,4 +3100,4 @@ waves:
       - "prompts/ad-721-3d-crew-avatars-v1.md"
     builder_required: true
     issues_to_close: [512, 515]
-    status: pending
+    status: done
