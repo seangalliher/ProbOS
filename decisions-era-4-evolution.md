@@ -5166,3 +5166,51 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 | DD-4: Parallel implementations | Same concept, separate stores | Brain optimizes for task reliability; crew optimize for discussion quality. Merging creates a confused system good at neither. |
 
 **Design:** `docs/research/ad-641-brain-enhancement-design.md`. **Issue:** #277.
+
+### AD-721b — Phoneme-accurate lip-sync (visemes)
+**Date:** 2026-05-09
+**Type:** Architecture Decision (forward marker promoted)
+**Wave:** TBD
+**Status:** PROPOSED. Issue [#529](https://github.com/seangalliher/ProbOS/issues/529).
+
+**Goal.** Replace AD-721's amplitude-only mouth-open driver with phoneme/viseme-accurate lip-sync. Drive the five vowel morphs already present on VRoid VRMs (`aa`/`ih`/`ou`/`ee`/`oh` — equivalently `Fcl_MTH_A/I/U/E/O`) and the consonant-shape morphs from the running TTS audio, instead of writing a single "open" value into `aa`.
+
+**Why now.** AD-721 D5 uses a synthetic envelope blended with a low-pass-smoothed analyser. That hits the "Counselor's mouth moves while she speaks" bar but not the "you can read her lips" bar. Counselor herself flagged it during testing.
+
+**Design surface.**
+1. Phoneme source. Two paths to evaluate:
+   - **Pre-generated:** run rhubarb-lip-sync (or oculus-lipsync) over the TTS audio off the critical path and ship a `[(timeMs, viseme)]` track alongside the utterance. Cheap, deterministic, easy to test.
+   - **Live:** `oculus-lipsync-web` WASM (or whisper.cpp tiny + phonemizer) consuming a `MediaStreamDestination` of the SpeechSynthesis output. Requires routing TTS through Web Audio, which Chrome/Firefox don't expose by default (the same blocker AD-721 D5 hit). Likely a Chromium-extension only path.
+2. Viseme → morph mapping. Adopt the **Oculus Viseme set** (15 visemes) and map to the VRM 1.0 mouth expressions:
+
+   | Viseme | VRM expression | Notes |
+   |---|---|---|
+   | sil | (zero all) | rest |
+   | PP, FF, TH | `aa` × 0.15 | minor open |
+   | DD, kk, CH, SS, nn, RR | `ih` | mid spread |
+   | aa | `aa` | open |
+   | E | `ee` | spread |
+   | ih | `ih` | small spread |
+   | oh | `oh` | rounded |
+   | ou | `ou` | tight round |
+
+   Multi-mesh face splits (the AD-721 BF — VRoid 0.x exporter splits face by material) still apply: drive every mesh with `Fcl_MTH_*` directly, not via the expression manager binding.
+3. Driver pipeline. `speechAmplitude.ts` is replaced by `lipSyncTrack.ts` which yields `{ aa, ih, ou, ee, oh }` weights at frame time. Same `_attachAnalyserOrSchedule` style API so `CrewVRM.useFrame` only swaps the formula.
+4. Smoothing. Per-viseme exponential decay with shorter attack (~50ms) + slightly longer release (~100ms). Cross-blend between consecutive visemes so transitions don't pop.
+5. Deferred from this AD: real-audio capture, pitch-driven jaw motion, eyebrow-from-prosody, secondary motion (tongue-out), bilingual phoneme sets.
+
+**Acceptance criteria.**
+- Counselor saying "Hello Captain" produces visibly different shapes for `eh`, `oh`, `aa` rather than a uniform open/close.
+- Track-based path works in OSS (no extension dependency).
+- All 7 face meshes still animate (regression of the AD-721 BF would be silent — needs an explicit test).
+- Vitest harness for the viseme→morph mapping (no R3F needed).
+
+**Forward markers retained.** AD-721c (VR avatars), AD-721d (agent-authored appearance), AD-721e (skeletal animation library), AD-721f (canvas-avatar replacement), AD-721g (per-tier baseline VRMs), AD-721h (browser VRM upload).
+
+**Files to touch (planning only).**
+- `ui/src/audio/lipSyncTrack.ts` (new — replaces `speechAmplitude.ts`)
+- `ui/src/components/profile/CrewVRM.tsx` (swap analyser amp → viseme weights, drive 5 morphs)
+- `src/probos/audio/lipsync.py` (new — pre-generates rhubarb track for outgoing TTS, optional)
+- `tests/audio/test_lipsync_track.ts` (new)
+
+**AD-numbering verification.** Highest pre-existing AD: 721. AD-721a–h are forward markers in AD-721; AD-721b is the next-up sub-AD per that plan. No collision.
