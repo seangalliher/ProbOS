@@ -6,7 +6,7 @@
  *  capture is unavailable — see AD-721 D5 / `speechAmplitude.ts`).
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -82,6 +82,11 @@ function applyExpressionsFromSignals(vrm: VRM, signals: AgentSignals, overrides:
 
 export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError }: Props) {
   const vrmRef = useRef<VRM | null>(null);
+  // BF: also keep VRM in state so React mounts <primitive> after load.
+  // Updating a ref alone does not trigger a re-render, which previously
+  // meant the avatar scene was loaded but never inserted into the R3F tree
+  // until some unrelated event (e.g. dragging the window) re-rendered.
+  const [vrmReady, setVrmReady] = useState<VRM | null>(null);
   const analyserRef = useRef<AnalyserNode | FakeAnalyser | null>(null);
   const speakingRef = useRef(false);
   // Cache which mouth blendshape names this VRM actually exposes — different
@@ -168,6 +173,7 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         });
         directMouthMeshesRef.current = direct;
         vrmRef.current = vrm;
+        setVrmReady(vrm);
       },
       undefined,
       (err: unknown) => {
@@ -276,7 +282,7 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     }
   });
 
-  return vrmRef.current ? <primitive object={vrmRef.current.scene} /> : null;
+  return vrmReady ? <primitive object={vrmReady.scene} /> : null;
 }
 
 export { applyExpressionsFromSignals as _applyExpressionsFromSignals };
