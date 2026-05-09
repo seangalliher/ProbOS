@@ -1503,3 +1503,16 @@ Captures the LoCoMo (Long Conversation Memory) methodology — the de-facto open
 **Forward markers:** AD-716-1 (real LoCoMo dataset), AD-716-2 (LLM-judge fuzzy scoring), AD-716-3 (per-metric breakdown across all three recall surfaces — `recall` / `recall_by_anchor` / `recall_weighted`).
 
 **Status:** SHIPPED. Issue [#497](https://github.com/seangalliher/ProbOS/issues/497) (subsumes [#494](https://github.com/seangalliher/ProbOS/issues/494)).
+
+
+### AD-717 — Warm-Boot State Fragmentation (DESIGN, implementation deferred)
+**Date:** 2026-05-08
+**Type:** Pure design AD — no production code
+**Wave:** 130
+
+Design pinned in `docs/research/warm-boot-fragmentation-design.md`. Four detection heuristics (anchor-temporal mismatch, missing dream-cycle markers, stale trust deltas, hash-chain cross-drift), triage rules (safe-discard vs. recovery), `MIN_BOOT_STASIS_SECONDS=2.0` / `MAX_BOOT_STASIS_SECONDS=30.0`, optional dream-checkpoint-resume with SHA-256 self-hash. Four named events for the implementation AD: `WARM_BOOT_FRAGMENT_DETECTED`, `WARM_BOOT_FRAGMENT_RECOVERED`, `WARM_BOOT_FRAGMENT_QUARANTINED`, `WARM_BOOT_STASIS_EXCEEDED`. Convention #14 carve-out: `warm_boot.enabled=true` is the only `enabled: true` default in Wave 130, justified as a safety mechanism (a fragmentation scan that's off-by-default silently misses what it exists to catch).
+
+**AD-numbering note:** highest pre-warm-boot AD = AD-716 (LoCoMo). Warm-boot assigned AD-717. Implementation deferred to **AD-717-1**; checkpoint format/resume = AD-717-2; HXI/CLI surface = AD-717-3.
+
+**Status:** SHIPPED (DESIGN ONLY — no code shipped). Issue [#501](https://github.com/seangalliher/ProbOS/issues/501).
+**Files:** `docs/research/warm-boot-fragmentation-design.md` (new design doc).
