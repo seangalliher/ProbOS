@@ -13,6 +13,10 @@ vi.mock('@react-three/fiber', () => ({
   useFrame: () => {},
 }));
 
+vi.mock('@react-three/drei', () => ({
+  OrbitControls: () => null,
+}));
+
 vi.mock('../components/profile/CrewVRM', () => ({
   CrewVRM: (props: any) => {
     popoutMocks.vrmRendered.v = true;

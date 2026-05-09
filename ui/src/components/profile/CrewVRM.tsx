@@ -10,7 +10,7 @@ import { useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, type VRM } from '@pixiv/three-vrm';
+import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import { onSpeechEvent } from '../../audio/voice';
 import { _attachAnalyserOrSchedule, type FakeAnalyser } from '../../audio/speechAmplitude';
 import type { AgentSignals } from './avatarSignals';
@@ -67,10 +67,14 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
   useEffect(() => {
     if (!vrmUrl) return;
     let mounted = true;
+    // Resolve bare filenames (e.g. "Ezri.vrm") against the avatar-serving API.
+    // Absolute / root-relative URLs are passed through.
+    const resolvedUrl =
+      /^(https?:|\/|blob:|data:)/.test(vrmUrl) ? vrmUrl : `/api/system/avatars/${vrmUrl}`;
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
     loader.load(
-      vrmUrl,
+      resolvedUrl,
       (gltf: any) => {
         if (!mounted) return;
         const vrm = gltf.userData.vrm as VRM | undefined;
@@ -78,10 +82,38 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
           onLoadError();
           return;
         }
+        // VRM 0.x models face -Z; rotate so they face the camera (+Z).
+        // No-op for VRM 1.0 models, which already face +Z.
+        try { VRMUtils.rotateVRM0(vrm); } catch (_e) { /* older lib versions */ }
+        // Disable frustum culling — tight camera + skinned meshes can clip otherwise.
+        vrm.scene.traverse((obj: any) => { obj.frustumCulled = false; });
+        // AD-721 diagnostics: log material + texture status to console so we
+        // can tell whether a "white blob" is a lighting issue vs a texture
+        // decode / MToon-default-color issue.
+        const matSummary: { name: string; type: string; map: boolean; color?: string }[] = [];
+        vrm.scene.traverse((obj: any) => {
+          if (obj.isMesh && obj.material) {
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            for (const m of mats) {
+              matSummary.push({
+                name: obj.name,
+                type: m.type || m.constructor?.name,
+                map: !!m.map,
+                color: m.color?.getHexString?.(),
+              });
+            }
+          }
+        });
+        // eslint-disable-next-line no-console
+        console.log('[AD-721 VRM loaded]', { url: vrmUrl, meta: vrm.meta, materials: matSummary });
         vrmRef.current = vrm;
       },
       undefined,
-      (_err: unknown) => onLoadError(),
+      (err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn('[AD-721 VRM load failed]', { url: resolvedUrl, err });
+        onLoadError();
+      },
     );
     return () => { mounted = false; };
   }, [vrmUrl, onLoadError]);

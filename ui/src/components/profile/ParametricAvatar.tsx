@@ -12,6 +12,25 @@ import { onSpeechEvent } from '../../audio/voice';
 import { _attachAnalyserOrSchedule, type FakeAnalyser } from '../../audio/speechAmplitude';
 import type { AgentSignals } from './avatarSignals';
 
+/** Map ProbOS palette tokens → hex. THREE.Color doesn't recognise "amber" etc. */
+const PALETTE: Record<string, string> = {
+  amber: '#f0b060',
+  bridge: '#d0a030',
+  engineering: '#b0a050',
+  science: '#50b0a0',
+  medical: '#5090d0',
+  security: '#d05050',
+  violet: '#9060c0',
+  blue: '#5090d0',
+  gold: '#d0a030',
+};
+
+function resolveTint(input: string): string {
+  if (!input) return '#f0b060';
+  if (input.startsWith('#') || input.startsWith('rgb')) return input;
+  return PALETTE[input.toLowerCase()] ?? '#f0b060';
+}
+
 interface Props {
   tint: string;
   signals: AgentSignals;
@@ -19,6 +38,7 @@ interface Props {
 }
 
 export function ParametricAvatar({ tint, signals, agentId }: Props) {
+  const resolved = resolveTint(tint);
   const meshRef = useRef<THREE.Mesh | null>(null);
   const matRef = useRef<THREE.MeshStandardMaterial | null>(null);
   // TTS amplitude (mouth analogue: scale Y).
@@ -79,24 +99,23 @@ export function ParametricAvatar({ tint, signals, agentId }: Props) {
       const flash = 0.5 + 0.5 * Math.sin(2 * Math.PI * 2 * t);
       mat.emissive.set(new THREE.Color(1, 0.2 + flash * 0.2, 0.2));
     } else {
-      mat.emissive.set(new THREE.Color(tint));
+      mat.emissive.set(new THREE.Color(resolved));
     }
   });
 
   return (
-    <group position={[0, 0.6, 0]}>
-      <mesh ref={meshRef}>
+    <group position={[0, 1.4, 0]}>      <mesh ref={meshRef}>
         <capsuleGeometry args={[0.32, 0.6, 8, 16]} />
         <meshStandardMaterial
           ref={matRef}
-          color={tint}
-          emissive={tint}
+          color={resolved}
+          emissive={resolved}
           emissiveIntensity={0.5}
           roughness={0.6}
           metalness={0.1}
         />
       </mesh>
-      <pointLight color={tint} intensity={1.0} distance={2.0} />
+      <pointLight color={resolved} intensity={1.0} distance={2.0} />
     </group>
   );
 }
