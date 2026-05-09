@@ -33,14 +33,16 @@ function applyAPose(vrm: VRM): void {
     const node = h.getNormalizedBoneNode(name);
     if (node) node.rotation.set(x, y, z);
   };
-  // Z-rotation on shoulders pulls arms down. Sign convention: +Z on left, -Z on right.
-  set(VRMHumanBoneName.LeftUpperArm, 0, 0, 1.15);
-  set(VRMHumanBoneName.RightUpperArm, 0, 0, -1.15);
-  set(VRMHumanBoneName.LeftLowerArm, 0, -0.15, 0.1);
-  set(VRMHumanBoneName.RightLowerArm, 0, 0.15, -0.1);
+  // Z-rotation on shoulders pulls arms down. Sign convention varies by VRM
+  // exporter — for VRoid/most VRM 0.x the LEFT upper arm needs negative Z and
+  // the RIGHT needs positive Z (the opposite of T-pose intuition).
+  set(VRMHumanBoneName.LeftUpperArm, 0, 0, -1.2);
+  set(VRMHumanBoneName.RightUpperArm, 0, 0, 1.2);
+  set(VRMHumanBoneName.LeftLowerArm, 0, -0.15, -0.1);
+  set(VRMHumanBoneName.RightLowerArm, 0, 0.15, 0.1);
   // Slight shoulder relax.
-  set(VRMHumanBoneName.LeftShoulder, 0, 0, 0.05);
-  set(VRMHumanBoneName.RightShoulder, 0, 0, -0.05);
+  set(VRMHumanBoneName.LeftShoulder, 0, 0, -0.05);
+  set(VRMHumanBoneName.RightShoulder, 0, 0, 0.05);
 }
 
 function applyExpressionsFromSignals(vrm: VRM, signals: AgentSignals, overrides: Record<string, number>): void {
