@@ -3101,3 +3101,41 @@ waves:
     builder_required: true
     issues_to_close: [512, 515]
     status: done
+  - id: "134"
+    title: "Cluster A wave 1 — AD-721d agent-authored avatar appearance + AD-721i DSL→Blender renderer (paired backend)"
+    kind: main
+    depends_on: ["133"]
+    dispatch_prompt: "prompts/WAVE-134-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-721d-agent-authored-appearance-v1.md"
+      - "prompts/ad-721i-dsl-blender-renderer-v1.md"
+    builder_required: true
+    issues_to_close: [531, 537]
+    status: pending
+
+  - id: "135"
+    title: "Cluster A wave 2 — AD-719 multi-agent chat (M365 @-mention pattern) + AD-720 chat attachments (files/images/Computer Use)"
+    kind: main
+    depends_on: ["134"]
+    dispatch_prompt: "prompts/WAVE-135-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-719-multi-agent-chat-v1.md"
+      - "prompts/ad-720-chat-attachments-v1.md"
+    builder_required: true
+    issues_to_close: [513, 514]
+    status: pending
+
+  - id: "136"
+    title: "Cluster A wave 3 — AD-718a agent-authored voice profile + AD-718d emotional voice modulation"
+    kind: main
+    depends_on: ["135"]
+    dispatch_prompt: "prompts/WAVE-136-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-718a-agent-authored-voice-v1.md"
+      - "prompts/ad-718d-emotional-voice-modulation-v1.md"
+    builder_required: true
+    issues_to_close: [522, 525]
+    status: pending
