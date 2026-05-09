@@ -186,7 +186,8 @@ After the 19 prompts are committed:
 3. Move all 19 completed prompts to `prompts/archive/` (matches prior sweep convention).
 4. Move per-prompt review files to `prompts/Reviews/archive/`.
 5. Surface a final summary message: commit hashes, final test count vs baseline, any deferred nits, and confirmation that AD-678 remains on hold pending AD-677 (now buildable in this wave but tracked as the lone sequenced item).
-6. Push: `git push`.
+6. **Forward-marker filing (HARD RULE, added 2026-05-08 after Wave 132).** Before push, scan every shipped prompt's "Forward markers" / "Out of scope" / "Defer to AD-NNNx" lines and the corresponding build report's deferred section. For EACH forward marker: file a GitHub issue with priority + verify-first anchor citations + cross-references to the parent AD; add a row to the roadmap's deferred-AD table. Forward markers in prompts alone are not sufficient tracking — they MUST become filed issues by gate-3 close. Recurring lesson: Wave 132 had 6 unfiled deferrals (AD-706a..f); Captain backfilled them as #516-#521 the same day. Don't repeat.
+7. Push: `git push`.
 
 ---
 

@@ -328,6 +328,17 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-720 | Chat attachments — file uploads + image paste + tool attach (v2) | [#514](https://github.com/seangalliher/ProbOS/issues/514) | 3 |
 | AD-721 | 3D crew avatars on profile cards (popout, expressions, body language) | [#515](https://github.com/seangalliher/ProbOS/issues/515) | 3 |
 
+**From Wave 132 deferred forward markers (AD-706 Browser Tool follow-ups):**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-706a | Captain-watch streaming bridge — live browser session in HXI | [#516](https://github.com/seangalliher/ProbOS/issues/516) | 2 |
+| AD-706b | Browser session video recording + retention policy | [#517](https://github.com/seangalliher/ProbOS/issues/517) | 3 |
+| AD-706c | OmniParser-style vision extraction for DOM-less surfaces | [#518](https://github.com/seangalliher/ProbOS/issues/518) | 4 |
+| AD-706d | LLM-driven tier classifier for Browser Tool actions | [#519](https://github.com/seangalliher/ProbOS/issues/519) | 3 |
+| AD-706e | Browser Tool action vocabulary v2 — drag, key_combo, mouse, upload, download, eval_js | [#520](https://github.com/seangalliher/ProbOS/issues/520) | 3 |
+| AD-706f | Browser Tool credential vault integration for authenticated flows | [#521](https://github.com/seangalliher/ProbOS/issues/521) | 3 |
+
 ### Forcing-function deferrals
 
 (Forward dependencies satisfied; build when need surfaces.)
