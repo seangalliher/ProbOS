@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useStore } from '../store/useStore';
 import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectProposalView } from '../store/types';
-import { speakResponse } from '../audio/voice';
+import { speakResponse, stripMarkdownForSpeech } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import { soundEngine } from '../audio/soundEngine';
 import { BridgePanel } from './BridgePanel';
@@ -193,18 +193,8 @@ export function IntentSurface() {
           addChatMessage('system', response);
         }
         if (voiceEnabled && response && !response.startsWith('(')) {
-          // Strip markdown formatting for cleaner TTS
-          const cleanText = response
-            .replace(/\*\*(.+?)\*\*/g, '$1')
-            .replace(/\*(.+?)\*/g, '$1')
-            .replace(/#{1,6}\s/g, '')
-            .replace(/[-•]\s/g, '')
-            .replace(/---+/g, '')
-            .replace(/`(.+?)`/g, '$1')
-            .replace(/\[(.+?)\]\(.+?\)/g, '$1')
-            .replace(/\n{2,}/g, '. ')
-            .trim();
-          speakResponse(cleanText);
+          // Strip markdown formatting for cleaner TTS (AD-718: shared helper)
+          speakResponse(stripMarkdownForSpeech(response));
         }
         soundEngine.playIntentRouting();
       })

@@ -192,6 +192,16 @@ class SetCooldownRequest(BaseModel):
     cooldown: float = 300.0  # seconds, range 60–1800
 
 
+# ── Voice profile model (AD-718) ─────────────────────────────────
+
+class SetVoiceProfileRequest(BaseModel):
+    """Request body for per-agent voice profile (AD-718)."""
+    voice_name: str = ""
+    pitch: float = 0.9
+    rate: float = 0.95
+    volume: float = 0.8
+
+
 # ── Assignment models (AD-408) ───────────────────────────────────
 
 class CreateAssignmentRequest(BaseModel):

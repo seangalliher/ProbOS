@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
+import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../audio/voice';
+import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
 
 interface Props {
   agentId: string;
@@ -9,6 +11,9 @@ export function ProfileChatTab({ agentId }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [listening, setListening] = useState(false);
+  const voiceEnabled = useStore((s) => s.voiceEnabled);
+  const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [seedMemories, setSeedMemories] = useState<{role: string; text: string}[]>([]);
 
@@ -25,6 +30,14 @@ export function ProfileChatTab({ agentId }: Props) {
         .then(r => r.json())
         .then(data => setSeedMemories(data.memories || []))
         .catch(() => {});  // Non-critical
+  }, [agentId]);
+
+  // AD-718: Fetch per-agent voice profile (Tier-2 log-and-degrade on failure).
+  useEffect(() => {
+    fetch(`/api/agent/${agentId}/profile`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.voiceProfile) setVoiceProfile(data.voiceProfile); })
+      .catch(() => {});
   }, [agentId]);
 
   const handleSend = useCallback(async () => {
@@ -55,13 +68,18 @@ export function ProfileChatTab({ agentId }: Props) {
         body: JSON.stringify({ message: text, history: fullHistory }),  // AD-430b: send history
       });
       const data = await res.json();
-      useStore.getState().addAgentMessage(agentId, 'agent', data.response || '(no response)');
+      const reply = data.response || '(no response)';
+      useStore.getState().addAgentMessage(agentId, 'agent', reply);
+      // AD-718: TTS playback for agent reply only (skip system error placeholders).
+      if (voiceEnabled && reply && !reply.startsWith('(')) {
+        speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, agentId);
+      }
     } catch {
       useStore.getState().addAgentMessage(agentId, 'agent', '(communication error)');
     } finally {
       setSending(false);
     }
-  }, [agentId, input, sending, seedMemories]);
+  }, [agentId, input, sending, seedMemories, voiceEnabled, voiceProfile]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -141,6 +159,55 @@ export function ProfileChatTab({ agentId }: Props) {
             outline: 'none',
           }}
         />
+        {/* AD-718: Mic button for STT input (parity with IntentSurface). */}
+        {isSpeechRecognitionSupported() && (
+          <button
+            type="button"
+            onClick={() => {
+              if (listening) {
+                stopListening();
+                setListening(false);
+                return;
+              }
+              setListening(true);
+              startListening(
+                (text) => {
+                  setInput(text);
+                  setListening(false);
+                  setTimeout(() => handleSend(), 100);
+                },
+                () => setListening(false),
+                () => setListening(false),
+              );
+            }}
+            title={listening ? 'Stop listening' : 'Voice input'}
+            aria-label={listening ? 'Stop listening' : 'Voice input'}
+            style={{
+              background: listening ? 'rgba(255, 102, 102, 0.15)' : 'transparent',
+              border: 'none',
+              color: listening ? '#ff6666' : '#8888aa',
+              cursor: 'pointer',
+              fontSize: 14,
+              padding: '4px',
+              borderRadius: 4,
+              transition: 'color 0.2s, filter 0.2s',
+              flexShrink: 0,
+              animation: listening ? 'pulse-mic 1s ease-in-out infinite' : undefined,
+              filter: listening
+                ? 'drop-shadow(0 0 4px #ff6666)'
+                : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                 stroke={listening ? '#ff6666' : 'currentColor'}
+                 strokeWidth="2" strokeLinecap="round">
+              <line x1="8" y1="2" x2="8" y2="9" />
+              <path d="M5 7c0 1.7 1.3 3 3 3s3-1.3 3-3" />
+              <line x1="8" y1="12" x2="8" y2="14" />
+              <line x1="6" y1="14" x2="10" y2="14" />
+            </svg>
+          </button>
+        )}
         <button
           onClick={handleSend}
           disabled={sending || !input.trim()}
@@ -159,6 +226,13 @@ export function ProfileChatTab({ agentId }: Props) {
           {sending ? '...' : 'Send'}
         </button>
       </div>
+      {/* AD-718: Listening pulse keyframe (mirrors IntentSurface.tsx). */}
+      <style>{`
+        @keyframes pulse-mic {
+          0%, 100% { opacity: 0.6; }
+          50% { opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }

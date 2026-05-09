@@ -3,6 +3,47 @@
 let voicesLoaded = false;
 let cachedVoice: SpeechSynthesisVoice | null = null;
 
+/** AD-718: Per-call voice override. All fields optional. */
+export interface VoiceProfile {
+  voice_name?: string;   // exact SpeechSynthesisVoice name; falls back to global default if missing
+  pitch?: number;        // 0.0–2.0; default 0.9 (matches v0 behaviour)
+  rate?: number;         // 0.1–10.0; default 0.95 (matches v0)
+  volume?: number;       // 0.0–1.0; default 0.8 (matches v0)
+}
+
+/** AD-718 / AD-721 hook: subscribers fire on every utterance lifecycle event.
+ *  Used by AD-721 CrewAvatarPopout to drive mouth blend-shape from audio.
+ *  v1 emits 'start' and 'end' only; 'boundary' is reserved for AD-721b phoneme work. */
+export type SpeechEventType = 'start' | 'end' | 'boundary';
+export interface SpeechEvent {
+  type: SpeechEventType;
+  agent_id?: string;     // present iff caller passed one to speakResponse
+  utterance: SpeechSynthesisUtterance;
+}
+type SpeechListener = (e: SpeechEvent) => void;
+
+const _speechListeners = new Set<SpeechListener>();
+
+/** AD-718: Subscribe to TTS playback lifecycle events. Returns unsubscribe fn. */
+export function onSpeechEvent(fn: SpeechListener): () => void {
+  _speechListeners.add(fn);
+  return () => { _speechListeners.delete(fn); };
+}
+
+function _fire(e: SpeechEvent): void {
+  // Tier-2 log-and-degrade: a buggy listener must not break TTS.
+  for (const fn of _speechListeners) {
+    try { fn(e); } catch (err) { console.warn('[voice] listener error', err); }
+  }
+}
+
+/** AD-718: Look up a voice by exact name without mutating the global cache. */
+function _resolveVoiceByName(name: string): SpeechSynthesisVoice | null {
+  if (!name || !('speechSynthesis' in window)) return null;
+  const v = speechSynthesis.getVoices().find(x => x.name === name);
+  return v ?? null;
+}
+
 function findPreferredVoice(): SpeechSynthesisVoice | null {
   if (cachedVoice) return cachedVoice;
   if (!('speechSynthesis' in window)) return null;
@@ -46,19 +87,30 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   });
 }
 
-export function speakResponse(text: string): void {
+/** AD-718: agent_id is optional; when provided it is forwarded to listeners
+ *  so AD-721 can route mouth animation to the right avatar. */
+export function speakResponse(
+  text: string,
+  profile?: VoiceProfile,
+  agent_id?: string,
+): void {
   if (!('speechSynthesis' in window)) return;
 
   // Cancel any ongoing speech
   speechSynthesis.cancel();
 
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 0.95;
-  utterance.pitch = 0.9;
-  utterance.volume = 0.8;
+  utterance.rate   = profile?.rate   ?? 0.95;
+  utterance.pitch  = profile?.pitch  ?? 0.9;
+  utterance.volume = profile?.volume ?? 0.8;
 
-  const voice = findPreferredVoice();
+  const named = profile?.voice_name ? _resolveVoiceByName(profile.voice_name) : null;
+  const voice = named ?? findPreferredVoice();
   if (voice) utterance.voice = voice;
+
+  utterance.onstart = () => _fire({ type: 'start', agent_id, utterance });
+  utterance.onend   = () => _fire({ type: 'end',   agent_id, utterance });
+  // 'boundary' reserved for AD-721b phoneme work; not wired in v1.
 
   speechSynthesis.speak(utterance);
 }
@@ -86,4 +138,18 @@ export function setPreferredVoiceName(name: string | null): void {
 export function getCurrentVoiceName(): string {
   const voice = findPreferredVoice();
   return voice?.name || 'Default';
+}
+
+/** AD-718: Strip markdown formatting for cleaner TTS playback. */
+export function stripMarkdownForSpeech(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/#{1,6}\s/g, '')
+    .replace(/[-•]\s/g, '')
+    .replace(/---+/g, '')
+    .replace(/`(.+?)`/g, '$1')
+    .replace(/\[(.+?)\]\(.+?\)/g, '$1')
+    .replace(/\n{2,}/g, '. ')
+    .trim();
 }

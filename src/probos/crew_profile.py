@@ -93,6 +93,39 @@ class PersonalityTraits:
 
 
 @dataclass
+class VoiceProfile:
+    """AD-718: per-agent voice override for browser SpeechSynthesis playback.
+
+    `voice_name` is the exact `SpeechSynthesisVoice.name` to prefer. The browser
+    voice catalogue is OS- and browser-specific, so `voice_name` is best-effort:
+    if it is empty or not present on the user's machine, the HXI falls back to
+    the global default voice (``localStorage("hxi_voice_name")``) and applies
+    the pitch/rate/volume below to that voice.
+    """
+    voice_name: str = ""    # SpeechSynthesisVoice.name; "" = use global default
+    pitch: float = 0.9      # 0.0–2.0 (matches voice.ts v0 default)
+    rate: float = 0.95      # 0.1–10.0
+    volume: float = 0.8     # 0.0–1.0
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.pitch <= 2.0:
+            raise ValueError(f"pitch must be 0.0–2.0, got {self.pitch}")
+        if not 0.1 <= self.rate <= 10.0:
+            raise ValueError(f"rate must be 0.1–10.0, got {self.rate}")
+        if not 0.0 <= self.volume <= 1.0:
+            raise ValueError(f"volume must be 0.0–1.0, got {self.volume}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "VoiceProfile":
+        return cls(**{
+            k: data[k] for k in ("voice_name", "pitch", "rate", "volume") if k in data
+        })
+
+
+@dataclass
 class PerformanceReview:
     """Timestamped performance snapshot — append-only history."""
     timestamp: float = 0.0
@@ -138,6 +171,9 @@ class CrewProfile:
     personality: PersonalityTraits = field(default_factory=PersonalityTraits)
     personality_baseline: PersonalityTraits = field(default_factory=PersonalityTraits)
 
+    # Voice (AD-718)
+    voice: VoiceProfile = field(default_factory=VoiceProfile)
+
     # Performance
     reviews: list[PerformanceReview] = field(default_factory=list)
 
@@ -181,6 +217,7 @@ class CrewProfile:
             "demotions": self.demotions,
             "personality": self.personality.to_dict(),
             "personality_baseline": self.personality_baseline.to_dict(),
+            "voice": self.voice.to_dict(),
             "reviews": [r.to_dict() for r in self.reviews],
             "commissioned": self.commissioned,
             "last_updated": self.last_updated,
@@ -207,6 +244,8 @@ class CrewProfile:
             profile.personality = PersonalityTraits.from_dict(data["personality"])
         if "personality_baseline" in data:
             profile.personality_baseline = PersonalityTraits.from_dict(data["personality_baseline"])
+        if "voice" in data:
+            profile.voice = VoiceProfile.from_dict(data["voice"])
         if "reviews" in data:
             profile.reviews = [PerformanceReview.from_dict(r) for r in data["reviews"]]
         return profile

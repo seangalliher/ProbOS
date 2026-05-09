@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from probos.api_models import AgentChatRequest, SetCooldownRequest
+from probos.api_models import AgentChatRequest, SetCooldownRequest, SetVoiceProfileRequest
 from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
@@ -107,6 +107,19 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
     # BF-017: Only crew agents get personality and proactive controls
     is_crew = is_crew_agent(agent, runtime.ontology)
 
+    # AD-718: per-agent voice profile (live ProfileStore takes precedence over seed defaults).
+    from probos.voice_profile_defaults import default_voice_for
+    voice_profile_dict: dict[str, Any]
+    live_profile = None
+    if hasattr(runtime, 'profile_store') and runtime.profile_store is not None:
+        live_profile = runtime.profile_store.get(agent.id)
+    if live_profile is not None:
+        voice_profile_dict = live_profile.voice.to_dict()
+    elif seed and isinstance(seed.get("voice"), dict):
+        voice_profile_dict = seed["voice"]
+    else:
+        voice_profile_dict = default_voice_for(agent.agent_type).to_dict()
+
     profile_data = {
         "id": agent.id,
         "sovereignId": getattr(agent, 'sovereign_id', ''),
@@ -127,6 +140,7 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
         "pool": agent.pool,
         "hebbianConnections": hebbian_connections,
         "memoryCount": memory_count,
+        "voiceProfile": voice_profile_dict,
         "uptime": round(time.monotonic() - runtime._start_time, 1),
         "isCrew": is_crew,
         "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if is_crew and hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else None,
@@ -161,6 +175,42 @@ async def set_agent_proactive_cooldown(agent_id: str, req: SetCooldownRequest, r
     if hasattr(runtime, 'proactive_loop') and runtime.proactive_loop:
         runtime.proactive_loop.set_agent_cooldown(agent_id, cooldown)
     return {"agentId": agent_id, "cooldown": runtime.proactive_loop.get_agent_cooldown(agent_id) if runtime.proactive_loop else 300.0}
+
+
+@router.put("/{agent_id}/voice-profile")
+async def set_agent_voice_profile(
+    agent_id: str,
+    req: SetVoiceProfileRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-718: Update per-agent voice profile (browser SpeechSynthesis)."""
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    from probos.crew_profile import VoiceProfile
+    try:
+        new_profile = VoiceProfile(
+            voice_name=req.voice_name,
+            pitch=req.pitch,
+            rate=req.rate,
+            volume=req.volume,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if hasattr(runtime, "profile_store") and runtime.profile_store is not None:
+        crew = runtime.profile_store.get_or_create(
+            agent.id, agent_type=agent.agent_type, pool=agent.pool,
+        )
+        crew.voice = new_profile
+        runtime.profile_store.update(crew)
+    else:
+        logger.warning(
+            "AD-718: profile_store not present on runtime; voice profile for %s not persisted",
+            agent_id,
+        )
+
+    return {"agentId": agent_id, "voiceProfile": new_profile.to_dict()}
 
 
 @router.post("/{agent_id}/chat")

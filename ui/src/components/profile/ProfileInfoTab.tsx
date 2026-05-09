@@ -1,6 +1,11 @@
 import type { Agent, AgentProfileData } from '../../store/types';
 import { useStore } from '../../store/useStore';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import {
+  getAvailableVoices,
+  speakResponse,
+  type VoiceProfile,
+} from '../../audio/voice';
 
 const TRAIT_LABELS: Record<string, string> = {
   openness: 'Openness',
@@ -43,6 +48,42 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
   const activeGame = useStore(s => s.activeGame);
   const challengeAgent = useStore(s => s.challengeAgent);
   useEffect(() => { refreshDms(); }, [refreshDms]);
+
+  // AD-718: Per-agent voice profile editor state.
+  const [currentProfile, setCurrentProfile] = useState<VoiceProfile>({
+    voice_name: profileData?.voiceProfile?.voice_name ?? '',
+    pitch: profileData?.voiceProfile?.pitch ?? 0.9,
+    rate: profileData?.voiceProfile?.rate ?? 0.95,
+    volume: profileData?.voiceProfile?.volume ?? 0.8,
+  });
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  useEffect(() => {
+    setAvailableVoices(getAvailableVoices());
+  }, []);
+  // Re-sync when profileData arrives or agent changes.
+  useEffect(() => {
+    if (profileData?.voiceProfile) {
+      setCurrentProfile({
+        voice_name: profileData.voiceProfile.voice_name ?? '',
+        pitch: profileData.voiceProfile.pitch ?? 0.9,
+        rate: profileData.voiceProfile.rate ?? 0.95,
+        volume: profileData.voiceProfile.volume ?? 0.8,
+      });
+    }
+  }, [profileData?.voiceProfile, agent.id]);
+
+  const persistVoiceProfile = (next: VoiceProfile): void => {
+    fetch(`/api/agent/${agent.id}/voice-profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        voice_name: next.voice_name ?? '',
+        pitch: next.pitch ?? 0.9,
+        rate: next.rate ?? 0.95,
+        volume: next.volume ?? 0.8,
+      }),
+    }).catch(() => {});  // Tier-2 log-and-degrade
+  };
 
   // Filter DM channels involving this agent (by agent ID prefix in channel name)
   const agentIdPrefix = (agent.id || '').slice(0, 8);
@@ -180,6 +221,88 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* AD-718: Per-agent voice picker (crew only). */}
+      {agent.isCrew && (
+        <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
+            Voice
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: '#8888a0', minWidth: 50 }}>Voice</span>
+              <select
+                value={currentProfile.voice_name ?? ''}
+                onChange={(e) => {
+                  const next = { ...currentProfile, voice_name: e.target.value };
+                  setCurrentProfile(next);
+                  persistVoiceProfile(next);
+                }}
+                aria-label="Voice selector"
+                style={{
+                  flex: 1,
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 4,
+                  color: '#e0dcd4',
+                  fontSize: 11,
+                  padding: '4px 6px',
+                }}
+              >
+                <option value="">(global default)</option>
+                {availableVoices.map(v => (
+                  <option key={v.name} value={v.name}>{v.name}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: '#8888a0', minWidth: 50 }}>Pitch</span>
+              <input
+                type="range"
+                min={0} max={2} step={0.05}
+                value={currentProfile.pitch ?? 0.9}
+                onChange={(e) => setCurrentProfile(p => ({ ...p, pitch: parseFloat(e.target.value) }))}
+                onMouseUp={() => persistVoiceProfile(currentProfile)}
+                onTouchEnd={() => persistVoiceProfile(currentProfile)}
+                aria-label="Pitch"
+                style={{ flex: 1 }}
+              />
+              <span style={{ color: '#c0bab0', minWidth: 32 }}>{(currentProfile.pitch ?? 0.9).toFixed(2)}</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: '#8888a0', minWidth: 50 }}>Rate</span>
+              <input
+                type="range"
+                min={0.1} max={2} step={0.05}
+                value={currentProfile.rate ?? 0.95}
+                onChange={(e) => setCurrentProfile(p => ({ ...p, rate: parseFloat(e.target.value) }))}
+                onMouseUp={() => persistVoiceProfile(currentProfile)}
+                onTouchEnd={() => persistVoiceProfile(currentProfile)}
+                aria-label="Rate"
+                style={{ flex: 1 }}
+              />
+              <span style={{ color: '#c0bab0', minWidth: 32 }}>{(currentProfile.rate ?? 0.95).toFixed(2)}</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => speakResponse('This is how I sound.', currentProfile, agent.id)}
+              style={{
+                marginTop: 4,
+                padding: '4px 8px',
+                background: 'rgba(240, 176, 96, 0.1)',
+                border: '1px solid rgba(240, 176, 96, 0.25)',
+                borderRadius: 4,
+                color: '#f0b060',
+                fontSize: 11,
+                cursor: 'pointer',
+                alignSelf: 'flex-start',
+              }}
+            >
+              Test
+            </button>
+          </div>
         </div>
       )}
 

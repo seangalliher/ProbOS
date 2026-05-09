@@ -3088,3 +3088,16 @@ waves:
     builder_required: true
     issues_to_close: [482]
     status: done
+
+  - id: "133"
+    title: "Chat-experience pair: AD-718 voice in 1:1 profile chat + AD-721 3D crew avatars"
+    kind: main
+    depends_on: ["132"]
+    dispatch_prompt: "prompts/WAVE-133-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-718-profile-voice-chat-v1.md"
+      - "prompts/ad-721-3d-crew-avatars-v1.md"
+    builder_required: true
+    issues_to_close: [512, 515]
+    status: pending

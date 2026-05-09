@@ -331,6 +331,12 @@ export interface AgentProfileData {
   uptime: number;
   proactiveCooldown: number | null;  // Phase 28b: per-agent proactive think cooldown (seconds), null for non-crew (BF-017)
   isCrew: boolean;  // BF-017: true for crew agents, false for utility/infrastructure
+  voiceProfile?: {
+    voice_name: string;
+    pitch: number;
+    rate: number;
+    volume: number;
+  };  // AD-718: per-agent TTS profile
 }
 
 // Ward Room types (AD-407)
