@@ -119,6 +119,55 @@ def _wire_classification_gate(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-706: Register BrowserTool in the ToolRegistry (default-disabled)."""
+    cfg = getattr(config, "browser_tool", None)
+    if not cfg or not cfg.enabled:
+        return False
+    if getattr(runtime, "tool_registry", None) is None:
+        logger.warning("AD-706: tool_registry not available; skipping BrowserTool wiring")
+        return False
+
+    # Lazy Playwright import — missing optional dep at import time must not crash startup.
+    try:
+        from playwright.async_api import async_playwright  # noqa: F401  # type: ignore[import-not-found]
+    except ImportError:
+        logger.warning(
+            "AD-706: playwright not installed; install probos[browser] and run 'playwright install chromium'"
+        )
+        return False
+
+    from probos.tools.browser.tool import BrowserTool
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    audit_log = getattr(runtime, "audit_log", None)
+    browser_tool = BrowserTool(
+        config=cfg,
+        audit_log=audit_log,
+        emit_event=emit_fn,
+    )
+    runtime.tool_registry.register(
+        browser_tool,
+        domain="*",
+        tags=["browser", "computer_use"],
+        provider="ship_computer",
+        enabled=True,
+        default_permissions={
+            "ensign": "none",
+            "lieutenant": "read",
+            "commander": "write",
+            "senior_officer": "full",
+        },
+        concurrency="concurrent",
+    )
+    runtime.browser_tool = browser_tool  # public attribute (Wave 5 convention #1)
+    logger.info(
+        "AD-706: BrowserTool registered (headless=%s, allowlist=%s)",
+        cfg.headless, cfg.domain_allowlist,
+    )
+    return True
+
+
 def _wire_curriculum_registry(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-507 v1: Wire CoreKnowledgeCurriculumRegistry (read-only catalog)."""
     cfg = getattr(config, "crew_development", None)
@@ -3214,6 +3263,12 @@ async def finalize_startup(
         _wire_mcp_app_host(runtime=runtime, config=config)
     except Exception:
         logger.warning("AD-597: _wire_mcp_app_host failed", exc_info=True)
+
+    # AD-706: Wire BrowserTool (default-False; Computer Use via Playwright when enabled)
+    try:
+        _wire_browser_tool(runtime=runtime, config=config)
+    except Exception:
+        logger.warning("AD-706: _wire_browser_tool failed", exc_info=True)
 
     # AD-520: Wire Spatial Knowledge Explorer (default-False; constructs runtime.spatial_layout)
     try:

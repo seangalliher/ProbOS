@@ -246,7 +246,7 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | Universal Translator | Channel adapters — Discord, Slack, Telegram, WhatsApp, Matrix, Teams | Partial (Discord/Slack/Webhook ✅ AD-472; remaining 4 in [#480 AD-704](https://github.com/seangalliher/ProbOS/issues/480)) |
 | Subspace Communications | Voice interaction — STT, TTS, wake word, continuous talk | Partial (substrate ✅ AD-474; backends in [#481 AD-705](https://github.com/seangalliher/ProbOS/issues/481)) |
 | PADD (Personal Access Display Device) | Mobile companion — PWA, push notifications, responsive HXI | Partial (PWA + push ✅ AD-473; responsive HXI + mDNS in [#484 AD-708](https://github.com/seangalliher/ProbOS/issues/484)) |
-| Holodeck | Browser automation — Playwright, screenshots, web interaction | Roadmap ([#482 AD-706](https://github.com/seangalliher/ProbOS/issues/482)) |
+| Browser Tool (Computer Use) | Agent-driven Chromium via Playwright — 10-action vocabulary, indexed-element state, XGA screenshots, tier-3 Captain-ACK gate | Built ([#482 AD-706](https://github.com/seangalliher/ProbOS/issues/482)) ✅ |
 | Holodeck Simulations | Agent training environments — scenario simulation, promotion tests, skill acquisition | Built (AD-486/510/539b) |
 | MemoryForge | Ship's Computer service — implanted birth memories, memory transfer, curated memory banks | Long Horizon ([#485 AD-709](https://github.com/seangalliher/ProbOS/issues/485)) |
 | Cognitive Evolution | Transfer learning, proactive initiative, service modeling, trend analysis, gap prediction | Built (AD-507/509/628/660/666/668-672) |
@@ -314,7 +314,6 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-703 | Starfleet Command — fleet-wide policy distribution | [#479](https://github.com/seangalliher/ProbOS/issues/479) | 4 (Long Horizon) |
 | AD-704 | Universal Translator — Telegram/WhatsApp/Matrix/Teams adapters | [#480](https://github.com/seangalliher/ProbOS/issues/480) | 3 |
 | AD-705 | Voice Stack Backends — Whisper/Deepgram/Coqui/Porcupine | [#481](https://github.com/seangalliher/ProbOS/issues/481) | 3 |
-| AD-706 | Holodeck — browser automation via Playwright | [#482](https://github.com/seangalliher/ProbOS/issues/482) | 3 |
 | AD-707 | Workflow Triggers — cron + webhook + workflow API | [#483](https://github.com/seangalliher/ProbOS/issues/483) | 3 |
 | AD-708 | PADD — responsive HXI + mDNS auto-discovery | [#484](https://github.com/seangalliher/ProbOS/issues/484) | 4 |
 | AD-709 | MemoryForge — implanted birth memories | [#485](https://github.com/seangalliher/ProbOS/issues/485) | 5 (Long Horizon) |

@@ -862,6 +862,63 @@ class MCPAppHostConfig(BaseModel):
     bundles_dir: str = ""
 
 
+class BrowserToolConfig(BaseModel):
+    """AD-706: BrowserTool (Computer Use via Playwright).
+
+    Safety guidelines (verbatim from anthropics/claude-quickstarts/computer-use-demo, MIT):
+
+    1. Use a dedicated virtual machine or container with minimal privileges to
+       prevent direct system attacks or accidents.
+    2. Avoid giving the model access to sensitive data, such as account login
+       information, to prevent information theft.
+    3. Limit internet access to an allowlist of domains to reduce exposure to
+       malicious content.
+    4. Ask a human to confirm decisions that may result in meaningful real-world
+       consequences as well as any tasks requiring affirmative consent, such as
+       accepting cookies, executing financial transactions, or agreeing to terms
+       of service.
+
+    Source: anthropics/claude-quickstarts/computer-use-demo, MIT-licensed.
+    """
+
+    enabled: bool = False  # Wave 10 convention #14: default-False on transitional flags
+    headless: bool = True
+    default_timeout_ms: int = 30000
+    session_max_duration_seconds: int = 1800
+    session_reaper_interval_seconds: int = 60
+
+    # Network egress policy
+    domain_allowlist: list[str] | None = None  # None = all allowed (subject to denylist)
+    domain_denylist: list[str] = Field(default_factory=list)
+
+    # XGA screenshot scaling (Anthropic computer-use-demo discipline, MIT)
+    screenshot_max_width: int = 1024
+    screenshot_max_height: int = 768
+
+    # Tier-3 confirmation policy
+    require_confirmation_for_tier_3: bool = True
+    confirmation_timeout_seconds: int = 300  # auto-deny if Captain doesn't ACK
+
+    # Per-domain rate limiting (mirrors HttpFetchAgent)
+    default_min_interval_seconds: float = 1.0
+
+    # Per-action overrides
+    per_action_timeout_ms: dict[str, int] = Field(default_factory=dict)
+
+    # Tier-3 classification — host-suffix glob patterns that force Captain ACK.
+    # Matched case-insensitively against the URL host via fnmatch.
+    tier_3_domain_patterns: list[str] = Field(
+        default_factory=lambda: [
+            "*bank*",
+            "*paypal*",
+            "*stripe*",
+            "*chase*",
+            "*coinbase*",
+            "*checkout*",
+        ]
+    )
+
+
 class A2APeerConfig(BaseModel):
     """AD-480e: Outbound A2A peer registration entry."""
 
@@ -3012,6 +3069,7 @@ class SystemConfig(BaseModel):
     eps: EPSConfig = EPSConfig()  # AD-469
     mcp: MCPConfig = MCPConfig()  # AD-449
     mcp_app_host: MCPAppHostConfig = Field(default_factory=MCPAppHostConfig)  # AD-597
+    browser_tool: BrowserToolConfig = Field(default_factory=BrowserToolConfig)  # AD-706
     spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481

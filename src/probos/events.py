@@ -195,6 +195,10 @@ class EventType(str, Enum):
     SENSORIUM_BUDGET_EXCEEDED = "sensorium_budget_exceeded"  # AD-666: sensorium injection over char threshold
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
     TOOL_INVOKED = "tool_invoked"  # AD-448
+    TOOL_INTERVENTION_REQUIRED = "tool_intervention_required"  # AD-706: tier-3 action awaits Captain ACK
+    BROWSER_ACTION_EXECUTED = "browser_action_executed"        # AD-706: per-action telemetry
+    BROWSER_SESSION_OPENED = "browser_session_opened"          # AD-706
+    BROWSER_SESSION_CLOSED = "browser_session_closed"          # AD-706
     AGENTIC_TOOL_CALL_STARTED = "agentic_tool_call_started"      # AD-545
     AGENTIC_TOOL_CALL_COMPLETED = "agentic_tool_call_completed"  # AD-545
     AGENTIC_LOOP_ITERATION = "agentic_loop_iteration"            # AD-545

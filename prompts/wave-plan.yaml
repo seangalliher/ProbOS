@@ -3076,3 +3076,15 @@ waves:
     builder_required: true
     issues_to_close: [510]
     status: done
+
+  - id: "132"
+    title: "AD-706 Browser Tool (Computer Use via Playwright) — agent capability for web interaction; supersedes Holodeck framing"
+    kind: main
+    depends_on: ["131"]
+    dispatch_prompt: "prompts/WAVE-132-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-706-browser-tool-v1.md"
+    builder_required: true
+    issues_to_close: [482]
+    status: pending

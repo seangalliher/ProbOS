@@ -1516,3 +1516,24 @@ Design pinned in `docs/research/warm-boot-fragmentation-design.md`. Four detecti
 
 **Status:** SHIPPED (DESIGN ONLY — no code shipped). Issue [#501](https://github.com/seangalliher/ProbOS/issues/501).
 **Files:** `docs/research/warm-boot-fragmentation-design.md` (new design doc).
+
+
+### AD-706 — Browser Tool (Computer Use via Playwright, default-disabled)
+**Date:** 2026-05-08
+**Type:** Architecture Decision (crew capability — agent-driven web browser)
+**Wave:** 132
+
+Ships ``BrowserTool`` (the AD-423a Tool Layer implementation), ``BrowserSession`` (one Playwright BrowserContext per session, 30-min TTL, no cookie persistence across sessions), and a 10-action vocabulary absorbed from browser-use (``goto``, ``state``, ``click``, ``type``, ``scroll``, ``screenshot``, ``wait``, ``back``, ``forward``, ``extract_text``). The ``state()`` action returns a stable indexed-element list so agents can say ``click 5`` instead of synthesising selectors. Screenshots are XGA-scaled (1024x768) per Anthropic's computer-use-demo (MIT) guidance. Per-domain rate limiting mirrors AD-270's pattern, scoped to the BrowserSession class rather than shared with HttpFetchAgent (different cadence; Playwright doesn't surface ``Retry-After`` uniformly).
+
+A rule-based three-tier classifier ships in this AD: tier-1 (silent) for observational actions, tier-2 (logged-and-proceed) for ordinary navigate/click/type, tier-3 (Captain ACK required) for clicks/types against financial host patterns (``*bank*``, ``*paypal*``, ``*stripe*``, ``*chase*``, ``*coinbase*``, ``*checkout*``), checkout/payment/transfer/subscribe/signup/register paths, or elements whose text matches the cookie/T&S/payment regex. Tier-3 short-circuits ``invoke()`` and emits ``EventType.TOOL_INTERVENTION_REQUIRED`` with a ``confirmation_token`` (UUID4 hex) that surfaces in the event payload only — never in ``ToolResult.output`` — so agents cannot autonomously satisfy the gate. Tokens are single-use (``_pending_confirmations.pop``), session/action-bound, expire after ``confirmation_timeout_seconds`` (default 300s), and are opportunistically pruned by the session reaper.
+
+Audit rows enforce a strict 7-key allowlist (``session_id``, ``action``, ``agent_id``, ``success``, ``error?``, ``tier``, ``url_sanitized?``); ``params.text``, raw ``params.url``, POST bodies, cookies, and state-element text are explicitly forbidden in ``detail``. ``url_sanitized`` strips query and fragment to avoid leaking tokens. AD-448 already emits ``TOOL_INVOKED`` via the tool executor — no duplicate emission. Three new browser-specific events: ``BROWSER_ACTION_EXECUTED``, ``BROWSER_SESSION_OPENED``, ``BROWSER_SESSION_CLOSED``.
+
+Default-disabled per Wave 10 convention #14: ``BrowserToolConfig.enabled=False``. ``playwright`` is a new optional dependency under ``[browser]`` — default install is unaffected. Lazy ``from playwright.async_api import async_playwright`` lives inside ``BrowserSession.start()`` (and the wirer's import-probe), so missing optional dep at import time cannot crash startup. ``_wire_browser_tool`` registers the tool with rank-graded permissions (``ensign=none``, ``lieutenant=read``, ``commander=write``, ``senior_officer=full``) and is invoked from finalize.py immediately after ``_wire_mcp_app_host``. ``BrowserSession.get_streaming_url() -> None`` is a v1 stub; the Captain-watch CDP/WebSocket bridge is deferred to AD-706a.
+
+Verify-first noted: the dispatch's references to ``McpAppFrame``, ``AD-451 SafetyClassifier``, and ``AD-561 Intervention Classification`` do not match HEAD names; this AD ships a self-contained rule-based classifier that a future LLM-driven AD-706d can replace without protocol changes. Forward markers: AD-706a (Captain-watch streaming), AD-706b (video recording), AD-706c (OmniParser-style vision extraction — architecture-only, AGPL on icon_detect blocks weight absorption), AD-706d (LLM-driven tier classifier), AD-706e (action vocab v2: drag/key_combo/upload/download/eval_js), AD-706f (credential vault).
+
+**AD-numbering note:** AD-706 was previously allocated against issue #482 in the roadmap but had no live DECISIONS entry — confirmed via grep before authoring. Wave 131 shipped to AD-717. AD-706 fills the reserved slot.
+
+**Status:** SHIPPED. Issue [#482](https://github.com/seangalliher/ProbOS/issues/482).
+**Files:** `src/probos/tools/browser/__init__.py` (new), `src/probos/tools/browser/tool.py` (new), `src/probos/tools/browser/session.py` (new), `src/probos/tools/browser/actions.py` (new), `src/probos/config.py` (BrowserToolConfig + SystemConfig field), `src/probos/events.py` (4 new EventType values), `src/probos/startup/finalize.py` (`_wire_browser_tool` + call site after `_wire_mcp_app_host`), `pyproject.toml` (`[browser]` optional dep), `tests/test_ad706_browser_tool.py` (new — 23 tests; one gated on `PROBOS_PLAYWRIGHT_REAL=1`).

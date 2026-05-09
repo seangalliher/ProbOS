@@ -62,6 +62,9 @@ slack = [
 copilot = [
     "github-copilot-sdk>=0.1.30",
 ]
+browser = [
+    "playwright>=1.50",
+]
 
 [dependency-groups]
 dev = [
