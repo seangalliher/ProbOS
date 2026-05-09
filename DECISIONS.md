@@ -1455,3 +1455,17 @@ Absorbs the YAML-declared "must / must-not" behavior contract pattern from langw
 
 **Status:** SHIPPED. Issue [#493](https://github.com/seangalliher/ProbOS/issues/493).
 **Files:** `src/probos/cognitive/behavior_contract.py` (new), `src/probos/__main__.py` (handler + subparser + dispatch), `config/contracts/sample_refusal.yaml` (new). Tests: `tests/test_better_agents_behavior_contract.py` (14 cases, all passing).
+
+
+### AD-714 — RAGFlow context-layer absorption study (research)
+**Date:** 2026-05-08
+**Type:** Research AD (no production code)
+**Wave:** 130
+
+Compares `infiniflow/ragflow` (Apache-2.0, ~80k★) against ProbOS's existing recall + working-memory + situation-awareness stack. Identifies four absorbable patterns (DeepDoc parsing, template-based chunking, fused re-ranking, grounded citations); rejects the heavyweight ES/MySQL/MinIO/Redis storage stack and the OpenClaw skill integration. Builder picked **option (a)** for the concrete artifact: a coverage-claim grep test that asserts every "ProbOS already covers X" citation in section 3 of the absorption doc resolves to an existing file with the cited line in-bounds. Documentation-integrity guard.
+
+**Files:** `docs/research/ragflow-absorption.md` (new), `tests/research/__init__.py` (new), `tests/research/test_ragflow_coverage_claims.py` (5 tests, all passing).
+
+**Forward markers:** AD-714-1 (document ingestion adapter), AD-714-2 (template-based chunking), AD-714-3 (grounded LLM citations), AD-714-4 (tri-recall lexical+relational+semantic comparison).
+
+**Status:** SHIPPED. Issue [#496](https://github.com/seangalliher/ProbOS/issues/496).
