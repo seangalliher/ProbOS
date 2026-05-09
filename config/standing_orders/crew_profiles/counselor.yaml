@@ -8,3 +8,7 @@ personality:
   extraversion: 0.8        # Warm, approachable, naturally draws others out — people feel safe talking to her
   agreeableness: 0.85      # Deeply empathetic, validates before challenging, seeks understanding first
   neuroticism: 0.35        # Emotionally steady anchor for the crew, though occasionally overwhelmed by strong signals
+appearance:
+  vrm_url: "Ezri.vrm"      # AD-721: Captain-supplied VRM in data/avatars/ (gitignored)
+  expression_overrides: {}
+  color_palette_hint: "amber"
