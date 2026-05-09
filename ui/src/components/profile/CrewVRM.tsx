@@ -168,9 +168,6 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         });
         directMouthMeshesRef.current = direct;
         vrmRef.current = vrm;
-        // DEBUG: expose to window so tests/console can poke it.
-        (window as any).__ezriVRM = vrm;
-        (window as any).__ezriMouth = found;
       },
       undefined,
       (err: unknown) => {
@@ -180,7 +177,8 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
       },
     );
     return () => { mounted = false; };
-  }, [vrmUrl, onLoadError]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vrmUrl]);
 
   // Subscribe to TTS events for mouth animation.
   useEffect(() => {
