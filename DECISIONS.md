@@ -1469,3 +1469,21 @@ Compares `infiniflow/ragflow` (Apache-2.0, ~80k★) against ProbOS's existing re
 **Forward markers:** AD-714-1 (document ingestion adapter), AD-714-2 (template-based chunking), AD-714-3 (grounded LLM citations), AD-714-4 (tri-recall lexical+relational+semantic comparison).
 
 **Status:** SHIPPED. Issue [#496](https://github.com/seangalliher/ProbOS/issues/496).
+
+
+### AD-715 — OpenCode magic-context absorption study (research)
+**Date:** 2026-05-08
+**Type:** Research AD (no production code; opt-in measurement harness only)
+**Wave:** 130
+
+Compares `cortexkit/magic-context` (MIT, 542★) — an OpenCode plugin handling agent context via `§N§` tagging, queued reductions, caveman age-tiered compression, and a historian/dreamer split — against ProbOS's working memory + Ebbinghaus + dream consolidation stack. Identifies four absorbable patterns (caveman compression, tagging-based addressable context, queued reduction triggers, cache-aware LLM client); rejects the OpenCode plugin layer and the 17-table SQLite proliferation.
+
+**Concrete artifact:** `tests/research/test_compression_ratio_harness.py` — opt-in via `PROBOS_RESEARCH_BENCH=1`. Ingests a 9-turn fixture and reports ratio. Baseline measurement: original=1311 chars, compressed=348 chars, ratio=0.265 via `recall(k=1)` proxy. Harness is the directional baseline future absorption ADs (AD-715-1, AD-715-2, AD-715-3) will quote when justifying caveman implementation effort.
+
+**Verify-first correction:** `EpisodicMemory.__init__` kwarg is `db_path`, not `persist_directory`. Harness uses the verified shape.
+
+**Files:** `docs/research/opencode-magic-context-absorption.md` (new), `tests/research/data/sample_session.json` (new), `tests/research/test_compression_ratio_harness.py` (new). Tests: 1 skipped-by-default; passes under opt-in env var.
+
+**Forward markers:** AD-715-1 (caveman compression), AD-715-2 (tagging-based addressable context), AD-715-3 (cache-aware LLM client wrapper).
+
+**Status:** SHIPPED. Issue [#492](https://github.com/seangalliher/ProbOS/issues/492).

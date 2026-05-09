@@ -1,0 +1,15 @@
+{
+  "session_id": "compression_baseline_v1",
+  "turns": [
+    {"role": "user", "content": "I'm planning a hiking trip to Yosemite next month. Can you help me organize what I'd need?"},
+    {"role": "assistant", "content": "Yosemite is wonderful in spring. You'll want layered clothing, sturdy boots, a rain shell, water filtration, a topographic map, and a permit if you're doing any of the wilderness routes. The Half Dome cable permits are lottery-only so apply early."},
+    {"role": "user", "content": "Great. I want to attempt Half Dome. What's the lottery deadline?"},
+    {"role": "assistant", "content": "The Half Dome preseason lottery runs through March 31 each year, with results posted in mid-April. Daily lotteries are also available 48 hours in advance for any unfilled permits."},
+    {"role": "user", "content": "What about training? I'm reasonably fit but haven't done serious elevation."},
+    {"role": "assistant", "content": "Half Dome is 14-16 miles round trip with ~4800 ft of elevation gain. Train with stairmaster sessions or hike local hills with a 20-pound pack. Build up over 6-8 weeks; do at least one 12-mile hike before the trip."},
+    {"role": "user", "content": "Got it. Can you remind me of the gear list one more time, condensed?"},
+    {"role": "assistant", "content": "Layered clothing, sturdy boots, rain shell, water filter, map, permit, headlamp, first aid, sunscreen, gloves for the cables, and at least 3 liters of water for the day."},
+    {"role": "user", "content": "Last question — best time of day to start the hike?"},
+    {"role": "assistant", "content": "Start at the trailhead before 5 AM. Expect 10-12 hours total. Cables typically come down by mid-October so plan accordingly if your trip extends past that."}
+  ]
+}
