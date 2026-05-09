@@ -2318,3 +2318,9 @@ Three layers, each buildable independently:
 OSS-publishable qualitative classification scheme for AD-453 research. 22 codes total: 18 ported from the commercial 18-code taxonomy + 4 architect additions (ABLATION-MEM, SELF-AWARE, STANDING-ORDER-COMPLIANCE, CASCADE-CONFAB). One anti-pattern: CASCADE-CONFAB (correlated confabulation cascade) — required for false-positive accounting in AD-453. Source of truth: `src/probos/cognitive/emergence_taxonomy.py`. Doc: `docs/research/emergence-taxonomy.md`. Distinct from `EmergentDetector` (quantitative population dynamics) and from Riedl 2026 PID/TDMI (quantitative information atoms). Trial observation data is intentionally NOT ported — stays in commercial repo.
 
 The EvidenceCollector that consumes this taxonomy ships in the `prompts/ad-454-evidence-collector-v1.md` follow-up.
+
+### AD-454-collector — EvidenceCollector agent (default-disabled, file-based research artifact sink)
+
+OSS-tier passive observer. Subscribes to `EventType.WARD_ROOM_POST_CREATED`. Classifies each post against the AD-454 taxonomy (22 codes incl. CASCADE-CONFAB anti-pattern) via fast-tier LLM call. Writes `OBS-NNNN.yaml` files under `config.emergence_collector.output_dir`. Default disabled (research opt-in). No trust effects, no Hebbian effects, no consensus participation, no federation sync. `tier="utility"` (matches IntrospectionAgent / SystemQAAgent precedent).
+
+Dedup: per-(`author_id`, `behavior_code`), default 600s window. Confidence threshold default 0.7. Listener-boundary tier-2 (log-and-degrade) policy across all entry points to avoid silent fire-and-forget task death. Closes #510 (joint with AD-454 taxonomy prerequisite).

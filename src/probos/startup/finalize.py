@@ -156,6 +156,57 @@ def _wire_boot_camp_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_emergence_collector(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-454: Wire EvidenceCollector if enabled. Default off.
+
+    Pure observer — subscribes to WARD_ROOM_POST_CREATED, classifies posts
+    against the AD-454 taxonomy via fast-tier LLM, writes OBS-NNNN.yaml
+    files. No trust, Hebbian, or consensus participation.
+    """
+    cfg = getattr(config, "emergence_collector", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    if getattr(runtime, "llm_client", None) is None:
+        logger.warning(
+            "AD-454: EvidenceCollector wants llm_client but runtime.llm_client "
+            "is None; collector NOT wired. Configure an LLM client to enable."
+        )
+        return False
+    if getattr(runtime, "ward_room", None) is None:
+        logger.warning(
+            "AD-454: EvidenceCollector wants ward_room but runtime.ward_room "
+            "is None; collector NOT wired."
+        )
+        return False
+
+    from probos.cognitive.evidence_collector import EvidenceCollector
+    from probos.events import EventType
+
+    collector = EvidenceCollector(
+        runtime=runtime,
+        confidence_threshold=cfg.confidence_threshold,
+        dedup_window_seconds=cfg.dedup_window_seconds,
+        output_dir=cfg.output_dir,
+        llm_tier=cfg.llm_tier,
+        trial_id=cfg.trial_id,
+        thread_context_limit=cfg.thread_context_limit,
+        max_reasoning_chars=cfg.max_reasoning_chars,
+    )
+    runtime.evidence_collector = collector  # public attribute (Wave 5 convention #1)
+    runtime.add_event_listener(
+        collector.on_ward_room_post,
+        event_types=[EventType.WARD_ROOM_POST_CREATED.value],
+    )
+    logger.info(
+        "AD-454: EvidenceCollector wired (trial=%s, threshold=%.2f, "
+        "dedup_window=%.0fs, output=%s)",
+        cfg.trial_id, cfg.confidence_threshold,
+        cfg.dedup_window_seconds, cfg.output_dir,
+    )
+    return True
+
+
 def _wire_birth_chamber(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-486 v1: Wire Holodeck Birth Chamber + Department scheduler.
 
@@ -1743,6 +1794,9 @@ async def finalize_startup(
 
     if _wire_birth_chamber(runtime=runtime, config=config):
         logger.info("AD-486: Holodeck Birth Chamber v1 wired during finalization")
+
+    if _wire_emergence_collector(runtime=runtime, config=config):
+        logger.info("AD-454: EvidenceCollector wired during finalization")
 
     if _wire_holodeck_scenarios(runtime=runtime, config=config):
         logger.info("AD-539b: Holodeck Scenario Generation v1 wired during finalization")

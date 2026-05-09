@@ -2073,6 +2073,19 @@ class FirewallConfig(BaseModel):
     quarantine_threshold: int = 3           # Flags in window before quarantine escalation
 
 
+class EmergenceCollectorConfig(BaseModel):
+    """AD-454: EvidenceCollector — research opt-in, default disabled."""
+
+    enabled: bool = False
+    confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    dedup_window_seconds: float = Field(default=600.0, ge=0.0)
+    output_dir: str = "data/research/emergence-evidence"
+    llm_tier: str = "fast"
+    trial_id: str = "default"
+    thread_context_limit: int = Field(default=5, ge=0, le=50)
+    max_reasoning_chars: int = Field(default=2000, ge=100, le=20000)
+
+
 class EmergentDetectorConfig(BaseModel):
     """BF-124: Emergent detector calibration parameters."""
     cluster_edge_threshold: float = 0.3
@@ -2967,6 +2980,9 @@ class SystemConfig(BaseModel):
     firewall: FirewallConfig = FirewallConfig()
     security: SecurityConfig = SecurityConfig()  # AD-455
     emergent_detector: EmergentDetectorConfig = EmergentDetectorConfig()
+    emergence_collector: "EmergenceCollectorConfig" = Field(
+        default_factory=lambda: EmergenceCollectorConfig()
+    )  # AD-454
     novelty_gate: NoveltyGateConfig = NoveltyGateConfig()
     earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()
     proactive_cognitive: ProactiveCognitiveConfig = ProactiveCognitiveConfig()
