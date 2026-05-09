@@ -1,0 +1,61 @@
+{
+  "sessions": [
+    {
+      "session_id": "s1",
+      "turns": [
+        {"role": "user", "text": "I work at Acme Corp as a backend engineer on the payments team."},
+        {"role": "assistant", "text": "Got it: Acme Corp, backend engineer, payments."},
+        {"role": "user", "text": "We use PostgreSQL and Kafka in production."},
+        {"role": "assistant", "text": "Noted: PostgreSQL + Kafka stack."},
+        {"role": "user", "text": "My manager is Priya. She joined Acme three years ago."}
+      ]
+    },
+    {
+      "session_id": "s2",
+      "turns": [
+        {"role": "user", "text": "I'm planning a vacation to Iceland in September. I want to see the northern lights."},
+        {"role": "assistant", "text": "September in Iceland is a great choice — the aurora season is beginning."},
+        {"role": "user", "text": "We'll rent a car and drive the Ring Road over ten days."},
+        {"role": "assistant", "text": "Ten days on the Ring Road is the right pace."},
+        {"role": "user", "text": "I budget about three thousand dollars per person for this trip."}
+      ]
+    },
+    {
+      "session_id": "s3",
+      "turns": [
+        {"role": "user", "text": "I'm allergic to shellfish. Please remember this for any restaurant recommendations."},
+        {"role": "assistant", "text": "Confirmed — shellfish allergy noted for future restaurant suggestions."},
+        {"role": "user", "text": "I prefer Italian or Japanese food when going out."},
+        {"role": "assistant", "text": "Italian or Japanese — got it."},
+        {"role": "user", "text": "I avoid drinking alcohol on weeknights."}
+      ]
+    }
+  ],
+  "questions": [
+    {
+      "session_id": "s1",
+      "question": "Where does the user work?",
+      "expected_substring": "Acme Corp"
+    },
+    {
+      "session_id": "s1",
+      "question": "Who is the user's manager?",
+      "expected_substring": "Priya"
+    },
+    {
+      "session_id": "s2",
+      "question": "What month is the Iceland trip?",
+      "expected_substring": "September"
+    },
+    {
+      "session_id": "s3",
+      "question": "What food allergy does the user have?",
+      "expected_substring": "shellfish"
+    },
+    {
+      "session_id": "s3",
+      "question": "What cuisines does the user prefer?",
+      "expected_substring": "Italian"
+    }
+  ]
+}

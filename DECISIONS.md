@@ -1487,3 +1487,19 @@ Compares `cortexkit/magic-context` (MIT, 542★) — an OpenCode plugin handling
 **Forward markers:** AD-715-1 (caveman compression), AD-715-2 (tagging-based addressable context), AD-715-3 (cache-aware LLM client wrapper).
 
 **Status:** SHIPPED. Issue [#492](https://github.com/seangalliher/ProbOS/issues/492).
+
+
+### AD-716 — LoCoMo benchmark absorption + harness stub (research)
+**Date:** 2026-05-08
+**Type:** Research AD (no production code; opt-in benchmark stub)
+**Wave:** 130
+
+Captures the LoCoMo (Long Conversation Memory) methodology — the de-facto open benchmark Mem0 and MemOS both quote — and ships a runnable micro-harness so ProbOS has its own directional baseline. v1 uses a hand-authored 3-session × 5-question fixture, exact-substring scoring, and the simplest recall surface (`EpisodicMemory.recall`); the prompt's `recall_weighted` skeleton was rejected because the live signature requires an `agent_id` positional the micro benchmark has no scaffolding to supply.
+
+**Concrete artifact:** `tests/benchmarks/test_locomo_episodic.py` (opt-in via `PROBOS_BENCHMARK_LOCOMO=1`). Includes fixture self-consistency pre-check (every `expected_substring` must appear in its named session). Harness prints a single JSON line: `{"benchmark":"micro_locomo_v1","method":"recall","correct":N,"total":5,"ratio":R,...}`.
+
+**Files:** `docs/research/locomo-benchmark-absorption.md` (new), `tests/benchmarks/__init__.py` (new), `tests/benchmarks/data/micro_locomo.json` (new), `tests/benchmarks/test_locomo_episodic.py` (new). Tests: 1 skipped-by-default; passes under opt-in env var.
+
+**Forward markers:** AD-716-1 (real LoCoMo dataset), AD-716-2 (LLM-judge fuzzy scoring), AD-716-3 (per-metric breakdown across all three recall surfaces — `recall` / `recall_by_anchor` / `recall_weighted`).
+
+**Status:** SHIPPED. Issue [#497](https://github.com/seangalliher/ProbOS/issues/497) (subsumes [#494](https://github.com/seangalliher/ProbOS/issues/494)).
