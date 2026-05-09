@@ -97,6 +97,9 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
   // point at the first one. We collect ALL meshes that have Fcl_MTH_A and
   // drive their morphTargetInfluences directly so the entire face animates.
   const directMouthMeshesRef = useRef<{ mesh: any; index: number }[]>([]);
+  // Low-pass smoothed mouth value so the motion feels natural rather than
+  // raw analyser noise. Adjusted with exponential smoothing in useFrame.
+  const smoothedMouthRef = useRef(0);
 
   // Load the VRM once per URL change.
   useEffect(() => {
@@ -234,9 +237,9 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     }
 
     if (speakingRef.current) {
-      // Compute mouth opening amplitude. If a real analyser is attached use
-      // its byte data; otherwise fall back to a synthetic ~6 Hz envelope so
-      // the avatar still animates when the browser doesn't expose TTS audio.
+      // Read amplitude from the analyser (real audio when the browser
+      // exposes it, otherwise the synthetic envelope from speechAmplitude.ts
+      // which already provides word/syllable cadence + boundary gaps).
       let amp = 0;
       if (analyserRef.current) {
         const buf = new Uint8Array(analyserRef.current.frequencyBinCount);
@@ -245,39 +248,28 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         for (let i = 0; i < buf.length; i++) sum += buf[i];
         amp = sum / buf.length / 255;
       }
-      // Synthetic 0→1 mouth open/close envelope at ~4 Hz. Big swing so the
-      // motion is unambiguous on stylised VRoid faces; phoneme-accurate
-      // lip-sync is AD-721b territory.
-      const synth = 0.5 - 0.5 * Math.cos(t * 2 * Math.PI * 4);
-      const value = Math.min(1.0, Math.max(amp * 1.4, synth));
+      const target = Math.min(1.0, amp * 1.6);
+      // Exponential smoothing so motion reads as natural rather than raw
+      // analyser noise. Faster opening (k=0.30) than closing (k=0.18).
+      const k = target > smoothedMouthRef.current ? 0.30 : 0.18;
+      smoothedMouthRef.current += (target - smoothedMouthRef.current) * k;
+      const value = smoothedMouthRef.current;
       const em = vrm.expressionManager;
       if (em) {
-        // Drive every detected mouth shape AND fall back to common names.
         const targets = mouthShapesRef.current.length > 0 ? mouthShapesRef.current : ['aa', 'a', 'A'];
         for (const n of targets) em.setValue(n, value);
       }
+    } else if (smoothedMouthRef.current > 0.01) {
+      smoothedMouthRef.current *= 0.6;
     }
     // Run expression manager + bone update first.
     vrm.update(delta);
-    // Then direct-write morph influences. Doing this AFTER vrm.update() is
-    // critical: VRMExpressionManager.update() resets every morph target on
-    // every bound mesh each frame, which would clobber our writes if we did
-    // them before. By writing after update we win the last-write race.
-    if (speakingRef.current) {
-      // Recompute the value (mirrors the formula used above).
-      const t2 = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
-      let amp2 = 0;
-      if (analyserRef.current) {
-        const buf = new Uint8Array(analyserRef.current.frequencyBinCount);
-        analyserRef.current.getByteFrequencyData(buf);
-        let sum = 0;
-        for (let i = 0; i < buf.length; i++) sum += buf[i];
-        amp2 = sum / buf.length / 255;
-      }
-      const synth2 = 0.5 - 0.5 * Math.cos(t2 * 2 * Math.PI * 4);
-      const val2 = Math.min(1.0, Math.max(amp2 * 1.4, synth2));
+    // Direct-write morph influences AFTER vrm.update() so the expression
+    // manager doesn't clobber them on multi-mesh face splits.
+    {
+      const v = smoothedMouthRef.current;
       for (const { mesh, index } of directMouthMeshesRef.current) {
-        if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = val2;
+        if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = v;
       }
     }
   });

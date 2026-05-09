@@ -35,12 +35,19 @@ export function _attachAnalyserOrSchedule(
       const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const elapsed = now - startedAt;
       if (elapsed > durationMs) { buf.fill(0); return; }
-      // Sine envelope at ~6 Hz (syllable cadence) modulated by mild noise.
+      // Two-band envelope to feel more like human speech:
+      //   - slow band (~2.5 Hz) = word/phrase rhythm
+      //   - fast band (~6 Hz)   = syllable cadence
+      // Combined with random gaps so the mouth occasionally closes instead
+      // of buzzing nonstop.
       const t = elapsed / 1000;
-      const envelope = 0.5 + 0.4 * Math.sin(2 * Math.PI * 6 * t);
+      const slow = 0.5 + 0.5 * Math.sin(2 * Math.PI * 2.5 * t);
+      const fast = 0.5 + 0.5 * Math.sin(2 * Math.PI * 6 * t + 1.0);
+      const gate = (Math.sin(2 * Math.PI * 0.7 * t) > -0.4) ? 1 : 0; // ~70% open
+      const envelope = gate * (0.55 * slow + 0.45 * fast);
       for (let i = 0; i < binCount; i++) {
-        const noise = Math.random() * 0.2;
-        buf[i] = Math.min(255, Math.floor((envelope + noise) * 200));
+        const noise = (Math.random() - 0.5) * 0.15;
+        buf[i] = Math.min(255, Math.max(0, Math.floor((envelope + noise) * 220)));
       }
     },
   };
