@@ -3087,4 +3087,4 @@ waves:
       - "prompts/ad-706-browser-tool-v1.md"
     builder_required: true
     issues_to_close: [482]
-    status: pending
+    status: done
