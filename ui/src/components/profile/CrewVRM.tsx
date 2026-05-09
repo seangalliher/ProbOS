@@ -87,6 +87,11 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
   // Cache which mouth blendshape names this VRM actually exposes — different
   // exporters use different names (preset 'aa', VRoid 'A', VRM0 'Fcl_MTH_A', etc.)
   const mouthShapesRef = useRef<string[]>([]);
+  // Direct morph-target driver: many VRoid 0.x exports split the face into
+  // multiple meshes (one per material) and the VRM expression bindings only
+  // point at the first one. We collect ALL meshes that have Fcl_MTH_A and
+  // drive their morphTargetInfluences directly so the entire face animates.
+  const directMouthMeshesRef = useRef<{ mesh: any; index: number }[]>([]);
 
   // Load the VRM once per URL change.
   useEffect(() => {
@@ -133,8 +138,6 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         });
         // eslint-disable-next-line no-console
         console.log('[AD-721 VRM loaded]', { url: vrmUrl, meta: vrm.meta, materials: matSummary });
-        // Detect available mouth blendshape names. setValue() silently ignores
-        // unknown names, so we have to probe the expression manager directly.
         const em: any = vrm.expressionManager;
         const candidates = ['aa', 'a', 'A', 'Fcl_MTH_A', 'mouth_a', 'M_A'];
         const found: string[] = [];
@@ -149,8 +152,21 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
           }
         }
         mouthShapesRef.current = found;
-        // eslint-disable-next-line no-console
-        console.log('[AD-721 VRM mouth shapes detected]', found);
+        // Collect every mesh with a recognised mouth-open morph target so
+        // we can drive them all directly (works around incomplete VRM
+        // expression bindings on multi-material face meshes).
+        const morphCandidates = ['Fcl_MTH_A', 'A', 'a', 'mouth_a', 'M_A', 'aa'];
+        const direct: { mesh: any; index: number }[] = [];
+        vrm.scene.traverse((o: any) => {
+          if (!o.isMesh || !o.morphTargetDictionary) return;
+          for (const key of morphCandidates) {
+            if (key in o.morphTargetDictionary) {
+              direct.push({ mesh: o, index: o.morphTargetDictionary[key] });
+              break;
+            }
+          }
+        });
+        directMouthMeshesRef.current = direct;
         vrmRef.current = vrm;
         // DEBUG: expose to window so tests/console can poke it.
         (window as any).__ezriVRM = vrm;
@@ -179,6 +195,10 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         // Close all detected mouth shapes.
         const em = vrmRef.current?.expressionManager;
         if (em) for (const n of mouthShapesRef.current) em.setValue(n, 0);
+        // And the direct morph-driven meshes.
+        for (const { mesh, index } of directMouthMeshesRef.current) {
+          if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = 0;
+        }
       }
     });
     return off;
@@ -232,7 +252,29 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         for (const n of targets) em.setValue(n, value);
       }
     }
+    // Run expression manager + bone update first.
     vrm.update(delta);
+    // Then direct-write morph influences. Doing this AFTER vrm.update() is
+    // critical: VRMExpressionManager.update() resets every morph target on
+    // every bound mesh each frame, which would clobber our writes if we did
+    // them before. By writing after update we win the last-write race.
+    if (speakingRef.current) {
+      // Recompute the value (mirrors the formula used above).
+      const t2 = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+      let amp2 = 0;
+      if (analyserRef.current) {
+        const buf = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i];
+        amp2 = sum / buf.length / 255;
+      }
+      const synth2 = 0.5 + 0.5 * Math.abs(Math.sin(t2 * 2 * Math.PI * 5));
+      const val2 = Math.min(1.0, Math.max(amp2 * 1.4, synth2));
+      for (const { mesh, index } of directMouthMeshesRef.current) {
+        if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = val2;
+      }
+    }
   });
 
   return vrmRef.current ? <primitive object={vrmRef.current.scene} /> : null;
