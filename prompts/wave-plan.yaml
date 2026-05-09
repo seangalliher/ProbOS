@@ -3063,3 +3063,16 @@ waves:
     builder_required: true
     issues_to_close: [477, 478, 483, 490, 493, 495, 496, 492, 497, 501]
     status: done
+
+  - id: "131"
+    title: "AD-454 EvidenceCollector — 2-prompt wave (taxonomy port + agent build)"
+    kind: main
+    depends_on: ["130"]
+    dispatch_prompt: "prompts/WAVE-131-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-454-emergence-taxonomy-v1.md"
+      - "prompts/ad-454-evidence-collector-v1.md"
+    builder_required: true
+    issues_to_close: [510]
+    status: done
