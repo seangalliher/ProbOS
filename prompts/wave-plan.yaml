@@ -3043,3 +3043,23 @@ waves:
     builder_required: true
     issues_to_close: [506, 507, 508, 509, 491]
     status: done
+  - id: "130"
+    title: "10-pack mixed: 6 code (AD-701/702/707/Memvid-QP/better-agents/claude-bootstrap) + 4 research (ragflow/opencode-mc/LoCoMo/warm-boot-design)"
+    kind: main
+    depends_on: ["129"]
+    dispatch_prompt: "prompts/WAVE-130-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-701-visiting-officers-v1.md"
+      - "prompts/ad-702-diplomatic-relations-v1.md"
+      - "prompts/ad-707-workflow-cron-trigger-v1.md"
+      - "prompts/memvid-queryplanner-relational-v1.md"
+      - "prompts/better-agents-behavior-contract-v1.md"
+      - "prompts/claude-bootstrap-init-defaults-v1.md"
+      - "prompts/research-ragflow-context-layer-v1.md"
+      - "prompts/research-opencode-magic-context-v1.md"
+      - "prompts/research-locomo-benchmark-v1.md"
+      - "prompts/research-warm-boot-fragmentation-design-v1.md"
+    builder_required: true
+    issues_to_close: [477, 478, 483, 490, 493, 495, 496, 492, 497, 501]
+    status: done
