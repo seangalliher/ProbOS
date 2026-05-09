@@ -319,6 +319,15 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-709 | MemoryForge — implanted birth memories | [#485](https://github.com/seangalliher/ProbOS/issues/485) | 5 (Long Horizon) |
 | AD-710 | Captain's Yeoman — personal AI assistant | [#486](https://github.com/seangalliher/ProbOS/issues/486) | 4 |
 
+**From the 2026-05-08 chat-experience enhancements (Captain's request):**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-718 | Voice in 1:1 crew profile chat (parity with Ship's Computer chat) | [#512](https://github.com/seangalliher/ProbOS/issues/512) | 2 |
+| AD-719 | Multi-agent chat surface (M365 Copilot pattern, @-mention + agent picker) | [#513](https://github.com/seangalliher/ProbOS/issues/513) | 2 |
+| AD-720 | Chat attachments — file uploads + image paste + tool attach (v2) | [#514](https://github.com/seangalliher/ProbOS/issues/514) | 3 |
+| AD-721 | 3D crew avatars on profile cards (popout, expressions, body language) | [#515](https://github.com/seangalliher/ProbOS/issues/515) | 3 |
+
 ### Forcing-function deferrals
 
 (Forward dependencies satisfied; build when need surfaces.)
