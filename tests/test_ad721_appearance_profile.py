@@ -77,7 +77,7 @@ def test_crew_profile_appearance_default_when_missing_in_dict():
 
 def test_avatars_config_defaults():
     cfg = AvatarsConfig()
-    assert cfg.enabled is False
+    assert cfg.enabled is True  # BF #536: default-on per Captain confirmation
     assert cfg.avatars_dir == "data/avatars"
     assert cfg.max_vrm_size_bytes == 25 * 1024 * 1024
     assert cfg.fallback_to_parametric_on_error is True
@@ -86,7 +86,7 @@ def test_avatars_config_defaults():
 def test_system_config_includes_avatars():
     cfg = SystemConfig()
     assert hasattr(cfg, "avatars")
-    assert cfg.avatars.enabled is False
+    assert cfg.avatars.enabled is True  # BF #536
 
 
 # ── HTTP endpoints ──────────────────────────────────────────────

@@ -922,7 +922,7 @@ class BrowserToolConfig(BaseModel):
 class AvatarsConfig(BaseModel):
     """AD-721: 3D crew avatars (VRM popout)."""
 
-    enabled: bool = False                                  # Wave 10 convention #14
+    enabled: bool = True                                   # BF #536: default-on per Captain confirmation; parametric fallback is license-safe
     avatars_dir: str = "data/avatars"
     max_vrm_size_bytes: int = 25 * 1024 * 1024             # 25 MB hard cap
     fallback_to_parametric_on_error: bool = True
