@@ -30,6 +30,13 @@ MagicMock/
 # AD-721: avatars dir is shipped (with .gitkeep), but VRM binaries are not.
 !data/avatars/
 data/avatars/*.vrm
+# AD-721i: drafts subtree + base_meshes operator-supplied subtree.
+data/avatars/**/*.vrm
+data/avatars/**/*.blend
+data/avatars/**/*.fbx
+data/avatars/**/*.glb
+data/avatars/**/*.dsl.yaml
+data/avatars/**/*.dsl.json
 
 # Environment
 .env

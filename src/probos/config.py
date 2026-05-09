@@ -926,6 +926,16 @@ class AvatarsConfig(BaseModel):
     avatars_dir: str = "data/avatars"
     max_vrm_size_bytes: int = 25 * 1024 * 1024             # 25 MB hard cap
     fallback_to_parametric_on_error: bool = True
+    # AD-721i: headless Blender renderer (operator brings the binary).
+    blender_path: str = ""                                 # "" = search PATH via shutil.which("blender")
+    blender_render_timeout_s: int = 180
+    dsl_drafts_dir: str = "data/avatars/.drafts"
+    # Wave 10 convention #14: transitional flag default-False; flip in a
+    # follow-up AD once the renderer is exercised end-to-end.
+    renderer_enabled: bool = False
+    # Captain ruling 2026-05-09: capsule fallback default-on so v1 is end-to-end
+    # without requiring operator-supplied base meshes.
+    procedural_base_mesh_fallback: bool = True
 
 
 class A2APeerConfig(BaseModel):

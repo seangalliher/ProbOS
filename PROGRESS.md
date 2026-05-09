@@ -8,7 +8,7 @@ back to OSS).
 
 **Authoritative state.**
 - `prompts/wave-plan.yaml` — wave roster (current wave: 128 done; next slot is 129).
-- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-721d).
+- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-721i).
 - `tests/` — 11000+ tests at HEAD; gate runs `-n 16 --dist=loadfile`.
 
 **Recent eras (archived):**

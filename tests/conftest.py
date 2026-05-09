@@ -9,6 +9,13 @@ from probos.substrate.registry import AgentRegistry
 from probos.substrate.spawner import AgentSpawner
 from probos.config import PoolConfig
 
+# AD-721i: defense-in-depth pytest collection ignore for the bundled in-Blender
+# render script. ``pyproject.toml`` already pins ``testpaths = ["tests"]`` so
+# nothing under ``src/`` is collected — this glob is belt-and-suspenders so a
+# future test layout change can't accidentally collect ``render_avatar.py``,
+# which imports ``bpy`` (only available inside Blender's subprocess Python).
+collect_ignore_glob = ["**/_blender/**"]
+
 # BF-245: Disable real NATS in tests at import time, before any fixtures run.
 # Module-level (not autouse fixture) so session/module-scoped fixtures that
 # construct SystemConfig see the override. setdefault allows opt-in:
