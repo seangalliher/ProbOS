@@ -358,6 +358,14 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-721g | Per-tier baseline VRMs | [#534](https://github.com/seangalliher/ProbOS/issues/534) | 4 |
 | AD-721h | Browser-based VRM upload UI | [#535](https://github.com/seangalliher/ProbOS/issues/535) | 3 |
 
+**From 2026-05-09 agent-authored avatar pipeline (Captain decision; AD-721d refined; pair with AD-721i in Wave 134):**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-721d (refined) | Agent-side appearance reflection cycle → DSL proposal | [#531](https://github.com/seangalliher/ProbOS/issues/531) | 2 |
+| AD-721i | DSL → Blender VRM renderer (headless backend) | [#537](https://github.com/seangalliher/ProbOS/issues/537) | 2 |
+| AD-721j | Blender Connector — Computer Use control (Anthropic-style; commercial overlay extension exists in private repo) | [#538](https://github.com/seangalliher/ProbOS/issues/538) | 3 |
+
 ### Forcing-function deferrals
 
 (Forward dependencies satisfied; build when need surfaces.)
