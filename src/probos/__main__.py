@@ -732,6 +732,62 @@ security:
     )
 
 
+def _cmd_qa_run_contracts(args: argparse.Namespace) -> int:
+    """Handle ``probos qa run-contracts <path>`` (AD-713 / better-agents).
+
+    Loads YAML behavior contracts from a file or directory and evaluates
+    each against a stub invoker. Returns 0 if all contracts pass; 1 if any
+    contract fails or fails to load; 2 if the path does not exist.
+
+    The stub invoker returns empty strings, which forces every ``must``-
+    bearing case to fail — an honest signal that the runtime is not wired.
+    AD-713-1 will swap the stub for a hot-runtime invoker.
+    """
+    import asyncio
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from probos.cognitive.behavior_contract import (
+        evaluate_contract,
+        load_contract,
+    )
+
+    console = Console()
+    root = Path(args.path)
+    if not root.exists():
+        console.print(f"[red]Path not found: {root}[/red]")
+        return 2
+    files = sorted(root.glob("*.yaml")) if root.is_dir() else [root]
+    if not files:
+        console.print(f"[yellow]No contracts found at {root}[/yellow]")
+        return 0
+
+    async def _stub_invoker(agent_id: str, prompt: str) -> str:
+        # AD-713-1 wires a real runtime invoker.
+        return ""
+
+    table = Table("Contract", "Score", "Passed")
+    rc = 0
+    for f in files:
+        try:
+            contract = load_contract(f)
+        except Exception as exc:
+            console.print(f"[red]Failed to load {f.name}: {exc}[/red]")
+            rc = 1
+            continue
+        result = asyncio.run(evaluate_contract(contract, _stub_invoker))
+        table.add_row(
+            contract.name,
+            f"{result['score']:.2f}",
+            "[green]yes[/green]" if result["passed"] else "[red]no[/red]",
+        )
+        if not result["passed"]:
+            rc = 1
+    console.print(table)
+    return rc
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     """Handle ``probos doctor`` -- diagnostic check (AD-484).
 
@@ -1352,6 +1408,18 @@ def main() -> None:
     # --- probos doctor (AD-484) ---
     subparsers.add_parser("doctor", help="Run a diagnostic check on the ProbOS environment")
 
+    # --- probos qa run-contracts (AD-713 / better-agents) ---
+    qa_parser = subparsers.add_parser("qa", help="Quality / behavior contract commands")
+    qa_sub = qa_parser.add_subparsers(dest="qa_cmd", required=True)
+    qa_run = qa_sub.add_parser(
+        "run-contracts", help="Evaluate behavior contracts in a file or directory"
+    )
+    qa_run.add_argument(
+        "path",
+        type=str,
+        help="Path to a contract file or directory of contracts",
+    )
+
     # --- probos serve ---
     serve_parser = subparsers.add_parser("serve", help="Start HTTP + WebSocket API server")
     serve_parser.add_argument(
@@ -1390,6 +1458,12 @@ def main() -> None:
         # AD-484: doctor returns non-zero exit code on failure
         import sys
         sys.exit(_cmd_doctor(args))
+
+    if args.command == "qa":
+        import sys
+        if getattr(args, "qa_cmd", None) == "run-contracts":
+            sys.exit(_cmd_qa_run_contracts(args))
+        sys.exit(2)
 
     if args.command == "reset":
         _cmd_reset(args)

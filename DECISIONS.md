@@ -1434,3 +1434,24 @@ Adds discounted transitive trust composition `T(A→C) = T(A→B) × T(B→C) ×
 
 **Status:** SHIPPED. Issue [#478](https://github.com/seangalliher/ProbOS/issues/478).
 **Files:** `src/probos/consensus/trust.py` (4 constants + 5 new methods, additive), `src/probos/protocols.py` (Protocol widening). Tests: `tests/test_ad702_diplomatic_relations.py` (16 cases, all passing).
+
+
+### AD-713 — Behavior Contract integration (better-agents pattern)
+**Date:** 2026-05-08
+**Type:** Architecture Decision (cognitive — declarative qualification)
+**Wave:** 130
+
+Absorbs the YAML-declared "must / must-not" behavior contract pattern from langwatch/better-agents (MIT, 1.5k★) without absorbing their TypeScript CLI, LangWatch SDK, or scenario notebook substrate. Provides a declarative entrypoint to the AD-477 / AD-566a qualification subsystem: users author YAML contracts; `probos qa run-contracts <path>` evaluates each and returns a TestResult-shaped result.
+
+**Implementation:**
+- `src/probos/cognitive/behavior_contract.py` (new): Pydantic models `_MustRule` (substring | substring_any | regex; model_validator forbids empty/multi-field), `ContractCase`, `BehaviorContract`. `load_contract(path)` YAML loader + validator chain. `evaluate_contract(contract, invoker)` async — runs every case, never raises on invoker exception, returns AD-566a TestResult-shaped dict with `last_error` semantics.
+- `src/probos/__main__.py`: new `_cmd_qa_run_contracts(args) -> int` handler (rc=0 pass / rc=1 fail / rc=2 path-missing) + `qa` parent subparser + `run-contracts` child + dispatch. Stub invoker returns empty strings — honest fail signal until AD-713-1 wires the hot-runtime invoker.
+- `config/contracts/sample_refusal.yaml`: example contract demonstrating refusal regex.
+
+**In scope:** YAML contract format, declarative loader/evaluator, CLI subcommand, sample contract.
+**Out of scope:** hot-runtime invoker (AD-713-1), multi-turn scenario simulator (AD-713-2), drift detection against historical baselines (AD-713-3), separate persistence table (results land in existing `QualificationStore`).
+
+**AD-numbering note:** prompt did not cite an AD number. Builder assigned AD-713 (next free above AD-712 Memvid).
+
+**Status:** SHIPPED. Issue [#493](https://github.com/seangalliher/ProbOS/issues/493).
+**Files:** `src/probos/cognitive/behavior_contract.py` (new), `src/probos/__main__.py` (handler + subparser + dispatch), `config/contracts/sample_refusal.yaml` (new). Tests: `tests/test_better_agents_behavior_contract.py` (14 cases, all passing).
