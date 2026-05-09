@@ -36,6 +36,23 @@ export function AgentProfilePanel() {
   const [activeTab, setActiveTab] = useState<ProfileTab>('chat');
   const [profileData, setProfileData] = useState<AgentProfileData | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // Resizable panel state — persisted in localStorage so the captain's
+  // preferred chat-window size survives reloads.
+  const [size, setSize] = useState(() => {
+    try {
+      const stored = localStorage.getItem('hxi_profile_panel_size');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (typeof parsed.w === 'number' && typeof parsed.h === 'number') return parsed;
+      }
+    } catch (_e) { /* fall through to default */ }
+    return { w: 420, h: 580 };
+  });
+  useEffect(() => {
+    localStorage.setItem('hxi_profile_panel_size', JSON.stringify(size));
+  }, [size]);
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStart = useRef({ x: 0, y: 0, w: 420, h: 580 });
   // AD-721: avatar popout state.
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [avatarsEnabled, setAvatarsEnabled] = useState(false);
@@ -94,6 +111,32 @@ export function AgentProfilePanel() {
     };
   }, [isDragging]);
 
+  // Resize handlers — bottom-right corner drags to resize.
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    setIsResizing(true);
+    resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h };
+    e.preventDefault();
+    e.stopPropagation();
+  }, [size]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMove = (e: MouseEvent) => {
+      const dw = e.clientX - resizeStart.current.x;
+      const dh = e.clientY - resizeStart.current.y;
+      const nw = Math.max(320, Math.min(window.innerWidth - 40, resizeStart.current.w + dw));
+      const nh = Math.max(360, Math.min(window.innerHeight - 40, resizeStart.current.h + dh));
+      setSize({ w: nw, h: nh });
+    };
+    const onUp = () => setIsResizing(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [isResizing]);
+
   if (!agentId || !agent) return null;
 
   const callsign = profileData?.callsign || agent.callsign || '';
@@ -116,8 +159,8 @@ export function AgentProfilePanel() {
         position: 'fixed',
         left: pos.x,
         top: pos.y,
-        width: 420,
-        height: 580,
+        width: size.w,
+        height: size.h,
         background: 'rgba(10, 10, 18, 0.92)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
@@ -249,6 +292,27 @@ export function AgentProfilePanel() {
           onClose={() => setAvatarOpen(false)}
         />
       )}
+      {/* Resize handle (bottom-right corner). */}
+      <div
+        onMouseDown={onResizeMouseDown}
+        aria-label="Resize panel"
+        title="Drag to resize"
+        style={{
+          position: 'absolute',
+          right: 0,
+          bottom: 0,
+          width: 14,
+          height: 14,
+          cursor: 'nwse-resize',
+          zIndex: 5,
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#8888a0"
+             strokeWidth="1.25" strokeLinecap="round">
+          <line x1="5" y1="14" x2="14" y2="5" />
+          <line x1="9" y1="14" x2="14" y2="9" />
+        </svg>
+      </div>
     </div>
   );
 }
