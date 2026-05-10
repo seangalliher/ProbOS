@@ -1,6 +1,7 @@
 /* Intent Surface — Conversation Anchor: "The Process Is Everything" */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import { useStore } from '../store/useStore';
 import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectProposalView, Agent, ChatAttachment } from '../store/types';
@@ -107,10 +108,16 @@ export function IntentSurface() {
   useEffect(() => {
     if (!active) return;
     function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setActive(false);
-        setInput('');
-      }
+      const target = e.target as Node;
+      if (containerRef.current && containerRef.current.contains(target)) return;
+      // AD-719: the @-mention picker is portal'd to document.body to escape
+      // the overflow:hidden of the conversation container, so it lives
+      // outside containerRef. Allow clicks inside the picker to NOT collapse
+      // the IntentSurface.
+      const popover = document.querySelector('[data-testid="at-picker-popover"]');
+      if (popover && popover.contains(target)) return;
+      setActive(false);
+      setInput('');
     }
     // Delay to avoid catching the click that opened
     const timer = setTimeout(() => {
@@ -1696,30 +1703,36 @@ export function IntentSurface() {
                 position: 'relative',
               }}
             >
-              {/* AD-719: @-picker popover (mouse + Enter only; arrow/Esc/Tab deferred to AD-719c). */}
-              {pickerOpen && pickerMatches.length > 0 && (
+              {/* AD-719: @-picker popover (mouse + Enter only; arrow/Esc/Tab deferred to AD-719c).
+                  Portal'd to document.body to escape the conversation container's overflow:hidden,
+                  which was clipping it and breaking pointer hit-testing (the canvas underneath would
+                  intercept clicks because the popover rendered outside the wrapper's bounding box). */}
+              {pickerOpen && pickerMatches.length > 0 && inputRef.current && createPortal(
+                (() => {
+                  const rect = inputRef.current.getBoundingClientRect();
+                  return (
                 <div
                   data-testid="at-picker-popover"
                   style={{
-                    position: 'absolute',
-                    bottom: '100%',
-                    left: 16,
-                    right: 16,
-                    marginBottom: 4,
+                    position: 'fixed',
+                    bottom: window.innerHeight - rect.top + 4,
+                    left: rect.left,
+                    width: rect.width,
                     maxHeight: 200,
                     overflowY: 'auto',
                     background: 'rgba(10, 10, 18, 0.96)',
                     border: '1px solid rgba(240, 176, 96, 0.25)',
                     borderRadius: 8,
                     backdropFilter: 'blur(12px)',
-                    zIndex: 50,
+                    zIndex: 1000,
+                    pointerEvents: 'auto',
                   }}
                 >
                   {pickerMatches.map((m, i) => (
                     <div
                       key={m.callsign}
                       data-testid="at-picker-row"
-                      onMouseDown={(e) => { e.preventDefault(); confirmPickerSelection(m.callsign); }}
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); confirmPickerSelection(m.callsign); }}
                       onMouseEnter={() => setPickerIndex(i)}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8,
@@ -1752,6 +1765,9 @@ export function IntentSurface() {
                     </div>
                   ))}
                 </div>
+                  );
+                })(),
+                document.body,
               )}
               {/* AD-720: image-paste preview thumbnails */}
               {pendingAttachments.length > 0 && (
