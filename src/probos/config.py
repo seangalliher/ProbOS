@@ -938,6 +938,38 @@ class AvatarsConfig(BaseModel):
     procedural_base_mesh_fallback: bool = True
 
 
+class SamplingRatesConfig(BaseModel):
+    """AD-722f: per-agent avatar-telemetry sampling rates (3 tiers).
+
+    Driven by ``runtime.avatar_sampling_state`` state machine. All three
+    fields default — ``SamplingRatesConfig()`` MUST succeed. Operator
+    overrides via system.yaml. Validators clamp to a safety floor (250 ms)
+    to prevent UI/backend hammering — same floor as ``polling_interval_ms``.
+    """
+
+    high_ms: int = 250      # DM in flight, popout open (forward marker — Wave 142)
+    normal_ms: int = 2000   # Chain reasoning active
+    low_ms: int = 10000     # Idle / WR posting / default
+
+    @field_validator("high_ms", "normal_ms", "low_ms")
+    @classmethod
+    def _bound_rate(cls, v: int) -> int:
+        if v < 250:
+            raise ValueError(
+                f"sampling-rate field must be >= 250 to prevent UI hammering, got {v}"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _check_ordering(self) -> "SamplingRatesConfig":
+        if not (self.high_ms <= self.normal_ms <= self.low_ms):
+            raise ValueError(
+                f"sampling rates must satisfy high_ms <= normal_ms <= low_ms; "
+                f"got high={self.high_ms}, normal={self.normal_ms}, low={self.low_ms}"
+            )
+        return self
+
+
 class AvatarTelemetryConfig(BaseModel):
     """AD-722: agent-observable avatar telemetry channel.
 
@@ -945,13 +977,20 @@ class AvatarTelemetryConfig(BaseModel):
     snapshot dataclass. v1 is poll-only (HTTP + in-process method on
     ``CognitiveAgent``); push (WebSocket) is forward marker AD-722b.
 
+    AD-722f added per-agent adaptive sampling (``sampling_rates`` field
+    + ``runtime.avatar_sampling_state`` state machine). The legacy
+    ``polling_interval_ms`` field is retained as a UI hint (consumed
+    directly by ``SelfImageTab.tsx``); Wave 142's WS push channel will
+    collapse the two surfaces.
+
     All fields default — ``AvatarTelemetryConfig()`` MUST succeed.
     """
 
     enabled: bool = True
     inject_into_agent_context: bool = False  # Feature-gated; default OFF.
     mouth_active_window_seconds: float = 3.0
-    polling_interval_ms: int = 2000          # UI hint; backend does not poll itself.
+    polling_interval_ms: int = 2000          # AD-722 — UI hint, not backend-driven.
+    sampling_rates: SamplingRatesConfig = Field(default_factory=SamplingRatesConfig)  # AD-722f
 
     @field_validator("mouth_active_window_seconds")
     @classmethod

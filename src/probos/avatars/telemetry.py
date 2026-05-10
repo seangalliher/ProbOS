@@ -272,6 +272,8 @@ class AvatarTelemetrySnapshot:
     dsl_summary: DslSummarySnapshot | None
     last_observed_at: float
     degraded_reasons: tuple[str, ...]
+    sampling_rate_ms: int                # AD-722f — agent's current adaptive sampling rate
+    sampling_tier: str                   # AD-722f — 'high' | 'normal' | 'low'
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -288,6 +290,8 @@ class AvatarTelemetrySnapshot:
             ),
             "last_observed_at": self.last_observed_at,
             "degraded_reasons": list(self.degraded_reasons),
+            "sampling_rate_ms": self.sampling_rate_ms,
+            "sampling_tier": self.sampling_tier,
         }
 
 
@@ -352,6 +356,38 @@ def _empty_signals() -> AgentSignalsSnapshot:
     )
 
 
+def _resolve_sampling(
+    runtime: Any, agent_id: str, reasons: list[str],
+) -> tuple[int, str]:
+    """AD-722f: resolve current adaptive sampling rate + tier for an agent.
+
+    Tier-2 log-and-degrade: when the state machine is missing (test
+    runtimes with stripped MagicMocks), fall back to LOW using the
+    config's default rate; append a degraded reason. NEVER raises.
+    """
+    state = getattr(runtime, "avatar_sampling_state", None)
+    cfg = getattr(runtime, "config", None)
+    tcfg = getattr(cfg, "avatar_telemetry", None)
+    rates = getattr(tcfg, "sampling_rates", None)
+    if state is None:
+        reasons.append("avatar_sampling_state_unavailable")
+        low_ms = getattr(rates, "low_ms", 10000)
+        return int(low_ms), "low"
+    try:
+        tier = state.current_tier(agent_id)
+        rate = state.current_rate_ms(agent_id)
+        return int(rate), str(tier)
+    except Exception:
+        logger.warning(
+            "AD-722f: sampling-state lookup failed for agent=%s; "
+            "falling back to LOW",
+            agent_id, exc_info=True,
+        )
+        reasons.append("avatar_sampling_state_unavailable")
+        low_ms = getattr(rates, "low_ms", 10000)
+        return int(low_ms), "low"
+
+
 def _warn(reason: str, agent_id: str, field: str) -> None:
     logger.warning(
         "AD-722 telemetry: %s for agent=%s; field=%s set to None/default",
@@ -376,6 +412,11 @@ async def build_telemetry_snapshot(
     agent = registry.get(agent_id) if registry is not None else None
     if agent is None:
         _warn("agent_not_found", agent_id, "all")
+        # AD-722f: agent_not_found path — emit LOW tier with config defaults.
+        _early_reasons: list[str] = ["agent_not_found"]
+        _early_rate_ms, _early_tier = _resolve_sampling(
+            runtime, agent_id, _early_reasons,
+        )
         return AvatarTelemetrySnapshot(
             agent_id=agent_id,
             expression_resting=None,
@@ -384,7 +425,9 @@ async def build_telemetry_snapshot(
             applied_modulation=None,
             dsl_summary=None,
             last_observed_at=now,
-            degraded_reasons=("agent_not_found",),
+            degraded_reasons=tuple(_early_reasons),
+            sampling_rate_ms=_early_rate_ms,
+            sampling_tier=_early_tier,
         )
 
     # 2. Crew profile (mirrors routers/agents.py 3-tier fallback: live ProfileStore →
@@ -559,6 +602,11 @@ async def build_telemetry_snapshot(
             reasons.append("voice_modulation_failed")
             _warn("voice_modulation_failed", agent_id, "applied_modulation")
 
+    # AD-722f: resolve adaptive sampling rate/tier for the success path.
+    sampling_rate_ms, sampling_tier = _resolve_sampling(
+        runtime, agent_id, reasons,
+    )
+
     return AvatarTelemetrySnapshot(
         agent_id=agent_id,
         expression_resting=expression_resting,
@@ -568,4 +616,6 @@ async def build_telemetry_snapshot(
         dsl_summary=dsl_summary,
         last_observed_at=now,
         degraded_reasons=tuple(reasons),
+        sampling_rate_ms=sampling_rate_ms,
+        sampling_tier=sampling_tier,
     )

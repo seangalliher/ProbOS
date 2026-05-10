@@ -1391,7 +1391,19 @@ class CognitiveAgent(BaseAgent):
 
         # Priority 2: intent-driven routing (AD-643a)
         elif self._should_activate_chain(observation):
-            chain_result = await self._execute_chain_with_intent_routing(observation)
+            # AD-722f: bracket chain reasoning with NORMAL-tier sampling.
+            # Wrapped in try/finally so an exception inside the chain
+            # cannot leak the refcount. Tier-2 degrade if the runtime is
+            # missing the state machine (e.g. test rigs with minimal
+            # MagicMock runtimes) — getattr fallback to None is safe.
+            _sampling_state = getattr(self._runtime, 'avatar_sampling_state', None)
+            if _sampling_state is not None:
+                _sampling_state.enter_chain(self.id)
+            try:
+                chain_result = await self._execute_chain_with_intent_routing(observation)
+            finally:
+                if _sampling_state is not None:
+                    _sampling_state.exit_chain(self.id)
             if chain_result is not None:
                 _cache_ttl = self._get_cache_ttl()
                 cache[cache_key] = (chain_result, time.monotonic(), _cache_ttl)

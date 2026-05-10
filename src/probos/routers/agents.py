@@ -543,6 +543,15 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # when prompt assembly runs. Tier-2 log-and-degrade — telemetry must
     # never block a reply. No-op when avatar_telemetry.enabled is False
     # (build_telemetry_snapshot itself short-circuits gracefully).
+    #
+    # AD-722f: bracket the DM with HIGH-tier sampling. enter_dm here;
+    # exit_dm fires at the mark_reply_emitted site below. The exit is
+    # ALSO guaranteed by the spurious-exit clamp in the state machine,
+    # so an exception path between enter and exit cannot leak refcount
+    # permanently — at worst, the next mark_reply_emitted clamps to 0.
+    _sampling_state = getattr(runtime, 'avatar_sampling_state', None)
+    if _sampling_state is not None:
+        _sampling_state.enter_dm(agent_id)
     if hasattr(agent, 'observe_self_avatar'):
         try:
             await agent.observe_self_avatar()
@@ -720,6 +729,12 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # AD-722: stamp the last-reply emission timestamp. Single source of truth.
     if hasattr(agent, 'mark_reply_emitted'):
         agent.mark_reply_emitted()
+
+    # AD-722f: matched exit for the enter_dm at the top of agent_chat.
+    # Spurious-exit clamp in the state machine handles the (rare)
+    # exception-path case where enter fired but exit didn't.
+    if _sampling_state is not None:
+        _sampling_state.exit_dm(agent_id)
 
     response = {
         "response": response_text,

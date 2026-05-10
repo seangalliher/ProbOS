@@ -408,6 +408,16 @@ class ProbOSRuntime:
         self.profile_store = ProfileStore(
             db_path=str(self._data_dir / "crew_profiles.db"),
         )
+
+        # AD-722f: per-agent avatar-telemetry sampling state machine.
+        # Initialized in __init__ (not finalize) so consumers in cognitive
+        # services / routers can rely on its presence at any startup phase.
+        # State is volatile by design — restart resets to LOW for every agent.
+        from probos.avatars.sampling_state import AvatarSamplingStateMachine
+        self.avatar_sampling_state = AvatarSamplingStateMachine(
+            rates=self.config.avatar_telemetry.sampling_rates,
+        )
+
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []
 
