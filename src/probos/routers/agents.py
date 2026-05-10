@@ -129,10 +129,19 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
     else:
         voice_profile_dict = default_voice_for(agent.agent_type).to_dict()
 
-    # AD-721: per-agent appearance profile (live ProfileStore → seed → empty default).
+    # AD-721 per-agent appearance profile (live ProfileStore → seed → empty default).
+    # AD-721d BF (2026-05-10): live ProfileStore wins, but missing fields fall
+    # through to seed so DSL approval doesn't drop the seed vrm_url. Without
+    # this, post-approval avatars regress to ParametricAvatar (solid amber).
     appearance_dict: dict[str, Any]
     if live_profile is not None:
         appearance_dict = live_profile.appearance.to_dict()
+        if seed and isinstance(seed.get("appearance"), dict):
+            seed_app = seed["appearance"]
+            if not appearance_dict.get("vrm_url") and seed_app.get("vrm_url"):
+                appearance_dict["vrm_url"] = seed_app["vrm_url"]
+            if not appearance_dict.get("color_palette_hint") and seed_app.get("color_palette_hint"):
+                appearance_dict["color_palette_hint"] = seed_app["color_palette_hint"]
     elif seed and isinstance(seed.get("appearance"), dict):
         appearance_dict = seed["appearance"]
     else:
@@ -445,6 +454,30 @@ async def set_agent_appearance(
         crew = runtime.profile_store.get_or_create(
             agent.id, agent_type=agent.agent_type, pool=agent.pool,
         )
+        # AD-721d BF (2026-05-10): when the live profile is freshly created
+        # by get_or_create(), AppearanceProfile defaults to empty vrm_url
+        # which causes the read path to fall back to ParametricAvatar (a
+        # solid amber capsule) for any crew that previously rendered fine
+        # from a seed-YAML vrm_url (e.g. Ezri.vrm). Hydrate vrm_url and
+        # color_palette_hint from the seed if the live profile doesn't
+        # already have them set, so DSL approval doesn't regress the avatar.
+        if not crew.appearance.vrm_url or not crew.appearance.color_palette_hint:
+            try:
+                from probos.crew_profile import load_seed_profile_async
+                seed = await load_seed_profile_async(agent.agent_type) or {}
+                seed_app = seed.get("appearance") if isinstance(seed.get("appearance"), dict) else None
+                if seed_app:
+                    if not crew.appearance.vrm_url and seed_app.get("vrm_url"):
+                        crew.appearance.vrm_url = seed_app["vrm_url"]
+                    if not crew.appearance.color_palette_hint and seed_app.get("color_palette_hint"):
+                        crew.appearance.color_palette_hint = seed_app["color_palette_hint"]
+            except Exception:
+                logger.debug(
+                    "AD-721d: seed-profile hydration failed for %s; "
+                    "DSL approval proceeding without seed-vrm fallback",
+                    agent_id,
+                    exc_info=True,
+                )
         crew.appearance.dsl = dsl.model_dump()
         runtime.profile_store.update(crew)
     else:
