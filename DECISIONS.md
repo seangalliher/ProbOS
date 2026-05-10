@@ -1796,3 +1796,36 @@ Conflating them obscures which failure each catches.
 
 **Precondition.** Backend render pipeline (AD-721i forward marker, #537) must exist. AD-728 consumes the renderer; does not build it.
 
+### AD-729 family — Peer avatar perception governed by Code of Conduct
+
+**Date:** 2026-05-10. **Status:** Forward markers, filed as #587 (capability), #588 (Standing Orders), #589 (Training), #590 (Counselor monitoring), #591 (reinforcement loop, deferred).
+
+**Captain ruling 2026-05-10 (verbatim):** *"We also need to think about applying a code of conduct and expected level of professionalism here. Going back to our roots in naval organizational theory, we should apply the same concepts here. There is certain behavior and decorum that is expected of the crew. If they want to say something personal, they would need permission to speak freely. Even then they should have training on what is appropriate. So while I agree it makes sense to have some guardrails, we should let their behavior do the work per their code of conduct not through system guardrails only."*
+
+**Architectural ruling.** Once AD-722e (deterministic self-projection) and AD-728 (vision-LLM mirror) ship, the same projection function that an agent uses to perceive herself can be invoked by another agent to perceive her. Cross-crew observation closes feedback loops that self-perception and renderer-mirror cannot close alone. **But peer perception is governed by the existing Code of Conduct (AD-489), not by mechanical guardrails layered on top.**
+
+This is the right precedent. We don't bolt mechanical safety onto every new capability forever — we build the conduct substrate once (Standing Orders, Trust, Counselor oversight, Code of Conduct, Boot Camp, Qualification) and let it scale. Officers don't bully because they're trained not to and the chain of command holds them accountable — not because the system mechanically prevents it.
+
+**Four mechanical constraints retained** because no amount of training prevents them:
+
+1. **Read-only with respect to trust/Hebbian for the observed agent.** Closes the optimization-gradient-toward-performance-for-peers failure mode; slander-attack mitigation in federated context.
+2. **Privacy opt-out for the observed agent.** Bodily autonomy is granted, not earned.
+3. **Backend render only, never browser capture.** Inherited from AD-727.
+4. **Cross-federation peer observation requires governance review.** Inherited from AD-480.
+
+**Everything else moves into the conduct layer (AD-729a / AD-729b / AD-729c):**
+
+| Concern | Conduct AD |
+|---|---|
+| When to observe; how to phrase; permission-to-speak-freely protocol | AD-729a (Standing Orders extension) |
+| Training in appropriate peer feedback before granting capability | AD-729b (Boot Camp / Qualification module) |
+| Pattern-level monitoring for gossip / bullying / sycophancy / cascade observation / static impressions | AD-729c (Counselor pattern-monitoring) |
+
+**Two-register observation DSL.** Mirrors the naval permission-to-speak-freely protocol. *Operational observations* ("The Counselor's expression suggests she is processing the alert") are always permitted in operational channels. *Personal commentary* ("You seem off today") requires explicit consent — `[PERMISSION_REQUEST]` → `[PERMISSION_GRANTED]` / `[PERMISSION_DENIED]`. Permission expires at end of exchange. Repeated denial is the observed officer's privilege and not a conduct concern. Repeated *requesting* despite denial IS a conduct concern.
+
+**Hard preconditions for AD-729 capability shipping:** AD-722e, AD-728, AD-722a all shipped; AD-729a/b/c conduct stack shipped; Counselor has reviewed at least one quarter of operational data from self-perception ADs to establish baseline; Captain design-stage review (Captain ruling is the ceiling above the AD-727 joint-review-gate floor).
+
+**AD-729d (reinforcement loop, #591) is explicitly deferred.** Peer observation as *information* (AD-729) is fundamentally different from peer observation as *pressure* on the observed agent's DSL or standing orders (AD-729d). The optimization-gradient risk re-enters through reinforcement even though AD-729 closes it for trust. AD-729d does not advance until AD-729 has been operationally stable for at least two quarters with no concerning pattern drift.
+
+**Pattern set precedent.** Future capabilities that touch crew-to-crew interaction (cross-agent voice modulation perception, shared memory annotations, peer review of each other's work product) inherit the AD-729 pattern: **capability AD + Standing Orders extension AD + Training AD + Counselor monitoring AD**. Four-AD family for any crew-to-crew capability of this class. The pattern protects the federation's self-governance.
+
