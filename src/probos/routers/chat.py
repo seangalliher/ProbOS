@@ -101,11 +101,13 @@ async def chat(
         is_directed_mention,
     )
 
-    # AD-719: multi-mention fan-out branch — handle BEFORE the single-mention
-    # short-circuit so two-or-more leading @callsigns are routed in parallel.
+    # AD-719: multi-mention fan-out branch — also handles SINGLE mentions
+    # (>= 1) so attribution + episodic-write parity is consistent. The legacy
+    # single-mention DM path below is kept only as fall-through for unrelated
+    # callsign edge cases (parse misses).
     if is_directed_mention(text):
         all_callsigns, remaining_message = extract_all_leading_callsign_mentions(text)
-        if len(all_callsigns) >= 2:
+        if len(all_callsigns) >= 1:
             t_start_fanout = time.monotonic()
             from probos.api_models import PerAgentReply
             from probos.types import IntentMessage as _IntentMessage
@@ -135,7 +137,12 @@ async def chat(
                     )
                 intent = _IntentMessage(
                     intent="direct_message",
-                    params={"text": remaining_message, "from": "hxi", "session": False},
+                    params={
+                        "text": remaining_message,
+                        "from": "hxi_profile",  # match per-agent chat path so agent direct_message handler treats it as a real DM
+                        "session": True,
+                        "session_history": [],
+                    },
                     target_agent_id=resolved["agent_id"],
                     ttl_seconds=60.0,  # AD-636
                 )
