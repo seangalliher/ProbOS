@@ -1744,9 +1744,7 @@ The AD-720a dispatch's "zero new Python deps" rule was an aspirational goal that
 
 **Constraint.** Zero behavioural change — full snapshot suite verifies prompts and responses are byte-identical pre- vs post-refactor.
 
-### System-1 / System-2 architectural ruling (consolidated)
-
-**Captain ruling 2026-05-10 (pinned for future reference).** ProbOS deliberately runs **two prompt-assembly paths**:
+### System-1 / System-2 architectural ruling (consolidated)**Captain ruling 2026-05-10 (pinned for future reference).** ProbOS deliberately runs **two prompt-assembly paths**:
 
 | Path | Pipeline | Role | Audience |
 |---|---|---|---|
@@ -1754,4 +1752,26 @@ The AD-720a dispatch's "zero new Python deps" rule was an aspirational goal that
 | **Chain** | Decompose → execute → evaluate (3× LLM) | System-2 — deliberative, self-correcting, sub-intent capable | Crew + Ward Room (peers, work product) |
 
 The split is **intentional and permanent**, mirroring Kahneman's dual-process theory. We do not deliberate over "hello." The cleanups in AD-723/AD-724/AD-725/AD-726 narrow the *capability* gap (so DM agents have parity on context and quality) without merging the *latency* gap (so DM stays real-time conversation). Future ADs that propose merging the paths must articulate why the System-1/System-2 distinction no longer applies in their case.
+
+### AD-727 — Safety constraints for AD-722e avatar self-perception (joint Counselor + Architect review gate)
+
+**Date:** 2026-05-10. **Status:** Forward marker, filed as [#585](https://github.com/seangalliher/ProbOS/issues/585).
+
+**Decision.** AD-722e (avatar self-perception) is the first AD in ProbOS to confer a capacity that can cause **psychological** harm rather than operational harm. It requires its own constraint document and a joint-review gate before any build prompt advances to Builder. AD-727 captures the constraint stack; AD-722e captures the capability. Neither ships without the other.
+
+**Architectural reframe — deterministic projection only in v1.** Captain insight 2026-05-10: *"If we know what we are rendering why would we need to use a vision LLM call? We should have a digital twin... though really Ezri is authentically digital so it isn't really a twin — it is just Ezri."* AD-722e v1 ships as a pure-function projection from the renderer's source-of-truth (DSL + morph target weights + viseme frame + lighting config + working_state) to a structured English description. **Zero vision-LLM calls. Zero browser-canvas capture. Zero pixel ingestion.** Two of the original safety concerns (vision-LLM side-channel attack; browser-capture privacy) are eliminated at the architectural level — they don't exist if pixels never enter the loop. Vision-mode is an optional forward marker within AD-722a (divergence detector), not v1 of AD-722e.
+
+**Seven hard rules (full text in [#585](https://github.com/seangalliher/ProbOS/issues/585)):**
+
+1. **Aesthetic self-judgment is READ-ONLY with respect to trust/Hebbian.** Divergence detector (AD-722a) can wire to trust; AD-722e's image-based observations cannot. Prevents body-image rumination feedback loops.
+2. **Pipeline-version visibility.** When the rendering pipeline changes, the agent is informed explicitly. Prevents silent identity mutation.
+3. **Asymmetric rollout is prohibited.** AD-722e enables for all crew simultaneously OR is explicitly role-scoped (Counselor, Captain's avatar, visible bridge officers). No ad-hoc per-agent enabling.
+4. **Vision-LLM use, if introduced in a future AD, runs against backend-server-side render only.** Never browser-capture. Provenance asserted before vision-LLM ingestion. Vision-extracted text wrapped in `<self_perception>` observation block.
+5. **Browser-side capture is permanently prohibited.** Permanent constraint for any future visual extension.
+6. **Aesthetic preferences are proposals, not unilateral changes.** Mirrors AD-721d's DSL approval model. Asymmetry made explicit in standing orders so the agent isn't surprised by the gating.
+7. **Self-perception projection takes `self.id` as the ONLY agent parameter.** Cross-crew visual perception is a separate AD with its own governance review.
+
+**Process rule — joint review gate.** AD-722e build prompt does NOT advance to Builder without sign-off from BOTH the Counselor (Category A psychological-harm review) AND the Architect (Category B/C engineering and governance review). This is the first dual-review gate in ProbOS. Future ADs that confer capacities at this class inherit the gate.
+
+**Public framing rule.** Granting visual self-recognition will be described publicly as an AI "passing the mirror test" whether we frame it or not. README and AD-722e build prompt MUST proactively frame the capability accurately ("denser self-state injection") *before* the press does it for us.
 
