@@ -1775,3 +1775,24 @@ The split is **intentional and permanent**, mirroring Kahneman's dual-process th
 
 **Public framing rule.** Granting visual self-recognition will be described publicly as an AI "passing the mirror test" whether we frame it or not. README and AD-722e build prompt MUST proactively frame the capability accurately ("denser self-state injection") *before* the press does it for us.
 
+### AD-728 — Vision-LLM mirror function (digital-analog render coherence verification)
+
+**Date:** 2026-05-10. **Status:** Forward marker, filed as [#586](https://github.com/seangalliher/ProbOS/issues/586).
+
+**Decision.** A vision-LLM call against the backend-rendered image produces a structured description of the *analog* projection. That description is compared against AD-722e's deterministic projection of the same moment's *digital* state. When they diverge, **the renderer has drifted** — a `RENDER_DIVERGENCE` alert fires with the renderer as the subject, not the agent.
+
+**Captain ruling 2026-05-10 (verbatim):** *"The Vision LLM would be the mirror function to reflect back if what is being rendered to the analog world is in sync with the digital model."*
+
+**Why three ADs, not one.** Three distinct coherence checks live in three distinct ADs:
+- **AD-722e** — *internal coherence*: digital state → English (what I AM). Deterministic, no LLM.
+- **AD-722a** — *intent-vs-presentation*: LLM emotional valence vs. parameters/modulation (did my reasoning produce what I meant). Sub-LLM v1.
+- **AD-728** — *digital-analog coherence*: digital state vs. rendered pixels (is the renderer faithful to my model). Vision-LLM.
+
+Conflating them obscures which failure each catches.
+
+**Cost gating.** Vision-LLM calls are expensive — NOT per-turn or per-frame. Three v1 triggers: (i) explicit Captain slash command, (ii) AD-722a divergence-detector escalation (one call per detected intent-vs-modulation divergence), (iii) hard-stubbed agent-initiated trigger (off in v1). Per-agent rate limit: max 3 mirror calls per hour (configurable). NO automatic periodic verification.
+
+**Phrasing rule (AD-728-specific hard rule #8).** Mirror outputs are observations about the RENDERER, never about the agent. `"Render output for Ezri differs from her digital state"` ✓ — `"Ezri looks different than she should"` ✗. The semantic boundary protects the agent from internalising render bugs as identity failures. All other AD-727 constraints inherit unchanged (joint review, backend-render-only, browser-capture prohibition, read-only-on-trust).
+
+**Precondition.** Backend render pipeline (AD-721i forward marker, #537) must exist. AD-728 consumes the renderer; does not build it.
+
