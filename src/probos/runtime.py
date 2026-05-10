@@ -393,6 +393,16 @@ class ProbOSRuntime:
             db_path=str(self._data_dir / "trust.db"),
             dampening_config=self.config.trust_dampening,
         )
+        # AD-718/AD-721d/AD-722 BF (2026-05-10): crew-wide ProfileStore.
+        # Voice-set + appearance-set endpoints in routers/agents.py persist
+        # via runtime.profile_store; before this it was never wired (only
+        # the counselor-specific store on _counselor_profile_store existed),
+        # so all approvals were silently dropped with the warning
+        # "AD-718: profile_store not present on runtime; ... not persisted".
+        from probos.crew_profile import ProfileStore
+        self.profile_store = ProfileStore(
+            db_path=str(self._data_dir / "crew_profiles.db"),
+        )
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []
 
