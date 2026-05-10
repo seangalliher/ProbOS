@@ -135,6 +135,7 @@ if TYPE_CHECKING:
     from probos.clearance_grants import ClearanceGrantStore
     from probos.cognitive.agent_patcher import AgentPatcher
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
+    from probos.avatars.divergence_detector import DivergenceResult  # AD-722a
     from probos.cognitive.codebase_index import CodebaseIndex
     from probos.cognitive.correction_detector import CorrectionDetector
     from probos.cognitive.episodic import EpisodicMemory
@@ -429,6 +430,13 @@ class ProbOSRuntime:
         self.avatar_telemetry_connection_manager = AvatarTelemetryConnectionManager(
             max_per_agent=self.config.avatar_telemetry.max_connections_per_agent,
         )
+
+        # AD-722a: most-recent intent-vs-presentation divergence per agent.
+        # Volatile (cleared on restart). Populated by the divergence detector
+        # call site in routers/agents.py:agent_chat; consumed by
+        # cognitive_agent._build_avatar_self_observation for next-cycle
+        # injection. Type: dict[agent_id, DivergenceResult].
+        self.divergence_results: dict[str, "DivergenceResult"] = {}
 
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []

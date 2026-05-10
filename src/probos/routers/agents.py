@@ -904,6 +904,30 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     except Exception:
         logger.debug("AD-573: Working memory DM record failed", exc_info=True)
 
+    # AD-722a: intent-vs-presentation divergence detection.
+    # Tier-2 wrapped — never blocks a reply. Default OFF
+    # (avatar_telemetry.divergence_detection). When ON, the LLM was
+    # instructed via _build_intent_self_tag_instruction to append a
+    # self-tag at end-of-reply. Parse + strip BEFORE the response leaves
+    # the handler; never leak the tag to the Captain. Trust + Hebbian
+    # wiring lives inside apply_divergence_check (single call site).
+    try:
+        _t_cfg = getattr(runtime.config, "avatar_telemetry", None)
+        if _t_cfg is not None and getattr(_t_cfg, "divergence_detection", False):
+            from probos.avatars.divergence_detector import apply_divergence_check
+            response_text = apply_divergence_check(
+                runtime=runtime,
+                agent_id=agent_id,
+                agent=agent,
+                response_text=response_text,
+                t_cfg=_t_cfg,
+            )
+    except Exception:
+        logger.debug(
+            "AD-722a: divergence detector failed for agent=%s",
+            agent_id, exc_info=True,
+        )
+
     # AD-722: stamp the last-reply emission timestamp. Single source of truth.
     if hasattr(agent, 'mark_reply_emitted'):
         agent.mark_reply_emitted()

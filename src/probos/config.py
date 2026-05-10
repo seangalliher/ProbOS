@@ -992,6 +992,16 @@ class AvatarTelemetryConfig(BaseModel):
     polling_interval_ms: int = 2000          # AD-722 — UI hint, not backend-driven.
     sampling_rates: SamplingRatesConfig = Field(default_factory=SamplingRatesConfig)  # AD-722f
     max_connections_per_agent: int = 4       # AD-722b — WS popout connections per agent
+    # AD-722a: intent-vs-presentation divergence detector.
+    # Default OFF — operator opt-in for token cost (~10 prompt + ~5 reply
+    # tokens per DM cycle). When True, the LLM is instructed to append
+    # ``<intent emotion=...>`` to every DM reply, the server parses + strips
+    # it, and divergence drives trust + Hebbian updates.
+    divergence_detection: bool = False
+    divergence_negative_threshold: float = 0.3   # |magnitude| > this fires NEGATIVE trust delta (output diverged AWAY)
+    divergence_positive_threshold: float = 0.5   # |magnitude| > this fires POSITIVE trust delta (output exceeded SAME direction; higher bar)
+    divergence_negative_weight: float = 0.4   # Output diverged AWAY (asymmetric heavier)
+    divergence_positive_weight: float = 0.1   # Output exceeded same direction (soft inform)
 
     @field_validator("mouth_active_window_seconds")
     @classmethod
@@ -1013,6 +1023,20 @@ class AvatarTelemetryConfig(BaseModel):
         if v < 1:
             raise ValueError(
                 f"max_connections_per_agent must be >= 1, got {v}"
+            )
+        return v
+
+    @field_validator(
+        "divergence_negative_threshold",
+        "divergence_positive_threshold",
+        "divergence_negative_weight",
+        "divergence_positive_weight",
+    )
+    @classmethod
+    def _bound_divergence_weights(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(
+                f"divergence weight/threshold fields must be in [0.0, 1.0], got {v}"
             )
         return v
 

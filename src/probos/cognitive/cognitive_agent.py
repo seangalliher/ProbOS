@@ -2690,13 +2690,72 @@ class CognitiveAgent(BaseAgent):
                 + mod_line
                 + f"  mouth_active: {snap.mouth_active}\n"
                 + dsl_line
-            )
+            ) + self._build_divergence_note_suffix()
         except Exception:
             logger.warning(
                 "AD-722 self-observation injection failed; returning empty",
                 exc_info=True,
             )
             return ""
+
+    def _build_divergence_note_suffix(self) -> str:
+        """AD-722a: render the most-recent divergence as an OUTPUT-subject note.
+
+        Phrasing rule: subject is OUTPUT, never the agent. Allowed text uses
+        constructions like *"Your last reply was intended as X but the
+        modulation came out as Y"*. Forbidden constructions: *"You sounded ..."*,
+        *"You came across as ..."*, *"Your tone was ..."*, *"You seem ..."*.
+
+        Tier-2 -- returns empty string on any failure or when no divergence
+        result is stored for this agent.
+        """
+        try:
+            rt = getattr(self, "_runtime", None)
+            if rt is None:
+                return ""
+            results = getattr(rt, "divergence_results", None)
+            if not results:
+                return ""
+            result = results.get(self.id)
+            if result is None:
+                return ""
+            applied = ", ".join(result.applied_fired_rules) or "no_rules_fired"
+            return (
+                "\nMost recent intent-vs-presentation check:\n"
+                f"  Your last reply was intended as `{result.intent_emotion}` "
+                f"but the modulation came out as `{applied}` "
+                f"(signed divergence: {result.signed_divergence:+.2f}, "
+                f"match score: {result.match_score:.2f}).\n"
+            )
+        except Exception:
+            logger.debug(
+                "AD-722a: divergence-note rendering failed",
+                exc_info=True,
+            )
+            return ""
+
+    def _build_intent_self_tag_instruction(self) -> str:
+        """AD-722a (feature-gated): instruct the LLM to emit a self-tag.
+
+        Returns a one-line instruction when
+        ``avatar_telemetry.divergence_detection`` is True; empty string
+        otherwise. The line is appended to the system prompt in DM and
+        chain reasoning paths so the parser at the chat handler can
+        extract + strip the tag and compute divergence.
+
+        Token cost: ~10 prompt tokens + ~5 reply tokens per cycle.
+        """
+        cfg = getattr(self._runtime, "config", None) if self._runtime else None
+        tcfg = getattr(cfg, "avatar_telemetry", None)
+        if not getattr(tcfg, "divergence_detection", False):
+            return ""
+        return (
+            "After your reply, on a new line, emit "
+            "`<intent emotion=NAME>` where NAME is one of: "
+            "warm | firm | warm_concern | alert | neutral | playful | "
+            "thoughtful | apologetic. The tag will be stripped server-side; "
+            "do not mention it in your prose."
+        )
 
     # ------------------------------------------------------------------
     # AD-721d: agent-authored appearance proposal
@@ -4535,6 +4594,10 @@ class CognitiveAgent(BaseAgent):
         # had _build_avatar_self_observation listed but no caller invoked it.
         try:
             avatar_block = self._build_avatar_self_observation(observation or {})
+            # AD-722a: append the self-tag instruction (default OFF).
+            _intent_tag_line = self._build_intent_self_tag_instruction()
+            if _intent_tag_line:
+                avatar_block = (avatar_block + "\n" + _intent_tag_line).strip("\n") + "\n"
             if avatar_block:
                 state["_avatar_self_observation"] = avatar_block
         except Exception:
@@ -5155,6 +5218,11 @@ class CognitiveAgent(BaseAgent):
                 _avatar_block = self._build_avatar_self_observation(observation)
                 if _avatar_block:
                     parts.append(_avatar_block)
+                    parts.append("")
+                # AD-722a: append the self-tag instruction (default OFF).
+                _intent_tag_line = self._build_intent_self_tag_instruction()
+                if _intent_tag_line:
+                    parts.append(_intent_tag_line)
                     parts.append("")
             except Exception:
                 logger.debug(
