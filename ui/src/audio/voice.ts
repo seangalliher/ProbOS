@@ -1,5 +1,9 @@
 /* Voice output — browser SpeechSynthesis (zero dependencies) */
 
+import { applyEmotionalModulation } from './voiceModulation';
+import { deriveAgentSignals } from '../components/profile/avatarSignals';
+import { useStore } from '../store/useStore';
+
 let voicesLoaded = false;
 let cachedVoice: SpeechSynthesisVoice | null = null;
 
@@ -100,9 +104,33 @@ export function speakResponse(
   speechSynthesis.cancel();
 
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate   = profile?.rate   ?? 0.95;
-  utterance.pitch  = profile?.pitch  ?? 0.9;
-  utterance.volume = profile?.volume ?? 0.8;
+
+  // AD-718d: when an agent_id is supplied, modulate pitch/rate/volume
+  // from the live AgentSignals selector. Tier-2 log-and-degrade — any
+  // signals-read failure falls back to the unmodulated baseline; speech
+  // must NEVER fail because of modulation.
+  let effective: VoiceProfile = profile ?? {};
+  if (agent_id) {
+    try {
+      const store = useStore.getState();
+      const signals = deriveAgentSignals(agent_id, store);
+      effective = applyEmotionalModulation(
+        {
+          voice_name: profile?.voice_name,
+          pitch: profile?.pitch ?? 0.9,
+          rate: profile?.rate ?? 0.95,
+          volume: profile?.volume ?? 0.8,
+        },
+        signals,
+      );
+    } catch {
+      // fall through with unmodulated profile
+    }
+  }
+
+  utterance.rate   = effective.rate   ?? 0.95;
+  utterance.pitch  = effective.pitch  ?? 0.9;
+  utterance.volume = effective.volume ?? 0.8;
 
   const named = profile?.voice_name ? _resolveVoiceByName(profile.voice_name) : null;
   const voice = named ?? findPreferredVoice();

@@ -5238,3 +5238,29 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 
 **Forward markers.** AD-718a-1 (proposal revision-cycle / persisted proposal log) — NOT filed at gate-3; the v1 single-shot + Request-revisions UX is sufficient for the Cluster A target. AD-718-1 stands as filed in Wave 135.
 
+
+### AD-718d - Emotional voice modulation
+**Date:** 2026-05-09
+**Type:** Architecture Decision
+**Wave:** 136
+**Status:** SHIPPED. Issue [#525](https://github.com/seangalliher/ProbOS/issues/525).
+
+**Goal.** At speak-time, modulate `pitch`/`rate`/`volume` based on the live `AgentSignals` channel that AD-721 already feeds the avatar. Voice + avatar align by sourcing the same `deriveAgentSignals` selector. Browser-only; zero server changes; zero new deps.
+
+**What shipped.**
+- `ui/src/audio/voiceModulation.ts` - pure `applyEmotionalModulation(profile, signals)` and `hasMeaningfulModulation(baseline, modulated)`. Captain-canonical threshold-based multiplicative rules: `working_state='responding'` -> rate * 1.05; `working_state='blocked'` -> rate * 0.92, pitch * 0.95; `trust_delta > 0.2` -> pitch * 1.03; `trust_delta < -0.2` -> pitch * 0.97; `tier3_alert` -> rate * 1.15, volume * 1.05. Rules compose multiplicatively. Output clamped against `PITCH_BOUNDS=[0,2]`, `RATE_BOUNDS=[0.1,10]`, `VOLUME_BOUNDS=[0,1]` (Web Speech API == VoiceProfile validator bounds, single source of truth). Pure data-in/data-out; no DOM/store access; `voice_name` passes through; input never mutated.
+- `ui/src/audio/voice.ts` `speakResponse` extended with try/catch around the store-snapshot read (Tier-2 log-and-degrade): when `agent_id` is supplied, reads `useStore.getState()`, derives signals via `deriveAgentSignals`, applies modulation, and assigns the clamped values to the utterance. Any read/store failure falls back to the unmodulated baseline; speech NEVER fails because of modulation.
+- `MODULATION_DIVERGENCE_THRESHOLD = 0.05` exposed for the (deferred) modulation indicator.
+
+**Counselor worked-example smoke test.** Baseline `{voice_name:"", pitch:1.05, rate:0.92, volume:0.85}` + signals `{trust_delta:0.3, working_state:'responding'}` -> pitch \u2248 1.0815, rate \u2248 0.966, volume = 0.85 (unchanged). All within Web Speech API bounds. Encoded as `test_counselor_worked_example` in `ui/src/__tests__/voiceModulation.test.ts`.
+
+**Hard-stop verifications.** Web Speech API only (no third-party audio deps; license posture stays clean). Modulation module imports only `./voice` types and `../components/profile/avatarSignals` types - zero imports from `consensus/trust`, `consensus/quorum`, or any trust-update path. No `exec`/`eval`/`Function(...)`/dynamic import in `voiceModulation.ts`. No emoji introduced (indicator E5 deferred to AD-718d-1; v1 ships modulation logic only).
+
+**Tests.** 18 pure-function + 3 integration Vitest tests = +21 `ui/src/__tests__/voiceModulation.test.ts`, `ui/src/__tests__/voice.speakResponse.modulation.test.ts`. Existing `voice.test.ts` regression-checked - utterance still receives `pitch=0.9, rate=0.95, volume=0.8` defaults when called without `agent_id`. UI Vitest: 493 passed (delta +21 vs AD-718a baseline 472). Full Python gate: 13048 passed (delta +6 vs commit N - the 6 `test_ad473d_474_voice_push.py` tests now resolve correctly through the `voice/__init__.py` re-exports landed by AD-718a; AD-718d adds zero Python tests). 2 environmental parallel-only failures (`test_ad632h_parallel_dispatch::test_three_step_parallel_wave` passes serial in 0.4s; `test_runtime::test_capabilities_registered` is a known heavy-runtime-boot flake under parallel dispatch).
+
+**E5 modulation indicator deferred.** Decision documented inline: shipping the indicator inside `ProfileChatTab` introduced enough Vitest harness scope to push the wave past blast-radius. Logic ships, indicator polish lands as AD-718d-1.
+
+**Forward markers filed.**
+- AD-718d-1 - modulation activity indicator (E5 deferred from this prompt). Filed as the wave's planned forward marker per dispatch §8.
+- AD-722 ([#545](https://github.com/seangalliher/ProbOS/issues/545)) - selector contract is unchanged; AD-718d benefits silently when AD-722 deepens `AgentSignals`.
+
