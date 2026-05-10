@@ -1,0 +1,248 @@
+// AD-722: agent-observable avatar telemetry surface.
+// Mouth-active is best-effort — see telemetry.py docstring for semantics.
+// No emoji — all icons are inline <svg> with strokeWidth: 1.5, strokeLinecap: round.
+import { useEffect, useState } from 'react';
+
+const AMBER = '#f0b060';
+const DIM = '#666680';
+
+interface AgentSignals {
+  trust_delta: number;
+  load: number;
+  working_state: string;
+  tier3_alert: boolean;
+}
+
+interface ModulationSnapshot {
+  pitch_factor: number;
+  rate_factor: number;
+  volume_factor: number;
+  fired_rules: string[];
+}
+
+interface DslSummary {
+  body_type: string;
+  hair_style: string;
+  primary_color: string;
+  outfit_style: string;
+  color_palette_hint: string;
+}
+
+interface AvatarTelemetry {
+  agent_id: string;
+  expression_resting: string | null;
+  current_signals: AgentSignals;
+  mouth_active: boolean;
+  applied_modulation: ModulationSnapshot | null;
+  dsl_summary: DslSummary | null;
+  last_observed_at: number;
+  degraded_reasons: string[];
+}
+
+const POLL_MS = 2000;
+
+interface SelfImageTabProps {
+  agentId: string;
+  isActive: boolean;
+}
+
+export function SelfImageTab({ agentId, isActive }: SelfImageTabProps) {
+  const [snap, setSnap] = useState<AvatarTelemetry | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isActive || !agentId) return;
+    let cancelled = false;
+    const fetchOnce = () => {
+      fetch(`/api/agent/${agentId}/avatar-telemetry`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((data) => {
+          if (!cancelled) {
+            setSnap(data);
+            setError(null);
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) setError(String(e));
+        });
+    };
+    fetchOnce();
+    const id = setInterval(fetchOnce, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [agentId, isActive]);
+
+  if (!snap && !error) {
+    return (
+      <div data-testid="self-image-loading" style={{ padding: 16, color: DIM }}>
+        Awaiting telemetry…
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="self-image-tab" style={{ padding: 12, fontSize: 12, color: '#cccce0' }}>
+      <style>{`
+        @keyframes ad722-pulse {
+          0%, 100% { opacity: 1; }
+          50%      { opacity: 0.45; }
+        }
+        .ad722-pulse-amber {
+          animation: ad722-pulse 1.1s ease-in-out infinite;
+        }
+      `}</style>
+      {error && (
+        <div data-testid="self-image-error" style={{ color: AMBER, marginBottom: 8 }}>
+          telemetry error: {error}
+        </div>
+      )}
+
+      {snap?.dsl_summary ? (
+        <PanelDslSummary dsl={snap.dsl_summary} expression={snap.expression_resting} />
+      ) : (
+        <PanelHeader title="DSL summary">
+          <span style={{ color: DIM }}>no DSL persisted</span>
+        </PanelHeader>
+      )}
+
+      <PanelSignals signals={snap?.current_signals} />
+      <PanelModulation mod={snap?.applied_modulation ?? null} />
+      <PanelMouthActive active={!!snap?.mouth_active} />
+
+      {snap && snap.degraded_reasons.length > 0 && (
+        <PanelDegraded reasons={snap.degraded_reasons} />
+      )}
+    </div>
+  );
+}
+
+function PanelHeader({ title, children }: { title: string; children?: React.ReactNode }) {
+  return (
+    <section style={{ marginBottom: 10 }}>
+      <h4 data-testid={`panel-header-${title.toLowerCase().replace(/\s+/g, '-')}`}
+          style={{ margin: '0 0 4px 0', fontSize: 11, color: AMBER, letterSpacing: '0.04em' }}>
+        {title.toUpperCase()}
+      </h4>
+      <div style={{ paddingLeft: 6 }}>{children}</div>
+    </section>
+  );
+}
+
+function PanelDslSummary({ dsl, expression }: { dsl: DslSummary; expression: string | null }) {
+  return (
+    <PanelHeader title="DSL summary">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <svg width="16" height="16" aria-hidden="true">
+          <rect width="16" height="16" fill={dsl.primary_color} stroke={DIM} strokeWidth={1} />
+        </svg>
+        <span data-testid="dsl-primary-color">{dsl.primary_color}</span>
+      </div>
+      <div data-testid="dsl-body">body: {dsl.body_type}</div>
+      <div data-testid="dsl-hair">hair: {dsl.hair_style}</div>
+      <div data-testid="dsl-outfit">outfit: {dsl.outfit_style}</div>
+      <div data-testid="dsl-expression">expression: {expression ?? '—'}</div>
+    </PanelHeader>
+  );
+}
+
+function PanelSignals({ signals }: { signals: AgentSignals | undefined }) {
+  if (!signals) {
+    return (
+      <PanelHeader title="Current signals">
+        <span style={{ color: DIM }}>no data</span>
+      </PanelHeader>
+    );
+  }
+  const stateActive = signals.working_state !== 'idle';
+  return (
+    <PanelHeader title="Current signals">
+      <div data-testid="signal-working-state" style={{ color: stateActive ? AMBER : DIM }}>
+        working_state: {signals.working_state}
+      </div>
+      <div data-testid="signal-trust-delta">
+        trust_delta: {signals.trust_delta >= 0 ? '+' : ''}{signals.trust_delta}
+      </div>
+      <div data-testid="signal-load">load: {signals.load}</div>
+      <div data-testid="signal-tier3-alert">
+        <svg width="14" height="14" aria-hidden="true" style={{ verticalAlign: 'middle' }}>
+          <path
+            d="M7 2 L13 12 L1 12 Z"
+            fill="none"
+            stroke={signals.tier3_alert ? AMBER : DIM}
+            strokeWidth={1.5}
+            strokeLinecap="round"
+          />
+        </svg>
+        {' '}tier3_alert: {signals.tier3_alert ? 'yes' : 'no'}
+      </div>
+    </PanelHeader>
+  );
+}
+
+function PanelModulation({ mod }: { mod: ModulationSnapshot | null }) {
+  if (!mod) {
+    return (
+      <PanelHeader title="Voice modulation">
+        <span style={{ color: DIM }}>voice profile unavailable</span>
+      </PanelHeader>
+    );
+  }
+  return (
+    <PanelHeader title="Voice modulation">
+      <div data-testid="mod-pitch">pitch_factor: {mod.pitch_factor}</div>
+      <div data-testid="mod-rate">rate_factor: {mod.rate_factor}</div>
+      <div data-testid="mod-volume">volume_factor: {mod.volume_factor}</div>
+      <div data-testid="mod-fired-rules">
+        fired_rules: {mod.fired_rules.length === 0 ? 'none' : mod.fired_rules.join(', ')}
+      </div>
+    </PanelHeader>
+  );
+}
+
+function PanelMouthActive({ active }: { active: boolean }) {
+  return (
+    <PanelHeader title="Mouth active">
+      <span
+        data-testid="mouth-active-indicator"
+        className={active ? 'ad722-pulse-amber' : ''}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      >
+        <svg width="14" height="14" aria-hidden="true">
+          <circle
+            cx="7" cy="7" r="5"
+            fill="none"
+            stroke={active ? AMBER : DIM}
+            strokeWidth={1.5}
+            strokeLinecap="round"
+          />
+        </svg>
+        <span style={{ color: active ? AMBER : DIM }}>{active ? 'speaking' : 'silent'}</span>
+      </span>
+    </PanelHeader>
+  );
+}
+
+function PanelDegraded({ reasons }: { reasons: string[] }) {
+  return (
+    <section
+      data-testid="degraded-strip"
+      style={{
+        marginTop: 8,
+        padding: 6,
+        border: `1px solid ${AMBER}`,
+        borderRadius: 4,
+        color: AMBER,
+        fontSize: 11,
+      }}
+    >
+      <div style={{ marginBottom: 2, letterSpacing: '0.04em' }}>DEGRADED</div>
+      {reasons.map((r) => (
+        <div key={r} data-testid={`degraded-reason-${r}`}>
+          • {r}
+        </div>
+      ))}
+    </section>
+  );
+}

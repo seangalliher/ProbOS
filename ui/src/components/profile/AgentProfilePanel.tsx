@@ -5,11 +5,12 @@ import { ProfileWorkTab } from './ProfileWorkTab';
 import { ProfileInfoTab } from './ProfileInfoTab';
 import { ProfileHealthTab } from './ProfileHealthTab';
 import { ProfileMemoryTab } from './ProfileMemoryTab';
+import { SelfImageTab } from './SelfImageTab';
 import { CrewAvatarPopout } from './CrewAvatarPopout';
 import { deriveAgentSignals } from './avatarSignals';
 import type { AgentProfileData, AvatarDSLDict } from '../../store/types';
 
-type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory';
+type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory' | 'self_image';
 
 const TAB_LABELS: { key: ProfileTab; label: string }[] = [
   { key: 'chat', label: 'Chat' },
@@ -17,6 +18,7 @@ const TAB_LABELS: { key: ProfileTab; label: string }[] = [
   { key: 'memory', label: 'Memory' },
   { key: 'profile', label: 'Profile' },
   { key: 'health', label: 'Health' },
+  { key: 'self_image', label: 'Self-image' },
 ];
 
 const DEPT_COLORS: Record<string, string> = {
@@ -152,7 +154,7 @@ export function AgentProfilePanel() {
   // BF-017: Filter tabs — non-crew agents don't get Chat tab
   const visibleTabs = isCrew
     ? TAB_LABELS
-    : TAB_LABELS.filter(t => t.key !== 'chat' && t.key !== 'memory');
+    : TAB_LABELS.filter(t => t.key !== 'chat' && t.key !== 'memory' && t.key !== 'self_image');
 
   // If current tab is hidden for non-crew, switch to profile
   const effectiveTab = visibleTabs.some(t => t.key === activeTab) ? activeTab : 'profile';
@@ -346,6 +348,9 @@ export function AgentProfilePanel() {
         {effectiveTab === 'profile' && <ProfileInfoTab profileData={profileData} agent={agent} />}
         {effectiveTab === 'health' && <ProfileHealthTab profileData={profileData} agent={agent} />}
         {effectiveTab === 'memory' && <ProfileMemoryTab agentId={agentId} />}
+        {effectiveTab === 'self_image' && isCrew && (
+          <SelfImageTab agentId={agentId} isActive={effectiveTab === 'self_image'} />
+        )}
       </div>
       {/* AD-721: 3D avatar popout. */}
       {avatarOpen && isCrew && avatarsEnabled && (

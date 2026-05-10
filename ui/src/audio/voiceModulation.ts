@@ -14,6 +14,9 @@ import type { AgentSignals } from '../components/profile/avatarSignals';
 /** Threshold above which the modulation indicator (E5) treats the
  *  modulation as perceptible. Pitch / rate / volume that diverge >5%
  *  from baseline trigger the active state. */
+// NOTE: this rule table is duplicated in src/probos/avatars/telemetry.py.
+// Keep them in lockstep — byte-parity is enforced by a Python test that
+// file-reads this source. AD-722-1 will extract to a YAML manifest.
 export const MODULATION_DIVERGENCE_THRESHOLD = 0.05;
 
 /** Web Speech API + VoiceProfile validator bounds (single source of

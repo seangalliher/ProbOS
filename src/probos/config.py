@@ -938,6 +938,36 @@ class AvatarsConfig(BaseModel):
     procedural_base_mesh_fallback: bool = True
 
 
+class AvatarTelemetryConfig(BaseModel):
+    """AD-722: agent-observable avatar telemetry channel.
+
+    Read-only telemetry — exposes the agent's own avatar state via a
+    snapshot dataclass. v1 is poll-only (HTTP + in-process method on
+    ``CognitiveAgent``); push (WebSocket) is forward marker AD-722b.
+
+    All fields default — ``AvatarTelemetryConfig()`` MUST succeed.
+    """
+
+    enabled: bool = True
+    inject_into_agent_context: bool = False  # Feature-gated; default OFF.
+    mouth_active_window_seconds: float = 3.0
+    polling_interval_ms: int = 2000          # UI hint; backend does not poll itself.
+
+    @field_validator("mouth_active_window_seconds")
+    @classmethod
+    def _bound_mouth_window(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"mouth_active_window_seconds must be > 0, got {v}")
+        return v
+
+    @field_validator("polling_interval_ms")
+    @classmethod
+    def _bound_polling(cls, v: int) -> int:
+        if v < 250:
+            raise ValueError(f"polling_interval_ms must be >= 250 to prevent UI hammering, got {v}")
+        return v
+
+
 class AttachmentsConfig(BaseModel):
     """AD-720: chat attachments configuration.
 
@@ -3133,6 +3163,7 @@ class SystemConfig(BaseModel):
     mcp_app_host: MCPAppHostConfig = Field(default_factory=MCPAppHostConfig)  # AD-597
     browser_tool: BrowserToolConfig = Field(default_factory=BrowserToolConfig)  # AD-706
     avatars: AvatarsConfig = Field(default_factory=AvatarsConfig)  # AD-721
+    avatar_telemetry: AvatarTelemetryConfig = Field(default_factory=AvatarTelemetryConfig)  # AD-722
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562

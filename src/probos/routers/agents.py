@@ -457,6 +457,31 @@ async def set_agent_appearance(
     return {"agentId": agent_id, "dsl": dsl.model_dump()}
 
 
+@router.get("/{agent_id}/avatar-telemetry")
+async def agent_avatar_telemetry(agent_id: str, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-722: read-only avatar telemetry snapshot.
+
+    Reuses the AD-721 ``_avatars_feature_check`` for the 3D-avatar gate
+    (503 when avatars disabled), plus an AD-722-specific ``avatar_telemetry.enabled``
+    gate. Returns 404 when the agent is missing. Never returns 422 — malformed
+    persisted DSL becomes a degraded field with a 200 response (degraded_reasons).
+    """
+    _avatars_feature_check(runtime)
+
+    cfg = getattr(runtime, "config", None)
+    telemetry_cfg = getattr(cfg, "avatar_telemetry", None)
+    if telemetry_cfg is None or not telemetry_cfg.enabled:
+        raise HTTPException(status_code=503, detail="avatar_telemetry_disabled")
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    from probos.avatars.telemetry import build_telemetry_snapshot
+    snap = await build_telemetry_snapshot(agent_id, runtime)
+    return snap.to_dict()
+
+
 @router.post("/{agent_id}/chat")
 async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Send a direct message to a specific agent and get their response."""
@@ -641,6 +666,10 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
             )
     except Exception:
         logger.debug("AD-573: Working memory DM record failed", exc_info=True)
+
+    # AD-722: stamp the last-reply emission timestamp. Single source of truth.
+    if hasattr(agent, 'mark_reply_emitted'):
+        agent.mark_reply_emitted()
 
     response = {
         "response": response_text,

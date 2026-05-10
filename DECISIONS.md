@@ -1665,3 +1665,35 @@ The AD-720a dispatch's "zero new Python deps" rule was an aspirational goal that
 **Status:** SHIPPED. Issue [#552](https://github.com/seangalliher/ProbOS/issues/552).
 **Files:** `src/probos/types.py` (additive `LLMRequest.messages`), `src/probos/cognitive/llm_client.py` (one-line conditional in `_call_openai` request-build), `src/probos/cognitive/text_extractor.py` (new), `src/probos/cognitive/vision_dispatch.py` (new), `src/probos/attachments/filesystem_store.py` (new `mime_for` async method), `src/probos/routers/chat.py` (new conditional branch in main `chat` handler). Tests: `tests/test_ad720d_vision_pipethrough.py` (10 cases, all passing — image routing, txt/md/json/csv extraction, oversize truncation, vision-tier-unhealthy stub, PDF deferred-feature stub, zero-attachment regression guard, `cfg.enabled=False` short-circuit). Net Python suite: 13063 → 13072.
 
+
+
+### AD-722 — Agent-observable avatar telemetry v1 (read-side channel)
+
+**Date:** 2026-05-10
+**Status:** SHIPPED Wave 140. Issue [#545](https://github.com/seangalliher/ProbOS/issues/545).
+
+**Decision.** Inverts the existing one-way `runtime → avatar` pipe (AD-721 / AD-721b / AD-721d / AD-718d) by adding a read-side telemetry channel so an agent can observe its own current avatar state. Two surfaces: `CognitiveAgent.observe_self_avatar()` (in-process, returns `AvatarTelemetrySnapshot`) and `GET /api/agent/{id}/avatar-telemetry` (HTTP, for HXI consumption). Polled, not pushed. Read-only — zero mutations to TrustNetwork, Hebbian, Records, persisted state. No new deps (Python or JS).
+
+**Five design calls.**
+
+(a) **Read-only contract is non-negotiable in v1.** The first consumer (intent-vs-presentation divergence detector → trust update) is AD-722a, deferred. v1 is the channel; the consumer is its own AD with its own concurrency story. The single state mutation introduced (`CognitiveAgent.mark_reply_emitted()` — a one-line UNIX-time stamp) has exactly one call site (`routers/agents.py` chat handler), enforced by a static-grep test.
+
+(b) **Poll, not push.** UI polls every 2s; agent code calls `observe_self_avatar()` on demand. WebSocket-driven push is AD-722b (forcing function: 100+ requests per agent per hour at scale).
+
+(c) **Modulation rule table is duplicated TS↔Python in v1, byte-parity test enforces lockstep.** The TS source `ui/src/audio/voiceModulation.ts` is widely imported and a manifest-extraction is its own AD (AD-722-1). The Python test file-reads the TS source, regex-extracts every named constant, and asserts equality. Drift → red build.
+
+(d) **mouth_active is a known approximation.** Speech happens browser-side via Web Speech API; the backend has no authoritative "currently speaking" signal. v1 derives it from `(now - agent.last_reply_emitted_at) < cfg.avatar_telemetry.mouth_active_window_seconds` (default 3s). AD-722b's WebSocket channel makes this authoritative. Documented in three places: the snapshot dataclass docstring, the `<SelfImageTab>` top comment, and the module docstring.
+
+(e) **Prompt-context injection is feature-gated default-OFF.** The new INTEROCEPTION sensorium method `_build_avatar_self_observation` returns the empty string unless `cfg.avatar_telemetry.inject_into_agent_context is True`. Operator opt-in only — adding ~150 tokens to every reasoning cycle without consent is a behavioural regression. The cached snapshot lives on `self._last_self_avatar_snap` populated by `observe_self_avatar()` so the synchronous sensorium method does not need to spawn an event loop.
+
+**Tier-2 log-and-degrade everywhere.** Every failure path (no DSL, malformed DSL, no appearance profile, trust history < 2, no `get_history` method, no `bridge_alerts`, no voice profile, agent not found) returns the snapshot with the affected field set to `None` and a structured `degraded_reasons: tuple[str, ...]` populated. Single `logger.warning` per degraded field. The HTTP endpoint NEVER returns 422 for malformed persisted DSL — that's a degraded field, 200 response.
+
+**Verified-against-codebase corrections during the build.** `CrewProfile.voice`, NOT `CrewProfile.voice_profile` (drafter-prompt naming drift). `BridgeAlert.related_agent_id`, NOT `BridgeAlert.agent_id`. `AlertSeverity.{INFO,ADVISORY,ALERT}`, no `WARN`. Builder caught all three at first compile/test gate; no production code was written against the phantom names.
+
+**Forward markers (Captain to file as GH issues — Builder lacks token scope at Wave 140 commit time).** AD-722a (divergence detector → trust update), AD-722b (WebSocket push), AD-722c (telemetry history for analytics), AD-722d (auto-write to Ship's Records), AD-722e (visual self-perception via image rendering), AD-722-1 (modulation rule table → YAML manifest, single source of truth for TS + Python).
+
+**Files.** `src/probos/avatars/telemetry.py` (new — module docstring is the single source of truth for the rule table), `src/probos/config.py` (new `AvatarTelemetryConfig` Pydantic model + `SystemConfig.avatar_telemetry` field), `src/probos/cognitive/cognitive_agent.py` (new `mark_reply_emitted()` + `last_reply_emitted_at` property + `observe_self_avatar()` method + `_build_avatar_self_observation` sensorium method + `SENSORIUM_REGISTRY` entry), `src/probos/routers/agents.py` (new `GET /{agent_id}/avatar-telemetry` endpoint + single `mark_reply_emitted()` call site in chat handler), `ui/src/components/profile/SelfImageTab.tsx` (new — 5 stacked panels, stroke-only SVG, no emoji), `ui/src/components/profile/AgentProfilePanel.tsx` (tab union extension + visibility filter + render switch), `ui/src/audio/voiceModulation.ts` (one-line cross-reference comment), `ui/src/components/profile/avatarSignals.ts` (one-line cross-reference docstring). Tests: `tests/test_ad722_avatar_telemetry.py` (18 cases) + `ui/src/__tests__/SelfImageTab.test.tsx` (7 cases).
+
+**Net delta:** Python 13092 → 13110 (+18, modulo 4 pre-existing flakes in `test_callsign_routing` / `test_ad719_chat_fanout` unrelated to this AD). Vitest 550 → 557 (+7).
+
+**AD-numbering note:** highest pre-Wave-140 entry was AD-721i. AD-722 is the new top-level — first time the ceiling moves above AD-721i since Wave 134. No collisions.

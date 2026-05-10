@@ -4,6 +4,11 @@
  * unknown agents return all-zero signals (idle, no alert) rather than
  * throwing. Real agent telemetry shapes evolve; this helper keeps the
  * popout decoupled from the store schema.
+ *
+ * AD-722: src/probos/avatars/telemetry.py module docstring is the single
+ * source of truth for the (trust_delta, load, working_state, tier3_alert)
+ * rule table. v1 ships intentional UI/backend duplication; AD-722-1
+ * (manifest extraction) is the consolidation forward marker.
  */
 
 import type { Agent } from '../../store/types';

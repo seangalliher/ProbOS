@@ -133,6 +133,8 @@ class CognitiveAgent(BaseAgent):
         "_build_situation_awareness": (SensoriumLayer.EXTEROCEPTION, "WR activity, alerts, events, infra, subordinates"),
         "_build_active_game_context": (SensoriumLayer.EXTEROCEPTION, "Active game board state"),
         "_build_user_message": (SensoriumLayer.EXTEROCEPTION, "Primary prompt assembly (DM/WR paths)"),
+        "_build_avatar_self_observation": (SensoriumLayer.INTEROCEPTION,
+            "AD-722: agent's own avatar state — gated by avatar_telemetry.inject_into_agent_context"),
     }
 
     def __init__(self, **kwargs: Any) -> None:
@@ -178,6 +180,16 @@ class CognitiveAgent(BaseAgent):
 
         # AD-672: Per-agent concurrency management
         self._concurrency_manager: ConcurrencyManager | None = None
+
+        # AD-722: most-recent reply emit timestamp (UNIX seconds).
+        # Read via the public property `last_reply_emitted_at`.
+        # Stamped by `mark_reply_emitted()` from the chat handler at
+        # `routers/agents.py` (single call site — Demeter / SoT).
+        self._last_reply_emit_ts: float = 0.0
+        # AD-722: cache of most-recent self-avatar snapshot, populated by
+        # `observe_self_avatar()` so the synchronous sensorium method can
+        # consume it without spawning an event loop.
+        self._last_self_avatar_snap: Any = None
 
         # AD-594: Crew Consultation Protocol
         self._consultation_protocol: Any = None
@@ -2579,6 +2591,78 @@ class CognitiveAgent(BaseAgent):
     async def report(self, result: dict) -> dict:
         """Package result as a dict (compatible with BaseAgent contract)."""
         return result
+
+    # ------------------------------------------------------------------
+    # AD-722: agent-observable avatar telemetry (read-side)
+    # ------------------------------------------------------------------
+
+    def mark_reply_emitted(self) -> None:
+        """AD-722: stamp the last-reply emission time.
+
+        Called from the chat handler at ``routers/agents.py`` — exactly one
+        call site (single source of truth, enforced by a static-grep test).
+        """
+        self._last_reply_emit_ts = time.time()
+
+    @property
+    def last_reply_emitted_at(self) -> float:
+        """AD-722: UNIX seconds of last reply emission (0.0 if never)."""
+        return self._last_reply_emit_ts
+
+    async def observe_self_avatar(self) -> "AvatarTelemetrySnapshot":  # type: ignore[name-defined]
+        """AD-722: read-only snapshot of this agent's avatar state.
+
+        Pure delegation to ``probos.avatars.telemetry.build_telemetry_snapshot``.
+        Side-effect: caches the snapshot on ``self._last_self_avatar_snap``
+        so the synchronous sensorium method can consume it without spawning
+        an event loop.
+        """
+        from probos.avatars.telemetry import build_telemetry_snapshot
+        snap = await build_telemetry_snapshot(self.id, self._runtime)
+        self._last_self_avatar_snap = snap
+        return snap
+
+    def _build_avatar_self_observation(self, observation: dict) -> str:
+        """AD-722 (feature-gated): agent's own avatar state as INTEROCEPTION.
+
+        Returns empty string when ``avatar_telemetry.inject_into_agent_context``
+        is False (default) OR when no cached snapshot is available. Tier-2
+        degrade — never raises into the prompt-assembly path.
+        """
+        cfg = getattr(self._runtime, "config", None) if self._runtime else None
+        tcfg = getattr(cfg, "avatar_telemetry", None)
+        if not getattr(tcfg, "inject_into_agent_context", False):
+            return ""
+        try:
+            snap = self._last_self_avatar_snap
+            if snap is None:
+                return ""
+            mod = snap.applied_modulation
+            dsl = snap.dsl_summary
+            mod_line = (
+                f"  applied_modulation: rate={mod.rate_factor:.2f}, "
+                f"pitch={mod.pitch_factor:.2f}\n"
+                if mod is not None else "  applied_modulation: unavailable\n"
+            )
+            dsl_line = (
+                f"  dsl: {dsl.body_type} {dsl.hair_style} {dsl.outfit_style} "
+                f"(color {dsl.primary_color})\n"
+                if dsl is not None else "  dsl: unavailable\n"
+            )
+            return (
+                "Your current avatar state:\n"
+                f"  expression_resting: {snap.expression_resting}\n"
+                f"  working_state: {snap.current_signals.working_state}\n"
+                + mod_line
+                + f"  mouth_active: {snap.mouth_active}\n"
+                + dsl_line
+            )
+        except Exception:
+            logger.warning(
+                "AD-722 self-observation injection failed; returning empty",
+                exc_info=True,
+            )
+            return ""
 
     # ------------------------------------------------------------------
     # AD-721d: agent-authored appearance proposal

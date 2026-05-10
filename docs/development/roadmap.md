@@ -375,10 +375,13 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 
 | AD | Title | Issue | Priority |
 |----|-------|-------|----------|
-| AD-722 | Agent-observable avatar telemetry feedback loop (UI → agent state channel) — **novel; no public prior art** | [#545](https://github.com/seangalliher/ProbOS/issues/545) | 3 |
-| AD-722a | Intent-vs-presentation divergence detector (intended tone vs rendered weights → trust/Hebbian) — **unprecedented in OSS LLM-avatar space** | (filed when AD-722 lands) | 4 |
-| AD-722b | Push channel (WebSocket) if poll-based v1 proves insufficient | (filed when AD-722 lands) | 4 |
-| AD-722c | Avatar telemetry history for analytics | (filed when AD-722 lands) | 4 |
+| AD-722 | Agent-observable avatar telemetry feedback loop (UI → agent state channel) — **SHIPPED Wave 140** (read-side v1; observe_self_avatar() + GET /api/agent/{id}/avatar-telemetry + <SelfImageTab>; feature-gated prompt injection default OFF) | [#545](https://github.com/seangalliher/ProbOS/issues/545) | 3 |
+| AD-722a | Intent-vs-presentation divergence detector (intended tone vs rendered weights → trust/Hebbian) — **unprecedented in OSS LLM-avatar space** | (forward marker, filed Wave 140) | 4 |
+| AD-722b | Push channel (WebSocket) replacing 2s poll | (forward marker, filed Wave 140) | 4 |
+| AD-722c | Avatar telemetry history for analytics | (forward marker, filed Wave 140) | 4 |
+| AD-722d | Auto-write telemetry summaries to Ship's Records (RecordsStore) | (forward marker, filed Wave 140) | 4 |
+| AD-722e | Visual self-perception via image rendering (agent compares rendered avatar vs intent) | (forward marker, filed Wave 140) | 4 |
+| AD-722-1 | Modulation rule table → YAML/JSON manifest (TS + Python single source of truth; closes byte-parity duplication) | (forward marker, filed Wave 140) | 4 |
 | AD-723 | Ship as persistent shared virtual space — co-presence protocol, agent-position state, multi-agent extension of AD-722 telemetry (extension point) | (filed after AD-722) | 4 |
 | AD-723-C *(Commercial)* | Polished multi-user 3D ship-interior UI, world layout, room semantics, meeting surfaces, operator controls — builds on AD-723 protocol | (commercial overlay) | — |
 | AD-724 | Away-mission protocol — agent embodiment in external virtual worlds (VRChat / open metaverse), episodic memory of places | (filed after AD-723) | 4 |

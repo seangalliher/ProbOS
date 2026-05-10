@@ -1,16 +1,18 @@
 # ProbOS Progress
 
-**Status (2026-05-09).** Open OSS issues: 3 (AD-721b-1/-2/-3 forward markers
-filed by Wave 138). Most recent shipped wave: 138 (AD-721b phoneme-weighted
-5-vowel lip-sync driver across all face meshes; heuristic track v1; multi-mesh
-BF de4107b preserved). AD-697 + AD-698 establish the commercial-overlay seam
+**Status (2026-05-10).** Open OSS issues: 3 (AD-721b-1/-2/-3 forward markers
+filed by Wave 138). Most recent shipped wave: 140 (AD-722 v1 agent-observable
+avatar telemetry — read-side channel; CognitiveAgent.observe_self_avatar() +
+GET /api/agent/{id}/avatar-telemetry + <SelfImageTab>; feature-gated prompt
+injection default OFF; modulation rule table TS↔Python byte-parity test).
+AD-697 + AD-698 establish the commercial-overlay seam
 (`pip install -e ../<commercial-package>` → overlay active; uninstall →
 back to OSS).
 
 **Authoritative state.**
-- `prompts/wave-plan.yaml` — wave roster (current wave: 138 done; next slot is 139).
-- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-721i).
-- `tests/` — 13057 pytest at HEAD (5 pre-existing flakes outside this wave) + 545 vitest; gate runs `-n 16 --dist=loadfile`.
+- `prompts/wave-plan.yaml` — wave roster (current wave: 140 done; next slot is 141).
+- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-722).
+- `tests/` — 13110 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 557 vitest; gate runs `-n 16 --dist=loadfile`.
 
 **Recent eras (archived):**
 - [Era I — Genesis](progress-era-1-genesis.md)
