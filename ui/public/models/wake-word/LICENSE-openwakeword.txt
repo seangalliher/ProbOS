@@ -1,0 +1,10 @@
+openWakeWord — https://github.com/dscripka/openWakeWord
+Author: David Scripka
+License: Apache License, Version 2.0
+
+The full Apache-2.0 license text is reproduced at the project root in
+THIRD_PARTY_LICENSES.md and at https://www.apache.org/licenses/LICENSE-2.0.
+
+ProbOS uses openWakeWord stock ONNX model files unmodified. Operators
+install the model files locally per ui/public/models/wake-word/README.md;
+the model files themselves are NOT bundled in this OSS repository.

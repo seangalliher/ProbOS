@@ -325,6 +325,9 @@ export interface HXIState {
   // Audio state
   soundEnabled: boolean;
   voiceEnabled: boolean;
+  // AD-705: always-on wake-word voice loop opt-in. Default OFF — the
+  // Captain explicitly opts in. Persisted in localStorage.
+  wakeWordEnabled: boolean;
 
   // Atmosphere preferences (AD-391)
   scanLinesEnabled: boolean;
@@ -404,6 +407,8 @@ export interface HXIState {
   consumePendingChar: () => string;
   setSoundEnabled: (v: boolean) => void;
   setVoiceEnabled: (v: boolean) => void;
+  // AD-705: opt-in toggle for the always-on wake-word voice loop.
+  setWakeWordEnabled: (v: boolean) => void;
   setScanLinesEnabled: (v: boolean) => void;
   setChromaticAberrationEnabled: (v: boolean) => void;
   setDataRainEnabled: (v: boolean) => void;
@@ -595,6 +600,14 @@ export const useStore = create<HXIState>((set, get) => ({
   pendingChar: '',
   soundEnabled: false,
   voiceEnabled: false,
+  // AD-705: hydrate wake-word toggle from localStorage; default OFF.
+  wakeWordEnabled: (() => {
+    try {
+      return localStorage.getItem('hxi_wake_word_enabled') === '1';
+    } catch {
+      return false;
+    }
+  })(),
   ...(() => {
     try {
       const stored = localStorage.getItem('hxi_atmosphere_prefs');
@@ -1140,6 +1153,16 @@ export const useStore = create<HXIState>((set, get) => ({
   setVoiceEnabled: (v) => {
     set({ voiceEnabled: v });
     localStorage.setItem('hxi_voice_enabled', v ? '1' : '0');
+  },
+  setWakeWordEnabled: (v) => {
+    set({ wakeWordEnabled: v });
+    try {
+      localStorage.setItem('hxi_wake_word_enabled', v ? '1' : '0');
+    } catch {
+      // Tier-2 log-and-degrade: localStorage may be unavailable in
+      // private-browsing or sandboxed contexts; the in-memory toggle
+      // still works for the current session.
+    }
   },
   setScanLinesEnabled: (v) => {
     set({ scanLinesEnabled: v });

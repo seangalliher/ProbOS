@@ -5264,3 +5264,24 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 - AD-718d-1 - modulation activity indicator (E5 deferred from this prompt). Filed as the wave's planned forward marker per dispatch §8.
 - AD-722 ([#545](https://github.com/seangalliher/ProbOS/issues/545)) - selector contract is unchanged; AD-718d benefits silently when AD-722 deepens `AgentSignals`.
 
+
+
+### AD-705 (reframed) — Always-on wake-word voice loop v1 (Wave 137 commit N)
+
+**Captain ruling 2026-05-09 (reframe).** AD-705 is reframed from "voice-stack backends (Whisper/Coqui/Piper/Porcupine)" to **the always-on wake-word voice loop**. Edge Online Natural TTS stays as v1 TTS — the killer feature is fluid hands-free conversation with a wake word. Backend STT/TTS swaps are firewalled OFF and re-filed as forward markers AD-705a (offline STT via Whisper), AD-705b (offline TTS via Coqui/Piper), AD-705c (custom wake-word training), AD-705d (mic-permission UX polish).
+
+**Substrate.** Browser-side state machine in `ui/src/audio/wakeWord.ts` with public surface `startWakeWordLoop`, `stopWakeWordLoop`, `isWakeWordActive`, `getWakeWordState`, `onWakeWordState`. State machine: `off → armed → capturing → submit → armed`, plus `fallback-armed` / `fallback-capturing` mirrors driven by Tier-2 log-and-degrade when ONNX cannot load. Pure router `routeWakeTranscript` lives in `ui/src/audio/wakeWord.router.ts` with structural-typed agent shape so AD-718c per-agent triggers register without a router change.
+
+**Privacy boundary.** Pre-wake audio is consumed in-browser by ONNX (when present) or browser SpeechRecognition (fallback) and never leaves the browser before a wake fires. Documented in the AD-705 prompt §1; Captain reviews on PR.
+
+**Indicator.** `ui/src/components/WakeWordIndicator.tsx` exposes three visual states (off / armed / capturing) plus a fallback-mode label "Voice unavailable: <reason>" when ONNX runtime / model / mic permission / SpeechRecognition is missing. Inline SVG, stroke-only, no emoji (HXI Principle #3). Pulse rate encodes capture intensity (HXI Principle #4).
+
+**Toggle + wiring.** `wakeWordEnabled` flag added to `useStore` (default OFF, persisted in `localStorage` under `hxi_wake_word_enabled`). DecisionSurface renders a stroke-SVG concentric-arc icon next to the existing voice toggle. IntentSurface owns a single `useEffect` keyed on the toggle that mounts/unmounts the loop and routes transcripts back through the existing `/api/chat` path (system surface = bare text; agent surface = prepended `@callsign`). Escape during capture cancels the utterance without submitting.
+
+**Lazy-load.** `onnxruntime-web` is added to `optionalDependencies` (deviation from D1 strict text — see Builder report). Dynamic import via indirect string variable + `/* @vite-ignore */` so Vite/Vitest never statically resolves the package. Test #21 reads the module source and asserts no top-level static import. Hard-stop #10 (eager bundle load) verified.
+
+**License posture.** New deps: `onnxruntime-web` (MIT, optional), openWakeWord stock model (Apache-2.0, operator-installed), Silero VAD (MIT, operator-installed). All clean for OSS Apache-2.0. Picovoice Porcupine REJECTED (AccessKey + non-Apache free tier). License attributions: `THIRD_PARTY_LICENSES.md` (top-level, NEW), `ui/public/models/wake-word/LICENSE-openwakeword.txt`, `ui/public/models/vad/LICENSE-silero.txt`. Model files are NOT bundled — README files document operator installation.
+
+**Tests.** 23 new Vitest cases across `wakeWord.stateMachine`, `wakeWord.router`, `wakeWord.bargeIn`, `wakeWord.fallback`, `wakeWord.escape`, `WakeWordIndicator`, `DecisionSurface.wakeWordToggle`, `wakeWord.lazyLoad`. UI Vitest: 516 passed (delta +23 vs commit N-1). All hard-stop conditions verified: no Porcupine, no eager ONNX import, indicator three-state non-negotiable, default-OFF toggle, no TTS path changes, license posture clean.
+
+**Issue:** [#481](https://github.com/seangalliher/ProbOS/issues/481) (root AD-705) closed via merge.

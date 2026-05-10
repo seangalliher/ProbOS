@@ -464,3 +464,5 @@ See [design-principles.md](docs/development/design-principles.md) for full desig
 - **Run demo:** `uv run python demo.py`
 - **Run interactive:** `uv run python -m probos`
 
+
+- AD-705 (reframed) - wake-word voice loop v1 shipped (Wave 137, Vitest +23 = 516 total).

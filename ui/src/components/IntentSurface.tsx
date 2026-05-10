@@ -7,6 +7,13 @@ import { useStore } from '../store/useStore';
 import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectProposalView, Agent, ChatAttachment } from '../store/types';
 import { speakResponse, stripMarkdownForSpeech } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
+import {
+  startWakeWordLoop,
+  stopWakeWordLoop,
+  getWakeWordState,
+  _cancelCurrentCapture,
+} from '../audio/wakeWord';
+import { WakeWordIndicator } from './WakeWordIndicator';
 import { soundEngine } from '../audio/soundEngine';
 import { BridgePanel } from './BridgePanel';
 import { ViewSwitcher } from './ViewSwitcher';
@@ -67,6 +74,8 @@ export function IntentSurface() {
   const pendingChar = useStore((s) => s.pendingChar);
   const consumePendingChar = useStore((s) => s.consumePendingChar);
   const voiceEnabled = useStore((s) => s.voiceEnabled);
+  // AD-705: opt-in wake-word loop. Single-owner lifecycle below.
+  const wakeWordEnabled = useStore((s) => s.wakeWordEnabled);
   const transporterProgress = useStore((s) => s.transporterProgress);
   const buildQueue = useStore((s) => s.buildQueue);
   const bridgeOpen = useStore((s) => s.bridgeOpen);
@@ -150,6 +159,38 @@ export function IntentSurface() {
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, [agentTasks, notifications, active]);
+
+  /* ── AD-705: wake-word loop single-owner mount.
+     Off by default; Captain explicitly opts in via DecisionSurface toggle.
+     The loop posts routed transcripts back through the standard chat path. */
+  useEffect(() => {
+    if (!wakeWordEnabled) return;
+    let cancelled = false;
+    const onWake = (routed: { surface: 'system' | 'agent'; agentCallsign?: string; cleanedText: string }): void => {
+      if (cancelled) return;
+      const text = (routed.cleanedText || '').trim();
+      if (!text) return;
+      // For agent-routed wakes prepend @callsign so the existing chat path
+      // dispatches to that agent (mirrors the manual `@`-mention pattern).
+      const finalText =
+        routed.surface === 'agent' && routed.agentCallsign
+          ? `@${routed.agentCallsign} ${text}`
+          : text;
+      setActive(true);
+      setInput(finalText);
+      // Submit on the next tick so React commits the input before the form
+      // reads it (mirrors the click-to-talk pattern below).
+      setTimeout(() => {
+        const form = inputRef.current?.closest('form');
+        if (form) form.requestSubmit();
+      }, 50);
+    };
+    void startWakeWordLoop(onWake);
+    return () => {
+      cancelled = true;
+      stopWakeWordLoop();
+    };
+  }, [wakeWordEnabled]);
 
   /* ── DAG progress text ── */
   const dagProgress = activeDag && activeDag.length > 0
@@ -244,6 +285,14 @@ export function IntentSurface() {
   /* ── Escape key ── */
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Escape') {
+      // AD-705 D8: while wake-word loop is capturing, Escape cancels the
+      // utterance without submitting (returns to armed). The picker / input
+      // close paths below still apply when the loop is not capturing.
+      const wState = getWakeWordState();
+      if (wState === 'capturing' || wState === 'fallback-capturing') {
+        _cancelCurrentCapture();
+        return;
+      }
       // AD-719: Esc on the input also closes the @-picker (a no-op for v1
       // keyboard nav — full ↑/↓/Tab/Esc state machine is AD-719c).
       if (pickerOpen) {
@@ -528,6 +577,9 @@ export function IntentSurface() {
 
   return (
     <>
+      {/* AD-705: wake-word listening indicator. Renders only when the loop
+          is active or in a fallback state with a reason. */}
+      <WakeWordIndicator />
       {/* ── Bridge toggle (AD-325) ── */}
       <button
         onClick={() => useStore.setState((s) => ({ bridgeOpen: !s.bridgeOpen }))}

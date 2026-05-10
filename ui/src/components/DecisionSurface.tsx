@@ -18,6 +18,9 @@ export function DecisionSurface() {
   const setSoundEnabled = useStore((s) => s.setSoundEnabled);
   const voiceEnabled = useStore((s) => s.voiceEnabled);
   const setVoiceEnabled = useStore((s) => s.setVoiceEnabled);
+  // AD-705: always-on wake-word voice loop opt-in.
+  const wakeWordEnabled = useStore((s) => s.wakeWordEnabled);
+  const setWakeWordEnabled = useStore((s) => s.setWakeWordEnabled);
 
   const [showVolume, setShowVolume] = useState(false);
   const [volume, setVolume] = useState(soundEngine.volume);
@@ -171,6 +174,35 @@ export function DecisionSurface() {
             <line x1="4" y1="5" x2="4" y2="11" />
             <line x1="8" y1="3" x2="8" y2="13" />
             <line x1="12" y1="6" x2="12" y2="10" />
+          </svg>
+        </button>
+
+        {/* AD-705: wake-word loop toggle. Default OFF — Captain explicitly
+            opts in. Stroke-only inline SVG; no emoji (HXI Principle #3). */}
+        <button
+          data-testid="wake-word-toggle"
+          onClick={() => setWakeWordEnabled(!wakeWordEnabled)}
+          style={btnStyle(wakeWordEnabled)}
+          title={wakeWordEnabled ? 'Disable wake-word listening' : 'Enable wake-word listening ("Computer\u2026")'}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke={wakeWordEnabled ? '#ffcc66' : '#8888aa'}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            style={{
+              filter: wakeWordEnabled
+                ? 'drop-shadow(0 0 4px #ffcc66) drop-shadow(0 0 8px rgba(255, 204, 102, 0.5))'
+                : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
+            }}
+          >
+            {/* Concentric arcs evoke a radio wave / wake signal. */}
+            <circle cx="8" cy="8" r="2" />
+            <path d="M4 8 a4 4 0 0 1 8 0" />
+            <path d="M2 8 a6 6 0 0 1 12 0" strokeOpacity="0.6" />
           </svg>
         </button>
 
