@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from probos.api_models import (
@@ -416,6 +416,104 @@ def _get_attachment_store(runtime: Any) -> Any:
     return store
 
 
+async def _validate_and_store_attachment(
+    runtime: Any,
+    blob: bytes,
+    declared_mime: str,
+    declared_filename: str | None,
+    declared_hash_or_None: str | None,
+) -> tuple[bool, dict[str, Any]]:
+    """AD-720a: shared defense-in-depth chain for both POST endpoints.
+
+    Returns ``(True, response_payload)`` on success, or
+    ``(False, {"status_code": int, "body": {...}})`` on rejection.
+
+    Both the JSON+base64 path (``upload_chat_attachment``) and the multipart
+    path (``upload_chat_attachment_multipart``) call this helper. The chain
+    is the single source of truth for the attachment defense-in-depth gate.
+    """
+    import hashlib
+
+    from probos.attachments.mime import validate_attachment_bytes
+
+    cfg = runtime.config.attachments
+
+    # 1. Feature gate.
+    if not cfg.enabled:
+        return (False, {"status_code": 503, "body": {"error": "attachments_disabled"}})
+
+    # 2. MIME allowlist.
+    if declared_mime not in cfg.allowed_mime_types:
+        return (
+            False,
+            {
+                "status_code": 415,
+                "body": {"error": "mime_not_allowed", "mime": declared_mime},
+            },
+        )
+
+    # 3. Size cap.
+    if len(blob) > cfg.max_attachment_bytes:
+        return (
+            False,
+            {
+                "status_code": 413,
+                "body": {
+                    "error": "too_large",
+                    "size": len(blob),
+                    "max": cfg.max_attachment_bytes,
+                },
+            },
+        )
+
+    # 4. sha256 — compute once, optionally cross-check the client-supplied hash.
+    actual_hash = hashlib.sha256(blob).hexdigest()
+    if declared_hash_or_None is not None:
+        if actual_hash != declared_hash_or_None.lower():
+            return (False, {"status_code": 400, "body": {"error": "hash_mismatch"}})
+
+    # 5. Magic-byte + parse-attempt + extension check.
+    ok, sniffed_or_reason = validate_attachment_bytes(blob, declared_mime, declared_filename)
+    if not ok:
+        logger.warning(
+            "AD-720a attachment rejected at validator: declared=%s filename=%s reason=%s size=%d",
+            declared_mime, declared_filename, sniffed_or_reason, len(blob),
+        )
+        return (
+            False,
+            {
+                "status_code": 415,
+                "body": {
+                    "error": "magic_mismatch",
+                    "declared": declared_mime,
+                    "sniffed": sniffed_or_reason,
+                },
+            },
+        )
+
+    # 6. Idempotent write — propagate path-traversal / malformed-hash as 400.
+    store = _get_attachment_store(runtime)
+    try:
+        await store.write(actual_hash, blob, declared_mime)
+    except ValueError as e:
+        logger.error(
+            "AD-720a attachment write rejected (security tier): %s: %s",
+            type(e).__name__, e,
+        )
+        return (False, {"status_code": 400, "body": {"error": "invalid_attachment"}})
+
+    return (
+        True,
+        {
+            "attachment_id": actual_hash,
+            "url": f"/api/chat/attachments/{actual_hash}",
+            "mime": declared_mime,
+            "size_bytes": len(blob),
+            "sha256": actual_hash,
+        },
+    )
+
+
 @router.post("/chat/attachments")
 async def upload_chat_attachment(
     req: Request,
@@ -423,30 +521,15 @@ async def upload_chat_attachment(
 ) -> dict[str, Any]:
     """AD-720: image-paste upload endpoint. JSON body, base64-encoded blob.
 
-    Defense-in-depth (in order — fail-fast with structured error JSON):
-      1. attachments enabled
-      2. MIME allowlist
-      3. base64 decode
-      4. post-decode size cap
-      5. sha256(decoded) == declared content_hash
-      6. magic-byte sniff matches declared MIME
-      7. idempotent write through AttachmentStore
+    Defense-in-depth chain delegated to ``_validate_and_store_attachment``
+    (AD-720a, Wave 139). Behaviour is bit-for-bit equivalent to the pre-AD-720a
+    inline implementation; the existing AD-720 paste tests are the regression
+    guard.
     """
     import base64
     import binascii
-    import hashlib
-
-    from fastapi.responses import JSONResponse
 
     from probos.api_models import AttachmentUploadRequest
-    from probos.attachments.mime import validate_image_bytes
-
-    cfg = runtime.config.attachments
-    if not cfg.enabled:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "attachments_disabled"},
-        )
 
     payload = await req.json()
     try:
@@ -456,74 +539,51 @@ async def upload_chat_attachment(
             "AD-720 attachment upload rejected (malformed body): %s: %s",
             type(e).__name__, e,
         )
-        return JSONResponse(
-            status_code=400,
-            content={"error": "invalid_body"},
-        )
-
-    if body.mime not in cfg.allowed_mime_types:
-        return JSONResponse(
-            status_code=415,
-            content={"error": "mime_not_allowed", "mime": body.mime},
-        )
+        return JSONResponse(status_code=400, content={"error": "invalid_body"})
 
     try:
         decoded = base64.b64decode(body.blob_b64, validate=True)
     except (binascii.Error, ValueError):
-        return JSONResponse(
-            status_code=400,
-            content={"error": "invalid_base64"},
-        )
+        return JSONResponse(status_code=400, content={"error": "invalid_base64"})
 
-    if len(decoded) > cfg.max_attachment_bytes:
-        return JSONResponse(
-            status_code=413,
-            content={
-                "error": "too_large",
-                "size": len(decoded),
-                "max": cfg.max_attachment_bytes,
-            },
-        )
-
-    actual_hash = hashlib.sha256(decoded).hexdigest()
-    if actual_hash != body.content_hash.lower():
-        return JSONResponse(
-            status_code=400,
-            content={"error": "hash_mismatch"},
-        )
-
-    ok, sniffed = validate_image_bytes(decoded, body.mime)
+    ok, result = await _validate_and_store_attachment(
+        runtime,
+        decoded,
+        body.mime,
+        declared_filename=None,
+        declared_hash_or_None=body.content_hash,
+    )
     if not ok:
-        return JSONResponse(
-            status_code=415,
-            content={
-                "error": "magic_mismatch",
-                "declared": body.mime,
-                "sniffed": sniffed,
-            },
-        )
+        return JSONResponse(status_code=result["status_code"], content=result["body"])
+    return result
 
-    store = _get_attachment_store(runtime)
-    try:
-        await store.write(actual_hash, decoded, body.mime)
-    except ValueError as e:
-        # Path traversal / malformed hash — propagate (security tier).
-        logger.error(
-            "AD-720 attachment write rejected: %s: %s",
-            type(e).__name__, e,
-        )
-        return JSONResponse(
-            status_code=400,
-            content={"error": "invalid_attachment"},
-        )
 
-    return {
-        "attachment_id": actual_hash,
-        "url": f"/api/chat/attachments/{actual_hash}",
-        "mime": body.mime,
-        "size_bytes": len(decoded),
-        "sha256": actual_hash,
-    }
+@router.post("/chat/attachments/multipart")
+async def upload_chat_attachment_multipart(
+    file: UploadFile = File(...),
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """AD-720a (Wave 139): multipart upload endpoint.
+
+    Reads bytes once via ``await file.read()``. Server computes sha256 — there
+    is no client-supplied content_hash on this endpoint. Filename and MIME come
+    from the FastAPI ``UploadFile`` (set by the multipart parser). Calls the
+    same shared ``_validate_and_store_attachment`` helper as the JSON path.
+    """
+    declared_mime = file.content_type or "application/octet-stream"
+    declared_filename = file.filename
+    blob = await file.read()
+
+    ok, result = await _validate_and_store_attachment(
+        runtime,
+        blob,
+        declared_mime,
+        declared_filename=declared_filename,
+        declared_hash_or_None=None,
+    )
+    if not ok:
+        return JSONResponse(status_code=result["status_code"], content=result["body"])
+    return result
 
 
 @router.get("/chat/attachments/{content_hash}")
@@ -547,13 +607,11 @@ async def fetch_chat_attachment(
     if not await store.exists(content_hash):
         raise HTTPException(status_code=404, detail="attachment_not_found")
     path = await store.get_path(content_hash)
-    # MIME inferred from extension; the upload validator ensured the
-    # extension matches the magic bytes.
-    ext = path.suffix.lstrip(".").lower()
-    mime = {
-        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "webp": "image/webp", "gif": "image/gif",
-    }.get(ext, "application/octet-stream")
+    # AD-720a: MIME inferred via the ext_to_mime helper (single source of truth
+    # backed by ``_MIME_TO_EXT``). The upload validator ensured the extension
+    # matches the magic bytes.
+    from probos.attachments.filesystem_store import ext_to_mime
+    mime = ext_to_mime(path.suffix)
     return FileResponse(path, media_type=mime)
 
 

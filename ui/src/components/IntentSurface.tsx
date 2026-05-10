@@ -63,6 +63,9 @@ export function IntentSurface() {
   // AD-720: image-paste attachments pending for the next send.
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [paperclipTooltipOpen, setPaperclipTooltipOpen] = useState(false);
+  // AD-720a (Wave 139): file-picker + drag-drop state.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const chatHistory = useStore((s) => s.chatHistory);
   const activeDag = useStore((s) => s.activeDag);
@@ -411,6 +414,14 @@ export function IntentSurface() {
   /* ── AD-720: image paste from clipboard ── */
   const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // mirrors server default
 
+  /* AD-720a (Wave 139): single source of truth for the upload allow-list.
+     The string is reused as the <input type="file"> accept attribute. */
+  const ALLOWED_ATTACHMENT_MIMES = [
+    'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+    'application/pdf', 'text/plain', 'text/markdown',
+    'application/json', 'text/csv',
+  ] as const;
+
   async function bufferToHexSha256(buf: ArrayBuffer): Promise<string> {
     const digest = await crypto.subtle.digest('SHA-256', buf);
     const bytes = new Uint8Array(digest);
@@ -469,6 +480,73 @@ export function IntentSurface() {
 
   function removePendingAttachment(attachmentId: string) {
     setPendingAttachments((prev) => prev.filter((a) => a.attachment_id !== attachmentId));
+  }
+
+  /* ── AD-720a (Wave 139): file upload via multipart + drag-drop ── */
+  async function uploadAttachmentMultipart(file: File): Promise<ChatAttachment | null> {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      addChatMessage('system', `(Attachment too large: ${file.size} bytes; max ${MAX_ATTACHMENT_BYTES})`);
+      return null;
+    }
+    try {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const res = await fetch('/api/chat/attachments/multipart', { method: 'POST', body: fd });
+      if (!res.ok) {
+        let reason = 'unknown';
+        try {
+          const errBody = await res.json();
+          reason = errBody?.error ?? reason;
+        } catch { /* log-and-degrade */ }
+        addChatMessage('system', `(Attachment upload failed: ${reason})`);
+        return null;
+      }
+      const data = await res.json() as ChatAttachment;
+      // Preserve the original filename so the preview strip can render it
+      // (the server response doesn't echo the filename — we keep what the
+      // user actually picked / dropped).
+      const enriched: ChatAttachment = { ...data, filename: file.name };
+      setPendingAttachments((prev) => [...prev, enriched]);
+      return enriched;
+    } catch (err) {
+      addChatMessage('system', `(Attachment upload error: ${(err as Error).message})`);
+      return null;
+    }
+  }
+
+  async function onFilePickerChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    for (const file of files) {
+      await uploadAttachmentMultipart(file);
+    }
+    // Reset so picking the same file twice in a row still fires onChange.
+    if (event.target) event.target.value = '';
+  }
+
+  function onComposerDragEnter(event: React.DragEvent<HTMLFormElement>) {
+    if (event.dataTransfer && Array.from(event.dataTransfer.types ?? []).includes('Files')) {
+      event.preventDefault();
+      setIsDragOver(true);
+    }
+  }
+  function onComposerDragOver(event: React.DragEvent<HTMLFormElement>) {
+    if (event.dataTransfer && Array.from(event.dataTransfer.types ?? []).includes('Files')) {
+      event.preventDefault();
+    }
+  }
+  function onComposerDragLeave(event: React.DragEvent<HTMLFormElement>) {
+    // Only clear on leaving the composer surface itself, not on entering children.
+    if (event.currentTarget === event.target) {
+      setIsDragOver(false);
+    }
+  }
+  async function onComposerDrop(event: React.DragEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsDragOver(false);
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    for (const file of files) {
+      await uploadAttachmentMultipart(file);
+    }
   }
 
   /* ── feedback helper with visual confirmation ── */
@@ -1759,6 +1837,10 @@ export function IntentSurface() {
             {/* ── Input + Reset ── */}
             <form
               onSubmit={handleSubmit}
+              onDragEnter={onComposerDragEnter}
+              onDragOver={onComposerDragOver}
+              onDragLeave={onComposerDragLeave}
+              onDrop={onComposerDrop}
               style={{
                 display: 'flex', alignItems: 'center',
                 padding: '8px 16px',
@@ -1853,11 +1935,29 @@ export function IntentSurface() {
                       background: 'rgba(10, 10, 18, 0.96)',
                       padding: 2,
                     }}>
-                      <img
-                        src={att.url}
-                        alt={att.attachment_id.slice(0, 8)}
-                        style={{ maxWidth: 128, maxHeight: 128, display: 'block', borderRadius: 2 }}
-                      />
+                      {att.mime.startsWith('image/') ? (
+                        <img
+                          src={att.url}
+                          alt={att.attachment_id.slice(0, 8)}
+                          style={{ maxWidth: 128, maxHeight: 128, display: 'block', borderRadius: 2 }}
+                        />
+                      ) : (
+                        <div style={{
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          padding: '6px 10px',
+                          minWidth: 80, maxWidth: 180,
+                          color: '#e0dcd4', fontSize: 12,
+                          fontFamily: "'Inter', sans-serif",
+                        }}>
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#f0b060" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 2h7l3 3v9a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" />
+                            <path d="M10 2v3h3" />
+                          </svg>
+                          <span style={{
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>{att.filename ?? att.attachment_id.slice(0, 8)}</span>
+                        </div>
+                      )}
                       <button
                         type="button"
                         data-testid="attachment-remove"
@@ -1905,21 +2005,31 @@ export function IntentSurface() {
                 }}
               />
               {/* Mic button for voice input */}
-              {/* AD-720: paperclip placeholder (image paste works via Ctrl+V; AD-720a will wire upload) */}
+              {/* AD-720a (Wave 139): file picker + drag-drop overlay (replaces tooltip-only paperclip).
+                  Hidden <input type="file"> is opened by the paperclip button. */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ALLOWED_ATTACHMENT_MIMES.join(',')}
+                onChange={onFilePickerChange}
+                style={{ display: 'none' }}
+                data-testid="attachment-file-input"
+              />
               <button
                 type="button"
                 data-testid="attachment-paperclip"
-                aria-label="attach"
+                aria-label="attach file"
                 onMouseEnter={() => setPaperclipTooltipOpen(true)}
                 onMouseLeave={() => setPaperclipTooltipOpen(false)}
-                onClick={(e) => { e.preventDefault(); setPaperclipTooltipOpen((v) => !v); }}
-                title="Paste an image to attach (more coming soon)"
+                onClick={(e) => { e.preventDefault(); fileInputRef.current?.click(); }}
+                title="Attach a file (or drag-drop)"
                 style={{
                   position: 'relative',
                   background: 'transparent',
                   border: 'none',
-                  color: '#666680',
-                  cursor: 'default',
+                  color: '#f0b060',
+                  cursor: 'pointer',
                   padding: '4px',
                   borderRadius: 4,
                   flexShrink: 0,
@@ -1934,9 +2044,33 @@ export function IntentSurface() {
                     background: 'rgba(10,10,18,0.96)', border: '1px solid rgba(240,176,96,0.25)',
                     borderRadius: 4, padding: '4px 8px', fontSize: 11, color: '#e0dcd4',
                     whiteSpace: 'nowrap',
-                  }}>Paste an image to attach (more coming soon)</span>
+                  }}>Attach a file (or drag-drop)</span>
                 )}
               </button>
+              {/* AD-720a: drag-drop overlay covering the composer. Stroke-SVG only — no emoji. */}
+              {isDragOver && (
+                <div data-testid="drag-drop-overlay" style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  gap: 8,
+                  background: 'rgba(240, 176, 96, 0.12)',
+                  border: '1px dashed rgba(240, 176, 96, 0.55)',
+                  borderRadius: 6,
+                  color: '#f0b060',
+                  fontSize: 13,
+                  fontFamily: "'Inter', sans-serif",
+                  pointerEvents: 'none',
+                  zIndex: 50,
+                }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M7 16a4 4 0 01-1-7.9 6 6 0 0111.7-1.7A4.5 4.5 0 0117 16" />
+                    <path d="M12 11v9" />
+                    <path d="M9 14l3-3 3 3" />
+                  </svg>
+                  <span>Drop to attach</span>
+                </div>
+              )}
               {isSpeechRecognitionSupported() && (
                 <button
                   type="button"

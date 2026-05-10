@@ -20,11 +20,34 @@ logger = logging.getLogger(__name__)
 
 
 _MIME_TO_EXT: dict[str, str] = {
-    "image/png":  "png",
-    "image/jpeg": "jpg",
-    "image/webp": "webp",
-    "image/gif":  "gif",
+    "image/png":         "png",
+    "image/jpeg":        "jpg",
+    "image/webp":        "webp",
+    "image/gif":         "gif",
+    # AD-720a (Wave 139): file upload — non-image types.
+    "application/pdf":   "pdf",
+    "text/plain":        "txt",
+    "text/markdown":     "md",
+    "application/json":  "json",
+    "text/csv":          "csv",
 }
+
+
+def ext_to_mime(ext: str) -> str:
+    """AD-720a: reverse-lookup helper. Single source of truth via ``_MIME_TO_EXT``.
+
+    ``ext`` is the lowercase extension without leading dot. Returns the first
+    matching MIME or ``"application/octet-stream"`` for unknown extensions.
+    The GET endpoint uses this to set the response media type.
+    """
+    normalized = ext.lstrip(".").lower()
+    # ``jpeg`` is an alias the GET endpoint historically accepted.
+    if normalized == "jpeg":
+        normalized = "jpg"
+    for mime, e in _MIME_TO_EXT.items():
+        if e == normalized:
+            return mime
+    return "application/octet-stream"
 
 
 class FilesystemAttachmentStore:

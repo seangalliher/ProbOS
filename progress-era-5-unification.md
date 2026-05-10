@@ -469,3 +469,7 @@ See [design-principles.md](docs/development/design-principles.md) for full desig
 
 - AD-718c - per-agent wake phrase v1 shipped (Wave 137, Vitest +8 = 524, Python +8 = 13053).
 
+- AD-720a-0 - python-multipart>=0.0.9 added to [project.dependencies] (Wave 139 preceding commit; Apache-2.0 license; required for FastAPI UploadFile).
+
+- AD-720a - file upload via multipart + drag-drop UI shipped (Wave 139, Python +10 = 13063, Vitest +5). 9-MIME allow-list (PDF/txt/md/json/csv added). Helper extraction (`_validate_and_store_attachment`) is the single defense-in-depth chain for both POST endpoints. JSON+base64 paste path bit-for-bit unchanged.
+

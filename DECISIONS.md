@@ -1603,3 +1603,36 @@ v1 derives the schedule from the utterance text via a length x phoneme-duration 
 
 **Status:** SHIPPED. Issue [#529](https://github.com/seangalliher/ProbOS/issues/529).
 **Files:** `ui/src/audio/lipSyncTrack.ts` (new — ~250 LOC, pure synchronous heuristic viseme schedule + sampler), `ui/src/components/profile/CrewVRM.tsx` (extended — `_collectMorphMeshes` helper, `VOWEL_CANDIDATES` map, per-vowel refs, viseme-weighted useFrame driver, dual-path direct-write), `ui/src/audio/__tests__/lipSyncTrack.test.ts` (new — 14 tests), `ui/src/audio/__tests__/lipSyncTrack.crewVRM.test.tsx` (new — 3 tests, multi-mesh regression guard), `ui/src/audio/__tests__/lipSyncTrack.fallback.test.ts` (new — 4 tests, fallback path guard).
+
+
+### AD-720a-0 — python-multipart dependency add (precondition for AD-720a)
+
+**Wave 139, 2026-05-10.** Tiny preceding commit landed before AD-720a. FastAPI's `UploadFile` / `File(...)` runtime requires `python-multipart` — the dependency is not optional and not avoidable for any multipart endpoint. Captain rule "free should stay free" honoured: `python-multipart` is Apache-2.0 (clean OSS-compatible), single small dep, zero transitive bloat, added to `[project.dependencies]` (not `[project.optional-dependencies]`).
+
+The AD-720a dispatch's "zero new Python deps" rule was an aspirational goal that contradicted FastAPI's documented requirement; the contradiction was a verify-first miss. Captain ruled (delegated authority while offline) that AD-720a-0 is the right place to land the dep so AD-720a's diff stays bounded to the upload feature itself.
+
+**License:** Apache-2.0 (https://github.com/Kludex/python-multipart). Pinned at `>=0.0.9`; `uv.lock` resolved `python-multipart 0.0.27` at HEAD.
+
+**Status:** SHIPPED. (No issue — single-commit dep-add.)
+**Files:** `pyproject.toml` (one line in `[project.dependencies]`), `uv.lock` (regenerated via `uv lock`).
+
+
+### AD-720a — File upload (multipart) v1
+
+**Wave 139, 2026-05-10.** Wave 135 shipped AD-720 image paste (clipboard → JSON+base64 POST). AD-720a closes the upload axis: drag-drop overlay + `+ Upload` button on the IntentSurface composer, both routing through a new `POST /api/chat/attachments/multipart` endpoint that takes a single `UploadFile = File(...)`. Allow-list extended from 4 image MIMEs to 9 (PDF, `.txt`, `.md`, JSON, CSV added). Single-source-of-truth `_MIME_TO_EXT` extended with the 5 new entries; new module-level `ext_to_mime()` helper backs the GET endpoint's reverse lookup (DRY-ified — no parallel hardcoded dict).
+
+**Helper extraction (DRY anchor):** `_validate_and_store_attachment(runtime, blob, declared_mime, declared_filename, declared_hash_or_None)` is the single defense-in-depth chain (feature-gate → MIME allowlist → size cap → optional hash check → magic-byte/parse-attempt validator → idempotent store write). Both the JSON+base64 endpoint and the new multipart endpoint call this helper. The JSON endpoint's body was refactored from 110 lines of inline validation to a 20-line wrapper; the existing AD-720 paste tests are the regression guard and stay green bit-for-bit.
+
+**`validate_attachment_bytes` (new sibling of `validate_image_bytes`):** PDF magic-bytes (`%PDF-`), JSON parse-attempt (strict UTF-8 + `json.loads`), CSV first-row parse-attempt (`csv.reader` on first 4 KiB), text/plain + text/markdown three-condition gate (strict UTF-8 + extension match + content-type allowlist). `errors='strict'` is the only acceptable mode — silent corruption is not Tier-2 acceptable for a content-type validator.
+
+**Vision-tier preflight (post-AD-720a state for AD-720d):** `AttachmentsConfig` extended with three new fields (`vision_tier: Literal["fast","standard","deep"] = "standard"` validated at parse time, `text_extraction_max_bytes: int = 1*1024*1024`, `pdf_extraction_enabled: bool = False` — the latter forward-marks AD-720a-1 PDF extraction). AD-720d's commit consumes these without touching `config.py`.
+
+**No emoji:** drag-drop overlay (cloud-arrow-up SVG) + `+ Upload` button (paperclip SVG, now active amber instead of dim grey) + non-image preview badge (file-with-corner-fold SVG) — all inline `stroke-width: 1.5` SVGs per HXI Design Principle #3.
+
+**Hard backwards-compat:** `handlePaste` body in IntentSurface unchanged (line 434–469). Existing JSON `POST /api/chat/attachments` and `GET /api/chat/attachments/{content_hash}` response shapes bit-for-bit identical. `ChatRequest` model unchanged — AD-720d wires `attachment_ids` server-side; this AD just plumbs the upload surface.
+
+**Forward markers:** AD-720a-1 (PDF / .docx / .xlsx text extraction — needs `pypdf` / `python-docx` / `openpyxl`), AD-720d (vision pipe-through — commit N+1 of this wave).
+
+**Status:** SHIPPED. Issue [#549](https://github.com/seangalliher/ProbOS/issues/549).
+**Files:** `src/probos/config.py` (extended `AttachmentsConfig`), `src/probos/attachments/filesystem_store.py` (extended `_MIME_TO_EXT` + new `ext_to_mime` helper), `src/probos/attachments/mime.py` (new `validate_attachment_bytes`), `src/probos/routers/chat.py` (new `_validate_and_store_attachment` helper + new multipart endpoint + JSON-path refactor + GET reverse-lookup DRY-ification + FastAPI `UploadFile`/`File` import), `ui/src/store/types.ts` (optional `filename` on `ChatAttachment`), `ui/src/components/IntentSurface.tsx` (file picker + drag-drop overlay + non-image preview badges + `ALLOWED_ATTACHMENT_MIMES` constant), `tests/test_ad720a_multipart.py` (new — 11 tests), `ui/src/__tests__/IntentSurface.dragDrop.test.tsx` (new — 5 Vitest cases).
+

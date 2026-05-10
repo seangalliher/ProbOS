@@ -7,6 +7,10 @@ sniffing here is the primary correctness signal; it does not depend on
 
 from __future__ import annotations
 
+import csv
+import io
+import json
+
 
 # Magic-byte signatures for the four allowed MIMEs.
 # Each entry: list of (offset, signature_bytes) tuples — ALL must match.
@@ -45,3 +49,92 @@ def validate_image_bytes(blob: bytes, declared_mime: str) -> tuple[bool, str]:
         if blob[offset:offset + len(sig)] != sig:
             return (False, "header_mismatch")
     return (True, declared_mime)
+
+
+# AD-720a (Wave 139): non-image attachment validator.
+
+_PDF_MAGIC: bytes = b"%PDF-"
+_TEXT_EXTENSIONS: dict[str, frozenset[str]] = {
+    "text/plain":    frozenset({".txt"}),
+    "text/markdown": frozenset({".md"}),
+}
+_NON_IMAGE_MIMES: frozenset[str] = frozenset({
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "application/json",
+    "text/csv",
+})
+
+
+def validate_attachment_bytes(
+    blob: bytes,
+    declared_mime: str,
+    declared_filename: str | None = None,
+) -> tuple[bool, str]:
+    """AD-720a: defense-in-depth validator for the 9 allowed MIMEs.
+
+    Image MIMEs delegate to :func:`validate_image_bytes` (no duplication).
+    Non-image MIMEs each have their own magic-byte / parse-attempt / extension
+    check. **Strict UTF-8 only** — ``errors='replace'`` is forbidden.
+
+    Returns ``(True, declared_mime)`` on success or ``(False, reason)`` where
+    ``reason`` is one of: ``"unknown_declared_mime"``, ``"header_mismatch"``,
+    ``"blob_too_short"``, ``"utf8_decode_error"``, ``"json_parse_error"``,
+    ``"csv_parse_error"``, ``"extension_mismatch"``.
+    """
+    # Image MIMEs: delegate verbatim.
+    if declared_mime in _SIGNATURES:
+        return validate_image_bytes(blob, declared_mime)
+
+    if declared_mime not in _NON_IMAGE_MIMES:
+        return (False, "unknown_declared_mime")
+
+    if declared_mime == "application/pdf":
+        if len(blob) < len(_PDF_MAGIC):
+            return (False, "blob_too_short")
+        if blob[: len(_PDF_MAGIC)] != _PDF_MAGIC:
+            return (False, "header_mismatch")
+        return (True, declared_mime)
+
+    if declared_mime == "application/json":
+        try:
+            text = blob.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return (False, "utf8_decode_error")
+        try:
+            json.loads(text)
+        except json.JSONDecodeError:
+            return (False, "json_parse_error")
+        return (True, declared_mime)
+
+    if declared_mime == "text/csv":
+        try:
+            head = blob[:4096].decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return (False, "utf8_decode_error")
+        try:
+            reader = csv.reader(io.StringIO(head))
+            first = next(reader)
+        except (csv.Error, StopIteration):
+            return (False, "csv_parse_error")
+        if not first:
+            return (False, "csv_parse_error")
+        return (True, declared_mime)
+
+    # text/plain or text/markdown: three conditions — UTF-8 strict + extension match.
+    if declared_mime in _TEXT_EXTENSIONS:
+        try:
+            blob.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return (False, "utf8_decode_error")
+        allowed_exts = _TEXT_EXTENSIONS[declared_mime]
+        if not declared_filename:
+            return (False, "extension_mismatch")
+        lowered = declared_filename.lower()
+        if not any(lowered.endswith(ext) for ext in allowed_exts):
+            return (False, "extension_mismatch")
+        return (True, declared_mime)
+
+    # Defensive — should be unreachable given _NON_IMAGE_MIMES check above.
+    return (False, "unknown_declared_mime")

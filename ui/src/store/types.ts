@@ -203,6 +203,9 @@ export interface ChatAttachment {
   mime: string;
   sha256: string;
   size_bytes: number;
+  // AD-720a (Wave 139): original filename for non-image attachments
+  // (drag-drop / file picker). Optional for back-compat with paste path.
+  filename?: string;
 }
 
 export interface ChatMessage {

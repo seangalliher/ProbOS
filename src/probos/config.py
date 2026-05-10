@@ -939,7 +939,13 @@ class AvatarsConfig(BaseModel):
 
 
 class AttachmentsConfig(BaseModel):
-    """AD-720: chat attachments configuration (image paste v1)."""
+    """AD-720: chat attachments configuration.
+
+    AD-720 v1 (Wave 135): image paste — 4 image MIMEs.
+    AD-720a (Wave 139): file upload — 9 MIMEs (PDF, txt, md, json, csv added),
+        plus three new fields consumed by AD-720d (commit N+1, same wave):
+        ``vision_tier``, ``text_extraction_max_bytes``, ``pdf_extraction_enabled``.
+    """
 
     enabled: bool = True                                   # stable feature, default-on
     attachments_dir: str = "data/attachments"
@@ -950,8 +956,29 @@ class AttachmentsConfig(BaseModel):
             "image/jpeg",
             "image/webp",
             "image/gif",
+            "application/pdf",
+            "text/plain",
+            "text/markdown",
+            "application/json",
+            "text/csv",
         ],
     )
+    # AD-720a: tier selection for vision-capable LLM dispatch (AD-720d consumer).
+    vision_tier: str = "standard"
+    # AD-720a: cap on bytes appended to the prompt by AD-720d's text extractor.
+    text_extraction_max_bytes: int = 1 * 1024 * 1024       # 1 MiB
+    # AD-720a: PDF text extraction is deferred to AD-720a-1 (needs pypdf).
+    pdf_extraction_enabled: bool = False
+
+    @field_validator("vision_tier")
+    @classmethod
+    def _vision_tier_must_be_known(cls, v: str) -> str:
+        allowed = {"fast", "standard", "deep"}
+        if v not in allowed:
+            raise ValueError(
+                f"AD-720a: vision_tier must be one of {sorted(allowed)}; got {v!r}"
+            )
+        return v
 
 
 class A2APeerConfig(BaseModel):
