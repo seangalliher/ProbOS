@@ -504,6 +504,23 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
         target_agent_id=agent_id,
         ttl_seconds=60.0,  # AD-636: Extended TTL for Captain DMs
     )
+
+    # AD-722 BF (2026-05-10): refresh self-avatar snapshot before the agent
+    # perceives the DM, so the INTEROCEPTION sensorium block has fresh data
+    # when prompt assembly runs. Tier-2 log-and-degrade — telemetry must
+    # never block a reply. No-op when avatar_telemetry.enabled is False
+    # (build_telemetry_snapshot itself short-circuits gracefully).
+    if hasattr(agent, 'observe_self_avatar'):
+        try:
+            await agent.observe_self_avatar()
+        except Exception:
+            logger.debug(
+                "AD-722: self-avatar snapshot refresh failed for %s; "
+                "INTEROCEPTION block will use stale or empty data",
+                agent_id,
+                exc_info=True,
+            )
+
     result = await runtime.intent_bus.send(intent)
 
     callsign = ""

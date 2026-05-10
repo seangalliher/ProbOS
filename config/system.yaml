@@ -323,6 +323,17 @@ workforce:
   tick_interval_seconds: 10.0
   default_capacity: 1
 
+# --- Avatar Telemetry (AD-722) ---
+# Closes the self-image feedback loop: agents perceive their own avatar
+# state (DSL summary, signals, applied voice modulation, mouth_active) as
+# an INTEROCEPTION sensorium block during prompt assembly. Captain ruling
+# 2026-05-10: flip default-OFF → ON so crew (Ezri et al.) stop "speaking
+# into a void." The DM chat handler refreshes the snapshot before each
+# reply (see routers/agents.py).
+avatar_telemetry:
+  enabled: true
+  inject_into_agent_context: true
+
 # --- Temporal Context (AD-502) ---
 temporal:
   enabled: true
