@@ -4494,6 +4494,21 @@ class CognitiveAgent(BaseAgent):
             if self_cue:
                 state["_self_recognition_cue"] = self_cue
 
+        # 12. AD-722 BF (2026-05-10): avatar self-observation (INTEROCEPTION).
+        # Method itself is feature-gated by avatar_telemetry.inject_into_agent_context
+        # and returns "" when the cached snapshot is missing — safe to call
+        # unconditionally. Wiring this here closes the loop: registry inventory
+        # had _build_avatar_self_observation listed but no caller invoked it.
+        try:
+            avatar_block = self._build_avatar_self_observation(observation or {})
+            if avatar_block:
+                state["_avatar_self_observation"] = avatar_block
+        except Exception:
+            logger.debug(
+                "AD-722: avatar self-observation injection raised; continuing",
+                exc_info=True,
+            )
+
         return state
 
     def _build_cognitive_extensions(self, context_parts: dict) -> dict[str, str]:
