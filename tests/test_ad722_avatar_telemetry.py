@@ -324,63 +324,83 @@ async def test_snapshot_agent_not_found():
 # ── Modulation tests ────────────────────────────────────────────────────
 
 
-def test_modulation_byte_parity_with_ts():
-    """The TS source MUST hold the same numeric values for every named constant.
+def test_modulation_manifest_loads_from_canonical_path():
+    """AD-722-1: the manifest must be at the canonical repo location and
+    parseable as JSON. This is the structural replacement for the old
+    regex-based byte-parity test — drift is now impossible because both
+    Python and TS read from this single file."""
+    import json
+    manifest_path = Path("ui/src/audio/modulation_manifest.json")
+    assert manifest_path.is_file(), (
+        f"AD-722-1 manifest missing at {manifest_path}"
+    )
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    # Schema: every documented key present, no extras.
+    expected_scalar = {
+        "modulation_divergence_threshold", "trust_delta_high",
+        "trust_delta_low", "responding_rate_factor", "blocked_rate_factor",
+        "blocked_pitch_factor", "high_trust_pitch_factor",
+        "low_trust_pitch_factor", "tier3_rate_factor", "tier3_volume_factor",
+        "default_pitch", "default_rate", "default_volume",
+    }
+    expected_bounds = {"pitch_bounds", "rate_bounds", "volume_bounds"}
+    assert set(data.keys()) == expected_scalar | expected_bounds, (
+        f"manifest schema drift: keys = {sorted(data.keys())}"
+    )
+    for k in expected_scalar:
+        assert isinstance(data[k], (int, float)) and not isinstance(data[k], bool)
+    for k in expected_bounds:
+        assert isinstance(data[k], list) and len(data[k]) == 2
 
-    File-read ``ui/src/audio/voiceModulation.ts``, regex-extract every
-    ``(const|export const) NAME = VALUE`` line, assert each matching Python
-    constant has the same numeric value.
-    """
+
+def test_python_constants_reflect_manifest_values():
+    """AD-722-1: every Python module-level constant must equal the manifest
+    value at import. This is the structural drift detector: if either side
+    changes without the other, the value mismatches."""
+    import json
+    data = json.loads(
+        Path("ui/src/audio/modulation_manifest.json").read_text(encoding="utf-8")
+    )
+    assert MODULATION_DIVERGENCE_THRESHOLD == pytest.approx(data["modulation_divergence_threshold"])
+    assert TRUST_DELTA_HIGH == pytest.approx(data["trust_delta_high"])
+    assert TRUST_DELTA_LOW == pytest.approx(data["trust_delta_low"])
+    assert RESPONDING_RATE_FACTOR == pytest.approx(data["responding_rate_factor"])
+    assert BLOCKED_RATE_FACTOR == pytest.approx(data["blocked_rate_factor"])
+    assert BLOCKED_PITCH_FACTOR == pytest.approx(data["blocked_pitch_factor"])
+    assert HIGH_TRUST_PITCH_FACTOR == pytest.approx(data["high_trust_pitch_factor"])
+    assert LOW_TRUST_PITCH_FACTOR == pytest.approx(data["low_trust_pitch_factor"])
+    assert TIER3_RATE_FACTOR == pytest.approx(data["tier3_rate_factor"])
+    assert TIER3_VOLUME_FACTOR == pytest.approx(data["tier3_volume_factor"])
+    assert DEFAULT_PITCH == pytest.approx(data["default_pitch"])
+    assert DEFAULT_RATE == pytest.approx(data["default_rate"])
+    assert DEFAULT_VOLUME == pytest.approx(data["default_volume"])
+    assert PITCH_BOUNDS == (pytest.approx(data["pitch_bounds"][0]),
+                            pytest.approx(data["pitch_bounds"][1]))
+    assert RATE_BOUNDS == (pytest.approx(data["rate_bounds"][0]),
+                           pytest.approx(data["rate_bounds"][1]))
+    assert VOLUME_BOUNDS == (pytest.approx(data["volume_bounds"][0]),
+                             pytest.approx(data["volume_bounds"][1]))
+
+
+def test_typescript_imports_manifest_not_inline_literals():
+    """AD-722-1: voiceModulation.ts must read its constants from the
+    manifest (via ``import manifest from './modulation_manifest.json'``)
+    rather than inline literals. Regex-checks the TS source for the
+    import statement and asserts no inline numeric literal is assigned
+    to a known rule-table constant."""
     ts_path = Path("ui/src/audio/voiceModulation.ts")
     text = ts_path.read_text(encoding="utf-8")
-
-    # Capture single-number TS constants: `(export )?const NAME = NUM;`
-    pattern = re.compile(
-        r"(?:export\s+)?const\s+([A-Z_][A-Z0-9_]*)\s*(?::\s*[^=]+)?=\s*(-?\d+\.?\d*)\s*;",
+    assert "from './modulation_manifest.json'" in text, (
+        "TS file must import the manifest"
     )
-    ts_constants: dict[str, float] = {}
-    for m in pattern.finditer(text):
-        name, value = m.group(1), m.group(2)
-        ts_constants[name] = float(value)
-
-    # Tuple-bound constants are emitted in TS as `[lo, hi]` arrays — capture separately.
-    bounds_pattern = re.compile(
-        r"(?:export\s+)?const\s+([A-Z_]+_BOUNDS)\s*:[^=]+=\s*\[\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*\]",
+    # Spot-check: no inline numeric literal for the divergence threshold.
+    inline_pattern = re.compile(
+        r"MODULATION_DIVERGENCE_THRESHOLD\s*[:=]\s*(?:number\s*=\s*)?-?\d+\.\d+",
     )
-    ts_bounds: dict[str, tuple[float, float]] = {}
-    for m in bounds_pattern.finditer(text):
-        ts_bounds[m.group(1)] = (float(m.group(2)), float(m.group(3)))
-
-    py_singletons = {
-        "MODULATION_DIVERGENCE_THRESHOLD": MODULATION_DIVERGENCE_THRESHOLD,
-        "RESPONDING_RATE_FACTOR": RESPONDING_RATE_FACTOR,
-        "BLOCKED_RATE_FACTOR": BLOCKED_RATE_FACTOR,
-        "BLOCKED_PITCH_FACTOR": BLOCKED_PITCH_FACTOR,
-        "HIGH_TRUST_PITCH_FACTOR": HIGH_TRUST_PITCH_FACTOR,
-        "LOW_TRUST_PITCH_FACTOR": LOW_TRUST_PITCH_FACTOR,
-        "TIER3_RATE_FACTOR": TIER3_RATE_FACTOR,
-        "TIER3_VOLUME_FACTOR": TIER3_VOLUME_FACTOR,
-        "TRUST_DELTA_HIGH": TRUST_DELTA_HIGH,
-        "TRUST_DELTA_LOW": TRUST_DELTA_LOW,
-        "DEFAULT_PITCH": DEFAULT_PITCH,
-        "DEFAULT_RATE": DEFAULT_RATE,
-        "DEFAULT_VOLUME": DEFAULT_VOLUME,
-    }
-    for name, py_value in py_singletons.items():
-        assert name in ts_constants, f"TS source missing constant {name}"
-        assert ts_constants[name] == pytest.approx(py_value), (
-            f"TS↔Python drift on {name}: TS={ts_constants[name]} Python={py_value}"
-        )
-
-    py_bounds = {
-        "PITCH_BOUNDS": PITCH_BOUNDS,
-        "RATE_BOUNDS": RATE_BOUNDS,
-        "VOLUME_BOUNDS": VOLUME_BOUNDS,
-    }
-    for name, py_value in py_bounds.items():
-        assert name in ts_bounds, f"TS source missing bounds {name}"
-        assert ts_bounds[name][0] == pytest.approx(py_value[0])
-        assert ts_bounds[name][1] == pytest.approx(py_value[1])
+    assert not inline_pattern.search(text), (
+        "TS file still contains inline literal for MODULATION_DIVERGENCE_THRESHOLD"
+    )
 
 
 def test_modulation_rule_composition_responding_plus_tier3():

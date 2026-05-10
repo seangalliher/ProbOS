@@ -1,0 +1,18 @@
+{
+  "modulation_divergence_threshold": 0.05,
+  "trust_delta_high": 0.2,
+  "trust_delta_low": -0.2,
+  "responding_rate_factor": 1.05,
+  "blocked_rate_factor": 0.92,
+  "blocked_pitch_factor": 0.95,
+  "high_trust_pitch_factor": 1.03,
+  "low_trust_pitch_factor": 0.97,
+  "tier3_rate_factor": 1.15,
+  "tier3_volume_factor": 1.05,
+  "default_pitch": 0.9,
+  "default_rate": 0.95,
+  "default_volume": 0.8,
+  "pitch_bounds": [0.0, 2.0],
+  "rate_bounds": [0.1, 10.0],
+  "volume_bounds": [0.0, 1.0]
+}

@@ -50,27 +50,127 @@ from probos.types import AgentState
 logger = logging.getLogger(__name__)
 
 
-# ── Modulation rule table (TS↔Python byte-parity, enforced by test) ─────
+# ── Modulation rule table (loaded from JSON manifest — AD-722-1) ────────
+#
+# Single source of truth: ``ui/src/audio/modulation_manifest.json``. Both
+# this module and ``ui/src/audio/voiceModulation.ts`` read from that file.
+# AD-722-1 retired the regex-based byte-parity test; drift is now structurally
+# impossible (one file, two readers). Schema is enforced by
+# ``_load_modulation_manifest()`` — every key listed below MUST be present.
 
-MODULATION_DIVERGENCE_THRESHOLD: float = 0.05
-PITCH_BOUNDS: tuple[float, float] = (0.0, 2.0)
-RATE_BOUNDS: tuple[float, float] = (0.1, 10.0)
-VOLUME_BOUNDS: tuple[float, float] = (0.0, 1.0)
+import json as _json
+from pathlib import Path as _Path
 
-TRUST_DELTA_HIGH: float = 0.2
-TRUST_DELTA_LOW: float = -0.2
 
-RESPONDING_RATE_FACTOR: float = 1.05
-BLOCKED_RATE_FACTOR: float = 0.92
-BLOCKED_PITCH_FACTOR: float = 0.95
-HIGH_TRUST_PITCH_FACTOR: float = 1.03
-LOW_TRUST_PITCH_FACTOR: float = 0.97
-TIER3_RATE_FACTOR: float = 1.15
-TIER3_VOLUME_FACTOR: float = 1.05
+_MANIFEST_PATH: _Path = (
+    _Path(__file__).resolve().parents[3]
+    / "ui" / "src" / "audio" / "modulation_manifest.json"
+)
 
-DEFAULT_PITCH: float = 0.9
-DEFAULT_RATE: float = 0.95
-DEFAULT_VOLUME: float = 0.8
+_REQUIRED_SCALAR_KEYS: tuple[str, ...] = (
+    "modulation_divergence_threshold",
+    "trust_delta_high",
+    "trust_delta_low",
+    "responding_rate_factor",
+    "blocked_rate_factor",
+    "blocked_pitch_factor",
+    "high_trust_pitch_factor",
+    "low_trust_pitch_factor",
+    "tier3_rate_factor",
+    "tier3_volume_factor",
+    "default_pitch",
+    "default_rate",
+    "default_volume",
+)
+_REQUIRED_BOUNDS_KEYS: tuple[str, ...] = (
+    "pitch_bounds", "rate_bounds", "volume_bounds",
+)
+
+
+def _load_modulation_manifest() -> dict[str, Any]:
+    """Load and validate the modulation manifest. Raises on any defect.
+
+    Hard requirement at import — if the manifest is missing, malformed,
+    or schema-incomplete, the module fails to import. This is by design:
+    the rule table is non-optional; degraded fallback would silently
+    re-introduce the duplication AD-722-1 exists to eliminate.
+    """
+    if not _MANIFEST_PATH.is_file():
+        raise RuntimeError(
+            f"AD-722-1: modulation manifest not found at {_MANIFEST_PATH}. "
+            "ProbOS expects to run from the repo source tree; if you are "
+            "running from a non-source layout, file a packaging AD."
+        )
+    try:
+        data = _json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except _json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"AD-722-1: modulation manifest at {_MANIFEST_PATH} is malformed "
+            f"JSON: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"AD-722-1: modulation manifest at {_MANIFEST_PATH} must be a "
+            f"JSON object; got {type(data).__name__}"
+        )
+    missing = [k for k in _REQUIRED_SCALAR_KEYS + _REQUIRED_BOUNDS_KEYS
+               if k not in data]
+    if missing:
+        raise RuntimeError(
+            f"AD-722-1: modulation manifest missing required keys: {missing}"
+        )
+    extra = [k for k in data
+             if k not in _REQUIRED_SCALAR_KEYS + _REQUIRED_BOUNDS_KEYS]
+    if extra:
+        raise RuntimeError(
+            f"AD-722-1: modulation manifest has unknown keys: {extra}. "
+            "Schema additions require an architecture-decision review."
+        )
+    for k in _REQUIRED_SCALAR_KEYS:
+        if not isinstance(data[k], (int, float)) or isinstance(data[k], bool):
+            raise RuntimeError(
+                f"AD-722-1: manifest key {k!r} must be a number; "
+                f"got {type(data[k]).__name__}"
+            )
+    for k in _REQUIRED_BOUNDS_KEYS:
+        b = data[k]
+        if not (isinstance(b, list) and len(b) == 2
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                        for x in b)):
+            raise RuntimeError(
+                f"AD-722-1: manifest key {k!r} must be a 2-number list; "
+                f"got {b!r}"
+            )
+    return data
+
+
+_MANIFEST: dict[str, Any] = _load_modulation_manifest()
+
+MODULATION_DIVERGENCE_THRESHOLD: float = float(_MANIFEST["modulation_divergence_threshold"])
+PITCH_BOUNDS: tuple[float, float] = (
+    float(_MANIFEST["pitch_bounds"][0]), float(_MANIFEST["pitch_bounds"][1]),
+)
+RATE_BOUNDS: tuple[float, float] = (
+    float(_MANIFEST["rate_bounds"][0]), float(_MANIFEST["rate_bounds"][1]),
+)
+VOLUME_BOUNDS: tuple[float, float] = (
+    float(_MANIFEST["volume_bounds"][0]), float(_MANIFEST["volume_bounds"][1]),
+)
+
+TRUST_DELTA_HIGH: float = float(_MANIFEST["trust_delta_high"])
+TRUST_DELTA_LOW: float = float(_MANIFEST["trust_delta_low"])
+
+RESPONDING_RATE_FACTOR: float = float(_MANIFEST["responding_rate_factor"])
+BLOCKED_RATE_FACTOR: float = float(_MANIFEST["blocked_rate_factor"])
+BLOCKED_PITCH_FACTOR: float = float(_MANIFEST["blocked_pitch_factor"])
+HIGH_TRUST_PITCH_FACTOR: float = float(_MANIFEST["high_trust_pitch_factor"])
+LOW_TRUST_PITCH_FACTOR: float = float(_MANIFEST["low_trust_pitch_factor"])
+TIER3_RATE_FACTOR: float = float(_MANIFEST["tier3_rate_factor"])
+TIER3_VOLUME_FACTOR: float = float(_MANIFEST["tier3_volume_factor"])
+
+DEFAULT_PITCH: float = float(_MANIFEST["default_pitch"])
+DEFAULT_RATE: float = float(_MANIFEST["default_rate"])
+DEFAULT_VOLUME: float = float(_MANIFEST["default_volume"])
 
 
 def _clamp(value: float, bounds: tuple[float, float]) -> float:
