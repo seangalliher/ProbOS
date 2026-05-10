@@ -3160,3 +3160,40 @@ waves:
     status: done
 
 
+
+  - id: "138"
+    title: "Phoneme-accurate lip-sync (visemes) — AD-721b — Counselor's next-80% feedback"
+    kind: main
+    depends_on: ["137"]
+    dispatch_prompt: "prompts/WAVE-138-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-721b-phoneme-lipsync-v1.md"
+    builder_required: true
+    issues_to_close: [529]
+    status: pending
+
+  - id: "139"
+    title: "Chat attachments next slice — AD-720a file upload + AD-720d vision pipe-through"
+    kind: main
+    depends_on: ["138"]
+    dispatch_prompt: "prompts/WAVE-139-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-720a-file-upload-v1.md"
+      - "prompts/ad-720d-vision-pipe-through-v1.md"
+    builder_required: true
+    issues_to_close: [549, 552]
+    status: pending
+
+  - id: "140"
+    title: "Avatar self-awareness — AD-722 agent-observable avatar telemetry feedback loop"
+    kind: main
+    depends_on: ["139"]
+    dispatch_prompt: "prompts/WAVE-140-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-722-avatar-telemetry-v1.md"
+    builder_required: true
+    issues_to_close: [545]
+    status: pending
