@@ -41,21 +41,28 @@ class TestSensoriumRegistry:
         assert len(CognitiveAgent.SENSORIUM_REGISTRY) >= 13
 
     def test_registry_entries_are_tuples_of_layer_and_description(self) -> None:
-        for method_name, (layer, description) in CognitiveAgent.SENSORIUM_REGISTRY.items():
+        # AD-723 v1 reshaped entries from ``tuple[SensoriumLayer, str]`` to
+        # ``SensoriumEntry`` dataclass. Layer + description fields are
+        # preserved on the dataclass.
+        from probos.cognitive.cognitive_agent import SensoriumEntry
+        for method_name, entry in CognitiveAgent.SENSORIUM_REGISTRY.items():
             assert isinstance(method_name, str)
-            assert layer in (
+            assert isinstance(entry, SensoriumEntry)
+            assert entry.layer in (
                 SensoriumLayer.PROPRIOCEPTION,
                 SensoriumLayer.INTEROCEPTION,
                 SensoriumLayer.EXTEROCEPTION,
             )
-            assert isinstance(description, str) and len(description) > 0
+            assert isinstance(entry.description, str) and len(entry.description) > 0
 
     def test_all_registry_methods_exist_on_class(self) -> None:
         for method_name in CognitiveAgent.SENSORIUM_REGISTRY:
             assert hasattr(CognitiveAgent, method_name)
 
     def test_registry_has_all_three_layers(self) -> None:
-        layers_present = {layer for (layer, _) in CognitiveAgent.SENSORIUM_REGISTRY.values()}
+        # AD-723 v1: entries are now ``SensoriumEntry`` dataclasses;
+        # access the layer via the ``.layer`` attribute.
+        layers_present = {entry.layer for entry in CognitiveAgent.SENSORIUM_REGISTRY.values()}
         assert SensoriumLayer.PROPRIOCEPTION in layers_present
         assert SensoriumLayer.INTEROCEPTION in layers_present
         assert SensoriumLayer.EXTEROCEPTION in layers_present

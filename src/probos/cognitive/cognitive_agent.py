@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import asyncio
+import inspect
 import json
 import logging
 import os
 import re
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -55,6 +57,63 @@ class SensoriumLayer(StrEnum):
     PROPRIOCEPTION = "proprioception"
     INTEROCEPTION = "interoception"
     EXTEROCEPTION = "exteroception"
+
+
+class SensoriumPath(StrEnum):
+    """AD-723: prompt-assembly paths that consume sensorium injections.
+
+    Each registry entry declares which paths consume it via its ``paths``
+    tuple. The dispatcher iterates the registry once per path; an entry
+    with an empty ``paths`` tuple is inventory-only (documented but never
+    rendered into a prompt).
+    """
+
+    CHAIN_BASELINE = "chain_baseline"
+    """Universal cognitive baseline — runs for ALL chain executions."""
+
+    CHAIN_EXTENSIONS = "chain_extensions"
+    """Proactive-conditional overrides — populated by proactive.py context_parts."""
+
+    CHAIN_SITUATION = "chain_situation"
+    """Environmental percepts — WR activity, alerts, infra, subordinates."""
+
+    DM_ONESHOT = "dm_oneshot"
+    """1:1 conversation with the Captain — System-1 path, single LLM call.
+
+    AD-723 v1 ships producer-side only: registry entries declare DM_ONESHOT
+    paths so future sensorium ADs only edit the registry, but the inline
+    DM-branch consumer in ``_build_user_message`` is migrated by AD-723a-1.
+    """
+
+    WR_ONESHOT = "wr_oneshot"
+    """Ward Room channels — peer audience; intentionally narrower than DM.
+
+    Same v1-producer-side note as ``DM_ONESHOT``.
+    """
+
+
+@dataclass(frozen=True)
+class SensoriumEntry:
+    """AD-723: registry record describing how a sensorium injection is dispatched.
+
+    Replaces the prior ``tuple[SensoriumLayer, str]`` inventory shape with
+    a dispatch-aware record. ``paths`` declares which prompt-assembly paths
+    consume the entry. Empty ``paths`` is allowed for inventory-only entries
+    (meta-methods that delegate rather than render).
+    """
+
+    layer: SensoriumLayer
+    description: str
+    paths: tuple[SensoriumPath, ...] = ()
+    priority: int = 0
+    output_key: str | None = None
+    """Key under which the entry's string output is stored in the merged dict.
+
+    When ``None``, the entry's registered method MUST return ``dict[str, str]``
+    or ``None`` (no single-key output). When set, the method MUST return
+    ``str`` or ``None`` and the dispatcher stores ``result`` under
+    ``output_key`` in the merged dict.
+    """
 
 
 def derive_communication_context(
@@ -119,22 +178,242 @@ class CognitiveAgent(BaseAgent):
     _retrieval_strategy_selector: RetrievalStrategySelector | None = None
 
     # AD-666: Agent Sensorium Registry — formal inventory of context injections.
-    SENSORIUM_REGISTRY: ClassVar[dict[str, tuple[SensoriumLayer, str]]] = {
-        "_build_temporal_context": (SensoriumLayer.PROPRIOCEPTION, "Time, age, uptime, crew complement"),
-        "_get_comm_proficiency_guidance": (SensoriumLayer.PROPRIOCEPTION, "Communication tier guidance"),
-        "_detect_self_in_content": (SensoriumLayer.PROPRIOCEPTION, "Cross-context self-recognition"),
-        "_build_dm_self_monitoring": (SensoriumLayer.PROPRIOCEPTION, "DM repetition self-detection"),
-        "_confabulation_guard": (SensoriumLayer.PROPRIOCEPTION, "Authority-calibrated confab guard"),
-        "_build_crew_complement": (SensoriumLayer.PROPRIOCEPTION, "Anti-confabulation crew roster"),
-        "_build_cognitive_baseline": (SensoriumLayer.INTEROCEPTION, "Universal injection: temporal, WM, metrics, ontology"),
-        "_build_cognitive_extensions": (SensoriumLayer.INTEROCEPTION, "Proactive-conditional: self-mon, telemetry, overrides"),
-        "_build_cognitive_state": (SensoriumLayer.INTEROCEPTION, "Meta-method: merges baseline + extensions"),
-        "_format_memory_section": (SensoriumLayer.INTEROCEPTION, "Episodic memories with anchor context"),
-        "_build_situation_awareness": (SensoriumLayer.EXTEROCEPTION, "WR activity, alerts, events, infra, subordinates"),
-        "_build_active_game_context": (SensoriumLayer.EXTEROCEPTION, "Active game board state"),
-        "_build_user_message": (SensoriumLayer.EXTEROCEPTION, "Primary prompt assembly (DM/WR paths)"),
-        "_build_avatar_self_observation": (SensoriumLayer.INTEROCEPTION,
-            "AD-722: agent's own avatar state — gated by avatar_telemetry.inject_into_agent_context"),
+    # AD-723 v1 (producer-side): the registry is now a dispatch table. Each
+    # entry's ``paths`` tuple declares which prompt-assembly paths consume
+    # it; the chain-side dispatchers iterate this registry. DM/WR consumer
+    # migration is deferred to AD-723a-1 (#617) per the Wave-10
+    # high-entanglement rule — DM_ONESHOT / WR_ONESHOT paths on entries
+    # below are forward-declarations that AD-723a-1 will wire into
+    # ``_build_user_message``.
+    SENSORIUM_REGISTRY: ClassVar[dict[str, "SensoriumEntry"]] = {
+        # ---- PROPRIOCEPTION (self-state) ----
+        "_sensorium_temporal_context": SensoriumEntry(
+            layer=SensoriumLayer.PROPRIOCEPTION,
+            description="Time, age, uptime, crew complement",
+            paths=(SensoriumPath.CHAIN_BASELINE, SensoriumPath.DM_ONESHOT, SensoriumPath.WR_ONESHOT),
+            output_key="_temporal_context",
+        ),
+        "_sensorium_comm_proficiency": SensoriumEntry(
+            layer=SensoriumLayer.PROPRIOCEPTION,
+            description="Communication tier guidance",
+            paths=(SensoriumPath.CHAIN_BASELINE,),
+            output_key="_comm_proficiency",
+        ),
+        "_sensorium_self_recognition": SensoriumEntry(
+            layer=SensoriumLayer.PROPRIOCEPTION,
+            description="Cross-context self-recognition",
+            paths=(SensoriumPath.CHAIN_BASELINE, SensoriumPath.WR_ONESHOT),
+            output_key="_self_recognition_cue",
+        ),
+        "_build_dm_self_monitoring": SensoriumEntry(
+            layer=SensoriumLayer.PROPRIOCEPTION,
+            description="DM repetition self-detection",
+            paths=(SensoriumPath.WR_ONESHOT,),
+            output_key="_dm_self_monitoring",
+        ),
+        "_confabulation_guard": SensoriumEntry(
+            layer=SensoriumLayer.PROPRIOCEPTION,
+            description="Authority-calibrated confab guard (inventory; embedded in baseline + extensions entries)",
+        ),
+        "_build_crew_complement": SensoriumEntry(
+            layer=SensoriumLayer.PROPRIOCEPTION,
+            description="Anti-confabulation crew roster (inventory; embedded in temporal context)",
+        ),
+        # AD-722a: registered as inventory + chain/DM-path declaration.
+        # Default-OFF (divergence_detection=False) → method returns "" → no
+        # key contributed → byte-identical to pre-AD-723 chain baseline.
+        # AD-723a-1 wires the DM-side rendering consumer.
+        "_build_intent_self_tag_instruction": SensoriumEntry(
+            layer=SensoriumLayer.PROPRIOCEPTION,
+            description="AD-722a: instruct LLM to emit a self-tag (feature-gated)",
+            paths=(SensoriumPath.CHAIN_BASELINE, SensoriumPath.DM_ONESHOT),
+            output_key="_intent_self_tag",
+        ),
+        # ---- INTEROCEPTION (cognitive state) ----
+        "_build_cognitive_baseline": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Meta-method: dispatches CHAIN_BASELINE (inventory)",
+        ),
+        "_build_cognitive_extensions": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Meta-method: dispatches CHAIN_EXTENSIONS (inventory)",
+        ),
+        "_build_cognitive_state": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Meta-method: merges baseline + extensions (inventory)",
+        ),
+        "_sensorium_working_memory": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="AD-573 working memory render",
+            paths=(SensoriumPath.CHAIN_BASELINE, SensoriumPath.DM_ONESHOT, SensoriumPath.WR_ONESHOT),
+            output_key="_working_memory_context",
+        ),
+        "_sensorium_agent_metrics": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Trust / Initiative / Agency / Rank summary",
+            paths=(SensoriumPath.CHAIN_BASELINE,),
+            output_key="_agent_metrics",
+        ),
+        "_sensorium_ontology_baseline": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Ontology identity grounding (runtime-sourced)",
+            paths=(SensoriumPath.CHAIN_BASELINE,),
+            output_key="_ontology_context",
+        ),
+        "_sensorium_source_attribution_baseline": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Source attribution (simplified, no authority class)",
+            paths=(SensoriumPath.CHAIN_BASELINE,),
+            output_key="_source_attribution_text",
+        ),
+        "_sensorium_confab_guard_baseline": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Confabulation guard (generic, no authority)",
+            paths=(SensoriumPath.CHAIN_BASELINE,),
+            output_key="_confabulation_guard",
+        ),
+        "_sensorium_no_memories_flag": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="No-memories flag (baseline default)",
+            paths=(SensoriumPath.CHAIN_BASELINE,),
+            output_key="_no_episodic_memories",
+        ),
+        "_sensorium_cold_start_note": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Cold-start runtime note",
+            paths=(SensoriumPath.CHAIN_BASELINE,),
+            output_key="_cold_start_note",
+        ),
+        "_sensorium_source_attribution_rich": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="AD-568d rich source attribution override",
+            paths=(SensoriumPath.CHAIN_BASELINE,),
+            output_key="_source_attribution_text",
+        ),
+        "_format_memory_section": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Episodic memories with anchor context (inventory; rendered inline by DM/WR consumers; AD-723a-1)",
+        ),
+        # AD-722: avatar self-observation. Default-OFF
+        # (inject_into_agent_context=False) → returns "" → no key
+        # contributed → byte-identical to pre-AD-723 baseline.
+        "_build_avatar_self_observation": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="AD-722: agent's own avatar state — gated by avatar_telemetry.inject_into_agent_context",
+            paths=(SensoriumPath.CHAIN_BASELINE, SensoriumPath.DM_ONESHOT),
+            output_key="_avatar_self_observation",
+        ),
+        # ---- CHAIN_EXTENSIONS (priority=10, override baseline by key) ----
+        "_sensorium_ext_self_monitoring": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="AD-504/506a self-monitoring extension",
+            paths=(SensoriumPath.CHAIN_EXTENSIONS,),
+            priority=10,
+            output_key="_self_monitoring",
+        ),
+        "_sensorium_ext_source_attribution_authority": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Authority-aware source attribution override",
+            paths=(SensoriumPath.CHAIN_EXTENSIONS,),
+            priority=10,
+            output_key="_source_attribution_text",
+        ),
+        "_sensorium_ext_introspective_telemetry": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="AD-588 introspective telemetry",
+            paths=(SensoriumPath.CHAIN_EXTENSIONS,),
+            priority=10,
+            output_key="_introspective_telemetry",
+        ),
+        "_sensorium_ext_ontology_from_context_parts": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Ontology override sourced from proactive context_parts",
+            paths=(SensoriumPath.CHAIN_EXTENSIONS,),
+            priority=10,
+            output_key="_ontology_context",
+        ),
+        "_sensorium_ext_orientation_supplement": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="AD-567g orientation supplement",
+            paths=(SensoriumPath.CHAIN_EXTENSIONS,),
+            priority=10,
+            output_key="_orientation_supplement",
+        ),
+        "_sensorium_ext_confab_guard_authority": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="Authority-calibrated confab guard override",
+            paths=(SensoriumPath.CHAIN_EXTENSIONS,),
+            priority=10,
+            output_key="_confabulation_guard",
+        ),
+        "_sensorium_ext_no_memories_flag_override": SensoriumEntry(
+            layer=SensoriumLayer.INTEROCEPTION,
+            description="No-memories flag override (None = removal per AD-646)",
+            paths=(SensoriumPath.CHAIN_EXTENSIONS,),
+            priority=10,
+            output_key="_no_episodic_memories",
+        ),
+        # ---- EXTEROCEPTION (environment / situation) ----
+        "_build_situation_awareness": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="Meta-method: dispatches CHAIN_SITUATION (inventory)",
+        ),
+        "_sensorium_situation_ward_room_activity": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="AD-413 Ward Room activity (dept + all-hands + recreation)",
+            paths=(SensoriumPath.CHAIN_SITUATION,),
+            output_key="_ward_room_activity",
+        ),
+        "_sensorium_situation_recent_alerts": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="Recent bridge alerts",
+            paths=(SensoriumPath.CHAIN_SITUATION,),
+            output_key="_recent_alerts",
+        ),
+        "_sensorium_situation_recent_events": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="Recent system events",
+            paths=(SensoriumPath.CHAIN_SITUATION,),
+            output_key="_recent_events",
+        ),
+        "_sensorium_situation_infrastructure": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="AD-576 infrastructure status",
+            paths=(SensoriumPath.CHAIN_SITUATION,),
+            output_key="_infrastructure_status",
+        ),
+        "_sensorium_situation_subordinate_stats": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="AD-630 subordinate stats (Chiefs only)",
+            paths=(SensoriumPath.CHAIN_SITUATION,),
+            output_key="_subordinate_stats",
+        ),
+        "_sensorium_situation_clinical_telemetry": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="AD-635f clinical telemetry (Chapel, Echo only)",
+            paths=(SensoriumPath.CHAIN_SITUATION,),
+            output_key="_clinical_telemetry",
+        ),
+        "_sensorium_situation_system_note": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="BF-034 cold-start system note (situation channel)",
+            paths=(SensoriumPath.CHAIN_SITUATION,),
+            output_key="_cold_start_note",
+        ),
+        "_sensorium_situation_active_game": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="BF-110 active game state (situation channel)",
+            paths=(SensoriumPath.CHAIN_SITUATION,),
+            output_key="_active_game",
+        ),
+        "_build_active_game_context": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="Active game board state (inventory; DM-side rendered inline; AD-723a-1)",
+        ),
+        "_build_user_message": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="Primary prompt assembly (DM/WR paths) — orchestrator (inventory)",
+        ),
     }
 
     def __init__(self, **kwargs: Any) -> None:
@@ -2734,7 +3013,7 @@ class CognitiveAgent(BaseAgent):
             )
             return ""
 
-    def _build_intent_self_tag_instruction(self) -> str:
+    def _build_intent_self_tag_instruction(self, observation: dict | None = None) -> str:
         """AD-722a (feature-gated): instruct the LLM to emit a self-tag.
 
         Returns a one-line instruction when
@@ -2744,7 +3023,11 @@ class CognitiveAgent(BaseAgent):
         extract + strip the tag and compute divergence.
 
         Token cost: ~10 prompt tokens + ~5 reply tokens per cycle.
+
+        AD-723: ``observation`` parameter accepted (unused) for dispatcher
+        signature compatibility; legacy no-arg callers still work.
         """
+        del observation  # AD-723: dispatcher passes it; method ignores it.
         cfg = getattr(self._runtime, "config", None) if self._runtime else None
         tcfg = getattr(cfg, "avatar_telemetry", None)
         if not getattr(tcfg, "divergence_detection", False):
@@ -4423,305 +4706,257 @@ class CognitiveAgent(BaseAgent):
 
         return "\n".join(parts)
 
-    def _build_cognitive_baseline(self, observation: dict) -> dict[str, str]:
-        """AD-646: Agent-intrinsic cognitive state — runs for ALL chain executions.
+    # ------------------------------------------------------------------
+    # AD-723: Sensorium dispatch (producer-side, Wave 144 v1)
+    #
+    # The dispatcher iterates SENSORIUM_REGISTRY entries whose ``paths``
+    # tuple contains the requested path, calls the registered method with
+    # ``observation``, and merges the result into a single dict keyed by
+    # ``entry.output_key``. Two variants:
+    #
+    #   * ``_dispatch_sensorium_sync``  — chain paths (BASELINE / EXTENSIONS
+    #     / SITUATION). Refuses async-registered methods (defense in depth).
+    #   * ``_dispatch_sensorium_async`` — DM / WR one-shot paths. Awaits
+    #     coroutine methods, calls sync methods directly. Producer-side v1
+    #     ships the helper; AD-723a-1 wires the DM/WR consumer.
+    #
+    # Wrapper methods below (``_sensorium_*``) adapt existing helpers whose
+    # signatures predate the dispatcher contract ``(observation: dict) ->
+    # str | dict | None``.
+    # ------------------------------------------------------------------
 
-        Produces baseline self-knowledge from agent attributes and runtime
-        services. Zero dependency on context_parts (which only proactive.py
-        populates). Ward Room chains get temporal awareness, working memory,
-        trust metrics, ontology, and confabulation guards.
+    def _sensorium_entries_for_path(
+        self, path: SensoriumPath,
+    ) -> list[tuple[str, "SensoriumEntry"]]:
+        """AD-723: (priority asc, registration order) entries for the given path."""
+        return sorted(
+            (
+                (name, entry)
+                for name, entry in self.SENSORIUM_REGISTRY.items()
+                if path in entry.paths
+            ),
+            key=lambda item: item[1].priority,
+        )
+
+    def _apply_sensorium_result(
+        self,
+        merged: dict[str, str],
+        entry: "SensoriumEntry",
+        method_name: str,
+        result: object,
+    ) -> None:
+        """AD-723: merge a single registered-method result into the dispatch dict.
+
+        ``None`` = removal (AD-646 semantics). ``str`` = keyed by
+        ``entry.output_key``. ``dict`` = multi-key contribution. Anything
+        else is logged-and-degraded (Tier 2).
         """
-        state: dict[str, str] = {}
+        if result is None:
+            if entry.output_key:
+                merged.pop(entry.output_key, None)
+            return
+        if isinstance(result, str):
+            if not result:
+                return
+            if entry.output_key is None:
+                logger.warning(
+                    "AD-723: sensorium method %s returned str but registry "
+                    "entry has no output_key; dropping. Configure output_key "
+                    "on the entry or change the method to return dict.",
+                    method_name,
+                )
+                return
+            merged[entry.output_key] = result
+            return
+        if isinstance(result, dict):
+            for k, v in result.items():
+                if v is None:
+                    merged.pop(k, None)
+                elif isinstance(v, str) and v:
+                    merged[k] = v
+            return
+        logger.warning(
+            "AD-723: sensorium method %s returned %s; expected str | dict | None. "
+            "Result dropped.",
+            method_name,
+            type(result).__name__,
+        )
 
-        # 1. Temporal awareness (AD-502) — self-contained
-        temporal = self._build_temporal_context()
-        if temporal:
-            state["_temporal_context"] = temporal
+    def _dispatch_sensorium_sync(
+        self,
+        path: SensoriumPath,
+        observation: dict,
+    ) -> dict[str, str]:
+        """AD-723: synchronous dispatch — used by chain paths.
 
-        # 2. Working memory (AD-573) — self-contained
-        _wm = getattr(self, '_working_memory', None)
-        if _wm:
-            wm_text = _wm.render_context(budget=1500)
-            if wm_text:
-                state["_working_memory_context"] = wm_text
+        Raises ``RuntimeError`` if it encounters an async-registered method
+        on the given path. At HEAD no async methods are registered for any
+        chain path; this guard catches future regressions before they
+        silently drop telemetry.
+        """
+        merged: dict[str, str] = {}
+        for method_name, entry in self._sensorium_entries_for_path(path):
+            method = getattr(self, method_name, None)
+            if method is None:
+                logger.warning(
+                    "AD-723: sensorium method %s not bound on %s; skipping. "
+                    "Registry entry exists but the class has no such attribute.",
+                    method_name, type(self).__name__,
+                )
+                continue
+            if inspect.iscoroutinefunction(method):
+                raise RuntimeError(
+                    f"AD-723: async method {method_name} registered on sync "
+                    f"path {path.value}; use _dispatch_sensorium_async or "
+                    f"change the entry's paths tuple."
+                )
+            try:
+                result = method(observation)
+            except Exception:
+                logger.debug(
+                    "AD-723: sensorium method %s raised on path %s; "
+                    "degrading (Tier-2: skipped, dispatch continues).",
+                    method_name, path.value, exc_info=True,
+                )
+                continue
+            self._apply_sensorium_result(merged, entry, method_name, result)
+        return merged
 
-        # 3. Agent metrics — computed from runtime (not _params)
+    async def _dispatch_sensorium_async(
+        self,
+        path: SensoriumPath,
+        observation: dict,
+    ) -> dict[str, str]:
+        """AD-723: asynchronous dispatch — used by DM and WR one-shot paths.
+
+        Handles both sync and async registered methods uniformly via
+        ``inspect.iscoroutinefunction``. AD-723 v1 ships this dispatcher
+        as producer-side infrastructure; the DM/WR consumer migration in
+        ``_build_user_message`` is deferred to AD-723a-1 (#617).
+        """
+        merged: dict[str, str] = {}
+        for method_name, entry in self._sensorium_entries_for_path(path):
+            method = getattr(self, method_name, None)
+            if method is None:
+                logger.warning(
+                    "AD-723: sensorium method %s not bound on %s; skipping. "
+                    "Registry entry exists but the class has no such attribute.",
+                    method_name, type(self).__name__,
+                )
+                continue
+            try:
+                if inspect.iscoroutinefunction(method):
+                    result = await method(observation)
+                else:
+                    result = method(observation)
+            except Exception:
+                logger.debug(
+                    "AD-723: sensorium method %s raised on path %s; "
+                    "degrading (Tier-2: skipped, dispatch continues).",
+                    method_name, path.value, exc_info=True,
+                )
+                continue
+            self._apply_sensorium_result(merged, entry, method_name, result)
+        return merged
+
+    # ------------------------------------------------------------------
+    # AD-723: Sensorium wrappers — adapt legacy helper signatures
+    # ------------------------------------------------------------------
+
+    def _sensorium_temporal_context(self, observation: dict) -> str:
+        """AD-723 dispatch wrapper for ``_build_temporal_context``."""
+        del observation
+        return self._build_temporal_context()
+
+    def _sensorium_working_memory(self, observation: dict) -> str:
+        """AD-723 dispatch wrapper for the working-memory render.
+
+        Returns ``""`` (no contribution; dispatcher skips without popping)
+        when the agent has no working memory or it renders empty.
+        """
+        del observation
+        wm = getattr(self, "_working_memory", None)
+        if wm is None:
+            return ""
+        return wm.render_context(budget=1500) or ""
+
+    def _sensorium_comm_proficiency(self, observation: dict) -> str:
+        """AD-723 dispatch wrapper for ``_get_comm_proficiency_guidance``.
+
+        Returns ``""`` (no contribution) instead of ``None`` so the
+        baseline-dispatch doesn't pop a same-key entry written earlier.
+        """
+        del observation
+        return self._get_comm_proficiency_guidance() or ""
+
+    def _sensorium_self_recognition(self, observation: dict) -> str:
+        """AD-723 dispatch wrapper for ``_detect_self_in_content``.
+
+        Returns ``""`` (no contribution) when no self-cue is found.
+        """
+        content = observation.get("context", "") if observation else ""
+        if not content:
+            return ""
+        return self._detect_self_in_content(content) or ""
+
+    # ------------------------------------------------------------------
+    # AD-723: Sensorium extracted methods — chain baseline inline blocks
+    # ------------------------------------------------------------------
+
+    def _sensorium_agent_metrics(self, observation: dict) -> str:
+        """AD-723 extraction of baseline step 3: trust / initiative / agency / rank."""
+        del observation
         try:
-            _rt = getattr(self, '_runtime', None)
-            _trust_val = 0.5
-            _rank_val = "ensign"
-            _agency_val = "ensign"
-            _initiative_val = 0
-            if _rt and hasattr(_rt, 'trust_network'):
+            rt = getattr(self, "_runtime", None)
+            trust_val: float | str = 0.5
+            rank_val = "ensign"
+            agency_val = "ensign"
+            initiative_val = 0
+            if rt and hasattr(rt, "trust_network"):
                 from probos.crew_profile import Rank
                 from probos.earned_agency import agency_from_rank, resolve_initiative_level
                 from probos.config import format_trust
-                _trust_val = _rt.trust_network.get_score(self.id)
-                _rank_val = Rank.from_trust(_trust_val).value
-                _agency_val = agency_from_rank(Rank.from_trust(_trust_val)).value
-                _runtime_ref = _rt
-                _initiative_thresholds = (
-                    _runtime_ref.config.earned_agency.initiative_trust_thresholds
-                    if _runtime_ref is not None and getattr(_runtime_ref, 'config', None) is not None
+                trust_val = rt.trust_network.get_score(self.id)
+                rank_val = Rank.from_trust(trust_val).value
+                agency_val = agency_from_rank(Rank.from_trust(trust_val)).value
+                thresholds = (
+                    rt.config.earned_agency.initiative_trust_thresholds
+                    if rt is not None and getattr(rt, "config", None) is not None
                     else None
                 )
-                _initiative_val = resolve_initiative_level(
-                    Rank.from_trust(_trust_val),
-                    _trust_val,
-                    thresholds=_initiative_thresholds,
+                initiative_val = resolve_initiative_level(
+                    Rank.from_trust(trust_val),
+                    trust_val,
+                    thresholds=thresholds,
                 ).value
-                _trust_val = format_trust(_trust_val)
-            state["_agent_metrics"] = (
-                f"Your trust: {_trust_val} | Initiative: {_initiative_val} | "
-                f"Agency: {_agency_val} | "
-                f"Rank: {_rank_val}"
+                trust_val = format_trust(trust_val)
+            return (
+                f"Your trust: {trust_val} | Initiative: {initiative_val} | "
+                f"Agency: {agency_val} | "
+                f"Rank: {rank_val}"
             )
-        except Exception:
-            logger.debug("AD-646: Agent metrics baseline computation failed", exc_info=True)
-            state["_agent_metrics"] = "Your trust: 0.5 | Agency: ensign | Rank: ensign"
-
-        # 4. Ontology identity grounding — computed from runtime
-        try:
-            _rt = getattr(self, '_runtime', None)
-            if _rt and hasattr(_rt, 'ontology'):
-                ontology = _rt.ontology.get_crew_context(self.agent_type)
-                if ontology:
-                    onto_parts: list[str] = []
-                    identity = ontology.get("identity", {})
-                    dept = ontology.get("department", {})
-                    vessel = ontology.get("vessel", {})
-                    onto_parts.append(
-                        f"You are {identity.get('callsign', '?')}, "
-                        f"{identity.get('post', '?')} in {dept.get('name', '?')} department."
-                    )
-                    if ontology.get("reports_to"):
-                        onto_parts.append(f"You report to {ontology['reports_to']}.")
-                    if ontology.get("direct_reports"):
-                        onto_parts.append(f"Your direct reports: {', '.join(ontology['direct_reports'])}.")
-                    if ontology.get("peers"):
-                        onto_parts.append(f"Department peers: {', '.join(ontology['peers'])}.")
-                    if vessel:
-                        alert = vessel.get("alert_condition", "GREEN")
-                        onto_parts.append(
-                            f"Ship status: {vessel.get('name', 'ProbOS')} "
-                            f"v{vessel.get('version', '?')} — Alert Condition {alert}."
-                        )
-                    # AD-648: Capability grounding — what this post actually does
-                    caps = ontology.get("capabilities", [])
-                    if caps:
-                        cap_lines = [f"- {c['summary']}" for c in caps]
-                        onto_parts.append(
-                            "Your post capabilities (what you actually do):\n"
-                            + "\n".join(cap_lines)
-                        )
-                    negatives = ontology.get("does_not_have", [])
-                    if negatives:
-                        neg_lines = [f"- {n}" for n in negatives]
-                        onto_parts.append(
-                            "You do NOT have (do not claim or reference these):\n"
-                            + "\n".join(neg_lines)
-                        )
-                    state["_ontology_context"] = "\n".join(onto_parts)
-        except Exception:
-            logger.debug("AD-646: Ontology baseline computation failed", exc_info=True)
-
-        # 5. Source attribution (simplified — no authority classification)
-        memories = observation.get("recent_memories", [])
-        _sources: list[str] = []
-        if memories and isinstance(memories, list):
-            _sources.append(f"episodic memory ({len(memories)} episodes)")
-        if not _sources:
-            _sources.append("training knowledge only")
-        state["_source_attribution_text"] = (
-            f"[Source awareness: Your response draws on: {', '.join(_sources)}. "
-            f"Source quality: unknown.]"
-        )
-
-        # 6. Confabulation guard (generic — no authority)
-        state["_confabulation_guard"] = self._confabulation_guard(None)
-
-        # 7. No-memories flag
-        if not memories or not isinstance(memories, list):
-            state["_no_episodic_memories"] = (
-                "You have no stored episodic memories yet. "
-                "Do not reference or invent past experiences you do not have."
-            )
-
-        # 8. Communication proficiency (AD-625) — self-contained
-        comm_guidance = self._get_comm_proficiency_guidance()
-        if comm_guidance:
-            state["_comm_proficiency"] = comm_guidance
-
-        # 9. Cold-start note (BF-102) — sync check
-        _rt_cs = getattr(self, '_runtime', None)
-        if _rt_cs and getattr(_rt_cs, 'is_cold_start', False):
-            state["_cold_start_note"] = (
-                "SYSTEM NOTE: This is a fresh start. You have no prior "
-                "episodic memories. Do not reference or invent past experiences."
-            )
-
-        # 10. Rich source attribution override (AD-568d)
-        _attr = observation.get("_source_attribution")
-        if _attr:
-            try:
-                _sources_present: list[str] = []
-                if _attr.episodic_count > 0:
-                    _sources_present.append(f"episodic memory ({_attr.episodic_count} episodes)")
-                if _attr.procedural_count > 0:
-                    _sources_present.append(f"learned procedures ({_attr.procedural_count})")
-                if _attr.oracle_used:
-                    _sources_present.append("ship's records")
-                if not _sources_present:
-                    _sources_present.append("training knowledge only")
-                state["_source_attribution_text"] = (
-                    f"<source_awareness>Your response draws on: {', '.join(_sources_present)}. "
-                    f"Primary basis: {_attr.primary_source.value}.</source_awareness>"
-                )
-            except Exception:
-                logger.debug("AD-646b: Rich source attribution failed", exc_info=True)
-
-        # 11. Self-recognition (AD-575) — sync regex
-        _content = observation.get("context", "")
-        if _content:
-            self_cue = self._detect_self_in_content(_content)
-            if self_cue:
-                state["_self_recognition_cue"] = self_cue
-
-        # 12. AD-722 BF (2026-05-10): avatar self-observation (INTEROCEPTION).
-        # Method itself is feature-gated by avatar_telemetry.inject_into_agent_context
-        # and returns "" when the cached snapshot is missing — safe to call
-        # unconditionally. Wiring this here closes the loop: registry inventory
-        # had _build_avatar_self_observation listed but no caller invoked it.
-        try:
-            avatar_block = self._build_avatar_self_observation(observation or {})
-            # AD-722a: append the self-tag instruction (default OFF).
-            _intent_tag_line = self._build_intent_self_tag_instruction()
-            if _intent_tag_line:
-                avatar_block = (avatar_block + "\n" + _intent_tag_line).strip("\n") + "\n"
-            if avatar_block:
-                state["_avatar_self_observation"] = avatar_block
         except Exception:
             logger.debug(
-                "AD-722: avatar self-observation injection raised; continuing",
+                "AD-723: agent metrics extraction failed; falling back to default",
                 exc_info=True,
             )
+            return "Your trust: 0.5 | Agency: ensign | Rank: ensign"
 
-        return state
+    def _sensorium_ontology_baseline(self, observation: dict) -> str:
+        """AD-723 extraction of baseline step 4: ontology grounding.
 
-    def _build_cognitive_extensions(self, context_parts: dict) -> dict[str, str]:
-        """AD-646: Context-parts-dependent cognitive state — proactive path only.
-
-        Returns keys that override baseline with richer versions when
-        context_parts is available (populated by proactive.py _gather_context()).
+        Returns ``""`` (no contribution) when runtime / ontology is
+        unavailable; never ``None`` so it cannot accidentally pop a
+        same-key entry on the baseline dispatch.
         """
-        state: dict[str, str] = {}
-
-        # 1. Self-monitoring (AD-504/506a) — requires context_parts
-        self_mon = context_parts.get("self_monitoring")
-        if self_mon:
-            sm_parts: list[str] = []
-
-            # Cognitive zone
-            zone = self_mon.get("cognitive_zone")
-            zone_note = self_mon.get("zone_note")
-            if zone:
-                sm_parts.append(f"<cognitive_zone>{zone.upper()}</cognitive_zone>")
-                if zone_note:
-                    sm_parts.append(zone_note)
-
-            # Recent posts
-            recent_posts = self_mon.get("recent_posts")
-            if recent_posts:
-                sm_parts.append("Your recent posts (review before adding):")
-                for p in recent_posts:
-                    age_str = f"[{p['age']} ago]" if p.get("age") else ""
-                    sm_parts.append(f"  - {age_str} {p['body']}")
-
-            # Self-similarity
-            sim = self_mon.get("self_similarity")
-            if sim is not None:
-                sm_parts.append(f"Self-similarity across recent posts: {sim:.2f}")
-                if sim >= 0.5:
-                    sm_parts.append(
-                        "WARNING: Your recent posts show high similarity. "
-                        "Before posting, ensure you have GENUINELY NEW information. "
-                        "If not, respond with [NO_RESPONSE]."
-                    )
-                elif sim >= 0.3:
-                    sm_parts.append(
-                        "Note: Some similarity in your recent posts. "
-                        "Consider whether you are adding new insight or restating."
-                    )
-
-            # Cooldown
-            if self_mon.get("cooldown_increased"):
-                sm_parts.append(
-                    "Your proactive cooldown has been increased due to rising similarity. "
-                    "This is pacing, not punishment — take time to find fresh perspectives."
-                )
-            if self_mon.get("cooldown_reason"):
-                sm_parts.append(f"  Counselor note: {self_mon['cooldown_reason']}")
-
-            # Memory state awareness
-            mem_state = self_mon.get("memory_state")
-            if mem_state:
-                count = mem_state.get("episode_count", 0)
-                lifecycle = mem_state.get("lifecycle", "")
-                uptime_hrs = mem_state.get("uptime_hours", 0)
-                if count < 5 and lifecycle != "reset" and uptime_hrs > 1:
-                    sm_parts.append(
-                        f"Note: You have {count} episodic memories, but the system has been "
-                        f"running for {uptime_hrs:.1f}h. Other crew may have richer histories. "
-                        "Do not generalize from your own sparse memory to the crew's state."
-                    )
-
-            # Notebook index
-            nb_index = self_mon.get("notebook_index")
-            if nb_index:
-                topics = ", ".join(
-                    f"{e['topic']} (updated {e['updated']})" if e.get("updated") else e["topic"]
-                    for e in nb_index
-                )
-                sm_parts.append(f"Your notebooks: [{topics}]")
-                sm_parts.append(
-                    "Use [NOTEBOOK topic-slug] to update. "
-                    "Use [READ_NOTEBOOK topic-slug] to review a notebook next cycle."
-                )
-
-            # Notebook content
-            nb_content = self_mon.get("notebook_content")
-            if nb_content:
-                sm_parts.append(f'<notebook topic="{nb_content["topic"]}">')
-                sm_parts.append(nb_content["snippet"])
-                sm_parts.append("</notebook>")
-
-            if sm_parts:
-                state["_self_monitoring"] = "\n".join(sm_parts)
-
-        # 2. Source attribution — override baseline with authority-aware version
-        memories = context_parts.get("recent_memories", [])
-        _framing = context_parts.get("_source_framing")
-        if memories or _framing:
-            _sources: list[str] = []
-            if memories:
-                _sources.append(f"episodic memory ({len(memories)} episodes)")
-            if not _sources:
-                _sources.append("training knowledge only")
-            _authority = getattr(_framing, 'authority', None) if _framing else None
-            _auth_label = getattr(_authority, 'value', 'unknown') if _authority else "unknown"
-            state["_source_attribution_text"] = (
-                f"[Source awareness: Your response draws on: {', '.join(_sources)}. "
-                f"Source quality: {_auth_label}.]"
-            )
-
-        # 3. Introspective telemetry (AD-588)
-        telemetry = context_parts.get("introspective_telemetry")
-        if telemetry:
-            state["_introspective_telemetry"] = telemetry
-
-        # 4. Ontology identity grounding — override baseline from context_parts
-        ontology = context_parts.get("ontology")
-        if ontology:
+        del observation
+        try:
+            rt = getattr(self, "_runtime", None)
+            if not (rt and hasattr(rt, "ontology")):
+                return ""
+            ontology = rt.ontology.get_crew_context(self.agent_type)
+            if not ontology:
+                return ""
             onto_parts: list[str] = []
             identity = ontology.get("identity", {})
             dept = ontology.get("department", {})
@@ -4742,30 +4977,464 @@ class CognitiveAgent(BaseAgent):
                     f"Ship status: {vessel.get('name', 'ProbOS')} "
                     f"v{vessel.get('version', '?')} — Alert Condition {alert}."
                 )
-            state["_ontology_context"] = "\n".join(onto_parts)
+            caps = ontology.get("capabilities", [])
+            if caps:
+                cap_lines = [f"- {c['summary']}" for c in caps]
+                onto_parts.append(
+                    "Your post capabilities (what you actually do):\n"
+                    + "\n".join(cap_lines)
+                )
+            negatives = ontology.get("does_not_have", [])
+            if negatives:
+                neg_lines = [f"- {n}" for n in negatives]
+                onto_parts.append(
+                    "You do NOT have (do not claim or reference these):\n"
+                    + "\n".join(neg_lines)
+                )
+            return "\n".join(onto_parts)
+        except Exception:
+            logger.debug(
+                "AD-723: ontology baseline extraction failed; skipping",
+                exc_info=True,
+            )
+            return ""
 
-        # 5. Orientation supplement (AD-567g)
-        orientation = context_parts.get("orientation_supplement")
-        if orientation:
-            state["_orientation_supplement"] = orientation
+    def _sensorium_source_attribution_baseline(self, observation: dict) -> str:
+        """AD-723 extraction of baseline step 5: simplified source attribution."""
+        memories = observation.get("recent_memories", []) if observation else []
+        sources: list[str] = []
+        if memories and isinstance(memories, list):
+            sources.append(f"episodic memory ({len(memories)} episodes)")
+        if not sources:
+            sources.append("training knowledge only")
+        return (
+            f"[Source awareness: Your response draws on: {', '.join(sources)}. "
+            f"Source quality: unknown.]"
+        )
 
-        # 6. Confabulation guard — override baseline with authority-calibrated version
-        _authority_val = getattr(_framing, 'authority', None) if _framing else None
-        if _authority_val is not None:
-            state["_confabulation_guard"] = self._confabulation_guard(_authority_val)
+    def _sensorium_confab_guard_baseline(self, observation: dict) -> str:
+        """AD-723 extraction of baseline step 6: generic confabulation guard."""
+        del observation
+        return self._confabulation_guard(None)
 
-        # 7. No-memories flag — override baseline based on context_parts memories
-        if memories:
-            # Has memories — signal removal of baseline's no-memories flag
-            state["_no_episodic_memories"] = None  # type: ignore[assignment]
-        elif not memories and _framing is not None:
-            # context_parts present but no memories — set flag
-            state["_no_episodic_memories"] = (
+    def _sensorium_no_memories_flag(self, observation: dict) -> str:
+        """AD-723 extraction of baseline step 7: no-memories flag.
+
+        Returns ``""`` (no contribution) when memories are present, so the
+        baseline dispatch leaves the key unset rather than popping it.
+        The extensions-side ``_sensorium_ext_no_memories_flag_override``
+        keeps the AD-646 ``None``-removal semantic for proactive paths.
+        """
+        memories = observation.get("recent_memories", []) if observation else []
+        if not memories or not isinstance(memories, list):
+            return (
                 "You have no stored episodic memories yet. "
                 "Do not reference or invent past experiences you do not have."
             )
+        return ""
 
-        return state
+    def _sensorium_cold_start_note(self, observation: dict) -> str:
+        """AD-723 extraction of baseline step 9: BF-102 cold-start runtime note.
+
+        Returns ``""`` when the runtime is not in cold-start state.
+        """
+        del observation
+        rt = getattr(self, "_runtime", None)
+        if rt and getattr(rt, "is_cold_start", False):
+            return (
+                "SYSTEM NOTE: This is a fresh start. You have no prior "
+                "episodic memories. Do not reference or invent past experiences."
+            )
+        return ""
+
+    def _sensorium_source_attribution_rich(self, observation: dict) -> str:
+        """AD-723 extraction of baseline step 10: AD-568d rich attribution override.
+
+        Returns ``""`` (no contribution; preserves the prior
+        ``_source_attribution_text`` key written by the baseline entry)
+        when no rich attribution is attached to the observation.
+        """
+        attr = observation.get("_source_attribution") if observation else None
+        if not attr:
+            return ""
+        try:
+            sources_present: list[str] = []
+            if attr.episodic_count > 0:
+                sources_present.append(f"episodic memory ({attr.episodic_count} episodes)")
+            if attr.procedural_count > 0:
+                sources_present.append(f"learned procedures ({attr.procedural_count})")
+            if attr.oracle_used:
+                sources_present.append("ship's records")
+            if not sources_present:
+                sources_present.append("training knowledge only")
+            return (
+                f"<source_awareness>Your response draws on: {', '.join(sources_present)}. "
+                f"Primary basis: {attr.primary_source.value}.</source_awareness>"
+            )
+        except Exception:
+            logger.debug(
+                "AD-723: rich source attribution extraction failed; skipping",
+                exc_info=True,
+            )
+            return ""
+
+    # ------------------------------------------------------------------
+    # AD-723: Sensorium extracted methods — chain extensions
+    # The dispatcher passes ``observation`` containing ``_context_parts``;
+    # extension methods read context_parts from it.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _ext_context_parts(observation: dict) -> dict:
+        return observation.get("_context_parts", {}) if observation else {}
+
+    def _sensorium_ext_self_monitoring(self, observation: dict) -> str:
+        """AD-723 extraction of extensions step 1: AD-504/506a self-monitoring.
+
+        Returns ``""`` (no contribution) when self_monitoring is absent
+        from context_parts; no baseline-set ``_self_monitoring`` key to pop.
+        """
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        self_mon = context_parts.get("self_monitoring")
+        if not self_mon:
+            return ""
+        sm_parts: list[str] = []
+        zone = self_mon.get("cognitive_zone")
+        zone_note = self_mon.get("zone_note")
+        if zone:
+            sm_parts.append(f"<cognitive_zone>{zone.upper()}</cognitive_zone>")
+            if zone_note:
+                sm_parts.append(zone_note)
+        recent_posts = self_mon.get("recent_posts")
+        if recent_posts:
+            sm_parts.append("Your recent posts (review before adding):")
+            for p in recent_posts:
+                age_str = f"[{p['age']} ago]" if p.get("age") else ""
+                sm_parts.append(f"  - {age_str} {p['body']}")
+        sim = self_mon.get("self_similarity")
+        if sim is not None:
+            sm_parts.append(f"Self-similarity across recent posts: {sim:.2f}")
+            if sim >= 0.5:
+                sm_parts.append(
+                    "WARNING: Your recent posts show high similarity. "
+                    "Before posting, ensure you have GENUINELY NEW information. "
+                    "If not, respond with [NO_RESPONSE]."
+                )
+            elif sim >= 0.3:
+                sm_parts.append(
+                    "Note: Some similarity in your recent posts. "
+                    "Consider whether you are adding new insight or restating."
+                )
+        if self_mon.get("cooldown_increased"):
+            sm_parts.append(
+                "Your proactive cooldown has been increased due to rising similarity. "
+                "This is pacing, not punishment — take time to find fresh perspectives."
+            )
+        if self_mon.get("cooldown_reason"):
+            sm_parts.append(f"  Counselor note: {self_mon['cooldown_reason']}")
+        mem_state = self_mon.get("memory_state")
+        if mem_state:
+            count = mem_state.get("episode_count", 0)
+            lifecycle = mem_state.get("lifecycle", "")
+            uptime_hrs = mem_state.get("uptime_hours", 0)
+            if count < 5 and lifecycle != "reset" and uptime_hrs > 1:
+                sm_parts.append(
+                    f"Note: You have {count} episodic memories, but the system has been "
+                    f"running for {uptime_hrs:.1f}h. Other crew may have richer histories. "
+                    "Do not generalize from your own sparse memory to the crew's state."
+                )
+        nb_index = self_mon.get("notebook_index")
+        if nb_index:
+            topics = ", ".join(
+                f"{e['topic']} (updated {e['updated']})" if e.get("updated") else e["topic"]
+                for e in nb_index
+            )
+            sm_parts.append(f"Your notebooks: [{topics}]")
+            sm_parts.append(
+                "Use [NOTEBOOK topic-slug] to update. "
+                "Use [READ_NOTEBOOK topic-slug] to review a notebook next cycle."
+            )
+        nb_content = self_mon.get("notebook_content")
+        if nb_content:
+            sm_parts.append(f'<notebook topic="{nb_content["topic"]}">')
+            sm_parts.append(nb_content["snippet"])
+            sm_parts.append("</notebook>")
+        if not sm_parts:
+            return ""
+        return "\n".join(sm_parts)
+
+    def _sensorium_ext_source_attribution_authority(self, observation: dict) -> str:
+        """AD-723 extraction of extensions step 2: authority-aware source attribution.
+
+        Returns ``""`` when context_parts contains no memories AND no
+        ``_source_framing``; this preserves the baseline-set
+        ``_source_attribution_text`` key (no implicit pop).
+        """
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        memories = context_parts.get("recent_memories", [])
+        framing = context_parts.get("_source_framing")
+        if not (memories or framing):
+            return ""
+        sources: list[str] = []
+        if memories:
+            sources.append(f"episodic memory ({len(memories)} episodes)")
+        if not sources:
+            sources.append("training knowledge only")
+        authority = getattr(framing, "authority", None) if framing else None
+        auth_label = getattr(authority, "value", "unknown") if authority else "unknown"
+        return (
+            f"[Source awareness: Your response draws on: {', '.join(sources)}. "
+            f"Source quality: {auth_label}.]"
+        )
+
+    def _sensorium_ext_introspective_telemetry(self, observation: dict) -> str:
+        """AD-723 extraction of extensions step 3: AD-588 introspective telemetry."""
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        return context_parts.get("introspective_telemetry") or ""
+
+    def _sensorium_ext_ontology_from_context_parts(self, observation: dict) -> str:
+        """AD-723 extraction of extensions step 4: ontology override from context_parts.
+
+        Returns ``""`` (no contribution; baseline ontology key preserved)
+        when context_parts has no ``ontology`` entry.
+        """
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        ontology = context_parts.get("ontology")
+        if not ontology:
+            return ""
+        onto_parts: list[str] = []
+        identity = ontology.get("identity", {})
+        dept = ontology.get("department", {})
+        vessel = ontology.get("vessel", {})
+        onto_parts.append(
+            f"You are {identity.get('callsign', '?')}, "
+            f"{identity.get('post', '?')} in {dept.get('name', '?')} department."
+        )
+        if ontology.get("reports_to"):
+            onto_parts.append(f"You report to {ontology['reports_to']}.")
+        if ontology.get("direct_reports"):
+            onto_parts.append(f"Your direct reports: {', '.join(ontology['direct_reports'])}.")
+        if ontology.get("peers"):
+            onto_parts.append(f"Department peers: {', '.join(ontology['peers'])}.")
+        if vessel:
+            alert = vessel.get("alert_condition", "GREEN")
+            onto_parts.append(
+                f"Ship status: {vessel.get('name', 'ProbOS')} "
+                f"v{vessel.get('version', '?')} — Alert Condition {alert}."
+            )
+        return "\n".join(onto_parts)
+
+    def _sensorium_ext_orientation_supplement(self, observation: dict) -> str:
+        """AD-723 extraction of extensions step 5: AD-567g orientation supplement."""
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        return context_parts.get("orientation_supplement") or ""
+
+    def _sensorium_ext_confab_guard_authority(self, observation: dict) -> str:
+        """AD-723 extraction of extensions step 6: authority-calibrated confab guard.
+
+        Returns ``""`` (no contribution; baseline confab-guard preserved)
+        when no authority is attached to the source framing.
+        """
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        framing = context_parts.get("_source_framing")
+        authority = getattr(framing, "authority", None) if framing else None
+        if authority is None:
+            return ""
+        return self._confabulation_guard(authority)
+
+    def _sensorium_ext_no_memories_flag_override(self, observation: dict) -> str | None:
+        """AD-723 extraction of extensions step 7: no-memories flag override.
+
+        Preserves AD-646 None-removal semantics: returning ``None`` signals
+        the dispatcher to pop the baseline-set ``_no_episodic_memories`` key.
+        Returning the flag string sets it (when context_parts present but
+        memories empty). Method only contributes when context_parts has a
+        ``_source_framing`` marker (otherwise no opinion — preserves
+        baseline behaviour).
+        """
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        memories = context_parts.get("recent_memories", [])
+        framing = context_parts.get("_source_framing")
+        if memories:
+            # AD-646: signal removal of baseline's no-memories flag
+            return None
+        if not memories and framing is not None:
+            return (
+                "You have no stored episodic memories yet. "
+                "Do not reference or invent past experiences you do not have."
+            )
+        return None
+
+    # ------------------------------------------------------------------
+    # AD-723: Sensorium extracted methods — chain situation awareness
+    # ------------------------------------------------------------------
+
+    def _sensorium_situation_ward_room_activity(self, observation: dict) -> str | None:
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        wr_activity = context_parts.get("ward_room_activity", [])
+        if not wr_activity:
+            return None
+        wr_lines = ["Recent Ward Room discussion:"]
+        for a in wr_activity:
+            prefix = "[thread]" if a.get("type") == "thread" else "[reply]"
+            ids = ""
+            if a.get("thread_id"):
+                ids += f" thread:{a['thread_id'][:8]}"
+            if a.get("post_id"):
+                ids += f" post:{a['post_id'][:8]}"
+            score = a.get("net_score", 0)
+            score_str = f" [+{score}]" if score > 0 else f" [{score}]" if score < 0 else ""
+            channel = f" ({a['channel']})" if a.get("channel") else ""
+            wr_lines.append(
+                f"  - {prefix}{ids}{score_str} {a.get('author', '?')}{channel}: "
+                f"{a.get('body', '?')}"
+            )
+        return "\n".join(wr_lines)
+
+    def _sensorium_situation_recent_alerts(self, observation: dict) -> str | None:
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        alerts = context_parts.get("recent_alerts", [])
+        if not alerts:
+            return None
+        alert_lines = ["Recent bridge alerts:"]
+        for a in alerts:
+            alert_lines.append(
+                f"  - [{a.get('severity', '?')}] {a.get('title', '?')} "
+                f"(from {a.get('source', '?')})"
+            )
+        return "\n".join(alert_lines)
+
+    def _sensorium_situation_recent_events(self, observation: dict) -> str | None:
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        events = context_parts.get("recent_events", [])
+        if not events:
+            return None
+        event_lines = ["Recent system events:"]
+        for e in events:
+            event_lines.append(
+                f"  - [{e.get('category', '?')}] {e.get('event', '?')}"
+            )
+        return "\n".join(event_lines)
+
+    def _sensorium_situation_infrastructure(self, observation: dict) -> str | None:
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        infra = context_parts.get("infrastructure_status")
+        if not infra:
+            return None
+        llm_status = infra.get("llm_status", "unknown")
+        return (
+            f"[INFRASTRUCTURE NOTE: Communications array {llm_status}]\n"
+            f"{infra.get('message', '')}"
+        )
+
+    def _sensorium_situation_subordinate_stats(self, observation: dict) -> str | None:
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        sub_stats = context_parts.get("subordinate_stats")
+        if not sub_stats:
+            return None
+        sub_lines = ["<subordinate_activity>"]
+        for callsign, stats in sub_stats.items():
+            sub_lines.append(
+                f"  {callsign}: {stats['posts_total']} posts, "
+                f"{stats['endorsements_given']} endorsements given, "
+                f"{stats['endorsements_received']} endorsements received, "
+                f"credibility {stats['credibility_score']:.2f}"
+            )
+        sub_lines.append("</subordinate_activity>")
+        return "\n".join(sub_lines)
+
+    def _sensorium_situation_clinical_telemetry(self, observation: dict) -> str | None:
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        clin = context_parts.get("clinical_telemetry")
+        if not clin:
+            return None
+        clin_lines = ["<clinical_telemetry>"]
+        dreams = clin.get("dreams")
+        if isinstance(dreams, dict):
+            clin_lines.append(f"  dreams: {dreams.get('count', 0)} recent")
+        traces = clin.get("chain_traces")
+        if isinstance(traces, dict):
+            clin_lines.append(
+                f"  chain_traces: {traces.get('count', 0)} self "
+                f"(latest_outcome={traces.get('latest_outcome', 'unknown')})"
+            )
+        breakers = clin.get("breakers")
+        if isinstance(breakers, dict):
+            recent = breakers.get("recent_transitions") or []
+            clin_lines.append(
+                f"  breakers: {breakers.get('count', 0)} transitions "
+                f"(recent={len(recent)})"
+            )
+            for tr in recent:
+                if not isinstance(tr, dict):
+                    continue
+                clin_lines.append(
+                    f"    - {tr.get('agent', '?')}: "
+                    f"{tr.get('from', '?')}->{tr.get('to', '?')}"
+                )
+        clin_lines.append("</clinical_telemetry>")
+        return "\n".join(clin_lines)
+
+    def _sensorium_situation_system_note(self, observation: dict) -> str | None:
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        return context_parts.get("system_note") or None
+
+    def _sensorium_situation_active_game(self, observation: dict) -> str | None:
+        context_parts = observation.get("_context_parts", {}) if observation else {}
+        active_game = context_parts.get("active_game")
+        if not active_game:
+            return None
+        game_lines = [
+            f"You are playing {active_game['game_type']} against "
+            f"{active_game['opponent']}. "
+            f"Moves so far: {active_game['moves_count']}.",
+            f"\nCurrent board:\n```\n{active_game['board']}\n```",
+        ]
+        if active_game["is_my_turn"]:
+            game_lines.append(
+                f"**It is YOUR turn.** Valid moves: "
+                f"{', '.join(str(m) for m in active_game['valid_moves'])}. "
+                f"Reply with [MOVE position] to play."
+            )
+        else:
+            game_lines.append("Waiting for your opponent to move.")
+        return "\n".join(game_lines)
+
+    def _build_cognitive_baseline(self, observation: dict) -> dict[str, str]:
+        """AD-646: Agent-intrinsic cognitive state — runs for ALL chain executions.
+
+        Produces baseline self-knowledge from agent attributes and runtime
+        services. Zero dependency on context_parts (which only proactive.py
+        populates). Ward Room chains get temporal awareness, working memory,
+        trust metrics, ontology, and confabulation guards.
+
+        AD-723 v1 (producer-side): this is now a thin shim around
+        ``_dispatch_sensorium_sync(CHAIN_BASELINE, ...)``. Each former
+        numbered step is registered as a ``_sensorium_*`` entry in
+        ``SENSORIUM_REGISTRY``. The dispatcher iterates the registry in
+        registration order (insertion-stable for same-priority entries),
+        preserving the legacy dict-key insertion order. Signature is
+        unchanged so ~17 existing test call sites keep passing.
+        """
+        return self._dispatch_sensorium_sync(SensoriumPath.CHAIN_BASELINE, observation)
+
+    def _build_cognitive_extensions(self, context_parts: dict) -> dict[str, str]:
+        """AD-646: Context-parts-dependent cognitive state — proactive path only.
+
+        Returns keys that override baseline with richer versions when
+        context_parts is available (populated by proactive.py _gather_context()).
+
+        AD-723 v1 (producer-side): thin shim around
+        ``_dispatch_sensorium_sync(CHAIN_EXTENSIONS, ...)``. Extension
+        entries register at ``priority=10`` so they run after baseline
+        (``priority=0``); AD-646 None-for-removal semantics are preserved
+        through ``_apply_sensorium_result``. Signature unchanged so
+        ~17 existing test call sites keep passing.
+        """
+        return self._dispatch_sensorium_sync(
+            SensoriumPath.CHAIN_EXTENSIONS,
+            {"_context_parts": context_parts},
+        )
 
     def _build_cognitive_state(self, context_parts: dict, observation: dict | None = None) -> dict[str, str]:
         """AD-644 Phase 2 / AD-646: Populate innate faculty observation keys for chain prompts.
@@ -4776,16 +5445,34 @@ class CognitiveAgent(BaseAgent):
 
         AD-666: This is the interoception hub of the Agent Sensorium — the agent's
         structured self-state snapshot. See SENSORIUM_REGISTRY for the full inventory.
+
+        AD-723 v1 (producer-side): single-dict variant — dispatcher writes
+        baseline then extensions into the SAME merged dict so AD-646
+        None-removal in extensions correctly pops baseline-set keys (e.g.
+        ``_no_episodic_memories``).
         """
-        state = self._build_cognitive_baseline(observation or {})
+        obs = observation or {}
         if context_parts:
-            extensions = self._build_cognitive_extensions(context_parts)
-            # Extensions can mark keys for removal by setting value to None
-            for key, val in extensions.items():
-                if val is None:
-                    state.pop(key, None)
-                else:
-                    state[key] = val
+            obs = {**obs, "_context_parts": context_parts}
+        state: dict[str, str] = {}
+        paths: tuple[SensoriumPath, ...] = (SensoriumPath.CHAIN_BASELINE,)
+        if context_parts:
+            paths = (SensoriumPath.CHAIN_BASELINE, SensoriumPath.CHAIN_EXTENSIONS)
+        for path in paths:
+            for method_name, entry in self._sensorium_entries_for_path(path):
+                method = getattr(self, method_name, None)
+                if method is None or inspect.iscoroutinefunction(method):
+                    continue
+                try:
+                    result = method(obs)
+                except Exception:
+                    logger.debug(
+                        "AD-723: sensorium method %s raised on path %s; "
+                        "degrading (Tier-2: skipped).",
+                        method_name, path.value, exc_info=True,
+                    )
+                    continue
+                self._apply_sensorium_result(state, entry, method_name, result)
         return state
 
     def _track_sensorium_budget(
@@ -4850,130 +5537,33 @@ class CognitiveAgent(BaseAgent):
         The one-shot path renders these inline in _build_user_message().
         This method extracts them into observation keys so ANALYZE can
         render the current situation.
+
+        AD-723 v1 (producer-side): inlined dispatch loop. Methods are
+        resolved through ``CognitiveAgent`` (the class) rather than
+        ``self`` so the existing AD-635f test pattern
+        ``CognitiveAgent._build_situation_awareness(MagicMock(spec=...),
+        ctx)`` continues to pass — the registered situation methods are
+        pure functions of ``observation['_context_parts']`` (no ``self.*``
+        attribute access required), so the class-bound resolution works
+        with both real and Mock ``self``.
         """
+        obs = {"_context_parts": context_parts}
         state: dict[str, str] = {}
-
-        # 1. Ward Room activity (AD-413) — dept + all-hands + recreation
-        wr_activity = context_parts.get("ward_room_activity", [])
-        if wr_activity:
-            wr_lines: list[str] = []
-            wr_lines.append("Recent Ward Room discussion:")
-            for a in wr_activity:
-                prefix = "[thread]" if a.get("type") == "thread" else "[reply]"
-                ids = ""
-                if a.get("thread_id"):
-                    ids += f" thread:{a['thread_id'][:8]}"
-                if a.get("post_id"):
-                    ids += f" post:{a['post_id'][:8]}"
-                score = a.get("net_score", 0)
-                score_str = f" [+{score}]" if score > 0 else f" [{score}]" if score < 0 else ""
-                channel = f" ({a['channel']})" if a.get("channel") else ""
-                wr_lines.append(
-                    f"  - {prefix}{ids}{score_str} {a.get('author', '?')}{channel}: "
-                    f"{a.get('body', '?')}"
+        for method_name, entry in CognitiveAgent.SENSORIUM_REGISTRY.items():
+            if SensoriumPath.CHAIN_SITUATION not in entry.paths:
+                continue
+            method = getattr(CognitiveAgent, method_name, None)
+            if method is None or inspect.iscoroutinefunction(method):
+                continue
+            try:
+                result = method(self, obs)
+            except Exception:
+                logger.debug(
+                    "AD-723: situation method %s raised; degrading (Tier-2).",
+                    method_name, exc_info=True,
                 )
-            state["_ward_room_activity"] = "\n".join(wr_lines)
-
-        # 2. Recent bridge alerts
-        alerts = context_parts.get("recent_alerts", [])
-        if alerts:
-            alert_lines = ["Recent bridge alerts:"]
-            for a in alerts:
-                alert_lines.append(
-                    f"  - [{a.get('severity', '?')}] {a.get('title', '?')} "
-                    f"(from {a.get('source', '?')})"
-                )
-            state["_recent_alerts"] = "\n".join(alert_lines)
-
-        # 3. Recent system events
-        events = context_parts.get("recent_events", [])
-        if events:
-            event_lines = ["Recent system events:"]
-            for e in events:
-                event_lines.append(
-                    f"  - [{e.get('category', '?')}] {e.get('event', '?')}"
-                )
-            state["_recent_events"] = "\n".join(event_lines)
-
-        # 4. Infrastructure status (AD-576)
-        infra = context_parts.get("infrastructure_status")
-        if infra:
-            llm_status = infra.get("llm_status", "unknown")
-            state["_infrastructure_status"] = (
-                f"[INFRASTRUCTURE NOTE: Communications array {llm_status}]\n"
-                f"{infra.get('message', '')}"
-            )
-
-        # 5. Subordinate stats (AD-630) — Chiefs only
-        sub_stats = context_parts.get("subordinate_stats")
-        if sub_stats:
-            sub_lines = ["<subordinate_activity>"]
-            for callsign, stats in sub_stats.items():
-                sub_lines.append(
-                    f"  {callsign}: {stats['posts_total']} posts, "
-                    f"{stats['endorsements_given']} endorsements given, "
-                    f"{stats['endorsements_received']} endorsements received, "
-                    f"credibility {stats['credibility_score']:.2f}"
-                )
-            sub_lines.append("</subordinate_activity>")
-            state["_subordinate_stats"] = "\n".join(sub_lines)
-
-        # 5b. Clinical telemetry (AD-635f) — Chapel, Echo only
-        clin = context_parts.get("clinical_telemetry")
-        if clin:
-            clin_lines = ["<clinical_telemetry>"]
-            _dreams = clin.get("dreams")
-            if isinstance(_dreams, dict):
-                clin_lines.append(
-                    f"  dreams: {_dreams.get('count', 0)} recent"
-                )
-            _traces = clin.get("chain_traces")
-            if isinstance(_traces, dict):
-                clin_lines.append(
-                    f"  chain_traces: {_traces.get('count', 0)} self "
-                    f"(latest_outcome={_traces.get('latest_outcome', 'unknown')})"
-                )
-            _breakers = clin.get("breakers")
-            if isinstance(_breakers, dict):
-                _recent = _breakers.get("recent_transitions") or []
-                clin_lines.append(
-                    f"  breakers: {_breakers.get('count', 0)} transitions "
-                    f"(recent={len(_recent)})"
-                )
-                for tr in _recent:
-                    if not isinstance(tr, dict):
-                        continue
-                    clin_lines.append(
-                        f"    - {tr.get('agent', '?')}: "
-                        f"{tr.get('from', '?')}->{tr.get('to', '?')}"
-                    )
-            clin_lines.append("</clinical_telemetry>")
-            state["_clinical_telemetry"] = "\n".join(clin_lines)
-
-        # 6. Cold-start system note (BF-034)
-        system_note = context_parts.get("system_note")
-        if system_note:
-            state["_cold_start_note"] = system_note
-
-        # 7. Active game state (BF-110)
-        active_game = context_parts.get("active_game")
-        if active_game:
-            game_lines = [
-                f"You are playing {active_game['game_type']} against "
-                f"{active_game['opponent']}. "
-                f"Moves so far: {active_game['moves_count']}.",
-                f"\nCurrent board:\n```\n{active_game['board']}\n```",
-            ]
-            if active_game["is_my_turn"]:
-                game_lines.append(
-                    f"**It is YOUR turn.** Valid moves: "
-                    f"{', '.join(str(m) for m in active_game['valid_moves'])}. "
-                    f"Reply with [MOVE position] to play."
-                )
-            else:
-                game_lines.append("Waiting for your opponent to move.")
-            state["_active_game"] = "\n".join(game_lines)
-
+                continue
+            CognitiveAgent._apply_sensorium_result(self, state, entry, method_name, result)
         return state
 
     # AD-588: Introspective self-query detection patterns
