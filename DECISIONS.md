@@ -1730,7 +1730,7 @@ The AD-720a dispatch's "zero new Python deps" rule was an aspirational goal that
 
 ### AD-723 — Sensorium dispatch unification (System-1 / System-2 path coherence, Phase 1)
 
-**Date:** 2026-05-10. **Status:** Forward marker, filed as [#581](https://github.com/seangalliher/ProbOS/issues/581).
+**Date:** 2026-05-10. **Status:** Shipped Wave 144 (73cbd95) — producer-side only per Wave-10 entanglement rule; DM/WR consumer migration deferred to AD-723a-1 (#617). Chain-side snapshot byte-equality verified.
 
 **Decision.** Convert `SENSORIUM_REGISTRY` (`cognitive_agent.py:122`) from inventory to dispatch. Each entry gains a `paths` tuple declaring which prompt-assembly paths consume it (chain-baseline / chain-extensions / chain-situation / DM-oneshot / WR-oneshot). Both `_build_cognitive_baseline` and the DM/WR branches of `_build_user_message` iterate the registry once. Every future sensorium injection registers with one `paths` tuple instead of being hand-wired into two assembly methods.
 
