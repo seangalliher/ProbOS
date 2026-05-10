@@ -8,7 +8,7 @@ back to OSS).
 
 **Authoritative state.**
 - `prompts/wave-plan.yaml` — wave roster (current wave: 128 done; next slot is 129).
-- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-720).
+- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-721i).
 - `tests/` — 11000+ tests at HEAD; gate runs `-n 16 --dist=loadfile`.
 
 **Recent eras (archived):**
@@ -68,3 +68,5 @@ back to OSS).
 - **Commercial overlay seam is live.** `runtime.commercial_overlay_loaded` and `/api/system/extensions` expose registry state. `pre_intent_authorization` hook fires on every `IntentBus.broadcast`; default-empty registry means zero overhead.
 - **No open OSS issues.** Pre-public-release tracker stays clean unless a regression or a new commercial-tagged AD lands.
 - **Roadmap drift convention:** `(SHIPPED, OSS)` for landed entries; `(planned, OSS)` for pending. Reconciliation runs on demand (tracked in BF #465 / AD-696).
+
+

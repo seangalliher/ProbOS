@@ -366,6 +366,20 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-721i | DSL → Blender VRM renderer (headless backend) | [#537](https://github.com/seangalliher/ProbOS/issues/537) | 2 |
 | AD-721j | Blender Connector — Computer Use control (Anthropic-style; commercial overlay extension exists in private repo) | [#538](https://github.com/seangalliher/ProbOS/issues/538) | 3 |
 
+**From 2026-05-09 Counselor feedback (avatar feedback loop) — novel territory:**
+
+Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545)) found no public OSS project where an AI agent monitors its own avatar's render state. Open-LLM-VTuber (7.6k★), kimjammer/Neuro (1.9k★), and super-agent-party (2.2k★) all run the same one-way LLM→avatar pattern. The standard framing is *"does the human perceive the avatar as natural?"* — AD-722 inverts it: *"does the agent know what it looks like right now?"* Functional self-presence awareness for embodied agents — pattern absorption only (VTube Studio plugin shape + A2F-3D blendshape stream), no code import.
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-722 | Agent-observable avatar telemetry feedback loop (UI → agent state channel) — **novel; no public prior art** | [#545](https://github.com/seangalliher/ProbOS/issues/545) | 3 |
+| AD-722a | Intent-vs-presentation divergence detector (intended tone vs rendered weights → trust/Hebbian) — **unprecedented in OSS LLM-avatar space** | (filed when AD-722 lands) | 4 |
+| AD-722b | Push channel (WebSocket) if poll-based v1 proves insufficient | (filed when AD-722 lands) | 4 |
+| AD-722c | Avatar telemetry history for analytics | (filed when AD-722 lands) | 4 |
+| AD-723 | Ship as persistent shared virtual space — co-presence protocol, agent-position state, multi-agent extension of AD-722 telemetry (extension point) | (filed after AD-722) | 4 |
+| AD-723-C *(Commercial)* | Polished multi-user 3D ship-interior UI, world layout, room semantics, meeting surfaces, operator controls — builds on AD-723 protocol | (commercial overlay) | — |
+| AD-724 | Away-mission protocol — agent embodiment in external virtual worlds (VRChat / open metaverse), episodic memory of places | (filed after AD-723) | 4 |
+
 ### Forcing-function deferrals
 
 (Forward dependencies satisfied; build when need surfaces.)
