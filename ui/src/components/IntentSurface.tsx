@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useStore } from '../store/useStore';
-import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectProposalView } from '../store/types';
+import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectProposalView, Agent } from '../store/types';
 import { speakResponse, stripMarkdownForSpeech } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import { soundEngine } from '../audio/soundEngine';
@@ -11,6 +11,7 @@ import { BridgePanel } from './BridgePanel';
 import { ViewSwitcher } from './ViewSwitcher';
 import { deriveBridgeState } from './glass/ContextRibbon';
 import { Diamond, Check, XMark, StatusPending, DiamondOpen, Bullseye, ChevronDown, ChevronRight, Warning, Sparkle } from './icons/Glyphs';
+import { AgentAvatarBadge } from './AgentAvatarBadge';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -44,6 +45,12 @@ export function IntentSurface() {
   // Command Surface breathing (AD-392)
   const pillRef = useRef<HTMLDivElement>(null);
   const [pillReceded, setPillReceded] = useState(false);
+
+  // AD-719: @-picker state for multi-agent fan-out
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerPrefix, setPickerPrefix] = useState('');
+  const [pickerIndex, setPickerIndex] = useState(0);
+  const agentsMap = useStore((s) => s.agents);
 
   const chatHistory = useStore((s) => s.chatHistory);
   const activeDag = useStore((s) => s.activeDag);
@@ -176,6 +183,21 @@ export function IntentSurface() {
     })
       .then((res) => res.json())
       .then((data) => {
+        // AD-719: multi-agent fan-out branch — render one ChatMessage per
+        // attributed reply. When per_agent_replies is non-empty, the
+        // top-level `response` is intentionally empty.
+        const replies = Array.isArray(data.per_agent_replies) ? data.per_agent_replies : [];
+        if (replies.length > 0) {
+          for (const r of replies as Array<{ agent_id: string; callsign: string; text: string }>) {
+            addChatMessage('agent', r.text, { agent_id: r.agent_id, callsign: r.callsign });
+          }
+          if (voiceEnabled && replies[0]?.text && !replies[0].text.startsWith('(')) {
+            speakResponse(stripMarkdownForSpeech(replies[0].text));
+          }
+          soundEngine.playIntentRouting();
+          return;
+        }
+
         const response = data.response
           || data.reflection
           || (data.results && Object.keys(data.results).length > 0
@@ -209,10 +231,107 @@ export function IntentSurface() {
   /* ── Escape key ── */
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Escape') {
+      // AD-719: Esc on the input also closes the @-picker (a no-op for v1
+      // keyboard nav — full ↑/↓/Tab/Esc state machine is AD-719c).
+      if (pickerOpen) {
+        setPickerOpen(false);
+        return;
+      }
       setActive(false);
       setInput('');
       inputRef.current?.blur();
     }
+    if (e.key === 'Enter' && pickerOpen && pickerMatches.length > 0) {
+      e.preventDefault();
+      confirmPickerSelection(pickerMatches[pickerIndex]?.callsign ?? pickerMatches[0].callsign);
+    }
+  }
+
+  /* ── AD-719: @-picker derived state and handlers ── */
+
+  // Derive crew rows from the live store's agents Map (no extra fetch).
+  type CrewRow = { callsign: string; displayName: string; tier: 'core' | 'utility' | 'domain'; department: string; deptColor: string };
+  const DEPT_COLORS_LOCAL: Record<string, string> = {
+    engineering: '#b0a050',
+    science: '#50b0a0',
+    medical: '#5090d0',
+    security: '#d05050',
+    bridge: '#d0a030',
+  };
+  const crewRows: CrewRow[] = Array.from(agentsMap.values())
+    .filter((a) => a.callsign && a.isCrew)
+    .map((a) => {
+      const dept = (a as Agent & { department?: string }).department || '';
+      return {
+        callsign: a.callsign,
+        displayName: a.displayName || '',
+        tier: a.tier,
+        department: dept,
+        deptColor: DEPT_COLORS_LOCAL[dept.toLowerCase()] ?? '#666',
+      };
+    })
+    // Dedupe by callsign — multiple live agents may share a type/callsign.
+    .filter((row, i, arr) => arr.findIndex((r) => r.callsign === row.callsign) === i);
+
+  const pickerMatches: CrewRow[] = pickerOpen
+    ? crewRows.filter((r) => {
+        const p = pickerPrefix.toLowerCase();
+        return r.callsign.toLowerCase().startsWith(p)
+            || r.displayName.toLowerCase().startsWith(p);
+      }).slice(0, 8)
+    : [];
+
+  // Detect "@<prefix>" at the caret tail (no whitespace in the prefix).
+  function handleInputChange(value: string) {
+    setInput(value);
+    const tail = value.split(/\s+/).pop() ?? '';
+    if (tail.startsWith('@') && !/\s/.test(tail.slice(1))) {
+      setPickerOpen(true);
+      setPickerPrefix(tail.slice(1));
+      setPickerIndex(0);
+    } else {
+      setPickerOpen(false);
+      setPickerPrefix('');
+    }
+  }
+
+  function confirmPickerSelection(callsign: string) {
+    // Replace the trailing @<prefix> with @<callsign> + trailing space.
+    const tokens = input.split(/(\s+)/);
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      if (tokens[i].startsWith('@') && !/\s/.test(tokens[i])) {
+        tokens[i] = `@${callsign}`;
+        break;
+      }
+    }
+    const next = tokens.join('') + (input.endsWith(' ') ? '' : ' ');
+    setInput(next);
+    setPickerOpen(false);
+    setPickerPrefix('');
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  // Derive selected mentions from the leading @callsign run in the input.
+  const selectedMentions: string[] = (() => {
+    const result: string[] = [];
+    const stripped = input.trimStart();
+    const re = /@(\w+)\s*/g;
+    let lastEnd = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(stripped)) !== null) {
+      if (m.index !== lastEnd) break;
+      result.push(m[1]);
+      lastEnd = m.index + m[0].length;
+    }
+    return result;
+  })();
+
+  function removeMention(callsign: string) {
+    // Remove the @<callsign> token plus surrounding spaces.
+    const re = new RegExp(`@${callsign}\\s*`, 'i');
+    const next = input.replace(re, '');
+    setInput(next.replace(/^\s+/, ''));
+    setTimeout(() => inputRef.current?.focus(), 0);
   }
 
   /* ── feedback helper with visual confirmation ── */
@@ -425,6 +544,21 @@ export function IntentSurface() {
                     flexDirection: 'column',
                     alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
                   }}>
+                    {/* AD-719: per-turn attribution for fanned-out agent replies. */}
+                    {msg.role === 'agent' && msg.callsign && (
+                      <div data-testid="agent-attribution" style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        marginBottom: 2, fontSize: 12, color: '#88a4c8',
+                      }}>
+                        <AgentAvatarBadge
+                          agentId={msg.agent_id ?? ''}
+                          callsign={msg.callsign}
+                          department={(crewRows.find((r) => r.callsign.toLowerCase() === msg.callsign!.toLowerCase())?.department) ?? ''}
+                          size={24}
+                        />
+                        <span style={{ color: '#f0d0a0', fontWeight: 500 }}>@{msg.callsign}</span>
+                      </div>
+                    )}
                     <div style={{
                       maxWidth: '80%',
                       padding: '8px 12px',
@@ -1426,6 +1560,62 @@ export function IntentSurface() {
               </div>
             )}
 
+            {/* AD-719: Recipient chip strip — one chip per leading @callsign in input. */}
+            {selectedMentions.length > 0 && (
+              <div
+                data-testid="recipient-chip-strip"
+                style={{
+                  display: 'flex', flexWrap: 'wrap', gap: 6,
+                  padding: '6px 16px 0 16px',
+                }}
+              >
+                {selectedMentions.map((cs) => {
+                  const row = crewRows.find((r) => r.callsign.toLowerCase() === cs.toLowerCase());
+                  const color = row?.deptColor ?? '#666';
+                  return (
+                    <span
+                      key={cs}
+                      data-testid="recipient-chip"
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '2px 8px',
+                        borderRadius: 12,
+                        background: 'rgba(240, 176, 96, 0.08)',
+                        border: '1px solid rgba(240, 176, 96, 0.2)',
+                        fontSize: 12,
+                        color: '#f0d0a0',
+                      }}
+                    >
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
+                      <span>@{cs}</span>
+                      <button
+                        type="button"
+                        data-testid="chip-remove"
+                        aria-label={`Remove ${cs}`}
+                        onClick={() => removeMention(cs)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          padding: 0,
+                          cursor: 'pointer',
+                          color: '#666680',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = '#f0b060'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = '#666680'; }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                          <line x1="3" y1="3" x2="9" y2="9" />
+                          <line x1="9" y1="3" x2="3" y2="9" />
+                        </svg>
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
             {/* ── Input + Reset ── */}
             <form
               onSubmit={handleSubmit}
@@ -1434,13 +1624,72 @@ export function IntentSurface() {
                 padding: '8px 16px',
                 borderTop: chatHistory.length > 0 ? '1px solid rgba(240, 176, 96, 0.1)' : 'none',
                 gap: 8,
+                position: 'relative',
               }}
             >
+              {/* AD-719: @-picker popover (mouse + Enter only; arrow/Esc/Tab deferred to AD-719c). */}
+              {pickerOpen && pickerMatches.length > 0 && (
+                <div
+                  data-testid="at-picker-popover"
+                  style={{
+                    position: 'absolute',
+                    bottom: '100%',
+                    left: 16,
+                    right: 16,
+                    marginBottom: 4,
+                    maxHeight: 200,
+                    overflowY: 'auto',
+                    background: 'rgba(10, 10, 18, 0.96)',
+                    border: '1px solid rgba(240, 176, 96, 0.25)',
+                    borderRadius: 8,
+                    backdropFilter: 'blur(12px)',
+                    zIndex: 50,
+                  }}
+                >
+                  {pickerMatches.map((m, i) => (
+                    <div
+                      key={m.callsign}
+                      data-testid="at-picker-row"
+                      onMouseDown={(e) => { e.preventDefault(); confirmPickerSelection(m.callsign); }}
+                      onMouseEnter={() => setPickerIndex(i)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '6px 12px',
+                        background: i === pickerIndex ? 'rgba(240, 176, 96, 0.08)' : 'transparent',
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        color: '#e0dcd4',
+                      }}
+                    >
+                      <span style={{
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: m.deptColor,
+                        flexShrink: 0,
+                      }} />
+                      <span style={{ color: '#f0d0a0', fontWeight: 500 }}>@{m.callsign}</span>
+                      {m.displayName && (
+                        <span style={{ color: '#888899', fontSize: 12 }}>{m.displayName}</span>
+                      )}
+                      <span style={{
+                        marginLeft: 'auto',
+                        fontSize: 10,
+                        padding: '1px 6px',
+                        borderRadius: 4,
+                        background: 'rgba(136, 164, 200, 0.1)',
+                        color: '#88a4c8',
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.5,
+                      }}>{m.tier}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <input
                 ref={inputRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => handleInputChange(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onBlur={() => { setTimeout(() => setPickerOpen(false), 150); }}
                 placeholder="Ask ProbOS..."
                 style={{
                   flex: 1,

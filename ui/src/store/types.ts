@@ -194,9 +194,12 @@ export interface ArchitectProposalView {
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'system';
+  role: 'user' | 'agent' | 'system';   // AD-719: was 'user' | 'system'
   text: string;
   timestamp: number;
+  // AD-719: per-reply attribution for multi-agent fan-out turns.
+  agent_id?: string;
+  callsign?: string;
   selfModProposal?: SelfModProposal;
   buildProposal?: BuildProposal;
   buildFailureReport?: BuildFailureReport;

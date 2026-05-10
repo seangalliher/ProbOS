@@ -334,7 +334,7 @@ export interface HXIState {
 
   // Actions
   handleEvent: (event: WSEvent) => void;
-  addChatMessage: (role: 'user' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; buildFailureReport?: BuildFailureReport; architectProposal?: ArchitectProposalView }) => void;
+  addChatMessage: (role: 'user' | 'agent' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; buildFailureReport?: BuildFailureReport; architectProposal?: ArchitectProposalView; agent_id?: string; callsign?: string }) => void;
   clearAnimationEvent: (key: 'pendingConsensusFlash' | 'pendingSelfModBloom' | 'pendingRoutingPulse' | 'pendingFeedbackPulse') => void;
   setConnected: (v: boolean) => void;
   setHoveredAgent: (agent: Agent | null, pos?: { x: number; y: number }) => void;
@@ -1313,6 +1313,8 @@ export const useStore = create<HXIState>((set, get) => ({
       ...(meta?.buildProposal ? { buildProposal: meta.buildProposal } : {}),
       ...(meta?.buildFailureReport ? { buildFailureReport: meta.buildFailureReport } : {}),
       ...(meta?.architectProposal ? { architectProposal: meta.architectProposal } : {}),
+      ...(meta?.agent_id ? { agent_id: meta.agent_id } : {}),
+      ...(meta?.callsign ? { callsign: meta.callsign } : {}),
     };
     set((s) => {
       const updated = [...s.chatHistory.slice(-49), msg];

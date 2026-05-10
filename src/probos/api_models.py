@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── Chat models ───────────────────────────────────────────────────
@@ -22,10 +22,20 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = []
 
 
+class PerAgentReply(BaseModel):
+    """AD-719: one entry of a multi-agent fan-out reply."""
+    agent_id: str
+    callsign: str
+    text: str
+
+
 class ChatResponse(BaseModel):
     response: str
     dag: dict[str, Any] | None = None
     results: dict[str, Any] | None = None
+    # AD-719: multi-agent fan-out attribution. Both optional for backward compat.
+    mentions: list[str] = Field(default_factory=list)
+    per_agent_replies: list[PerAgentReply] = Field(default_factory=list)
 
 
 # ── Self-mod models ───────────────────────────────────────────────

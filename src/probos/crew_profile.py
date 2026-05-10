@@ -547,3 +547,28 @@ def is_directed_mention(text: str) -> bool:
         return False
     stripped = text.lstrip()
     return bool(re.match(r'@\w+', stripped))
+
+
+def extract_all_leading_callsign_mentions(text: str) -> tuple[list[str], str]:
+    """AD-719: extract leading run of @callsign tokens.
+
+    Walks tokens from the start of the (left-stripped) text, peeling off
+    @callsign tokens until the first non-mention token is encountered.
+    Returns (callsigns, remaining_message). callsigns are returned in the
+    order they appeared and lower-cased to match CallsignRegistry.resolve.
+    Returns ([], text) if the message does not start with @.
+
+    Reuses the same word-character primitive as extract_callsign_mention.
+    """
+    if not text:
+        return ([], text)
+    callsigns: list[str] = []
+    remaining = text.lstrip()
+    while True:
+        m = re.match(r'@(\w+)\s*', remaining)
+        if not m:
+            break
+        callsigns.append(m.group(1).lower())
+        remaining = remaining[m.end():]
+    return (callsigns, remaining.strip())
+

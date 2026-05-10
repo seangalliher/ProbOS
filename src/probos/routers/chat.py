@@ -95,7 +95,125 @@ async def chat(
     # AD-397/BF-009: @callsign direct message routing
     # BF #467: only treat as DM directive when @callsign is the leading token.
     # "@Tucker hello" -> DM. "Hello @Tucker, can you help?" -> broadcast.
-    from probos.crew_profile import extract_callsign_mention, is_directed_mention
+    from probos.crew_profile import (
+        extract_all_leading_callsign_mentions,
+        extract_callsign_mention,
+        is_directed_mention,
+    )
+
+    # AD-719: multi-mention fan-out branch — handle BEFORE the single-mention
+    # short-circuit so two-or-more leading @callsigns are routed in parallel.
+    if is_directed_mention(text):
+        all_callsigns, remaining_message = extract_all_leading_callsign_mentions(text)
+        if len(all_callsigns) >= 2:
+            t_start_fanout = time.monotonic()
+            from probos.api_models import PerAgentReply
+            from probos.types import IntentMessage as _IntentMessage
+
+            resolved_list: list[tuple[str, dict[str, Any] | None]] = []
+            for cs in all_callsigns:
+                resolved_list.append((cs, runtime.callsign_registry.resolve(cs)))
+
+            async def _send_one(callsign: str, resolved: dict[str, Any] | None) -> PerAgentReply:
+                if resolved is None:
+                    return PerAgentReply(
+                        agent_id="",
+                        callsign=callsign,
+                        text="(callsign not recognized)",
+                    )
+                if resolved.get("agent_id") is None:
+                    return PerAgentReply(
+                        agent_id="",
+                        callsign=resolved.get("callsign", callsign),
+                        text="(not currently on duty)",
+                    )
+                if not remaining_message:
+                    return PerAgentReply(
+                        agent_id=resolved["agent_id"],
+                        callsign=resolved["callsign"],
+                        text="(no message — append text after the mentions)",
+                    )
+                intent = _IntentMessage(
+                    intent="direct_message",
+                    params={"text": remaining_message, "from": "hxi", "session": False},
+                    target_agent_id=resolved["agent_id"],
+                    ttl_seconds=60.0,  # AD-636
+                )
+                try:
+                    result = await runtime.intent_bus.send(intent)
+                except Exception as e:
+                    logger.warning(
+                        "AD-719 fan-out send failed for %s: %s: %s; "
+                        "returning stub reply, other recipients unaffected",
+                        resolved.get("callsign", callsign), type(e).__name__, e,
+                    )
+                    return PerAgentReply(
+                        agent_id=resolved["agent_id"],
+                        callsign=resolved["callsign"],
+                        text="(delivery failed)",
+                    )
+                reply_text = (result.result if result and result.result else "(no response)")
+                return PerAgentReply(
+                    agent_id=resolved["agent_id"],
+                    callsign=resolved["callsign"],
+                    text=str(reply_text),
+                )
+
+            per_agent_replies_list = await asyncio.gather(
+                *[_send_one(cs, r) for cs, r in resolved_list],
+            )
+            per_agent_replies = list(per_agent_replies_list)
+
+            # Episodic write per resolved fan-out reply (one episode per
+            # (captain_turn, replying_agent) pair). Stubs (unresolved /
+            # off-duty / delivery-failed without an agent_id) are skipped.
+            episodic_memory = getattr(runtime, "episodic_memory", None)
+            if episodic_memory is not None:
+                t_end_fanout = time.monotonic()
+                dream_adapter = getattr(runtime, "dream_adapter", None)
+                for reply in per_agent_replies:
+                    if not reply.agent_id:
+                        continue
+                    try:
+                        episode_input = f"@{reply.callsign} {remaining_message}"
+                        if dream_adapter is not None:
+                            episode = dream_adapter.build_episode(
+                                episode_input,
+                                {"response": reply.text, "agent_ids": [reply.agent_id]},
+                                t_start_fanout,
+                                t_end_fanout,
+                            )
+                        else:
+                            from probos.types import AnchorFrame, Episode
+                            episode = Episode(
+                                timestamp=time.time(),
+                                user_input=episode_input,
+                                dag_summary={},
+                                outcomes=[],
+                                agent_ids=[reply.agent_id],
+                                duration_ms=(t_end_fanout - t_start_fanout) * 1000,
+                                source="multi_agent_chat",  # AD-719 distinct tag
+                                anchors=AnchorFrame(
+                                    channel="chat",
+                                    trigger_type="at_mention_fanout",
+                                ),
+                            )
+                        await episodic_memory.store(episode)
+                    except Exception as e:
+                        logger.warning(
+                            "AD-719 fan-out episode store failed for %s: %s: %s; "
+                            "continuing — episodic gap accepted, replies still returned",
+                            reply.callsign, type(e).__name__, e,
+                        )
+
+            return {
+                "response": "",
+                "dag": None,
+                "results": None,
+                "mentions": all_callsigns,
+                "per_agent_replies": [r.model_dump() for r in per_agent_replies],
+            }
+
     mention = extract_callsign_mention(text)
     if mention and is_directed_mention(text):
         callsign, message_text = mention
