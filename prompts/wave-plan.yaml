@@ -3184,7 +3184,7 @@ waves:
       - "prompts/ad-720d-vision-pipe-through-v1.md"
     builder_required: true
     issues_to_close: [549, 552]
-    status: pending
+    status: done
 
   - id: "140"
     title: "Avatar self-awareness — AD-722 agent-observable avatar telemetry feedback loop"
@@ -3197,3 +3197,7 @@ waves:
     builder_required: true
     issues_to_close: [545]
     status: pending
+
+
+
+
