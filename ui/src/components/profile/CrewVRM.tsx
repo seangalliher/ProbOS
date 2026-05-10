@@ -13,7 +13,45 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, VRMHumanBoneName, type VRM } from '@pixiv/three-vrm';
 import { onSpeechEvent } from '../../audio/voice';
 import { _attachAnalyserOrSchedule, type FakeAnalyser } from '../../audio/speechAmplitude';
+import {
+  buildHeuristicTrack,
+  type LipSyncTrack,
+  type VowelKey,
+} from '../../audio/lipSyncTrack';
 import type { AgentSignals } from './avatarSignals';
+
+/** AD-721b: collect every mesh whose ``morphTargetDictionary`` contains any
+ *  of the candidate names. Refactor of the inline traverse block previously
+ *  used for the legacy single-vowel ``aa`` set; now also called once per
+ *  vowel for the new viseme-weighted driver. Behaviourally identical to the
+ *  old block when called with the legacy candidate list (same first-match
+ *  semantics, same iteration order). */
+export function _collectMorphMeshes(
+  scene: any,
+  candidates: readonly string[],
+): { mesh: any; index: number }[] {
+  const out: { mesh: any; index: number }[] = [];
+  scene.traverse((o: any) => {
+    if (!o.isMesh || !o.morphTargetDictionary) return;
+    for (const key of candidates) {
+      if (key in o.morphTargetDictionary) {
+        out.push({ mesh: o, index: o.morphTargetDictionary[key] });
+        break;
+      }
+    }
+  });
+  return out;
+}
+
+/** AD-721b: per-vowel morph candidate names. Mirrors VRM 1.0 preset names
+ *  (``aa/ih/ou/ee/oh``) + VRoid 0.x ``Fcl_MTH_*`` + lowercase aliases. */
+export const VOWEL_CANDIDATES: Record<VowelKey, readonly string[]> = {
+  aa: ['Fcl_MTH_A', 'A', 'a', 'mouth_a', 'M_A', 'aa'],
+  ih: ['Fcl_MTH_I', 'I', 'i', 'mouth_i', 'M_I', 'ih'],
+  ou: ['Fcl_MTH_U', 'U', 'u', 'mouth_u', 'M_U', 'ou'],
+  ee: ['Fcl_MTH_E', 'E', 'e', 'mouth_e', 'M_E', 'ee'],
+  oh: ['Fcl_MTH_O', 'O', 'o', 'mouth_o', 'M_O', 'oh'],
+};
 
 interface Props {
   vrmUrl: string;
@@ -147,6 +185,25 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
   // Low-pass smoothed mouth value so the motion feels natural rather than
   // raw analyser noise. Adjusted with exponential smoothing in useFrame.
   const smoothedMouthRef = useRef(0);
+  // AD-721b: per-vowel expression-name candidates (subset of VOWEL_CANDIDATES
+  // that the loaded VRM actually exposes via expressionManager). Cached at
+  // load time alongside mouthShapesRef.
+  const vowelShapesRef = useRef<Record<VowelKey, string[]>>(
+    { aa: [], ih: [], ou: [], ee: [], oh: [] }
+  );
+  // AD-721b: per-vowel direct-mesh sets. BF de4107b multi-mesh fix
+  // generalised from the single ``aa`` axis to all five vowels. Each entry
+  // is the morphTargetInfluences index for that vowel on that mesh.
+  const directVowelMeshesRef = useRef<Record<VowelKey, { mesh: any; index: number }[]>>(
+    { aa: [], ih: [], ou: [], ee: [], oh: [] }
+  );
+  // AD-721b: per-vowel smoothed weight, exponential-blended in useFrame.
+  const smoothedVowelsRef = useRef<Record<VowelKey, number>>(
+    { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 }
+  );
+  // AD-721b: active viseme track (null = fallback to amplitude path).
+  const currentTrackRef = useRef<LipSyncTrack | null>(null);
+  const startedAtMsRef = useRef<number>(0);
 
   // Load the VRM once per URL change.
   useEffect(() => {
@@ -210,18 +267,30 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         // Collect every mesh with a recognised mouth-open morph target so
         // we can drive them all directly (works around incomplete VRM
         // expression bindings on multi-material face meshes).
+        // AD-721 BF de4107b: legacy single-vowel ``aa`` set — kept for the
+        // fallback amplitude path when buildHeuristicTrack returns null.
         const morphCandidates = ['Fcl_MTH_A', 'A', 'a', 'mouth_a', 'M_A', 'aa'];
-        const direct: { mesh: any; index: number }[] = [];
-        vrm.scene.traverse((o: any) => {
-          if (!o.isMesh || !o.morphTargetDictionary) return;
-          for (const key of morphCandidates) {
-            if (key in o.morphTargetDictionary) {
-              direct.push({ mesh: o, index: o.morphTargetDictionary[key] });
-              break;
-            }
-          }
-        });
-        directMouthMeshesRef.current = direct;
+        directMouthMeshesRef.current = _collectMorphMeshes(vrm.scene, morphCandidates);
+
+        // AD-721b: per-vowel mesh sets for the viseme-weighted driver. Each
+        // vowel gets its own collection across ALL face meshes — the
+        // BF de4107b multi-mesh guarantee generalised to all five vowels.
+        const vowelKeys: VowelKey[] = ['aa', 'ih', 'ou', 'ee', 'oh'];
+        const known = new Set<string>();
+        if (em) {
+          (em.expressions ?? []).forEach((x: any) => {
+            if (x?.expressionName) known.add(x.expressionName);
+          });
+          (em._expressionMap ? Object.keys(em._expressionMap) : [])
+            .forEach((n: string) => known.add(n));
+        }
+        for (const v of vowelKeys) {
+          directVowelMeshesRef.current[v] = _collectMorphMeshes(
+            vrm.scene, VOWEL_CANDIDATES[v]
+          );
+          vowelShapesRef.current[v] = (VOWEL_CANDIDATES[v] as readonly string[])
+            .filter((n) => known.has(n));
+        }
         // AD-721d: apply DSL resting expression across every face mesh
         // carrying a matching morph target (multi-mesh face-split fix).
         if (restingExpression && restingExpression !== 'neutral') {
@@ -246,17 +315,36 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     const off = onSpeechEvent((e) => {
       if (e.agent_id !== agentId) return;
       if (e.type === 'start') {
+        // AD-721b: try the heuristic viseme track first; fall back to the
+        // AD-721 D5 amplitude analyser path when the track is null/empty.
+        const text = e.utterance.text ?? '';
+        const rate = e.utterance.rate || 1.0;
+        currentTrackRef.current = buildHeuristicTrack(text, { rate });
+        startedAtMsRef.current = (typeof performance !== 'undefined'
+          ? performance.now() : Date.now());
+        // Always wire the analyser too — fallback path needs it AND it costs
+        // nothing when the viseme track is active (we just don't read it).
         analyserRef.current = _attachAnalyserOrSchedule(e.utterance);
         speakingRef.current = true;
       } else if (e.type === 'end') {
         speakingRef.current = false;
         analyserRef.current = null;
-        // Close all detected mouth shapes.
+        currentTrackRef.current = null;
+        // Close all detected mouth shapes (legacy single-vowel set).
         const em = vrmRef.current?.expressionManager;
         if (em) for (const n of mouthShapesRef.current) em.setValue(n, 0);
-        // And the direct morph-driven meshes.
         for (const { mesh, index } of directMouthMeshesRef.current) {
           if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = 0;
+        }
+        // AD-721b: zero ALL 5 vowels across ALL meshes (generalises the
+        // single-vowel zero above to the new per-vowel sets).
+        const vowelKeys: VowelKey[] = ['aa', 'ih', 'ou', 'ee', 'oh'];
+        for (const v of vowelKeys) {
+          if (em) for (const n of vowelShapesRef.current[v]) em.setValue(n, 0);
+          for (const { mesh, index } of directVowelMeshesRef.current[v]) {
+            if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = 0;
+          }
+          smoothedVowelsRef.current[v] = 0;
         }
       }
     });
@@ -289,27 +377,47 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     }
 
     if (speakingRef.current) {
-      // Read amplitude from the analyser (real audio when the browser
-      // exposes it, otherwise the synthetic envelope from speechAmplitude.ts
-      // which already provides word/syllable cadence + boundary gaps).
-      let amp = 0;
-      if (analyserRef.current) {
-        const buf = new Uint8Array(analyserRef.current.frequencyBinCount);
-        analyserRef.current.getByteFrequencyData(buf);
-        let sum = 0;
-        for (let i = 0; i < buf.length; i++) sum += buf[i];
-        amp = sum / buf.length / 255;
-      }
-      const target = Math.min(1.0, amp * 1.6);
-      // Exponential smoothing so motion reads as natural rather than raw
-      // analyser noise. Faster opening (k=0.30) than closing (k=0.18).
-      const k = target > smoothedMouthRef.current ? 0.30 : 0.18;
-      smoothedMouthRef.current += (target - smoothedMouthRef.current) * k;
-      const value = smoothedMouthRef.current;
       const em = vrm.expressionManager;
-      if (em) {
-        const targets = mouthShapesRef.current.length > 0 ? mouthShapesRef.current : ['aa', 'a', 'A'];
-        for (const n of targets) em.setValue(n, value);
+      const track = currentTrackRef.current;
+      if (track) {
+        // AD-721b viseme-weighted path: sample the track at the current
+        // elapsed time, smooth per-vowel (faster attack than release), and
+        // write each vowel's smoothed weight to its expression name AND to
+        // every direct mesh in directVowelMeshesRef.
+        const now = (typeof performance !== 'undefined'
+          ? performance.now() : Date.now());
+        const elapsed = now - startedAtMsRef.current;
+        const w = track.sample(elapsed);
+        const vowelKeys: VowelKey[] = ['aa', 'ih', 'ou', 'ee', 'oh'];
+        for (const v of vowelKeys) {
+          const target = w[v];
+          // 60-fps coefficients pinned per dispatch §3 (HXI Principle #4):
+          // attack ~50 ms (k≈0.30), release ~100 ms (k≈0.18).
+          const k = target > smoothedVowelsRef.current[v] ? 0.30 : 0.18;
+          smoothedVowelsRef.current[v] +=
+            (target - smoothedVowelsRef.current[v]) * k;
+          const value = smoothedVowelsRef.current[v];
+          if (em) for (const n of vowelShapesRef.current[v]) em.setValue(n, value);
+        }
+      } else {
+        // Tier-2 fallback: AD-721 D5 amplitude path verbatim.
+        let amp = 0;
+        if (analyserRef.current) {
+          const buf = new Uint8Array(analyserRef.current.frequencyBinCount);
+          analyserRef.current.getByteFrequencyData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) sum += buf[i];
+          amp = sum / buf.length / 255;
+        }
+        const target = Math.min(1.0, amp * 1.6);
+        const k = target > smoothedMouthRef.current ? 0.30 : 0.18;
+        smoothedMouthRef.current += (target - smoothedMouthRef.current) * k;
+        const value = smoothedMouthRef.current;
+        if (em) {
+          const targets = mouthShapesRef.current.length > 0
+            ? mouthShapesRef.current : ['aa', 'a', 'A'];
+          for (const n of targets) em.setValue(n, value);
+        }
       }
     } else if (smoothedMouthRef.current > 0.01) {
       smoothedMouthRef.current *= 0.6;
@@ -318,7 +426,17 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     vrm.update(delta);
     // Direct-write morph influences AFTER vrm.update() so the expression
     // manager doesn't clobber them on multi-mesh face splits.
-    {
+    if (currentTrackRef.current) {
+      // AD-721b: per-vowel direct write across ALL meshes per vowel.
+      const vowelKeys: VowelKey[] = ['aa', 'ih', 'ou', 'ee', 'oh'];
+      for (const v of vowelKeys) {
+        const value = smoothedVowelsRef.current[v];
+        for (const { mesh, index } of directVowelMeshesRef.current[v]) {
+          if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = value;
+        }
+      }
+    } else {
+      // Fallback: AD-721 BF de4107b legacy single-vowel direct write.
       const v = smoothedMouthRef.current;
       for (const { mesh, index } of directMouthMeshesRef.current) {
         if (mesh.morphTargetInfluences) mesh.morphTargetInfluences[index] = v;

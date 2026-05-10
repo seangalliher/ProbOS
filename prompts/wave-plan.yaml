@@ -3166,12 +3166,12 @@ waves:
     kind: main
     depends_on: ["137"]
     dispatch_prompt: "prompts/WAVE-138-DISPATCH.md"
-    prompts_already_drafted: false
+    prompts_already_drafted: true
     prompt_paths:
       - "prompts/ad-721b-phoneme-lipsync-v1.md"
     builder_required: true
     issues_to_close: [529]
-    status: pending
+    status: done
 
   - id: "139"
     title: "Chat attachments next slice — AD-720a file upload + AD-720d vision pipe-through"

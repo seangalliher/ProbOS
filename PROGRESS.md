@@ -1,15 +1,16 @@
 # ProbOS Progress
 
-**Status (2026-05-08).** Open OSS issues: 0. Most recent shipped wave: 128
-(BF #466 xdist stabilization). All 37 issues filed during the 2026-05-07
-roadmap audit closed. AD-697 + AD-698 establish the commercial-overlay seam
+**Status (2026-05-09).** Open OSS issues: 3 (AD-721b-1/-2/-3 forward markers
+filed by Wave 138). Most recent shipped wave: 138 (AD-721b phoneme-weighted
+5-vowel lip-sync driver across all face meshes; heuristic track v1; multi-mesh
+BF de4107b preserved). AD-697 + AD-698 establish the commercial-overlay seam
 (`pip install -e ../<commercial-package>` → overlay active; uninstall →
 back to OSS).
 
 **Authoritative state.**
-- `prompts/wave-plan.yaml` — wave roster (current wave: 128 done; next slot is 129).
+- `prompts/wave-plan.yaml` — wave roster (current wave: 138 done; next slot is 139).
 - `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-721i).
-- `tests/` — 11000+ tests at HEAD; gate runs `-n 16 --dist=loadfile`.
+- `tests/` — 13057 pytest at HEAD (5 pre-existing flakes outside this wave) + 545 vitest; gate runs `-n 16 --dist=loadfile`.
 
 **Recent eras (archived):**
 - [Era I — Genesis](progress-era-1-genesis.md)
