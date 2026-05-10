@@ -938,6 +938,22 @@ class AvatarsConfig(BaseModel):
     procedural_base_mesh_fallback: bool = True
 
 
+class AttachmentsConfig(BaseModel):
+    """AD-720: chat attachments configuration (image paste v1)."""
+
+    enabled: bool = True                                   # stable feature, default-on
+    attachments_dir: str = "data/attachments"
+    max_attachment_bytes: int = 10 * 1024 * 1024           # 10 MiB
+    allowed_mime_types: list[str] = Field(
+        default_factory=lambda: [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif",
+        ],
+    )
+
+
 class A2APeerConfig(BaseModel):
     """AD-480e: Outbound A2A peer registration entry."""
 
@@ -3090,6 +3106,7 @@ class SystemConfig(BaseModel):
     mcp_app_host: MCPAppHostConfig = Field(default_factory=MCPAppHostConfig)  # AD-597
     browser_tool: BrowserToolConfig = Field(default_factory=BrowserToolConfig)  # AD-706
     avatars: AvatarsConfig = Field(default_factory=AvatarsConfig)  # AD-721
+    attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481

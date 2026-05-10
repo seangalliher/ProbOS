@@ -20,6 +20,8 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
+    # AD-720: optional content-hash references to previously-uploaded images.
+    attachment_ids: list[str] = Field(default_factory=list)
 
 
 class PerAgentReply(BaseModel):
@@ -36,6 +38,24 @@ class ChatResponse(BaseModel):
     # AD-719: multi-agent fan-out attribution. Both optional for backward compat.
     mentions: list[str] = Field(default_factory=list)
     per_agent_replies: list[PerAgentReply] = Field(default_factory=list)
+
+
+# ── Chat attachments (AD-720) ─────────────────────────────────────
+
+class AttachmentUploadRequest(BaseModel):
+    """AD-720: image paste upload request body (JSON, base64-encoded)."""
+    content_hash: str   # client-computed sha256 hex
+    blob_b64: str       # base64-encoded raw bytes
+    mime: str           # declared MIME type
+
+
+class AttachmentUploadResponse(BaseModel):
+    """AD-720: image paste upload response."""
+    attachment_id: str  # == content_hash
+    url: str            # browser-fetchable URL
+    mime: str
+    size_bytes: int
+    sha256: str
 
 
 # ── Self-mod models ───────────────────────────────────────────────

@@ -38,6 +38,11 @@ data/avatars/**/*.glb
 data/avatars/**/*.dsl.yaml
 data/avatars/**/*.dsl.json
 
+# AD-720: attachments dir is shipped (with .gitkeep), but image blobs are not.
+!data/attachments/
+data/attachments/*
+!data/attachments/.gitkeep
+
 # Environment
 .env
 .env.*

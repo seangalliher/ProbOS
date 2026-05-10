@@ -386,6 +386,139 @@ async def chat(
 
 
 # ------------------------------------------------------------------
+# Chat attachments (AD-720) — image paste v1
+# ------------------------------------------------------------------
+
+
+_ATTACHMENT_STORE_CACHE: dict[int, Any] = {}
+
+
+def _get_attachment_store(runtime: Any) -> Any:
+    """Lazy per-runtime FilesystemAttachmentStore."""
+    key = id(runtime)
+    cached = _ATTACHMENT_STORE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    from probos.attachments.filesystem_store import FilesystemAttachmentStore
+    from probos.attachments.store import _resolve_attachments_dir
+    cfg = runtime.config.attachments
+    root = _resolve_attachments_dir(cfg.attachments_dir)
+    store = FilesystemAttachmentStore(root)
+    _ATTACHMENT_STORE_CACHE[key] = store
+    return store
+
+
+@router.post("/chat/attachments")
+async def upload_chat_attachment(
+    req: Request,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-720: image-paste upload endpoint. JSON body, base64-encoded blob.
+
+    Defense-in-depth (in order — fail-fast with structured error JSON):
+      1. attachments enabled
+      2. MIME allowlist
+      3. base64 decode
+      4. post-decode size cap
+      5. sha256(decoded) == declared content_hash
+      6. magic-byte sniff matches declared MIME
+      7. idempotent write through AttachmentStore
+    """
+    import base64
+    import binascii
+    import hashlib
+
+    from fastapi.responses import JSONResponse
+
+    from probos.api_models import AttachmentUploadRequest
+    from probos.attachments.mime import validate_image_bytes
+
+    cfg = runtime.config.attachments
+    if not cfg.enabled:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "attachments_disabled"},
+        )
+
+    payload = await req.json()
+    try:
+        body = AttachmentUploadRequest.model_validate(payload)
+    except Exception as e:
+        logger.warning(
+            "AD-720 attachment upload rejected (malformed body): %s: %s",
+            type(e).__name__, e,
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_body"},
+        )
+
+    if body.mime not in cfg.allowed_mime_types:
+        return JSONResponse(
+            status_code=415,
+            content={"error": "mime_not_allowed", "mime": body.mime},
+        )
+
+    try:
+        decoded = base64.b64decode(body.blob_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_base64"},
+        )
+
+    if len(decoded) > cfg.max_attachment_bytes:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": "too_large",
+                "size": len(decoded),
+                "max": cfg.max_attachment_bytes,
+            },
+        )
+
+    actual_hash = hashlib.sha256(decoded).hexdigest()
+    if actual_hash != body.content_hash.lower():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "hash_mismatch"},
+        )
+
+    ok, sniffed = validate_image_bytes(decoded, body.mime)
+    if not ok:
+        return JSONResponse(
+            status_code=415,
+            content={
+                "error": "magic_mismatch",
+                "declared": body.mime,
+                "sniffed": sniffed,
+            },
+        )
+
+    store = _get_attachment_store(runtime)
+    try:
+        await store.write(actual_hash, decoded, body.mime)
+    except ValueError as e:
+        # Path traversal / malformed hash — propagate (security tier).
+        logger.error(
+            "AD-720 attachment write rejected: %s: %s",
+            type(e).__name__, e,
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_attachment"},
+        )
+
+    return {
+        "attachment_id": actual_hash,
+        "url": f"/api/chat/attachments/{actual_hash}",
+        "mime": body.mime,
+        "size_bytes": len(decoded),
+        "sha256": actual_hash,
+    }
+
+
+# ------------------------------------------------------------------
 # Self-mod approval endpoint (async pipeline)
 # ------------------------------------------------------------------
 

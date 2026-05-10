@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useStore } from '../store/useStore';
-import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectProposalView, Agent } from '../store/types';
+import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectProposalView, Agent, ChatAttachment } from '../store/types';
 import { speakResponse, stripMarkdownForSpeech } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import { soundEngine } from '../audio/soundEngine';
@@ -51,6 +51,10 @@ export function IntentSurface() {
   const [pickerPrefix, setPickerPrefix] = useState('');
   const [pickerIndex, setPickerIndex] = useState(0);
   const agentsMap = useStore((s) => s.agents);
+
+  // AD-720: image-paste attachments pending for the next send.
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [paperclipTooltipOpen, setPaperclipTooltipOpen] = useState(false);
 
   const chatHistory = useStore((s) => s.chatHistory);
   const activeDag = useStore((s) => s.activeDag);
@@ -176,10 +180,12 @@ export function IntentSurface() {
     }));
 
     // Fire-and-forget — user can keep typing immediately
+    const attachmentIds = pendingAttachments.map((a) => a.attachment_id);
+    setPendingAttachments([]);
     fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, history: recentHistory }),
+      body: JSON.stringify({ message: text, history: recentHistory, attachment_ids: attachmentIds }),
     })
       .then((res) => res.json())
       .then((data) => {
@@ -332,6 +338,69 @@ export function IntentSurface() {
     const next = input.replace(re, '');
     setInput(next.replace(/^\s+/, ''));
     setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  /* ── AD-720: image paste from clipboard ── */
+  const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // mirrors server default
+
+  async function bufferToHexSha256(buf: ArrayBuffer): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    const bytes = new Uint8Array(digest);
+    let out = '';
+    for (let i = 0; i < bytes.length; i++) {
+      out += bytes[i].toString(16).padStart(2, '0');
+    }
+    return out;
+  }
+
+  function bufferToBase64(buf: ArrayBuffer): string {
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+    }
+    return btoa(bin);
+  }
+
+  async function handlePaste(event: React.ClipboardEvent<HTMLInputElement>) {
+    const items = Array.from(event.clipboardData?.items ?? []);
+    const imageItem = items.find((it) => it.type && it.type.startsWith('image/'));
+    if (!imageItem) return; // text paste — let the input handle it
+    event.preventDefault();
+    const blob = imageItem.getAsFile();
+    if (!blob) return;
+    if (blob.size > MAX_ATTACHMENT_BYTES) {
+      addChatMessage('system', `(Attachment too large: ${blob.size} bytes; max ${MAX_ATTACHMENT_BYTES})`);
+      return;
+    }
+    try {
+      const buf = await blob.arrayBuffer();
+      const hash = await bufferToHexSha256(buf);
+      const b64 = bufferToBase64(buf);
+      const res = await fetch('/api/chat/attachments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content_hash: hash, blob_b64: b64, mime: blob.type }),
+      });
+      if (!res.ok) {
+        let reason = 'unknown';
+        try {
+          const errBody = await res.json();
+          reason = errBody?.error ?? reason;
+        } catch { /* log-and-degrade */ }
+        addChatMessage('system', `(Attachment upload failed: ${reason})`);
+        return;
+      }
+      const data = await res.json() as ChatAttachment;
+      setPendingAttachments((prev) => [...prev, data]);
+    } catch (err) {
+      addChatMessage('system', `(Attachment upload error: ${(err as Error).message})`);
+    }
+  }
+
+  function removePendingAttachment(attachmentId: string) {
+    setPendingAttachments((prev) => prev.filter((a) => a.attachment_id !== attachmentId));
   }
 
   /* ── feedback helper with visual confirmation ── */
@@ -1684,11 +1753,64 @@ export function IntentSurface() {
                   ))}
                 </div>
               )}
+              {/* AD-720: image-paste preview thumbnails */}
+              {pendingAttachments.length > 0 && (
+                <div data-testid="attachment-preview-strip" style={{
+                  position: 'absolute',
+                  bottom: '100%',
+                  left: 16,
+                  marginBottom: 4,
+                  display: 'flex',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  zIndex: 49,
+                }}>
+                  {pendingAttachments.map((att) => (
+                    <div key={att.attachment_id} data-testid="attachment-preview" style={{
+                      position: 'relative',
+                      borderRadius: 4,
+                      border: '1px solid rgba(240, 176, 96, 0.25)',
+                      background: 'rgba(10, 10, 18, 0.96)',
+                      padding: 2,
+                    }}>
+                      <img
+                        src={att.url}
+                        alt={att.attachment_id.slice(0, 8)}
+                        style={{ maxWidth: 128, maxHeight: 128, display: 'block', borderRadius: 2 }}
+                      />
+                      <button
+                        type="button"
+                        data-testid="attachment-remove"
+                        aria-label="remove attachment"
+                        onClick={() => removePendingAttachment(att.attachment_id)}
+                        style={{
+                          position: 'absolute',
+                          top: -6, right: -6,
+                          width: 16, height: 16,
+                          borderRadius: '50%',
+                          background: 'rgba(10, 10, 18, 0.96)',
+                          border: '1px solid rgba(240, 176, 96, 0.5)',
+                          color: '#f0b060',
+                          cursor: 'pointer',
+                          padding: 0,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                          <line x1="3" y1="3" x2="9" y2="9" />
+                          <line x1="9" y1="3" x2="3" y2="9" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <input
                 ref={inputRef}
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 onBlur={() => { setTimeout(() => setPickerOpen(false), 150); }}
                 placeholder="Ask ProbOS..."
                 style={{
@@ -1703,6 +1825,38 @@ export function IntentSurface() {
                 }}
               />
               {/* Mic button for voice input */}
+              {/* AD-720: paperclip placeholder (image paste works via Ctrl+V; AD-720a will wire upload) */}
+              <button
+                type="button"
+                data-testid="attachment-paperclip"
+                aria-label="attach"
+                onMouseEnter={() => setPaperclipTooltipOpen(true)}
+                onMouseLeave={() => setPaperclipTooltipOpen(false)}
+                onClick={(e) => { e.preventDefault(); setPaperclipTooltipOpen((v) => !v); }}
+                title="Paste an image to attach (more coming soon)"
+                style={{
+                  position: 'relative',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#666680',
+                  cursor: 'default',
+                  padding: '4px',
+                  borderRadius: 4,
+                  flexShrink: 0,
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M11 4l-5 5a2 2 0 002.8 2.8l5-5a3 3 0 00-4.2-4.2l-5 5a4 4 0 005.7 5.7" />
+                </svg>
+                {paperclipTooltipOpen && (
+                  <span data-testid="attachment-paperclip-tooltip" style={{
+                    position: 'absolute', bottom: '120%', right: 0,
+                    background: 'rgba(10,10,18,0.96)', border: '1px solid rgba(240,176,96,0.25)',
+                    borderRadius: 4, padding: '4px 8px', fontSize: 11, color: '#e0dcd4',
+                    whiteSpace: 'nowrap',
+                  }}>Paste an image to attach (more coming soon)</span>
+                )}
+              </button>
               {isSpeechRecognitionSupported() && (
                 <button
                   type="button"

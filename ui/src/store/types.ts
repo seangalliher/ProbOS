@@ -192,6 +192,14 @@ export interface ArchitectProposalView {
   status: 'analyzing' | 'review' | 'approved' | 'rejected';
 }
 
+export interface ChatAttachment {
+  attachment_id: string;
+  url: string;
+  mime: string;
+  sha256: string;
+  size_bytes: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'agent' | 'system';   // AD-719: was 'user' | 'system'
@@ -200,6 +208,8 @@ export interface ChatMessage {
   // AD-719: per-reply attribution for multi-agent fan-out turns.
   agent_id?: string;
   callsign?: string;
+  // AD-720: image attachments paste-uploaded with this turn.
+  attachments?: ChatAttachment[];
   selfModProposal?: SelfModProposal;
   buildProposal?: BuildProposal;
   buildFailureReport?: BuildFailureReport;
