@@ -1705,3 +1705,53 @@ The AD-720a dispatch's "zero new Python deps" rule was an aspirational goal that
 **Net delta:** Python 13092 → 13110 (+18, modulo 4 pre-existing flakes in `test_callsign_routing` / `test_ad719_chat_fanout` unrelated to this AD). Vitest 550 → 557 (+7).
 
 **AD-numbering note:** highest pre-Wave-140 entry was AD-721i. AD-722 is the new top-level — first time the ceiling moves above AD-721i since Wave 134. No collisions.
+
+### AD-723 — Sensorium dispatch unification (System-1 / System-2 path coherence, Phase 1)
+
+**Date:** 2026-05-10. **Status:** Forward marker, filed as [#581](https://github.com/seangalliher/ProbOS/issues/581).
+
+**Decision.** Convert `SENSORIUM_REGISTRY` (`cognitive_agent.py:122`) from inventory to dispatch. Each entry gains a `paths` tuple declaring which prompt-assembly paths consume it (chain-baseline / chain-extensions / chain-situation / DM-oneshot / WR-oneshot). Both `_build_cognitive_baseline` and the DM/WR branches of `_build_user_message` iterate the registry once. Every future sensorium injection registers with one `paths` tuple instead of being hand-wired into two assembly methods.
+
+**Why.** AD-722 shipped with the avatar block wired only into the chain baseline; Captain reported "no avatar awareness in 1:1 chat" and a follow-up BF was needed to wire the DM branch separately. This is the dual-wire tax — every new sensorium AD pays it twice or dies on whichever path the implementer forgot. The registry is currently `ClassVar[dict]` *inventory* — nothing iterates it.
+
+**Constraint — keep the split.** This AD does NOT merge chain and DM one-shot. Per the System-1/System-2 ruling (Captain ruling 2026-05-10), DM stays one-shot for latency and conversational tone; chain stays multi-LLM for deliberative work. AD-723 only unifies the **wiring**, not the paths themselves.
+
+### AD-724 — Lightweight sanity gate for DM one-shot replies (System-1 quality floor)
+
+**Date:** 2026-05-10. **Status:** Forward marker, filed as [#582](https://github.com/seangalliher/ProbOS/issues/582).
+
+**Decision.** A new `DmReplySanityGate` runs synchronously between LLM emit and the chat handler's response, sub-LLM only (regex / length / repetition / capability-gap regex / orphaned-tag detection). One controlled retry on rejection; tier-2 log-and-degrade on second rejection. Existing post-hoc cleanups scattered in `routers/agents.py` (BF-120 markdown-strip, BF-119 challenge-parse, AD-572 move-parse) migrate INTO the gate as named, individually-testable steps.
+
+**Why.** DM one-shot skips chain's evaluate phase. Whatever the LLM emits ships to the Captain. Every `[CHALLENGE]` / `[MOVE]` / `**[COMMAND]**` regex in the chat handler is a post-hoc workaround for a failure mode chain would catch upstream. The gate gives the System-1 path a quality floor without paying chain's 3× LLM round-trip cost.
+
+### AD-725 — Targeted sub-intent dispatch on the DM one-shot path
+
+**Date:** 2026-05-10. **Status:** Forward marker, filed as [#583](https://github.com/seangalliher/ProbOS/issues/583).
+
+**Decision.** Pre-LLM, sub-LLM classifier (regex ladder v1; embedding router v2) emits at most ONE `targeted_lookup` per turn — `oracle | episodic | codebase | knowledge | none`. Lookup runs directly against the corresponding store (NOT through the intent_bus — single call, no broadcast, no consensus, no Hebbian update, no episode storage). Result registers as a sensorium block with `paths={DM_ONESHOT}` (per AD-723 dispatch) and renders into the prompt under `--- Targeted Recall ---`.
+
+**Why.** Closes the largest System-1/System-2 cognitive-parity gap — chain can reach for episodic/oracle/codebase data mid-flight; DM one-shot currently can't. "What was our last 1:1 about?" should not require a chain round-trip. Hard contract — **one lookup per turn, no side effects** — keeps it conversation, not work.
+
+**Risk.** Highest of the four System-1/System-2 cleanups. Closer to chain's expressive power means closer to chain's failure modes. The "no side effects, no chains, no follow-ups" contract is the firewall.
+
+### AD-726 — Refactor the one-shot DM path's organic growth (housekeeping)
+
+**Date:** 2026-05-10. **Status:** Forward marker, filed as [#584](https://github.com/seangalliher/ProbOS/issues/584).
+
+**Decision.** Refactor `_build_user_message`'s DM branch (~150 lines, AD-397/AD-430b/c/AD-502/AD-540/AD-568/AD-572/AD-573/AD-575/AD-586/AD-588/AD-589/AD-636/AD-643a/AD-683/AD-722) and `routers/agents.py:agent_chat` (~200 lines) into named phases — `DmContextPrep`, `DmPromptAssembler`, `DmReplyPipeline` — composed of individually-testable steps with frozen-dataclass cross-phase data. Captain ruling 2026-05-10: *"the one shot grew organically and will probably need some refactoring to streamline it."*
+
+**Sequencing.** This MUST land AFTER AD-723 (dispatch), AD-724 (sanity gate), AD-725 (targeted lookup) — each creates a clean seam this AD leverages. Doing it first refactors against ghosts. Wave-10 lesson: ship the new seams first, then refactor against them.
+
+**Constraint.** Zero behavioural change — full snapshot suite verifies prompts and responses are byte-identical pre- vs post-refactor.
+
+### System-1 / System-2 architectural ruling (consolidated)
+
+**Captain ruling 2026-05-10 (pinned for future reference).** ProbOS deliberately runs **two prompt-assembly paths**:
+
+| Path | Pipeline | Role | Audience |
+|---|---|---|---|
+| **One-shot** | Single LLM call, inline assembly | System-1 — fast, conversational, low latency | Captain (1:1 DMs) |
+| **Chain** | Decompose → execute → evaluate (3× LLM) | System-2 — deliberative, self-correcting, sub-intent capable | Crew + Ward Room (peers, work product) |
+
+The split is **intentional and permanent**, mirroring Kahneman's dual-process theory. We do not deliberate over "hello." The cleanups in AD-723/AD-724/AD-725/AD-726 narrow the *capability* gap (so DM agents have parity on context and quality) without merging the *latency* gap (so DM stays real-time conversation). Future ADs that propose merging the paths must articulate why the System-1/System-2 distinction no longer applies in their case.
+
