@@ -14,6 +14,8 @@ from probos.api_models import (
     AgentChatRequest,
     ProposeAppearanceRequest,
     ProposeAppearanceResponse,
+    ProposeVoiceProfileRequest,
+    ProposeVoiceProfileResponse,
     SetAppearanceRequest,
     SetCooldownRequest,
     SetVoiceProfileRequest,
@@ -227,7 +229,13 @@ async def set_agent_voice_profile(
     req: SetVoiceProfileRequest,
     runtime: Any = Depends(get_runtime),
 ) -> dict[str, Any]:
-    """AD-718: Update per-agent voice profile (browser SpeechSynthesis)."""
+    """AD-718: Update per-agent voice profile (browser SpeechSynthesis).
+
+    AD-718a: when ``proposal_rationale`` is non-empty, write an episode
+    capturing the approve-from-proposal event (the rationale IS the
+    learning signal). Hand-edits with empty rationale follow the existing
+    path unchanged.
+    """
     agent = runtime.registry.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
@@ -242,10 +250,15 @@ async def set_agent_voice_profile(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    old_voice_dict: dict[str, Any] = {}
     if hasattr(runtime, "profile_store") and runtime.profile_store is not None:
         crew = runtime.profile_store.get_or_create(
             agent.id, agent_type=agent.agent_type, pool=agent.pool,
         )
+        try:
+            old_voice_dict = crew.voice.to_dict()
+        except Exception:  # pragma: no cover — defensive
+            old_voice_dict = {}
         crew.voice = new_profile
         runtime.profile_store.update(crew)
     else:
@@ -254,7 +267,98 @@ async def set_agent_voice_profile(
             agent_id,
         )
 
+    # AD-718a: episode write on approve-from-proposal path only.
+    if (
+        req.proposal_rationale
+        and hasattr(runtime, "episodic_memory")
+        and runtime.episodic_memory is not None
+    ):
+        try:
+            import time as _time
+            from probos.cognitive.episodic import resolve_sovereign_id
+            from probos.types import AnchorFrame, Episode
+            sovereign_id = resolve_sovereign_id(agent)
+            new_voice_dict = new_profile.to_dict()
+            episode = Episode(
+                user_input=(
+                    f"[voice approval] Captain approved voice proposal for "
+                    f"{agent_id}: {req.proposal_rationale[:200]}"
+                ),
+                timestamp=_time.time(),
+                agent_ids=[sovereign_id],
+                outcomes=[{
+                    "intent": "voice_profile_change",
+                    "success": True,
+                    "old_voice": old_voice_dict,
+                    "new_voice": new_voice_dict,
+                    "rationale": req.proposal_rationale,
+                    "agent_id": agent_id,
+                }],
+                reflection=(
+                    f"Captain approved an agent-authored voice proposal for "
+                    f"{agent_id}; rationale recorded for learning."
+                ),
+                source="direct",
+                anchors=AnchorFrame(
+                    channel="hxi_profile",
+                    trigger_type="voice_profile_change",
+                    trigger_agent="captain",
+                    participants=["captain", agent_id],
+                ),
+            )
+            await runtime.episodic_memory.store(episode)
+        except Exception:
+            logger.debug(
+                "AD-718a: failed to store voice-approval episode for %s",
+                agent_id, exc_info=True,
+            )
+
     return {"agentId": agent_id, "voiceProfile": new_profile.to_dict()}
+
+
+@router.post("/{agent_id}/voice-profile/propose", response_model=ProposeVoiceProfileResponse)
+async def propose_agent_voice_profile(
+    agent_id: str,
+    req: ProposeVoiceProfileRequest | None = None,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-718a: trigger ``CognitiveAgent.propose_voice_profile`` and return
+    the candidate ``VoiceProfile`` for Captain review. NOT persisted —
+    caller must follow up with ``PUT /{agent_id}/voice-profile`` (carrying
+    ``proposal_rationale``) once the Captain approves.
+    """
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    if not hasattr(agent, "propose_voice_profile"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Agent {agent_id} does not support voice proposal "
+                "(not a CognitiveAgent subclass)"
+            ),
+        )
+
+    from probos.voice.proposal import VoiceProposalError
+
+    captain_note = (req.captain_note if req else "") or ""
+    try:
+        profile, rationale = await agent.propose_voice_profile(captain_note=captain_note)
+    except VoiceProposalError as exc:
+        logger.warning(
+            "AD-718a: voice proposal rejected for %s: reason=%s detail=%s; "
+            "no profile persisted, Captain may retry",
+            agent_id, exc.reason, exc.detail,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": exc.reason, "detail": exc.detail},
+        )
+    return {
+        "agent_id": agent_id,
+        "voice_profile": profile.to_dict(),
+        "rationale": rationale,
+    }
 
 
 # ── AD-721d: agent-authored appearance pipeline ─────────────────────────

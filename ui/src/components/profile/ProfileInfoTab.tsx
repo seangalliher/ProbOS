@@ -57,6 +57,13 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
     volume: profileData?.voiceProfile?.volume ?? 0.8,
   });
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  // AD-718a: agent-authored voice proposal preview state.
+  const [proposal, setProposal] = useState<VoiceProfile | null>(null);
+  const [proposalRationale, setProposalRationale] = useState<string>('');
+  const [proposalError, setProposalError] = useState<string>('');
+  const [proposalBusy, setProposalBusy] = useState<boolean>(false);
+  const [revisionNote, setRevisionNote] = useState<string>('');
+  const [showRevisionInput, setShowRevisionInput] = useState<boolean>(false);
   useEffect(() => {
     setAvailableVoices(getAvailableVoices());
   }, []);
@@ -72,7 +79,7 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
     }
   }, [profileData?.voiceProfile, agent.id]);
 
-  const persistVoiceProfile = (next: VoiceProfile): void => {
+  const persistVoiceProfile = (next: VoiceProfile, rationale: string = ''): void => {
     fetch(`/api/agent/${agent.id}/voice-profile`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -81,6 +88,7 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
         pitch: next.pitch ?? 0.9,
         rate: next.rate ?? 0.95,
         volume: next.volume ?? 0.8,
+        proposal_rationale: rationale,
       }),
     })
       .then(() => {
@@ -90,6 +98,55 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
         }));
       })
       .catch(() => {});  // Tier-2 log-and-degrade
+  };
+
+  // AD-718a: trigger an agent-authored voice proposal. Optional captain note
+  // re-runs the LLM with revision context.
+  const fetchVoiceProposal = (captainNote: string = ''): void => {
+    setProposalBusy(true);
+    setProposalError('');
+    fetch(`/api/agent/${agent.id}/voice-profile/propose`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ captain_note: captainNote }),
+    })
+      .then(async (resp) => {
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        const body = await resp.json();
+        const vp: VoiceProfile = {
+          voice_name: body?.voice_profile?.voice_name ?? '',
+          pitch: body?.voice_profile?.pitch ?? 0.9,
+          rate: body?.voice_profile?.rate ?? 0.95,
+          volume: body?.voice_profile?.volume ?? 0.8,
+        };
+        setProposal(vp);
+        setProposalRationale(typeof body?.rationale === 'string' ? body.rationale : '');
+        setShowRevisionInput(false);
+        setRevisionNote('');
+      })
+      .catch((err) => {
+        setProposalError(String(err?.message ?? err));
+      })
+      .finally(() => {
+        setProposalBusy(false);
+      });
+  };
+
+  const dismissProposal = (): void => {
+    setProposal(null);
+    setProposalRationale('');
+    setProposalError('');
+    setShowRevisionInput(false);
+    setRevisionNote('');
+  };
+
+  const approveProposal = (): void => {
+    if (!proposal) return;
+    persistVoiceProfile(proposal, proposalRationale);
+    setCurrentProfile(proposal);
+    dismissProposal();
   };
 
   // Filter DM channels involving this agent (by agent ID prefix in channel name)
@@ -309,6 +366,205 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
             >
               Test
             </button>
+
+            {/* AD-718a: agent-authored voice proposal affordance. */}
+            <button
+              type="button"
+              aria-label="Propose voice"
+              onClick={() => fetchVoiceProposal('')}
+              disabled={proposalBusy}
+              style={{
+                marginTop: 4,
+                padding: '4px 8px',
+                background: 'rgba(240, 176, 96, 0.06)',
+                border: '1px solid rgba(240, 176, 96, 0.2)',
+                borderRadius: 4,
+                color: proposalBusy ? '#666680' : '#f0b060',
+                fontSize: 11,
+                cursor: proposalBusy ? 'default' : 'pointer',
+                alignSelf: 'flex-start',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <svg
+                width={12}
+                height={12}
+                viewBox="0 0 12 12"
+                fill="none"
+                stroke={proposalBusy ? '#666680' : '#f0b060'}
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M6 1.5 v9 M2 4 l4 -2.5 4 2.5 M2 8 l4 2.5 4 -2.5" />
+              </svg>
+              {proposalBusy ? 'Proposing…' : 'Propose voice'}
+            </button>
+            {proposalError && (
+              <div
+                role="alert"
+                style={{ color: '#d05050', fontSize: 11, marginTop: 2 }}
+              >
+                Proposal failed: {proposalError}
+              </div>
+            )}
+            {proposal && (
+              <div
+                role="region"
+                aria-label="Voice proposal preview"
+                style={{
+                  marginTop: 6,
+                  padding: '6px 8px',
+                  background: 'rgba(240, 176, 96, 0.05)',
+                  border: '1px solid rgba(240, 176, 96, 0.18)',
+                  borderRadius: 4,
+                  fontSize: 11,
+                  color: '#c0bab0',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                }}
+              >
+                <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase' }}>
+                  Proposal
+                </div>
+                <div>
+                  <span style={{ color: '#8888a0' }}>Voice: </span>
+                  <span>{currentProfile.voice_name || '(default)'}</span>
+                  <span style={{ color: '#666680' }}> → </span>
+                  <span style={{ color: '#f0b060' }}>{proposal.voice_name || '(default)'}</span>
+                </div>
+                <div>
+                  <span style={{ color: '#8888a0' }}>Pitch: </span>
+                  <span>{(currentProfile.pitch ?? 0.9).toFixed(2)}</span>
+                  <span style={{ color: '#666680' }}> → </span>
+                  <span style={{ color: '#f0b060' }}>{(proposal.pitch ?? 0.9).toFixed(2)}</span>
+                </div>
+                <div>
+                  <span style={{ color: '#8888a0' }}>Rate: </span>
+                  <span>{(currentProfile.rate ?? 0.95).toFixed(2)}</span>
+                  <span style={{ color: '#666680' }}> → </span>
+                  <span style={{ color: '#f0b060' }}>{(proposal.rate ?? 0.95).toFixed(2)}</span>
+                </div>
+                <div>
+                  <span style={{ color: '#8888a0' }}>Volume: </span>
+                  <span>{(currentProfile.volume ?? 0.8).toFixed(2)}</span>
+                  <span style={{ color: '#666680' }}> → </span>
+                  <span style={{ color: '#f0b060' }}>{(proposal.volume ?? 0.8).toFixed(2)}</span>
+                </div>
+                {proposalRationale && (
+                  <div style={{ color: '#8888a0', fontStyle: 'italic' }}>
+                    “{proposalRationale}”
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    aria-label="Sample proposed voice"
+                    onClick={() => speakResponse('This is how I would sound.', proposal, agent.id)}
+                    style={{
+                      padding: '3px 8px',
+                      background: 'rgba(240, 176, 96, 0.08)',
+                      border: '1px solid rgba(240, 176, 96, 0.25)',
+                      borderRadius: 3,
+                      color: '#f0b060',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Sample
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Approve voice proposal"
+                    onClick={approveProposal}
+                    style={{
+                      padding: '3px 8px',
+                      background: 'rgba(128, 200, 120, 0.08)',
+                      border: '1px solid rgba(128, 200, 120, 0.3)',
+                      borderRadius: 3,
+                      color: '#80c878',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Request voice revisions"
+                    onClick={() => setShowRevisionInput(v => !v)}
+                    style={{
+                      padding: '3px 8px',
+                      background: 'rgba(240, 176, 96, 0.04)',
+                      border: '1px solid rgba(240, 176, 96, 0.2)',
+                      borderRadius: 3,
+                      color: '#f0b060',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Request revisions
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Reject voice proposal"
+                    onClick={dismissProposal}
+                    style={{
+                      padding: '3px 8px',
+                      background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      borderRadius: 3,
+                      color: '#8888a0',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Reject
+                  </button>
+                </div>
+                {showRevisionInput && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                    <input
+                      type="text"
+                      maxLength={280}
+                      value={revisionNote}
+                      onChange={(e) => setRevisionNote(e.target.value)}
+                      aria-label="Captain revision note"
+                      placeholder="e.g. lower pitch, more measured"
+                      style={{
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: 3,
+                        color: '#e0dcd4',
+                        fontSize: 11,
+                        padding: '3px 6px',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Submit revision note"
+                      onClick={() => fetchVoiceProposal(revisionNote)}
+                      disabled={proposalBusy}
+                      style={{
+                        padding: '3px 8px',
+                        background: 'rgba(240, 176, 96, 0.08)',
+                        border: '1px solid rgba(240, 176, 96, 0.25)',
+                        borderRadius: 3,
+                        color: '#f0b060',
+                        fontSize: 11,
+                        cursor: proposalBusy ? 'default' : 'pointer',
+                        alignSelf: 'flex-start',
+                      }}
+                    >
+                      Submit revision
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

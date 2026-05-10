@@ -2793,6 +2793,151 @@ class CognitiveAgent(BaseAgent):
             return max(CognitiveAgent._max_depth(v, depth + 1) for v in obj)
         return depth
 
+    # ------------------------------------------------------------------
+    # AD-718a: agent-authored voice proposal
+    # ------------------------------------------------------------------
+
+    async def propose_voice_profile(
+        self,
+        *,
+        captain_note: str = "",
+    ) -> tuple["VoiceProfile", str]:  # type: ignore[name-defined]
+        """AD-718a: reflect on personality + role, propose a candidate
+        ``(VoiceProfile, rationale)``.
+
+        Mirrors :meth:`propose_appearance` structurally. NOT persisted —
+        the caller (the propose endpoint) returns the candidate to the UI;
+        Captain approval flows through the existing
+        ``PUT /voice-profile`` endpoint, which re-runs
+        ``VoiceProfile.__post_init__`` for a second independent bounds
+        check (defense in depth).
+
+        Args:
+            captain_note: Optional revision note from the Captain
+                (≤ 280 chars) appended to the prompt context for
+                "Request revisions" flows.
+
+        Raises:
+            VoiceProposalError: LLM call failed, response oversized,
+                contained YAML anchors/aliases/tags, exceeded depth
+                bounds, failed to parse, or failed bounds validation.
+        """
+        from probos.crew_profile import VoiceProfile
+        from probos.voice.proposal import (
+            VoiceProposalError,
+            parse_voice_proposal,
+        )
+
+        if self._llm_client is None:
+            raise VoiceProposalError(
+                "llm_unavailable",
+                detail="CognitiveAgent has no llm_client configured",
+            )
+
+        if len(captain_note) > 280:
+            raise VoiceProposalError(
+                "invalid_input",
+                detail=f"captain_note must be ≤ 280 chars, got {len(captain_note)}",
+            )
+
+        # ── Reflection context ──────────────────────────────────────
+        personality_text = getattr(self, "instructions", "") or ""
+        agent_type = getattr(self, "agent_type", "") or ""
+
+        # Optional richer context from the live CrewProfile (display_name,
+        # department, rank, Big-Five). Tier-2 log-and-degrade if profile_store
+        # is unwired in tests.
+        display_name = ""
+        department = ""
+        rank = ""
+        big_five: dict[str, float] = {}
+        runtime = getattr(self, "_runtime", None)
+        try:
+            ps = getattr(runtime, "profile_store", None) if runtime else None
+            if ps is not None and hasattr(ps, "get"):
+                crew = ps.get(self.id)
+                if crew is not None:
+                    display_name = getattr(crew, "display_name", "") or ""
+                    department = getattr(crew, "department", "") or ""
+                    rank_obj = getattr(crew, "rank", None)
+                    rank = getattr(rank_obj, "value", "") or str(rank_obj or "")
+                    p = getattr(crew, "personality", None)
+                    if p is not None:
+                        for trait in (
+                            "openness", "conscientiousness", "extraversion",
+                            "agreeableness", "neuroticism",
+                        ):
+                            v = getattr(p, trait, None)
+                            if isinstance(v, (int, float)):
+                                big_five[trait] = float(v)
+        except Exception:
+            logger.warning(
+                "AD-718a: failed to fetch CrewProfile context for %s; "
+                "proceeding without personality context",
+                self.id[:12],
+                exc_info=True,
+            )
+
+        system_prompt = (
+            "You are designing your own voice. Output STRICT JSON matching "
+            "the VoiceProfile schema below. Output JSON ONLY — no prose, no "
+            "Markdown fences, no commentary. Do NOT use YAML anchors (&), "
+            "aliases (*), or tag tokens (!!). Every field must be present.\n\n"
+            "Schema (Web Speech API knobs):\n"
+            "{\n"
+            '  "voice_name": "exact SpeechSynthesisVoice.name to prefer, '
+            'or empty string for global default",\n'
+            '  "pitch": 0.0-2.0  (1.0 = neutral; lower = deeper, higher = brighter),\n'
+            '  "rate":  0.1-10.0 (0.95 = relaxed; lower = slower),\n'
+            '  "volume": 0.0-1.0 (0.8 = comfortable),\n'
+            '  "rationale": "short reasoning, ≤ 500 chars"\n'
+            "}\n"
+        )
+
+        user_message_parts = [
+            f"Agent identity: {display_name or agent_type or self.id}",
+        ]
+        if department:
+            user_message_parts.append(f"Department: {department}")
+        if rank:
+            user_message_parts.append(f"Rank: {rank}")
+        if big_five:
+            user_message_parts.append(f"Big-Five personality: {big_five}")
+        if personality_text:
+            user_message_parts.append(
+                f"Personality / instructions:\n{personality_text[:2000]}"
+            )
+        if captain_note:
+            user_message_parts.append(
+                f"Captain revision note: {captain_note}"
+            )
+        user_message_parts.append(
+            "Reflect on the above and output the JSON describing how YOU "
+            "want to sound. Match the schema exactly."
+        )
+        user_message = "\n\n".join(user_message_parts)
+
+        # ── LLM call (Tier-2 log-and-degrade only at this layer) ────
+        request = LLMRequest(
+            prompt=user_message,
+            system_prompt=system_prompt,
+            tier=self._resolve_tier() if hasattr(self, "_resolve_tier") else "standard",
+            max_tokens=512,
+        )
+        try:
+            response = await self._llm_client.complete(request, priority=Priority.NORMAL)
+        except Exception as exc:
+            logger.warning(
+                "AD-718a: LLM call failed for %s voice proposal: %s; "
+                "no profile produced — caller may retry",
+                self.id[:12],
+                exc,
+            )
+            raise VoiceProposalError("llm_call_failed", detail=str(exc)) from exc
+
+        text = (response.content or "").strip()
+        return parse_voice_proposal(text)
+
     async def _self_post_ward_room_response(
         self, intent: "IntentMessage", response_text: str,
     ) -> None:

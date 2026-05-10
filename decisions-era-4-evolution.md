@@ -5214,3 +5214,27 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 - `tests/audio/test_lipsync_track.ts` (new)
 
 **AD-numbering verification.** Highest pre-existing AD: 721. AD-721a–h are forward markers in AD-721; AD-721b is the next-up sub-AD per that plan. No collision.
+
+### AD-718a — Agent-authored voice profile
+**Date:** 2026-05-09
+**Type:** Architecture Decision
+**Wave:** 136
+**Status:** SHIPPED. Issue [#522](https://github.com/seangalliher/ProbOS/issues/522).
+
+**Goal.** Transpose the AD-721d agent-authored-DSL pattern onto voice. The agent reflects on its `CrewProfile.personality` (Big-Five), `display_name`, `department`, and `rank`, then **proposes** a candidate `VoiceProfile`. The Captain reviews a preview and either Approves (persists via the existing `PUT /api/agent/{id}/voice-profile`), Requests revisions (re-runs the LLM with a Captain note), or Rejects.
+
+**What shipped.**
+- `src/probos/voice/proposal.py` — hardened parser `parse_voice_proposal(text) -> (VoiceProfile, rationale)` mirroring AD-721d `_parse_appearance_dsl`: 16 KiB byte cap, anchor/alias/tag (`&` / `*` / `!!`) reject, optional Markdown-fence strip, `yaml.safe_load` only, depth guard (max 8), unknown-key reject, `VoiceProfile.__post_init__` bounds re-run, rationale truncated to 500 chars.
+- `CognitiveAgent.propose_voice_profile(captain_note='')` — async, `fast` LLM tier, mirrors `propose_appearance`. Reflects over `CrewProfile` Big-Five + identity context. Tier-2 log-and-degrade only at the LLM-call layer; parser/bounds violations propagate as `VoiceProposalError`.
+- `POST /api/agent/{agent_id}/voice-profile/propose` — non-persistent. 200 returns `{agent_id, voice_profile, rationale}`. 422 on parser/bounds rejection. 404 on missing agent. 400 if agent lacks the capability.
+- `SetVoiceProfileRequest` extended with `proposal_rationale: str = ""`. When non-empty (approve-from-proposal), the existing PUT writes an `Episode` with `intent="voice_profile_change"`, `signals`-style outcome including `old_voice`, `new_voice`, `rationale`, `agent_id`. Hand-edit path is unchanged (no episode write).
+- HXI: `ProfileInfoTab` voice section gains a stroke-SVG "Propose voice" affordance, a diff-style preview (current → proposed), and Sample / Approve / Request revisions / Reject buttons. No emoji; amber active, dim inactive. Captain may hand-edit proposed values before approving.
+
+**Defense in depth (server).** Two independent bounds checks: parser → `VoiceProfile.__post_init__`; PUT handler → `VoiceProfile(...)` → `__post_init__`. Per-Captain override the prompt removed the planned `VoiceProposal` Pydantic layer; `VoiceProfile` dataclass is the single source of bounds truth.
+
+**Hard-stop verifications.** Web Speech API only (no third-party audio deps). Parser module AST-scanned for `exec`/`eval`/`compile`/`pickle.loads`/`marshal.loads` — clean (boundary test `test_no_eval_or_exec_in_module`). Anchor/alias/tag tokens rejected at byte level. No emoji in TSX/TS/PY diff. `probos.voice` module shadowing resolved by promoting to a package and re-exporting the AD-474 substrate from `voice/_substrate.py`.
+
+**Tests.** 17 parser + 12 capability/endpoint Python tests (`tests/test_ad718a_voice_proposal_parser.py`, `tests/test_ad718a_propose_voice.py`) + 5 Vitest UI tests (`ui/src/__tests__/ProfileInfoTab.proposeVoice.test.tsx`). Full Python gate: 13042 passed (delta +29 vs Wave 135 baseline 13013); 7 environmental parallel-only failures (pre-existing, all green at `-n 0`). UI Vitest: 472 passed.
+
+**Forward markers.** AD-718a-1 (proposal revision-cycle / persisted proposal log) — NOT filed at gate-3; the v1 single-shot + Request-revisions UX is sufficient for the Cluster A target. AD-718-1 stands as filed in Wave 135.
+

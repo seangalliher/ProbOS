@@ -225,11 +225,38 @@ class SetCooldownRequest(BaseModel):
 # ── Voice profile model (AD-718) ─────────────────────────────────
 
 class SetVoiceProfileRequest(BaseModel):
-    """Request body for per-agent voice profile (AD-718)."""
+    """Request body for per-agent voice profile (AD-718, extended AD-718a).
+
+    ``proposal_rationale`` is set ONLY on approve-from-proposal flows
+    (see AD-718a). Hand-edits leave it empty; episode-write is gated on
+    a non-empty value (Captain Q4 ruling: hand-edits carry no rationale
+    to learn from, so the episodic write only fires when the proposal
+    rationale is present).
+    """
     voice_name: str = ""
     pitch: float = 0.9
     rate: float = 0.95
     volume: float = 0.8
+    proposal_rationale: str = ""  # AD-718a: non-empty iff approve-from-proposal
+
+
+# ── Voice proposal models (AD-718a) ──────────────────────────────
+
+class ProposeVoiceProfileRequest(BaseModel):
+    """AD-718a: Optional Captain revision note for "Request revisions" flows."""
+    captain_note: str = ""
+
+
+class ProposeVoiceProfileResponse(BaseModel):
+    """AD-718a: Validated VoiceProfile candidate returned for Captain review.
+
+    NOT persisted — caller must follow up with
+    ``PUT /{agent_id}/voice-profile`` (carrying ``proposal_rationale``)
+    once the Captain approves.
+    """
+    agent_id: str
+    voice_profile: dict  # VoiceProfile.to_dict() shape
+    rationale: str       # agent's reasoning, ≤ 500 chars
 
 
 # ── Appearance models (AD-721d) ──────────────────────────────────
