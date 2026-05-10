@@ -3157,4 +3157,6 @@ waves:
       - "prompts/ad-718c-per-agent-wake-phrase-v1.md"
     builder_required: true
     issues_to_close: [481, 524]
-    status: pending
+    status: done
+
+

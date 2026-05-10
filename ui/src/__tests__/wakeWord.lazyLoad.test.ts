@@ -1,20 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+// Use Vite's `?raw` import to read the source without Node typings.
+// This keeps the test browser-bundler-compatible (no @types/node needed)
+// and survives `tsc -b` in the prod build.
+import wakeWordSource from '../audio/wakeWord.ts?raw';
 
 // AD-705 D8 test #21: lazy-load source-level guard.
 //
-// This test reads the wake-word module source as text and asserts that
-// `onnxruntime-web` is NEVER referenced in a static top-level `import`.
-// Captain answer Q5 (2026-05-09): lazy-load is non-negotiable. First-paint
-// must not regress for Captains who never enable voice.
+// This test asserts that `onnxruntime-web` is NEVER referenced in a static
+// top-level `import`. Captain answer Q5 (2026-05-09): lazy-load is
+// non-negotiable. First-paint must not regress for Captains who never
+// enable voice.
 
 describe('wakeWord lazy-load (AD-705 D1, hard-stop #10)', () => {
   it('21. wakeWord.ts does not statically import onnxruntime-web', () => {
-    const src = readFileSync(
-      resolve(__dirname, '..', 'audio', 'wakeWord.ts'),
-      'utf-8',
-    );
+    const src = wakeWordSource;
     // Static-import patterns at module top-level. The dynamic import
     // (await import(moduleName)) is allowed and required.
     const staticImportRe = /^\s*import\s+[^;]*['"]onnxruntime-web['"]/m;

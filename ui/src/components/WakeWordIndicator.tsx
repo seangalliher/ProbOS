@@ -12,6 +12,7 @@
  * Inline SVG only. No emoji. No Material icons. HXI Design Principle #3.
  */
 
+import type * as React from 'react';
 import { useEffect, useState } from 'react';
 import {
   getWakeWordState,
@@ -31,7 +32,7 @@ const _REASON_LABEL: Record<WakeFallbackReason, string> = {
   speech_recognition_unavailable: 'Speech recognition not supported',
 };
 
-export function WakeWordIndicator(): JSX.Element | null {
+export function WakeWordIndicator(): React.JSX.Element | null {
   const [state, setState] = useState<WakeWordState>(() => getWakeWordState());
   const [detail, setDetail] = useState<WakeWordStateDetail>({});
 
