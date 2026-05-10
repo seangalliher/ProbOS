@@ -3145,3 +3145,16 @@ waves:
 
 
 
+
+  - id: "137"
+    title: "Wake-word + always-on voice loop — AD-705 (reframed) + AD-718c per-agent wake-phrase"
+    kind: main
+    depends_on: ["136"]
+    dispatch_prompt: "prompts/WAVE-137-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-705-wake-word-voice-loop-v1.md"
+      - "prompts/ad-718c-per-agent-wake-phrase-v1.md"
+    builder_required: true
+    issues_to_close: [481, 524]
+    status: pending
