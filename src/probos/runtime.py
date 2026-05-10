@@ -400,6 +400,11 @@ class ProbOSRuntime:
         # so all approvals were silently dropped with the warning
         # "AD-718: profile_store not present on runtime; ... not persisted".
         from probos.crew_profile import ProfileStore
+        # Ensure the data_dir exists; ProfileStore connects synchronously in
+        # __init__ (unlike TrustNetwork/EventLog which are async-lazy and
+        # mkdir on first start()). Tests that run RuntimeBuilder against a
+        # tmp path expect this.
+        self._data_dir.mkdir(parents=True, exist_ok=True)
         self.profile_store = ProfileStore(
             db_path=str(self._data_dir / "crew_profiles.db"),
         )

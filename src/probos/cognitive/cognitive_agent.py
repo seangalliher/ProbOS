@@ -5112,6 +5112,22 @@ class CognitiveAgent(BaseAgent):
                 parts.append(wm_context)
                 parts.append("")
 
+            # AD-722 BF (2026-05-10): avatar self-observation on the DM one-shot path.
+            # The chain path picks this up via _build_cognitive_baseline, but DMs
+            # bypass cognitive_state entirely and assemble inline here. Method is
+            # feature-gated by avatar_telemetry.inject_into_agent_context and
+            # returns "" when the cached snapshot is missing — safe to call.
+            try:
+                _avatar_block = self._build_avatar_self_observation(observation)
+                if _avatar_block:
+                    parts.append(_avatar_block)
+                    parts.append("")
+            except Exception:
+                logger.debug(
+                    "AD-722: avatar self-observation injection in DM path failed",
+                    exc_info=True,
+                )
+
             # AD-430c / AD-540: Episodic memory with provenance boundary
             memories = observation.get("recent_memories", [])
             if memories:
