@@ -3138,7 +3138,9 @@ waves:
       - "prompts/ad-718d-emotional-voice-modulation-v1.md"
     builder_required: true
     issues_to_close: [522, 525]
-    status: pending
+    status: done
+
+
 
 
 

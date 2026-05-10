@@ -113,7 +113,10 @@ export function speakResponse(
   if (agent_id) {
     try {
       const store = useStore.getState();
-      const signals = deriveAgentSignals(agent_id, store);
+      // deriveAgentSignals takes a structurally-typed slice of the store;
+      // cast through unknown because HXIState's NotificationView type is
+      // a wider/branded shape than the helper's structural { tier? } guard.
+      const signals = deriveAgentSignals(agent_id, store as unknown as Parameters<typeof deriveAgentSignals>[1]);
       effective = applyEmotionalModulation(
         {
           voice_name: profile?.voice_name,
