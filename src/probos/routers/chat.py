@@ -251,6 +251,76 @@ async def chat(
             return {"response": response, "dag": None, "results": None}
         # Callsign not found — fall through to NL processing
 
+    # AD-720d (Wave 139): vision pipe-through + non-image inline extraction.
+    # Fires only when the user attached files. Zero-attachment turns are
+    # bit-for-bit unchanged (the existing decomposer path runs as before).
+    if req.attachment_ids:
+        cfg_attach = getattr(runtime.config, "attachments", None)
+        if cfg_attach is not None and getattr(cfg_attach, "enabled", False):
+            from probos.cognitive.text_extractor import extract_text  # noqa: F401
+            from probos.cognitive.vision_dispatch import build_multimodal_messages
+            from probos.types import LLMRequest
+
+            store = _get_attachment_store(runtime)
+
+            async def _mime_lookup(content_hash: str) -> str | None:
+                return await store.mime_for(content_hash)
+
+            messages, image_ids = await build_multimodal_messages(
+                prompt=text,
+                attachment_ids=list(req.attachment_ids),
+                store=store,
+                mime_lookup=_mime_lookup,
+                text_extraction_max_bytes=cfg_attach.text_extraction_max_bytes,
+                pdf_extraction_enabled=cfg_attach.pdf_extraction_enabled,
+            )
+
+            if image_ids:
+                tier = cfg_attach.vision_tier
+                health = runtime.llm_client.get_health_status()
+                tier_status = (health.get("tiers", {}).get(tier) or {}).get("status")
+                if tier_status != "operational":
+                    logger.warning(
+                        "AD-720d vision tier=%s unavailable (status=%s); returning "
+                        "text-only stub naming attachments. attachment_ids=%s",
+                        tier, tier_status, list(req.attachment_ids),
+                    )
+                    preview = ", ".join(list(req.attachment_ids)[:3])
+                    if len(req.attachment_ids) > 3:
+                        preview = preview + "..."
+                    stub = (
+                        f"I see {len(req.attachment_ids)} attachment(s) "
+                        f"({preview}) but vision processing is currently "
+                        f"unavailable. Try again in a moment."
+                    )
+                    return {"response": stub, "dag": None, "results": None}
+                llm_response = await runtime.llm_client.complete(
+                    LLMRequest(
+                        prompt="",
+                        messages=messages,
+                        tier=tier,
+                        max_tokens=2048,
+                    ),
+                )
+                return {
+                    "response": llm_response.content or "(no response)",
+                    "dag": None,
+                    "results": None,
+                }
+
+            # Non-image only: synthesize an augmented prompt and fall through
+            # to the standard NL decomposer path. The augmented prompt gets the
+            # same treatment as a normal text turn (decomposition, episodic, etc.).
+            text_blocks = [
+                item.get("text", "")
+                for item in messages[0]["content"]
+                if item.get("type") == "text" and item.get("text") != text
+            ]
+            if text_blocks:
+                augmented = text + "\n\n" + "\n\n".join(text_blocks)
+                req = req.model_copy(update={"message": augmented})
+                text = req.message
+
     events: list[dict[str, Any]] = []
 
     async def on_event(event_type: str, data: dict[str, Any] | None = None) -> None:

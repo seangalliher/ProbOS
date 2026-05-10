@@ -113,3 +113,15 @@ class FilesystemAttachmentStore:
     async def size(self, content_hash: str) -> int:
         path = await self.get_path(content_hash)
         return await asyncio.to_thread(lambda: path.stat().st_size)
+
+    async def mime_for(self, content_hash: str) -> str | None:
+        """AD-720d (Wave 139): derive MIME from the on-disk extension.
+
+        Returns the MIME or None if the attachment is not stored. Uses the
+        module-level ``ext_to_mime`` helper as the single source of truth
+        (backed by ``_MIME_TO_EXT``).
+        """
+        path = await self._find(content_hash)
+        if path is None:
+            return None
+        return ext_to_mime(path.suffix)

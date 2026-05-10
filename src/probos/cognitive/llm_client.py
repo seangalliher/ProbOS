@@ -666,10 +666,17 @@ class OpenAICompatibleClient(BaseLLMClient):
         """OpenAI-compatible chat/completions call."""
         if effective_temp is None:
             effective_temp = request.temperature
-        messages = []
-        if request.system_prompt:
-            messages.append({"role": "system", "content": request.system_prompt})
-        messages.append({"role": "user", "content": request.prompt})
+        # AD-720d (Wave 139): multimodal turns provide a pre-built ``messages``
+        # array; when present, skip the prompt-shape synthesis below.
+        if request.messages is not None:
+            messages = list(request.messages)
+            if request.system_prompt and not (messages and messages[0].get("role") == "system"):
+                messages.insert(0, {"role": "system", "content": request.system_prompt})
+        else:
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            messages.append({"role": "user", "content": request.prompt})
 
         payload = {
             "model": model,

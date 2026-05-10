@@ -473,3 +473,5 @@ See [design-principles.md](docs/development/design-principles.md) for full desig
 
 - AD-720a - file upload via multipart + drag-drop UI shipped (Wave 139, Python +10 = 13063, Vitest +5). 9-MIME allow-list (PDF/txt/md/json/csv added). Helper extraction (`_validate_and_store_attachment`) is the single defense-in-depth chain for both POST endpoints. JSON+base64 paste path bit-for-bit unchanged.
 
+- AD-720d - vision pipe-through v1 shipped (Wave 139, Python +10 = 13072, Vitest +0). Wires previously-dead `ChatRequest.attachment_ids` into the chat path. Image attachments route via `LLMClient` vision tier (multimodal `messages` array, additive `LLMRequest.messages` field, zero new vendor SDK deps). Non-image attachments (txt/md/json/csv) inline-extract and augment the prompt for the standard decomposer path. PDF / vision-tier-unhealthy paths emit structured stubs — never silent drop.
+

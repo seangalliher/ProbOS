@@ -237,6 +237,10 @@ class LLMRequest:
     # AD-543: Tool-aware completion (None preserves byte-for-byte text-only behaviour).
     tools: list[dict] | None = None
     tool_choice: str = "auto"
+    # AD-720d (Wave 139): when set, takes precedence over ``prompt`` for multimodal turns.
+    # The OpenAI-compatible client posts the array verbatim as the request's
+    # ``messages`` field. None preserves the existing prompt-shape behaviour.
+    messages: list[dict] | None = None
 
 
 @dataclass

@@ -1636,3 +1636,32 @@ The AD-720a dispatch's "zero new Python deps" rule was an aspirational goal that
 **Status:** SHIPPED. Issue [#549](https://github.com/seangalliher/ProbOS/issues/549).
 **Files:** `src/probos/config.py` (extended `AttachmentsConfig`), `src/probos/attachments/filesystem_store.py` (extended `_MIME_TO_EXT` + new `ext_to_mime` helper), `src/probos/attachments/mime.py` (new `validate_attachment_bytes`), `src/probos/routers/chat.py` (new `_validate_and_store_attachment` helper + new multipart endpoint + JSON-path refactor + GET reverse-lookup DRY-ification + FastAPI `UploadFile`/`File` import), `ui/src/store/types.ts` (optional `filename` on `ChatAttachment`), `ui/src/components/IntentSurface.tsx` (file picker + drag-drop overlay + non-image preview badges + `ALLOWED_ATTACHMENT_MIMES` constant), `tests/test_ad720a_multipart.py` (new — 11 tests), `ui/src/__tests__/IntentSurface.dragDrop.test.tsx` (new — 5 Vitest cases).
 
+
+
+### AD-720d — Vision pipe-through v1
+
+**Wave 139, 2026-05-10.** Closes #552 (commit N+1 of Wave 139). Captain pasted Ezri's avatar and Ezri replied "I have no visual input capability" — correct per the AD-720d deferral but visible to the user. AD-720d wires the previously-dead `ChatRequest.attachment_ids` field into the live chat path for the first time.
+
+**Routing decision** (in the chat handler, after slash-command + at-mention + DM branches, before `runtime.process_natural_language`):
+- **Image attachments** (any `image/*` MIME among `attachment_ids`): build the OpenAI/Anthropic multimodal `messages` array (`[{role: "user", content: [{type: "text", ...}, {type: "image", source: {type: "base64", media_type, data}}, ...]}]`) and call `runtime.llm_client.complete(LLMRequest(messages=..., tier=cfg.vision_tier))` directly, bypassing the decomposer. Response shape: `{"response": ..., "dag": None, "results": None}`.
+- **Non-image attachments** (text/markdown/JSON/CSV): inline-extract the text, append a `<ATTACHMENT id="..." mime="...">...</ATTACHMENT>` block to the user prompt, and proceed through the standard `runtime.process_natural_language` decomposer path (preserves episodic, slash-command, reflection codepath).
+- **PDF attachments** (with `pdf_extraction_enabled=False` — the v1 default): emit a `<ATTACHMENT mime="application/pdf" note="PDF extraction not yet wired (AD-720a-1)" />` stub block. AD-720a-1 flips the path to real extraction.
+- **Vision tier unhealthy** (`llm_client.get_health_status()["tiers"][vision_tier]["status"] != "operational"`): structured stub message naming the attachments + `WARNING`-level log entry. Never silent drop. Never 500.
+
+**Additive `LLMRequest.messages` field:** one-line addition to the `LLMRequest` dataclass (`messages: list[dict] | None = None`). The OpenAI-compatible client's `_call_openai` request-build skips the prompt-shape synthesis when `messages is not None` and posts the array verbatim. Every existing `LLMRequest(...)` call site at HEAD uses kwargs and gets `messages=None` (62 LLM-client tests confirm bit-for-bit behaviour preservation). Anthropic / OpenAI vendor SDKs are NOT imported — the existing httpx-based client posts the multimodal JSON which the Copilot proxy at `127.0.0.1:8080` accepts.
+
+**Two new modules (stdlib only):**
+- `src/probos/cognitive/text_extractor.py`: `extract_text(blob, mime, *, max_bytes) -> (text, was_truncated)`. Strict UTF-8 decodes only (one `errors='ignore'` allowed for byte-boundary truncation). PDF branch raises `NotImplementedError("AD-720a-1: PDF extraction not yet wired")` — the dispatch catches it and emits the stub.
+- `src/probos/cognitive/vision_dispatch.py`: `build_multimodal_messages(prompt, attachment_ids, store, mime_lookup, *, text_extraction_max_bytes, pdf_extraction_enabled) -> (messages, image_attachment_ids)`. Pure formatter — does not call the LLM client. `asyncio.gather` for parallel attachment reads. Tier-2 log-and-degrade on per-attachment failures (`failed_to_load` block; other attachments still render).
+
+**Helper exposure:** `FilesystemAttachmentStore.mime_for(content_hash)` async method derives MIME from the on-disk extension via the AD-720a `ext_to_mime` helper (single source of truth backed by `_MIME_TO_EXT`). The chat router passes a thin async closure as the `mime_lookup` callable — keeps the `vision_dispatch` module's contract narrow (Callable, not concrete store).
+
+**Backwards-compat (HARD):** zero-attachment turns are bit-for-bit unchanged (early-return short-circuit on empty `req.attachment_ids`). The new branch is also short-circuited when `cfg.attachments.enabled is False`. All slash-command + DM + at-mention fan-out branches run BEFORE the attachment branch.
+
+**Forward markers:** AD-720a-1 (PDF / DOCX / XLSX text extraction — needs `pypdf` / `python-docx` / `openpyxl`), AD-720d-1 (multi-image batch send — latency, prompt-context budget, per-attachment timing), AD-720d-2 (per-agent vision capability designation), AD-720d-3 (episodic writes for vision-routed turns — v1 bypasses the decomposer for image-only turns and therefore does not write an episode).
+
+**AD-numbering note:** highest pre-Wave-139 entry was AD-721i (dispatch §12). AD-720a + AD-720d were reserved as forward markers in the Wave 135 archive. No collisions.
+
+**Status:** SHIPPED. Issue [#552](https://github.com/seangalliher/ProbOS/issues/552).
+**Files:** `src/probos/types.py` (additive `LLMRequest.messages`), `src/probos/cognitive/llm_client.py` (one-line conditional in `_call_openai` request-build), `src/probos/cognitive/text_extractor.py` (new), `src/probos/cognitive/vision_dispatch.py` (new), `src/probos/attachments/filesystem_store.py` (new `mime_for` async method), `src/probos/routers/chat.py` (new conditional branch in main `chat` handler). Tests: `tests/test_ad720d_vision_pipethrough.py` (10 cases, all passing — image routing, txt/md/json/csv extraction, oversize truncation, vision-tier-unhealthy stub, PDF deferred-feature stub, zero-attachment regression guard, `cfg.enabled=False` short-circuit). Net Python suite: 13063 → 13072.
+
