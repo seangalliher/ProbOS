@@ -991,6 +991,7 @@ class AvatarTelemetryConfig(BaseModel):
     mouth_active_window_seconds: float = 3.0
     polling_interval_ms: int = 2000          # AD-722 — UI hint, not backend-driven.
     sampling_rates: SamplingRatesConfig = Field(default_factory=SamplingRatesConfig)  # AD-722f
+    max_connections_per_agent: int = 4       # AD-722b — WS popout connections per agent
 
     @field_validator("mouth_active_window_seconds")
     @classmethod
@@ -1004,6 +1005,15 @@ class AvatarTelemetryConfig(BaseModel):
     def _bound_polling(cls, v: int) -> int:
         if v < 250:
             raise ValueError(f"polling_interval_ms must be >= 250 to prevent UI hammering, got {v}")
+        return v
+
+    @field_validator("max_connections_per_agent")
+    @classmethod
+    def _bound_max_connections(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"max_connections_per_agent must be >= 1, got {v}"
+            )
         return v
 
 

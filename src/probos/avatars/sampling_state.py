@@ -12,10 +12,11 @@ Trigger surfaces (Wave 141):
   - ``enter_chain`` / ``exit_chain`` — wired at cognitive_agent.py around
     the ``_execute_chain_with_intent_routing`` call site (line ~1394).
 
-Trigger surfaces NOT wired in Wave 141 (forward markers):
-  - ``enter_subscriber`` / ``exit_subscriber`` — Wave 142 / AD-722b WebSocket
-    subscribe/unsubscribe. Method names reserved here for forward-marker
-    discoverability; bodies are NOT defined in this AD.
+Trigger surfaces wired in Wave 142 (AD-722b):
+  - ``enter_popout`` / ``exit_popout`` — WS subscribe/unsubscribe at
+    ``WS /api/agent/{id}/avatar-telemetry-stream``. Refcount semantics
+    match ``enter_dm`` (multiple HXI tabs subscribing to the same agent
+    each enter; tier stays HIGH while >= 1 connection is open).
 
 Per AD-722 addendum (h): WR (ward_room_notification) does NOT trigger
 state changes. The state machine does not expose ``enter_wr``/``exit_wr``;
@@ -58,7 +59,7 @@ class AvatarSamplingStateMachine:
         self._rates = rates
         # nested dict: agent_id -> {trigger_name: refcount}
         self._counts: dict[str, dict[str, int]] = defaultdict(
-            lambda: {"dm": 0, "chain": 0},
+            lambda: {"dm": 0, "chain": 0, "popout": 0},
         )
         self._lock = Lock()
 
@@ -99,15 +100,41 @@ class AvatarSamplingStateMachine:
                 return
             self._counts[agent_id]["chain"] = n - 1
 
+    def enter_popout(self, agent_id: str) -> None:
+        """AD-722b: WS subscribe → HIGH-tier sampling. Ref-counted to
+        tolerate multiple HXI tabs subscribing to the same agent."""
+        with self._lock:
+            self._counts[agent_id]["popout"] += 1
+
+    def exit_popout(self, agent_id: str) -> None:
+        """AD-722b: WS unsubscribe. Spurious-exit clamp matches the
+        DM/chain pattern (BF-leakage protection on exception paths)."""
+        with self._lock:
+            n = self._counts[agent_id]["popout"]
+            if n <= 0:
+                logger.warning(
+                    "AD-722b: spurious exit_popout for agent=%s "
+                    "(count was %d); clamping to 0",
+                    agent_id, n,
+                )
+                self._counts[agent_id]["popout"] = 0
+                return
+            self._counts[agent_id]["popout"] = n - 1
+
     # ── Read surface ────────────────────────────────────────────────
 
     def current_tier(self, agent_id: str) -> str:
-        """Resolve the active tier for an agent. HIGH > NORMAL > LOW."""
+        """Resolve the active tier for an agent. HIGH > NORMAL > LOW.
+
+        AD-722b: ``popout`` (WS subscriber attached) is HIGH-tier — same
+        priority bucket as ``dm``. Either trigger flips to HIGH; chain
+        is NORMAL; otherwise LOW.
+        """
         with self._lock:
             counts = self._counts.get(agent_id)
             if counts is None:
                 return TIER_LOW
-            if counts.get("dm", 0) > 0:
+            if counts.get("dm", 0) > 0 or counts.get("popout", 0) > 0:
                 return TIER_HIGH
             if counts.get("chain", 0) > 0:
                 return TIER_NORMAL
@@ -127,5 +154,5 @@ class AvatarSamplingStateMachine:
         with self._lock:
             counts = self._counts.get(agent_id)
             if counts is None:
-                return {"dm": 0, "chain": 0}
+                return {"dm": 0, "chain": 0, "popout": 0}
             return dict(counts)

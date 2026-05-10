@@ -418,6 +418,18 @@ class ProbOSRuntime:
             rates=self.config.avatar_telemetry.sampling_rates,
         )
 
+        # AD-722b: avatar-telemetry WS push channel — event bus + connection
+        # manager. Co-located with sampling_state for the same lifecycle
+        # discipline (eager __init__, volatile across restarts).
+        from probos.avatars.events import AvatarEventBus
+        from probos.avatars.ws_connection_manager import (
+            AvatarTelemetryConnectionManager,
+        )
+        self.avatar_event_bus = AvatarEventBus()
+        self.avatar_telemetry_connection_manager = AvatarTelemetryConnectionManager(
+            max_per_agent=self.config.avatar_telemetry.max_connections_per_agent,
+        )
+
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []
 

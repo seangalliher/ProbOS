@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from probos.api_models import (
@@ -515,6 +516,179 @@ async def agent_avatar_telemetry(agent_id: str, runtime: Any = Depends(get_runti
     return snap.to_dict()
 
 
+@router.websocket("/{agent_id}/avatar-telemetry-stream")
+async def agent_avatar_telemetry_stream(
+    websocket: WebSocket,
+    agent_id: str,
+) -> None:
+    """AD-722b: WebSocket push channel for avatar telemetry.
+
+    Same feature gates as the GET endpoint. Subscribe → tier flip to
+    HIGH via ``avatar_sampling_state.enter_popout``; disconnect → flip
+    back via ``exit_popout``. Publish loop awaits both an interval timer
+    (rate from ``current_rate_ms``) and a per-agent event (set by trigger
+    surfaces). On either wake, builds + sends a fresh snapshot.
+
+    Authentication: feature-gate-only — same model as the GET endpoint.
+    Forward marker AD-722b-1 covers crew-scoped auth.
+    """
+    runtime = websocket.app.state.runtime
+    cfg = getattr(runtime, "config", None)
+    avatars_cfg = getattr(cfg, "avatars", None)
+    telemetry_cfg = getattr(cfg, "avatar_telemetry", None)
+
+    # Feature gate 1: avatars system disabled — close before accept.
+    if avatars_cfg is None or not avatars_cfg.enabled:
+        await websocket.close(code=1008, reason="avatars_disabled")
+        return
+    # Feature gate 2: avatar telemetry disabled.
+    if telemetry_cfg is None or not telemetry_cfg.enabled:
+        await websocket.close(code=1008, reason="avatar_telemetry_disabled")
+        return
+    # Agent existence check.
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        await websocket.close(code=1008, reason="agent_not_found")
+        return
+
+    # Accept the handshake.
+    await websocket.accept()
+
+    # Max-connections enforcement — accept-then-immediate-close so the
+    # client receives a structured close frame.
+    from probos.avatars.ws_connection_manager import MaxConnectionsExceeded
+    conn_manager = getattr(
+        runtime, "avatar_telemetry_connection_manager", None,
+    )
+    sampling_state = getattr(runtime, "avatar_sampling_state", None)
+    event_bus = getattr(runtime, "avatar_event_bus", None)
+    if conn_manager is None or sampling_state is None or event_bus is None:
+        await websocket.send_json(
+            {"type": "error", "reason": "telemetry_runtime_unavailable"},
+        )
+        await websocket.close(code=1011, reason="runtime_unavailable")
+        return
+
+    try:
+        connection_id = conn_manager.register(agent_id, websocket)
+    except MaxConnectionsExceeded:
+        await websocket.send_json(
+            {"type": "error", "reason": "max_connections_exceeded"},
+        )
+        await websocket.close(code=1008, reason="max_connections_exceeded")
+        return
+
+    sampling_state.enter_popout(agent_id)
+    event = event_bus.subscribe(agent_id)
+    publish_task: asyncio.Task | None = None
+    receive_task: asyncio.Task | None = None
+    try:
+        from probos.avatars.telemetry import build_telemetry_snapshot
+
+        # Send an initial snapshot immediately on connect (UI populates fast).
+        try:
+            initial = await build_telemetry_snapshot(agent_id, runtime)
+            await websocket.send_json(initial.to_dict())
+        except Exception:
+            logger.warning(
+                "AD-722b: initial snapshot send failed for agent=%s",
+                agent_id, exc_info=True,
+            )
+
+        async def _publish_loop() -> None:
+            """Per-connection publish loop. Sleep-or-event-driven."""
+            while True:
+                rate_ms = sampling_state.current_rate_ms(agent_id)
+                interval_s = max(0.05, float(rate_ms) / 1000.0)
+                event.clear()
+                # Race the timer against the event.
+                wait_event = asyncio.create_task(event.wait())
+                wait_timer = asyncio.create_task(asyncio.sleep(interval_s))
+                try:
+                    await asyncio.wait(
+                        {wait_event, wait_timer},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    for t in (wait_event, wait_timer):
+                        if not t.done():
+                            t.cancel()
+                # Build + send.
+                snap = await build_telemetry_snapshot(agent_id, runtime)
+                await websocket.send_json(snap.to_dict())
+
+        async def _receive_loop() -> None:
+            """Drain client messages so WebSocketDisconnect surfaces.
+
+            v1 ignores client message content (no client-driven commands);
+            the loop exists solely to detect disconnect. 30 s heartbeat
+            ping is sent by this side when no other receive arrives.
+            """
+            while True:
+                try:
+                    await asyncio.wait_for(
+                        websocket.receive_text(), timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    await websocket.send_json(
+                        {"type": "ping", "timestamp": time.time()},
+                    )
+
+        publish_task = asyncio.create_task(_publish_loop())
+        receive_task = asyncio.create_task(_receive_loop())
+
+        # Whichever finishes first ends the connection.
+        done, pending = await asyncio.wait(
+            {publish_task, receive_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+        # Surface any non-disconnect exception from the completed task.
+        for t in done:
+            exc = t.exception()
+            if exc is not None and not isinstance(exc, WebSocketDisconnect):
+                logger.warning(
+                    "AD-722b: WS task ended for agent=%s with %s",
+                    agent_id, type(exc).__name__, exc_info=exc,
+                )
+
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.warning(
+            "AD-722b: WS handler error for agent=%s",
+            agent_id, exc_info=True,
+        )
+    finally:
+        # Cleanup MUST always run.
+        if publish_task is not None and not publish_task.done():
+            publish_task.cancel()
+        if receive_task is not None and not receive_task.done():
+            receive_task.cancel()
+        try:
+            event_bus.unsubscribe(agent_id, event)
+        except Exception:
+            logger.debug(
+                "AD-722b: unsubscribe failed for agent=%s",
+                agent_id, exc_info=True,
+            )
+        try:
+            sampling_state.exit_popout(agent_id)
+        except Exception:
+            logger.debug(
+                "AD-722b: exit_popout failed for agent=%s",
+                agent_id, exc_info=True,
+            )
+        try:
+            conn_manager.deregister(agent_id, connection_id)
+        except Exception:
+            logger.debug(
+                "AD-722b: deregister failed for agent=%s",
+                agent_id, exc_info=True,
+            )
+
+
 @router.post("/{agent_id}/chat")
 async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Send a direct message to a specific agent and get their response."""
@@ -550,8 +724,12 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # so an exception path between enter and exit cannot leak refcount
     # permanently — at worst, the next mark_reply_emitted clamps to 0.
     _sampling_state = getattr(runtime, 'avatar_sampling_state', None)
+    _avatar_event_bus = getattr(runtime, 'avatar_event_bus', None)
     if _sampling_state is not None:
         _sampling_state.enter_dm(agent_id)
+    if _avatar_event_bus is not None:
+        # AD-722b: wake WS publish loop — DM in-flight is a state change.
+        _avatar_event_bus.notify(agent_id)
     if hasattr(agent, 'observe_self_avatar'):
         try:
             await agent.observe_self_avatar()
@@ -735,6 +913,10 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # exception-path case where enter fired but exit didn't.
     if _sampling_state is not None:
         _sampling_state.exit_dm(agent_id)
+    # AD-722b: wake WS publish loop — DM-exit is a state change
+    # (working_state goes from 'responding' back to 'idle').
+    if _avatar_event_bus is not None:
+        _avatar_event_bus.notify(agent_id)
 
     response = {
         "response": response_text,

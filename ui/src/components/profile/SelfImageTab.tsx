@@ -53,6 +53,11 @@ export function SelfImageTab({ agentId, isActive }: SelfImageTabProps) {
   useEffect(() => {
     if (!isActive || !agentId) return;
     let cancelled = false;
+    let pollIntervalId: ReturnType<typeof setInterval> | null = null;
+    let ws: WebSocket | null = null;
+    let wsOpened = false;
+    let wsTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
     const fetchOnce = () => {
       fetch(`/api/agent/${agentId}/avatar-telemetry`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
@@ -66,11 +71,90 @@ export function SelfImageTab({ agentId, isActive }: SelfImageTabProps) {
           if (!cancelled) setError(String(e));
         });
     };
-    fetchOnce();
-    const id = setInterval(fetchOnce, POLL_MS);
+
+    const startPollFallback = () => {
+      // AD-722b: poll fallback — fires when WS open never arrives, or after
+      // a previously-open WS closes without recovery. Idempotent.
+      if (pollIntervalId !== null) return;
+      fetchOnce();
+      pollIntervalId = setInterval(fetchOnce, POLL_MS);
+    };
+
+    const stopPollFallback = () => {
+      if (pollIntervalId !== null) {
+        clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
+    };
+
+    // AD-722b: open WS first; fall back to poll on error/close-before-open
+    // or 5 s open-timeout.
+    try {
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProto}//${window.location.host}/api/agent/${agentId}/avatar-telemetry-stream`;
+      ws = new WebSocket(wsUrl);
+
+      wsTimeoutId = setTimeout(() => {
+        if (!wsOpened && !cancelled) {
+          // Open never arrived — fall back to polling.
+          startPollFallback();
+        }
+      }, 5000);
+
+      ws.onopen = () => {
+        wsOpened = true;
+        if (wsTimeoutId !== null) {
+          clearTimeout(wsTimeoutId);
+          wsTimeoutId = null;
+        }
+        // Suppress polling — WS is the live channel now.
+        stopPollFallback();
+      };
+
+      ws.onmessage = (ev) => {
+        if (cancelled) return;
+        try {
+          const data = JSON.parse(ev.data as string);
+          if (data && data.type === 'ping') return;
+          if (data && data.type === 'error') {
+            setError(String(data.reason ?? 'ws_error'));
+            return;
+          }
+          setSnap(data);
+          setError(null);
+        } catch {
+          // Ignore malformed frames.
+        }
+      };
+
+      ws.onerror = () => {
+        if (!wsOpened && !cancelled) {
+          startPollFallback();
+        }
+      };
+
+      ws.onclose = () => {
+        if (cancelled) return;
+        // Whether or not we had opened, fall back to poll. Reconnect with
+        // backoff is forward marker AD-722b-6.
+        startPollFallback();
+      };
+    } catch {
+      // Constructor threw (e.g. WebSocket undefined in jsdom). Fall back.
+      startPollFallback();
+    }
+
     return () => {
       cancelled = true;
-      clearInterval(id);
+      if (wsTimeoutId !== null) {
+        clearTimeout(wsTimeoutId);
+        wsTimeoutId = null;
+      }
+      if (ws !== null) {
+        try { ws.close(); } catch { /* ignore */ }
+        ws = null;
+      }
+      stopPollFallback();
     };
   }, [agentId, isActive]);
 

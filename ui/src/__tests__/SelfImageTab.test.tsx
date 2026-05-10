@@ -5,6 +5,33 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act } from '@testing-library/react';
 import { SelfImageTab } from '../components/profile/SelfImageTab';
 
+// AD-722b: minimal in-tree WebSocket mock — records connect URL,
+// surfaces onopen/onmessage/onerror/onclose so tests can simulate the
+// browser's connection lifecycle.
+class MockWebSocket {
+  static instances: MockWebSocket[] = [];
+  url: string;
+  onopen: (() => void) | null = null;
+  onmessage: ((ev: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  closed = false;
+  constructor(url: string) {
+    this.url = url;
+    MockWebSocket.instances.push(this);
+  }
+  close() {
+    this.closed = true;
+    if (this.onclose) this.onclose();
+  }
+  simulateOpen() { if (this.onopen) this.onopen(); }
+  simulateMessage(data: unknown) {
+    if (this.onmessage) this.onmessage({ data: JSON.stringify(data) });
+  }
+  simulateError() { if (this.onerror) this.onerror(); }
+  simulateClose() { if (this.onclose) this.onclose(); }
+}
+
 const HAPPY_SNAPSHOT = {
   agent_id: 'agent-007',
   expression_resting: 'neutral',
@@ -131,5 +158,90 @@ describe('SelfImageTab (AD-722)', () => {
     await flushMicrotasks();
     const indicator = screen.getByTestId('mouth-active-indicator');
     expect(indicator.className).not.toContain('ad722-pulse-amber');
+  });
+
+  // ── AD-722b: WebSocket-first with poll fallback ─────────────────────
+
+  describe('AD-722b WebSocket push channel', () => {
+    beforeEach(() => {
+      MockWebSocket.instances = [];
+    });
+
+    it('WS connects on mount and renders the first frame', async () => {
+      const fetchMock = mockFetch(HAPPY_SNAPSHOT);
+      vi.stubGlobal('fetch', fetchMock);
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      render(<SelfImageTab agentId="agent-007" isActive={true} />);
+      await flushMicrotasks();
+      expect(MockWebSocket.instances.length).toBe(1);
+      const ws = MockWebSocket.instances[0];
+      await act(async () => {
+        ws.simulateOpen();
+        ws.simulateMessage(HAPPY_SNAPSHOT);
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId('panel-header-current-signals')).toBeTruthy();
+      expect(fetchMock).toHaveBeenCalledTimes(0);
+    });
+
+    it('WS open suppresses poll path', async () => {
+      const fetchMock = mockFetch(HAPPY_SNAPSHOT);
+      vi.stubGlobal('fetch', fetchMock);
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      render(<SelfImageTab agentId="agent-007" isActive={true} />);
+      await flushMicrotasks();
+      const ws = MockWebSocket.instances[0];
+      await act(async () => {
+        ws.simulateOpen();
+        ws.simulateMessage(HAPPY_SNAPSHOT);
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+        await Promise.resolve();
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(0);
+    });
+
+    it('WS error before open falls back to poll', async () => {
+      const fetchMock = mockFetch(HAPPY_SNAPSHOT);
+      vi.stubGlobal('fetch', fetchMock);
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      render(<SelfImageTab agentId="agent-007" isActive={true} />);
+      await flushMicrotasks();
+      const ws = MockWebSocket.instances[0];
+      await act(async () => {
+        ws.simulateError();
+        await Promise.resolve();
+      });
+      // Initial poll fired by startPollFallback.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('WS close after open falls back to poll', async () => {
+      const fetchMock = mockFetch(HAPPY_SNAPSHOT);
+      vi.stubGlobal('fetch', fetchMock);
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      render(<SelfImageTab agentId="agent-007" isActive={true} />);
+      await flushMicrotasks();
+      const ws = MockWebSocket.instances[0];
+      await act(async () => {
+        ws.simulateOpen();
+        ws.simulateMessage(HAPPY_SNAPSHOT);
+        await Promise.resolve();
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(0);
+      await act(async () => {
+        ws.simulateClose();
+        await Promise.resolve();
+      });
+      // Poll fallback fires immediately on close.
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
   });
 });

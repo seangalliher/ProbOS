@@ -1397,13 +1397,19 @@ class CognitiveAgent(BaseAgent):
             # missing the state machine (e.g. test rigs with minimal
             # MagicMock runtimes) — getattr fallback to None is safe.
             _sampling_state = getattr(self._runtime, 'avatar_sampling_state', None)
+            _avatar_event_bus = getattr(self._runtime, 'avatar_event_bus', None)
             if _sampling_state is not None:
                 _sampling_state.enter_chain(self.id)
+            if _avatar_event_bus is not None:
+                # AD-722b: wake WS publish loop on chain enter.
+                _avatar_event_bus.notify(self.id)
             try:
                 chain_result = await self._execute_chain_with_intent_routing(observation)
             finally:
                 if _sampling_state is not None:
                     _sampling_state.exit_chain(self.id)
+                if _avatar_event_bus is not None:
+                    _avatar_event_bus.notify(self.id)
             if chain_result is not None:
                 _cache_ttl = self._get_cache_ttl()
                 cache[cache_key] = (chain_result, time.monotonic(), _cache_ttl)
@@ -2613,8 +2619,24 @@ class CognitiveAgent(BaseAgent):
 
         Called from the chat handler at ``routers/agents.py`` — exactly one
         call site (single source of truth, enforced by a static-grep test).
+
+        AD-722b: also notifies the avatar event bus so any open WS
+        subscribers wake immediately (mouth_active flips from True back to
+        False once the 3 s window elapses; this notify gives the loop a
+        head-start so the next iteration emits a fresh snapshot reflecting
+        the brand-new last_reply_emitted_at).
         """
         self._last_reply_emit_ts = time.time()
+        bus = getattr(self._runtime, 'avatar_event_bus', None)
+        if bus is not None:
+            try:
+                bus.notify(self.id)
+            except Exception:
+                logger.debug(
+                    "AD-722b: avatar_event_bus.notify failed during "
+                    "mark_reply_emitted for agent=%s",
+                    self.id, exc_info=True,
+                )
 
     @property
     def last_reply_emitted_at(self) -> float:

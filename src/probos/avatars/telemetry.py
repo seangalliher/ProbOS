@@ -32,6 +32,9 @@ Signal derivation rules (mirrored from
 Modulation rule table (mirrors ``ui/src/audio/voiceModulation.ts`` constants
 verbatim — byte-parity is enforced by ``test_modulation_byte_parity_with_ts``).
 AD-722-1 is the consolidation forward marker (extract to YAML manifest).
+
+AD-722b: WS push channel consumes this snapshot via to_dict() — do NOT
+add fields without updating the AD-722b WS frame contract test.
 """
 
 from __future__ import annotations

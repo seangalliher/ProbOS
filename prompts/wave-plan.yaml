@@ -3203,3 +3203,64 @@ waves:
 
 
 
+
+  - id: "141"
+    title: "Avatar self-image cleanup — AD-722-1 modulation manifest + AD-722f adaptive sampling"
+    kind: main
+    depends_on: ["140"]
+    dispatch_prompt: "prompts/WAVE-141-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-722-1-modulation-manifest.md"
+      - "prompts/ad-722f-adaptive-sampling.md"
+    builder_required: true
+    issues_to_close: [572, 580]
+    status: pending
+
+  - id: "142"
+    title: "Avatar push channel — AD-722b WebSocket telemetry push"
+    kind: main
+    depends_on: ["141"]
+    dispatch_prompt: "prompts/WAVE-142-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-722b-websocket-push.md"
+    builder_required: true
+    issues_to_close: [568]
+    status: pending
+
+  - id: "143"
+    title: "Intent-vs-presentation divergence — AD-722a sub-LLM detector + trust wiring"
+    kind: main
+    depends_on: ["142"]
+    dispatch_prompt: "prompts/WAVE-143-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-722a-divergence-detector.md"
+    builder_required: true
+    issues_to_close: [567]
+    status: pending
+
+  - id: "144"
+    title: "Sensorium dispatch unification — AD-723 registry from inventory to dispatch"
+    kind: main
+    depends_on: ["143"]
+    dispatch_prompt: "prompts/WAVE-144-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-723-sensorium-dispatch.md"
+    builder_required: true
+    issues_to_close: [581]
+    status: pending
+
+  - id: "145"
+    title: "Avatar appearance UX — AD-721d-1 DSL draft preview + revision cycle"
+    kind: main
+    depends_on: ["144"]
+    dispatch_prompt: "prompts/WAVE-145-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-721d-1-dsl-preview.md"
+    builder_required: true
+    issues_to_close: [541]
+    status: pending
