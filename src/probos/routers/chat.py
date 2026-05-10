@@ -7,7 +7,8 @@ import logging
 import time
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 
 from probos.api_models import (
     BuildRequest, ChatRequest, DesignRequest,
@@ -523,6 +524,37 @@ async def upload_chat_attachment(
         "size_bytes": len(decoded),
         "sha256": actual_hash,
     }
+
+
+@router.get("/chat/attachments/{content_hash}")
+async def fetch_chat_attachment(
+    content_hash: str,
+    runtime: Any = Depends(get_runtime),
+) -> FileResponse:
+    """AD-720: serve a previously-stored attachment by sha256.
+
+    The store's content-addressed filenames make this safe — the hash
+    pattern is constrained to [0-9a-f]{64}, no path traversal possible.
+    Path resolution still goes through the same _resolve_attachments_dir
+    guard that the POST uses.
+    """
+    if not (len(content_hash) == 64 and all(c in "0123456789abcdef" for c in content_hash)):
+        raise HTTPException(status_code=400, detail="invalid_content_hash")
+    cfg = getattr(runtime.config, "attachments", None)
+    if cfg is None or not getattr(cfg, "enabled", True):
+        raise HTTPException(status_code=404, detail="attachments_disabled")
+    store = _get_attachment_store(runtime)
+    if not await store.exists(content_hash):
+        raise HTTPException(status_code=404, detail="attachment_not_found")
+    path = await store.get_path(content_hash)
+    # MIME inferred from extension; the upload validator ensured the
+    # extension matches the magic bytes.
+    ext = path.suffix.lstrip(".").lower()
+    mime = {
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "webp": "image/webp", "gif": "image/gif",
+    }.get(ext, "application/octet-stream")
+    return FileResponse(path, media_type=mime)
 
 
 # ------------------------------------------------------------------
