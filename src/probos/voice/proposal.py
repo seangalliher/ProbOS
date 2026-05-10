@@ -31,9 +31,9 @@ _MAX_DEPTH = 8
 # Trim agent rationale to a sensible UI-facing size.
 _MAX_RATIONALE_CHARS = 500
 # Allowed top-level keys in the parsed dict.
-_ALLOWED_KEYS = {"voice_name", "pitch", "rate", "volume", "rationale"}
+_ALLOWED_KEYS = {"voice_name", "pitch", "rate", "volume", "rationale", "wake_phrase"}
 # Voice-profile fields forwarded to :class:`VoiceProfile`.
-_PROFILE_KEYS = ("voice_name", "pitch", "rate", "volume")
+_PROFILE_KEYS = ("voice_name", "pitch", "rate", "volume", "wake_phrase")
 
 
 class VoiceProposalError(Exception):

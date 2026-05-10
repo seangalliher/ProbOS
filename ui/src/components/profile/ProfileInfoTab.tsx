@@ -55,6 +55,8 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
     pitch: profileData?.voiceProfile?.pitch ?? 0.9,
     rate: profileData?.voiceProfile?.rate ?? 0.95,
     volume: profileData?.voiceProfile?.volume ?? 0.8,
+    // AD-718c: optional per-agent wake phrase.
+    wake_phrase: profileData?.voiceProfile?.wake_phrase ?? '',
   });
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   // AD-718a: agent-authored voice proposal preview state.
@@ -75,6 +77,7 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
         pitch: profileData.voiceProfile.pitch ?? 0.9,
         rate: profileData.voiceProfile.rate ?? 0.95,
         volume: profileData.voiceProfile.volume ?? 0.8,
+        wake_phrase: profileData.voiceProfile.wake_phrase ?? '',
       });
     }
   }, [profileData?.voiceProfile, agent.id]);
@@ -88,6 +91,7 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
         pitch: next.pitch ?? 0.9,
         rate: next.rate ?? 0.95,
         volume: next.volume ?? 0.8,
+        wake_phrase: next.wake_phrase ?? '',
         proposal_rationale: rationale,
       }),
     })
@@ -120,6 +124,9 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
           pitch: body?.voice_profile?.pitch ?? 0.9,
           rate: body?.voice_profile?.rate ?? 0.95,
           volume: body?.voice_profile?.volume ?? 0.8,
+          // AD-718c: surface the proposed wake_phrase to the Captain for
+          // approve / hand-edit.
+          wake_phrase: body?.voice_profile?.wake_phrase ?? '',
         };
         setProposal(vp);
         setProposalRationale(typeof body?.rationale === 'string' ? body.rationale : '');
@@ -348,6 +355,32 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
                 style={{ flex: 1 }}
               />
               <span style={{ color: '#c0bab0', minWidth: 32 }}>{(currentProfile.rate ?? 0.95).toFixed(2)}</span>
+            </label>
+            {/* AD-718c: per-agent wake phrase. Empty = no per-agent wake;
+                system-wide "Computer" still routes to the agent via @callsign. */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: '#8888a0', minWidth: 70 }}>Wake phrase</span>
+              <input
+                type="text"
+                maxLength={50}
+                value={currentProfile.wake_phrase ?? ''}
+                onChange={(e) =>
+                  setCurrentProfile(p => ({ ...p, wake_phrase: e.target.value }))
+                }
+                onBlur={() => persistVoiceProfile(currentProfile)}
+                aria-label="Wake phrase"
+                placeholder="(none)"
+                data-testid="wake-phrase-input"
+                style={{
+                  flex: 1,
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 4,
+                  color: '#e0dcd4',
+                  fontSize: 11,
+                  padding: '4px 6px',
+                }}
+              />
             </label>
             <button
               type="button"

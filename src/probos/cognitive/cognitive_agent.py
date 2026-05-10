@@ -2890,8 +2890,17 @@ class CognitiveAgent(BaseAgent):
             '  "pitch": 0.0-2.0  (1.0 = neutral; lower = deeper, higher = brighter),\n'
             '  "rate":  0.1-10.0 (0.95 = relaxed; lower = slower),\n'
             '  "volume": 0.0-1.0 (0.8 = comfortable),\n'
+            '  "wake_phrase": "optional short phrase the Captain may speak '
+            'to address you directly (\u2264 50 chars). Two-syllable phrases '
+            'work best. May be your first name, callsign, or rank. Keep it '
+            'short and distinct from other crew members. Empty string if '
+            'you have no preference.",\n'
             '  "rationale": "short reasoning, ≤ 500 chars"\n'
             "}\n"
+            "\n"
+            "Example: {\"voice_name\": \"\", \"pitch\": 0.95, \"rate\": 0.9, "
+            "\"volume\": 0.8, \"wake_phrase\": \"Ezri\", "
+            "\"rationale\": \"warm and measured\"}\n"
         )
 
         user_message_parts = [

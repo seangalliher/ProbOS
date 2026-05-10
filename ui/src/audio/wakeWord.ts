@@ -79,6 +79,7 @@ let _captureTimer: ReturnType<typeof setTimeout> | null = null;
 let _silenceTimer: ReturnType<typeof setTimeout> | null = null;
 let _captureBuffer = '';
 let _wakeWordFired = false;
+let _activeAgentCallsign: string | null = null;
 let _lastFallbackToastAt = 0;
 
 const _stateListeners = new Set<
@@ -260,17 +261,13 @@ function _ingestTranscript(transcript: string): void {
     const triggered = _detectWakeInTranscript(transcript);
     if (triggered) {
       _wakeWordFired = true;
+      _activeAgentCallsign = triggered.agentCallsign ?? null;
       _captureBuffer = triggered.cleanedText;
       _setState(isFallback ? 'fallback-capturing' : 'capturing', {
         trigger: triggered.trigger,
       });
       _scheduleCaptureWindow();
-      // If the cleanedText already contains content, treat it as the post-
-      // wake utterance candidate; the silence timer below decides commit.
       _resetSilenceTimer();
-      if (_captureBuffer) {
-        _resetSilenceTimer();
-      }
       // Do not commit immediately — wait for silence or max-duration.
     }
     return;
@@ -356,12 +353,22 @@ function _commitUtterance(_reason: string): void {
   const text = _captureBuffer.trim();
   _captureBuffer = '';
 
-  // Build the agents map for routing — derived from both the on-store
-  // callsign (Agent.callsign) and the in-flight agentTriggers list.
-  const agents = _buildAgentsMap();
-  const routeOpts: RouteOptions = { postWakeWord: _wakeWordFired };
-  const routed = routeWakeTranscript(text, agents, routeOpts);
+  // If a per-agent trigger fired, the surface is locked to that agent;
+  // routeWakeTranscript still runs to strip any residual prefix tokens.
+  let routed: WakeRoute | null;
+  if (_activeAgentCallsign) {
+    routed = {
+      surface: 'agent',
+      agentCallsign: _activeAgentCallsign,
+      cleanedText: text,
+    };
+  } else {
+    const agents = _buildAgentsMap();
+    const routeOpts: RouteOptions = { postWakeWord: _wakeWordFired };
+    routed = routeWakeTranscript(text, agents, routeOpts);
+  }
   _wakeWordFired = false;
+  _activeAgentCallsign = null;
 
   if (routed && _onWake) {
     try {
@@ -387,6 +394,7 @@ function _cancelCapture(): void {
   }
   _captureBuffer = '';
   _wakeWordFired = false;
+  _activeAgentCallsign = null;
   _setState(isFallback ? 'fallback-armed' : 'armed');
 }
 
@@ -441,6 +449,7 @@ function _teardown(): void {
   }
   _captureBuffer = '';
   _wakeWordFired = false;
+  _activeAgentCallsign = null;
   _bargedIn = false;
   _onWake = null;
   _options = undefined;
@@ -469,10 +478,12 @@ function _emitFallbackToast(message: string): void {
 export function _simulateWakeFire(opts: {
   trigger?: string;
   cleanedText?: string;
+  agentCallsign?: string;
 }): void {
   if (_state !== 'armed' && _state !== 'fallback-armed') return;
   const isFallback = _state === 'fallback-armed';
   _wakeWordFired = true;
+  _activeAgentCallsign = opts.agentCallsign ?? null;
   _captureBuffer = opts.cleanedText ?? '';
   _setState(isFallback ? 'fallback-capturing' : 'capturing', {
     trigger: opts.trigger ?? 'computer',

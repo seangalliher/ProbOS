@@ -14,6 +14,11 @@ export interface Agent {
   position: [number, number, number];
   createdAt?: number;
   activatedAt?: number;
+  // AD-718c: optional per-agent wake phrase (mirrors AgentProfileData.voiceProfile.
+  // wake_phrase). Empty/undefined means no per-agent wake registered.
+  voice_profile?: {
+    wake_phrase?: string;
+  };
 }
 
 export interface Connection {
@@ -349,6 +354,8 @@ export interface AgentProfileData {
     pitch: number;
     rate: number;
     volume: number;
+    // AD-718c: optional per-agent wake phrase (≤ 50 chars).
+    wake_phrase?: string;
   };  // AD-718: per-agent TTS profile
   appearance?: {
     vrm_url: string;

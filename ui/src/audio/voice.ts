@@ -13,6 +13,9 @@ export interface VoiceProfile {
   pitch?: number;        // 0.0–2.0; default 0.9 (matches v0 behaviour)
   rate?: number;         // 0.1–10.0; default 0.95 (matches v0)
   volume?: number;       // 0.0–1.0; default 0.8 (matches v0)
+  /** AD-718c: optional per-agent wake phrase (≤ 50 chars). Empty = no
+   *  per-agent wake; system-wide "Computer" still works via @callsign. */
+  wake_phrase?: string;
 }
 
 /** AD-718 / AD-721 hook: subscribers fire on every utterance lifecycle event.

@@ -246,6 +246,7 @@ async def set_agent_voice_profile(
             pitch=req.pitch,
             rate=req.rate,
             volume=req.volume,
+            wake_phrase=req.wake_phrase,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

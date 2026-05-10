@@ -106,6 +106,12 @@ class VoiceProfile:
     pitch: float = 0.9      # 0.0–2.0 (matches voice.ts v0 default)
     rate: float = 0.95      # 0.1–10.0
     volume: float = 0.8     # 0.0–1.0
+    # AD-718c: optional per-agent wake phrase. Empty string == no per-agent
+    # wake (system-wide "Computer" still routes to the agent via @callsign).
+    # Bounds: stripped + length ≤ 50 chars; rejects YAML anchor/alias tokens
+    # so the dataclass is also a defense-in-depth boundary on PUT-from-UI
+    # (the AD-718a parser already rejects these at the LLM-output surface).
+    wake_phrase: str = ""
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.pitch <= 2.0:
@@ -114,6 +120,26 @@ class VoiceProfile:
             raise ValueError(f"rate must be 0.1–10.0, got {self.rate}")
         if not 0.0 <= self.volume <= 1.0:
             raise ValueError(f"volume must be 0.0–1.0, got {self.volume}")
+        # AD-718c: wake_phrase normalisation + bounds. Strip whitespace so
+        # " Ezri " round-trips as "Ezri". The dataclass is frozen=False, so
+        # direct attribute assignment works.
+        if not isinstance(self.wake_phrase, str):
+            raise ValueError(
+                f"wake_phrase must be str, got {type(self.wake_phrase).__name__}"
+            )
+        self.wake_phrase = self.wake_phrase.strip()
+        if len(self.wake_phrase) > 50:
+            raise ValueError(
+                f"wake_phrase must be ≤ 50 chars, got {len(self.wake_phrase)}"
+            )
+        if (
+            "&" in self.wake_phrase
+            or "!!" in self.wake_phrase
+            or "*" in self.wake_phrase
+        ):
+            raise ValueError(
+                "wake_phrase must not contain YAML anchor/alias/tag tokens"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -121,7 +147,9 @@ class VoiceProfile:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "VoiceProfile":
         return cls(**{
-            k: data[k] for k in ("voice_name", "pitch", "rate", "volume") if k in data
+            k: data[k] for k in (
+                "voice_name", "pitch", "rate", "volume", "wake_phrase",
+            ) if k in data
         })
 
 

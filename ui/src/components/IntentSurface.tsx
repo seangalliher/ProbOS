@@ -166,6 +166,18 @@ export function IntentSurface() {
   useEffect(() => {
     if (!wakeWordEnabled) return;
     let cancelled = false;
+    // AD-718c E6: collect per-agent wake phrases from the live store map.
+    // Empty / missing wake_phrase fields are skipped, so no trigger is
+    // registered when an agent has not authored one.
+    const agentTriggers = Array.from(agentsMap.values())
+      .filter((a) => {
+        const wp = a.voice_profile?.wake_phrase;
+        return typeof wp === 'string' && wp.length > 0;
+      })
+      .map((a) => ({
+        callsign: a.callsign,
+        phrase: a.voice_profile!.wake_phrase!,
+      }));
     const onWake = (routed: { surface: 'system' | 'agent'; agentCallsign?: string; cleanedText: string }): void => {
       if (cancelled) return;
       const text = (routed.cleanedText || '').trim();
@@ -185,12 +197,12 @@ export function IntentSurface() {
         if (form) form.requestSubmit();
       }, 50);
     };
-    void startWakeWordLoop(onWake);
+    void startWakeWordLoop(onWake, { agentTriggers });
     return () => {
       cancelled = true;
       stopWakeWordLoop();
     };
-  }, [wakeWordEnabled]);
+  }, [wakeWordEnabled, agentsMap]);
 
   /* ── DAG progress text ── */
   const dagProgress = activeDag && activeDag.length > 0

@@ -466,3 +466,6 @@ See [design-principles.md](docs/development/design-principles.md) for full desig
 
 
 - AD-705 (reframed) - wake-word voice loop v1 shipped (Wave 137, Vitest +23 = 516 total).
+
+- AD-718c - per-agent wake phrase v1 shipped (Wave 137, Vitest +8 = 524, Python +8 = 13053).
+

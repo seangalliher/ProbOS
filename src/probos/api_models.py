@@ -237,6 +237,9 @@ class SetVoiceProfileRequest(BaseModel):
     pitch: float = 0.9
     rate: float = 0.95
     volume: float = 0.8
+    # AD-718c: optional per-agent wake phrase (≤ 50 chars; bounds re-checked
+    # by ``VoiceProfile.__post_init__`` on the server side).
+    wake_phrase: str = ""
     proposal_rationale: str = ""  # AD-718a: non-empty iff approve-from-proposal
 
 

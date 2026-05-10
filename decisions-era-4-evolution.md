@@ -5285,3 +5285,30 @@ BF-135/137 fixed this inside `shutdown()` by writing the session record before t
 **Tests.** 23 new Vitest cases across `wakeWord.stateMachine`, `wakeWord.router`, `wakeWord.bargeIn`, `wakeWord.fallback`, `wakeWord.escape`, `WakeWordIndicator`, `DecisionSurface.wakeWordToggle`, `wakeWord.lazyLoad`. UI Vitest: 516 passed (delta +23 vs commit N-1). All hard-stop conditions verified: no Porcupine, no eager ONNX import, indicator three-state non-negotiable, default-OFF toggle, no TTS path changes, license posture clean.
 
 **Issue:** [#481](https://github.com/seangalliher/ProbOS/issues/481) (root AD-705) closed via merge.
+
+
+### AD-718c — Per-agent wake phrase v1 (Wave 137 commit N+1)
+
+**Goal.** Each crew member's `VoiceProfile` gains an optional `wake_phrase` (≤ 50 chars). When the AD-705 wake-word loop is active and an agent's `wake_phrase` is non-empty, saying that phrase routes directly to the agent's `@callsign` chat path — no `@`-typing required. Reuses AD-718a propose/Captain-approve flow byte-for-byte: zero new endpoints, zero new tables, zero new approval pipeline.
+
+**E1 (dataclass).** `wake_phrase: str = ""` added to `VoiceProfile` in `crew_profile.py`. `__post_init__` now strips whitespace, enforces ≤ 50 chars, and rejects YAML anchor/alias/tag tokens (`&`, `!!`, `*`) — defense-in-depth boundary on PUT-from-UI (the AD-718a parser already rejects these at the LLM-output surface). `from_dict` round-trips the field; `to_dict` picks it up via `asdict()` automatically.
+
+**E2 (parser).** `voice/proposal.py` allow-lists extended: `_ALLOWED_KEYS` and `_PROFILE_KEYS` now include `wake_phrase`. No new Pydantic model — bounds for `wake_phrase` are validated entirely by `VoiceProfile.__post_init__`, single source of truth (mirrors AD-718a design). LLM responses that omit `wake_phrase` parse identically to before.
+
+**E3 (LLM prompt).** `propose_voice_profile` system prompt now informs the agent it MAY propose a `wake_phrase`. Added schema entry, guidance ("two-syllable phrases work best; may be your first name, callsign, or rank"), and a worked example (`"wake_phrase": "Ezri"`). The instructions text avoids the capability-gap regex (no `can't`/`don't have`/`unable to`).
+
+**E4 (API).** `SetVoiceProfileRequest` extended with `wake_phrase: str = ""`. PUT `/voice-profile` forwards the field through the `VoiceProfile(...)` constructor (defense-in-depth re-validation at the dataclass boundary). GET response automatically includes the new field via `to_dict()`.
+
+**E5 (UI editor).** `ProfileInfoTab` voice editor block adds a labelled `<input type="text" maxLength={50} data-testid="wake-phrase-input">` row. State managed alongside existing voice fields. PUT-on-blur persistence pattern. The AD-718a propose-affordance now surfaces `wake_phrase` in the candidate preview for Captain hand-edit.
+
+**E6 (loop wiring).** AD-705's `startWakeWordLoop({ agentTriggers })` already accepts the per-agent trigger list; AD-718c adds the IntentSurface collector that filters `useStore.getState().agents` for non-empty `voice_profile.wake_phrase` values and passes the resulting `Array<{ callsign, phrase }>` to the loop. Also extended `Agent` type in `store/types.ts` with `voice_profile?: { wake_phrase?: string }`. The router (AD-705 D4) needed no change — it accepts the structural shape via TypeScript subtyping. When agent map updates, the IntentSurface `useEffect` re-runs (keyed on `agentsMap`) and the loop re-collects.
+
+**E7 (governance).** No new approve flow. Captain reviews the candidate `VoiceProfile` (including `wake_phrase`) in the existing UI preview, approves via existing PUT, and the existing AD-718a episode hook writes the change — `wake_phrase` rides on the `old_voice` / `new_voice` dicts via `to_dict()` automatically.
+
+**Source-tracking corrections (architect noted during draft).**
+1. Dispatch §5 E2 said "Pydantic mirror in `VoiceProposal`" — there is no `VoiceProposal` Pydantic model. AD-718a is parser-only (`voice/proposal.py`); bounds are validated by `VoiceProfile.__post_init__`. Corrected E2 to extend the parser allow-list constants.
+2. Dispatch §5 E3 said `propose_voice` — actual method is `propose_voice_profile` (line 2800 of `cognitive_agent.py`). Corrected throughout.
+
+**Tests.** 8 new Python cases in `test_ad718c_wake_phrase.py` (round-trip / strip / length / anchor reject / parser accept / parser reject / Pydantic round-trip / default empty). 5+ new Vitest cases across `wakeWord.perAgent.test.ts` (router + agentTriggers wiring + empty-list filter) and `ProfileInfoTab.wakePhrase.test.tsx` (input render + populate from server data + PUT-on-blur). Full UI Vitest gate: 524 passed (delta +31 vs Wave 137 baseline). Full Python gate: 13053 passed; 7 pre-existing failures (3 `test_callsign_routing` + 1 `test_ad719_chat_fanout` + 1 `test_runtime::test_capabilities_registered` + 1 `test_experience::test_nl_unrecognized` + 1 `test_ad632h_parallel_dispatch`) verified by stash-and-rerun against the AD-705 commit — none introduced by this prompt.
+
+**Issue:** [#524](https://github.com/seangalliher/ProbOS/issues/524) closed via merge.
