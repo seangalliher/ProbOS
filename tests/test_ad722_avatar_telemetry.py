@@ -290,6 +290,26 @@ async def test_snapshot_voice_profile_missing():
 
 
 @pytest.mark.asyncio
+async def test_snapshot_no_persisted_profile_falls_back_to_defaults():
+    """BF-2026-05-10: most crew never have a persisted CrewProfile until the
+    Captain modifies their voice or appearance. Telemetry must fall through
+    to typed defaults gracefully (mirrors routers/agents.py 3-tier fallback)
+    rather than emitting scary "missing" warnings for normal startup state."""
+    runtime = _make_runtime(crew=None, trust_history=[0.4, 0.5])
+    snap = await build_telemetry_snapshot("agent-007", runtime)
+    # Voice modulation IS computed using default_voice_for("counselor") seed.
+    assert snap.applied_modulation is not None
+    # Reason set distinguishes "fell back to defaults" from "data corrupt".
+    fallback_reasons = {"crew_profile_default", "crew_profile_seeded"}
+    assert any(r in fallback_reasons for r in snap.degraded_reasons), (
+        f"expected one of {fallback_reasons} in {snap.degraded_reasons}"
+    )
+    # The OLD scary flags should NOT fire on this normal-startup path.
+    assert "crew_profile_missing" not in snap.degraded_reasons
+    assert "voice_profile_missing" not in snap.degraded_reasons
+
+
+@pytest.mark.asyncio
 async def test_snapshot_agent_not_found():
     runtime = _make_runtime(agent_present=False)
     snap = await build_telemetry_snapshot("agent-missing", runtime)

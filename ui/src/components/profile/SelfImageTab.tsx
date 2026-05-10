@@ -225,24 +225,64 @@ function PanelMouthActive({ active }: { active: boolean }) {
 }
 
 function PanelDegraded({ reasons }: { reasons: string[] }) {
+  // Split reasons into "informational" (normal startup states like an
+  // unmodified crew profile) and "real failures" (parser errors, missing
+  // runtime services, etc.). Only real failures get the amber DEGRADED
+  // warning; informational reasons show as a quiet gray note.
+  const INFORMATIONAL = new Set([
+    'crew_profile_default',  // server step 2 — no live profile, using typed defaults
+    'crew_profile_seeded',   // server step 2 — no live profile, using seed YAML
+    'appearance_profile_missing',  // legacy — kept for older snapshots
+    'dsl_not_persisted',     // expected — agent hasn't proposed an avatar yet
+    'insufficient_trust_history',  // expected — agent hasn't accumulated history yet
+  ]);
+  const informational = reasons.filter((r) => INFORMATIONAL.has(r));
+  const failures = reasons.filter((r) => !INFORMATIONAL.has(r));
+
+  if (failures.length === 0 && informational.length === 0) return null;
+
   return (
-    <section
-      data-testid="degraded-strip"
-      style={{
-        marginTop: 8,
-        padding: 6,
-        border: `1px solid ${AMBER}`,
-        borderRadius: 4,
-        color: AMBER,
-        fontSize: 11,
-      }}
-    >
-      <div style={{ marginBottom: 2, letterSpacing: '0.04em' }}>DEGRADED</div>
-      {reasons.map((r) => (
-        <div key={r} data-testid={`degraded-reason-${r}`}>
-          • {r}
-        </div>
-      ))}
-    </section>
+    <>
+      {failures.length > 0 && (
+        <section
+          data-testid="degraded-strip"
+          style={{
+            marginTop: 8,
+            padding: 6,
+            border: `1px solid ${AMBER}`,
+            borderRadius: 4,
+            color: AMBER,
+            fontSize: 11,
+          }}
+        >
+          <div style={{ marginBottom: 2, letterSpacing: '0.04em' }}>DEGRADED</div>
+          {failures.map((r) => (
+            <div key={r} data-testid={`degraded-reason-${r}`}>
+              • {r}
+            </div>
+          ))}
+        </section>
+      )}
+      {informational.length > 0 && (
+        <section
+          data-testid="informational-strip"
+          style={{
+            marginTop: 8,
+            padding: 6,
+            border: `1px solid ${DIM}`,
+            borderRadius: 4,
+            color: DIM,
+            fontSize: 11,
+          }}
+        >
+          <div style={{ marginBottom: 2, letterSpacing: '0.04em' }}>NOTE</div>
+          {informational.map((r) => (
+            <div key={r} data-testid={`degraded-reason-${r}`}>
+              • {r}
+            </div>
+          ))}
+        </section>
+      )}
+    </>
   );
 }

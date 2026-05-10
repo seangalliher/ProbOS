@@ -287,19 +287,68 @@ async def build_telemetry_snapshot(
             degraded_reasons=("agent_not_found",),
         )
 
-    # 2. Crew profile (mirrors routers/agents.py:124 pattern).
-    crew = None
+    # 2. Crew profile (mirrors routers/agents.py 3-tier fallback: live ProfileStore →
+    #    seed YAML → typed defaults). Crew profiles are created lazily — most agents
+    #    won't have a persisted profile until the Captain modifies their voice or
+    #    appearance, so falling all the way to defaults is the common case, not an
+    #    error.
+    from probos.crew_profile import (
+        AppearanceProfile,
+        CrewProfile,
+        VoiceProfile,
+        load_seed_profile_async,
+    )
+    from probos.voice_profile_defaults import default_voice_for
+
+    crew: CrewProfile | None = None
     profile_store = getattr(runtime, "profile_store", None)
     if profile_store is not None:
         try:
             crew = profile_store.get(agent_id)
         except Exception:
             crew = None
-    appearance = getattr(crew, "appearance", None) if crew is not None else None
+
+    seed: dict[str, Any] = {}
     if crew is None:
-        reasons.append("crew_profile_missing")
-        _warn("crew_profile_missing", agent_id, "dsl_summary+modulation")
-    elif appearance is None:
+        agent_type = getattr(agent, "agent_type", "")
+        try:
+            seed = await load_seed_profile_async(agent_type) or {}
+        except Exception:
+            seed = {}
+        # Build a synthetic in-memory CrewProfile from seed + defaults so the
+        # rest of the assembly path uses one consistent shape. Not persisted.
+        seed_voice = seed.get("voice") if isinstance(seed.get("voice"), dict) else None
+        voice = (
+            VoiceProfile.from_dict(seed_voice)
+            if seed_voice
+            else default_voice_for(agent_type)
+        )
+        seed_appearance = (
+            seed.get("appearance") if isinstance(seed.get("appearance"), dict) else None
+        )
+        appearance = (
+            AppearanceProfile.from_dict(seed_appearance)
+            if seed_appearance
+            else AppearanceProfile()
+        )
+        crew = CrewProfile(
+            agent_id=agent_id,
+            agent_type=agent_type,
+            voice=voice,
+            appearance=appearance,
+        )
+        # Distinguish "fell back to defaults" from "no data at all" — the former
+        # is normal for unmodified crew; the latter is the original signal we
+        # surfaced before this fix. Keep the reason but make it accurate.
+        if seed_voice or seed_appearance:
+            reasons.append("crew_profile_seeded")
+        else:
+            reasons.append("crew_profile_default")
+
+    appearance = crew.appearance
+    if appearance is None:
+        # Crew exists but has no appearance profile — data inconsistency
+        # (default factory should always populate it). Surface it.
         reasons.append("appearance_profile_missing")
         _warn("appearance_profile_missing", agent_id, "dsl_summary")
 
@@ -394,9 +443,12 @@ async def build_telemetry_snapshot(
         tier3_alert=tier3_alert,
     )
 
-    # 9. applied_modulation — needs voice profile.
+    # 9. applied_modulation — voice profile is normally always populated
+    #    (live or defaulted from seed/typed defaults in step 2). The only
+    #    way it's None here is data corruption on a live crew profile
+    #    (default factory should always populate it). Surface that case.
     applied_modulation: ModulationSnapshot | None = None
-    voice_profile = getattr(crew, "voice", None) if crew is not None else None
+    voice_profile = crew.voice
     if voice_profile is None:
         reasons.append("voice_profile_missing")
         _warn("voice_profile_missing", agent_id, "applied_modulation")
