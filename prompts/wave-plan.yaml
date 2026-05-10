@@ -3221,13 +3221,15 @@ waves:
     title: "Avatar push channel — AD-722b WebSocket telemetry push"
     kind: main
     depends_on: ["141"]
-    dispatch_prompt: "prompts/WAVE-142-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-142-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-722b-websocket-push.md"
+      - "prompts/archive/ad-722b-websocket-push.md"
     builder_required: true
     issues_to_close: [568]
-    status: pending
+    status: shipped
+    shipped_commit: "7e08110"
+    forward_markers_filed: [598, 599, 600, 601, 602, 603]
 
   - id: "143"
     title: "Intent-vs-presentation divergence — AD-722a sub-LLM detector + trust wiring"

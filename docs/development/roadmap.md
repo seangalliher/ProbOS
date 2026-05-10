@@ -377,7 +377,7 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 |----|-------|-------|----------|
 | AD-722 | Agent-observable avatar telemetry feedback loop (UI → agent state channel) — **SHIPPED Wave 140** (read-side v1; observe_self_avatar() + GET /api/agent/{id}/avatar-telemetry + <SelfImageTab>; feature-gated prompt injection default OFF) | [#545](https://github.com/seangalliher/ProbOS/issues/545) | 3 |
 | AD-722a | Intent-vs-presentation divergence detector (intended tone vs rendered weights → trust/Hebbian) — **unprecedented in OSS LLM-avatar space** | (forward marker, filed Wave 140) | 4 |
-| AD-722b | Push channel (WebSocket) replacing 2s poll | (forward marker, filed Wave 140) | 4 |
+| AD-722b | Push channel (WebSocket) replacing 2s poll — **SHIPPED Wave 142** (WS /api/agent/{id}/avatar-telemetry-stream; popout flips sampling tier to HIGH via AvatarSamplingStateMachine.enter_popout/exit_popout; UI WS-first with 5 s open-timeout poll fallback; +28 Python tests, +4 Vitest tests, zero new deps) | [#568](https://github.com/seangalliher/ProbOS/issues/568) | 3 |
 | AD-722c | Avatar telemetry history for analytics | (forward marker, filed Wave 140) | 4 |
 | AD-722d | Auto-write telemetry summaries to Ship's Records (RecordsStore) | (forward marker, filed Wave 140) | 4 |
 | AD-722e | Visual self-perception via image rendering (agent compares rendered avatar vs intent) | (forward marker, filed Wave 140) | 4 |

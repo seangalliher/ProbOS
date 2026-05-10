@@ -1,20 +1,14 @@
 # ProbOS Progress
 
-**Status (2026-05-10).** Open OSS issues: 3 (AD-721b-1/-2/-3 forward markers
-filed by Wave 138). Most recent shipped wave: 141 (AD-722-1 modulation rule
-table extracted to ui/src/audio/modulation_manifest.json — single source of
-truth shared by Python telemetry.py and TS voiceModulation.ts; AD-722f
-per-agent adaptive avatar-telemetry sampling state machine on
-runtime.avatar_sampling_state with three tiers HIGH 250 ms / NORMAL 2000 ms /
-LOW 10000 ms wired at DM and chain trigger surfaces).
+**Status (2026-05-10).** Open OSS issues: 9 (3 from Wave 138 — AD-721b-1/-2/-3; 6 new from Wave 142 — AD-722b-1/-2/-3/-4/-5/-6 forward markers). Most recent shipped wave: 142 (AD-722b WebSocket push channel for avatar telemetry — WS /api/agent/{id}/avatar-telemetry-stream; popout flips sampling tier to HIGH; UI WS-first with 5 s open-timeout poll fallback; read-only snapshot contract preserved).
 AD-697 + AD-698 establish the commercial-overlay seam
 (`pip install -e ../<commercial-package>` → overlay active; uninstall →
 back to OSS).
 
 **Authoritative state.**
-- `prompts/wave-plan.yaml` — wave roster (current wave: 141 done; next slot is 142).
+- `prompts/wave-plan.yaml` — wave roster (current wave: 142 done; next slot is 143).
 - `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-729).
-- `tests/` — 13112 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 557 vitest; gate runs `-n 8 --dist=loadfile`.
+- `tests/` — 13140 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 561 vitest; gate runs `-n 8 --dist=loadfile`.
 
 **Recent eras (archived):**
 - [Era I — Genesis](progress-era-1-genesis.md)
