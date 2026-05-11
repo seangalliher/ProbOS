@@ -1,14 +1,14 @@
 # ProbOS Progress
 
-**Status (2026-05-10).** Open OSS issues: 10 (3 from Wave 138 — AD-721b-1/-2/-3; 6 from Wave 143 — AD-722a-1/-2/-3/-4/-5/-6 forward markers; 1 new from Wave 144 — AD-723a-1 #617 DM/WR consumer-side sensorium dispatch migration). Most recent shipped wave: 144 (AD-723 v1 producer-side sensorium dispatch unification — `SensoriumPath` enum + `SensoriumEntry` dataclass + chain-side dispatcher; AD-722 avatar / AD-722a intent-self-tag register once with `paths` tuples; DM/WR consumer migration deferred to AD-723a-1 per Wave-10 entanglement rule; chain-baseline snapshot byte-equality verified).
+**Status (2026-05-10).** Open OSS issues: 12 (3 from Wave 138 — AD-721b-1/-2/-3; 6 from Wave 143 — AD-722a-1/-2/-3/-4/-5/-6 forward markers; 1 from Wave 144 — AD-723a-1 #617 DM/WR consumer-side sensorium dispatch migration; 3 new from Wave 145 — AD-721d-2 #621 Counselor-mediated revision, AD-721d-3 #622 visual preview requires AD-721i, AD-721d-4 #623 proposal-history persistence). Most recent shipped wave: 145 (AD-721d-1 DSL draft preview + revision cycle — closes the avatar-self-image cluster (Waves 141-145); 3 sub-markers filed for follow-up).
 AD-697 + AD-698 establish the commercial-overlay seam
 (`pip install -e ../<commercial-package>` → overlay active; uninstall →
 back to OSS).
 
 **Authoritative state.**
-- `prompts/wave-plan.yaml` — wave roster (current wave: 144 done; next slot is 145).
+- `prompts/wave-plan.yaml` — wave roster (current wave: 145 done; next slot is 146).
 - `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-729).
-- `tests/` — 13196 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 561 vitest; gate runs `-n 8 --dist=loadfile`.
+- `tests/` — 13209 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 568 vitest; gate runs `-n 8 --dist=loadfile`.
 
 **Recent eras (archived):**
 - [Era I — Genesis](progress-era-1-genesis.md)

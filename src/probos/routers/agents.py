@@ -392,9 +392,15 @@ async def propose_agent_appearance(
     req: ProposeAppearanceRequest | None = None,
     runtime: Any = Depends(get_runtime),
 ) -> dict[str, Any]:
-    """AD-721d D7: trigger ``CognitiveAgent.propose_appearance`` and return the
-    proposed DSL for Captain review. NOT persisted — caller must follow up with
-    ``PUT /{agent_id}/appearance`` once the Captain approves.
+    """AD-721d D7 + AD-721d-1: trigger ``CognitiveAgent.propose_appearance``
+    and return the proposed DSL for Captain review. NOT persisted — caller
+    must follow up with ``PUT /{agent_id}/appearance`` once the Captain
+    approves.
+
+    AD-721d-1: supports up to ``cfg.avatars.max_proposal_iterations``
+    revisions per agent. Iteration count is server-side in-memory
+    (cleared on approve / DELETE /appearance/proposal-history). At the
+    cap the endpoint returns HTTP 429 with structured detail.
     """
     _avatars_feature_check(runtime)
     agent = runtime.registry.get(agent_id)
@@ -407,9 +413,42 @@ async def propose_agent_appearance(
                    "(not a CognitiveAgent subclass)",
         )
 
-    from probos.avatars.dsl import AppearanceProposalError
+    from probos.avatars.dsl import AppearanceProposalError, AvatarDSL
+    from probos.avatars import proposal_history
 
     captain_note = (req.captain_note if req else "") or ""
+    previous_dsl_raw = (req.previous_dsl if req else None)
+
+    # AD-721d-1: validate previous_dsl shape BEFORE incrementing the counter.
+    # Malformed previous_dsl must NOT consume an iteration slot.
+    if previous_dsl_raw is not None:
+        try:
+            AvatarDSL.model_validate(previous_dsl_raw)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"reason": "invalid_previous_dsl", "detail": str(exc)},
+            )
+
+    # AD-721d-1: iteration cap. Reading BEFORE the LLM call ensures we don't
+    # spend a $LLM_call when we're going to 429 anyway.
+    cfg_max = int(getattr(runtime.config.avatars, "max_proposal_iterations", 3))
+    current_iterations = proposal_history.iteration_count(agent_id)
+    if current_iterations + 1 > cfg_max:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "reason": "iteration_cap_reached",
+                "detail": (
+                    f"Maximum {cfg_max} proposal iterations reached for "
+                    f"{agent_id}. Approve, reject, or DELETE the proposal "
+                    "history to start a new session."
+                ),
+                "iteration": current_iterations,
+                "max_iterations": cfg_max,
+            },
+        )
+
     try:
         dsl = await agent.propose_appearance(captain_note=captain_note)
     except AppearanceProposalError as exc:
@@ -422,7 +461,35 @@ async def propose_agent_appearance(
             status_code=422,
             detail={"reason": exc.reason, "detail": exc.detail},
         )
-    return {"agent_id": agent_id, "dsl": dsl.model_dump()}
+
+    dsl_dict = dsl.model_dump()
+    new_iteration = proposal_history.append(agent_id, dsl_dict, captain_note)
+
+    # AD-721d-1: audit event — string-keyed, not a new EventType enum value.
+    try:
+        runtime.emit_event(
+            "appearance_proposal",
+            {
+                "agent_id": agent_id,
+                "iteration": new_iteration,
+                "has_captain_note": bool(captain_note),
+                "captain_note_len": len(captain_note),
+            },
+        )
+    except Exception:
+        # Tier-2 log-and-degrade: audit failure must not block the Captain.
+        logger.warning(
+            "AD-721d-1: emit_event('appearance_proposal') failed for %s; "
+            "proposal returned to Captain but audit lost",
+            agent_id, exc_info=True,
+        )
+
+    return {
+        "agent_id": agent_id,
+        "dsl": dsl_dict,
+        "proposal_iteration": new_iteration,
+        "max_iterations": cfg_max,
+    }
 
 
 @router.put("/{agent_id}/appearance")
@@ -488,7 +555,55 @@ async def set_agent_appearance(
             agent_id,
         )
 
+    # AD-721d-1: clear proposal history + emit audit event on approve.
+    from probos.avatars import proposal_history
+    iterations_used = proposal_history.clear(agent_id)
+    try:
+        runtime.emit_event(
+            "appearance_approved",
+            {"agent_id": agent_id, "iterations_used": iterations_used},
+        )
+    except Exception:
+        logger.warning(
+            "AD-721d-1: emit_event('appearance_approved') failed for %s; "
+            "approval persisted but audit lost",
+            agent_id, exc_info=True,
+        )
+
     return {"agentId": agent_id, "dsl": dsl.model_dump()}
+
+
+@router.delete("/{agent_id}/appearance/proposal-history")
+async def clear_agent_appearance_proposal_history(
+    agent_id: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-721d-1: explicitly drop the in-memory proposal-history for
+    ``agent_id``. Used when the Captain rejects a proposal mid-session, or
+    when an operator wants to reset the iteration counter without
+    approving anything.
+
+    Idempotent: returns ``{"agent_id": ..., "cleared_iterations": N}``
+    where N is the prior iteration count (0 if no history existed).
+    """
+    _avatars_feature_check(runtime)
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    from probos.avatars import proposal_history
+    cleared = proposal_history.clear(agent_id)
+    try:
+        runtime.emit_event(
+            "appearance_history_cleared",
+            {"agent_id": agent_id, "reason": "delete"},
+        )
+    except Exception:
+        logger.warning(
+            "AD-721d-1: emit_event('appearance_history_cleared') failed for %s",
+            agent_id, exc_info=True,
+        )
+    return {"agent_id": agent_id, "cleared_iterations": cleared}
 
 
 @router.get("/{agent_id}/avatar-telemetry")

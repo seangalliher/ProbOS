@@ -232,11 +232,29 @@ async def wardroom_update_thread(thread_id: str, req: UpdateThreadRequest, runti
 async def wardroom_create_post(thread_id: str, req: CreatePostRequest, runtime: Any = Depends(get_runtime)):
     if not runtime.ward_room:
         raise HTTPException(503, "Ward Room not available")
+    # BF-263: Resolve callsign server-side when the client omits author_callsign.
+    # The UI DM dual-write path (WardRoomThreadDetail.submitReply) posts the
+    # agent reply with only author_id, which would otherwise render as
+    # "unknown" because WardRoomPostItem falls back when author_callsign == "".
+    author_callsign = req.author_callsign or ""
+    if not author_callsign and req.author_id and req.author_id != "captain":
+        try:
+            agent = runtime.registry.get(req.author_id)
+            callsign_registry = getattr(runtime, "callsign_registry", None)
+            if agent is not None and callsign_registry is not None:
+                author_callsign = callsign_registry.get_callsign(agent.agent_type) or ""
+        except Exception:
+            logger.debug(
+                "BF-263: callsign resolution failed for author_id=%s; "
+                "posting with empty callsign",
+                req.author_id,
+                exc_info=True,
+            )
     try:
         post = await runtime.ward_room.create_post(
             thread_id=thread_id, author_id=req.author_id,
             body=req.body, parent_id=req.parent_id,
-            author_callsign=req.author_callsign,
+            author_callsign=author_callsign,
         )
         return vars(post)
     except ValueError as e:

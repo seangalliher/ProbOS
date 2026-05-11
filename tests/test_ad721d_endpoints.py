@@ -84,6 +84,9 @@ def _make_runtime(*, avatars_enabled: bool = True, agent_supports_design: bool =
     cfg.avatars.enabled = avatars_enabled
     cfg.avatars.avatars_dir = "data/avatars"
     cfg.avatars.max_vrm_size_bytes = 25 * 1024 * 1024
+    # AD-721d-1: propose endpoint reads this to enforce the iteration cap;
+    # set it explicitly so int(...) doesn't trip on a MagicMock child attr.
+    cfg.avatars.max_proposal_iterations = 3
     runtime.config = cfg
 
     return runtime
@@ -98,6 +101,18 @@ def runtime() -> MagicMock:
 def client(runtime: MagicMock) -> TestClient:
     from probos.api import create_app
     return TestClient(create_app(runtime))
+
+
+@pytest.fixture(autouse=True)
+def _reset_proposal_history():
+    """AD-721d-1: reset module-level proposal history between tests so the
+    iteration cap doesn't fire when this file runs in the same process as
+    test_ad721d1_dsl_preview.py.
+    """
+    from probos.avatars import proposal_history
+    proposal_history.reset_all()
+    yield
+    proposal_history.reset_all()
 
 
 # ── Tests ───────────────────────────────────────────────────────

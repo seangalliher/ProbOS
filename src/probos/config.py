@@ -936,6 +936,19 @@ class AvatarsConfig(BaseModel):
     # Captain ruling 2026-05-09: capsule fallback default-on so v1 is end-to-end
     # without requiring operator-supplied base meshes.
     procedural_base_mesh_fallback: bool = True
+    # AD-721d-1: how many revision iterations before the Captain MUST approve
+    # or reject. Iteration 1 = initial proposal; iterations 2..N are
+    # revisions. Bounded 1..10 to keep LLM cost predictable.
+    max_proposal_iterations: int = 3
+
+    @field_validator("max_proposal_iterations")
+    @classmethod
+    def _bound_max_proposal_iterations(cls, v: int) -> int:
+        if not 1 <= v <= 10:
+            raise ValueError(
+                f"max_proposal_iterations must be 1 ≤ v ≤ 10, got {v}"
+            )
+        return v
 
 
 class SamplingRatesConfig(BaseModel):

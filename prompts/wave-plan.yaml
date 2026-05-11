@@ -3259,10 +3259,10 @@ waves:
     title: "Avatar appearance UX — AD-721d-1 DSL draft preview + revision cycle"
     kind: main
     depends_on: ["144"]
-    dispatch_prompt: "prompts/WAVE-145-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-145-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-721d-1-dsl-preview.md"
+      - "prompts/archive/ad-721d-1-dsl-preview.md"
     builder_required: true
     issues_to_close: [541]
-    status: pending
+    status: shipped

@@ -6,6 +6,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { CrewVRM } from './CrewVRM';
 import { ParametricAvatar } from './ParametricAvatar';
+import { diffAvatarDsl } from './avatarDslDiff';
 import type { AgentSignals } from './avatarSignals';
 import type { AvatarDSLDict } from '../../store/types';
 
@@ -27,6 +28,11 @@ interface Props {
   proposedDsl?: AvatarDSLDict | null;
   onApproveDsl?: (dsl: AvatarDSLDict) => void | Promise<void>;
   onRejectDsl?: () => void;
+  // AD-721d-1: revision-cycle wiring.
+  previousDsl?: AvatarDSLDict | null;     // for diff highlighting
+  iteration?: number;                      // 1-based; defaults to 1 when absent
+  maxIterations?: number;                  // defaults to 3
+  onRequestRevision?: (note: string) => void | Promise<void>;
 }
 
 const MIN_W = 220;
@@ -43,10 +49,17 @@ export function CrewAvatarPopout({
   proposedDsl,
   onApproveDsl,
   onRejectDsl,
+  previousDsl,
+  iteration,
+  maxIterations,
+  onRequestRevision,
 }: Props) {
   const [loadFailed, setLoadFailed] = useState(false);
   const useVRM = !!appearance?.vrm_url && !loadFailed;
   const tint = appearance?.color_palette_hint || departmentColor;
+  // AD-721d-1: revision-flow local UI state.
+  const [revisionOpen, setRevisionOpen] = useState(false);
+  const [revisionNote, setRevisionNote] = useState('');
 
   // Window position + size state. Initialise to bottom-right (the previous fixed location).
   const [pos, setPos] = useState(() => {
@@ -221,72 +234,216 @@ export function CrewAvatarPopout({
         </Canvas>
       </div>
 
-      {/* AD-721d: Captain approval bar — only when a freshly proposed DSL is awaiting review. */}
-      {proposedDsl && (
-        <div
-          data-testid="approval-bar"
-          style={{
-            flex: '0 0 auto',
-            padding: '6px 8px',
-            background: 'rgba(240, 176, 96, 0.06)',
-            borderTop: '1px solid rgba(240, 176, 96, 0.15)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 11,
-            fontFamily: "'JetBrains Mono', monospace",
-            color: '#ccccd8',
-          }}
-        >
-          <span style={{ flex: 1 }}>
-            Proposed: {proposedDsl.body.type} body, {proposedDsl.outfit.style} outfit,{' '}
-            {proposedDsl.expression_resting} resting
-          </span>
-          <button
-            data-testid="approve-dsl-btn"
-            onClick={() => onApproveDsl?.(proposedDsl)}
-            aria-label="Approve avatar design"
-            title="Approve"
+      {/* AD-721d + AD-721d-1: Captain approval bar with revision-cycle support. */}
+      {proposedDsl && (() => {
+        const changed = diffAvatarDsl(previousDsl ?? null, proposedDsl);
+        const iter = iteration ?? 1;
+        const maxIter = maxIterations ?? 3;
+        const atCap = iter >= maxIter;
+        const labelStyle: React.CSSProperties = {
+          color: '#8888a0', fontSize: 10, marginRight: 4,
+        };
+        const valueStyle = (path: string): React.CSSProperties => ({
+          color: changed.has(path) ? '#f0b060' : '#ccccd8',
+          background: changed.has(path) ? 'rgba(240, 176, 96, 0.12)' : 'transparent',
+          padding: changed.has(path) ? '0 4px' : 0,
+          borderRadius: 2,
+        });
+        const prevStyle: React.CSSProperties = {
+          color: '#666680', fontSize: 9, textDecoration: 'line-through', marginLeft: 4,
+        };
+        const renderField = (path: string, label: string, curr: unknown, prev: unknown) => (
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, lineHeight: 1.4 }}>
+            <span style={labelStyle}>{label}</span>
+            <span style={valueStyle(path)} data-diff-path={path}>{String(curr)}</span>
+            {changed.has(path) && prev !== undefined && prev !== null && (
+              <span style={prevStyle} data-diff-prev={path}>{String(prev)}</span>
+            )}
+          </div>
+        );
+
+        return (
+          <div
+            data-testid="approval-bar"
+            data-iteration={iter}
+            data-max-iterations={maxIter}
             style={{
-              background: 'none',
-              border: '1px solid rgba(240, 176, 96, 0.4)',
-              color: '#f0b060',
-              cursor: 'pointer',
-              padding: '2px 6px',
-              borderRadius: 3,
+              flex: '0 0 auto',
+              padding: '6px 8px',
+              background: 'rgba(240, 176, 96, 0.06)',
+              borderTop: '1px solid rgba(240, 176, 96, 0.15)',
               display: 'flex',
-              alignItems: 'center',
+              flexDirection: 'column',
+              gap: 6,
+              fontSize: 11,
+              fontFamily: "'JetBrains Mono', monospace",
+              color: '#ccccd8',
             }}
           >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-                 strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 8l3.5 3.5L13 4.5" />
-            </svg>
-          </button>
-          <button
-            data-testid="reject-dsl-btn"
-            onClick={() => onRejectDsl?.()}
-            aria-label="Reject avatar design"
-            title="Reject"
-            style={{
-              background: 'none',
-              border: '1px solid rgba(136, 136, 160, 0.4)',
-              color: '#8888a0',
-              cursor: 'pointer',
-              padding: '2px 6px',
-              borderRadius: 3,
-              display: 'flex',
-              alignItems: 'center',
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-                 strokeWidth="1.5" strokeLinecap="round">
-              <line x1="3" y1="3" x2="13" y2="13" />
-              <line x1="13" y1="3" x2="3" y2="13" />
-            </svg>
-          </button>
-        </div>
-      )}
+            {/* Structured parametric description (with diff highlights) */}
+            <div data-testid="parametric-description" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: '#f0b060', fontSize: 10 }}>
+                  Proposal {iter} / {maxIter}
+                </span>
+                {/* Hair-color swatch (small SVG square, no emoji) */}
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-label="hair color">
+                  <rect
+                    x="0" y="0" width="10" height="10" rx="2"
+                    fill={`hsl(${proposedDsl.hair?.color_hsl?.[0] ?? 0}, ${proposedDsl.hair?.color_hsl?.[1] ?? 0}%, ${proposedDsl.hair?.color_hsl?.[2] ?? 0}%)`}
+                  />
+                </svg>
+                {/* Outfit-color swatch */}
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-label="outfit color">
+                  <rect
+                    x="0" y="0" width="10" height="10" rx="2"
+                    fill={proposedDsl.outfit?.primary_color ?? '#2a4a6a'}
+                  />
+                </svg>
+              </div>
+              {renderField('body.type',            'body',     proposedDsl.body?.type,            previousDsl?.body?.type)}
+              {renderField('body.height_cm',       'h(cm)',    proposedDsl.body?.height_cm,       previousDsl?.body?.height_cm)}
+              {renderField('hair.style',           'hair',     proposedDsl.hair?.style,           previousDsl?.hair?.style)}
+              {renderField('face.warmth',          'warmth',   proposedDsl.face?.warmth,          previousDsl?.face?.warmth)}
+              {renderField('face.jaw',             'jaw',      proposedDsl.face?.jaw,             previousDsl?.face?.jaw)}
+              {renderField('face.eyes',            'eyes',     proposedDsl.face?.eyes,            previousDsl?.face?.eyes)}
+              {renderField('outfit.style',         'outfit',   proposedDsl.outfit?.style,         previousDsl?.outfit?.style)}
+              {renderField('expression_resting',   'resting',  proposedDsl.expression_resting,    previousDsl?.expression_resting)}
+              {proposedDsl.notes && (
+                <div style={{ color: '#8888a0', fontSize: 10, marginTop: 2, fontStyle: 'italic' }}>
+                  {proposedDsl.notes}
+                </div>
+              )}
+            </div>
+
+            {/* Action row: Approve / Request revision / Reject */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ flex: 1 }} />
+              <button
+                data-testid="approve-dsl-btn"
+                onClick={() => onApproveDsl?.(proposedDsl)}
+                aria-label="Approve avatar design"
+                title="Approve"
+                style={{
+                  background: 'none', border: '1px solid rgba(240, 176, 96, 0.4)',
+                  color: '#f0b060', cursor: 'pointer', padding: '2px 6px',
+                  borderRadius: 3, display: 'flex', alignItems: 'center',
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                     strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 8l3.5 3.5L13 4.5" />
+                </svg>
+              </button>
+              <button
+                data-testid="request-revision-btn"
+                onClick={() => setRevisionOpen((v) => !v)}
+                aria-label="Request avatar design revision"
+                aria-disabled={atCap}
+                disabled={atCap}
+                title={atCap
+                  ? `Maximum revisions reached (${maxIter}). Approve or reject.`
+                  : 'Request revision'}
+                style={{
+                  background: 'none',
+                  border: `1px solid ${atCap ? 'rgba(136, 136, 160, 0.25)' : 'rgba(240, 176, 96, 0.4)'}`,
+                  color: atCap ? '#666680' : '#f0b060',
+                  cursor: atCap ? 'not-allowed' : 'pointer',
+                  padding: '2px 6px', borderRadius: 3, display: 'flex', alignItems: 'center',
+                }}
+              >
+                {/* Curved arrow / revise glyph — stroke-based, no emoji. */}
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                     strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 8a6 6 0 0 1 10.5-4" />
+                  <path d="M13 2v3h-3" />
+                  <path d="M14 8a6 6 0 0 1-10.5 4" />
+                  <path d="M3 14v-3h3" />
+                </svg>
+              </button>
+              <button
+                data-testid="reject-dsl-btn"
+                onClick={() => { setRevisionOpen(false); onRejectDsl?.(); }}
+                aria-label="Reject avatar design"
+                title="Reject"
+                style={{
+                  background: 'none', border: '1px solid rgba(136, 136, 160, 0.4)',
+                  color: '#8888a0', cursor: 'pointer', padding: '2px 6px',
+                  borderRadius: 3, display: 'flex', alignItems: 'center',
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                     strokeWidth="1.5" strokeLinecap="round">
+                  <line x1="3" y1="3" x2="13" y2="13" />
+                  <line x1="13" y1="3" x2="3" y2="13" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Inline revision textarea (expands when Request revision is clicked) */}
+            {revisionOpen && !atCap && (
+              <div data-testid="revision-textarea-wrap" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <textarea
+                  data-testid="revision-note"
+                  value={revisionNote}
+                  onChange={(e) => setRevisionNote(e.target.value.slice(0, 280))}
+                  placeholder="What should the agent change? (≤ 280 chars)"
+                  rows={2}
+                  style={{
+                    width: '100%', resize: 'vertical', fontSize: 11,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    background: 'rgba(0, 0, 0, 0.3)',
+                    color: '#ccccd8',
+                    border: '1px solid rgba(240, 176, 96, 0.25)',
+                    borderRadius: 3, padding: 4,
+                  }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    data-testid="revision-counter"
+                    style={{
+                      fontSize: 9,
+                      color: revisionNote.length >= 280
+                        ? '#cc6666'
+                        : revisionNote.length >= 250 ? '#f0b060' : '#666680',
+                    }}
+                  >
+                    {revisionNote.length} / 280
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <button
+                    data-testid="submit-revision-btn"
+                    onClick={async () => {
+                      const note = revisionNote.trim();
+                      if (!note) return;
+                      await onRequestRevision?.(note);
+                      setRevisionNote('');
+                      setRevisionOpen(false);
+                    }}
+                    disabled={!revisionNote.trim()}
+                    aria-label="Submit revision request"
+                    title="Submit revision"
+                    style={{
+                      background: 'none',
+                      border: '1px solid rgba(240, 176, 96, 0.4)',
+                      color: revisionNote.trim() ? '#f0b060' : '#666680',
+                      cursor: revisionNote.trim() ? 'pointer' : 'not-allowed',
+                      padding: '2px 6px', borderRadius: 3, display: 'flex', alignItems: 'center',
+                    }}
+                  >
+                    {/* Paper-plane / send glyph — stroke-based. */}
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                         strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M2 8l12-5-5 12-2-5z" />
+                      <path d="M7 10l5-7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Resize handle (bottom-right corner). */}
       <div

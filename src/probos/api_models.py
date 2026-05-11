@@ -262,24 +262,40 @@ class ProposeVoiceProfileResponse(BaseModel):
     rationale: str       # agent's reasoning, ≤ 500 chars
 
 
-# ── Appearance models (AD-721d) ──────────────────────────────────
+# ── Appearance models (AD-721d, extended AD-721d-1) ──────────────
 
 class ProposeAppearanceRequest(BaseModel):
-    """AD-721d: Optional Captain revision note for "Request revisions" flows."""
+    """AD-721d + AD-721d-1: Captain revision note plus optional prior DSL.
+
+    AD-721d-1: when ``previous_dsl`` is non-null AND ``captain_note`` is
+    non-empty, this is a *revision* request. The server validates
+    ``previous_dsl`` matches the ``AvatarDSL`` schema (rejects 422 if not)
+    and increments the per-agent iteration counter. At
+    ``AvatarsConfig.max_proposal_iterations`` the endpoint returns 429.
+
+    ``captain_note`` IS the revision note — there is intentionally no
+    separate ``revision_note`` field. The semantic difference between
+    "initial proposal" and "revision" is carried by the presence of
+    ``previous_dsl`` plus the existing iteration counter.
+    """
     captain_note: str = ""
+    previous_dsl: dict | None = None  # AD-721d-1
 
 
 class ProposeAppearanceResponse(BaseModel):
-    """AD-721d: Validated AvatarDSL returned for Captain review (NOT yet persisted)."""
+    """AD-721d + AD-721d-1: Validated AvatarDSL plus iteration metadata."""
     agent_id: str
     dsl: dict
+    proposal_iteration: int = 1   # AD-721d-1: 1-based; 1 for initial proposal
+    max_iterations: int = 3       # AD-721d-1: echo of AvatarsConfig.max_proposal_iterations
 
 
 class SetAppearanceRequest(BaseModel):
     """AD-721d: Persist an approved AvatarDSL to ``AppearanceProfile.dsl``.
 
     The endpoint re-validates ``dsl`` with ``AvatarDSL.model_validate(...)``
-    before writing. Invalid → HTTP 422.
+    before writing. Invalid → HTTP 422. AD-721d-1: on success, clears the
+    in-memory proposal history for ``agent_id``.
     """
     dsl: dict
 

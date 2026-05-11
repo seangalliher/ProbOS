@@ -62,6 +62,10 @@ export function AgentProfilePanel() {
   const [proposedDsl, setProposedDsl] = useState<AvatarDSLDict | null>(null);
   const [designInFlight, setDesignInFlight] = useState(false);
   const [designError, setDesignError] = useState<string | null>(null);
+  // AD-721d-1: revision-cycle state.
+  const [previousDsl, setPreviousDsl] = useState<AvatarDSLDict | null>(null);
+  const [proposalIteration, setProposalIteration] = useState<number>(1);
+  const [proposalMaxIterations, setProposalMaxIterations] = useState<number>(3);
   useEffect(() => {
     fetch('/api/config/avatars-enabled')
       .then(r => r.ok ? r.json() : null)
@@ -230,6 +234,9 @@ export function AgentProfilePanel() {
                   const data = await r.json();
                   if (data && data.dsl) {
                     setProposedDsl(data.dsl as AvatarDSLDict);
+                    setPreviousDsl(null);
+                    setProposalIteration(Number(data.proposal_iteration ?? 1));
+                    setProposalMaxIterations(Number(data.max_iterations ?? 3));
                     setAvatarOpen(true);
                   }
                 } catch (e: any) {
@@ -359,8 +366,41 @@ export function AgentProfilePanel() {
           appearance={profileData?.appearance ?? null}
           departmentColor={deptColor}
           agentSignals={deriveAgentSignals(agentId, useStore.getState() as any)}
-          onClose={() => { setAvatarOpen(false); setProposedDsl(null); }}
+          onClose={() => {
+            setAvatarOpen(false);
+            setProposedDsl(null);
+            setPreviousDsl(null);
+          }}
           proposedDsl={proposedDsl}
+          previousDsl={previousDsl}
+          iteration={proposalIteration}
+          maxIterations={proposalMaxIterations}
+          onRequestRevision={async (note) => {
+            if (!agentId) return;
+            try {
+              const r = await fetch(`/api/agent/${agentId}/appearance/propose`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  captain_note: note,
+                  previous_dsl: proposedDsl,
+                }),
+              });
+              if (!r.ok) {
+                setDesignError(`Revision rejected (HTTP ${r.status})`);
+                return;
+              }
+              const data = await r.json();
+              if (data && data.dsl) {
+                setPreviousDsl(proposedDsl);
+                setProposedDsl(data.dsl as AvatarDSLDict);
+                setProposalIteration(Number(data.proposal_iteration ?? proposalIteration + 1));
+                setProposalMaxIterations(Number(data.max_iterations ?? proposalMaxIterations));
+              }
+            } catch (e: any) {
+              setDesignError(String(e?.message || e));
+            }
+          }}
           onApproveDsl={async (dsl) => {
             const r = await fetch(`/api/agent/${agentId}/appearance`, {
               method: 'PUT',
@@ -369,6 +409,8 @@ export function AgentProfilePanel() {
             });
             if (r.ok) {
               setProposedDsl(null);
+              setPreviousDsl(null);
+              setProposalIteration(1);
               // Refresh profile so any cached vrm_url is picked up.
               fetch(`/api/agent/${agentId}/profile`)
                 .then(rr => rr.ok ? rr.json() : null)
@@ -376,7 +418,16 @@ export function AgentProfilePanel() {
                 .catch(() => {});
             }
           }}
-          onRejectDsl={() => setProposedDsl(null)}
+          onRejectDsl={() => {
+            // AD-721d-1: best-effort server-side history clear; UI does not block on this.
+            if (agentId) {
+              fetch(`/api/agent/${agentId}/appearance/proposal-history`, { method: 'DELETE' })
+                .catch(() => { /* swallow — Tier-1 (UX cleanup, no user impact) */ });
+            }
+            setProposedDsl(null);
+            setPreviousDsl(null);
+            setProposalIteration(1);
+          }}
         />
       )}
       {/* Resize handle (bottom-right corner). */}

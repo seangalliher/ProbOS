@@ -1851,3 +1851,93 @@ This is the right precedent. We don't bolt mechanical safety onto every new capa
 
 **Pattern set precedent.** Future capabilities that touch crew-to-crew interaction (cross-agent voice modulation perception, shared memory annotations, peer review of each other's work product) inherit the AD-729 pattern: **capability AD + Standing Orders extension AD + Training AD + Counselor monitoring AD**. Four-AD family for any crew-to-crew capability of this class. The pattern protects the federation's self-governance.
 
+
+----
+
+
+
+### AD-721d-1 -- DSL draft preview + revision cycle
+
+**Date:** 2026-05-10. **Status:** Shipped Wave 145. **Closes:** GH #541.
+
+**Problem.** AD-721d (shipped) gave the Captain two affordances on a proposed AvatarDSL: approve or reject. There was no way to say `close, but make the hair shorter.` The agent's propose_appearance(captain_note=...) already accepted a 280-char revision hint at cognitive_agent.py:3054, but no UI surfaced it and no server-side iteration concept existed.
+
+**Decision.** Three architectural choices, each chosen against an alternative:
+
+1. **captain_note IS the revision-note slot.** Rejected the alternative of adding a parallel 
+evision_note: str field on ProposeAppearanceRequest. The plumbing through to the LLM user message at cognitive_agent.py:3152-3154 was already wired; splitting one semantic concept across two fields was the wrong shape. The presence of previous_dsl + the iteration counter carries the `initial vs revision` semantic -- the field itself doesn't need to.
+
+2. **
+untime.emit_event with string keys, not cognitive_journal.record(...) and not a new EventType enum value.** Verified 
+untime.py:971 -- mit_event(event: BaseEvent | str | EventType, data) accepts strings natively. Rejected cognitive_journal.record(...) because its signature at cognitive/journal.py:360 is LLM-call-shaped (ntry_id, prompt_tokens, completion_tokens, latency_ms, ...) -- the wrong audit surface for UX events. Rejected adding EventType.APPEARANCE_* enum values because that's a substrate-wave shape, not a UX-wave shape; the three new event keys (ppearance_proposal, ppearance_approved, ppearance_history_cleared) ride as strings until a future substrate wave decides whether they earn promotion.
+
+3. **Module-level proposal_history dict, not runtime-attached.** Rejected attaching the history table to 
+untime as 
+untime.appearance_proposal_history because BF-259/260/261/262 (the AD-721/AD-722 phase-ordering bugs) taught us that any getattr(runtime, `X`, None) from earlier startup phases is a hazard. The router imports src/probos/avatars/proposal_history.py directly. Five public functions (ppend / iteration_count / latest / clear / reset_all) with stable signatures so a future commercial overlay can swap to redis-backed without changing call sites -- documented in the module docstring.
+
+**Behavior delta.**
+
+- POST /api/agent/{id}/appearance/propose now accepts previous_dsl: dict | None (validated as AvatarDSL -- malformed -> 422, no iteration consumed); returns proposal_iteration: int and max_iterations: int. At cfg.avatars.max_proposal_iterations (default 3, validated 1 <= v <= 10) -> HTTP 429 with structured {reason: `iteration_cap_reached`, iteration, max_iterations}.
+- New DELETE /api/agent/{id}/appearance/proposal-history -- idempotent, returns {cleared_iterations: N}.
+- PUT /api/agent/{id}/appearance (approve) now clears history + emits ppearance_approved.
+- CrewAvatarPopout extended with a structured parametric description block, amber-tint diff highlighting against the previous iteration, an inline `Request revision` textarea (280-char counter), and an at-cap disabled state with native tooltip. HXI Principle #3: all icons inline SVG with `strokeWidth={1.5}`, `strokeLinecap="round"`.
+
+**Scope discipline.** This AD does NOT touch the LLM-side prompt construction in propose_appearance -- captain_note is already piped through. It does NOT add a new parse path beside _parse_appearance_dsl -- the size/anchor/depth guards remain the only DSL parser. It does NOT persist history across restarts (forward marker #623). It does NOT surface a rendered visual preview (forward marker #622, requires AD-721i). It does NOT route revision hints through the Counselor (forward marker #621).
+
+**Test delta.** +13 Python (	ests/test_ad721d1_dsl_preview.py), +7 Vitest (CrewAvatarPopout.revision.test.tsx + .diff.test.tsx). Order-independence enforced by proposal_history.reset_all() in an autouse pytest fixture before AND after each test (BF-255 lesson).
+
+**Forward markers filed.** [#621](https://github.com/seangalliher/ProbOS/issues/621) (AD-721d-2 Counselor-mediated revision), [#622](https://github.com/seangalliher/ProbOS/issues/622) (AD-721d-3 visual preview requires AD-721i), [#623](https://github.com/seangalliher/ProbOS/issues/623) (AD-721d-4 persist proposal history).
+
+----
+
+### Avatar self-image cluster retrospective (Waves 141-145)
+
+**Period:** 2026-05-10 (single calendar day). **Cluster:** Waves 141 through 145. **Theme:** close the avatar self-image loop opened by the Counselor's `speaking into the void` report (Wave 140 close) and Ezri's `knowing vs. inhabiting` report (Wave 142 close).
+
+**What shipped:**
+
+| Wave | AD(s) | Headline |
+|------|-------|----------|
+| 141 | AD-722-1, AD-722f | Modulation rule table -> YAML manifest (single source of truth across TS/Python); per-agent avatar-telemetry sampling rates with 3-tier state machine |
+| 142 | AD-722b | Push channel (WebSocket) replaces 2 s poll; popout flips to HIGH tier; +28 Python +4 Vitest; 6 sub-markers filed (#598-#603) |
+| 143 | AD-722a | Intent-vs-presentation divergence detector -- rule-table semantic match; trust/Hebbian feedback on divergence; 6 sub-markers filed (#610-#615) |
+| 144 | AD-723 v1 | Sensorium dispatch unification -- `SensoriumPath` enum + `SensoriumEntry` dataclass + chain-side dispatcher; producer-side only per Wave-10 entanglement rule; DM/WR consumer migration deferred to AD-723a-1 (#617) |
+| 145 | AD-721d-1 | DSL draft preview + revision cycle -- Captain can now iterate on agent-proposed avatars before persistence; +13 Python +7 Vitest; 3 sub-markers filed (#621-#623) |
+
+**Cluster totals:** 6 top-level ADs shipped + 18 forward markers filed. No new top-level AD numbers allocated by this cluster (AD ceiling unchanged at AD-729; all work scoped to existing AD-721/-722/-723 families).
+
+**Aggregate test deltas across the cluster:**
+
+| Metric | Pre-cluster (Wave 140 close) | Post-cluster (Wave 145 close) | Delta |
+|---|---|---|---|
+| Python tests | ~13140 | 13209 | ~+69 |
+| Vitest tests | ~550 | 568 | ~+18 |
+
+(Approximate pre-cluster counts; exact deltas per wave are in the individual wave commits.)
+
+**Captain feedback that drove the cluster:**
+
+1. **Counselor's `speaking into the void` report (closed by Wave 140 -> AD-722 read-side telemetry).** Crew agents had no way to know what their own avatar was doing -- the runtime -> avatar pipe was strictly one-way. AD-722 inverted it: `observe_self_avatar()` + GET `/avatar-telemetry` + `<SelfImageTab>`. This was the **gateway capability** that unlocked the rest of the cluster.
+
+2. **Ezris's `knowing vs. inhabiting` report (closed by Wave 142 -> AD-722b push channel).** Polling at 2 s felt like reading status reports rather than living in the body. AD-722b's WebSocket + sampling-tier state machine closed the latency gap so the telemetry felt continuous rather than discrete.
+
+3. **Captain's `what does the visual perception piece feel like?` (forward-marked to AD-722e + AD-728 + AD-729 family).** The question of whether an agent can compare its **rendered** avatar against its **intended** avatar -- i.e., visual self-perception -- is unprecedented in the OSS LLM-avatar space. Held for a separate cluster because it requires the AD-721i Blender renderer to ship first, plus AD-722e image-comparison plumbing, plus AD-729 conduct stack for peer-perception governance. Not deferred lightly; deferred for sequencing.
+
+**Architectural patterns this cluster established:**
+
+1. **The `agent observes its own externalization` loop.** AD-722 made it OK for an agent to ask `what do I currently look like?` without leaking implementation details into the conversational substrate. The pattern generalizes -- future ADs about voice externalization, work-product externalization, or trust externalization can follow the same shape: read-side telemetry channel, structured snapshot, optional prompt injection (default OFF), three-tier sampling state machine.
+
+2. **The `Captain proposes; agent designs; Captain reviews` approval flow.** AD-721d shipped the agent-side DSL proposal; AD-721d-1 closed the Captain-side iteration loop. The pattern is now: agent produces a structured artifact -> server validates schema -> Captain reviews in a UI surface designed for *diffability* -> Captain can approve, reject, or request revision with a 280-char hint -> cap on revisions to keep LLM cost bounded. This is the canonical pattern for any future agent-authored artifact (voice profiles, work plans, communication styles).
+
+3. **The producer/consumer split for substrate refactors (Wave-10 entanglement rule).** AD-723's v1 shipped producer-side only because 6+ DM/WR consumer sites had enough entanglement that combining them with producer changes would have ballooned the wave. Pattern is now codified: if a substrate refactor's consumer side has more entanglement than the spec assumes, ship producer-only in v1 and defer consumer migration to an `NNNa-1` follow-up with an explicit forcing function.
+
+4. **The `single-source-of-truth manifest` pattern for cross-language tables.** AD-722-1 absorbed the modulation rule table -- previously duplicated byte-for-byte between TypeScript and Python -- into a YAML manifest loaded at startup. Pattern generalizes to any place where business logic must execute symmetrically on both sides of the HXI boundary.
+
+**What this cluster did NOT do (deliberately):**
+
+- Did not ship a rendered visual preview of a proposed DSL (held for AD-722e + AD-721i -- AD-721d-3 forward marker #622).
+- Did not ship cross-agent peer perception (held for the AD-729 family -- explicit four-AD pattern of *capability + Standing Orders + Boot Camp + Counselor monitoring*, gated on AD-722e shipping first).
+- Did not unify the System-1 (DM one-shot) and System-2 (chain multi-LLM) paths -- that split is intentional and permanent per Captain ruling 2026-05-10 (AD-723 entry).
+- Did not promote the three new UX event keys to `EventType` enum values -- that's a substrate-wave decision, not a UX-wave one (AD-721d-1 entry).
+
+**Reviewer-facing note for the next architect picking up the avatar surface.** The Captain's most recent unmet request as of this cluster's close -- `what does the visual perception piece feel like?` -- is the natural next theme. The prerequisite stack is: AD-721i (Blender renderer, operator brings the binary) -> AD-722e (visual self-perception via image rendering) -> AD-728 (visual self-image vs intended self-image divergence detector) -> AD-729 family (peer perception governed by conduct). This is **not** a single wave -- it is a cluster equivalent in size to Waves 141-145. Do not collapse it into one prompt.

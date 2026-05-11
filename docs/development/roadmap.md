@@ -366,6 +366,10 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD | Title | Issue | Priority |
 |----|-------|-------|----------|
 | AD-721d (refined) | Agent-side appearance reflection cycle → DSL proposal | [#531](https://github.com/seangalliher/ProbOS/issues/531) | 2 |
+| AD-721d-1 | DSL draft preview + revision cycle (Captain "request revision" + iteration cap + parametric diff highlights) — **SHIPPED Wave 145** (POST /appearance/propose extended with `previous_dsl` + iteration counter; new DELETE /appearance/proposal-history; CrewAvatarPopout request-revision affordance + amber-tint diff highlights; +13 Python tests, +7 Vitest tests, zero new deps) | [#541](https://github.com/seangalliher/ProbOS/issues/541) | 2 |
+| AD-721d-2 | Counselor-mediated avatar revision (vs Captain-driven hint) | [#621](https://github.com/seangalliher/ProbOS/issues/621) | 4 |
+| AD-721d-3 | Visual avatar preview before DSL persistence (requires AD-721i renderer) | [#622](https://github.com/seangalliher/ProbOS/issues/622) | 4 |
+| AD-721d-4 | Persist avatar proposal history across runtime restarts | [#623](https://github.com/seangalliher/ProbOS/issues/623) | 4 |
 | AD-721i | DSL → Blender VRM renderer (headless backend) | [#537](https://github.com/seangalliher/ProbOS/issues/537) | 2 |
 | AD-721j | Blender Connector — Computer Use control (Anthropic-style; commercial overlay extension exists in private repo) | [#538](https://github.com/seangalliher/ProbOS/issues/538) | 3 |
 
