@@ -2,16 +2,27 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
+import type { ChatAttachment } from '../../store/types';
 
 interface Props {
   agentId: string;
 }
+
+const ALLOWED_ATTACHMENT_MIMES = [
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+  'application/pdf', 'text/plain', 'text/markdown',
+  'application/json', 'text/csv',
+] as const;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 export function ProfileChatTab({ agentId }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [listening, setListening] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const globalVoiceEnabled = useStore((s) => s.voiceEnabled);
   // Per-agent TTS toggle: defaults to global setting; persisted in localStorage.
   const ttsKey = `hxi_chat_tts_${agentId}`;
@@ -65,7 +76,7 @@ export function ProfileChatTab({ agentId }: Props) {
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || sending) return;
+    if ((!text && pendingAttachments.length === 0) || sending) return;
     setInput('');
     setSending(true);
 
@@ -81,14 +92,28 @@ export function ProfileChatTab({ agentId }: Props) {
     // Prepend seed memories on first message (no prior conversation)
     const fullHistory = conv?.messages?.length ? history : [...seedMemories, ...history];
 
+    // Compose display text including attachment filenames (so the user sees
+    // their own message with the attachments listed).
+    const attachmentSummary = pendingAttachments.length
+      ? '\n\n' + pendingAttachments.map(a => `[attached: ${a.filename || a.attachment_id}]`).join('\n')
+      : '';
+    const displayText = (text || '(attachment)') + attachmentSummary;
+
     // Add user message immediately (after capturing history)
-    useStore.getState().addAgentMessage(agentId, 'user', text);
+    useStore.getState().addAgentMessage(agentId, 'user', displayText);
+
+    const attachmentIds = pendingAttachments.map(a => a.attachment_id);
+    setPendingAttachments([]);
 
     try {
       const res = await fetch(`/api/agent/${agentId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, history: fullHistory }),  // AD-430b: send history
+        body: JSON.stringify({
+          message: text || '(attachment)',
+          history: fullHistory,
+          attachment_ids: attachmentIds,
+        }),
       });
       const data = await res.json();
       const reply = data.response || '(no response)';
@@ -102,7 +127,7 @@ export function ProfileChatTab({ agentId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, input, sending, seedMemories, ttsEnabled, voiceProfile]);
+  }, [agentId, input, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -110,6 +135,41 @@ export function ProfileChatTab({ agentId }: Props) {
       handleSend();
     }
   };
+
+  async function uploadAttachment(file: File): Promise<void> {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setAttachError(`Too large: ${file.name} (${file.size} bytes)`);
+      return;
+    }
+    try {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const res = await fetch('/api/chat/attachments/multipart', { method: 'POST', body: fd });
+      if (!res.ok) {
+        let reason = 'unknown';
+        try { reason = (await res.json())?.error ?? reason; } catch { /* ignore */ }
+        setAttachError(`Upload failed: ${reason}`);
+        return;
+      }
+      const data = await res.json() as ChatAttachment;
+      setPendingAttachments(prev => [...prev, { ...data, filename: file.name }]);
+      setAttachError(null);
+    } catch (err) {
+      setAttachError(`Upload error: ${(err as Error).message}`);
+    }
+  }
+
+  async function onFilePickerChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    for (const file of files) {
+      await uploadAttachment(file);
+    }
+    if (e.target) e.target.value = '';
+  }
+
+  function removePendingAttachment(id: string) {
+    setPendingAttachments(prev => prev.filter(a => a.attachment_id !== id));
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -156,6 +216,43 @@ export function ProfileChatTab({ agentId }: Props) {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Attachment chips */}
+      {(pendingAttachments.length > 0 || attachError) && (
+        <div style={{
+          padding: '4px 12px',
+          borderTop: '1px solid rgba(255,255,255,0.04)',
+          display: 'flex', flexWrap: 'wrap', gap: 4,
+          fontSize: 11,
+        }}>
+          {pendingAttachments.map(a => (
+            <span key={a.attachment_id} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              background: 'rgba(240,176,96,0.10)',
+              border: '1px solid rgba(240,176,96,0.25)',
+              borderRadius: 4, padding: '2px 6px',
+              color: '#f0b060',
+              maxWidth: 200,
+            }}>
+              <span style={{
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{a.filename || a.attachment_id.slice(0, 12)}</span>
+              <button
+                type="button"
+                onClick={() => removePendingAttachment(a.attachment_id)}
+                aria-label="remove attachment"
+                style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: '#f0b060', fontSize: 11, padding: 0, lineHeight: 1,
+                }}
+              >×</button>
+            </span>
+          ))}
+          {attachError && (
+            <span style={{ color: '#ff8080' }}>{attachError}</span>
+          )}
+        </div>
+      )}
+
       {/* Input */}
       <div style={{
         display: 'flex',
@@ -163,6 +260,39 @@ export function ProfileChatTab({ agentId }: Props) {
         padding: '8px 12px',
         borderTop: '1px solid rgba(255,255,255,0.06)',
       }}>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={ALLOWED_ATTACHMENT_MIMES.join(',')}
+          onChange={onFilePickerChange}
+          style={{
+            position: 'absolute', width: 1, height: 1, opacity: 0,
+            pointerEvents: 'none', left: -9999,
+          }}
+          tabIndex={-1}
+          aria-hidden="true"
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="attach file"
+          title="Attach a file"
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#f0b060',
+            cursor: 'pointer',
+            padding: '4px',
+            borderRadius: 4,
+            flexShrink: 0,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+               stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <path d="M11 4l-5 5a2 2 0 002.8 2.8l5-5a3 3 0 00-4.2-4.2l-5 5a4 4 0 005.7 5.7" />
+          </svg>
+        </button>
         <input
           type="text"
           value={input}
@@ -266,7 +396,7 @@ export function ProfileChatTab({ agentId }: Props) {
         )}
         <button
           onClick={handleSend}
-          disabled={sending || !input.trim()}
+          disabled={sending || (!input.trim() && pendingAttachments.length === 0)}
           style={{
             background: sending ? 'rgba(240, 176, 96, 0.1)' : 'rgba(240, 176, 96, 0.2)',
             border: '1px solid rgba(240, 176, 96, 0.3)',
@@ -276,7 +406,7 @@ export function ProfileChatTab({ agentId }: Props) {
             fontFamily: "'JetBrains Mono', monospace",
             padding: '6px 12px',
             cursor: sending ? 'default' : 'pointer',
-            opacity: sending || !input.trim() ? 0.5 : 1,
+            opacity: sending || (!input.trim() && pendingAttachments.length === 0) ? 0.5 : 1,
           }}
         >
           {sending ? '...' : 'Send'}

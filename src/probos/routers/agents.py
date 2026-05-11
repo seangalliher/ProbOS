@@ -881,15 +881,99 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if not is_crew_agent(agent, runtime.ontology):
         raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent — direct chat is crew-only")
 
+    # AD-730 (Wave 151): vision pipe-through for per-agent DMs.
+    # When req.attachment_ids includes an image MIME AND attachments.vision_tier
+    # is operational, build the Anthropic-shape multimodal messages array and
+    # pass it through IntentMessage.params['vision_messages']. The receiving
+    # agent's direct_message handler routes that to LLMRequest(messages=...)
+    # via the configured vision tier. When images are absent OR vision tier is
+    # degraded, fall back to AD-720d's text-only augmentation (markers + extracted
+    # text) so the agent at least sees the attachment names.
+    # Tier-2 log-and-degrade throughout: failures revert to the original message.
+    message_text = req.message
+    vision_messages: list[dict[str, object]] | None = None
+    has_image_attachment = False
+    if req.attachment_ids:
+        cfg_attach = getattr(runtime.config, "attachments", None)
+        if cfg_attach is not None and getattr(cfg_attach, "enabled", False):
+            try:
+                from probos.cognitive.vision_dispatch import (
+                    augment_prompt_with_attachment_text,
+                    build_multimodal_messages,
+                )
+                from probos.routers.chat import _get_attachment_store
+
+                store = _get_attachment_store(runtime)
+
+                async def _mime_lookup(content_hash: str) -> str | None:
+                    return await store.mime_for(content_hash)
+
+                # Build the multimodal array once; we may use either the
+                # vision-tier path (image_ids present + tier operational) or
+                # fall back to the text-only augmentation.
+                messages, image_ids = await build_multimodal_messages(
+                    prompt=req.message,
+                    attachment_ids=list(req.attachment_ids),
+                    store=store,
+                    mime_lookup=_mime_lookup,
+                    text_extraction_max_bytes=cfg_attach.text_extraction_max_bytes,
+                    pdf_extraction_enabled=cfg_attach.pdf_extraction_enabled,
+                )
+
+                if image_ids:
+                    # Vision tier health probe — same pattern as /api/chat:309-325.
+                    tier = cfg_attach.vision_tier
+                    health = runtime.llm_client.get_health_status()
+                    tier_status = (
+                        health.get("tiers", {}).get(tier) or {}
+                    ).get("status")
+                    if tier_status == "operational":
+                        vision_messages = messages
+                        has_image_attachment = True
+                        # Keep message_text as the original Captain text so
+                        # episodic memory remains search-friendly; the LLM
+                        # sees the full multimodal array via vision_messages.
+                    else:
+                        logger.warning(
+                            "AD-730 vision tier=%s unavailable (status=%s) for "
+                            "agent=%s; falling back to text-only augmentation. "
+                            "attachment_ids=%s",
+                            tier, tier_status, agent_id, list(req.attachment_ids),
+                        )
+
+                if vision_messages is None:
+                    # Text-only path: either no images, or vision degraded.
+                    message_text = await augment_prompt_with_attachment_text(
+                        prompt=req.message,
+                        attachment_ids=list(req.attachment_ids),
+                        store=store,
+                        mime_lookup=_mime_lookup,
+                        text_extraction_max_bytes=cfg_attach.text_extraction_max_bytes,
+                        pdf_extraction_enabled=cfg_attach.pdf_extraction_enabled,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "agent_chat attachment augmentation failed for %s: %s: %s; "
+                    "falling back to text-only message",
+                    agent_id, type(e).__name__, e,
+                )
+
     from probos.types import IntentMessage
+    _params: dict[str, object] = {
+        "text": message_text,
+        "from": "hxi_profile",
+        "session": bool(req.history),
+        "session_history": req.history[-10:] if req.history else [],
+    }
+    # AD-730: thread vision messages through to the agent's LLM-call site.
+    # When present, the agent routes to attachments.vision_tier with
+    # LLMRequest(messages=vision_messages); otherwise the standard text path.
+    if vision_messages is not None:
+        _params["vision_messages"] = vision_messages
+        _params["has_image_attachment"] = True
     intent = IntentMessage(
         intent="direct_message",
-        params={
-            "text": req.message,
-            "from": "hxi_profile",
-            "session": bool(req.history),
-            "session_history": req.history[-10:] if req.history else [],
-        },
+        params=_params,
         target_agent_id=agent_id,
         ttl_seconds=60.0,  # AD-636: Extended TTL for Captain DMs
     )
@@ -1071,6 +1155,9 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                     "callsign": callsign,
                     "source": "hxi_profile",
                     "agent_type": agent.agent_type,
+                    # AD-730: tag DM episodes that included an image so Counselor
+                    # wellness and AD-722a divergence analysis can filter on it.
+                    "has_image_attachment": has_image_attachment,
                 }],
                 reflection=f"Captain had a 1:1 conversation with {callsign or agent_id} via HXI.",
                 source="direct",

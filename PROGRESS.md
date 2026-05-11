@@ -7,7 +7,7 @@ back to OSS).
 
 **Authoritative state.**
 - `prompts/wave-plan.yaml` — wave roster (current wave: 150 done; next slot is 151).
-- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-729).
+- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-730).
 - `tests/` — 13268 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 582 vitest; gate runs `-n 8 --dist=loadfile`.
 
 **Recent eras (archived):**

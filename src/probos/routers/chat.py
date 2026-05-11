@@ -102,6 +102,37 @@ async def chat(
         is_directed_mention,
     )
 
+    # BF (2026-05-11): Attachment augmentation for callsign-DM paths.
+    # The mention-fan-out and legacy single-mention branches below early-return
+    # without running the attachment pipeline at line ~257, silently dropping
+    # any image / PDF / text attachment when the message starts with @callsign.
+    # When a mention is present AND there are attachments, augment `text`
+    # (and `req.message`) with extracted attachment text + image markers so
+    # the receiving agent at least sees the attachment in its prompt.
+    # Tier-2 log-and-degrade: failures fall back to original text.
+    if req.attachment_ids and is_directed_mention(text):
+        _cfg_attach = getattr(runtime.config, "attachments", None)
+        if _cfg_attach is not None and getattr(_cfg_attach, "enabled", False):
+            from probos.cognitive.vision_dispatch import (
+                augment_prompt_with_attachment_text,
+            )
+            _store = _get_attachment_store(runtime)
+
+            async def _mime_lookup_dm(content_hash: str) -> str | None:
+                return await _store.mime_for(content_hash)
+
+            augmented = await augment_prompt_with_attachment_text(
+                prompt=text,
+                attachment_ids=list(req.attachment_ids),
+                store=_store,
+                mime_lookup=_mime_lookup_dm,
+                text_extraction_max_bytes=_cfg_attach.text_extraction_max_bytes,
+                pdf_extraction_enabled=_cfg_attach.pdf_extraction_enabled,
+            )
+            if augmented != text:
+                text = augmented
+                req = req.model_copy(update={"message": augmented})
+
     # AD-719: multi-mention fan-out branch — also handles SINGLE mentions
     # (>= 1) so attribution + episodic-write parity is consistent. The legacy
     # single-mention DM path below is kept only as fall-through for unrelated

@@ -3332,6 +3332,18 @@ waves:
     issues_to_close: [582]
     status: shipped
 
+  - id: "151"
+    title: "Vision pipe-through for per-agent DMs — AD-730 (image-aware Counselor DMs)"
+    kind: main
+    depends_on: ["150"]
+    dispatch_prompt: "prompts/archive/WAVE-151-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/archive/ad-730-agent-chat-vision.md"
+    builder_required: true
+    issues_to_close: [630]
+    status: shipped
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

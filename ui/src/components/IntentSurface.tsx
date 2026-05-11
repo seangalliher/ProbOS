@@ -63,6 +63,7 @@ export function IntentSurface() {
   // AD-720: image-paste attachments pending for the next send.
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [paperclipTooltipOpen, setPaperclipTooltipOpen] = useState(false);
+  const [paperclipTooltipRect, setPaperclipTooltipRect] = useState<{ top: number; right: number } | null>(null);
   // AD-720a (Wave 139): file-picker + drag-drop state.
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -2013,16 +2014,31 @@ export function IntentSurface() {
                 multiple
                 accept={ALLOWED_ATTACHMENT_MIMES.join(',')}
                 onChange={onFilePickerChange}
-                style={{ display: 'none' }}
+                // Off-screen rather than display:none — some browsers/webviews block
+                // file picker dialogs triggered from inputs with display:none or visibility:hidden.
+                style={{
+                  position: 'absolute',
+                  width: 1,
+                  height: 1,
+                  opacity: 0,
+                  pointerEvents: 'none',
+                  left: -9999,
+                }}
+                tabIndex={-1}
+                aria-hidden="true"
                 data-testid="attachment-file-input"
               />
               <button
                 type="button"
                 data-testid="attachment-paperclip"
                 aria-label="attach file"
-                onMouseEnter={() => setPaperclipTooltipOpen(true)}
+                onMouseEnter={(e) => {
+                  const r = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                  setPaperclipTooltipRect({ top: r.top, right: r.right });
+                  setPaperclipTooltipOpen(true);
+                }}
                 onMouseLeave={() => setPaperclipTooltipOpen(false)}
-                onClick={(e) => { e.preventDefault(); fileInputRef.current?.click(); }}
+                onClick={() => fileInputRef.current?.click()}
                 title="Attach a file (or drag-drop)"
                 style={{
                   position: 'relative',
@@ -2038,13 +2054,19 @@ export function IntentSurface() {
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                   <path d="M11 4l-5 5a2 2 0 002.8 2.8l5-5a3 3 0 00-4.2-4.2l-5 5a4 4 0 005.7 5.7" />
                 </svg>
-                {paperclipTooltipOpen && (
+                {paperclipTooltipOpen && paperclipTooltipRect && createPortal(
                   <span data-testid="attachment-paperclip-tooltip" style={{
-                    position: 'absolute', bottom: '120%', right: 0,
+                    position: 'fixed',
+                    top: paperclipTooltipRect.top - 28,
+                    left: paperclipTooltipRect.right,
+                    transform: 'translateX(-100%)',
                     background: 'rgba(10,10,18,0.96)', border: '1px solid rgba(240,176,96,0.25)',
                     borderRadius: 4, padding: '4px 8px', fontSize: 11, color: '#e0dcd4',
                     whiteSpace: 'nowrap',
-                  }}>Attach a file (or drag-drop)</span>
+                    pointerEvents: 'none',
+                    zIndex: 1000,
+                  }}>Attach a file (or drag-drop)</span>,
+                  document.body,
                 )}
               </button>
               {/* AD-720a: drag-drop overlay covering the composer. Stroke-SVG only — no emoji. */}

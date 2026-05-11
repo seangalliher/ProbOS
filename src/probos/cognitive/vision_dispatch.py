@@ -182,3 +182,48 @@ async def build_multimodal_messages(
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
     return (messages, image_ids)
+
+
+async def augment_prompt_with_attachment_text(
+    prompt: str,
+    attachment_ids: list[str],
+    store: AttachmentStore,
+    mime_lookup: Callable[[str], Awaitable[str | None]],
+    *,
+    text_extraction_max_bytes: int,
+    pdf_extraction_enabled: bool,
+) -> str:
+    """Return ``prompt`` augmented with text content extracted from non-image
+    attachments and inline markers for image attachments.
+
+    Used by the @callsign-DM path in /api/chat and by /api/agent/{id}/chat
+    where the receiving agent's prompt assembly is text-only (no vision).
+    For image attachments we emit ``[Captain attached an image (id=...)]``
+    so the agent can at least acknowledge the attachment in its reply.
+    Tier-2 log-and-degrade: on any failure returns the original prompt.
+    """
+    if not attachment_ids:
+        return prompt
+    try:
+        messages, image_ids = await build_multimodal_messages(
+            prompt=prompt,
+            attachment_ids=list(attachment_ids),
+            store=store,
+            mime_lookup=mime_lookup,
+            text_extraction_max_bytes=text_extraction_max_bytes,
+            pdf_extraction_enabled=pdf_extraction_enabled,
+        )
+    except Exception as e:
+        logger.warning(
+            "Attachment augmentation failed; sending text-only prompt. "
+            "attachment_ids=%s err=%s: %s",
+            list(attachment_ids), type(e).__name__, e,
+        )
+        return prompt
+    parts: list[str] = [prompt] if prompt else []
+    for iid in image_ids:
+        parts.append(f"[Captain attached an image (id={iid})]")
+    for item in messages[0]["content"]:
+        if item.get("type") == "text" and item.get("text") and item.get("text") != prompt:
+            parts.append(item["text"])
+    return "\n\n".join(p for p in parts if p)

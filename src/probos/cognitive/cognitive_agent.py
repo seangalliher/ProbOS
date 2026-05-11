@@ -2033,11 +2033,33 @@ class CognitiveAgent(BaseAgent):
                 "short_circuit_reason": "ad-700c-no-llm-tier",
             }
 
-        request = LLMRequest(
-            prompt=user_message,
-            system_prompt=composed,
-            tier=_per_call_tier or self._resolve_tier(),
-        )
+        # AD-730 (Wave 151): vision pipe-through for DM perception.
+        # When the intent params carry vision_messages (Captain attached an
+        # image to the DM via /api/agent/{id}/chat), route through
+        # attachments.vision_tier with the multimodal array instead of the
+        # standard text path. The system_prompt is still passed — Claude
+        # vision accepts system + multimodal user content.
+        _vision_messages = observation.get("params", {}).get("vision_messages")
+        if _vision_messages:
+            _attach_cfg = getattr(
+                getattr(self._runtime, "config", None), "attachments", None
+            )
+            _resolved_vision_tier = (
+                getattr(_attach_cfg, "vision_tier", None)
+                if _attach_cfg is not None else None
+            )
+            request = LLMRequest(
+                prompt="",  # content lives in messages
+                messages=_vision_messages,
+                system_prompt=composed,
+                tier=_resolved_vision_tier or (_per_call_tier or self._resolve_tier()),
+            )
+        else:
+            request = LLMRequest(
+                prompt=user_message,
+                system_prompt=composed,
+                tier=_per_call_tier or self._resolve_tier(),
+            )
 
         # AD-431: Time the LLM call for journal
         _t0 = time.monotonic()

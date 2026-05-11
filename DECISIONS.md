@@ -1992,3 +1992,29 @@ Three pieces, all gated by existing `avatar_telemetry.divergence_detection` (no 
 **Out of scope:** cross-crew / wardroom rollup (forward marker AD-722a-6 / [#615](https://github.com/seangalliher/ProbOS/issues/615)); on-disk persistence (AD-722a-5-a, file at retrospective); WS push channel for history (AD-722a-5-b); trend chart visualization (AD-722a-5-c).
 **Status:** SHIPPED. Issue [#614](https://github.com/seangalliher/ProbOS/issues/614).
 **Files:** `src/probos/avatars/divergence_detector.py` (new `DivergenceHistoryEntry`, buffer-append branch in `apply_divergence_check`), `src/probos/config.py` (2 fields + validator), `src/probos/runtime.py` (`self.divergence_history`), `src/probos/routers/agents.py` (new endpoint), `ui/src/components/profile/SelfImageTab.tsx` (new panel + payload types). Tests: `tests/test_ad722a_5_divergence_history.py` (9 backend cases) + `ui/src/__tests__/SelfImageTab.divergenceHistory.test.tsx` (3 vitest cases). Existing `ui/src/__tests__/SelfImageTab.test.tsx` updated minimally - `mockFetch` returns 503 for `/divergence-history` URLs and assertions filter via new `mainTelemetryCalls()` helper so existing call-count semantics stay equivalent.
+
+### AD-730 -- Vision pipe-through for per-agent DMs (image-aware DMs)
+
+**Date:** 2026-05-11  **Type:** Architecture Decision (capability extension)  **Status:** Forward marker (filed pending implementation prompt + wave slot).
+
+**Problem.** AD-720d (Wave 139) shipped vision pipe-through for the main composer at `/api/chat` — images attached there route through the configured vision tier of `runtime.llm_client`. The per-agent DM path at `/api/agent/{id}/chat` (used by ProfileChatTab and by Counselor therapeutic DMs) has no equivalent. As of 2026-05-11 the `AgentChatRequest` model and the agent_chat route accept `attachment_ids` and pass extracted text + `[Captain attached an image (id=...)]` markers into the agent's `direct_message` intent (see chat.py mention branch + agents.py augmentation), but the receiving agent cannot actually **see** the image — it only knows one was attached.
+
+**Decision (forward-marker shape).** Extend the DM dispatch in `routers/agents.py` so that when `attachment_ids` contains an image MIME, the agent's perception step runs through a vision-capable LLM tier instead of the standard text path. Three architectural choices to make at implementation time:
+
+1. **Per-agent intent params shape.** Either (a) pass the multimodal `messages` array through `IntentMessage.params['vision_messages']` and have `CognitiveAgent._handle_direct_message` route to vision tier when present, or (b) extend `LLMRequest` consumption inside the agent's reply path with a new optional `attachment_blobs` field. Choice (a) keeps the agent free to interleave the image into its full instructions-based prompt; choice (b) is simpler but limits the agent to a single vision turn. Recommend (a).
+
+2. **Tier selection inheritance.** Reuse `runtime.config.attachments.vision_tier` rather than introducing a per-agent vision tier setting. Agents inherit the same operational-vs-degraded gate as the main composer (AD-720d). Per-agent overrides are a follow-up if a crew role ever needs a different tier (e.g., a hypothetical Imaging Officer).
+
+3. **Standing Orders integration.** When the receiving agent is shown an image, the perception turn should record a sensorium block in episodic memory tagged `"channel": "dm"` + `"attachment_kind": "image"` so the Counselor wellness pipeline and AD-722a divergence detector continue to see consistent inputs. No new EventType — ride existing `direct_message` event with an extra `has_image_attachment: True` data field.
+
+**Out of scope (forward markers).**
+- AD-730-1: vision support inside the WardRoom DM panel (`WardRoomThreadDetail` send path goes through `/api/agent/{id}/chat` already, so this should fall out for free, but needs a UI attach button on that surface — separate AD).
+- AD-730-2: multi-image DMs (>=2 attachments) — vision LLM token budget concerns; default to first image only in v1.
+- AD-730-3: image generation by agents in DM replies (agent attaches an image back). Requires a generation tier and storage-write capability; separate capability AD.
+- AD-730-4: federation peer-to-peer vision DMs — inherits AD-480 governance review.
+
+**Hard preconditions before shipping.** `runtime.config.attachments.vision_tier` operational. AD-722a divergence-detection consumer must be reviewed for behavioral changes when DM perception turn becomes multimodal (sensorium prompt expands).
+
+**Files (anticipated).** `src/probos/routers/agents.py` (augmentation -> dispatch swap), `src/probos/cognitive/cognitive_agent.py` (direct_message handler accepts vision_messages), `src/probos/api_models.py` (no change — `attachment_ids` already present), tests: `tests/test_ad730_agent_chat_vision.py` (new).
+
+**Status:** Forward marker. Filed via GH issue [#630](https://github.com/seangalliher/ProbOS/issues/630). Awaits wave-slot assignment + Architect implementation prompt.

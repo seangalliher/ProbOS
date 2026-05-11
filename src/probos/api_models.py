@@ -147,6 +147,10 @@ class AgentChatRequest(BaseModel):
     """Request to send a direct message to a specific agent."""
     message: str
     history: list[dict[str, str]] = []  # AD-430b: conversation history from HXI
+    # BF (2026-05-11): optional attachment content-hashes — augments prompt with
+    # extracted text + image markers before /api/agent/{id}/chat dispatches the
+    # direct_message intent. Mirrors ChatRequest.attachment_ids.
+    attachment_ids: list[str] = Field(default_factory=list)
 
 
 # ── Ward Room models (AD-407, AD-424) ────────────────────────────
