@@ -816,16 +816,48 @@ class IntentBus:
     # AD-637b: Serialization helpers
     # ------------------------------------------------------------------
 
+    # BF-265 / Wave 151 fallout: params keys whose values are large in-memory
+    # transient data and must NEVER cross NATS transport. AD-730 added
+    # vision_messages (base64 image bytes, often 150KB-1MB per attachment).
+    # JetStream retries on these payloads accumulated buffers that contributed
+    # to the 2026-05-11 memory-exhaustion crash (#636). Strip on serialize;
+    # callers that need the data have in-process access via the original
+    # IntentMessage object (the perception path uses observation.params not
+    # the round-tripped NATS payload).
+    _TRANSPORT_STRIPPED_PARAM_KEYS: tuple[str, ...] = (
+        "vision_messages",  # AD-730 — base64 image content
+    )
+
     @staticmethod
     def _serialize_intent(intent: IntentMessage) -> dict[str, Any]:
         """Serialize IntentMessage for NATS transport.
 
         All fields must be JSON-serializable. params dict values that are
         not JSON-serializable will raise TypeError — fail fast.
+
+        BF-265: large in-process payloads (vision_messages, etc.) are
+        stripped before transport. Receivers needing those payloads consume
+        them in-process from the live IntentMessage object, not from the
+        NATS-deserialized copy. The stripped-keys allowlist is the
+        ``_TRANSPORT_STRIPPED_PARAM_KEYS`` class attribute.
         """
+        params = intent.params
+        if any(k in params for k in IntentBus._TRANSPORT_STRIPPED_PARAM_KEYS):
+            # Build a stripped copy; original is untouched (caller keeps it).
+            params = {
+                k: v
+                for k, v in params.items()
+                if k not in IntentBus._TRANSPORT_STRIPPED_PARAM_KEYS
+            }
+            # Leave a marker so log/replay readers know data was stripped.
+            params = dict(params)  # ensure mutable
+            params["_transport_stripped"] = list(
+                k for k in IntentBus._TRANSPORT_STRIPPED_PARAM_KEYS
+                if k in intent.params
+            )
         return {
             "intent": intent.intent,
-            "params": intent.params,
+            "params": params,
             "urgency": intent.urgency,
             "context": intent.context,
             "ttl_seconds": intent.ttl_seconds,

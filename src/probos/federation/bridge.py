@@ -105,12 +105,30 @@ class FederationBridge:
         if not peers:
             return []
 
+        # BF-265: strip transport-unsafe params (e.g. vision_messages with
+        # base64 image bytes from AD-730). See mesh/intent.py _serialize_intent
+        # for the canonical pattern. Local receivers consume from the live
+        # IntentMessage; federation receivers don't have that path so they
+        # get the marker only.
+        _stripped_keys = ("vision_messages",)
+        if any(k in intent.params for k in _stripped_keys):
+            params_for_transport = {
+                k: v
+                for k, v in intent.params.items()
+                if k not in _stripped_keys
+            }
+            params_for_transport["_transport_stripped"] = [
+                k for k in _stripped_keys if k in intent.params
+            ]
+        else:
+            params_for_transport = intent.params
+
         msg = FederationMessage(
             type="intent_request",
             source_node=self._node_id,
             payload={
                 "intent": intent.intent,
-                "params": intent.params,
+                "params": params_for_transport,
                 "urgency": intent.urgency,
                 "context": intent.context,
                 "id": intent.id,
