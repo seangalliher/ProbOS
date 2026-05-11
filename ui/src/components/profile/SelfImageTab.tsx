@@ -39,6 +39,37 @@ interface AvatarTelemetry {
   degraded_reasons: string[];
 }
 
+// AD-722a-5: divergence history surface types.
+interface DivergenceResultPayload {
+  intent_emotion: string;
+  applied_fired_rules: string[];
+  match_score: number;
+  signed_divergence: number;
+  magnitude: number;
+}
+
+interface DivergenceHistoryEntryPayload {
+  timestamp: number;
+  result: DivergenceResultPayload;
+  note: string;  // server-rendered OUTPUT-subject note
+}
+
+interface DivergenceAggregatePayload {
+  window_size: number;
+  total: number;
+  diverged: number;
+  percentage: number;
+}
+
+interface DivergenceHistoryPayload {
+  agent_id: string;
+  history: DivergenceHistoryEntryPayload[];
+  aggregate: DivergenceAggregatePayload;
+}
+
+const HISTORY_POLL_MS = 5000;  // Lower frequency than telemetry -- history changes only on reply.
+const HISTORY_LIMIT = 20;
+
 const POLL_MS = 2000;
 
 interface SelfImageTabProps {
@@ -198,7 +229,130 @@ export function SelfImageTab({ agentId, isActive }: SelfImageTabProps) {
       {snap && snap.degraded_reasons.length > 0 && (
         <PanelDegraded reasons={snap.degraded_reasons} />
       )}
+
+      <PanelDivergenceHistory agentId={agentId} isActive={isActive} />
     </div>
+  );
+}
+
+function PanelDivergenceHistory({
+  agentId,
+  isActive,
+}: {
+  agentId: string;
+  isActive: boolean;
+}) {
+  // AD-722a-5: divergence history panel.
+  // Auto-hides on 503 (feature off). Renders empty-history fallback when
+  // history is empty but feature is on. No emoji -- stroke-only SVG.
+  // AD-727 rule #8: every rendered note is OUTPUT-subject. The server
+  // pre-renders the note string in `entry.note` so phrasing is server-
+  // authoritative and inherits the Python regex test gate.
+  const [payload, setPayload] = useState<DivergenceHistoryPayload | null>(null);
+  const [disabled, setDisabled] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isActive || !agentId) return;
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const fetchOnce = () => {
+      fetch(`/api/agent/${agentId}/avatar-telemetry/divergence-history?limit=${HISTORY_LIMIT}`)
+        .then((r) => {
+          if (r.status === 503) {
+            if (!cancelled) setDisabled(true);
+            return null;
+          }
+          if (!r.ok) return Promise.reject(new Error(`HTTP ${r.status}`));
+          return r.json();
+        })
+        .then((data) => {
+          if (!cancelled && data !== null) {
+            setPayload(data);
+            setDisabled(false);
+          }
+        })
+        .catch(() => {
+          // Tier-2: silent degrade. Don't surface fetch errors here --
+          // the main telemetry error banner already covers connectivity.
+        });
+    };
+
+    fetchOnce();
+    intervalId = setInterval(fetchOnce, HISTORY_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (intervalId !== null) clearInterval(intervalId);
+    };
+  }, [agentId, isActive]);
+
+  if (disabled) return null;
+  if (!payload) {
+    return (
+      <PanelHeader title="Divergence history">
+        <span data-testid="divergence-loading" style={{ color: DIM }}>
+          loading…
+        </span>
+      </PanelHeader>
+    );
+  }
+
+  const { history, aggregate } = payload;
+  // Defense in depth -- treat malformed payloads (missing aggregate / history)
+  // as not-yet-loaded rather than crashing the parent panel.
+  if (!aggregate || !Array.isArray(history)) {
+    return (
+      <PanelHeader title="Divergence history">
+        <span data-testid="divergence-loading" style={{ color: DIM }}>
+          loading…
+        </span>
+      </PanelHeader>
+    );
+  }
+  const pct = Math.round(aggregate.percentage * 100);
+
+  return (
+    <PanelHeader title="Divergence history">
+      <div data-testid="divergence-aggregate" style={{ marginBottom: 6 }}>
+        {aggregate.total === 0 ? (
+          <span style={{ color: DIM }}>no divergences recorded</span>
+        ) : (
+          <span>
+            Of the last <strong>{aggregate.total}</strong> replies,{' '}
+            <strong style={{ color: AMBER }}>{aggregate.diverged}</strong> had
+            non-zero intent-vs-output divergence (<strong>{pct}%</strong>).
+          </span>
+        )}
+      </div>
+      <div
+        data-testid="divergence-history-list"
+        style={{
+          maxHeight: 160,
+          overflowY: 'auto',
+          fontSize: 11,
+          borderTop: `1px solid ${DIM}`,
+          paddingTop: 4,
+        }}
+      >
+        {history.length === 0 ? (
+          <span style={{ color: DIM }}>(empty)</span>
+        ) : (
+          history.map((entry, i) => (
+            <div
+              key={`${entry.timestamp}-${i}`}
+              data-testid="divergence-history-entry"
+              style={{ marginBottom: 4 }}
+            >
+              <span style={{ color: DIM }}>
+                {new Date(entry.timestamp * 1000).toISOString().substring(11, 19)}{' '}
+              </span>
+              <span>{entry.note}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </PanelHeader>
   );
 }
 

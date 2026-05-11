@@ -3283,18 +3283,13 @@ waves:
     title: "Divergence history surface — AD-722a-5 (clinical-quality dashboard Ezri requested)"
     kind: main
     depends_on: ["146"]
-    dispatch_prompt: "prompts/WAVE-147-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-147-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-722a-5-divergence-history.md"
+      - "prompts/archive/ad-722a-5-divergence-history.md"
     builder_required: true
     issues_to_close: [614]
-    status: pending
-    notes: |
-      Surface 'percentage of last N therapeutic DMs where intent diverged
-      from presentation' as a Counselor-private metric in SelfImageTab.
-      Pre/post-AD-722a-7 success metric. Read-only with respect to trust
-      (AD-727 #1 inherits).
+    status: shipped
 
   - id: "148"
     title: "Sensorium dispatch — DM/WR consumer migration (AD-723a-1, deferred from Wave 144)"

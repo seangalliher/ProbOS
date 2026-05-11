@@ -1015,6 +1015,13 @@ class AvatarTelemetryConfig(BaseModel):
     divergence_positive_threshold: float = 0.5   # |magnitude| > this fires POSITIVE trust delta (output exceeded SAME direction; higher bar)
     divergence_negative_weight: float = 0.4   # Output diverged AWAY (asymmetric heavier)
     divergence_positive_weight: float = 0.1   # Output exceeded same direction (soft inform)
+    # AD-722a-5: in-memory ring buffer for the divergence history surface.
+    # Volatile (restart wipes). Per-agent. Size 0 disables history capture
+    # entirely (the surface degrades to an empty list + 0% aggregate).
+    divergence_history_size: int = 100
+    # AD-722a-5: window walked by the aggregate-metric calculation.
+    # Clamped at read time to min(window, len(history)).
+    divergence_aggregate_window: int = 50
 
     @field_validator("mouth_active_window_seconds")
     @classmethod
@@ -1050,6 +1057,15 @@ class AvatarTelemetryConfig(BaseModel):
         if not (0.0 <= v <= 1.0):
             raise ValueError(
                 f"divergence weight/threshold fields must be in [0.0, 1.0], got {v}"
+            )
+        return v
+
+    @field_validator("divergence_history_size", "divergence_aggregate_window")
+    @classmethod
+    def _bound_divergence_history_counts(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(
+                f"divergence_history_size / divergence_aggregate_window must be >= 0, got {v}"
             )
         return v
 

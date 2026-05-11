@@ -132,6 +132,44 @@ class DivergenceResult:
         }
 
 
+@dataclass(frozen=True)
+class DivergenceHistoryEntry:
+    """One historical divergence event with its capture timestamp.
+
+    AD-722a-5: wraps ``DivergenceResult`` with the wall-clock timestamp at
+    capture. Frozen -- captured value, not a live reference.
+
+    Phrasing rule (AD-727 #8): ``to_note()`` describes the OUTPUT, never
+    the agent. The forbidden-phrasing regex test at
+    ``tests/test_ad722a_divergence_detector.py:497`` continues to gate.
+    """
+
+    timestamp: float
+    result: DivergenceResult
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "timestamp": self.timestamp,
+            "result": self.result.to_dict(),
+            "note": self.to_note(),
+        }
+
+    def to_note(self) -> str:
+        """Render a one-line OUTPUT-subject note.
+
+        Subject of every sentence is the REPLY / OUTPUT, never the agent.
+        The phrasing mirrors ``_build_divergence_note_suffix()`` in
+        ``cognitive_agent.py`` so the AD-727 regex test covers both.
+        """
+        applied = ", ".join(self.result.applied_fired_rules) or "no_rules_fired"
+        return (
+            f"Reply intended as `{self.result.intent_emotion}` "
+            f"came out as `{applied}` "
+            f"(signed divergence: {self.result.signed_divergence:+.2f}, "
+            f"match score: {self.result.match_score:.2f})."
+        )
+
+
 def parse_intent_self_tag(text: str) -> str | None:
     """Extract the emotion name from an ``<intent emotion=NAME>`` tag.
 
@@ -350,6 +388,29 @@ def apply_divergence_check(
     div_results = getattr(runtime, "divergence_results", None)
     if div_results is not None:
         div_results[agent_id] = result
+
+    # AD-722a-5: append to per-agent ring buffer. Tier-2 -- buffer absence
+    # or zero-sized buffer is a silent no-op (history surface degrades to
+    # empty). The deque is allocated lazily on first append so memory is
+    # only spent on agents that actually produce divergences.
+    history_size = int(getattr(t_cfg, "divergence_history_size", 0))
+    if history_size > 0:
+        div_history = getattr(runtime, "divergence_history", None)
+        if div_history is not None:
+            import time as _time
+            from collections import deque as _deque
+            entry = DivergenceHistoryEntry(
+                timestamp=_time.time(),
+                result=result,
+            )
+            bucket = div_history.get(agent_id)
+            if bucket is None or bucket.maxlen != history_size:
+                # Lazy alloc OR resize on config change. Preserves existing
+                # entries up to the new cap.
+                old = list(bucket) if bucket is not None else []
+                bucket = _deque(old, maxlen=history_size)
+                div_history[agent_id] = bucket
+            bucket.append(entry)
 
     # Trust update -- asymmetric thresholds AND weights per AD-727 dampening.
     trust = getattr(runtime, "trust_network", None)

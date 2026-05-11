@@ -136,6 +136,7 @@ if TYPE_CHECKING:
     from probos.cognitive.agent_patcher import AgentPatcher
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
     from probos.avatars.divergence_detector import DivergenceResult  # AD-722a
+    from probos.avatars.divergence_detector import DivergenceHistoryEntry  # AD-722a-5
     from probos.cognitive.codebase_index import CodebaseIndex
     from probos.cognitive.correction_detector import CorrectionDetector
     from probos.cognitive.episodic import EpisodicMemory
@@ -437,6 +438,15 @@ class ProbOSRuntime:
         # cognitive_agent._build_avatar_self_observation for next-cycle
         # injection. Type: dict[agent_id, DivergenceResult].
         self.divergence_results: dict[str, "DivergenceResult"] = {}
+
+        # AD-722a-5: per-agent ring buffer of historical divergence entries.
+        # Volatile (cleared on restart). Populated by the same single call
+        # site as divergence_results (apply_divergence_check), gated by
+        # avatar_telemetry.divergence_history_size > 0. Consumed by the
+        # GET /avatar-telemetry/divergence-history endpoint.
+        # Type: dict[agent_id, collections.deque[DivergenceHistoryEntry]].
+        from collections import deque as _deque
+        self.divergence_history: dict[str, "_deque"] = {}
 
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []

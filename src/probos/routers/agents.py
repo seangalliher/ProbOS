@@ -804,6 +804,68 @@ async def agent_avatar_telemetry_stream(
             )
 
 
+@router.get("/{agent_id}/avatar-telemetry/divergence-history")
+async def agent_avatar_divergence_history(
+    agent_id: str,
+    limit: int = 20,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-722a-5: read-only divergence history for one agent.
+
+    Per-agent only (cross-crew is forward marker AD-722a-6 / #615).
+    Most-recent-first. Returns ``history`` (capped at min(limit, ring_size))
+    + ``aggregate`` (count + percentage walked over the configured window).
+
+    Feature gate: ``avatar_telemetry.divergence_detection`` -- 503 when off,
+    so the UI panel auto-hides without a separate capability probe.
+    """
+    _avatars_feature_check(runtime)
+
+    cfg = getattr(runtime, "config", None)
+    telemetry_cfg = getattr(cfg, "avatar_telemetry", None)
+    if telemetry_cfg is None or not telemetry_cfg.enabled:
+        raise HTTPException(status_code=503, detail="avatar_telemetry_disabled")
+    if not getattr(telemetry_cfg, "divergence_detection", False):
+        raise HTTPException(status_code=503, detail="divergence_detection_disabled")
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    # Read-side clamp on limit (defense in depth -- caller-provided integer).
+    if limit < 1:
+        limit = 1
+    history_map = getattr(runtime, "divergence_history", {}) or {}
+    bucket = history_map.get(agent_id)
+    entries = list(bucket) if bucket is not None else []
+
+    # Most-recent-first.
+    entries_reversed = list(reversed(entries))
+    history_payload = [e.to_dict() for e in entries_reversed[:limit]]
+
+    # Aggregate over the configured window (clamped to actual length).
+    window_size = int(getattr(
+        telemetry_cfg, "divergence_aggregate_window", 50,
+    ))
+    if window_size < 0:
+        window_size = 0
+    walked = entries_reversed[:window_size]
+    total = len(walked)
+    diverged = sum(1 for e in walked if e.result.magnitude > 0.0)
+    percentage = (diverged / total) if total > 0 else 0.0
+
+    return {
+        "agent_id": agent_id,
+        "history": history_payload,
+        "aggregate": {
+            "window_size": total,
+            "total": total,
+            "diverged": diverged,
+            "percentage": percentage,
+        },
+    }
+
+
 @router.post("/{agent_id}/chat")
 async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Send a direct message to a specific agent and get their response."""

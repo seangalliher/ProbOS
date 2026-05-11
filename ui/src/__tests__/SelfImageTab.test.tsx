@@ -60,12 +60,30 @@ const HAPPY_SNAPSHOT = {
 };
 
 function mockFetch(snapshot: unknown) {
-  return vi.fn(() =>
-    Promise.resolve({
+  // AD-722a-5: the new PanelDivergenceHistory fetches /divergence-history
+  // on mount. Return 503 for that URL so the panel auto-hides; the
+  // returned vi.fn still records the call (one extra on initial mount).
+  // Existing call-count assertions filter via ``mainTelemetryCalls``.
+  return vi.fn((url: string) => {
+    if (typeof url === 'string' && url.includes('/divergence-history')) {
+      return Promise.resolve({
+        ok: false,
+        status: 503,
+        json: () => Promise.resolve({ detail: 'divergence_detection_disabled' }),
+      } as Response);
+    }
+    return Promise.resolve({
       ok: true,
       json: () => Promise.resolve(snapshot),
-    } as Response),
-  );
+    } as Response);
+  });
+}
+
+// AD-722a-5: count only main-telemetry fetches (filters divergence-history).
+function mainTelemetryCalls(m: ReturnType<typeof vi.fn>): number {
+  return m.mock.calls.filter(
+    (c) => !(typeof c[0] === 'string' && c[0].includes('/divergence-history')),
+  ).length;
 }
 
 async function flushMicrotasks() {
@@ -101,12 +119,12 @@ describe('SelfImageTab (AD-722)', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<SelfImageTab agentId="agent-007" isActive={true} />);
     await flushMicrotasks();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mainTelemetryCalls(fetchMock)).toBe(1);
     await act(async () => {
       vi.advanceTimersByTime(2000);
       await Promise.resolve();
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mainTelemetryCalls(fetchMock)).toBe(2);
   });
 
   it('stops polling when isActive flips to false', async () => {
@@ -116,13 +134,13 @@ describe('SelfImageTab (AD-722)', () => {
       <SelfImageTab agentId="agent-007" isActive={true} />,
     );
     await flushMicrotasks();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mainTelemetryCalls(fetchMock)).toBe(1);
     rerender(<SelfImageTab agentId="agent-007" isActive={false} />);
     await act(async () => {
       vi.advanceTimersByTime(5000);
       await Promise.resolve();
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mainTelemetryCalls(fetchMock)).toBe(1);
   });
 
   it('renders degraded-reasons strip when degraded_reasons present', async () => {
@@ -181,7 +199,7 @@ describe('SelfImageTab (AD-722)', () => {
         await Promise.resolve();
       });
       expect(screen.getByTestId('panel-header-current-signals')).toBeTruthy();
-      expect(fetchMock).toHaveBeenCalledTimes(0);
+      expect(mainTelemetryCalls(fetchMock)).toBe(0);
     });
 
     it('WS open suppresses poll path', async () => {
@@ -200,7 +218,7 @@ describe('SelfImageTab (AD-722)', () => {
         vi.advanceTimersByTime(5000);
         await Promise.resolve();
       });
-      expect(fetchMock).toHaveBeenCalledTimes(0);
+      expect(mainTelemetryCalls(fetchMock)).toBe(0);
     });
 
     it('WS error before open falls back to poll', async () => {
@@ -215,12 +233,12 @@ describe('SelfImageTab (AD-722)', () => {
         await Promise.resolve();
       });
       // Initial poll fired by startPollFallback.
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(mainTelemetryCalls(fetchMock)).toBe(1);
       await act(async () => {
         vi.advanceTimersByTime(2000);
         await Promise.resolve();
       });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(mainTelemetryCalls(fetchMock)).toBe(2);
     });
 
     it('WS close after open falls back to poll', async () => {
@@ -235,7 +253,7 @@ describe('SelfImageTab (AD-722)', () => {
         ws.simulateMessage(HAPPY_SNAPSHOT);
         await Promise.resolve();
       });
-      expect(fetchMock).toHaveBeenCalledTimes(0);
+      expect(mainTelemetryCalls(fetchMock)).toBe(0);
       await act(async () => {
         ws.simulateClose();
         await Promise.resolve();
