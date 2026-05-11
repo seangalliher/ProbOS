@@ -3311,19 +3311,14 @@ waves:
     title: "WebSocket push completion — AD-722b-2 agent-side consumer + AD-722b-6 reconnect backoff"
     kind: main
     depends_on: ["148"]
-    dispatch_prompt: "prompts/WAVE-149-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-149-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-722b-2-agent-side-consumer.md"
-      - "prompts/ad-722b-6-reconnect-backoff.md"
+      - "prompts/archive/ad-722b-2-agent-side-consumer.md"
+      - "prompts/archive/ad-722b-6-reconnect-backoff.md"
     builder_required: true
     issues_to_close: [599, 603]
-    status: pending
-    notes: |
-      Closes the AD-722b WebSocket loop. AD-722b-2 wires the agent to
-      consume push events directly into _last_self_avatar_snap. AD-722b-6
-      adds capped exponential backoff on disconnect. Makes AD-722f adaptive
-      sampling stable across connection churn.
+    status: shipped
 
   - id: "150"
     title: "DM sanity gate — AD-724 (migrate BF-120/BF-119/AD-572 regexes into named, testable steps)"

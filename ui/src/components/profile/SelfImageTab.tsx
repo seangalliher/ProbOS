@@ -88,6 +88,10 @@ export function SelfImageTab({ agentId, isActive }: SelfImageTabProps) {
     let ws: WebSocket | null = null;
     let wsOpened = false;
     let wsTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    // AD-722b-6: reconnect state machine — capped exponential backoff.
+    let reconnectAttempt = 0;
+    let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    const MAX_RECONNECT_ATTEMPTS = 10;
 
     const fetchOnce = () => {
       fetch(`/api/agent/${agentId}/avatar-telemetry`)
@@ -120,66 +124,95 @@ export function SelfImageTab({ agentId, isActive }: SelfImageTabProps) {
 
     // AD-722b: open WS first; fall back to poll on error/close-before-open
     // or 5 s open-timeout.
-    try {
-      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProto}//${window.location.host}/api/agent/${agentId}/avatar-telemetry-stream`;
-      ws = new WebSocket(wsUrl);
+    // AD-722b-6: hoisted into a named inner function so the close-handler
+    // can re-invoke it for reconnect attempts. Closure-scoped state (`ws`,
+    // `wsOpened`, `wsTimeoutId`, `reconnectAttempt`, `reconnectTimeoutId`)
+    // is mutated, not redeclared, on each call.
+    const openWebSocket = () => {
+      wsOpened = false;
+      try {
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProto}//${window.location.host}/api/agent/${agentId}/avatar-telemetry-stream`;
+        ws = new WebSocket(wsUrl);
 
-      wsTimeoutId = setTimeout(() => {
-        if (!wsOpened && !cancelled) {
-          // Open never arrived — fall back to polling.
+        wsTimeoutId = setTimeout(() => {
+          if (!wsOpened && !cancelled) {
+            // Open never arrived — fall back to polling.
+            startPollFallback();
+          }
+        }, 5000);
+
+        ws.onopen = () => {
+          wsOpened = true;
+          if (wsTimeoutId !== null) {
+            clearTimeout(wsTimeoutId);
+            wsTimeoutId = null;
+          }
+          // AD-722b-6: successful reconnect resets the attempt counter.
+          reconnectAttempt = 0;
+          // Suppress polling — WS is the live channel now.
+          stopPollFallback();
+        };
+
+        ws.onmessage = (ev) => {
+          if (cancelled) return;
+          try {
+            const data = JSON.parse(ev.data as string);
+            if (data && data.type === 'ping') return;
+            if (data && data.type === 'error') {
+              setError(String(data.reason ?? 'ws_error'));
+              return;
+            }
+            setSnap(data);
+            setError(null);
+          } catch {
+            // Ignore malformed frames.
+          }
+        };
+
+        ws.onerror = () => {
+          if (!wsOpened && !cancelled) {
+            startPollFallback();
+          }
+        };
+
+        ws.onclose = () => {
+          if (cancelled) return;
+          // AD-722b-6: poll fallback covers the gap while we attempt reconnect.
           startPollFallback();
-        }
-      }, 5000);
-
-      ws.onopen = () => {
-        wsOpened = true;
-        if (wsTimeoutId !== null) {
-          clearTimeout(wsTimeoutId);
-          wsTimeoutId = null;
-        }
-        // Suppress polling — WS is the live channel now.
-        stopPollFallback();
-      };
-
-      ws.onmessage = (ev) => {
-        if (cancelled) return;
-        try {
-          const data = JSON.parse(ev.data as string);
-          if (data && data.type === 'ping') return;
-          if (data && data.type === 'error') {
-            setError(String(data.reason ?? 'ws_error'));
+          if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+            // Give up; remain on poll fallback. Visible via existing UI
+            // disabled-state pattern from AD-722a-5.
+            // eslint-disable-next-line no-console
+            console.warn(
+              `AD-722b-6: WS reconnect exhausted after ${MAX_RECONNECT_ATTEMPTS} attempts; staying on poll fallback`
+            );
             return;
           }
-          setSnap(data);
-          setError(null);
-        } catch {
-          // Ignore malformed frames.
-        }
-      };
-
-      ws.onerror = () => {
-        if (!wsOpened && !cancelled) {
-          startPollFallback();
-        }
-      };
-
-      ws.onclose = () => {
-        if (cancelled) return;
-        // Whether or not we had opened, fall back to poll. Reconnect with
-        // backoff is forward marker AD-722b-6.
+          const delayMs = Math.min(30_000, 1000 * 2 ** reconnectAttempt);
+          reconnectAttempt += 1;
+          reconnectTimeoutId = setTimeout(() => {
+            reconnectTimeoutId = null;
+            if (!cancelled) openWebSocket();
+          }, delayMs);
+        };
+      } catch {
+        // Constructor threw (e.g. WebSocket undefined in jsdom). Fall back.
         startPollFallback();
-      };
-    } catch {
-      // Constructor threw (e.g. WebSocket undefined in jsdom). Fall back.
-      startPollFallback();
-    }
+      }
+    };
+
+    openWebSocket();
 
     return () => {
       cancelled = true;
       if (wsTimeoutId !== null) {
         clearTimeout(wsTimeoutId);
         wsTimeoutId = null;
+      }
+      if (reconnectTimeoutId !== null) {
+        clearTimeout(reconnectTimeoutId);
+        reconnectTimeoutId = null;
       }
       if (ws !== null) {
         try { ws.close(); } catch { /* ignore */ }

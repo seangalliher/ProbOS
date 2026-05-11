@@ -701,8 +701,11 @@ async def agent_avatar_telemetry_stream(
         from probos.avatars.telemetry import build_telemetry_snapshot
 
         # Send an initial snapshot immediately on connect (UI populates fast).
+        # AD-722b-2: also write to agent._last_self_avatar_snap so the agent's
+        # own sensorium (INTEROCEPTION) stays fresh without re-polling.
         try:
             initial = await build_telemetry_snapshot(agent_id, runtime)
+            agent._last_self_avatar_snap = initial
             await websocket.send_json(initial.to_dict())
         except Exception:
             logger.warning(
@@ -729,7 +732,9 @@ async def agent_avatar_telemetry_stream(
                         if not t.done():
                             t.cancel()
                 # Build + send.
+                # AD-722b-2: same side-effect as initial — keep agent cache fresh.
                 snap = await build_telemetry_snapshot(agent_id, runtime)
+                agent._last_self_avatar_snap = snap
                 await websocket.send_json(snap.to_dict())
 
         async def _receive_loop() -> None:

@@ -262,4 +262,138 @@ describe('SelfImageTab (AD-722)', () => {
       expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
   });
+
+  // ── AD-722b-6: WS reconnect with capped exponential backoff ──────────
+
+  describe('AD-722b-6 reconnect with backoff', () => {
+    beforeEach(() => {
+      MockWebSocket.instances = [];
+    });
+
+    it('schedules reconnect at 1s after first close', async () => {
+      const fetchMock = mockFetch(HAPPY_SNAPSHOT);
+      vi.stubGlobal('fetch', fetchMock);
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      render(<SelfImageTab agentId="agent-007" isActive={true} />);
+      await flushMicrotasks();
+      expect(MockWebSocket.instances.length).toBe(1);
+      const ws = MockWebSocket.instances[0];
+      await act(async () => {
+        ws.simulateOpen();
+        ws.simulateClose();
+        await Promise.resolve();
+      });
+      // Just before 1 s — no reconnect yet.
+      await act(async () => {
+        vi.advanceTimersByTime(999);
+        await Promise.resolve();
+      });
+      expect(MockWebSocket.instances.length).toBe(1);
+      // Cross 1 s — reconnect fires.
+      await act(async () => {
+        vi.advanceTimersByTime(2);
+        await Promise.resolve();
+      });
+      expect(MockWebSocket.instances.length).toBe(2);
+    });
+
+    it('uses exponential schedule 1s/2s/4s/8s', async () => {
+      const fetchMock = mockFetch(HAPPY_SNAPSHOT);
+      vi.stubGlobal('fetch', fetchMock);
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      render(<SelfImageTab agentId="agent-007" isActive={true} />);
+      await flushMicrotasks();
+      // initial connect
+      expect(MockWebSocket.instances.length).toBe(1);
+      const expectedDelays = [1000, 2000, 4000, 8000];
+      for (let i = 0; i < expectedDelays.length; i++) {
+        const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+        await act(async () => {
+          ws.simulateClose();
+          await Promise.resolve();
+        });
+        // Just below the expected delay — no new connection.
+        await act(async () => {
+          vi.advanceTimersByTime(expectedDelays[i] - 1);
+          await Promise.resolve();
+        });
+        expect(MockWebSocket.instances.length).toBe(i + 1);
+        // Cross the threshold — reconnect fires.
+        await act(async () => {
+          vi.advanceTimersByTime(2);
+          await Promise.resolve();
+        });
+        expect(MockWebSocket.instances.length).toBe(i + 2);
+      }
+    });
+
+    it('stops reconnecting after 10 failed attempts', async () => {
+      const fetchMock = mockFetch(HAPPY_SNAPSHOT);
+      vi.stubGlobal('fetch', fetchMock);
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      render(<SelfImageTab agentId="agent-007" isActive={true} />);
+      await flushMicrotasks();
+      // Cycle: close -> advance 30s -> reconnect. 10 reconnect attempts max.
+      for (let i = 0; i < 11; i++) {
+        const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+        await act(async () => {
+          ws.simulateClose();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(30_000);
+          await Promise.resolve();
+        });
+      }
+      // 1 initial + 10 reconnects = 11. 11th close exhausts; no 12th connect.
+      expect(MockWebSocket.instances.length).toBe(11);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('AD-722b-6: WS reconnect exhausted'),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('resets attempt counter on successful reconnect', async () => {
+      const fetchMock = mockFetch(HAPPY_SNAPSHOT);
+      vi.stubGlobal('fetch', fetchMock);
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      render(<SelfImageTab agentId="agent-007" isActive={true} />);
+      await flushMicrotasks();
+      // Cycle 1: close at attempt=0 -> reconnect after 1 s.
+      const ws1 = MockWebSocket.instances[0];
+      await act(async () => {
+        ws1.simulateClose();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1001);
+        await Promise.resolve();
+      });
+      expect(MockWebSocket.instances.length).toBe(2);
+      // Successful open resets the counter.
+      const ws2 = MockWebSocket.instances[1];
+      await act(async () => {
+        ws2.simulateOpen();
+        await Promise.resolve();
+      });
+      // Cycle 2: close again; reconnect should be 1 s (not 2 s) because reset.
+      await act(async () => {
+        ws2.simulateClose();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(999);
+        await Promise.resolve();
+      });
+      // Counter was reset → schedule is 1 s, not 2 s. At 999 ms no new conn.
+      expect(MockWebSocket.instances.length).toBe(2);
+      await act(async () => {
+        vi.advanceTimersByTime(2);
+        await Promise.resolve();
+      });
+      expect(MockWebSocket.instances.length).toBe(3);
+    });
+  });
 });

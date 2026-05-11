@@ -483,3 +483,66 @@ async def test_chain_enter_exit_notify_event_bus():
     sm.exit_chain(agent_id)
     bus.notify(agent_id)
     assert event.is_set()
+
+
+# ── G. AD-722b-2: agent-side consumption of WS push ──────────────────
+
+
+def test_ad722b_2_ws_push_populates_agent_self_snap():
+    """AD-722b-2: agent's _last_self_avatar_snap is written on initial WS send.
+
+    Closes the stale-between-DMs window: any path that re-reads the cached
+    snapshot (INTEROCEPTION prompt injection, divergence_detector modulation
+    lookup) sees a fresh value the moment the WS subscriber connects, even
+    without re-entering ``observe_self_avatar()``.
+    """
+    runtime = _ws_endpoint_runtime()
+    agent = runtime.registry.get("agent-007")
+    agent._last_self_avatar_snap = None  # explicit stale baseline
+
+    client = TestClient(_make_app(runtime))
+    with client.websocket_connect(
+        "/api/agent/agent-007/avatar-telemetry-stream"
+    ) as ws:
+        ws.receive_json()  # consume initial snapshot
+        snap = agent._last_self_avatar_snap
+        assert snap is not None
+        assert snap.agent_id == "agent-007"
+
+
+def test_ad722b_2_ws_push_refreshes_agent_self_snap_on_tick():
+    """AD-722b-2: subsequent ticks overwrite the cached snapshot."""
+    runtime = _ws_endpoint_runtime()
+    agent = runtime.registry.get("agent-007")
+
+    client = TestClient(_make_app(runtime))
+    with client.websocket_connect(
+        "/api/agent/agent-007/avatar-telemetry-stream"
+    ) as ws:
+        ws.receive_json()
+        first = agent._last_self_avatar_snap
+        assert first is not None
+        # Trigger an event-driven publish via the event bus.
+        runtime.avatar_event_bus.notify("agent-007")
+        ws.receive_json()
+        second = agent._last_self_avatar_snap
+        # Same agent, but a distinct object instance (new build).
+        assert second is not first
+        assert second.agent_id == "agent-007"
+
+
+def test_ad722b_2_http_get_does_not_mutate_agent_self_snap():
+    """AD-722b-2: idempotent-read invariant — HTTP GET must not write the cache.
+
+    The cache-write side-effect lives in the WS handler only. The HTTP GET
+    endpoint at ``/api/agent/{id}/avatar-telemetry`` must remain a pure read.
+    """
+    runtime = _ws_endpoint_runtime()
+    agent = runtime.registry.get("agent-007")
+    agent._last_self_avatar_snap = None
+
+    client = TestClient(_make_app(runtime))
+    resp = client.get("/api/agent/agent-007/avatar-telemetry")
+    assert resp.status_code == 200
+    # HTTP path remains side-effect-free.
+    assert agent._last_self_avatar_snap is None
