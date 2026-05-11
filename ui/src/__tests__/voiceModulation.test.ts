@@ -201,9 +201,9 @@ describe('AD-722a-7 applyEmotionalModulation intent layering', () => {
   it('intent=neutral leaves numeric output unchanged', () => {
     const ops = applyEmotionalModulation(baseline(), signals());
     const withNeutral = applyEmotionalModulation(baseline(), signals(), 'neutral');
-    expect(withNeutral.pitch).toBeCloseTo(ops.pitch, 9);
-    expect(withNeutral.rate).toBeCloseTo(ops.rate, 9);
-    expect(withNeutral.volume).toBeCloseTo(ops.volume, 9);
+    expect(withNeutral.pitch).toBeCloseTo(ops.pitch!, 9);
+    expect(withNeutral.rate).toBeCloseTo(ops.rate!, 9);
+    expect(withNeutral.volume).toBeCloseTo(ops.volume!, 9);
   });
 
   it('intent layers multiplicatively on operational rules', () => {
