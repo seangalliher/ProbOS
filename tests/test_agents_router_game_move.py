@@ -57,6 +57,11 @@ def _make_runtime(
     # Episodic memory — disable
     runtime.episodic_memory = None
 
+    # AD-724: tests using MagicMock-based runtime must opt out of the
+    # sanity gate or its mocked methods will short-circuit the migration.
+    from probos.cognitive.dm_sanity_gate import DmSanityGate
+    runtime.dm_sanity_gate = DmSanityGate()
+
     return runtime
 
 

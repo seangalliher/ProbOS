@@ -3324,18 +3324,13 @@ waves:
     title: "DM sanity gate — AD-724 (migrate BF-120/BF-119/AD-572 regexes into named, testable steps)"
     kind: main
     depends_on: ["149"]
-    dispatch_prompt: "prompts/WAVE-150-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-150-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-724-dm-sanity-gate.md"
+      - "prompts/archive/ad-724-dm-sanity-gate.md"
     builder_required: true
     issues_to_close: [582]
-    status: pending
-    notes: |
-      Lightweight sub-LLM checks (length, repetition, orphaned tag,
-      capability-gap regex). One controlled retry. Tier-2 log-and-degrade
-      on second rejection. BF-120 markdown-strip, BF-119 challenge-parse,
-      AD-572 move-parse migrate INTO the gate as named steps.
+    status: shipped
 
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"

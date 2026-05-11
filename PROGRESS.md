@@ -1,14 +1,14 @@
 # ProbOS Progress
 
-**Status (2026-05-10).** Open OSS issues: 11 (3 from Wave 138 — AD-721b-1/-2/-3; 5 from Wave 143 — AD-722a-1/-2/-3/-4/-6 forward markers (AD-722a-5 closed Wave 147); 1 from Wave 144 — AD-723a-1 #617 DM/WR consumer-side sensorium dispatch migration; 3 new from Wave 145 — AD-721d-2 #621 Counselor-mediated revision, AD-721d-3 #622 visual preview requires AD-721i, AD-721d-4 #623 proposal-history persistence). Most recent shipped wave: 147 (AD-722a-5 divergence history surface for SelfImageTab — clinical-quality longitudinal view Counselor Ezri requested 2026-05-10; in-memory ring buffer + new endpoint + UI panel; 3 follow-up markers AD-722a-5-a/-b/-c filed at retrospective).
+**Status (2026-05-11).** Open OSS issues: 10 (#582 closed Wave 150; 3 from Wave 138 — AD-721b-1/-2/-3; 5 from Wave 143 — AD-722a-1/-2/-3/-4/-6 forward markers (AD-722a-5 closed Wave 147); 1 from Wave 144 — AD-723a-1 #617 DM/WR consumer-side sensorium dispatch migration; 3 from Wave 145 — AD-721d-2 #621 Counselor-mediated revision, AD-721d-3 #622 visual preview requires AD-721i, AD-721d-4 #623 proposal-history persistence). Most recent shipped wave: 150 (AD-724 DM sanity gate — behavior-preserving migration of BF-120/BF-119/AD-572 regexes into `DmSanityGate` + 3 new log-only checks; 5 forward markers AD-724-1/-2/-3/-4/-5 filed).
 AD-697 + AD-698 establish the commercial-overlay seam
 (`pip install -e ../<commercial-package>` → overlay active; uninstall →
 back to OSS).
 
 **Authoritative state.**
-- `prompts/wave-plan.yaml` — wave roster (current wave: 147 done; next slot is 148).
+- `prompts/wave-plan.yaml` — wave roster (current wave: 150 done; next slot is 151).
 - `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-729).
-- `tests/` — 13254 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 582 vitest; gate runs `-n 8 --dist=loadfile`.
+- `tests/` — 13268 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 582 vitest; gate runs `-n 8 --dist=loadfile`.
 
 **Recent eras (archived):**
 - [Era I — Genesis](progress-era-1-genesis.md)

@@ -937,19 +937,22 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     else:
         response_text = "(no response)"
 
-    # BF-120: Strip markdown formatting that wraps structured tags.
-    # LLMs sometimes emit **[COMMAND ...]** or `[COMMAND ...]` which
-    # prevents regex patterns from matching.
-    if response_text:
-        response_text = re.sub(r'[`*]{1,3}\[', '[', response_text)
-        response_text = re.sub(r'\][`*]{1,3}', ']', response_text)
+    # AD-724: DM sanity gate (migrates BF-120 markdown strip + adds 3 log-only checks).
+    # The gate NEVER blocks; warnings are logged and the cleaned text is returned.
+    sanity_gate = getattr(runtime, "dm_sanity_gate", None)
+    if response_text and sanity_gate is not None:
+        sanity_result = sanity_gate.process(agent_id, response_text)
+        response_text = sanity_result.cleaned_text
 
-    # BF-119: Parse [CHALLENGE @callsign game_type] from DM response
+    # BF-119 (migrated to AD-724): Parse [CHALLENGE @callsign game_type] from DM response.
     if response_text and hasattr(runtime, 'recreation_service') and runtime.recreation_service:
-        challenge_match = re.search(r'\[CHALLENGE\s+@(\w+)\s+(\w+)\]', response_text)
-        if challenge_match:
-            target_callsign = challenge_match.group(1)
-            game_type = challenge_match.group(2)
+        challenge_parsed = (
+            sanity_gate.extract_challenge(response_text)
+            if sanity_gate is not None
+            else None
+        )
+        if challenge_parsed is not None:
+            target_callsign, game_type = challenge_parsed
             try:
                 rec_svc = runtime.recreation_service
                 # Resolve target callsign
@@ -999,15 +1002,21 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                     logger.debug("BF-119: Target callsign %s not found", target_callsign)
             except Exception as e:
                 logger.warning("BF-119: DM game challenge failed for %s: %s", callsign, e)
-            # Strip [CHALLENGE] tag from response text shown to Captain
-            response_text = re.sub(r'\[CHALLENGE\s+@\w+\s+\w+\]', '', response_text).strip()
+            # AD-724: Strip [CHALLENGE] tag from Captain-visible text.
+            if sanity_gate is not None:
+                response_text = sanity_gate.strip_challenge(response_text)
+            else:
+                response_text = re.sub(r'\[CHALLENGE\s+@\w+\s+\w+\]', '', response_text).strip()
 
-    # AD-572: Parse [MOVE pos] from DM response and execute against RecreationService
+    # AD-572 (migrated to AD-724): Parse [MOVE pos] and execute against RecreationService.
     game_move_result = None
     if response_text and hasattr(runtime, 'recreation_service') and runtime.recreation_service:
-        move_match = re.search(r'\[MOVE\s+(\S+)\]', response_text)
-        if move_match:
-            position = move_match.group(1)
+        position = (
+            sanity_gate.extract_move(response_text)
+            if sanity_gate is not None
+            else None
+        )
+        if position is not None:
             try:
                 rec_svc = runtime.recreation_service
                 game = rec_svc.get_game_by_player(callsign)
@@ -1037,8 +1046,11 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
             except Exception as e:
                 logger.warning("AD-572: DM game move failed for %s: %s", callsign, e)
 
-            # Strip [MOVE] tag from response text shown to Captain
-            response_text = re.sub(r'\[MOVE\s+\S+\]', '', response_text).strip()
+            # AD-724: Strip [MOVE] tag from Captain-visible text.
+            if sanity_gate is not None:
+                response_text = sanity_gate.strip_move(response_text)
+            else:
+                response_text = re.sub(r'\[MOVE\s+\S+\]', '', response_text).strip()
 
     # AD-430b: Store HXI 1:1 interaction as episodic memory
     if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:

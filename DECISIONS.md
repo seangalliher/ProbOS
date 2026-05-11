@@ -1746,6 +1746,8 @@ The AD-720a dispatch's "zero new Python deps" rule was an aspirational goal that
 
 **Why.** DM one-shot skips chain's evaluate phase. Whatever the LLM emits ships to the Captain. Every `[CHALLENGE]` / `[MOVE]` / `**[COMMAND]**` regex in the chat handler is a post-hoc workaround for a failure mode chain would catch upstream. The gate gives the System-1 path a quality floor without paying chain's 3× LLM round-trip cost.
 
+**Implementation (Wave 150, 2026-05-11).** Shipped as `src/probos/cognitive/dm_sanity_gate.py` exposing `DmSanityGate`, `DmSanityGateConfig` (default-ON, `length_floor=5`, `repetition_prefix_chars=100`), and `DmSanityResult`. Mounted at `RuntimeOS.dm_sanity_gate` (constructed alongside `recreation_service` in `runtime.py`). Config registered on `SystemConfig` as top-level `dm_sanity_gate` field. Router `agent_chat` migrated to `runtime.dm_sanity_gate.process(...)` plus `extract_challenge` / `strip_challenge` / `extract_move` / `strip_move` — behavior-preserving for BF-120 / BF-119 / AD-572. Three new Tier-2 log-and-degrade checks added: `check_length_floor`, `check_repetition` (per-agent in-memory cache, lost on restart), `check_orphaned_tags`. 14 new tests in `tests/test_ad724_dm_sanity_gate.py`. Closes [#582](https://github.com/seangalliher/ProbOS/issues/582). Five forward markers filed: AD-724-1 (retry on rejection), AD-724-2 (repetition similarity beyond exact prefix), AD-724-3 (capability-gap regex integration), AD-724-4 (multi-turn coherence), AD-724-5 (gate for WR/chain paths).
+
 ### AD-725 — Targeted sub-intent dispatch on the DM one-shot path
 
 **Date:** 2026-05-10. **Status:** Forward marker, filed as [#583](https://github.com/seangalliher/ProbOS/issues/583).

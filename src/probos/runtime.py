@@ -563,6 +563,12 @@ class ProbOSRuntime:
         # --- Recreation Service (AD-526a) ---
         self.recreation_service: Any = None
 
+        # --- DM Sanity Gate (AD-724) ---
+        from probos.cognitive.dm_sanity_gate import DmSanityGate
+        self.dm_sanity_gate: DmSanityGate = DmSanityGate(
+            self.config.dm_sanity_gate
+        )
+
         # --- Recreation Preference Tracker (AD-526d) ---
         from probos.recreation.preferences import GamePreferenceTracker
         self.recreation_preference_tracker: GamePreferenceTracker = (

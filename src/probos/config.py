@@ -3183,6 +3183,19 @@ class ExtensionsConfig(BaseModel):
     extensions_dir: str = "src/probos/extensions"
 
 
+class DmSanityGateConfig(BaseModel):  # AD-724
+    """Configuration for the DM one-shot sanity gate.
+
+    Default-ON: this config gates three previously-unconditional regex
+    cleanups (BF-120, BF-119, AD-572) plus three new log-only checks.
+    Disabling it preserves only the BF-120 markdown strip.
+    """
+
+    enabled: bool = True
+    length_floor: int = 5
+    repetition_prefix_chars: int = 100
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -3266,6 +3279,7 @@ class SystemConfig(BaseModel):
     browser_tool: BrowserToolConfig = Field(default_factory=BrowserToolConfig)  # AD-706
     avatars: AvatarsConfig = Field(default_factory=AvatarsConfig)  # AD-721
     avatar_telemetry: AvatarTelemetryConfig = Field(default_factory=AvatarTelemetryConfig)  # AD-722
+    dm_sanity_gate: DmSanityGateConfig = Field(default_factory=DmSanityGateConfig)  # AD-724
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562
