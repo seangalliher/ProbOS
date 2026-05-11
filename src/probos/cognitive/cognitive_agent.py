@@ -416,6 +416,21 @@ class CognitiveAgent(BaseAgent):
         ),
     }
 
+    # AD-723a-1 (Wave 148): keys from the DM_ONESHOT dispatch result that
+    # render at the post-working-memory / pre-episodic injection zone
+    # (where AD-722 currently injects). v1 limits migration to entries
+    # whose registered method returns a self-wrapped block — i.e., output
+    # that needs no DM-side framing markers. Other DM-tagged entries
+    # (_temporal_context, _working_memory_context, _self_recognition_cue)
+    # have hand-rolled DM-side wrappers that differ from registered
+    # output; they migrate when AD-723a-3 lands position + wrapper
+    # metadata on SensoriumEntry. When this tuple grows to 3+ keys,
+    # AD-723a-3 becomes the forcing function.
+    _DM_SELF_WRAPPED_KEYS: ClassVar[tuple[str, ...]] = (
+        "_avatar_self_observation",
+        "_intent_self_tag",
+    )
+
     def __init__(self, **kwargs: Any) -> None:
         # Extract instructions from kwargs if provided (overrides class attr)
         if "instructions" in kwargs:
@@ -5799,24 +5814,28 @@ class CognitiveAgent(BaseAgent):
                 parts.append(wm_context)
                 parts.append("")
 
-            # AD-722 BF (2026-05-10): avatar self-observation on the DM one-shot path.
-            # The chain path picks this up via _build_cognitive_baseline, but DMs
-            # bypass cognitive_state entirely and assemble inline here. Method is
-            # feature-gated by avatar_telemetry.inject_into_agent_context and
-            # returns "" when the cached snapshot is missing — safe to call.
+            # AD-723a-1 (Wave 148): dispatch self-wrapped DM_ONESHOT sensorium
+            # entries. Replaces the prior hand-rolled AD-722 + AD-722a manual
+            # call site. v1 renders only keys in _DM_SELF_WRAPPED_KEYS at this
+            # zone (post-working-memory, pre-episodic); other DM-tagged entries
+            # stay inline pending AD-723a-3 (position + wrapper metadata).
+            # The dispatcher iterates SENSORIUM_REGISTRY entries whose paths
+            # include DM_ONESHOT, awaiting async-registered methods and
+            # tolerating per-method failure (Tier-2 degrade inside the
+            # dispatcher itself).
             try:
-                _avatar_block = self._build_avatar_self_observation(observation)
-                if _avatar_block:
-                    parts.append(_avatar_block)
-                    parts.append("")
-                # AD-722a: append the self-tag instruction (default OFF).
-                _intent_tag_line = self._build_intent_self_tag_instruction()
-                if _intent_tag_line:
-                    parts.append(_intent_tag_line)
-                    parts.append("")
+                _dm_sensorium = await self._dispatch_sensorium_async(
+                    SensoriumPath.DM_ONESHOT, observation,
+                )
+                for _key in self._DM_SELF_WRAPPED_KEYS:
+                    _block = _dm_sensorium.get(_key)
+                    if _block:
+                        parts.append(_block)
+                        parts.append("")
             except Exception:
                 logger.debug(
-                    "AD-722: avatar self-observation injection in DM path failed",
+                    "AD-723a-1: DM sensorium dispatch failed; "
+                    "degrading (Tier-2: skipping injection zone).",
                     exc_info=True,
                 )
 

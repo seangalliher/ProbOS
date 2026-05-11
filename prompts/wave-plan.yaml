@@ -3295,18 +3295,17 @@ waves:
     title: "Sensorium dispatch — DM/WR consumer migration (AD-723a-1, deferred from Wave 144)"
     kind: main
     depends_on: ["147"]
-    dispatch_prompt: "prompts/WAVE-148-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-148-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-723a-1-consumer-migration.md"
+      - "prompts/archive/ad-723a-1-consumer-migration.md"
     builder_required: true
     issues_to_close: [617]
-    status: pending
+    status: shipped
     notes: |
-      Highest-risk wave in this batch. Wave-10 entanglement rule may apply
-      again — partial migration with AD-723a-2 forward marker is acceptable
-      if entanglement exceeds spec assumptions. Goal: every future sensorium
-      AD registers once with a paths tuple instead of dual-wiring.
+      DM branch migrated. WR branch deferred to AD-723a-2 (Wave-10 entanglement
+      rule: 15 fragments, 0 self-wrapped entries). AD-723a-3 forward marker
+      filed for position + wrapper metadata on SensoriumEntry.
 
   - id: "149"
     title: "WebSocket push completion — AD-722b-2 agent-side consumer + AD-722b-6 reconnect backoff"
