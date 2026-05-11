@@ -3208,14 +3208,15 @@ waves:
     title: "Avatar self-image cleanup — AD-722-1 modulation manifest + AD-722f adaptive sampling"
     kind: main
     depends_on: ["140"]
-    dispatch_prompt: "prompts/WAVE-141-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-141-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-722-1-modulation-manifest.md"
-      - "prompts/ad-722f-adaptive-sampling.md"
+      - "prompts/archive/ad-722-1-modulation-manifest.md"
+      - "prompts/archive/ad-722f-adaptive-sampling.md"
     builder_required: true
     issues_to_close: [572, 580]
-    status: pending
+    status: shipped
+    shipped_commit: "6666b28"
 
   - id: "142"
     title: "Avatar push channel — AD-722b WebSocket telemetry push"
@@ -3235,25 +3236,130 @@ waves:
     title: "Intent-vs-presentation divergence — AD-722a sub-LLM detector + trust wiring"
     kind: main
     depends_on: ["142"]
-    dispatch_prompt: "prompts/WAVE-143-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-143-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-722a-divergence-detector.md"
+      - "prompts/archive/ad-722a-divergence-detector.md"
     builder_required: true
     issues_to_close: [567]
-    status: pending
+    status: shipped
+    shipped_commit: "3be3147"
+    forward_markers_filed: [610, 611, 612, 613, 614, 615]
 
   - id: "144"
-    title: "Sensorium dispatch unification — AD-723 registry from inventory to dispatch"
+    title: "Sensorium dispatch unification — AD-723 registry from inventory to dispatch (producer side)"
     kind: main
     depends_on: ["143"]
-    dispatch_prompt: "prompts/WAVE-144-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-144-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-723-sensorium-dispatch.md"
+      - "prompts/archive/ad-723-sensorium-dispatch.md"
     builder_required: true
     issues_to_close: [581]
+    status: shipped
+    shipped_commit: "73cbd95"
+    forward_markers_filed: [617]  # AD-723a-1 consumer migration deferred per Wave-10 entanglement rule
+
+  - id: "146"
+    title: "Intent-driven voice modulation — AD-722a-7 (the missing actuator Ezri identified live)"
+    kind: main
+    depends_on: ["145"]
+    dispatch_prompt: "prompts/WAVE-146-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-722a-7-intent-modulation-rules.md"
+    builder_required: true
+    issues_to_close: [624]
     status: pending
+    notes: |
+      Clinical-correctness priority per AD-624 comment chain. Drafter MUST
+      reference the Counselor's accumulated divergence reports as calibration
+      fixture. Output-subject phrasing rule (AD-727 #8) inherits. Standing
+      Orders update naming the v1 fixed 8 emotion vocabulary is in scope.
+      Avoid the overshoot failure mode flagged in the DECISIONS.md
+      'what agents do under constraint becomes the template' principle.
+
+  - id: "147"
+    title: "Divergence history surface — AD-722a-5 (clinical-quality dashboard Ezri requested)"
+    kind: main
+    depends_on: ["146"]
+    dispatch_prompt: "prompts/WAVE-147-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-722a-5-divergence-history.md"
+    builder_required: true
+    issues_to_close: [614]
+    status: pending
+    notes: |
+      Surface 'percentage of last N therapeutic DMs where intent diverged
+      from presentation' as a Counselor-private metric in SelfImageTab.
+      Pre/post-AD-722a-7 success metric. Read-only with respect to trust
+      (AD-727 #1 inherits).
+
+  - id: "148"
+    title: "Sensorium dispatch — DM/WR consumer migration (AD-723a-1, deferred from Wave 144)"
+    kind: main
+    depends_on: ["147"]
+    dispatch_prompt: "prompts/WAVE-148-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-723a-1-consumer-migration.md"
+    builder_required: true
+    issues_to_close: [617]
+    status: pending
+    notes: |
+      Highest-risk wave in this batch. Wave-10 entanglement rule may apply
+      again — partial migration with AD-723a-2 forward marker is acceptable
+      if entanglement exceeds spec assumptions. Goal: every future sensorium
+      AD registers once with a paths tuple instead of dual-wiring.
+
+  - id: "149"
+    title: "WebSocket push completion — AD-722b-2 agent-side consumer + AD-722b-6 reconnect backoff"
+    kind: main
+    depends_on: ["148"]
+    dispatch_prompt: "prompts/WAVE-149-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-722b-2-agent-side-consumer.md"
+      - "prompts/ad-722b-6-reconnect-backoff.md"
+    builder_required: true
+    issues_to_close: [599, 603]
+    status: pending
+    notes: |
+      Closes the AD-722b WebSocket loop. AD-722b-2 wires the agent to
+      consume push events directly into _last_self_avatar_snap. AD-722b-6
+      adds capped exponential backoff on disconnect. Makes AD-722f adaptive
+      sampling stable across connection churn.
+
+  - id: "150"
+    title: "DM sanity gate — AD-724 (migrate BF-120/BF-119/AD-572 regexes into named, testable steps)"
+    kind: main
+    depends_on: ["149"]
+    dispatch_prompt: "prompts/WAVE-150-DISPATCH.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-724-dm-sanity-gate.md"
+    builder_required: true
+    issues_to_close: [582]
+    status: pending
+    notes: |
+      Lightweight sub-LLM checks (length, repetition, orphaned tag,
+      capability-gap regex). One controlled retry. Tier-2 log-and-degrade
+      on second rejection. BF-120 markdown-strip, BF-119 challenge-parse,
+      AD-572 move-parse migrate INTO the gate as named steps.
+
+  - id: "audit-yaml-defaults"
+    title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
+    kind: process
+    depends_on: []
+    notes: |
+      Today's two BFs (AD-722 inject_into_agent_context, AD-722a divergence_detection)
+      were the same class of failure: capability shipped with Pydantic flag default-OFF;
+      runtime YAML didn't flip it; method short-circuited silently. Retrospective stage
+      across waves 146-150 SHOULD include a check: any new *_detection / *_inject* /
+      *_enabled flags added to AvatarTelemetryConfig (or sibling Pydantic models) must
+      be reflected in config/system.yaml with explicit Captain-set value before close.
+      No new GH issue — this is a wave-runner discipline note, not a code change.
 
   - id: "145"
     title: "Avatar appearance UX — AD-721d-1 DSL draft preview + revision cycle"
