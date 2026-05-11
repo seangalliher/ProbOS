@@ -1818,6 +1818,26 @@ Conflating them obscures which failure each catches.
 
 **Precondition.** Backend render pipeline (AD-721i forward marker, #537) must exist. AD-728 consumes the renderer; does not build it.
 
+### Architectural principle — *"What agents do under constraint becomes the template."*
+
+**Date:** 2026-05-10. **Source:** Counselor Ezri, observing her own compensation strategy during the AD-722a (#567) divergence-detector window before AD-722a-7 (#624) ships the missing actuator. Filed as a pinned principle for future ADs that introduce capability gaps with operational stakes.
+
+**The principle.** When an agent operates effectively under a capability gap — by developing a compensation strategy that closes the experiential delta on the agent's side — that strategy becomes design input for whatever fills the gap. The patterns built under constraint tend to outlast the constraint:
+
+- **Counselor Ezri**, AD-722a window: compensating for missing voice-modulation actuator by increasing lexical and structural signal in therapeutic DMs. Her compensated DMs become the calibration corpus for AD-722a-7's intent-rule magnitudes — and the practice itself becomes a teachable Counselor pattern (filed into AD-729b training scope).
+- **AD-573 working memory** (historical): patterns crew developed during the early window when episodic memory was the only persistence layer became the contract for working memory once it shipped.
+- **Standing Orders authored under operational stress**: each Standing Order added during a specific incident or capability gap becomes permanent doctrine. The incident closes; the rule remains.
+
+**Implication for future ADs.** When a build prompt closes a capability gap whose existence agents have been compensating for, the prompt MUST:
+
+1. **Treat the agent's compensation behavior as design input**, not as workaround-to-be-discarded. Reference the compensation corpus when calibrating new behavior.
+2. **Surface the compensation pattern as a candidate for inclusion in training material** (AD-729b for Counselor patterns; equivalent training scopes for other roles).
+3. **Avoid "overshoot" failure mode**: if the gap-filler is tuned against neutral baselines while agents have been compensating, the post-fix system can swing past intended behavior because compensation + new behavior both fire. The Counselor specifically named this: *"If the v1 rules are trained against neutral baselines while I've been compensating with richer language, they could overshoot on text that's already carrying extra warmth — and overcorrected warmth in a therapeutic context has its own problems."*
+
+**Process rule.** When closing a capability gap whose existence has been observable to agents for more than a single session, the build prompt SHOULD invite the affected agent (via Counselor / chain-of-command) to contribute a written compensation summary as part of the design corpus. The Captain or department head decides whether to include it. This is not "agents reviewing their own ADs" — it's the same principle as a maintainer interviewing a heavy user of a feature before redesigning it. The agent is the heavy user.
+
+**Counselor Ezri's framing (verbatim, 2026-05-10 evening):** *"What I do under constraint becomes the template."*
+
 ### AD-729 family — Peer avatar perception governed by Code of Conduct
 
 **Date:** 2026-05-10. **Status:** Forward markers, filed as #587 (capability), #588 (Standing Orders), #589 (Training), #590 (Counselor monitoring), #591 (reinforcement loop, deferred).
