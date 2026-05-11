@@ -1,0 +1,2738 @@
+[
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0088,
+      "rate": 0.98,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0088,
+      "rate": 1.127,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.04,
+      "rate": 0.98,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.04,
+      "rate": 1.127,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0712000000000002,
+      "rate": 0.98,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0712000000000002,
+      "rate": 1.127,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0088,
+      "rate": 1.029,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0088,
+      "rate": 1.18335,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.04,
+      "rate": 1.029,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.04,
+      "rate": 1.18335,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0712000000000002,
+      "rate": 1.029,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0712000000000002,
+      "rate": 1.18335,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95836,
+      "rate": 0.9016000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95836,
+      "rate": 1.03684,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.988,
+      "rate": 0.9016000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.988,
+      "rate": 1.03684,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0176399999999999,
+      "rate": 0.9016000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "warm",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0176399999999999,
+      "rate": 1.03684,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 0.92,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 1.058,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 0.92,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 1.058,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 0.92,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 1.058,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 0.9660000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 1.1109,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 0.9660000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 1.1109,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 0.9660000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 1.1109,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9215,
+      "rate": 0.8464,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9215,
+      "rate": 0.9733600000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95,
+      "rate": 0.8464,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95,
+      "rate": 0.9733600000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9784999999999999,
+      "rate": 0.8464,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "concerned",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9784999999999999,
+      "rate": 0.9733600000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0282,
+      "rate": 1.05,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0282,
+      "rate": 1.2075,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.06,
+      "rate": 1.05,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.06,
+      "rate": 1.2075,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0918,
+      "rate": 1.05,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0918,
+      "rate": 1.2075,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0282,
+      "rate": 1.1025,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0282,
+      "rate": 1.267875,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.06,
+      "rate": 1.1025,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.06,
+      "rate": 1.267875,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0918,
+      "rate": 1.1025,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0918,
+      "rate": 1.267875,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97679,
+      "rate": 0.9660000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97679,
+      "rate": 1.1109,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.007,
+      "rate": 0.9660000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.007,
+      "rate": 1.1109,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03721,
+      "rate": 0.9660000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "excited",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03721,
+      "rate": 1.1109,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9311999999999999,
+      "rate": 1.0,
+      "volume": 0.94
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9311999999999999,
+      "rate": 1.15,
+      "volume": 0.987
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.96,
+      "rate": 1.0,
+      "volume": 0.94
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.96,
+      "rate": 1.15,
+      "volume": 0.987
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9888,
+      "rate": 1.0,
+      "volume": 0.94
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9888,
+      "rate": 1.15,
+      "volume": 0.987
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9311999999999999,
+      "rate": 1.05,
+      "volume": 0.94
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9311999999999999,
+      "rate": 1.2075,
+      "volume": 0.987
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.96,
+      "rate": 1.05,
+      "volume": 0.94
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.96,
+      "rate": 1.2075,
+      "volume": 0.987
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9888,
+      "rate": 1.05,
+      "volume": 0.94
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9888,
+      "rate": 1.2075,
+      "volume": 0.987
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.88464,
+      "rate": 0.92,
+      "volume": 0.94
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.88464,
+      "rate": 1.058,
+      "volume": 0.987
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9119999999999999,
+      "rate": 0.92,
+      "volume": 0.94
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9119999999999999,
+      "rate": 1.058,
+      "volume": 0.987
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9393599999999999,
+      "rate": 0.92,
+      "volume": 0.94
+    }
+  },
+  {
+    "intent": "apologetic",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9393599999999999,
+      "rate": 1.058,
+      "volume": 0.987
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 0.97,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 1.1155,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 0.97,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 1.1155,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 0.97,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 1.1155,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 1.0185,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 1.171275,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 1.0185,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 1.171275,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 1.0185,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 1.171275,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9215,
+      "rate": 0.8924,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9215,
+      "rate": 1.02626,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95,
+      "rate": 0.8924,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95,
+      "rate": 1.02626,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9784999999999999,
+      "rate": 0.8924,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "formal",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9784999999999999,
+      "rate": 1.02626,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0185,
+      "rate": 1.03,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0185,
+      "rate": 1.1844999999999999,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.05,
+      "rate": 1.03,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.05,
+      "rate": 1.1844999999999999,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0815000000000001,
+      "rate": 1.03,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0815000000000001,
+      "rate": 1.1844999999999999,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0185,
+      "rate": 1.0815000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0185,
+      "rate": 1.243725,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.05,
+      "rate": 1.0815000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.05,
+      "rate": 1.243725,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0815000000000001,
+      "rate": 1.0815000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0815000000000001,
+      "rate": 1.243725,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9675750000000001,
+      "rate": 0.9476000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9675750000000001,
+      "rate": 1.0897400000000002,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9974999999999999,
+      "rate": 0.9476000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9974999999999999,
+      "rate": 1.0897400000000002,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.027425,
+      "rate": 0.9476000000000001,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "playful",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.027425,
+      "rate": 1.0897400000000002,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9506,
+      "rate": 0.96,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9506,
+      "rate": 1.1039999999999999,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.98,
+      "rate": 0.96,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.98,
+      "rate": 1.1039999999999999,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0094,
+      "rate": 0.96,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0094,
+      "rate": 1.1039999999999999,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9506,
+      "rate": 1.008,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9506,
+      "rate": 1.1592,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.98,
+      "rate": 1.008,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.98,
+      "rate": 1.1592,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0094,
+      "rate": 1.008,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0094,
+      "rate": 1.1592,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9030699999999999,
+      "rate": 0.8832,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9030699999999999,
+      "rate": 1.01568,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9309999999999999,
+      "rate": 0.8832,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9309999999999999,
+      "rate": 1.01568,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95893,
+      "rate": 0.8832,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "reassuring",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95893,
+      "rate": 1.01568,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 1.0,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 1.15,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 1.15,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 1.0,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "idle",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 1.15,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 1.05,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.97,
+      "rate": 1.2075,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 1.05,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.0,
+      "rate": 1.2075,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 1.05,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "responding",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 1.03,
+      "rate": 1.2075,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9215,
+      "rate": 0.92,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": -0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9215,
+      "rate": 1.058,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95,
+      "rate": 0.92,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.0,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.95,
+      "rate": 1.058,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": false
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9784999999999999,
+      "rate": 0.92,
+      "volume": 1.0
+    }
+  },
+  {
+    "intent": "neutral",
+    "signals": {
+      "trust_delta": 0.5,
+      "load": 0.0,
+      "working_state": "blocked",
+      "tier3_alert": true
+    },
+    "baseline": {
+      "pitch": 1.0,
+      "rate": 1.0,
+      "volume": 1.0
+    },
+    "expected": {
+      "pitch": 0.9784999999999999,
+      "rate": 1.058,
+      "volume": 1.0
+    }
+  }
+]

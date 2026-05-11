@@ -57,6 +57,14 @@ const DEFAULT_PITCH: number = manifest.default_pitch;
 const DEFAULT_RATE: number = manifest.default_rate;
 const DEFAULT_VOLUME: number = manifest.default_volume;
 
+/** AD-722a-7: intent rule table -- byte-parity with
+ *  ``src/probos/avatars/telemetry.py:INTENT_RULES``. Keyed by emotion;
+ *  ``rule_name`` is the canonical fired-rule identifier. */
+const INTENT_RULES: Record<
+  string,
+  { pitch: number; rate: number; volume: number; rule_name: string }
+> = manifest.intent_rules;
+
 function clamp(value: number, bounds: readonly [number, number]): number {
   return Math.max(bounds[0], Math.min(bounds[1], value));
 }
@@ -70,6 +78,8 @@ function clamp(value: number, bounds: readonly [number, number]): number {
  *   - ``trust_delta > 0.2``              → pitch × 1.03
  *   - ``trust_delta < -0.2``             → pitch × 0.97
  *   - ``tier3_alert``                    → rate × 1.15, volume × 1.05
+ *   - AD-722a-7 ``intent`` (optional)    → ``intent_<name>`` factors from
+ *     ``manifest.intent_rules``. Applied AFTER operational rules.
  *
  * Rules compose multiplicatively. Output is clamped to both Web Speech
  * API bounds and ``VoiceProfile`` validator bounds (same numbers).
@@ -79,6 +89,7 @@ function clamp(value: number, bounds: readonly [number, number]): number {
 export function applyEmotionalModulation(
   profile: VoiceProfile,
   signals: AgentSignals,
+  intent?: string,
 ): VoiceProfile {
   const basePitch = profile.pitch ?? DEFAULT_PITCH;
   const baseRate = profile.rate ?? DEFAULT_RATE;
@@ -104,6 +115,18 @@ export function applyEmotionalModulation(
   if (signals.tier3_alert) {
     rate *= TIER3_RATE_FACTOR;
     volume *= TIER3_VOLUME_FACTOR;
+  }
+
+  // AD-722a-7: intent layering. Apply after operational rules; clamp
+  // covers both stages. Unknown intent names are silently dropped --
+  // the server-side parser (parse_intent_self_tag) is the boundary.
+  if (intent !== undefined && intent !== null) {
+    const rule = INTENT_RULES[intent];
+    if (rule !== undefined) {
+      pitch *= rule.pitch;
+      rate *= rule.rate;
+      volume *= rule.volume;
+    }
   }
 
   return {

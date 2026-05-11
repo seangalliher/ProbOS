@@ -32,35 +32,36 @@ REL_AVATAR_INTENT: Final[str] = "avatar_intent"
 
 
 class EmotionalIntent(str, Enum):
-    """v1 emotion taxonomy. Per-agent palettes is forward marker AD-722a-3."""
+    """v1 emotion taxonomy (AD-722a-7 migration). Per-agent palettes is
+    forward marker AD-722a-3 (#612)."""
 
     WARM = "warm"
-    FIRM = "firm"
-    WARM_CONCERN = "warm_concern"
-    ALERT = "alert"
-    NEUTRAL = "neutral"
-    PLAYFUL = "playful"
-    THOUGHTFUL = "thoughtful"
+    CONCERNED = "concerned"
+    EXCITED = "excited"
     APOLOGETIC = "apologetic"
+    FORMAL = "formal"
+    PLAYFUL = "playful"
+    REASSURING = "reassuring"
+    NEUTRAL = "neutral"
 
 
 # Intent -> expected fired_rules subset.
-# Keys MUST be the str values from EmotionalIntent. Values MUST be subsets
-# of the modulation rule names from telemetry.py:apply_voice_modulation
+# AD-722a-7: keys are the str values from EmotionalIntent. Values are the
+# matching ``intent_X`` rule names emitted by ``apply_voice_modulation``
+# when the intent fires. ``match_score`` is computed against the
+# ``intent_*`` namespace only -- operational rules
 # (``responding_rate``, ``blocked_rate_pitch``, ``high_trust_pitch``,
-# ``low_trust_pitch``, ``tier3_rate_volume``).
-#
-# Empty frozenset means "no specific rules expected" -- the intent is
-# compatible with neutral modulation.
+# ``low_trust_pitch``, ``tier3_rate_volume``) are informational; they
+# reflect agent state, not intent fulfillment.
 INTENT_EXPECTED_RULES: Final[dict[str, frozenset[str]]] = {
-    EmotionalIntent.WARM.value: frozenset({"high_trust_pitch"}),
-    EmotionalIntent.FIRM.value: frozenset({"low_trust_pitch"}),
-    EmotionalIntent.WARM_CONCERN.value: frozenset({"blocked_rate_pitch"}),
-    EmotionalIntent.ALERT.value: frozenset({"tier3_rate_volume"}),
-    EmotionalIntent.NEUTRAL.value: frozenset(),
-    EmotionalIntent.PLAYFUL.value: frozenset({"responding_rate", "high_trust_pitch"}),
-    EmotionalIntent.THOUGHTFUL.value: frozenset(),
-    EmotionalIntent.APOLOGETIC.value: frozenset({"low_trust_pitch"}),
+    EmotionalIntent.WARM.value: frozenset({"intent_warm"}),
+    EmotionalIntent.CONCERNED.value: frozenset({"intent_concerned"}),
+    EmotionalIntent.EXCITED.value: frozenset({"intent_excited"}),
+    EmotionalIntent.APOLOGETIC.value: frozenset({"intent_apologetic"}),
+    EmotionalIntent.FORMAL.value: frozenset({"intent_formal"}),
+    EmotionalIntent.PLAYFUL.value: frozenset({"intent_playful"}),
+    EmotionalIntent.REASSURING.value: frozenset({"intent_reassuring"}),
+    EmotionalIntent.NEUTRAL.value: frozenset({"intent_neutral"}),
 }
 
 
@@ -70,13 +71,13 @@ INTENT_EXPECTED_RULES: Final[dict[str, frozenset[str]]] = {
 #  0 = neutral (neither axis is the divergence target)
 INTENT_DIRECTION: Final[dict[str, int]] = {
     EmotionalIntent.WARM.value: +1,
-    EmotionalIntent.FIRM.value: -1,
-    EmotionalIntent.WARM_CONCERN.value: 0,
-    EmotionalIntent.ALERT.value: 0,
-    EmotionalIntent.NEUTRAL.value: 0,
-    EmotionalIntent.PLAYFUL.value: +1,
-    EmotionalIntent.THOUGHTFUL.value: -1,
+    EmotionalIntent.CONCERNED.value: -1,
+    EmotionalIntent.EXCITED.value: +1,
     EmotionalIntent.APOLOGETIC.value: -1,
+    EmotionalIntent.FORMAL.value: 0,
+    EmotionalIntent.PLAYFUL.value: +1,
+    EmotionalIntent.REASSURING.value: -1,
+    EmotionalIntent.NEUTRAL.value: 0,
 }
 
 
@@ -168,10 +169,28 @@ def strip_intent_self_tag(text: str) -> str:
 def _applied_direction(applied: tuple[str, ...]) -> int:
     """Project the applied fired_rules onto the directional axis.
 
-    +1 if rules indicate warmer modulation (high_trust_pitch dominates).
-    -1 if firmer (low_trust_pitch / blocked_rate_pitch dominate).
-     0 if neutral or mixed-cancelling.
+    AD-722a-7: intent rules dominate when present (they were explicitly
+    chosen by the agent). Operational rules contribute only when no
+    intent rule fired.
+
+    +1 = warmer (high pitch / brighter); -1 = firmer (lower pitch);
+     0 = neutral or mixed-cancelling.
     """
+    intent_pos = sum(1 for r in applied if r in {
+        "intent_warm", "intent_excited", "intent_playful",
+    })
+    intent_neg = sum(1 for r in applied if r in {
+        "intent_concerned", "intent_apologetic", "intent_reassuring",
+    })
+    if intent_pos > intent_neg:
+        return +1
+    if intent_neg > intent_pos:
+        return -1
+    if intent_pos > 0 or intent_neg > 0:
+        # Intent rules present but cancelling -- explicit neutral.
+        return 0
+
+    # Fallback: project operational rules (pre-AD-722a-7 behavior).
     pos = sum(1 for r in applied if r in {"high_trust_pitch"})
     neg = sum(1 for r in applied if r in {"low_trust_pitch", "blocked_rate_pitch"})
     if pos > neg:
@@ -189,9 +208,18 @@ def compute_divergence(
 
     Pure function. ``intent_emotion`` MUST be a valid taxonomy member
     (caller's responsibility -- ``parse_intent_self_tag`` filters).
+
+    AD-722a-7: ``match_score`` is computed against the ``intent_*``
+    namespace only. Operational rules in ``applied_fired_rules``
+    (``responding_rate``, ``blocked_rate_pitch``, ``high_trust_pitch``,
+    ``low_trust_pitch``, ``tier3_rate_volume``) are informational -- they
+    reflect agent state, not intent fulfillment.
     """
     expected = INTENT_EXPECTED_RULES.get(intent_emotion, frozenset())
-    applied_set = frozenset(applied_fired_rules)
+    # Restrict applied set to the intent_* namespace for match calculation.
+    applied_set = frozenset(
+        r for r in applied_fired_rules if r.startswith("intent_")
+    )
 
     # Jaccard score, with the "empty intent + non-empty applied" edge
     # handled explicitly: intent asked for stillness, modulation moved.
@@ -228,6 +256,33 @@ def compute_divergence(
 # applied modulation has Jaccard >= this against the expected rule set
 # is treated as a "match"; below this, the edge weakens.
 _HEBBIAN_MATCH_THRESHOLD: Final[float] = 0.7
+
+
+def _resolve_voice_profile_for_intent(runtime: Any, agent_id: str) -> Any:
+    """AD-722a-7: synchronous voice-profile lookup for intent-modulation recompute.
+
+    Returns a duck-typed object exposing ``pitch`` / ``rate`` / ``volume``
+    attributes. The caller only reads these to compose baseline numeric
+    factors; ``fired_rules`` content is independent of the baseline.
+
+    Tier-2 log-and-degrade: any lookup failure returns a synthetic
+    identity baseline (pitch=rate=volume=1.0). NEVER raises.
+    """
+    store = getattr(runtime, "profile_store", None)
+    if store is not None:
+        try:
+            crew = store.get(agent_id)
+            if crew is not None and getattr(crew, "voice", None) is not None:
+                return crew.voice
+        except Exception:
+            logger.debug(
+                "AD-722a-7: profile_store lookup failed for %s; "
+                "using identity baseline",
+                agent_id, exc_info=True,
+            )
+    # Identity baseline -- safe for the fired_rules-only consumer downstream.
+    from types import SimpleNamespace
+    return SimpleNamespace(pitch=1.0, rate=1.0, volume=1.0)
 
 
 def apply_divergence_check(
@@ -269,6 +324,22 @@ def apply_divergence_check(
     modulation = getattr(snap, "applied_modulation", None) if snap is not None else None
     if intent is None or modulation is None:
         return stripped
+
+    # AD-722a-7: recompute the modulation with the parsed intent so
+    # ``fired_rules`` carries the ``intent_X`` rule the divergence calc
+    # is keyed against. Pure function call; the cached snap's signals
+    # already drove the operational-rule computation pre-reply, so we
+    # reuse them. The voice profile is looked up via the profile_store
+    # when available; if absent (test fakes, fresh agents), we fall back
+    # to a synthetic identity baseline -- ``fired_rules`` does not depend
+    # on profile baseline values, only on signal triple + intent.
+    signals = getattr(snap, "current_signals", None)
+    if signals is not None:
+        from probos.avatars.telemetry import apply_voice_modulation
+        voice_profile = _resolve_voice_profile_for_intent(runtime, agent_id)
+        modulation = apply_voice_modulation(
+            voice_profile, signals, intent=intent,
+        )
 
     result = compute_divergence(
         intent_emotion=intent,

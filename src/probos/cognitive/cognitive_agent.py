@@ -3035,8 +3035,8 @@ class CognitiveAgent(BaseAgent):
         return (
             "After your reply, on a new line, emit "
             "`<intent emotion=NAME>` where NAME is one of: "
-            "warm | firm | warm_concern | alert | neutral | playful | "
-            "thoughtful | apologetic. The tag will be stripped server-side; "
+            "warm | concerned | excited | apologetic | formal | playful | "
+            "reassuring | neutral. The tag will be stripped server-side; "
             "do not mention it in your prose."
         )
 

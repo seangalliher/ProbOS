@@ -40,6 +40,7 @@ add fields without updating the AD-722b WS frame contract test.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -88,6 +89,16 @@ _REQUIRED_SCALAR_KEYS: tuple[str, ...] = (
 _REQUIRED_BOUNDS_KEYS: tuple[str, ...] = (
     "pitch_bounds", "rate_bounds", "volume_bounds",
 )
+# AD-722a-7: nested-object keys (validated with their own field schemas).
+_REQUIRED_OBJECT_KEYS: tuple[str, ...] = (
+    "intent_rules",
+)
+_REQUIRED_INTENT_FIELDS: tuple[str, ...] = ("pitch", "rate", "volume", "rule_name")
+_REQUIRED_INTENT_EMOTIONS: tuple[str, ...] = (
+    "warm", "concerned", "excited", "apologetic",
+    "formal", "playful", "reassuring", "neutral",
+)
+_INTENT_RULE_NAME_RE: re.Pattern[str] = re.compile(r"^intent_[a-z_]+$")
 
 
 def _load_modulation_manifest() -> dict[str, Any]:
@@ -122,8 +133,19 @@ def _load_modulation_manifest() -> dict[str, Any]:
         raise RuntimeError(
             f"AD-722-1: modulation manifest missing required keys: {missing}"
         )
+    # AD-722a-7: required nested-object keys are validated separately below.
+    missing_objects = [k for k in _REQUIRED_OBJECT_KEYS if k not in data]
+    if missing_objects:
+        raise RuntimeError(
+            f"AD-722a-7: modulation manifest missing required object keys: "
+            f"{missing_objects}"
+        )
     extra = [k for k in data
-             if k not in _REQUIRED_SCALAR_KEYS + _REQUIRED_BOUNDS_KEYS]
+             if k not in (
+                 _REQUIRED_SCALAR_KEYS
+                 + _REQUIRED_BOUNDS_KEYS
+                 + _REQUIRED_OBJECT_KEYS
+             )]
     if extra:
         raise RuntimeError(
             f"AD-722-1: modulation manifest has unknown keys: {extra}. "
@@ -143,6 +165,60 @@ def _load_modulation_manifest() -> dict[str, Any]:
             raise RuntimeError(
                 f"AD-722-1: manifest key {k!r} must be a 2-number list; "
                 f"got {b!r}"
+            )
+    # AD-722a-7: validate intent_rules nested object.
+    intent_rules = data["intent_rules"]
+    if not isinstance(intent_rules, dict):
+        raise RuntimeError(
+            f"AD-722a-7: manifest key 'intent_rules' must be an object; "
+            f"got {type(intent_rules).__name__}"
+        )
+    missing_emotions = [
+        e for e in _REQUIRED_INTENT_EMOTIONS if e not in intent_rules
+    ]
+    if missing_emotions:
+        raise RuntimeError(
+            f"AD-722a-7: manifest 'intent_rules' missing required emotions: "
+            f"{missing_emotions}"
+        )
+    extra_emotions = [
+        e for e in intent_rules if e not in _REQUIRED_INTENT_EMOTIONS
+    ]
+    if extra_emotions:
+        raise RuntimeError(
+            f"AD-722a-7: manifest 'intent_rules' has unknown emotion keys: "
+            f"{extra_emotions}. The v1 taxonomy is fixed; per-agent palettes "
+            "are forward marker AD-722a-3."
+        )
+    for emotion, entry in intent_rules.items():
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"AD-722a-7: manifest 'intent_rules[{emotion!r}]' must be an "
+                f"object; got {type(entry).__name__}"
+            )
+        missing_fields = [
+            f for f in _REQUIRED_INTENT_FIELDS if f not in entry
+        ]
+        if missing_fields:
+            raise RuntimeError(
+                f"AD-722a-7: manifest 'intent_rules[{emotion!r}]' missing "
+                f"required fields: {missing_fields}"
+            )
+        for field in ("pitch", "rate", "volume"):
+            val = entry[field]
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                raise RuntimeError(
+                    f"AD-722a-7: manifest 'intent_rules[{emotion!r}].{field}' "
+                    f"must be a number; got {type(val).__name__}"
+                )
+        rule_name = entry["rule_name"]
+        if not isinstance(rule_name, str) or not _INTENT_RULE_NAME_RE.match(
+            rule_name
+        ):
+            raise RuntimeError(
+                f"AD-722a-7: manifest 'intent_rules[{emotion!r}].rule_name' "
+                f"must match pattern {_INTENT_RULE_NAME_RE.pattern!r}; "
+                f"got {rule_name!r}"
             )
     return data
 
@@ -174,6 +250,22 @@ TIER3_VOLUME_FACTOR: float = float(_MANIFEST["tier3_volume_factor"])
 DEFAULT_PITCH: float = float(_MANIFEST["default_pitch"])
 DEFAULT_RATE: float = float(_MANIFEST["default_rate"])
 DEFAULT_VOLUME: float = float(_MANIFEST["default_volume"])
+
+# AD-722a-7: intent rule table -- {emotion: {pitch, rate, volume, rule_name}}.
+# Single source of truth: ui/src/audio/modulation_manifest.json (intent_rules
+# section). The TS reader (voiceModulation.ts) consumes the same fields.
+# rule_name is appended to ModulationSnapshot.fired_rules when the intent
+# matches -- even when factors are all 1.0 (intent_neutral), preserving the
+# "intent declared and parsed" signal for the divergence detector.
+INTENT_RULES: dict[str, dict[str, Any]] = {
+    name: {
+        "pitch": float(entry["pitch"]),
+        "rate": float(entry["rate"]),
+        "volume": float(entry["volume"]),
+        "rule_name": str(entry["rule_name"]),
+    }
+    for name, entry in _MANIFEST["intent_rules"].items()
+}
 
 
 def _clamp(value: float, bounds: tuple[float, float]) -> float:
@@ -304,6 +396,7 @@ class AvatarTelemetrySnapshot:
 def apply_voice_modulation(
     profile: Any,
     signals: AgentSignalsSnapshot,
+    intent: str | None = None,
 ) -> ModulationSnapshot:
     """Pure function. Multiplicative composition matches voiceModulation.ts.
 
@@ -312,6 +405,14 @@ def apply_voice_modulation(
 
     Fired-rule names: ``'responding_rate'``, ``'blocked_rate_pitch'``,
     ``'high_trust_pitch'``, ``'low_trust_pitch'``, ``'tier3_rate_volume'``.
+
+    AD-722a-7: when ``intent`` is set to a known emotion name (one of
+    ``INTENT_RULES.keys()``), the corresponding ``intent_X`` rule fires
+    AFTER operational rules and multiplies onto the post-operational
+    factors. ``intent_neutral`` is recorded as a no-op (rule_name is
+    appended to fired_rules even though all factors are 1.0). Unknown
+    intent names are silently dropped -- ``parse_intent_self_tag`` already
+    filters at the boundary.
     """
     base_pitch = float(getattr(profile, "pitch", DEFAULT_PITCH))
     base_rate = float(getattr(profile, "rate", DEFAULT_RATE))
@@ -341,6 +442,20 @@ def apply_voice_modulation(
         rate *= TIER3_RATE_FACTOR
         volume *= TIER3_VOLUME_FACTOR
         fired.append("tier3_rate_volume")
+
+    # AD-722a-7: intent layering. Intent rule applies AFTER operational
+    # rules, multiplies onto current factors, then the final clamp covers
+    # both stages. ``intent_neutral`` (and any rule with all-1.0 factors)
+    # is recorded in fired_rules even though factors don't change --
+    # preserves the "intent declared and parsed" signal for divergence
+    # detection.
+    if intent is not None:
+        rule = INTENT_RULES.get(intent)
+        if rule is not None:
+            pitch *= rule["pitch"]
+            rate *= rule["rate"]
+            volume *= rule["volume"]
+            fired.append(rule["rule_name"])
 
     return ModulationSnapshot(
         pitch_factor=_clamp(pitch, PITCH_BOUNDS),
@@ -401,11 +516,18 @@ def _warn(reason: str, agent_id: str, field: str) -> None:
 async def build_telemetry_snapshot(
     agent_id: str,
     runtime: Any,
+    intent_emotion: str | None = None,
 ) -> AvatarTelemetrySnapshot:
     """Build a read-only avatar telemetry snapshot.
 
     Tier-2 log-and-degrade on every failure path. NEVER raises on missing
-    data — degraded fields populate ``degraded_reasons`` instead.
+    data -- degraded fields populate ``degraded_reasons`` instead.
+
+    AD-722a-7: ``intent_emotion`` is threaded through to
+    ``apply_voice_modulation`` so the ``applied_modulation.fired_rules``
+    carries the corresponding ``intent_X`` rule. The divergence path in
+    ``apply_divergence_check`` uses this to compute match scores against
+    the intent_* namespace.
     """
     reasons: list[str] = []
     now = time.time()
@@ -600,7 +722,9 @@ async def build_telemetry_snapshot(
         _warn("voice_profile_missing", agent_id, "applied_modulation")
     else:
         try:
-            applied_modulation = apply_voice_modulation(voice_profile, signals)
+            applied_modulation = apply_voice_modulation(
+                voice_profile, signals, intent=intent_emotion,
+            )
         except Exception:
             reasons.append("voice_modulation_failed")
             _warn("voice_modulation_failed", agent_id, "applied_modulation")

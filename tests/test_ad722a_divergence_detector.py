@@ -69,9 +69,16 @@ def _make_runtime_with_real_trust_hebb(tmp_path):
 
 
 def _make_agent_with_modulation(agent_id: str, fired_rules: tuple[str, ...]):
-    """Agent stub carrying a cached _last_self_avatar_snap.applied_modulation."""
+    """Agent stub carrying a cached _last_self_avatar_snap.applied_modulation.
+
+    AD-722a-7: sets ``snap.current_signals = None`` so apply_divergence_check
+    skips the intent-aware recompute path and uses the test-provided
+    ``fired_rules`` as-is. Tests that want to exercise the recompute path
+    should set ``current_signals`` to a real ``AgentSignalsSnapshot``.
+    """
     snap = MagicMock()
     snap.applied_modulation = SimpleNamespace(fired_rules=tuple(fired_rules))
+    snap.current_signals = None  # AD-722a-7: bypass recompute path
     agent = MagicMock()
     agent.id = agent_id
     agent._last_self_avatar_snap = snap
@@ -86,7 +93,7 @@ def test_parse_self_tag_happy():
 
 
 def test_parse_self_tag_self_closing():
-    assert parse_intent_self_tag("Hello.\n<intent emotion=firm/>") == "firm"
+    assert parse_intent_self_tag("Hello.\n<intent emotion=concerned/>") == "concerned"
 
 
 def test_parse_self_tag_uppercase_emotion():
@@ -99,6 +106,29 @@ def test_parse_self_tag_unknown_emotion():
 
 def test_parse_self_tag_missing():
     assert parse_intent_self_tag("Hello, Captain.") is None
+
+
+# ── AD-722a-7 taxonomy migration: retired tokens no longer parse ────────
+
+
+def test_taxonomy_migration_firm_no_longer_parsed():
+    """`firm` retired; v1 maps to `concerned`. Parser silently drops."""
+    assert parse_intent_self_tag("Reply.\n<intent emotion=firm>") is None
+
+
+def test_taxonomy_migration_alert_no_longer_parsed():
+    """`alert` retired; v1 maps to `excited`. Parser silently drops."""
+    assert parse_intent_self_tag("Reply.\n<intent emotion=alert>") is None
+
+
+def test_taxonomy_migration_warm_concern_no_longer_parsed():
+    """`warm_concern` retired; v1 collapses to `concerned`. Parser drops."""
+    assert parse_intent_self_tag("Reply.\n<intent emotion=warm_concern>") is None
+
+
+def test_taxonomy_migration_thoughtful_no_longer_parsed():
+    """`thoughtful` retired; v1 maps to `formal`. Parser silently drops."""
+    assert parse_intent_self_tag("Reply.\n<intent emotion=thoughtful>") is None
 
 
 def test_strip_self_tag_idempotent():
@@ -118,29 +148,45 @@ def test_strip_self_tag_does_not_touch_prose():
 
 
 def test_divergence_warm_intent_warm_modulation():
-    result = compute_divergence("warm", ("high_trust_pitch",))
+    # AD-722a-7: match_score is keyed against intent_* namespace.
+    result = compute_divergence("warm", ("intent_warm",))
     assert result.match_score == 1.0
     assert result.magnitude == 0.0
     assert result.signed_divergence == 0.0
 
 
-def test_divergence_neutral_intent_no_rules():
-    result = compute_divergence("neutral", ())
+def test_divergence_neutral_intent_with_neutral_rule():
+    # AD-722a-7: intent_neutral is recorded -> match against neutral intent.
+    result = compute_divergence("neutral", ("intent_neutral",))
     assert result.match_score == 1.0
     assert result.magnitude == 0.0
 
 
-def test_divergence_neutral_intent_with_rules():
-    # Intent asked for stillness; modulation moved.
+def test_divergence_neutral_intent_with_operational_only():
+    # Operational rules alone do NOT satisfy a neutral intent (which
+    # expects intent_neutral fired). match_score = 0; mag = 1.
     result = compute_divergence("neutral", ("tier3_rate_volume",))
     assert result.match_score == 0.0
     assert result.magnitude == 1.0
 
 
+def test_match_score_ignores_operational_rules():
+    """AD-722a-7: match_score restricts applied set to the intent_* namespace.
+    Operational rules in applied_fired_rules MUST NOT affect the score."""
+    result = compute_divergence(
+        "warm", ("responding_rate", "high_trust_pitch", "intent_warm"),
+    )
+    assert result.match_score == 1.0
+    assert result.magnitude == 0.0
+
+
 # ── §C. compute_divergence — divergence cases (asymmetric sign) ─────────
 
 
-def test_divergence_warm_intent_firm_modulation_negative():
+def test_divergence_warm_intent_low_trust_operational_negative():
+    # AD-722a-7: intent declared warm; modulation fired only an opposite-
+    # axis operational rule (low_trust_pitch). applied_set after filter is
+    # empty; mag = 1.0; direction falls back to operational rule projection.
     result = compute_divergence("warm", ("low_trust_pitch",))
     assert result.match_score == 0.0
     assert result.magnitude == 1.0
@@ -153,13 +199,14 @@ def test_divergence_warm_intent_blocked_negative():
     assert result.signed_divergence < 0
 
 
-def test_divergence_firm_intent_warm_modulation_negative():
-    result = compute_divergence("firm", ("high_trust_pitch",))
+def test_divergence_concerned_intent_warm_modulation_negative():
+    # AD-722a-7: concerned subsumes the retired `firm` token; same direction.
+    result = compute_divergence("concerned", ("high_trust_pitch",))
     assert result.signed_divergence == -1.0
 
 
 def test_divergence_warm_intent_responding_only_positive():
-    # responding_rate has no direction (warm/firm); same/neutral axis
+    # responding_rate has no direction (warm/firmer); same/neutral axis
     # against warm intent -> positive informational signal.
     result = compute_divergence("warm", ("responding_rate",))
     assert result.signed_divergence > 0
@@ -199,6 +246,8 @@ def test_apply_divergence_strips_tag_even_on_unknown_emotion(tmp_path):
 def test_apply_divergence_negative_weakens_trust(tmp_path):
     runtime = _make_runtime_with_real_trust_hebb(tmp_path)
     # Intent=warm but modulation fired low_trust_pitch (opposite axis).
+    # AD-722a-7: applied_set after intent_* filter is empty; mag=1.0; sign
+    # comes from operational-rule fallback (low_trust_pitch -> -1).
     agent = _make_agent_with_modulation("agent-007", ("low_trust_pitch",))
     t_cfg = _make_t_cfg()
     prior_score = runtime.trust_network.get_score("agent-007")
@@ -218,17 +267,11 @@ def test_apply_divergence_negative_weakens_trust(tmp_path):
 
 
 def test_apply_divergence_positive_rewards_trust(tmp_path):
-    # Intent=warm, modulation=blocked_rate_pitch+high_trust_pitch fires both
-    # warmer and firmer signals -- but more readily reproducible: use
-    # intent=playful (expects {responding_rate, high_trust_pitch}) and
-    # applied=(high_trust_pitch,) -- same-direction, magnitude=0.5
-    # exactly equals positive_threshold (not > it). Use neutral intent
-    # with a non-matching same-direction tuple to drive magnitude=1.0:
-    # intent=playful expects 2 rules; applied=(high_trust_pitch,) gives
-    # Jaccard 1/2 = 0.5, magnitude 0.5 -- still not > 0.5. Use applied
-    # with high_trust_pitch+tier3_rate_volume: expected={responding_rate,
-    # high_trust_pitch}, applied={high_trust_pitch, tier3_rate_volume};
-    # Jaccard = 1/3, magnitude = 2/3 > 0.5; same-axis (+1).
+    # AD-722a-7: intent=playful, applied has same-axis operational rule
+    # (high_trust_pitch) but NO intent_* rule fired. After filter,
+    # applied_set is empty -> match=0, mag=1.0. Direction falls back to
+    # operational (high_trust_pitch -> +1); playful intent_dir=+1; same
+    # axis -> signed=+1.0 > pos_threshold=0.5 -> trust strengthens.
     runtime = _make_runtime_with_real_trust_hebb(tmp_path)
     agent = _make_agent_with_modulation(
         "agent-007", ("high_trust_pitch", "tier3_rate_volume")
@@ -251,8 +294,8 @@ def test_apply_divergence_positive_rewards_trust(tmp_path):
 
 def test_apply_divergence_below_negative_threshold_no_trust_update(tmp_path):
     runtime = _make_runtime_with_real_trust_hebb(tmp_path)
-    # Match -- magnitude == 0.
-    agent = _make_agent_with_modulation("agent-007", ("high_trust_pitch",))
+    # Match -- magnitude == 0 (intent_warm fired + intent=warm).
+    agent = _make_agent_with_modulation("agent-007", ("intent_warm",))
     t_cfg = _make_t_cfg()
     prior_score = runtime.trust_network.get_score("agent-007")
 
@@ -269,11 +312,14 @@ def test_apply_divergence_below_negative_threshold_no_trust_update(tmp_path):
 
 
 def test_apply_divergence_between_positive_thresholds_no_reward(tmp_path):
-    # intent=playful (expects {responding_rate, high_trust_pitch});
-    # applied=(high_trust_pitch,) -> Jaccard 1/2 = 0.5, magnitude 0.5,
-    # NOT > positive_threshold (0.5). Same-direction so positive sign.
+    # AD-722a-7: intent=playful expects {intent_playful}; applied carries
+    # two same-axis intent_* rules ({intent_playful, intent_warm}). Jaccard
+    # = 1/2 = 0.5 -> mag=0.5, exactly at positive_threshold (0.5). Defensive
+    # check that strict `>` is used (not `>=`): no trust update fires.
     runtime = _make_runtime_with_real_trust_hebb(tmp_path)
-    agent = _make_agent_with_modulation("agent-007", ("high_trust_pitch",))
+    agent = _make_agent_with_modulation(
+        "agent-007", ("intent_playful", "intent_warm")
+    )
     t_cfg = _make_t_cfg()
     prior_score = runtime.trust_network.get_score("agent-007")
 
@@ -285,8 +331,6 @@ def test_apply_divergence_between_positive_thresholds_no_reward(tmp_path):
 
     new_score = runtime.trust_network.get_score("agent-007")
     result = runtime.divergence_results["agent-007"]
-    # Magnitude is 0.5 -- at threshold, not above. Defensive check that
-    # strict `>` is used (not `>=`): no trust update fires.
     assert result.magnitude == pytest.approx(0.5)
     assert result.signed_divergence > 0
     assert new_score == pytest.approx(prior_score)
@@ -294,7 +338,8 @@ def test_apply_divergence_between_positive_thresholds_no_reward(tmp_path):
 
 def test_apply_divergence_match_strengthens_hebbian(tmp_path):
     runtime = _make_runtime_with_real_trust_hebb(tmp_path)
-    agent = _make_agent_with_modulation("agent-007", ("high_trust_pitch",))
+    # AD-722a-7: applied carries intent_warm -> match=1.0 with intent=warm.
+    agent = _make_agent_with_modulation("agent-007", ("intent_warm",))
     t_cfg = _make_t_cfg()
 
     response = "Reply.\n<intent emotion=warm>"
@@ -312,7 +357,7 @@ def test_apply_divergence_match_strengthens_hebbian(tmp_path):
 def test_apply_divergence_mismatch_weakens_hebbian(tmp_path):
     runtime = _make_runtime_with_real_trust_hebb(tmp_path)
     # First a match to build positive weight.
-    agent_match = _make_agent_with_modulation("agent-007", ("high_trust_pitch",))
+    agent_match = _make_agent_with_modulation("agent-007", ("intent_warm",))
     t_cfg = _make_t_cfg()
     apply_divergence_check(
         runtime=runtime, agent_id="agent-007", agent=agent_match,
@@ -508,10 +553,35 @@ def test_intent_self_tag_instruction_when_on():
     agent._runtime = runtime
     line = agent._build_intent_self_tag_instruction()
     assert "<intent emotion=NAME>" in line
+    # AD-722a-7: v1 eight-emotion vocabulary.
     assert (
-        "warm | firm | warm_concern | alert | neutral | playful | "
-        "thoughtful | apologetic"
+        "warm | concerned | excited | apologetic | formal | playful | "
+        "reassuring | neutral"
     ) in line
+
+
+def test_self_tag_instruction_lists_v1_eight_emotions():
+    """AD-722a-7: vocabulary contains exactly the v1 eight; none of the
+    four retired tokens leak through."""
+    runtime = SimpleNamespace()
+    runtime.config = SimpleNamespace(
+        avatar_telemetry=SimpleNamespace(divergence_detection=True),
+    )
+    from probos.cognitive.cognitive_agent import CognitiveAgent
+    agent = object.__new__(CognitiveAgent)
+    agent._runtime = runtime
+    line = agent._build_intent_self_tag_instruction()
+    for v1 in ("warm", "concerned", "excited", "apologetic",
+               "formal", "playful", "reassuring", "neutral"):
+        assert v1 in line, f"v1 emotion {v1!r} missing"
+    for retired in ("firm", "warm_concern", "alert", "thoughtful"):
+        # Token-bounded: ensure the retired name is not present as a bare
+        # token in the pipe-separated list.
+        assert (
+            f" {retired} " not in line
+            and not line.endswith(f" {retired}")
+            and not line.startswith(f"{retired} ")
+        ), f"retired emotion {retired!r} leaked"
 
 
 # ── Config validation ───────────────────────────────────────────────────

@@ -345,13 +345,24 @@ def test_modulation_manifest_loads_from_canonical_path():
         "default_pitch", "default_rate", "default_volume",
     }
     expected_bounds = {"pitch_bounds", "rate_bounds", "volume_bounds"}
-    assert set(data.keys()) == expected_scalar | expected_bounds, (
+    # AD-722a-7: intent_rules nested-object key carries the v1 emotion taxonomy.
+    expected_objects = {"intent_rules"}
+    assert set(data.keys()) == expected_scalar | expected_bounds | expected_objects, (
         f"manifest schema drift: keys = {sorted(data.keys())}"
     )
     for k in expected_scalar:
         assert isinstance(data[k], (int, float)) and not isinstance(data[k], bool)
     for k in expected_bounds:
         assert isinstance(data[k], list) and len(data[k]) == 2
+    # AD-722a-7: intent_rules schema check.
+    intent_rules = data["intent_rules"]
+    assert isinstance(intent_rules, dict)
+    assert set(intent_rules.keys()) == {
+        "warm", "concerned", "excited", "apologetic",
+        "formal", "playful", "reassuring", "neutral",
+    }
+    for entry in intent_rules.values():
+        assert set(entry.keys()) == {"pitch", "rate", "volume", "rule_name"}
 
 
 def test_python_constants_reflect_manifest_values():

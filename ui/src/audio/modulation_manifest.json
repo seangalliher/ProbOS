@@ -14,5 +14,15 @@
   "default_volume": 0.8,
   "pitch_bounds": [0.0, 2.0],
   "rate_bounds": [0.1, 10.0],
-  "volume_bounds": [0.0, 1.0]
+  "volume_bounds": [0.0, 1.0],
+  "intent_rules": {
+    "warm":       { "pitch": 1.04, "rate": 0.98, "volume": 1.00, "rule_name": "intent_warm" },
+    "concerned":  { "pitch": 1.00, "rate": 0.92, "volume": 1.00, "rule_name": "intent_concerned" },
+    "excited":    { "pitch": 1.06, "rate": 1.05, "volume": 1.00, "rule_name": "intent_excited" },
+    "apologetic": { "pitch": 0.96, "rate": 1.00, "volume": 0.94, "rule_name": "intent_apologetic" },
+    "formal":     { "pitch": 1.00, "rate": 0.97, "volume": 1.00, "rule_name": "intent_formal" },
+    "playful":    { "pitch": 1.05, "rate": 1.03, "volume": 1.00, "rule_name": "intent_playful" },
+    "reassuring": { "pitch": 0.98, "rate": 0.96, "volume": 1.00, "rule_name": "intent_reassuring" },
+    "neutral":    { "pitch": 1.00, "rate": 1.00, "volume": 1.00, "rule_name": "intent_neutral" }
+  }
 }

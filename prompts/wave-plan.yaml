@@ -3264,13 +3264,13 @@ waves:
     title: "Intent-driven voice modulation — AD-722a-7 (the missing actuator Ezri identified live)"
     kind: main
     depends_on: ["145"]
-    dispatch_prompt: "prompts/WAVE-146-DISPATCH.md"
-    prompts_already_drafted: false
+    dispatch_prompt: "prompts/archive/WAVE-146-DISPATCH.md"
+    prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-722a-7-intent-modulation-rules.md"
+      - "prompts/archive/ad-722a-7-intent-modulation-rules.md"
     builder_required: true
     issues_to_close: [624]
-    status: pending
+    status: shipped
     notes: |
       Clinical-correctness priority per AD-624 comment chain. Drafter MUST
       reference the Counselor's accumulated divergence reports as calibration

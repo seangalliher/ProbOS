@@ -166,3 +166,122 @@ describe('AD-718d hasMeaningfulModulation', () => {
     expect(MODULATION_DIVERGENCE_THRESHOLD).toBe(0.05);
   });
 });
+
+// ─── AD-722a-7: intent-driven modulation ─────────────────────────────────
+
+describe('AD-722a-7 applyEmotionalModulation intent layering', () => {
+  it('intent=warm on idle baseline applies pitch ×1.04, rate ×0.98', () => {
+    const out = applyEmotionalModulation(baseline(), signals(), 'warm');
+    expect(out.pitch).toBeCloseTo(1.04, 6);
+    expect(out.rate).toBeCloseTo(0.98, 6);
+    expect(out.volume).toBeCloseTo(1.0, 6);
+  });
+
+  it('intent=concerned on idle baseline applies rate ×0.92 only', () => {
+    const out = applyEmotionalModulation(baseline(), signals(), 'concerned');
+    expect(out.pitch).toBeCloseTo(1.0, 6);
+    expect(out.rate).toBeCloseTo(0.92, 6);
+    expect(out.volume).toBeCloseTo(1.0, 6);
+  });
+
+  it('intent=excited on idle baseline applies pitch ×1.06, rate ×1.05', () => {
+    const out = applyEmotionalModulation(baseline(), signals(), 'excited');
+    expect(out.pitch).toBeCloseTo(1.06, 6);
+    expect(out.rate).toBeCloseTo(1.05, 6);
+    expect(out.volume).toBeCloseTo(1.0, 6);
+  });
+
+  it('intent=apologetic applies pitch ×0.96 and volume ×0.94', () => {
+    const out = applyEmotionalModulation(baseline(), signals(), 'apologetic');
+    expect(out.pitch).toBeCloseTo(0.96, 6);
+    expect(out.rate).toBeCloseTo(1.0, 6);
+    expect(out.volume).toBeCloseTo(0.94, 6);
+  });
+
+  it('intent=neutral leaves numeric output unchanged', () => {
+    const ops = applyEmotionalModulation(baseline(), signals());
+    const withNeutral = applyEmotionalModulation(baseline(), signals(), 'neutral');
+    expect(withNeutral.pitch).toBeCloseTo(ops.pitch, 9);
+    expect(withNeutral.rate).toBeCloseTo(ops.rate, 9);
+    expect(withNeutral.volume).toBeCloseTo(ops.volume, 9);
+  });
+
+  it('intent layers multiplicatively on operational rules', () => {
+    // responding (rate ×1.05) + excited (rate ×1.05) = 1.1025
+    const out = applyEmotionalModulation(
+      baseline(),
+      signals({ working_state: 'responding' }),
+      'excited',
+    );
+    expect(out.rate).toBeCloseTo(1.05 * 1.05, 9);
+    expect(out.pitch).toBeCloseTo(1.06, 9);
+  });
+
+  it('unknown intent name is silently dropped', () => {
+    const out = applyEmotionalModulation(baseline(), signals(), 'nonexistent');
+    expect(out.pitch).toBeCloseTo(1.0, 9);
+    expect(out.rate).toBeCloseTo(1.0, 9);
+    expect(out.volume).toBeCloseTo(1.0, 9);
+  });
+
+  it('intent param undefined preserves pre-AD-722a-7 behavior', () => {
+    const withoutIntent = applyEmotionalModulation(baseline(), signals({ working_state: 'responding' }));
+    const explicitUndefined = applyEmotionalModulation(baseline(), signals({ working_state: 'responding' }), undefined);
+    expect(explicitUndefined).toEqual(withoutIntent);
+  });
+
+  it('clamps composed pitch at upper bound 2.0', () => {
+    const out = applyEmotionalModulation(
+      baseline({ pitch: 1.9 }),
+      signals({ trust_delta: 0.5 }),
+      'excited',
+    );
+    expect(out.pitch).toBeLessThanOrEqual(2.0);
+  });
+});
+
+// ─── AD-722a-7 §7: byte-parity with Python actuator ──────────────────────
+
+import parityVectors from '../../../tests/fixtures/intent_parity_vectors.json';
+
+interface ParityVector {
+  intent: string;
+  signals: {
+    trust_delta: number;
+    load: number;
+    working_state: string;
+    tier3_alert: boolean;
+  };
+  baseline: { pitch: number; rate: number; volume: number };
+  expected: { pitch: number; rate: number; volume: number };
+}
+
+describe('AD-722a-7 byte-parity with Python actuator', () => {
+  const vectors = parityVectors as ParityVector[];
+
+  it('fixture has the expected 144 vectors', () => {
+    expect(vectors.length).toBe(144);
+  });
+
+  it('every fixture vector matches the TS actuator to 6 decimal places', () => {
+    for (const v of vectors) {
+      const profile: VoiceProfile = {
+        voice_name: '',
+        pitch: v.baseline.pitch,
+        rate: v.baseline.rate,
+        volume: v.baseline.volume,
+      };
+      const sig: AgentSignals = {
+        trust_delta: v.signals.trust_delta,
+        load: v.signals.load,
+        working_state: v.signals.working_state as AgentSignals['working_state'],
+        tier3_alert: v.signals.tier3_alert,
+      };
+      const out = applyEmotionalModulation(profile, sig, v.intent);
+      const ctx = `intent=${v.intent} ws=${v.signals.working_state} td=${v.signals.trust_delta} t3=${v.signals.tier3_alert}`;
+      expect(out.pitch, `pitch ${ctx}`).toBeCloseTo(v.expected.pitch, 6);
+      expect(out.rate, `rate ${ctx}`).toBeCloseTo(v.expected.rate, 6);
+      expect(out.volume, `volume ${ctx}`).toBeCloseTo(v.expected.volume, 6);
+    }
+  });
+});
