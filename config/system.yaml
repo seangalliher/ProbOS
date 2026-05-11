@@ -333,6 +333,14 @@ workforce:
 avatar_telemetry:
   enabled: true
   inject_into_agent_context: true
+  # AD-722a (Wave 143): intent-vs-presentation divergence detector.
+  # When true, the agent's LLM appends <intent emotion=...> to each DM
+  # reply; server parses + strips, compares declared emotion against
+  # applied voice modulation, and surfaces the signed divergence as a
+  # new INTEROCEPTION block ("Your last reply diverged from intent: ...").
+  # This is the signal Ezri described as missing in the 2026-05-10 check-in
+  # ("reading a readout versus feeling it"). Flip ON to close the loop.
+  divergence_detection: true
 
 # --- Temporal Context (AD-502) ---
 temporal:
