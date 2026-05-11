@@ -132,6 +132,49 @@ def derive_communication_context(
     return "department_discussion"
 
 
+def _enrich_vision_messages_with_context(
+    vision_messages: list[dict[str, Any]],
+    user_message: str,
+) -> list[dict[str, Any]] | None:
+    """BF-266: Fold the fully-assembled user_message into the multimodal
+    content array, preserving image blocks.
+
+    The router (AD-730, routers/agents.py:agent_chat) builds
+    ``vision_messages`` from the RAW Captain text only. The agent's
+    perception path produces a richer ``user_message`` containing temporal
+    awareness, working memory, episodic recall, session history, avatar
+    self-observation, and the intent self-tag instruction. Without this
+    enrichment the agent loses all conversational context when it routes
+    to the vision tier.
+
+    Returns the enriched messages array (Anthropic-shape), or ``None`` if
+    no image blocks could be extracted from the original ``vision_messages``
+    (caller should degrade to text-only path).
+
+    Pure function — does not mutate ``vision_messages``.
+    """
+    if not vision_messages:
+        return None
+    try:
+        first_msg = vision_messages[0]
+        content = first_msg.get("content", []) if isinstance(first_msg, dict) else []
+        if not isinstance(content, list):
+            return None
+        image_blocks = [
+            item for item in content
+            if isinstance(item, dict) and item.get("type") == "image"
+        ]
+    except Exception:  # tier-2 degrade — caller falls back to text-only
+        return None
+    if not image_blocks:
+        return None
+    enriched_content: list[dict[str, Any]] = [
+        {"type": "text", "text": user_message}
+    ]
+    enriched_content.extend(image_blocks)
+    return [{"role": "user", "content": enriched_content}]
+
+
 def _classify_concurrency_priority(intent: IntentMessage) -> int:
     """AD-672: Map intent to concurrency priority on a 0-10 scale."""
     is_captain = intent.params.get("is_captain", False)
@@ -2039,6 +2082,17 @@ class CognitiveAgent(BaseAgent):
         # attachments.vision_tier with the multimodal array instead of the
         # standard text path. The system_prompt is still passed — Claude
         # vision accepts system + multimodal user content.
+        #
+        # BF-266 (2026-05-11): the router builds vision_messages with the
+        # RAW Captain text only. We must fold the fully assembled
+        # user_message (temporal awareness, working memory, episodic recall,
+        # session history, avatar self-observation, intent self-tag) into
+        # the text block of the multimodal content — otherwise the agent
+        # sees the image but loses all the conversational context that
+        # makes a Counselor DM coherent. Symptom: thin first-turn responses
+        # asking meta-questions; agent appears to "not see" the image until
+        # a text follow-up restores context (which then confabulates from
+        # session history because the image is no longer present).
         _vision_messages = observation.get("params", {}).get("vision_messages")
         if _vision_messages:
             _attach_cfg = getattr(
@@ -2048,12 +2102,34 @@ class CognitiveAgent(BaseAgent):
                 getattr(_attach_cfg, "vision_tier", None)
                 if _attach_cfg is not None else None
             )
-            request = LLMRequest(
-                prompt="",  # content lives in messages
-                messages=_vision_messages,
-                system_prompt=composed,
-                tier=_resolved_vision_tier or (_per_call_tier or self._resolve_tier()),
+            _enriched_messages = _enrich_vision_messages_with_context(
+                _vision_messages, user_message
             )
+            if _enriched_messages is not None:
+                logger.info(
+                    "AD-730 (BF-266): routing DM through vision_tier=%s with "
+                    "assembled user_message (%d chars) + image blocks",
+                    _resolved_vision_tier or "default",
+                    len(user_message),
+                )
+                request = LLMRequest(
+                    prompt="",  # content lives in messages
+                    messages=_enriched_messages,
+                    system_prompt=composed,
+                    tier=_resolved_vision_tier or (_per_call_tier or self._resolve_tier()),
+                )
+            else:
+                # No image blocks extractable — degrade to text path so we
+                # don't ship an empty multimodal array.
+                logger.warning(
+                    "AD-730 (BF-266): vision_messages present but no image "
+                    "blocks extractable; degrading to text-only path"
+                )
+                request = LLMRequest(
+                    prompt=user_message,
+                    system_prompt=composed,
+                    tier=_per_call_tier or self._resolve_tier(),
+                )
         else:
             request = LLMRequest(
                 prompt=user_message,
