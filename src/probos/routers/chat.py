@@ -321,7 +321,11 @@ async def chat(
                 configured = is_vision_tier_configured(
                     runtime.config.cognitive, tier
                 )
-                if not configured or tier_status != "operational":
+                # BF-271 (2026-05-12): 'recovering' is operational. Tier
+                # responded successfully recently but hasn't met the dwell
+                # threshold to clear failure counter — refusing to use it
+                # would produce honest-degrade for a working endpoint.
+                if not configured or tier_status not in ("operational", "recovering"):
                     if not configured:
                         logger.info(
                             "AD-732: /api/chat vision DM requested but vision "

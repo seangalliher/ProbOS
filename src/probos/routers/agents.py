@@ -941,7 +941,14 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                     configured = is_vision_tier_configured(
                         runtime.config.cognitive, tier
                     )
-                    if not configured or tier_status != "operational":
+                    # BF-271 (2026-05-12): 'recovering' is operational. It
+                    # means the tier has had recent successes but hasn't yet
+                    # met the dwell-time threshold to clear its failure
+                    # counter. The endpoint IS working — refusing to use it
+                    # is over-cautious and produces honest-degrade messages
+                    # for a working tier. AD-732's gate fires only on
+                    # 'degraded'/'unreachable' (real failures).
+                    if not configured or tier_status not in ("operational", "recovering"):
                         # callsign_registry is a stable runtime attribute
                         # (initialized in ProbOSRuntime.__init__); no guard.
                         _callsign = runtime.callsign_registry.get_callsign(

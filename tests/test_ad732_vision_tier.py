@@ -237,6 +237,47 @@ async def test_api_chat_vision_unhealthy_returns_unhealthy_message(chat_client):
 
 
 @pytest.mark.asyncio
+async def test_api_chat_vision_recovering_passes_through(chat_client):
+    """BF-271 (2026-05-12): tier_status == 'recovering' is operational.
+
+    A tier is 'recovering' when it has had recent successes but hasn't yet
+    met the dwell-time threshold to clear its failure counter (BF-240).
+    The endpoint IS working — refusing to use it would produce
+    honest-degrade for a working tier. Regression sentinel for the
+    cold-start scenario where qwen3.6:27b on Ollama takes 14s for its
+    first probe (timeout), then succeeds on every subsequent call.
+    """
+    ac, rt, write_blob = chat_client
+    rt.config.cognitive.llm_base_url_vision = "http://127.0.0.1:11434/v1"
+    rt.config.cognitive.llm_model_vision = "qwen3.6:27b"
+    # Recovering: status string says recovering, real successes are happening.
+    rt.llm_client.get_health_status = MagicMock(
+        return_value={
+            "tiers": {"vision": {"status": "recovering"}},
+            "overall": "degraded",
+        },
+    )
+    # Make the LLM call succeed (it's recovering, after all).
+    rt.llm_client.complete = AsyncMock(
+        return_value=SimpleNamespace(
+            content="An orange cat on a blue background.",
+            tier="vision",
+            model="qwen3.6:27b",
+        ),
+    )
+    sha = await write_blob(_PNG_HEADER + b"a" * 64, "image/png")
+    r = await ac.post(
+        "/api/chat",
+        json={"message": "what is this", "history": [], "attachment_ids": [sha]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Honest-degrade DID NOT fire — the request flowed through to the LLM.
+    assert body["response"] != VISION_UNHEALTHY_MESSAGE
+    rt.llm_client.complete.assert_called()
+
+
+@pytest.mark.asyncio
 async def test_text_only_dm_unchanged_when_vision_unconfigured(chat_client):
     """No-attachment chat is unaffected by AD-732 vision-tier state."""
     ac, rt, _ = chat_client
