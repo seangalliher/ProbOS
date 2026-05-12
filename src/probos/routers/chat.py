@@ -349,6 +349,7 @@ async def chat(
                         "dag": None,
                         "results": None,
                     }
+                t_start_vision = time.monotonic()
                 llm_response = await runtime.llm_client.complete(
                     LLMRequest(
                         prompt="",
@@ -357,6 +358,47 @@ async def chat(
                         max_tokens=2048,
                     ),
                 )
+                t_end_vision = time.monotonic()
+
+                # AD-720d-3: episodic write for vision-routed /api/chat turns.
+                # The standard NL path stores an episode after decomposition,
+                # but this branch short-circuits via `return` below — so the
+                # turn would be invisible to recall/dreaming without this block.
+                # Tier-2 log-and-degrade: write failures must not block the reply.
+                episodic_memory = getattr(runtime, "episodic_memory", None)
+                if episodic_memory is not None:
+                    try:
+                        from probos.types import AnchorFrame, Episode
+                        episode = Episode(
+                            timestamp=time.time(),
+                            user_input=text,
+                            dag_summary={},
+                            outcomes=[{
+                                "intent": "captain_chat_vision",
+                                "success": True,
+                                "response": (llm_response.content or "")[:500],
+                                "has_image_attachment": True,
+                                "image_count": len(image_ids),
+                                "attachment_ids": list(req.attachment_ids),
+                                "llm_tier": tier,
+                                "llm_model": getattr(llm_response, "model", ""),
+                            }],
+                            agent_ids=["captain"],
+                            duration_ms=(t_end_vision - t_start_vision) * 1000,
+                            source="captain_chat",
+                            anchors=AnchorFrame(
+                                channel="captain_chat",
+                                trigger_type="vision_attachment",
+                            ),
+                        )
+                        await episodic_memory.store(episode)
+                    except Exception:
+                        logger.debug(
+                            "AD-720d-3: vision episode store failed; "
+                            "continuing — reply unaffected",
+                            exc_info=True,
+                        )
+
                 return {
                     "response": llm_response.content or "(no response)",
                     "dag": None,

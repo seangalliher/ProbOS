@@ -2139,3 +2139,14 @@ Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not jus
 **Lesson locked in.** `Restore lost code` commits MUST be audited file-by-file with full diff review. Symptom-level checks (constants present) miss adjacent regressions (shape reverted). Contract tests on the wire boundary, not just on the component APIs, are the durable guard.
 
 **Files.** `tests/test_ad734_wire_shape_contract.py` (new, 3 tests, ~230 lines). `.git/hooks/pre-commit` (+~20 lines vision-paths gate).
+
+### AD-720d-3 — Episodic write for /api/chat vision-routed turns (Wave 154)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #565.
+
+**Problem.** The vision branch of /api/chat short-circuits via return with the LLM response, bypassing the standard NL path's episodic write. Every captain vision DM was invisible to recall, dreaming, and Counselor wellness. Violates Design Principle #8 (every execution path stores an episode).
+
+**Decision.** Insert an Episode store between the llm_client.complete call and the return inside the vision branch of routers/chat.py. Tier-2 log-and-degrade — store failure does not block the reply. agent_ids=['captain']; AnchorFrame channel='captain_chat' (distinct from per-agent 'dm'). Outcomes carry has_image_attachment, image_count, attachment_ids, llm_tier, llm_model so Counselor and AD-722a divergence analysis can filter on vision turns.
+
+**Files.** `src/probos/routers/chat.py` (vision branch episode block). `tests/test_ad720d3_vision_episode_write.py` (new, 3 tests).
+
