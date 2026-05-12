@@ -501,14 +501,16 @@ class OpenAICompatibleClient(BaseLLMClient):
                 "deep": self._rate_config.rpm_deep,
             }
             if not await self._wait_for_rate_limit(tier, rpm_limits, self._rate_config.max_wait_seconds):
-                # Budget exhausted — try cache, then return error
-                cache_key = self._cache_key(tier, request.prompt)
-                if cache_key in self._cache:
-                    cached = self._cache[cache_key]
-                    return LLMResponse(
-                        content=cached.content, model=cached.model, tier=tier,
-                        tokens_used=cached.tokens_used, cached=True, request_id=request.id,
-                    )
+                # Budget exhausted — try cache (text-only), then return error.
+                # BF-272: multimodal requests bypass the cache (degenerate key).
+                if request.messages is None:
+                    cache_key = self._cache_key(tier, request.prompt)
+                    if cache_key in self._cache:
+                        cached = self._cache[cache_key]
+                        return LLMResponse(
+                            content=cached.content, model=cached.model, tier=tier,
+                            tokens_used=cached.tokens_used, cached=True, request_id=request.id,
+                        )
                 return LLMResponse(
                     content="", model="", tier=tier,
                     error=f"LLM rate limit exceeded for tier {tier}",
@@ -574,14 +576,22 @@ class OpenAICompatibleClient(BaseLLMClient):
                         effective_top_p=effective_top_p,
                         effective_max_tokens=effective_max_tokens,
                     )
-                    # Cache successful responses (keyed by original tier)
-                    cache_key = self._cache_key(tier, request.prompt)
-                    self._cache[cache_key] = response
-                    self._cache.move_to_end(cache_key)  # AD-617: LRU — most recent to end
-                    # AD-617: Evict oldest if over limit
-                    if hasattr(self, '_cache_max_entries'):
-                        while len(self._cache) > self._cache_max_entries:
-                            self._cache.popitem(last=False)
+                    # Cache successful non-empty responses (keyed by original
+                    # tier + prompt). BF-272 (2026-05-12): empty content is
+                    # never cached — it poisons all future calls with the same
+                    # cache key. Multimodal requests carry their content in
+                    # ``messages`` not ``prompt``, so they share a degenerate
+                    # cache key ('vision:hash("")') and would always collide.
+                    # The multimodal-skip below handles that lookup-side; this
+                    # write-side guard catches any tier that returns empty.
+                    if request.messages is None and response.content:
+                        cache_key = self._cache_key(tier, request.prompt)
+                        self._cache[cache_key] = response
+                        self._cache.move_to_end(cache_key)  # AD-617: LRU
+                        # AD-617: Evict oldest if over limit
+                        if hasattr(self, '_cache_max_entries'):
+                            while len(self._cache) > self._cache_max_entries:
+                                self._cache.popitem(last=False)
                     # BF-240: Dwell-time recovery — track consecutive successes
                     prev_failures = self._consecutive_failures[attempt_tier]
                     self._consecutive_successes[attempt_tier] += 1
@@ -685,19 +695,24 @@ class OpenAICompatibleClient(BaseLLMClient):
                     )
                     break  # Move to next tier
 
-        # Try cache (keyed by original tier)
-        cache_key = self._cache_key(tier, request.prompt)
-        if cache_key in self._cache:
-            cached = self._cache[cache_key]
-            logger.debug("Using cached LLM response for request %s", request.id[:8])
-            return LLMResponse(
-                content=cached.content,
-                model=cached.model,
-                tier=tier,
-                tokens_used=cached.tokens_used,
-                cached=True,
-                request_id=request.id,
-            )
+        # Try cache (keyed by original tier).
+        # BF-272: multimodal requests bypass the cache — their content lives
+        # in ``messages``, not ``prompt``, so the (tier, hash(prompt)) key is
+        # degenerate ('vision:hash("")') and collisions cause cross-image
+        # response poisoning.
+        if request.messages is None:
+            cache_key = self._cache_key(tier, request.prompt)
+            if cache_key in self._cache:
+                cached = self._cache[cache_key]
+                logger.debug("Using cached LLM response for request %s", request.id[:8])
+                return LLMResponse(
+                    content=cached.content,
+                    model=cached.model,
+                    tier=tier,
+                    tokens_used=cached.tokens_used,
+                    cached=True,
+                    request_id=request.id,
+                )
 
         # Final fallback: error response
         logger.error("All LLM tiers unavailable and no cached response for request %s", request.id[:8])
