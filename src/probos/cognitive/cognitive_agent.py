@@ -1933,28 +1933,51 @@ class CognitiveAgent(BaseAgent):
                 task_type=_task_type,
             )
             if observation.get("intent") == "ward_room_notification":
-                composed += (
-                    "\n\nYou are participating in the Ward Room — the ship's discussion forum. "
-                    "Write concise, conversational posts (2-4 sentences). "
-                    "Speak in your natural voice. Don't be formal unless the topic demands it. "
-                    "You may be responding to the Captain or to a fellow crew member. "
-                    "Engage naturally — agree, disagree, build on ideas, ask questions. "
-                    "Do NOT repeat what someone else already said. "
-                    "If you have nothing meaningful to add, respond with exactly: [NO_RESPONSE]"
-                    "\n\nAfter your reply (or [NO_RESPONSE]), you may endorse posts you've read in this thread. "
-                    "If a post is particularly insightful, actionable, or well-reasoned, endorse it up. "
-                    "If a post is incorrect, misleading, or unhelpful, endorse it down. "
-                    "Only endorse when you have a clear opinion — not every post needs a vote. "
-                    "Use this format, one per line:\n"
-                    "[ENDORSE post_id UP]\n"
-                    "[ENDORSE post_id DOWN]\n"
-                    "Place endorsements AFTER your reply text, each on its own line. "
-                    "Do NOT endorse your own posts."
-                )
-                # BF-051: DM syntax available in ward room context too
-                _dm_instr = self._compose_dm_instructions(brief=True)
-                if _dm_instr:
-                    composed += _dm_instr
+                # BF (2026-05-11): When the notification is for a DM channel,
+                # the agent is INSIDE an ongoing 1:1 conversation. Plain-text
+                # replies are auto-posted to the same thread by the pipeline
+                # (_self_post_ward_room_response). Offering [DM @callsign]
+                # here causes the agent to wrap its reply in a [DM] block,
+                # which the action extractor turns into a brand-new thread
+                # in the DM channel — producing a fresh thread per message
+                # instead of a continuing conversation.
+                _wr_params = observation.get("params", {})
+                _in_dm_channel = _wr_params.get("is_dm_channel", False)
+                if _in_dm_channel:
+                    _dm_partner = _wr_params.get("author_callsign", "") or "the other crew member"
+                    composed += (
+                        f"\n\nYou are in a private direct message conversation with @{_dm_partner}. "
+                        "Reply naturally and conversationally — your response will be posted "
+                        f"to this DM thread as a reply to @{_dm_partner}. "
+                        "Do NOT wrap your reply in [DM @callsign] tags — that would start a "
+                        "brand-new conversation thread. "
+                        "Do NOT use [REPLY], [ENDORSE], [NOTEBOOK], or other action tags here. "
+                        "Just write your reply text directly (2-4 sentences). "
+                        "If you have nothing meaningful to add, respond with exactly: [NO_RESPONSE]"
+                    )
+                else:
+                    composed += (
+                        "\n\nYou are participating in the Ward Room — the ship's discussion forum. "
+                        "Write concise, conversational posts (2-4 sentences). "
+                        "Speak in your natural voice. Don't be formal unless the topic demands it. "
+                        "You may be responding to the Captain or to a fellow crew member. "
+                        "Engage naturally — agree, disagree, build on ideas, ask questions. "
+                        "Do NOT repeat what someone else already said. "
+                        "If you have nothing meaningful to add, respond with exactly: [NO_RESPONSE]"
+                        "\n\nAfter your reply (or [NO_RESPONSE]), you may endorse posts you've read in this thread. "
+                        "If a post is particularly insightful, actionable, or well-reasoned, endorse it up. "
+                        "If a post is incorrect, misleading, or unhelpful, endorse it down. "
+                        "Only endorse when you have a clear opinion — not every post needs a vote. "
+                        "Use this format, one per line:\n"
+                        "[ENDORSE post_id UP]\n"
+                        "[ENDORSE post_id DOWN]\n"
+                        "Place endorsements AFTER your reply text, each on its own line. "
+                        "Do NOT endorse your own posts."
+                    )
+                    # BF-051: DM syntax available in ward room context too
+                    _dm_instr = self._compose_dm_instructions(brief=True)
+                    if _dm_instr:
+                        composed += _dm_instr
             elif observation.get("intent") == "proactive_think":
                 composed += (
                     "\n\nYou are reviewing recent ship activity during a quiet moment. "
