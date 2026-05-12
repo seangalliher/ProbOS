@@ -921,7 +921,26 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 )
 
                 if image_ids:
-                    # Vision tier health probe — same pattern as /api/chat:309-325.
+                    # AD-720d-2: vision_capable gate. If the receiving
+                    # agent's CrewProfile.vision_capable is False, demote
+                    # this turn to the text-only fallback path. The Captain
+                    # attached the image deliberately — we surface attachment
+                    # markers, NOT an honest-degrade refusal (that's
+                    # AD-732's job for unconfigured/unhealthy *tiers*, a
+                    # different failure mode).
+                    _prof = runtime.callsign_registry.get_profile(
+                        agent.agent_type
+                    )
+                    if not (_prof or {}).get("vision_capable", False):
+                        logger.info(
+                            "AD-720d-2: agent_id=%s vision_capable=False; "
+                            "routing image attachment through text-only "
+                            "fallback (attachment_ids=%s)",
+                            agent_id, list(req.attachment_ids),
+                        )
+                        image_ids = []
+
+                if image_ids:
                     tier = cfg_attach.vision_tier
                     health = runtime.llm_client.get_health_status()
                     tier_status = (

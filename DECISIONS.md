@@ -2150,3 +2150,18 @@ Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not jus
 
 **Files.** `src/probos/routers/chat.py` (vision branch episode block). `tests/test_ad720d3_vision_episode_write.py` (new, 3 tests).
 
+
+### AD-720d-2 — Per-agent vision_capable gating (Wave 154)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #564.
+
+**Problem.** AD-730's vision pipe-through routed ALL image-bearing DMs through the vision tier regardless of the receiving agent's role or training. A security-sensitive agent, a low-trust probationary agent, or a future commercial-overlay variant could silently consume image content without operator review.
+
+**Decision.** Add `vision_capable: bool = False` to `CrewProfile` (default False = transitional flag, Wave 10 convention #14). Seed Counselor + Architect to True via `config/standing_orders/crew_profiles/counselor.yaml` and `architect.yaml`. `CallsignRegistry.load_from_profiles` plumbs the flag into its in-memory profile dict so `runtime.callsign_registry.get_profile(agent_type).get('vision_capable', False)` is the single read site. `routers/agents.py:agent_chat` consults the flag before constructing `vision_messages` — when False, image_ids is cleared and the turn falls through to `augment_prompt_with_attachment_text` (text-only attachment markers). The Captain attached deliberately, so the agent sees an attachment marker — NOT an honest-degrade refusal (that's AD-732's role for unconfigured/unhealthy tiers).
+
+**/api/chat is unchanged.** The /api/chat vision branch fires only for untargeted Captain turns (mentions are intercepted upstream and never reach the vision branch). The captain composes with the LLM, not an agent — no per-agent gate applies.
+
+**Forward markers.** AD-720d-2.1 — Captain-approval workflow to enable vision_capable on a previously text-only agent (filed at wave close).
+
+**Files.** `src/probos/crew_profile.py` (CrewProfile field + to_dict/from_dict + CallsignRegistry plumbing). `config/standing_orders/crew_profiles/counselor.yaml` + `architect.yaml` (seed flag). `src/probos/routers/agents.py` (gate before image_ids vision branch). `tests/test_ad720d2_vision_capable.py` (new, 5 tests).
+

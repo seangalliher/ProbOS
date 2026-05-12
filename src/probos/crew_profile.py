@@ -224,6 +224,13 @@ class CrewProfile:
     pool: str = ""
     role: str = ""                 # "chief", "officer", "crew"
 
+    # AD-720d-2: per-agent vision capability gate. Default False so a new
+    # agent type that has not been ratified for vision attachments routes
+    # image-bearing DMs through the text-only fallback (attachment markers
+    # + extracted text). Counselor + Architect default to True via seed
+    # YAML (config/standing_orders/crew_profiles/*.yaml).
+    vision_capable: bool = False
+
     # Rank
     rank: Rank = Rank.ENSIGN
     rank_since: float = 0.0        # timestamp of last rank change
@@ -277,6 +284,7 @@ class CrewProfile:
             "department": self.department,
             "pool": self.pool,
             "role": self.role,
+            "vision_capable": self.vision_capable,
             "rank": self.rank.value,
             "rank_since": self.rank_since,
             "promotions": self.promotions,
@@ -300,6 +308,7 @@ class CrewProfile:
             department=data.get("department", ""),
             pool=data.get("pool", ""),
             role=data.get("role", ""),
+            vision_capable=data.get("vision_capable", False),
             rank=Rank(data["rank"]) if "rank" in data else Rank.ENSIGN,
             rank_since=data.get("rank_since", 0.0),
             promotions=data.get("promotions", 0),
@@ -416,7 +425,7 @@ class CallsignRegistry:
     def __init__(self) -> None:
         self._callsign_to_type: dict[str, str] = {}   # "wesley" -> "scout"
         self._type_to_callsign: dict[str, str] = {}   # "scout" -> "Wesley" (original case)
-        self._type_to_profile: dict[str, dict[str, str]] = {}  # agent_type -> {display_name, department}
+        self._type_to_profile: dict[str, dict[str, Any]] = {}  # agent_type -> {display_name, department, vision_capable}
         self._agent_registry: AgentRegistry | None = None
 
     def load_from_profiles(self, profiles_dir: str = "") -> None:
@@ -449,6 +458,10 @@ class CallsignRegistry:
             self._type_to_profile[agent_type] = {
                 "display_name": data.get("display_name", ""),
                 "department": data.get("department", ""),
+                # AD-720d-2: surface vision_capable on the registry profile
+                # dict so router gates can consult it without loading the
+                # full CrewProfile dataclass.
+                "vision_capable": bool(data.get("vision_capable", False)),
             }
 
     def bind_registry(self, registry: AgentRegistry) -> None:
