@@ -875,26 +875,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             # (e.g., unit tests constructing OpenAICompatibleClient directly).
             messages = await self._resolve_attachment_refs_for_openai(messages)
             if request.system_prompt and not (messages and messages[0].get("role") == "system"):
-                # BF-277 (2026-05-12): when ANY message in the array uses
-                # list-content (multimodal), ALL messages must use list-content.
-                # Anthropic / OpenAI Chat Completions accept mixed shapes;
-                # Ollama qwen3.6:27b returns
-                # ``{"error":{"message":"invalid message format",...}}``
-                # with HTTP 400 if a string-content system message precedes
-                # a list-content user message. Detect any list-shape content
-                # in the existing messages and wrap the system_prompt to
-                # match. Pure-text turns (request.messages absent) take the
-                # else branch above and use string content as before.
-                _has_list_content = any(
-                    isinstance(m.get("content"), list) for m in messages
-                )
-                if _has_list_content:
-                    _sys_content: list | str = [
-                        {"type": "text", "text": request.system_prompt}
-                    ]
-                else:
-                    _sys_content = request.system_prompt
-                messages.insert(0, {"role": "system", "content": _sys_content})
+                messages.insert(0, {"role": "system", "content": request.system_prompt})
         else:
             messages = []
             if request.system_prompt:
@@ -918,6 +899,33 @@ class OpenAICompatibleClient(BaseLLMClient):
         logger.debug("LLM request payload (openai): %s", json.dumps(payload, indent=2))
 
         resp = await client.post("chat/completions", json=payload, timeout=timeout)
+        # BF-275 DIAG: capture 4xx response bodies so vision-tier failures
+        # produce diagnosable logs without needing a proxy. The Ollama-side
+        # GIN log only shows "400 24ms" — the actual validation error lives
+        # in the response body, which raise_for_status() throws away.
+        if resp.status_code >= 400:
+            try:
+                _body = resp.text[:800]
+            except Exception:
+                _body = "<unreadable>"
+            _msg_count = len(payload.get("messages", []))
+            _content_shapes: list = []
+            for _m in payload.get("messages", [])[:2]:
+                _c = _m.get("content")
+                if isinstance(_c, list):
+                    _content_shapes.append([
+                        (x.get("type") if isinstance(x, dict) else type(x).__name__)
+                        for x in _c
+                    ])
+                elif isinstance(_c, str):
+                    _content_shapes.append(f"str[{len(_c)}]")
+            logger.warning(
+                "BF-275-DIAG: %s %d on %s. model=%r max_tokens=%r msg_count=%d "
+                "shapes=%r body=%s",
+                resp.request.method, resp.status_code, str(resp.request.url),
+                payload.get("model"), payload.get("max_tokens"),
+                _msg_count, _content_shapes, _body,
+            )
         resp.raise_for_status()
         data = resp.json()
 
