@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from probos.types import LLMRequest, LLMResponse, Priority
+from probos.attachments.store import AttachmentStore
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +71,18 @@ class OpenAICompatibleClient(BaseLLMClient):
         rate_config: Any = None,  # AD-617: LLMRateConfig — optional
         *,
         model_router: Any = None,  # AD-463: ModelRouter — optional override
+        attachment_store: AttachmentStore | None = None,  # AD-731: optional, enables vision ref resolution
     ) -> None:
         # AD-463: public attribute (not _-prefixed) so finalize.py can rewire
         # post-construction without touching protected internals.
         self.model_router = model_router
+        # AD-731: optional AttachmentStore for resolving attachment_ref
+        # source blocks to base64 just before the HTTP POST. None disables
+        # resolution (no-op pass-through) so legacy tests/callers that
+        # construct without the store still work. Dependency Inversion:
+        # we depend on the AttachmentStore Protocol, not on the concrete
+        # FilesystemAttachmentStore implementation.
+        self._attachment_store: AttachmentStore | None = attachment_store
         from probos.config import CognitiveConfig
 
         if config is not None and isinstance(config, CognitiveConfig):
@@ -658,6 +667,88 @@ class OpenAICompatibleClient(BaseLLMClient):
             effective_temp=effective_temp, effective_top_p=effective_top_p,
         )
 
+    def set_attachment_store(self, store: AttachmentStore | None) -> None:
+        """AD-731: deferred setter for the AttachmentStore.
+
+        Used when the LLM client is constructed before the runtime exists
+        (the LLM client is created during ``_create_llm_client`` and the
+        runtime is built afterwards). Passing ``None`` disables ref
+        resolution (no-op pass-through).
+        """
+        self._attachment_store = store
+
+    async def _resolve_attachment_refs_for_openai(
+        self, messages: list[dict]
+    ) -> list[dict]:
+        """AD-731: resolve ``attachment_ref`` source blocks to OpenAI/Anthropic-
+        compatible base64 source blocks just before the HTTP POST.
+
+        Walks each message's ``content`` array. For each image content block
+        whose ``source.type == "attachment_ref"``, reads bytes from
+        ``self._attachment_store`` and replaces the block with a ``base64``
+        source. Other blocks pass through unchanged.
+
+        Tier-2 log-and-degrade: a missing attachment is replaced with a
+        ``failed_to_load`` text marker and a warning is logged. Never raises.
+
+        Returns a NEW messages list — does not mutate the input.
+
+        No-op when ``self._attachment_store is None`` (returns the input as-is).
+        """
+        if self._attachment_store is None:
+            return messages
+        import base64
+        resolved_messages: list[dict] = []
+        resolved_count = 0
+        for msg in messages:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                resolved_messages.append(msg)
+                continue
+            new_content: list[dict] = []
+            for block in content:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "image"
+                    and isinstance(block.get("source"), dict)
+                    and block["source"].get("type") == "attachment_ref"
+                ):
+                    sha = block["source"].get("sha256", "")
+                    mime = block["source"].get("media_type", "")
+                    try:
+                        blob = await self._attachment_store.read(sha)
+                        new_content.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime,
+                                "data": base64.b64encode(blob).decode("ascii"),
+                            },
+                        })
+                        resolved_count += 1
+                    except FileNotFoundError:
+                        logger.warning(
+                            "AD-731: attachment_ref %s not found in store; "
+                            "replacing image block with failed_to_load text marker",
+                            sha[:16],
+                        )
+                        new_content.append({
+                            "type": "text",
+                            "text": (
+                                f'<ATTACHMENT id="{sha}" mime="{mime}" '
+                                f'note="failed_to_load_at_dereference" />'
+                            ),
+                        })
+                else:
+                    new_content.append(block)
+            resolved_messages.append({**msg, "content": new_content})
+        if resolved_count:
+            logger.info(
+                "AD-731: resolved %d attachment_ref(s) to base64 for LLM call",
+                resolved_count,
+            )
+        return resolved_messages
+
     async def _call_openai(
         self, request: LLMRequest, model: str, client: httpx.AsyncClient,
         *, timeout: float = 30.0,
@@ -670,6 +761,10 @@ class OpenAICompatibleClient(BaseLLMClient):
         # array; when present, skip the prompt-shape synthesis below.
         if request.messages is not None:
             messages = list(request.messages)
+            # AD-731: resolve attachment_ref source blocks to base64 just
+            # before the HTTP POST. No-op when attachment_store is unwired
+            # (e.g., unit tests constructing OpenAICompatibleClient directly).
+            messages = await self._resolve_attachment_refs_for_openai(messages)
             if request.system_prompt and not (messages and messages[0].get("role") == "system"):
                 messages.insert(0, {"role": "system", "content": request.system_prompt})
         else:
