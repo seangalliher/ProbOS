@@ -330,6 +330,13 @@ async def _boot_runtime(
     )
     runtime._eviction_audit = eviction_audit  # AD-541f: expose for shutdown/SIF
 
+    # AD-731: wire the runtime's content-addressable AttachmentStore into the
+    # LLM client so it can resolve attachment_ref source blocks to base64 just
+    # before the HTTP POST. The LLM client is created before the runtime, so
+    # we use the deferred setter rather than a constructor arg.
+    if hasattr(llm_client, "set_attachment_store"):
+        llm_client.set_attachment_store(runtime.attachment_store)
+
     # Boot sequence
     with console.status("  Initializing infrastructure..."):
         await runtime.start()

@@ -1187,6 +1187,16 @@ class ProbOSRuntime:
         """Public accessor for emergence metrics engine (AD-680). Read-only."""
         return self._emergence_metrics_engine
 
+    @property
+    def attachment_store(self) -> Any:
+        """AD-731: public accessor for the runtime's content-addressable
+        attachment store. Delegates to the cached helper in routers/chat.py
+        so the per-runtime cache stays in one place. Returns an instance
+        satisfying the ``probos.attachments.store.AttachmentStore`` Protocol.
+        """
+        from probos.routers.chat import _get_attachment_store
+        return _get_attachment_store(self)
+
     def build_state_snapshot(self) -> dict[str, Any]:
         """Build a full state snapshot for HXI clients (AD-254)."""
         from probos.earned_agency import agency_from_rank
