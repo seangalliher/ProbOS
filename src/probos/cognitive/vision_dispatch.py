@@ -168,13 +168,28 @@ async def build_multimodal_messages(
 
         if mime.startswith("image/"):
             image_ids.append(attachment_id)
-            data = base64.b64encode(blob).decode("ascii")
+            # AD-731: emit a content-addressable ref instead of inline base64.
+            # The receiver dereferences from the local AttachmentStore inside
+            # the LLM client immediately before the HTTP POST. This keeps the
+            # bus message ~70 bytes per image instead of 150 KB-1 MB and
+            # restores the uniform-NATS-transport invariant (AD-637z2).
+            #
+            # BF-278 (2026-05-12): RESTORED after accidental regression in
+            # BF-274. When BF-274 restored VISION_UNCONFIGURED_MESSAGE et al.,
+            # the working tree's ``vision_dispatch.py`` had ALSO reverted the
+            # AD-731 ref-shape emission back to inline-base64 with Anthropic-
+            # source-shape. The bus carried that shape through, the resolver
+            # ``_resolve_attachment_refs_for_openai`` only matches blocks
+            # whose source.type=="attachment_ref" so it left them untouched,
+            # and Ollama qwen3.6:27b rejected the resulting Anthropic-shape
+            # payload with HTTP 400 "invalid message format". Captured live
+            # via tmp_capture_proxy.py 2026-05-12.
             content.append({
                 "type": "image",
                 "source": {
-                    "type": "base64",
+                    "type": "attachment_ref",
+                    "sha256": attachment_id,
                     "media_type": mime,
-                    "data": data,
                 },
             })
             continue

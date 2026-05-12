@@ -899,33 +899,6 @@ class OpenAICompatibleClient(BaseLLMClient):
         logger.debug("LLM request payload (openai): %s", json.dumps(payload, indent=2))
 
         resp = await client.post("chat/completions", json=payload, timeout=timeout)
-        # BF-275 DIAG: capture 4xx response bodies so vision-tier failures
-        # produce diagnosable logs without needing a proxy. The Ollama-side
-        # GIN log only shows "400 24ms" — the actual validation error lives
-        # in the response body, which raise_for_status() throws away.
-        if resp.status_code >= 400:
-            try:
-                _body = resp.text[:800]
-            except Exception:
-                _body = "<unreadable>"
-            _msg_count = len(payload.get("messages", []))
-            _content_shapes: list = []
-            for _m in payload.get("messages", [])[:2]:
-                _c = _m.get("content")
-                if isinstance(_c, list):
-                    _content_shapes.append([
-                        (x.get("type") if isinstance(x, dict) else type(x).__name__)
-                        for x in _c
-                    ])
-                elif isinstance(_c, str):
-                    _content_shapes.append(f"str[{len(_c)}]")
-            logger.warning(
-                "BF-275-DIAG: %s %d on %s. model=%r max_tokens=%r msg_count=%d "
-                "shapes=%r body=%s",
-                resp.request.method, resp.status_code, str(resp.request.url),
-                payload.get("model"), payload.get("max_tokens"),
-                _msg_count, _content_shapes, _body,
-            )
         resp.raise_for_status()
         data = resp.json()
 
