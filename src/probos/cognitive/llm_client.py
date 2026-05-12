@@ -542,6 +542,16 @@ class OpenAICompatibleClient(BaseLLMClient):
             if effective_top_p is None and tc.get("top_p") is not None:
                 effective_top_p = tc["top_p"]
 
+            # Per-tier max_tokens override (tier-level wins over the
+            # request default; explicit caller overrides via
+            # LLMRequest.max_tokens still beat the tier override because
+            # they are non-default). Thinking models (qwen3.6, etc.) need
+            # generous budgets so the reasoning trace doesn't starve the
+            # final answer.
+            effective_max_tokens = request.max_tokens
+            if effective_max_tokens == 2048 and tc.get("max_tokens") is not None:
+                effective_max_tokens = tc["max_tokens"]
+
             # AD-617: Inner retry loop for 429 backpressure (stays on same tier)
             _max_429_retries = 5
             for _429_attempt in range(_max_429_retries):
@@ -551,6 +561,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         timeout=tier_timeout,
                         effective_temp=effective_temp,
                         effective_top_p=effective_top_p,
+                        effective_max_tokens=effective_max_tokens,
                     )
                     # Cache successful responses (keyed by original tier)
                     cache_key = self._cache_key(tier, request.prompt)
@@ -691,16 +702,19 @@ class OpenAICompatibleClient(BaseLLMClient):
         self, request: LLMRequest, model: str, client: httpx.AsyncClient,
         *, api_format: str = "openai", timeout: float = 30.0,
         effective_temp: float | None = None, effective_top_p: float | None = None,
+        effective_max_tokens: int | None = None,
     ) -> LLMResponse:
         """Make the actual API call, routing by api_format."""
         if api_format == "ollama":
             return await self._call_ollama_native(
                 request, model, client, timeout=timeout,
                 effective_temp=effective_temp, effective_top_p=effective_top_p,
+                effective_max_tokens=effective_max_tokens,
             )
         return await self._call_openai(
             request, model, client, timeout=timeout,
             effective_temp=effective_temp, effective_top_p=effective_top_p,
+            effective_max_tokens=effective_max_tokens,
         )
 
     def set_attachment_store(self, store: AttachmentStore | None) -> None:
@@ -806,10 +820,13 @@ class OpenAICompatibleClient(BaseLLMClient):
         self, request: LLMRequest, model: str, client: httpx.AsyncClient,
         *, timeout: float = 30.0,
         effective_temp: float | None = None, effective_top_p: float | None = None,
+        effective_max_tokens: int | None = None,
     ) -> LLMResponse:
         """OpenAI-compatible chat/completions call."""
         if effective_temp is None:
             effective_temp = request.temperature
+        if effective_max_tokens is None:
+            effective_max_tokens = request.max_tokens
         # AD-720d (Wave 139): multimodal turns provide a pre-built ``messages``
         # array; when present, skip the prompt-shape synthesis below.
         if request.messages is not None:
@@ -830,7 +847,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             "model": model,
             "messages": messages,
             "temperature": effective_temp,
-            "max_tokens": request.max_tokens,
+            "max_tokens": effective_max_tokens,
         }
         if effective_top_p is not None:
             payload["top_p"] = effective_top_p
@@ -918,10 +935,13 @@ class OpenAICompatibleClient(BaseLLMClient):
         self, request: LLMRequest, model: str, client: httpx.AsyncClient,
         *, timeout: float = 30.0,
         effective_temp: float | None = None, effective_top_p: float | None = None,
+        effective_max_tokens: int | None = None,
     ) -> LLMResponse:
         """Native Ollama /api/chat call with think disabled."""
         if effective_temp is None:
             effective_temp = request.temperature
+        if effective_max_tokens is None:
+            effective_max_tokens = request.max_tokens
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -934,8 +954,8 @@ class OpenAICompatibleClient(BaseLLMClient):
             "think": False,
             "keep_alive": self._ollama_keep_alive,
         }
-        if request.max_tokens:
-            payload.setdefault("options", {})["num_predict"] = request.max_tokens
+        if effective_max_tokens:
+            payload.setdefault("options", {})["num_predict"] = effective_max_tokens
         if effective_temp is not None:
             payload.setdefault("options", {})["temperature"] = effective_temp
         if effective_top_p is not None:

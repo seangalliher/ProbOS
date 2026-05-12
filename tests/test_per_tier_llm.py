@@ -110,6 +110,20 @@ class TestCognitiveConfigSampling:
         assert config.tier_config("deep")["top_p"] == 0.95
         assert config.tier_config("fast")["top_p"] is None
 
+    def test_tier_config_returns_max_tokens_when_set(self):
+        """Per-tier max_tokens override (AD-732 +1, 2026-05-12): set
+        llm_max_tokens_vision=8192, verify vision returns 8192 and other
+        tiers return None. Used by _call_openai/_call_ollama_native to
+        size the per-request token budget — thinking models like
+        qwen3.6:27b need generous budgets so the reasoning trace doesn't
+        starve the final answer.
+        """
+        config = CognitiveConfig(llm_max_tokens_vision=8192)
+        assert config.tier_config("vision")["max_tokens"] == 8192
+        assert config.tier_config("fast")["max_tokens"] is None
+        assert config.tier_config("standard")["max_tokens"] is None
+        assert config.tier_config("deep")["max_tokens"] is None
+
     def test_tier_defaults_not_set_returns_none(self):
         """Default CognitiveConfig() returns None for temperature and top_p in all tiers."""
         config = CognitiveConfig()
@@ -117,6 +131,7 @@ class TestCognitiveConfigSampling:
             tc = config.tier_config(tier)
             assert tc["temperature"] is None
             assert tc["top_p"] is None
+            assert tc["max_tokens"] is None
 
     def test_tier_info_includes_sampling_params(self):
         """OpenAICompatibleClient with llm_temperature_fast=0.1 shows it in tier_info()."""

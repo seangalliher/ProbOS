@@ -225,6 +225,16 @@ class CognitiveConfig(BaseModel):
     llm_top_p_deep: float | None = None
     llm_top_p_vision: float | None = None
 
+    # Per-tier max_tokens overrides (None = use request-level value).
+    # Useful for thinking models (qwen3.6, gpt-5.x-thinking, claude-extended-
+    # thinking) where the reasoning trace eats the token budget before the
+    # final answer is produced. Bumping vision to 8192+ on a 32K-context model
+    # gives the model room to think AND produce a complete reply.
+    llm_max_tokens_fast: int | None = None
+    llm_max_tokens_standard: int | None = None
+    llm_max_tokens_deep: int | None = None
+    llm_max_tokens_vision: int | None = None
+
     # Default tier for LLM requests ("fast", "standard", or "deep")
     default_llm_tier: str = "fast"
 
@@ -290,6 +300,12 @@ class CognitiveConfig(BaseModel):
             "deep": self.llm_top_p_deep,
             "vision": self.llm_top_p_vision,
         }
+        max_tokens_map = {
+            "fast": self.llm_max_tokens_fast,
+            "standard": self.llm_max_tokens_standard,
+            "deep": self.llm_max_tokens_deep,
+            "vision": self.llm_max_tokens_vision,
+        }
         return {
             "base_url": url_map.get(tier) or self.llm_base_url,
             "api_key": key_map.get(tier) if key_map.get(tier) is not None else self.llm_api_key,
@@ -298,6 +314,7 @@ class CognitiveConfig(BaseModel):
             "api_format": format_map.get(tier) or "openai",
             "temperature": temp_map.get(tier),   # None = use request default
             "top_p": top_p_map.get(tier),        # None = don't send
+            "max_tokens": max_tokens_map.get(tier),  # None = use request default
         }
 
 

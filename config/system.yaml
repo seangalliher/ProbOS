@@ -69,6 +69,10 @@ cognitive:
   llm_model_vision: "qwen3.6:27b"
   llm_api_format_vision: "openai"  # Ollama's OpenAI-compat endpoint
   llm_timeout_vision: 120  # local inference can be slow on first load
+  # qwen3.6:27b is a thinking model — reasoning trace can be long.
+  # 8192 leaves ample room for both the reasoning AND a complete reply
+  # within the model's 32K context. Bump higher if descriptions get cut off.
+  llm_max_tokens_vision: 8192
 
   # Per-tier sampling parameters (uncomment to override request defaults)
   # Deep tier: higher temperature for reasoning diversity
