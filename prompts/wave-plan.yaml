@@ -3344,6 +3344,17 @@ waves:
     issues_to_close: [630]
     status: shipped
 
+  - id: "152"
+    title: "Content-addressable vision payloads — AD-731 (replace inline base64 with refs; revert BF-265)"
+    kind: main
+    depends_on: ["151"]
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-731-content-addressable-vision-payloads.md"
+    builder_required: true
+    issues_to_close: [637, 639]
+    status: shipped
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

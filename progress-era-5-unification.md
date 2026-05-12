@@ -480,3 +480,14 @@ See [design-principles.md](docs/development/design-principles.md) for full desig
 
 - AD-720d - vision pipe-through v1 shipped (Wave 139, Python +10 = 13072, Vitest +0). Wires previously-dead `ChatRequest.attachment_ids` into the chat path. Image attachments route via `LLMClient` vision tier (multimodal `messages` array, additive `LLMRequest.messages` field, zero new vendor SDK deps). Non-image attachments (txt/md/json/csv) inline-extract and augment the prompt for the standard decomposer path. PDF / vision-tier-unhealthy paths emit structured stubs — never silent drop.
 
+
+- AD-730 - vision pipe-through for per-agent DMs shipped (Wave 151, Python +N), then partially compromised by BF-265 transport-strip. Resolved by AD-731 (Wave 152) — see below.
+
+- BF-265 - IntentBus strip of `vision_messages` from NATS transport shipped Wave 151 as emergency fix for #636 OOM crash (1 MB allocation failure from inline-base64 retry-buffer accumulation). **REVERTED in Wave 152 / AD-731** — content-addressable refs make the strip unnecessary; the uniform-NATS-transport invariant is restored.
+
+- BF-266 - fold full `user_message` into vision DM multimodal content shipped (Wave 151). Behavior unchanged by AD-731; the enrichment is shape-agnostic (matches on `type == 'image'`).
+
+- BF-267 - IntentBus.send() local-first dispatch shipped Wave 151, **REVERTED 2026-05-11** (commit 8b4b39f) because the local handler is async and returns immediately (cognitive queue enqueue), so `await handler(intent)` returned `None` — broke ALL DMs including text. Architecturally the local-first reflex was the wrong-direction fix; the right fix is the wire format (AD-731).
+
+- AD-731 (Wave 152) - content-addressable vision payloads shipped (Python +13 = 13342). Sender (`build_multimodal_messages`) emits `{type:image, source:{type:attachment_ref, sha256, media_type}}` instead of inline base64. Receiver (`OpenAICompatibleClient._resolve_attachment_refs_for_openai`) dereferences refs from the runtime's content-addressable `AttachmentStore` to base64 immediately before the HTTP POST. Bus message stays ~70 bytes/image (was 150 KB-1 MB). BF-265 reverted as a consequence — AD-637z2 (#639) auto-closes. Federation strip preserved as an explicit AD-731a forward marker (cross-mesh attachment distribution unsolved; AD-731a-1 HTTP fetch and AD-731a-2 NATS Object Store will retire it). Industry pattern (refs not bytes on RPC) matches Ray/Dask object refs, Erlang BEAM refs, MCP resource handles, Anthropic API source types, Git, IPFS, OCI registries.
+

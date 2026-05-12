@@ -2018,3 +2018,57 @@ Three pieces, all gated by existing `avatar_telemetry.divergence_detection` (no 
 **Files (anticipated).** `src/probos/routers/agents.py` (augmentation -> dispatch swap), `src/probos/cognitive/cognitive_agent.py` (direct_message handler accepts vision_messages), `src/probos/api_models.py` (no change — `attachment_ids` already present), tests: `tests/test_ad730_agent_chat_vision.py` (new).
 
 **Status:** Forward marker. Filed via GH issue [#630](https://github.com/seangalliher/ProbOS/issues/630). Awaits wave-slot assignment + Architect implementation prompt.
+
+
+### AD-731 - Content-Addressable Vision Payloads (closes #637, #639)
+**Date:** 2026-05-11  `n**Type:** Architecture Decision (wire format / load-bearing invariant restoration)  `n**Wave:** 152
+
+Replace inline base64 in `IntentMessage.params['vision_messages']` with content-addressable refs to the existing `AttachmentStore`. Bytes never cross the bus. Receiver dereferences from the local store inside the LLM client immediately before the HTTP POST. The bus carries SHA-256 + media_type (~70 bytes/image); the store carries the bytes.
+
+**Problem (verified diagnostic baseline — 2026-05-11).** AD-730 (Wave 151) packed Anthropic-shape `vision_messages` arrays containing inline base64 image bytes into `IntentMessage.params`. NATS request/reply serialization triggered #636 (1 MB allocation failure) when retry buffers accumulated the inline base64. BF-265 added a transport strip that prevented the crash but also stripped the receiver's view of `vision_messages` — the agent's LLM call saw text only. BF-267 attempted to bypass NATS for local-process targets ("local-first dispatch"); it broke all DMs because the local handler is async and returns immediately, so `await handler(intent)` returned `None`. Reverted (commit `8b4b39f`).
+
+The architectural error was not BF-265 (a correct emergency response to OOM) and not BF-267 (the local-first reflex was wrong-direction). The architectural error was **inline base64 in RPC messages.** AD-730 should have referenced the already-existing `AttachmentStore` (shipped AD-720) instead of inlining bytes.
+
+**Decision: refs, not URLs, not base64.** Bus message format on the wire is content-addressable + provider-agnostic:
+- Sender (`vision_dispatch.build_multimodal_messages`) emits `{type: image, source: {type: attachment_ref, sha256, media_type}}`.
+- Receiver (`OpenAICompatibleClient._resolve_attachment_refs_for_openai`) walks each `messages[i].content` array and replaces `attachment_ref` source blocks with `base64` source blocks just before `httpx.AsyncClient.post` — Anthropic-shape adaptation happens at the LLM-vendor boundary, NOT on the bus.
+- Single-host attachment store assumption (Option A). v1 assumes all agent processes share the same filesystem path. Multi-host distribution (HTTP fetch, NATS Object Store) is explicitly deferred to AD-731a forward markers (#638).
+- Missing refs degrade gracefully: image block replaced with a `failed_to_load_at_dereference` text marker; warning logged; never raises into the LLM call.
+
+**Why (industry-comparison citations).** Every mature distributed system that carries large payloads through RPC converges on the same pattern: control plane carries refs/IDs, data plane carries bytes.
+- **Ray / Dask object refs** — distributed object stores accessed by ObjectRef; tasks pass refs, not data.
+- **Erlang BEAM refs** — opaque term references for cross-process value handles.
+- **Anthropic API source types** — the multimodal content-block schema accepts `base64`, `url`, and `file_id` source types; the API itself models refs as a first-class shape.
+- **Model Context Protocol (MCP) resource handles** — clients pass resource URIs to tools; bytes flow through a separate fetch.
+- **Git** — the entire object model is content-addressable (blob SHAs); the working tree dereferences on read.
+- **IPFS** — CIDs in the routing layer, bytes in the storage layer.
+- **OCI image registries** — manifests reference layer digests; layers are fetched out-of-band.
+
+NATS just enforces the discipline earlier (1 MiB default) than transports without hard limits. The right response to "my payload is bigger than the transport budget" is **not** to weaken the transport or fork the dispatch path — it is to fix the wire format.
+
+**Why not BF-267's local-first.** Bypassing the standardized pub/sub bus for in-process targets means we maintain two dispatch code paths, each with different governance, episodic-log, consensus, and trust-scoring properties. The bus invariant ("all intents flow through the same path") is load-bearing; weakening it has compounding correctness costs over time. BF-267's specific failure mode (async-handler `await` returning `None`) is the surface symptom; the deeper issue is that the bus was correct and the message shape was wrong.
+
+**See also: User-memory lesson 2026-05-11 — "Don't change the architecture to fix a symptom."** Wave 151 BF-265 -> BF-267 sequence is now the canonical example. Before any prompt that proposes changing a load-bearing invariant to make a feature work, check whether a shared primitive (store, registry, knowledge base) already exists that the feature should be using instead. AD-730 ignored AD-720's existing store; AD-731 wires it.
+
+**In scope (this AD).**
+- Sender shape change (`vision_dispatch.py`).
+- Receiver resolution (new `OpenAICompatibleClient._resolve_attachment_refs_for_openai`).
+- Constructor parameter and deferred setter on `OpenAICompatibleClient` (Dependency Inversion on `AttachmentStore` Protocol).
+- Public `ProbOSRuntime.attachment_store` property (delegates to `routers/chat.py:_get_attachment_store`).
+- Wire-up in `__main__._boot_and_run` after runtime construction.
+- BF-265 revert in `mesh/intent.py` (removed `_TRANSPORT_STRIPPED_PARAM_KEYS` and the strip branch).
+- 12 new tests + invert assertions on the BF-265/BF-266/AD-730 fixtures.
+
+**Out of scope (explicit Do-Not-Build list).**
+- HTTP fetch for cross-host attachment distribution — AD-731a-1 (#638 sub-marker).
+- NATS Object Store integration — AD-731a-2 (#638 sub-marker).
+- Federation strip change — pinned as a deliberate AD-731a forward marker because the receiving mesh may not have the local store.
+- HXI / TypeScript UI changes — wire format change is internal to the bus.
+- `AgentChatRequest` model — no API change.
+- LLM tier system / retry / health-probe changes.
+- Re-introducing local-first dispatch (BF-267 pattern) — the fix is the wire format.
+- Binding the bus message format to Anthropic's content-block schema — `attachment_ref` is internal and provider-agnostic.
+
+**Status:** SHIPPED. Closes #637 (AD-731 implementation) and #639 (AD-637z2 — BF-265 transport strip removal auto-closes as a consequence). AD-731a remains open as the cross-host distribution forward marker (#638), with sub-markers AD-731a-1 (HTTP fetch), AD-731a-2 (NATS Object Store), and AD-731a-3 (mime-only fast path in sender).
+
+**Files.** `src/probos/cognitive/vision_dispatch.py` (sender shape + observability log + drop base64 import), `src/probos/cognitive/llm_client.py` (constructor param + deferred setter + `_resolve_attachment_refs_for_openai` + `_call_openai` wiring), `src/probos/mesh/intent.py` (revert BF-265 strip), `src/probos/federation/bridge.py` (AD-731a forward-marker comment on the federation strip), `src/probos/runtime.py` (`attachment_store` property), `src/probos/__main__.py` (deferred-setter wiring after `ProbOSRuntime` construction), `tests/test_ad731_attachment_ref_wire_format.py` (new, 12 tests), `tests/test_bf265_transport_stripped_params.py` (inverted assertions + regression sentinel), `tests/test_bf266_vision_context_folding.py` and `tests/test_ad730_agent_chat_vision.py` (fixture shape flipped to `attachment_ref`).

@@ -391,6 +391,18 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-723-C *(Commercial)* | Polished multi-user 3D ship-interior UI, world layout, room semantics, meeting surfaces, operator controls — builds on AD-723 protocol | (commercial overlay) | — |
 | AD-724 | Away-mission protocol — agent embodiment in external virtual worlds (VRChat / open metaverse), episodic memory of places | (filed after AD-723) | 4 |
 
+**Wave 151 / Wave 152 — vision DM payload chain:**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-730 | Vision pipe-through for per-agent DMs — **SHIPPED Wave 151**, partial regression resolved by AD-731 (Wave 152) | [#630](https://github.com/seangalliher/ProbOS/issues/630) | 2 |
+| AD-731 | Content-addressable vision payloads (refs not bytes on the bus; receiver dereferences from AttachmentStore just before HTTP POST) — **SHIPPED Wave 152** (12 new tests + BF-265/BF-266/AD-730 fixture assertions inverted; +13 net) | [#637](https://github.com/seangalliher/ProbOS/issues/637) | 1 |
+| AD-637z2 | Remove BF-265 transport strip after AD-731 lands — **CLOSED-AS-PART-OF-AD-731 (Wave 152)** | [#639](https://github.com/seangalliher/ProbOS/issues/639) | 1 |
+| AD-731a | Cross-host attachment distribution (parent forward marker; single-host store assumption deferred from AD-731) | [#638](https://github.com/seangalliher/ProbOS/issues/638) | 3 |
+| AD-731a-1 | HTTP fetch for cross-host single-tenant attachment retrieval | (sub-marker under AD-731a) | 3 |
+| AD-731a-2 | NATS Object Store integration for cross-mesh attachment distribution; retires federation/bridge.py vision_messages strip | (sub-marker under AD-731a) | 3 |
+| AD-731a-3 | Mime-only fast path in sender (skip blob read for image attachments) | (sub-marker under AD-731a, optional) | 4 |
+
 ### Forcing-function deferrals
 
 (Forward dependencies satisfied; build when need surfaces.)

@@ -152,6 +152,7 @@ When reviewing PROGRESS.md or evaluating changes, check for:
 - **Scope creep**: "This change adds [feature] which was not in the prompt. Revert and keep to the stated deliverables."
 - **Prompt text triggering gap regex**: "This response/example text contains phrases ('can't', 'don't have', 'unable to') that match `_CAPABILITY_GAP_RE`. Review all prompt example text against the gap regex before shipping."
 - **IntentBus fan-out side effects**: "This change adds HTTP calls in agent code. Remember: `IntentBus.broadcast()` fans out to ALL subscribers. 3 HttpFetchAgents × N broadcasts = 3N HTTP calls. Use `_mesh_fetch()` for designed agents — rate limiter handles the rest."
+- **Inline blob in IntentMessage.params**: "ANY new code path that puts >4 KB into `IntentMessage.params` should be flagged. Use a content-addressable ref to `AttachmentStore` (AD-731 pattern). The bus carries refs; the store carries bytes. The 2026-05-11 OOM crash (#636) and the BF-265 → BF-267 → AD-731 wave-151/152 sequence is the canonical lesson on why inline blobs in RPC messages is the wrong shape."
 - **HXI Canvas regression**: "This UI change touches agents.tsx, animations.tsx, or CognitiveCanvas.tsx. Verify tooltips, bloom position, and raycasting still work after the change."
 - **HXI emoji violation**: "This UI code uses emoji (👍, 🔊, ✨, etc.) instead of inline SVG glyphs. Replace with stroke-based SVG icons per HXI Design Principle #3."
 - **Missing type annotations**: "This public method has no return type annotation. All public APIs must be fully typed."
