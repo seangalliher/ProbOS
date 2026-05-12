@@ -439,6 +439,35 @@ class TestRoutingShifts:
         # Both agents in same pool → entropy = 0
         assert entropy == 0.0
 
+    def test_entropy_includes_social_weights(self) -> None:
+        """Parallel to BF-176: REL_SOCIAL cross-pool collaboration must
+        contribute to routing entropy. Without this, an active crew that
+        is primarily DMing/Ward-Roomming (REL_SOCIAL) but rarely receiving
+        intent-bus broadcasts (REL_INTENT) shows entropy=0 even though
+        cross-pool routing is healthy.
+        """
+        weights = {
+            # No REL_INTENT activity — pure social crew.
+            ("agentA", "agent_poolA_0_aaa", REL_SOCIAL): 0.5,
+            ("agentB", "agent_poolB_0_bbb", REL_SOCIAL): 0.5,
+            ("agentC", "agent_poolC_0_ccc", REL_SOCIAL): 0.5,
+        }
+        d = _make_detector(weights=weights)
+        entropy = d.compute_routing_entropy()
+        # 3 distinct target pools with equal social weight → entropy > 1.0
+        assert entropy > 1.0
+
+    def test_entropy_combines_intent_and_social(self) -> None:
+        """Intent + social weights aggregate into the same pool distribution."""
+        weights = {
+            ("i1", "agent_poolA_0_aaa", REL_INTENT): 0.3,
+            ("agentX", "agent_poolB_0_bbb", REL_SOCIAL): 0.3,
+        }
+        d = _make_detector(weights=weights)
+        entropy = d.compute_routing_entropy()
+        # Two equally-weighted pools → entropy = 1.0
+        assert entropy == pytest.approx(1.0)
+
 
 # ===========================================================================
 # Consolidation anomaly detection

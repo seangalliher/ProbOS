@@ -1076,13 +1076,27 @@ class EmergentDetector:
         return patterns
 
     def compute_routing_entropy(self) -> float:
-        """Compute Shannon entropy over Hebbian weight distribution across pools."""
+        """Compute Shannon entropy over Hebbian weight distribution across pools.
+
+        BF (parallel to BF-176 for compute_tc_n): aggregates BOTH intent routing
+        (REL_INTENT) and social cross-pool collaboration (REL_SOCIAL). When crew
+        agents are mostly producing Ward Room / DM activity (REL_SOCIAL) and
+        intent-bus broadcasts are rare, an INTENT-only signal collapses to a
+        single pool → Shannon entropy = 0. Including REL_SOCIAL keeps the
+        metric meaningful as the crew shifts toward agent-to-agent
+        collaboration as its dominant routing mode.
+        """
         weights = self._router.all_weights_typed()
         intent_weights = {k: v for k, v in weights.items() if k[2] == REL_INTENT}
+        social_weights = {k: v for k, v in weights.items() if k[2] == REL_SOCIAL}
 
-        # Sum weights by target agent pool
+        # Sum weights by target agent pool — intent + social combined
         pool_totals: dict[str, float] = {}
-        for (source, target, _), weight in intent_weights.items():
+        for (_source, target, _), weight in intent_weights.items():
+            pool = self._extract_pool(target)
+            if pool:
+                pool_totals[pool] = pool_totals.get(pool, 0.0) + weight
+        for (_source, target, _), weight in social_weights.items():
             pool = self._extract_pool(target)
             if pool:
                 pool_totals[pool] = pool_totals.get(pool, 0.0) + weight
