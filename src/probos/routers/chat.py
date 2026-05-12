@@ -311,20 +311,34 @@ async def chat(
                 health = runtime.llm_client.get_health_status()
                 tier_status = (health.get("tiers", {}).get(tier) or {}).get("status")
                 if tier_status != "operational":
+                    from probos.cognitive.vision_dispatch import (
+                        VISION_UNCONFIGURED_MESSAGE,
+                        VISION_UNHEALTHY_MESSAGE,
+                        is_vision_tier_configured,
+                    )
+                    if not is_vision_tier_configured(runtime.config.cognitive, tier):
+                        logger.info(
+                            "AD-732: /api/chat vision DM requested but vision tier "
+                            "unconfigured; returning honest-degrade message. "
+                            "attachment_ids=%s",
+                            list(req.attachment_ids),
+                        )
+                        return {
+                            "response": VISION_UNCONFIGURED_MESSAGE,
+                            "dag": None,
+                            "results": None,
+                        }
                     logger.warning(
-                        "AD-720d vision tier=%s unavailable (status=%s); returning "
-                        "text-only stub naming attachments. attachment_ids=%s",
+                        "AD-732: /api/chat vision tier=%s configured but unhealthy "
+                        "(status=%s); returning honest-degrade message. "
+                        "attachment_ids=%s",
                         tier, tier_status, list(req.attachment_ids),
                     )
-                    preview = ", ".join(list(req.attachment_ids)[:3])
-                    if len(req.attachment_ids) > 3:
-                        preview = preview + "..."
-                    stub = (
-                        f"I see {len(req.attachment_ids)} attachment(s) "
-                        f"({preview}) but vision processing is currently "
-                        f"unavailable. Try again in a moment."
-                    )
-                    return {"response": stub, "dag": None, "results": None}
+                    return {
+                        "response": VISION_UNHEALTHY_MESSAGE,
+                        "dag": None,
+                        "results": None,
+                    }
                 llm_response = await runtime.llm_client.complete(
                     LLMRequest(
                         prompt="",

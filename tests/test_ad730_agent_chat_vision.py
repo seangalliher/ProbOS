@@ -3,7 +3,7 @@
 Covers:
   - image attachments route the agent's DM perception turn via the vision tier
   - vision_messages threaded through IntentMessage.params['vision_messages']
-  - degraded vision tier falls back to text-only augmentation
+  - degraded vision tier => AD-732 honest-degrade (no intent dispatch)
   - text-only DM path unchanged when no images present
   - text/.txt attachments do not trigger the vision branch
   - episodic outcomes carry the has_image_attachment flag
@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.config import CognitiveConfig
 from probos.routers.agents import agent_chat
 
 
@@ -58,7 +59,10 @@ def _make_runtime(
     runtime.recreation_service = None
     runtime.ward_room = None
 
-    # Attachments config
+    # Attachments config + AD-732 cognitive config (vision tier).
+    # vision_tier="standard" → is_vision_tier_configured returns True
+    # (legacy tier; always configured). vision_tier="vision" with no
+    # llm_model_vision is_vision_tier_configured returns False (unconfigured).
     runtime.config = SimpleNamespace(
         attachments=SimpleNamespace(
             enabled=attachments_enabled,
@@ -66,6 +70,7 @@ def _make_runtime(
             pdf_extraction_enabled=False,
             vision_tier="standard",
         ),
+        cognitive=CognitiveConfig(),
     )
 
     # LLM client health
@@ -167,8 +172,13 @@ async def test_dm_image_passes_vision_messages_through_intent_params():
 
 
 @pytest.mark.asyncio
-async def test_dm_image_with_degraded_vision_tier_falls_back_to_text_augmentation():
-    """Degraded vision tier => no vision_messages; falls back to text augmentation."""
+async def test_dm_image_with_degraded_vision_tier_returns_unhealthy_message():
+    """AD-732: a configured-but-unhealthy vision tier returns the
+    VISION_UNHEALTHY_MESSAGE honest-degrade text and does NOT dispatch the
+    intent. vision_tier="standard" is "configured" for legacy reasons, so
+    the unhealthy branch fires."""
+    from probos.cognitive.vision_dispatch import VISION_UNHEALTHY_MESSAGE
+
     runtime = _make_runtime(vision_status="degraded")
     req = _req(attachment_ids=["sha-img-1"])
 
@@ -181,12 +191,14 @@ async def test_dm_image_with_degraded_vision_tier_falls_back_to_text_augmentatio
          patch("probos.cognitive.vision_dispatch.build_multimodal_messages", side_effect=_bmm), \
          patch("probos.cognitive.vision_dispatch.augment_prompt_with_attachment_text", aug), \
          patch("probos.routers.chat._get_attachment_store", return_value=MagicMock()):
-        await agent_chat("test-id", req, runtime)
+        result = await agent_chat("test-id", req, runtime)
 
-    sent_intent = runtime.intent_bus.send.call_args.args[0]
-    assert "vision_messages" not in sent_intent.params
-    assert "Captain attached an image" in sent_intent.params["text"]
-    aug.assert_awaited_once()
+    # Honest-degrade: early return, no intent dispatch, no text-augmentation.
+    runtime.intent_bus.send.assert_not_called()
+    aug.assert_not_awaited()
+    assert result["response"] == VISION_UNHEALTHY_MESSAGE
+    assert result["callsign"] == "Lynx"
+    assert result["agentId"] == "test-id"
 
 
 @pytest.mark.asyncio

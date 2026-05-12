@@ -21,6 +21,50 @@ logger = logging.getLogger(__name__)
 _PDF_DEFERRED_NOTE = "PDF extraction not yet wired (AD-720a-1)"
 
 
+# AD-732: Operator-facing honest-degrade messages. Two variants because they
+# have different remediations — "unconfigured" needs setup; "unhealthy" needs
+# the endpoint restarted. The /api/chat and /api/agent/{id}/chat handlers
+# both return one of these (no LLM call, no intent dispatch) instead of the
+# pre-AD-732 "Try again in a moment" stub, which was misleading on a
+# permanently-misconfigured instance.
+VISION_UNCONFIGURED_MESSAGE = (
+    "Vision LLM is not configured on this ProbOS instance. Image attachments "
+    "require a vision-capable model. To enable it, install Ollama "
+    "(https://ollama.com), run `ollama pull llava:34b`, then uncomment the "
+    "vision tier block in config/system.yaml. Alternatively, point "
+    "cognitive.llm_base_url_vision and cognitive.llm_model_vision at "
+    "OpenAI, Anthropic, or any other OpenAI-compatible vision endpoint."
+)
+
+VISION_UNHEALTHY_MESSAGE = (
+    "Vision LLM endpoint is configured but currently unreachable. "
+    "Check that the configured vision endpoint (cognitive.llm_base_url_vision) "
+    "is running and reachable. Once the endpoint recovers, image attachments "
+    "will work again on the next message."
+)
+
+
+def is_vision_tier_configured(cfg: Any, tier_name: str) -> bool:
+    """AD-732: vision tier is "configured" iff it has both a model name AND
+    a non-default base URL on the CognitiveConfig.
+
+    The empty-string ``llm_model_vision`` sentinel (and ``None``) both mean
+    unconfigured; operators must set both ``llm_base_url_vision`` and
+    ``llm_model_vision`` to enable the vision tier.
+
+    When the configured ``tier_name`` is one of the legacy tiers ("fast",
+    "standard", "deep"), return True — those tiers are always configured by
+    default (they fall back to the shared ``llm_base_url`` if no per-tier
+    override is set). Only "vision" requires the explicit configured-check
+    because it is opt-in by default (see AttachmentsConfig.vision_tier).
+    """
+    if tier_name != "vision":
+        return True
+    model = getattr(cfg, "llm_model_vision", None) or ""
+    base_url = getattr(cfg, "llm_base_url_vision", None)
+    return bool(model and base_url)
+
+
 async def _resolve_one(
     attachment_id: str,
     store: AttachmentStore,

@@ -24,7 +24,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from probos.config import AttachmentsConfig
+from probos.config import AttachmentsConfig, CognitiveConfig
 from probos.routers import chat as chat_router_mod
 from probos.routers.deps import get_runtime, get_ws_broadcast, get_task_tracker, get_pending_designs
 
@@ -73,7 +73,7 @@ def runtime_fixture(tmp_path: Path, monkeypatch):
     })
 
     rt = SimpleNamespace(
-        config=SimpleNamespace(attachments=cfg),
+        config=SimpleNamespace(attachments=cfg, cognitive=CognitiveConfig()),
         llm_client=llm_client,
         process_natural_language=pnl,
     )
@@ -209,7 +209,14 @@ async def test_oversize_text_truncated(client):
 
 @pytest.mark.asyncio
 async def test_vision_tier_unhealthy_returns_text_only_stub(client, caplog):
+    """AD-732: an unhealthy (but configured) vision tier returns the
+    VISION_UNHEALTHY_MESSAGE honest-degrade text, not the previous
+    'Try again in a moment' stub."""
+    from probos.cognitive.vision_dispatch import VISION_UNHEALTHY_MESSAGE
+
     ac, rt, write_blob = client
+    # vision_tier is "standard" in this fixture (legacy AD-720d default),
+    # which is_vision_tier_configured treats as configured → UNHEALTHY path.
     rt.llm_client.get_health_status = MagicMock(
         return_value={"tiers": {"standard": {"status": "unreachable"}}, "overall": "degraded"},
     )
@@ -221,11 +228,11 @@ async def test_vision_tier_unhealthy_returns_text_only_stub(client, caplog):
         )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert "vision processing is currently unavailable" in body["response"]
-    assert sha[:6] in body["response"] or sha in body["response"]
+    assert body["response"] == VISION_UNHEALTHY_MESSAGE
     rt.llm_client.complete.assert_not_called()
     assert any(
-        "AD-720d vision tier=standard unavailable" in rec.message
+        "AD-732: /api/chat vision tier=standard configured but unhealthy"
+        in rec.message
         for rec in caplog.records
     )
 

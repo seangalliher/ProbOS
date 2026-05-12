@@ -934,12 +934,47 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                         # episodic memory remains search-friendly; the LLM
                         # sees the full multimodal array via vision_messages.
                     else:
+                        # AD-732: honest-degrade replaces the previous "fall
+                        # back to text-only augmentation" path. The agent has
+                        # no way to surface a missing-vision-endpoint to the
+                        # crew, so the OS speaks for itself. Early return —
+                        # BEFORE _sampling_state.enter_dm / avatar notify /
+                        # intent dispatch (~line 990-1010 below). Never-enter
+                        # → never-exit is correct (no DM refcount leak).
+                        from probos.cognitive.vision_dispatch import (
+                            VISION_UNCONFIGURED_MESSAGE,
+                            VISION_UNHEALTHY_MESSAGE,
+                            is_vision_tier_configured,
+                        )
+                        # callsign_registry is a stable runtime attribute
+                        # (initialized in ProbOSRuntime.__init__); no guard.
+                        _callsign = runtime.callsign_registry.get_callsign(
+                            agent.agent_type
+                        )
+                        if not is_vision_tier_configured(
+                            runtime.config.cognitive, tier
+                        ):
+                            logger.info(
+                                "AD-732: agent_chat vision DM unconfigured for "
+                                "%s; honest-degrade. attachment_ids=%s",
+                                agent_id, list(req.attachment_ids),
+                            )
+                            return {
+                                "response": VISION_UNCONFIGURED_MESSAGE,
+                                "callsign": _callsign,
+                                "agentId": agent_id,
+                            }
                         logger.warning(
-                            "AD-730 vision tier=%s unavailable (status=%s) for "
-                            "agent=%s; falling back to text-only augmentation. "
+                            "AD-732: agent_chat vision tier=%s unhealthy "
+                            "(status=%s) for %s; honest-degrade. "
                             "attachment_ids=%s",
                             tier, tier_status, agent_id, list(req.attachment_ids),
                         )
+                        return {
+                            "response": VISION_UNHEALTHY_MESSAGE,
+                            "callsign": _callsign,
+                            "agentId": agent_id,
+                        }
 
                 if vision_messages is None:
                     # Text-only path: either no images, or vision degraded.
