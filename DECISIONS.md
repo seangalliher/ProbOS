@@ -2019,36 +2019,37 @@ Three pieces, all gated by existing `avatar_telemetry.divergence_detection` (no 
 
 **Status:** Forward marker. Filed via GH issue [#630](https://github.com/seangalliher/ProbOS/issues/630). Awaits wave-slot assignment + Architect implementation prompt.
 
+---
 
 ### AD-731 - Content-Addressable Vision Payloads (closes #637, #639)
 **Date:** 2026-05-11  `n**Type:** Architecture Decision (wire format / load-bearing invariant restoration)  `n**Wave:** 152
 
 Replace inline base64 in `IntentMessage.params['vision_messages']` with content-addressable refs to the existing `AttachmentStore`. Bytes never cross the bus. Receiver dereferences from the local store inside the LLM client immediately before the HTTP POST. The bus carries SHA-256 + media_type (~70 bytes/image); the store carries the bytes.
 
-**Problem (verified diagnostic baseline — 2026-05-11).** AD-730 (Wave 151) packed Anthropic-shape `vision_messages` arrays containing inline base64 image bytes into `IntentMessage.params`. NATS request/reply serialization triggered #636 (1 MB allocation failure) when retry buffers accumulated the inline base64. BF-265 added a transport strip that prevented the crash but also stripped the receiver's view of `vision_messages` — the agent's LLM call saw text only. BF-267 attempted to bypass NATS for local-process targets ("local-first dispatch"); it broke all DMs because the local handler is async and returns immediately, so `await handler(intent)` returned `None`. Reverted (commit `8b4b39f`).
+**Problem (verified diagnostic baseline ΓÇö 2026-05-11).** AD-730 (Wave 151) packed Anthropic-shape `vision_messages` arrays containing inline base64 image bytes into `IntentMessage.params`. NATS request/reply serialization triggered #636 (1 MB allocation failure) when retry buffers accumulated the inline base64. BF-265 added a transport strip that prevented the crash but also stripped the receiver's view of `vision_messages` ΓÇö the agent's LLM call saw text only. BF-267 attempted to bypass NATS for local-process targets ("local-first dispatch"); it broke all DMs because the local handler is async and returns immediately, so `await handler(intent)` returned `None`. Reverted (commit `8b4b39f`).
 
 The architectural error was not BF-265 (a correct emergency response to OOM) and not BF-267 (the local-first reflex was wrong-direction). The architectural error was **inline base64 in RPC messages.** AD-730 should have referenced the already-existing `AttachmentStore` (shipped AD-720) instead of inlining bytes.
 
 **Decision: refs, not URLs, not base64.** Bus message format on the wire is content-addressable + provider-agnostic:
 - Sender (`vision_dispatch.build_multimodal_messages`) emits `{type: image, source: {type: attachment_ref, sha256, media_type}}`.
-- Receiver (`OpenAICompatibleClient._resolve_attachment_refs_for_openai`) walks each `messages[i].content` array and replaces `attachment_ref` source blocks with `base64` source blocks just before `httpx.AsyncClient.post` — Anthropic-shape adaptation happens at the LLM-vendor boundary, NOT on the bus.
+- Receiver (`OpenAICompatibleClient._resolve_attachment_refs_for_openai`) walks each `messages[i].content` array and replaces `attachment_ref` source blocks with `base64` source blocks just before `httpx.AsyncClient.post` ΓÇö Anthropic-shape adaptation happens at the LLM-vendor boundary, NOT on the bus.
 - Single-host attachment store assumption (Option A). v1 assumes all agent processes share the same filesystem path. Multi-host distribution (HTTP fetch, NATS Object Store) is explicitly deferred to AD-731a forward markers (#638).
 - Missing refs degrade gracefully: image block replaced with a `failed_to_load_at_dereference` text marker; warning logged; never raises into the LLM call.
 
 **Why (industry-comparison citations).** Every mature distributed system that carries large payloads through RPC converges on the same pattern: control plane carries refs/IDs, data plane carries bytes.
-- **Ray / Dask object refs** — distributed object stores accessed by ObjectRef; tasks pass refs, not data.
-- **Erlang BEAM refs** — opaque term references for cross-process value handles.
-- **Anthropic API source types** — the multimodal content-block schema accepts `base64`, `url`, and `file_id` source types; the API itself models refs as a first-class shape.
-- **Model Context Protocol (MCP) resource handles** — clients pass resource URIs to tools; bytes flow through a separate fetch.
-- **Git** — the entire object model is content-addressable (blob SHAs); the working tree dereferences on read.
-- **IPFS** — CIDs in the routing layer, bytes in the storage layer.
-- **OCI image registries** — manifests reference layer digests; layers are fetched out-of-band.
+- **Ray / Dask object refs** ΓÇö distributed object stores accessed by ObjectRef; tasks pass refs, not data.
+- **Erlang BEAM refs** ΓÇö opaque term references for cross-process value handles.
+- **Anthropic API source types** ΓÇö the multimodal content-block schema accepts `base64`, `url`, and `file_id` source types; the API itself models refs as a first-class shape.
+- **Model Context Protocol (MCP) resource handles** ΓÇö clients pass resource URIs to tools; bytes flow through a separate fetch.
+- **Git** ΓÇö the entire object model is content-addressable (blob SHAs); the working tree dereferences on read.
+- **IPFS** ΓÇö CIDs in the routing layer, bytes in the storage layer.
+- **OCI image registries** ΓÇö manifests reference layer digests; layers are fetched out-of-band.
 
-NATS just enforces the discipline earlier (1 MiB default) than transports without hard limits. The right response to "my payload is bigger than the transport budget" is **not** to weaken the transport or fork the dispatch path — it is to fix the wire format.
+NATS just enforces the discipline earlier (1 MiB default) than transports without hard limits. The right response to "my payload is bigger than the transport budget" is **not** to weaken the transport or fork the dispatch path ΓÇö it is to fix the wire format.
 
 **Why not BF-267's local-first.** Bypassing the standardized pub/sub bus for in-process targets means we maintain two dispatch code paths, each with different governance, episodic-log, consensus, and trust-scoring properties. The bus invariant ("all intents flow through the same path") is load-bearing; weakening it has compounding correctness costs over time. BF-267's specific failure mode (async-handler `await` returning `None`) is the surface symptom; the deeper issue is that the bus was correct and the message shape was wrong.
 
-**See also: User-memory lesson 2026-05-11 — "Don't change the architecture to fix a symptom."** Wave 151 BF-265 -> BF-267 sequence is now the canonical example. Before any prompt that proposes changing a load-bearing invariant to make a feature work, check whether a shared primitive (store, registry, knowledge base) already exists that the feature should be using instead. AD-730 ignored AD-720's existing store; AD-731 wires it.
+**See also: User-memory lesson 2026-05-11 ΓÇö "Don't change the architecture to fix a symptom."** Wave 151 BF-265 -> BF-267 sequence is now the canonical example. Before any prompt that proposes changing a load-bearing invariant to make a feature work, check whether a shared primitive (store, registry, knowledge base) already exists that the feature should be using instead. AD-730 ignored AD-720's existing store; AD-731 wires it.
 
 **In scope (this AD).**
 - Sender shape change (`vision_dispatch.py`).
@@ -2060,36 +2061,36 @@ NATS just enforces the discipline earlier (1 MiB default) than transports withou
 - 12 new tests + invert assertions on the BF-265/BF-266/AD-730 fixtures.
 
 **Out of scope (explicit Do-Not-Build list).**
-- HTTP fetch for cross-host attachment distribution — AD-731a-1 (#638 sub-marker).
-- NATS Object Store integration — AD-731a-2 (#638 sub-marker).
-- Federation strip change — pinned as a deliberate AD-731a forward marker because the receiving mesh may not have the local store.
-- HXI / TypeScript UI changes — wire format change is internal to the bus.
-- `AgentChatRequest` model — no API change.
+- HTTP fetch for cross-host attachment distribution ΓÇö AD-731a-1 (#638 sub-marker).
+- NATS Object Store integration ΓÇö AD-731a-2 (#638 sub-marker).
+- Federation strip change ΓÇö pinned as a deliberate AD-731a forward marker because the receiving mesh may not have the local store.
+- HXI / TypeScript UI changes ΓÇö wire format change is internal to the bus.
+- `AgentChatRequest` model ΓÇö no API change.
 - LLM tier system / retry / health-probe changes.
-- Re-introducing local-first dispatch (BF-267 pattern) — the fix is the wire format.
-- Binding the bus message format to Anthropic's content-block schema — `attachment_ref` is internal and provider-agnostic.
+- Re-introducing local-first dispatch (BF-267 pattern) ΓÇö the fix is the wire format.
+- Binding the bus message format to Anthropic's content-block schema ΓÇö `attachment_ref` is internal and provider-agnostic.
 
-**Status:** SHIPPED. Closes #637 (AD-731 implementation) and #639 (AD-637z2 — BF-265 transport strip removal auto-closes as a consequence). AD-731a remains open as the cross-host distribution forward marker (#638), with sub-markers AD-731a-1 (HTTP fetch), AD-731a-2 (NATS Object Store), and AD-731a-3 (mime-only fast path in sender).
+**Status:** SHIPPED. Closes #637 (AD-731 implementation) and #639 (AD-637z2 ΓÇö BF-265 transport strip removal auto-closes as a consequence). AD-731a remains open as the cross-host distribution forward marker (#638), with sub-markers AD-731a-1 (HTTP fetch), AD-731a-2 (NATS Object Store), and AD-731a-3 (mime-only fast path in sender).
 
 **Files.** `src/probos/cognitive/vision_dispatch.py` (sender shape + observability log + drop base64 import), `src/probos/cognitive/llm_client.py` (constructor param + deferred setter + `_resolve_attachment_refs_for_openai` + `_call_openai` wiring), `src/probos/mesh/intent.py` (revert BF-265 strip), `src/probos/federation/bridge.py` (AD-731a forward-marker comment on the federation strip), `src/probos/runtime.py` (`attachment_store` property), `src/probos/__main__.py` (deferred-setter wiring after `ProbOSRuntime` construction), `tests/test_ad731_attachment_ref_wire_format.py` (new, 12 tests), `tests/test_bf265_transport_stripped_params.py` (inverted assertions + regression sentinel), `tests/test_bf266_vision_context_folding.py` and `tests/test_ad730_agent_chat_vision.py` (fixture shape flipped to `attachment_ref`).
 
 ### AD-732 - Dedicated Vision LLM Tier + Honest Degrade (closes #640)
 
 **Date:** 2026-05-11
-**Decision:** Promote `vision` to a fourth peer-tier of `fast`/`standard`/`deep`. `CognitiveConfig` gains 7 vision-tier fields (`llm_base_url_vision`, `llm_api_key_vision`, `llm_model_vision`, `llm_timeout_vision`, `llm_api_format_vision`, `llm_temperature_vision`, `llm_top_p_vision`) with the same Optional-defaults pattern as the text tiers. `tier_config("vision")` resolves through the same map-dict shape. `OpenAICompatibleClient` tracks vision in every per-tier state dict via a new module-level `_LLM_TIERS = ("fast","standard","deep","vision")` single-source-of-truth constant; the fallback chain `_TIER_ORDER = ["fast","standard","deep"]` deliberately excludes vision because text-only tiers cannot see images. `AttachmentsConfig.vision_tier` default flips from `"standard"` to `"vision"` (validator allow-set extended). When the vision tier is unconfigured OR unhealthy, `/api/chat` and `/api/agent/{id}/chat` return one of two operator-facing honest-degrade messages (`VISION_UNCONFIGURED_MESSAGE` or `VISION_UNHEALTHY_MESSAGE`) instead of the pre-AD-732 "Try again in a moment" stub. The agent-side path early-returns BEFORE intent dispatch — the agent has no way to surface a missing endpoint to the crew, so the OS speaks for itself. OSS default: local Ollama + Qwen3.6 (`config/system.yaml` ships an active block pointing at `qwen3.6:27b` via Ollama's OpenAI-compatible endpoint; operator runs `ollama pull qwen3.6:27b`).
+**Decision:** Promote `vision` to a fourth peer-tier of `fast`/`standard`/`deep`. `CognitiveConfig` gains 7 vision-tier fields (`llm_base_url_vision`, `llm_api_key_vision`, `llm_model_vision`, `llm_timeout_vision`, `llm_api_format_vision`, `llm_temperature_vision`, `llm_top_p_vision`) with the same Optional-defaults pattern as the text tiers. `tier_config("vision")` resolves through the same map-dict shape. `OpenAICompatibleClient` tracks vision in every per-tier state dict via a new module-level `_LLM_TIERS = ("fast","standard","deep","vision")` single-source-of-truth constant; the fallback chain `_TIER_ORDER = ["fast","standard","deep"]` deliberately excludes vision because text-only tiers cannot see images. `AttachmentsConfig.vision_tier` default flips from `"standard"` to `"vision"` (validator allow-set extended). When the vision tier is unconfigured OR unhealthy, `/api/chat` and `/api/agent/{id}/chat` return one of two operator-facing honest-degrade messages (`VISION_UNCONFIGURED_MESSAGE` or `VISION_UNHEALTHY_MESSAGE`) instead of the pre-AD-732 "Try again in a moment" stub. The agent-side path early-returns BEFORE intent dispatch ΓÇö the agent has no way to surface a missing endpoint to the crew, so the OS speaks for itself. OSS default: local Ollama + Qwen3.6 (`config/system.yaml` ships an active block pointing at `qwen3.6:27b` via Ollama's OpenAI-compatible endpoint; operator runs `ollama pull qwen3.6:27b`).
 
-**Rationale.** AD-731 wired content-addressable refs onto the bus; BF-268 emitted the correct OpenAI `image_url` shape at the vendor boundary. Together they fixed the wire format, but the LLM still couldn't see images. Captain's repro (Ezri: "no image visible on my end") + `/api/chat` repro (gpt-4o describing "Visual Studio Code editor with open files") confirmed the **endpoint** was the missing piece. Root cause: the Copilot proxy ([gratajik/vscode-copilot-proxy](https://github.com/gratajik/vscode-copilot-proxy)) is a passthrough over `vscode.lm.selectChatModels(...).sendRequest(...)`. The VS Code Language Model API (a) does not pipe arbitrary user-supplied images through for free-form turns, (b) strips non-text content parts when building `LanguageModelChatMessage`, (c) returns 200 OK even when image content was dropped (no error signal), (d) re-injects VS Code's own editor context into the prompt. Direct testing 2026-05-11 against the proxy with three shapes (Anthropic `source.base64`, OpenAI `image_url` to Claude, OpenAI `image_url` to gpt-4o) all confirmed: no shape gets images to the model through that proxy. No client-side wire-format adjustment can fix this — the vendor boundary for vision must point at an endpoint that can actually carry images.
+**Rationale.** AD-731 wired content-addressable refs onto the bus; BF-268 emitted the correct OpenAI `image_url` shape at the vendor boundary. Together they fixed the wire format, but the LLM still couldn't see images. Captain's repro (Ezri: "no image visible on my end") + `/api/chat` repro (gpt-4o describing "Visual Studio Code editor with open files") confirmed the **endpoint** was the missing piece. Root cause: the Copilot proxy ([gratajik/vscode-copilot-proxy](https://github.com/gratajik/vscode-copilot-proxy)) is a passthrough over `vscode.lm.selectChatModels(...).sendRequest(...)`. The VS Code Language Model API (a) does not pipe arbitrary user-supplied images through for free-form turns, (b) strips non-text content parts when building `LanguageModelChatMessage`, (c) returns 200 OK even when image content was dropped (no error signal), (d) re-injects VS Code's own editor context into the prompt. Direct testing 2026-05-11 against the proxy with three shapes (Anthropic `source.base64`, OpenAI `image_url` to Claude, OpenAI `image_url` to gpt-4o) all confirmed: no shape gets images to the model through that proxy. No client-side wire-format adjustment can fix this ΓÇö the vendor boundary for vision must point at an endpoint that can actually carry images.
 
 **Architectural separation (three orthogonal concerns).**
-- **AD-731 — bus shape.** Provider-agnostic `attachment_ref` source blocks. Owned by `vision_dispatch.build_multimodal_messages`. The bus carries refs; the store carries bytes.
-- **BF-268 — vendor adaptation.** OpenAI `image_url` vs Anthropic `source.base64` shape selection at the HTTP POST boundary. Owned by `llm_client._resolve_attachment_refs_for_openai` (and its Anthropic-shape sibling).
-- **AD-732 — endpoint selection.** Per-tier `base_url`/`model`/`api_key`/`timeout`/`api_format` for vision. Owned by `CognitiveConfig.tier_config("vision")` + `OpenAICompatibleClient._clients`. Vision is the fourth peer tier; the fallback chain deliberately excludes it (standard/deep cannot see images).
+- **AD-731 ΓÇö bus shape.** Provider-agnostic `attachment_ref` source blocks. Owned by `vision_dispatch.build_multimodal_messages`. The bus carries refs; the store carries bytes.
+- **BF-268 ΓÇö vendor adaptation.** OpenAI `image_url` vs Anthropic `source.base64` shape selection at the HTTP POST boundary. Owned by `llm_client._resolve_attachment_refs_for_openai` (and its Anthropic-shape sibling).
+- **AD-732 ΓÇö endpoint selection.** Per-tier `base_url`/`model`/`api_key`/`timeout`/`api_format` for vision. Owned by `CognitiveConfig.tier_config("vision")` + `OpenAICompatibleClient._clients`. Vision is the fourth peer tier; the fallback chain deliberately excludes it (standard/deep cannot see images).
 
 Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not just the class scope.
 
-**See also: User-memory lesson 2026-05-11 — "Don't change the architecture to fix a symptom."** AD-732 is the right outcome of that lesson applied at the endpoint layer: don't fork the wire format; fork the endpoint. The bus stays one shape; the vendor boundary stays one shape per provider; the endpoint becomes per-tier addressable. The earlier BF-267 reflex (bypass NATS for in-process targets) would have been a load-bearing invariant change to dodge a payload-shape problem; AD-731 fixed the shape and AD-732 fixed the endpoint, leaving the bus invariant intact.
+**See also: User-memory lesson 2026-05-11 ΓÇö "Don't change the architecture to fix a symptom."** AD-732 is the right outcome of that lesson applied at the endpoint layer: don't fork the wire format; fork the endpoint. The bus stays one shape; the vendor boundary stays one shape per provider; the endpoint becomes per-tier addressable. The earlier BF-267 reflex (bypass NATS for in-process targets) would have been a load-bearing invariant change to dodge a payload-shape problem; AD-731 fixed the shape and AD-732 fixed the endpoint, leaving the bus invariant intact.
 
-**Honest-degrade routing semantic.** The chat/agents handlers gate on `(not is_vision_tier_configured(cfg, tier)) OR (tier_status != "operational")`. The two-clause gate is necessary: `get_health_status` reports 0 failures for an unconfigured vision tier (the connectivity short-circuit doesn't bump failure counters), so the operational check alone misses unconfigured. Two distinct messages because the remediations differ — `VISION_UNCONFIGURED_MESSAGE` names config keys and `ollama pull qwen3.6:27b`; `VISION_UNHEALTHY_MESSAGE` asks the operator to restart the endpoint.
+**Honest-degrade routing semantic.** The chat/agents handlers gate on `(not is_vision_tier_configured(cfg, tier)) OR (tier_status != "operational")`. The two-clause gate is necessary: `get_health_status` reports 0 failures for an unconfigured vision tier (the connectivity short-circuit doesn't bump failure counters), so the operational check alone misses unconfigured. Two distinct messages because the remediations differ ΓÇö `VISION_UNCONFIGURED_MESSAGE` names config keys and `ollama pull qwen3.6:27b`; `VISION_UNHEALTHY_MESSAGE` asks the operator to restart the endpoint.
 
 **In scope (this AD).**
 - 7 new vision-tier fields on `CognitiveConfig` + `tier_config("vision")` resolution.
@@ -2105,18 +2106,36 @@ Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not jus
 - 15 new tests + minimal updates to existing fixtures (test_per_tier_llm, test_bf069_llm_health, test_ad484_ux_adoption, test_ad720d, test_ad730).
 
 **Out of scope (explicit Do-Not-Build list).**
-- Per-agent vision tier overrides — AD-732a forward marker.
-- Autodetection of local Ollama on startup — AD-732b forward marker.
-- Hot-reload of vision tier config — AD-732c forward marker.
+- Per-agent vision tier overrides ΓÇö AD-732a forward marker.
+- Autodetection of local Ollama on startup ΓÇö AD-732b forward marker.
+- Hot-reload of vision tier config ΓÇö AD-732c forward marker.
 - Vision tier participation in the `_TIER_ORDER` fallback chain.
 - Changes to AD-731's `attachment_ref` shape.
 - Changes to BF-268's `image_url` adaptation.
-- Federation strip — still AD-731a's concern.
-- `image_generation` capability for agents — AD-730-3 remains a separate concern.
+- Federation strip ΓÇö still AD-731a's concern.
+- `image_generation` capability for agents ΓÇö AD-730-3 remains a separate concern.
 - HXI UI changes.
-- Multi-image DMs in v1 — AD-730-2 forward marker stays open.
-- Fallback to a different vision endpoint when the primary fails — operator deploys redundancy at the endpoint layer (e.g., LiteLLM router).
+- Multi-image DMs in v1 ΓÇö AD-730-2 forward marker stays open.
+- Fallback to a different vision endpoint when the primary fails ΓÇö operator deploys redundancy at the endpoint layer (e.g., LiteLLM router).
 
 **Status:** SHIPPED. Closes #640.
 
 **Files.** `src/probos/config.py` (CognitiveConfig fields + tier_config map dicts + AttachmentsConfig default/validator), `src/probos/cognitive/llm_client.py` (`_LLM_TIERS` constant + grep-replace + vision short-circuit + docstring), `src/probos/cognitive/vision_dispatch.py` (`VISION_*_MESSAGE` constants + `is_vision_tier_configured` helper), `src/probos/routers/chat.py` and `src/probos/routers/agents.py` (honest-degrade routing), `src/probos/experience/commands/commands_llm.py` and `src/probos/__main__.py` (loop over 4 tiers in `/model` display + boot connectivity report + doctor), `config/system.yaml` (commented-out vision example), `tests/test_ad732_vision_tier.py` (new, 15 tests), `tests/test_ad720d_vision_pipethrough.py` / `tests/test_ad730_agent_chat_vision.py` / `tests/test_bf069_llm_health.py` / `tests/test_per_tier_llm.py` / `tests/test_ad484_ux_adoption.py` (fixture updates).
+
+### AD-734 — Wire-shape contract test for the vision pipeline (Wave 153)
+
+**Date:** 2026-05-12. **Status:** Shipped.
+
+**Problem.** The BF-268 -> BF-274 -> BF-278 debug arc (vision DMs returning '(no response)') burned ~10 bugfix cycles diagnosing what was ultimately a silent wire-shape regression: `vision_dispatch.build_multimodal_messages` had reverted from the AD-731 `attachment_ref` source shape back to inline Anthropic-shape `source.base64` during the BF-274 multi-edit, and no automated test asserted the shape of the JSON crossing the LLM HTTP boundary. The defect was caught only by live capture against the running daemon (`tmp_capture_proxy.py`). This is the missing layer of testing for any multi-subsystem feature where the contract is the *shape on the wire*, not the API of any individual component.
+
+**Decision.** Codify the live-capture work as a CI-runnable pytest at `tests/test_ad734_wire_shape_contract.py` that pins three invariants:
+
+1. **Bus shape (sender):** `build_multimodal_messages` emits `{type: image, source: {type: attachment_ref, sha256, media_type}}` and NEVER inline base64 nor Anthropic `source.base64`.
+2. **Resolver shape (boundary):** `OpenAICompatibleClient._resolve_attachment_refs_for_openai` rewrites that to the OpenAI chat-completions `{type: image_url, image_url: {url: data:<mime>;base64,...}}` shape, and the bus-shape `attachment_ref` MUST NOT survive past the resolver.
+3. **Wire shape (HTTP POST):** End-to-end `_call_openai` via `httpx.MockTransport` captures the POST body and asserts `image_url` blocks (not `image`+source) reach the model endpoint. This is the exact observation tmp_capture_proxy.py made live during BF-278; it now runs in CI on every commit.
+
+**Pre-commit smoke hook.** `.git/hooks/pre-commit` runs `test_ad734_wire_shape_contract.py` whenever any vision-pipeline file is staged (`vision_dispatch.py`, `llm_client.py`, `routers/chat.py`, `routers/agents.py`, `config/system.yaml`). ~30 lines of bash. Would have caught BF-274 and BF-278 at commit time instead of after a multi-day debug arc.
+
+**Lesson locked in.** `Restore lost code` commits MUST be audited file-by-file with full diff review. Symptom-level checks (constants present) miss adjacent regressions (shape reverted). Contract tests on the wire boundary, not just on the component APIs, are the durable guard.
+
+**Files.** `tests/test_ad734_wire_shape_contract.py` (new, 3 tests, ~230 lines). `.git/hooks/pre-commit` (+~20 lines vision-paths gate).

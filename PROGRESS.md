@@ -1,14 +1,14 @@
 # ProbOS Progress
 
-**Status (2026-05-11).** Open OSS issues: 10 (#640 closed Wave 153; #582 closed Wave 150; #637/#639 closed Wave 152; 3 from Wave 138 — AD-721b-1/-2/-3; 5 from Wave 143 — AD-722a-1/-2/-3/-4/-6 forward markers (AD-722a-5 closed Wave 147); 1 from Wave 144 — AD-723a-1 #617 DM/WR consumer-side sensorium dispatch migration; 3 from Wave 145 — AD-721d-2 #621 Counselor-mediated revision, AD-721d-3 #622 visual preview requires AD-721i, AD-721d-4 #623 proposal-history persistence). Most recent shipped wave: 153 (AD-732 dedicated vision LLM tier + honest degrade — `vision` is now a fourth peer of `fast`/`standard`/`deep` with its own `base_url`/`model`/`api_key`/`timeout`/`api_format`; `AttachmentsConfig.vision_tier` default flips `"standard"`→`"vision"`; unconfigured OR unhealthy vision returns `VISION_UNCONFIGURED_MESSAGE`/`VISION_UNHEALTHY_MESSAGE` honest-degrade with operator remediation instead of the old "Try again in a moment" stub; vision deliberately excluded from `_TIER_ORDER` fallback chain because standard/deep cannot see images; 15 new tests + minimal fixture updates, +15 net).
+**Status (2026-05-11).** Open OSS issues: 10 (#582 closed Wave 150; 3 from Wave 138 — AD-721b-1/-2/-3; 5 from Wave 143 — AD-722a-1/-2/-3/-4/-6 forward markers (AD-722a-5 closed Wave 147); 1 from Wave 144 — AD-723a-1 #617 DM/WR consumer-side sensorium dispatch migration; 3 from Wave 145 — AD-721d-2 #621 Counselor-mediated revision, AD-721d-3 #622 visual preview requires AD-721i, AD-721d-4 #623 proposal-history persistence). Most recent shipped wave: 150 (AD-724 DM sanity gate — behavior-preserving migration of BF-120/BF-119/AD-572 regexes into `DmSanityGate` + 3 new log-only checks; 5 forward markers AD-724-1/-2/-3/-4/-5 filed).
 AD-697 + AD-698 establish the commercial-overlay seam
 (`pip install -e ../<commercial-package>` → overlay active; uninstall →
 back to OSS).
 
 **Authoritative state.**
-- `prompts/wave-plan.yaml` — wave roster (current wave: 153 done; next slot is 154).
-- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-732).
-- `tests/` — 13357 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 582 vitest; gate runs `-n 8 --dist=loadfile`.
+- `prompts/wave-plan.yaml` — wave roster (current wave: 150 done; next slot is 151).
+- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-734).
+- `tests/` — 13268 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 582 vitest; gate runs `-n 8 --dist=loadfile`.
 
 **Recent eras (archived):**
 - [Era I — Genesis](progress-era-1-genesis.md)
