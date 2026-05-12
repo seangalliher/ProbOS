@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -649,3 +650,120 @@ def test_resolve_model_for_tier_skips_router_for_vision():
 
     # For vision, the router MUST be bypassed; None signals "use tc['model']".
     assert client._resolve_model_for_tier("vision") is None
+
+
+# ---------------------------------------------------------------------------
+# BF-277 — system message must match user message content shape
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_system_message_shape_matches_multimodal_user_content():
+    """BF-277 (2026-05-12): when user-message content is list-of-blocks
+    (multimodal), the system message Ollama receives MUST also use
+    list-of-blocks shape — Ollama qwen3.6:27b rejects mixed-shape
+    conversations with HTTP 400 "invalid message format".
+
+    Pure-text turns (LLMRequest.messages absent) still use string content
+    for the system message — that branch is unchanged.
+    """
+    import httpx
+    from probos.cognitive.llm_client import OpenAICompatibleClient
+    from probos.config import CognitiveConfig
+
+    cfg = CognitiveConfig(
+        llm_base_url_vision="http://127.0.0.1:11434/v1",
+        llm_model_vision="qwen3.6:27b",
+        llm_api_format_vision="openai",
+    )
+    client = OpenAICompatibleClient(config=cfg)
+
+    captured: list[dict] = []
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }],
+            },
+        )
+
+    # Replace the vision-tier httpx client with our recorder.
+    for key in list(client._clients.keys()):
+        old = client._clients[key]
+        client._clients[key] = httpx.AsyncClient(
+            base_url=old.base_url,
+            transport=httpx.MockTransport(_capture),
+            timeout=5.0,
+        )
+
+    # Multimodal request with a system_prompt.
+    req = LLMRequest(
+        prompt="",
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR"}},
+        ]}],
+        system_prompt="You are Ezri.",
+        tier="vision",
+    )
+    await client.complete(req)
+
+    assert len(captured) == 1, f"Expected 1 POST, got {len(captured)}"
+    msgs = captured[0]["messages"]
+    assert msgs[0]["role"] == "system"
+    # BF-277 requirement: system content is list-of-blocks, not raw string.
+    assert isinstance(msgs[0]["content"], list), (
+        f"system message must use list-content shape when user is multimodal; "
+        f"got {type(msgs[0]['content']).__name__}: {msgs[0]['content']!r}"
+    )
+    assert msgs[0]["content"] == [{"type": "text", "text": "You are Ezri."}]
+    # User message shape unchanged.
+    assert isinstance(msgs[1]["content"], list)
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_system_message_uses_string_content_for_text_only_request():
+    """BF-277 regression sentinel: text-only (request.messages is None) path
+    must NOT change. System content stays a raw string in that branch.
+    """
+    import httpx
+    from probos.cognitive.llm_client import OpenAICompatibleClient
+    from probos.config import CognitiveConfig
+
+    cfg = CognitiveConfig()  # default text tiers
+    client = OpenAICompatibleClient(config=cfg)
+
+    captured: list[dict] = []
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    for key in list(client._clients.keys()):
+        old = client._clients[key]
+        client._clients[key] = httpx.AsyncClient(
+            base_url=old.base_url,
+            transport=httpx.MockTransport(_capture),
+            timeout=5.0,
+        )
+
+    req = LLMRequest(prompt="hello", system_prompt="be brief", tier="fast")
+    await client.complete(req)
+
+    assert len(captured) == 1
+    msgs = captured[0]["messages"]
+    # Text-only branch: system content is the bare string.
+    assert msgs[0] == {"role": "system", "content": "be brief"}
+    assert msgs[1] == {"role": "user", "content": "hello"}
+    await client.close()
