@@ -21,7 +21,27 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+# BF-276 (2026-05-12): Windows + pipe-redirected stdout (e.g.
+# ``probos serve --interactive | tee log.txt``) drops to cp1252 encoding by
+# default and crashes the moment Rich tries to print a glyph like ✓ / ✗ / ⚠.
+# Operators running diagnostic captures hit this twice before we added this
+# guard. Force UTF-8 on both streams when piped — the standard library
+# supports ``reconfigure(encoding=...)`` since Python 3.7. The native-terminal
+# path (no redirection) already works because Rich detects the TTY and uses
+# the Win32 console API directly. Idempotent — repeat invocations are no-ops.
+if sys.platform == "win32":
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            if _stream is not None and not _stream.isatty():
+                _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            # Fall back silently — worst case the operator hits the cp1252
+            # crash and has to set PYTHONIOENCODING=utf-8 manually (the
+            # documented workaround in CONTRIBUTING.md / README).
+            pass
 
 from rich.console import Console
 from rich.panel import Panel
