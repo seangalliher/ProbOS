@@ -371,19 +371,37 @@ class IntentBus:
 
         _send_start = time.monotonic()  # AD-470: timing
         try:
-            # BF-267 (2026-05-11): local-first dispatch when the target agent
-            # is in-process. Bypasses NATS serialization entirely, which
-            # preserves transient params keys like 'vision_messages' that
-            # BF-265 strips before NATS transport. Without this, image DMs
-            # to local crew lose their vision_messages payload during the
-            # local NATS request/reply round-trip (deserialization restores
-            # an IntentMessage without the stripped fields).
+            # BF-267 (2026-05-11) — TRANSITIONAL local-first dispatch.
             #
-            # Federation (cross-mesh) still goes through NATS — the strip
-            # is correct there: large transient payloads should not cross
-            # the wire. Locality is determined by subscriber presence: if
-            # the target is registered in _subscribers, this process owns
-            # the agent and direct-call is both safe and cheaper.
+            # Bypasses NATS serialization when the target agent is registered
+            # in self._subscribers (= in-process). This preserves transient
+            # params keys like 'vision_messages' that BF-265 strips before
+            # NATS transport. Without this branch, image DMs to local crew
+            # lose their vision_messages payload during local NATS request/
+            # reply round-trip (deserialization restores an IntentMessage
+            # without the stripped fields).
+            #
+            # ⚠ This violates the uniform-NATS-transport invariant that
+            # ProbOS's multi-mesh (Nooplex), sandboxed-container, and cloud
+            # deployment scenarios require. It is correct for today's
+            # single-node local-process topology only.
+            #
+            # REMOVAL PATH (filed 2026-05-11):
+            #   - AD-731 (#637)  — content-addressable vision payloads
+            #     (refs instead of inline base64). Eliminates the underlying
+            #     payload-size problem that BF-265 strips for.
+            #   - AD-731a (#638) — attachment store distribution model
+            #     (how cross-host receivers fetch bytes).
+            #   - AD-637z2 (#639) — uniform NATS transport invariant. Reverts
+            #     this BF-267 branch once AD-731 + AD-731a ship. Restores
+            #     "all unicast goes through NATS, regardless of locality."
+            #
+            # Federation (cross-mesh) still goes through NATS even today —
+            # the strip is correct there: large transient payloads should
+            # not cross the wire. Locality is determined by subscriber
+            # presence: if the target is registered in _subscribers, this
+            # process owns the agent and direct-call is both safe and
+            # cheaper.
             handler = self._subscribers.get(intent.target_agent_id)
             if handler is not None:
                 try:
