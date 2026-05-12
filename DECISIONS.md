@@ -2180,3 +2180,23 @@ Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not jus
 
 **Files.** `src/probos/config.py` (AttachmentsConfig field). `src/probos/cognitive/vision_dispatch.py` (helper). `src/probos/routers/agents.py` + `routers/chat.py` + `cognitive/cognitive_agent.py` (call sites). `tests/test_ad730_5_vision_tier_override.py` (new, 3 tests).
 
+
+### AD-722e — Deterministic structured self-projection v1 (Wave 154)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #571.
+
+**Problem.** Crew agents had INTEROCEPTION text built from AvatarTelemetrySnapshot but no structured self-description that surfaced the renderer pipeline version. AD-727 had ratified the safety stack but the capability was unbuilt.
+
+**Decision.** New module `src/probos/cognitive/self_perception.py` (~125 lines). Exports:
+- `PIPELINE_VERSION = '1.0.0'` module constant (bump on renderer-input-contract change).
+- `@dataclass(frozen=True) SelfPerceptionProjection` — agent_id, timestamp, pipeline_version, four DSL summary fields, working_state, expression_resting, mouth_active, modulation_rate_factor, modulation_pitch_factor.
+- `async project_self_perception(self_id, runtime) -> SelfPerceptionProjection | None` — reads same source-of-truth as renderer via `probos.avatars.telemetry.build_telemetry_snapshot`; returns None when telemetry disabled or snapshot unavailable (tier-2 log-and-degrade). Zero vision-LLM calls. Zero browser capture. Single agent parameter (AD-727 rule #7). No trust/Hebbian mutations (AD-727 rule #1).
+
+**Wiring.** `CognitiveAgent._build_avatar_self_observation` appends a `pipeline_version: 1.0.0` line to the existing INTEROCEPTION block. Feature-flagged behind the existing `avatar_telemetry.inject_into_agent_context` flag — no new config flag.
+
+**Tests.** `tests/test_ad722e_self_perception.py` (6 tests: dataclass shape, telemetry-disabled None, no-snapshot None, field round-trip, no-LLM-import double-guard, CognitiveAgent wiring). The 5 AD-727 safety_constraint tests now PASS (were RED in AD-727 commit; AD-722e turned them green).
+
+**Forward markers.** AD-722e-2 (vision-LLM verification against backend-server-side render — AD-727 rule #4); AD-722e-3 (cross-crew visual perception — covered by AD-729 family at #587); AD-722e-4 (aesthetic-preference proposals extending AD-721d).
+
+**Files.** `src/probos/cognitive/self_perception.py` (new). `src/probos/cognitive/cognitive_agent.py` (one-line pipeline_version append in `_build_avatar_self_observation`). `tests/test_ad722e_self_perception.py` (new, 6 tests).
+

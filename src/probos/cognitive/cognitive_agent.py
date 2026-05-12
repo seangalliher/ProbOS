@@ -3094,6 +3094,11 @@ class CognitiveAgent(BaseAgent):
         if not getattr(tcfg, "inject_into_agent_context", False):
             return ""
         try:
+            # AD-722e: surface pipeline_version so renderer changes appear
+            # as observations in the prompt rather than silent identity
+            # mutation. Imported lazily to keep the cognitive_agent module
+            # import-time light.
+            from probos.cognitive import self_perception as self_perception_mod
             snap = self._last_self_avatar_snap
             if snap is None:
                 return ""
@@ -3116,6 +3121,7 @@ class CognitiveAgent(BaseAgent):
                 + mod_line
                 + f"  mouth_active: {snap.mouth_active}\n"
                 + dsl_line
+                + f"  pipeline_version: {self_perception_mod.PIPELINE_VERSION}\n"
             ) + self._build_divergence_note_suffix()
         except Exception:
             logger.warning(
