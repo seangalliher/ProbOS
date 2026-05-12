@@ -83,7 +83,7 @@ async def _ensure_ollama(config, console: Console) -> None:
 
     # Collect Ollama tier configs
     ollama_tiers: list[dict] = []
-    for tier in ("fast", "standard", "deep"):
+    for tier in ("fast", "standard", "deep", "vision"):
         tc = config.cognitive.tier_config(tier)
         if tc.get("api_format") == "ollama":
             ollama_tiers.append(tc)
@@ -183,7 +183,7 @@ async def _create_llm_client(config, console: Console):
     console.print("  Checking LLM endpoints...")
     connectivity = await client.check_connectivity()
 
-    for tier in ("fast", "standard", "deep"):
+    for tier in ("fast", "standard", "deep", "vision"):
         tc = cog.tier_config(tier)
         reachable = connectivity[tier]
         if reachable:
@@ -841,7 +841,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             client = OpenAICompatibleClient(config=cfg.cognitive)
             connectivity = asyncio.run(client.check_connectivity())
             asyncio.run(client.close())
-            for tier in ("fast", "standard", "deep"):
+            for tier in ("fast", "standard", "deep", "vision"):
                 tc = cfg.cognitive.tier_config(tier)
                 if connectivity.get(tier):
                     console.print(

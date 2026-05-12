@@ -23,8 +23,9 @@ class TestLLMClientHealthTracking:
         from probos.cognitive.llm_client import OpenAICompatibleClient
         client = OpenAICompatibleClient.__new__(OpenAICompatibleClient)
         # Initialize the health tracking state
-        client._consecutive_failures = {t: 0 for t in ("fast", "standard", "deep")}
-        client._consecutive_successes = {t: 0 for t in ("fast", "standard", "deep")}
+        # AD-732: vision is the fourth peer tier; state dicts must include it.
+        client._consecutive_failures = {t: 0 for t in ("fast", "standard", "deep", "vision")}
+        client._consecutive_successes = {t: 0 for t in ("fast", "standard", "deep", "vision")}
         client._min_consecutive_healthy = 3
         client._last_success = {}
         client._last_failure = {}
@@ -60,11 +61,13 @@ class TestLLMClientHealthTracking:
     def test_health_status_all_unreachable(self):
         """3+ failures on all tiers → overall offline."""
         client = self._make_client()
-        for tier in ("fast", "standard", "deep"):
+        # AD-732: vision is a peer tier; mark it unreachable too so the
+        # overall-offline assertion holds.
+        for tier in ("fast", "standard", "deep", "vision"):
             client._consecutive_failures[tier] = 3
         status = client.get_health_status()
         assert status["overall"] == "offline"
-        for tier in ("fast", "standard", "deep"):
+        for tier in ("fast", "standard", "deep", "vision"):
             assert status["tiers"][tier]["status"] == "unreachable"
 
     def test_failure_counter_resets_on_success(self):
@@ -534,6 +537,8 @@ class TestDwellTimeCriterion:
         from probos.cognitive.llm_client import OpenAICompatibleClient
         client = OpenAICompatibleClient.__new__(OpenAICompatibleClient)
         client.default_tier = "fast"
+        # AD-732: include vision tier in the state-init dicts.
+        _tiers = ("fast", "standard", "deep", "vision")
         client._tier_configs = {
             tier: {
                 "base_url": f"http://{tier}.example/v1",
@@ -544,19 +549,19 @@ class TestDwellTimeCriterion:
                 "temperature": None,
                 "top_p": None,
             }
-            for tier in ("fast", "standard", "deep")
+            for tier in _tiers
         }
         client._clients = {
             f"http://{tier}.example/v1|openai": MagicMock()
-            for tier in ("fast", "standard", "deep")
+            for tier in _tiers
         }
         client._tier_status = {}
         client._cache = OrderedDict()
         client._cache_max_entries = 500
         client._rate_config = None
-        client._consecutive_429s = {t: 0 for t in ("fast", "standard", "deep")}
-        client._consecutive_failures = {t: 0 for t in ("fast", "standard", "deep")}
-        client._consecutive_successes = {t: 0 for t in ("fast", "standard", "deep")}
+        client._consecutive_429s = {t: 0 for t in _tiers}
+        client._consecutive_failures = {t: 0 for t in _tiers}
+        client._consecutive_successes = {t: 0 for t in _tiers}
         client._min_consecutive_healthy = min_consecutive_healthy
         client._last_success = {}
         client._last_failure = {}

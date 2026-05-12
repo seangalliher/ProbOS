@@ -241,6 +241,7 @@ class TestOpenAICompatibleClientMultiEndpoint:
             "fast": "local-model",
             "standard": "cloud-model-a",
             "deep": "cloud-model-b",
+            "vision": None,  # AD-732: vision peer tier, unconfigured by default
         }
 
 
@@ -262,7 +263,8 @@ class TestConnectivityCheck:
         try:
             result = await client.check_connectivity()
             assert isinstance(result, dict)
-            assert set(result.keys()) == {"fast", "standard", "deep"}
+            # AD-732: vision is the fourth peer tier in the connectivity report.
+            assert set(result.keys()) == {"fast", "standard", "deep", "vision"}
             for tier, reachable in result.items():
                 assert isinstance(reachable, bool)
         finally:
@@ -344,7 +346,10 @@ class TestBootSequence:
         ) as MockClientClass:
             mock_instance = AsyncMock()
             mock_instance.check_connectivity = AsyncMock(
-                return_value={"standard": False, "fast": False, "deep": False}
+                return_value={
+                    "standard": False, "fast": False, "deep": False,
+                    "vision": False,  # AD-732: vision peer tier
+                }
             )
             mock_instance.close = AsyncMock()
             MockClientClass.return_value = mock_instance

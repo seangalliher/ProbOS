@@ -21,6 +21,16 @@ from probos.attachments.store import AttachmentStore
 logger = logging.getLogger(__name__)
 
 
+# AD-732: single source of truth for the LLM tier set. State-init loops, health
+# probes, and per-tier dict construction MUST iterate this constant. The
+# fallback chain (_TIER_ORDER, defined inside complete() near line ~483) is a
+# SEPARATE concern — vision deliberately does NOT participate in fallback
+# because fallback exists for text-completion graceful degrade, and
+# standard/deep cannot see images. Vision failures route to the honest-degrade
+# message defined in cognitive/vision_dispatch.py.
+_LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision")
+
+
 class BaseLLMClient(ABC):
     """Abstract LLM client interface."""
 
@@ -36,7 +46,7 @@ class BaseLLMClient(ABC):
         """
         tiers = {t: {"status": "operational", "consecutive_failures": 0,
                       "last_success": None, "last_failure": None}
-                 for t in ("fast", "standard", "deep")}
+                 for t in _LLM_TIERS}
         return {"tiers": tiers, "overall": "operational"}
 
     async def close(self) -> None:
@@ -46,12 +56,18 @@ class BaseLLMClient(ABC):
 class OpenAICompatibleClient(BaseLLMClient):
     """Multi-endpoint OpenAI-compatible LLM client with per-tier routing.
 
-    Each tier (fast/standard/deep) can have its own:
+    Each tier (fast/standard/deep/vision) can have its own:
     - base_url (different server)
     - api_key (different auth)
     - model (different model name)
     - timeout (different latency budget)
     - httpx.AsyncClient (separate connection pool)
+
+    AD-732: the vision tier is a peer of the text tiers but does NOT
+    participate in the fast→standard→deep fallback chain because
+    text-only tiers cannot see images. Vision failures degrade to the
+    honest-degrade message at the call site, not by quietly falling
+    back to a blind tier.
 
     When per-tier config is not specified, falls back to shared values.
     Tiers sharing the same base_url share the same httpx.AsyncClient
@@ -107,13 +123,13 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         # Resolve per-tier configs
         self._tier_configs: dict[str, dict] = {}
-        for tier in ("fast", "standard", "deep"):
+        for tier in _LLM_TIERS:
             self._tier_configs[tier] = self._config.tier_config(tier)
 
         # Create httpx clients, deduplicated by (base_url, api_key)
         self._clients: dict[str, httpx.AsyncClient] = {}  # base_url → client
         self._tier_status: dict[str, bool] = {}
-        for tier in ("fast", "standard", "deep"):
+        for tier in _LLM_TIERS:
             tc = self._tier_configs[tier]
             url = tc["base_url"]
             api_format = tc.get("api_format", "openai")
@@ -143,12 +159,12 @@ class OpenAICompatibleClient(BaseLLMClient):
         self._cache_max_entries: int = 500  # AD-617: default, overridden by rate_config
 
         # BF-069: Per-tier failure tracking for health monitoring
-        self._consecutive_failures: dict[str, int] = {t: 0 for t in ("fast", "standard", "deep")}
+        self._consecutive_failures: dict[str, int] = {t: 0 for t in _LLM_TIERS}
         self._last_success: dict[str, float] = {}  # tier -> monotonic timestamp
         self._last_failure: dict[str, float] = {}  # tier -> monotonic timestamp
 
         # BF-240: Dwell-time recovery tracking
-        self._consecutive_successes: dict[str, int] = {t: 0 for t in ("fast", "standard", "deep")}
+        self._consecutive_successes: dict[str, int] = {t: 0 for t in _LLM_TIERS}
         self._min_consecutive_healthy: int = getattr(
             self._config, "llm_health_min_consecutive_healthy", 3
         )
@@ -167,11 +183,11 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         # AD-617: Per-tier token bucket rate limiting
         self._request_timestamps: dict[str, deque[float]] = {
-            t: deque() for t in ("fast", "standard", "deep")
+            t: deque() for t in _LLM_TIERS
         }
 
         # AD-617: Per-tier 429 consecutive counter for exponential backoff
-        self._consecutive_429s: dict[str, int] = {t: 0 for t in ("fast", "standard", "deep")}
+        self._consecutive_429s: dict[str, int] = {t: 0 for t in _LLM_TIERS}
 
         # AD-636: Priority-lane concurrency semaphores
         _max_concurrent = 6
@@ -202,7 +218,7 @@ class OpenAICompatibleClient(BaseLLMClient):
     def models(self) -> dict[str, str]:
         return {
             tier: self._tier_configs[tier]["model"]
-            for tier in ("fast", "standard", "deep")
+            for tier in _LLM_TIERS
         }
 
     def _client_key(self, tier: str) -> str:
@@ -290,14 +306,23 @@ class OpenAICompatibleClient(BaseLLMClient):
     async def check_connectivity(self) -> dict[str, bool]:
         """Check connectivity for each tier independently.
 
-        Returns {"fast": True/False, "standard": True/False, "deep": True/False}.
-        Tiers sharing the same endpoint share the result (no duplicate checks).
+        Returns {"fast": True/False, "standard": True/False, "deep": True/False,
+        "vision": True/False}. Tiers sharing the same endpoint share the result
+        (no duplicate checks). AD-732: the vision tier short-circuits to False
+        without an HTTP call when llm_model_vision is unset/empty.
         """
         results: dict[str, bool] = {}
         checked_urls: dict[str, bool] = {}
 
-        for tier in ("fast", "standard", "deep"):
+        for tier in _LLM_TIERS:
             tc = self._tier_configs[tier]
+            # AD-732: vision tier unconfigured short-circuit. We never probe
+            # a default base URL with no model name — the operator either
+            # configures the tier or accepts the honest-degrade message.
+            if tier == "vision" and not tc.get("model"):
+                results[tier] = False
+                self._tier_status[tier] = False
+                continue
             url = tc["base_url"]
             if url in checked_urls:
                 results[tier] = checked_urls[url]
@@ -937,7 +962,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         Returns {"fast": {"base_url": ..., "model": ..., "reachable": ...}, ...}
         """
         info = {}
-        for tier in ("fast", "standard", "deep"):
+        for tier in _LLM_TIERS:
             tc = self._tier_configs[tier]
             info[tier] = {
                 "base_url": tc["base_url"],
@@ -964,7 +989,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         - "offline": all tiers unreachable
         """
         tiers: dict[str, dict[str, Any]] = {}
-        for tier in ("fast", "standard", "deep"):
+        for tier in _LLM_TIERS:
             failures = self._consecutive_failures.get(tier, 0)
             successes = self._consecutive_successes.get(tier, 0)
             if failures == 0:
@@ -1048,10 +1073,21 @@ class MockLLMClient(BaseLLMClient):
         self._scripted_content_blocks.append(list(blocks))
 
     def get_health_status(self) -> dict[str, Any]:
-        """BF-108: Report honestly — MockLLMClient has no real LLM."""
-        tiers = {t: {"status": "offline", "consecutive_failures": 0,
-                      "last_success": None, "last_failure": None}
-                 for t in ("fast", "standard", "deep")}
+        """BF-108: Report honestly — MockLLMClient has no real LLM.
+
+        AD-732: vision tier is reported as 'operational' so test scaffolding
+        that constructs MockLLMClient passes the vision-path operational
+        check. The text tiers remain 'offline' (BF-108 invariant).
+        """
+        tiers: dict[str, dict[str, Any]] = {
+            t: {"status": "offline", "consecutive_failures": 0,
+                "last_success": None, "last_failure": None}
+            for t in ("fast", "standard", "deep")
+        }
+        tiers["vision"] = {
+            "status": "operational", "consecutive_failures": 0,
+            "last_success": None, "last_failure": None,
+        }
         return {"tiers": tiers, "overall": "mock"}
 
     def _register_defaults(self) -> None:

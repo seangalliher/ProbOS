@@ -30,7 +30,7 @@ async def cmd_models(runtime: ProbOSRuntime, console: Console, args: str) -> Non
         info = client.tier_info()
         # Track which URLs we've seen to note shared endpoints
         seen_urls: dict[str, str] = {}
-        for tier in ("fast", "standard", "deep"):
+        for tier in ("fast", "standard", "deep", "vision"):
             ti = info[tier]
             marker = " [dim](active)[/dim]" if tier == client.default_tier else ""
             reachable = ti.get("reachable")
@@ -76,7 +76,7 @@ async def cmd_registry(runtime: ProbOSRuntime, console: Console, args: str) -> N
 
     if isinstance(client, OpenAICompatibleClient):
         info = client.tier_info()
-        for tier in ("fast", "standard", "deep"):
+        for tier in ("fast", "standard", "deep", "vision"):
             ti = info[tier]
             reachable = ti.get("reachable")
             if reachable is True:
