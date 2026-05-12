@@ -57,6 +57,20 @@ cognitive:
   llm_model_deep: "claude-opus-4.6"
   llm_timeout_deep: 300
 
+  # AD-732 — Vision tier. Default-unconfigured. Enable for image-aware DMs.
+  #
+  # Recommended OSS setup: local Ollama + llava (free, no API key).
+  #   1. Install Ollama: https://ollama.com/download
+  #   2. Run: ollama pull llava:34b
+  #   3. Uncomment the four lines below.
+  #
+  # Cloud alternative: point at OpenAI / Anthropic direct (set llm_api_key_vision).
+  #
+  # llm_base_url_vision: "http://127.0.0.1:11434/v1"
+  # llm_model_vision: "llava:34b"
+  # llm_api_format_vision: "openai"  # Ollama's OpenAI-compat endpoint
+  # llm_timeout_vision: 120  # local inference can be slow on first load
+
   # Per-tier sampling parameters (uncomment to override request defaults)
   # Deep tier: higher temperature for reasoning diversity
   # llm_temperature_deep: 0.7

@@ -201,14 +201,29 @@ class CognitiveConfig(BaseModel):
     llm_timeout_deep: float | None = None
     llm_api_format_deep: str | None = None
 
+    # AD-732: vision tier — fourth peer of fast/standard/deep. Default
+    # unconfigured. Operators uncomment the config/system.yaml block
+    # (or set values here) to enable image-aware DMs. When unconfigured
+    # OR unhealthy, image attachments degrade to the honest-degrade
+    # message (see vision_dispatch.VISION_UNCONFIGURED_MESSAGE /
+    # VISION_UNHEALTHY_MESSAGE). Vision does NOT participate in the
+    # fast→standard→deep fallback chain (standard/deep can't see images).
+    llm_base_url_vision: str | None = None
+    llm_api_key_vision: str | None = None
+    llm_model_vision: str | None = None
+    llm_timeout_vision: float | None = None
+    llm_api_format_vision: str | None = None  # "openai" or "ollama"
+
     # Per-tier sampling overrides (None = use request-level value)
     llm_temperature_fast: float | None = None
     llm_temperature_standard: float | None = None
     llm_temperature_deep: float | None = None
+    llm_temperature_vision: float | None = None
 
     llm_top_p_fast: float | None = None
     llm_top_p_standard: float | None = None
     llm_top_p_deep: float | None = None
+    llm_top_p_vision: float | None = None
 
     # Default tier for LLM requests ("fast", "standard", or "deep")
     default_llm_tier: str = "fast"
@@ -237,36 +252,43 @@ class CognitiveConfig(BaseModel):
             "fast": self.llm_model_fast,
             "standard": self.llm_model_standard,
             "deep": self.llm_model_deep,
+            "vision": self.llm_model_vision,
         }
         url_map = {
             "fast": self.llm_base_url_fast,
             "standard": self.llm_base_url_standard,
             "deep": self.llm_base_url_deep,
+            "vision": self.llm_base_url_vision,
         }
         key_map = {
             "fast": self.llm_api_key_fast,
             "standard": self.llm_api_key_standard,
             "deep": self.llm_api_key_deep,
+            "vision": self.llm_api_key_vision,
         }
         timeout_map = {
             "fast": self.llm_timeout_fast,
             "standard": self.llm_timeout_standard,
             "deep": self.llm_timeout_deep,
+            "vision": self.llm_timeout_vision,
         }
         format_map = {
             "fast": self.llm_api_format_fast,
             "standard": self.llm_api_format_standard,
             "deep": self.llm_api_format_deep,
+            "vision": self.llm_api_format_vision,
         }
         temp_map = {
             "fast": self.llm_temperature_fast,
             "standard": self.llm_temperature_standard,
             "deep": self.llm_temperature_deep,
+            "vision": self.llm_temperature_vision,
         }
         top_p_map = {
             "fast": self.llm_top_p_fast,
             "standard": self.llm_top_p_standard,
             "deep": self.llm_top_p_deep,
+            "vision": self.llm_top_p_vision,
         }
         return {
             "base_url": url_map.get(tier) or self.llm_base_url,
@@ -1095,8 +1117,10 @@ class AttachmentsConfig(BaseModel):
             "text/csv",
         ],
     )
-    # AD-720a: tier selection for vision-capable LLM dispatch (AD-720d consumer).
-    vision_tier: str = "standard"
+    # AD-720a/AD-732: tier selection for vision-capable LLM dispatch.
+    # Default changed from "standard" → "vision" in AD-732. Existing operator
+    # configs that explicitly set vision_tier: "standard" still validate.
+    vision_tier: str = "vision"
     # AD-720a: cap on bytes appended to the prompt by AD-720d's text extractor.
     text_extraction_max_bytes: int = 1 * 1024 * 1024       # 1 MiB
     # AD-720a: PDF text extraction is deferred to AD-720a-1 (needs pypdf).
@@ -1105,10 +1129,10 @@ class AttachmentsConfig(BaseModel):
     @field_validator("vision_tier")
     @classmethod
     def _vision_tier_must_be_known(cls, v: str) -> str:
-        allowed = {"fast", "standard", "deep"}
+        allowed = {"fast", "standard", "deep", "vision"}
         if v not in allowed:
             raise ValueError(
-                f"AD-720a: vision_tier must be one of {sorted(allowed)}; got {v!r}"
+                f"AD-720a/AD-732: vision_tier must be one of {sorted(allowed)}; got {v!r}"
             )
         return v
 
