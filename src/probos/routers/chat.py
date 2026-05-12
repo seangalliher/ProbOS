@@ -310,17 +310,23 @@ async def chat(
                 tier = cfg_attach.vision_tier
                 health = runtime.llm_client.get_health_status()
                 tier_status = (health.get("tiers", {}).get(tier) or {}).get("status")
-                if tier_status != "operational":
-                    from probos.cognitive.vision_dispatch import (
-                        VISION_UNCONFIGURED_MESSAGE,
-                        VISION_UNHEALTHY_MESSAGE,
-                        is_vision_tier_configured,
-                    )
-                    if not is_vision_tier_configured(runtime.config.cognitive, tier):
+                from probos.cognitive.vision_dispatch import (
+                    VISION_UNCONFIGURED_MESSAGE,
+                    VISION_UNHEALTHY_MESSAGE,
+                    is_vision_tier_configured,
+                )
+                # AD-732: honest-degrade fires if vision is either
+                # unconfigured (no endpoint set) or unhealthy (probe-failed).
+                # Two distinct messages because the remediations differ.
+                configured = is_vision_tier_configured(
+                    runtime.config.cognitive, tier
+                )
+                if not configured or tier_status != "operational":
+                    if not configured:
                         logger.info(
-                            "AD-732: /api/chat vision DM requested but vision tier "
-                            "unconfigured; returning honest-degrade message. "
-                            "attachment_ids=%s",
+                            "AD-732: /api/chat vision DM requested but vision "
+                            "tier unconfigured; returning honest-degrade "
+                            "message. attachment_ids=%s",
                             list(req.attachment_ids),
                         )
                         return {
@@ -329,9 +335,9 @@ async def chat(
                             "results": None,
                         }
                     logger.warning(
-                        "AD-732: /api/chat vision tier=%s configured but unhealthy "
-                        "(status=%s); returning honest-degrade message. "
-                        "attachment_ids=%s",
+                        "AD-732: /api/chat vision tier=%s configured but "
+                        "unhealthy (status=%s); returning honest-degrade "
+                        "message. attachment_ids=%s",
                         tier, tier_status, list(req.attachment_ids),
                     )
                     return {

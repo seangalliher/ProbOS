@@ -927,36 +927,30 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                     tier_status = (
                         health.get("tiers", {}).get(tier) or {}
                     ).get("status")
-                    if tier_status == "operational":
-                        vision_messages = messages
-                        has_image_attachment = True
-                        # Keep message_text as the original Captain text so
-                        # episodic memory remains search-friendly; the LLM
-                        # sees the full multimodal array via vision_messages.
-                    else:
-                        # AD-732: honest-degrade replaces the previous "fall
-                        # back to text-only augmentation" path. The agent has
-                        # no way to surface a missing-vision-endpoint to the
-                        # crew, so the OS speaks for itself. Early return —
-                        # BEFORE _sampling_state.enter_dm / avatar notify /
-                        # intent dispatch (~line 990-1010 below). Never-enter
-                        # → never-exit is correct (no DM refcount leak).
-                        from probos.cognitive.vision_dispatch import (
-                            VISION_UNCONFIGURED_MESSAGE,
-                            VISION_UNHEALTHY_MESSAGE,
-                            is_vision_tier_configured,
-                        )
+                    from probos.cognitive.vision_dispatch import (
+                        VISION_UNCONFIGURED_MESSAGE,
+                        VISION_UNHEALTHY_MESSAGE,
+                        is_vision_tier_configured,
+                    )
+                    # AD-732: honest-degrade fires for unconfigured OR
+                    # unhealthy vision. Early-return BEFORE
+                    # _sampling_state.enter_dm + intent_bus.send so
+                    # never-enter → never-exit holds (no DM refcount leak).
+                    # The agent has no way to surface a missing endpoint
+                    # to the crew; the OS speaks for itself.
+                    configured = is_vision_tier_configured(
+                        runtime.config.cognitive, tier
+                    )
+                    if not configured or tier_status != "operational":
                         # callsign_registry is a stable runtime attribute
                         # (initialized in ProbOSRuntime.__init__); no guard.
                         _callsign = runtime.callsign_registry.get_callsign(
                             agent.agent_type
                         )
-                        if not is_vision_tier_configured(
-                            runtime.config.cognitive, tier
-                        ):
+                        if not configured:
                             logger.info(
-                                "AD-732: agent_chat vision DM unconfigured for "
-                                "%s; honest-degrade. attachment_ids=%s",
+                                "AD-732: agent_chat vision DM unconfigured "
+                                "for %s; honest-degrade. attachment_ids=%s",
                                 agent_id, list(req.attachment_ids),
                             )
                             return {
@@ -975,6 +969,11 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                             "callsign": _callsign,
                             "agentId": agent_id,
                         }
+                    vision_messages = messages
+                    has_image_attachment = True
+                    # Keep message_text as the original Captain text so
+                    # episodic memory remains search-friendly; the LLM
+                    # sees the full multimodal array via vision_messages.
 
                 if vision_messages is None:
                     # Text-only path: either no images, or vision degraded.

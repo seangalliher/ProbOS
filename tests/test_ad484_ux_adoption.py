@@ -177,7 +177,7 @@ def test_doctor_returns_zero_on_clean_setup(monkeypatch, tmp_path):
         def __init__(self, *a, **kw):
             pass
         async def check_connectivity(self):
-            return {"fast": True, "standard": True, "deep": True}
+            return {"fast": True, "standard": True, "deep": True, "vision": True}
         async def close(self):
             return None
 
