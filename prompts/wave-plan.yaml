@@ -3355,6 +3355,17 @@ waves:
     issues_to_close: [637, 639]
     status: shipped
 
+  - id: "153"
+    title: "Dedicated vision LLM tier + honest degrade — AD-732 (first-class fourth tier; local Ollama+llava default; operator-facing degrade message)"
+    kind: main
+    depends_on: ["152"]
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-732-vision-llm-tier.md"
+    builder_required: true
+    issues_to_close: [640]
+    status: drafted
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process
