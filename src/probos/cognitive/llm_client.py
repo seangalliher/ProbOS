@@ -409,12 +409,23 @@ class OpenAICompatibleClient(BaseLLMClient):
     async def _check_endpoint(self, tier: str) -> bool:
         """Check if a tier's endpoint is reachable.
 
-        Sends a minimal completion request with a short timeout.
-        Any response below HTTP 500 means the server is up.
+        Sends a minimal completion request and treats any response below
+        HTTP 500 as proof the server is up.
+
+        BF-270 (2026-05-12): probe timeout is min(tier_timeout, 30s) rather
+        than a hardcoded 5s. Local vision endpoints (Ollama + qwen3.6:27b
+        on cold start) routinely take 10-15s for the first ping; a 5s
+        probe ceiling marked vision permanently degraded after every model
+        unload, then BF-269 honest-degrade tripped on real requests
+        because the tier was flagged unhealthy. The tier's own configured
+        timeout is the right ceiling — operators who run slow local models
+        already set llm_timeout_vision high enough; capping at 30s keeps
+        unreachable cloud endpoints from holding the probe forever.
         """
         tc = self._tier_configs[tier]
         client = self._clients[self._client_key(tier)]
         api_format = tc.get("api_format", "openai")
+        probe_timeout = min(float(tc.get("timeout") or 5.0), 30.0)
         try:
             if api_format == "ollama":
                 resp = await client.post(
@@ -426,7 +437,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         "think": False,
                         "keep_alive": self._ollama_keep_alive,
                     },
-                    timeout=5.0,
+                    timeout=probe_timeout,
                 )
             else:
                 resp = await client.post(
@@ -436,7 +447,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         "messages": [{"role": "user", "content": "ping"}],
                         "max_tokens": 1,
                     },
-                    timeout=5.0,
+                    timeout=probe_timeout,
                 )
             reachable = resp.status_code < 500
             if not reachable:
