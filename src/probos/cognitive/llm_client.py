@@ -239,7 +239,20 @@ class OpenAICompatibleClient(BaseLLMClient):
         v1 only overrides the model NAME; ``base_url``, ``api_key``, ``timeout``,
         and ``rate_config`` remain the existing per-tier values.
         Provider-routing (different base_url per provider) is deferred to AD-463b.
+
+        BF-273 (2026-05-12): vision tier ALWAYS uses the configured
+        ``llm_model_vision``. ModelRouter is text-tier cost optimization
+        infrastructure (AD-463) — its registry has no vision-tier entries,
+        so ``by_tier("vision")`` falls through to "pick first available
+        text model" and the runtime then POSTs the wrong model name to
+        the vision endpoint. The result is a 404 from Ollama on a model
+        name that only exists in the Copilot proxy (`claude-sonnet-4-6-fast`),
+        and the loop falls through to "All LLM tiers unavailable" returned
+        as a 16ms (no response) at the agent surface. Skip the router for
+        vision; the explicit tier config is authoritative.
         """
+        if tier == "vision":
+            return None
         # Defensive: tests that construct via __new__ (bypassing __init__) won't
         # have the model_router attribute. Treat that the same as not wired.
         router = getattr(self, "model_router", None)
@@ -493,16 +506,6 @@ class OpenAICompatibleClient(BaseLLMClient):
         """Inner completion logic (separated from semaphore for AD-636)."""
         tier = request.tier or self.default_tier
 
-        # BF-273 DIAG: trace what _complete_inner does for vision DMs.
-        if tier == "vision" or request.messages is not None:
-            logger.info(
-                "BF-273-DIAG enter: tier=%s msgs=%s prompt_len=%d msg_count=%d",
-                tier,
-                request.messages is not None,
-                len(request.prompt or ""),
-                len(request.messages or []),
-            )
-
         # AD-617: Rate limit check before dispatch
         if hasattr(self, '_rate_config') and self._rate_config:
             rpm_limits = {
@@ -511,9 +514,6 @@ class OpenAICompatibleClient(BaseLLMClient):
                 "deep": self._rate_config.rpm_deep,
             }
             if not await self._wait_for_rate_limit(tier, rpm_limits, self._rate_config.max_wait_seconds):
-                # BF-273 DIAG
-                if tier == "vision":
-                    logger.warning("BF-273-DIAG vision rate-limit-exhausted return")
                 # Budget exhausted — try cache (text-only), then return error.
                 # BF-272: multimodal requests bypass the cache (degenerate key).
                 if request.messages is None:
@@ -557,9 +557,6 @@ class OpenAICompatibleClient(BaseLLMClient):
 
             # Skip tiers known to be unreachable at boot
             if self._tier_status.get(attempt_tier) is False and attempt_tier != tier:
-                # BF-273 DIAG
-                if attempt_tier == "vision":
-                    logger.warning("BF-273-DIAG skip-unreachable vision (tier_status=False)")
                 continue
 
             # Apply tier-level sampling defaults (caller override wins)
@@ -592,12 +589,6 @@ class OpenAICompatibleClient(BaseLLMClient):
                         effective_top_p=effective_top_p,
                         effective_max_tokens=effective_max_tokens,
                     )
-                    # BF-273 DIAG
-                    if attempt_tier == "vision":
-                        logger.info(
-                            "BF-273-DIAG _call_api OK tier=%s model=%s content_len=%d error=%r",
-                            attempt_tier, response.model, len(response.content or ""), response.error,
-                        )
                     # Cache successful non-empty responses (keyed by original
                     # tier + prompt). BF-272 (2026-05-12): empty content is
                     # never cached — it poisons all future calls with the same
@@ -738,14 +729,6 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         # Final fallback: error response
         logger.error("All LLM tiers unavailable and no cached response for request %s", request.id[:8])
-        # BF-273 DIAG
-        if tier == "vision":
-            logger.warning(
-                "BF-273-DIAG vision final-fallback. last_error=%r tier_status=%r request_timestamps_len=%d",
-                last_error,
-                self._tier_status.get(tier),
-                len(self._request_timestamps.get(tier, [])),
-            )
         return LLMResponse(
             content="",
             model="",

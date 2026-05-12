@@ -611,3 +611,41 @@ async def test_vision_request_does_not_fall_back_to_text_tiers():
         "BF-269: vision must never fall back — text tiers drop image content."
     )
     await client.close()
+
+
+def test_resolve_model_for_tier_skips_router_for_vision():
+    """BF-273 regression (2026-05-12): ModelRouter must NOT be consulted for
+    the vision tier. The router's registry only knows about text tiers
+    (fast/standard/deep) — calling ``by_tier("vision")`` returns no
+    candidates and the fallback path picks the cheapest text-tier model
+    (e.g. ``claude-sonnet-4-6-fast``). The runtime then POSTs that model
+    name to the vision endpoint (Ollama at 11434), which returns a 404
+    because the text model doesn't exist there. Vision must always use
+    the explicitly configured ``llm_model_vision``.
+    """
+    from probos.cognitive.llm_client import OpenAICompatibleClient
+    from probos.config import CognitiveConfig
+
+    cfg = CognitiveConfig(
+        llm_base_url_vision="http://127.0.0.1:11434/v1",
+        llm_model_vision="qwen3.6:27b",
+    )
+    client = OpenAICompatibleClient(config=cfg)
+
+    # Inject a router that, like the real one, returns a text-tier model
+    # when asked for vision (because its registry has no vision entries).
+    class _TextOnlyRouter:
+        def choose(self, *, tier: str, cost_ceiling=None):
+            class _D:
+                chosen_model = "claude-sonnet-4-6-fast"
+            return _D()
+
+    client.model_router = _TextOnlyRouter()
+
+    # For text tiers the router IS allowed to override.
+    assert client._resolve_model_for_tier("fast") == "claude-sonnet-4-6-fast"
+    assert client._resolve_model_for_tier("standard") == "claude-sonnet-4-6-fast"
+    assert client._resolve_model_for_tier("deep") == "claude-sonnet-4-6-fast"
+
+    # For vision, the router MUST be bypassed; None signals "use tc['model']".
+    assert client._resolve_model_for_tier("vision") is None
