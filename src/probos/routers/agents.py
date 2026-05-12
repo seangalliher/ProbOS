@@ -942,7 +942,27 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
 
                 if image_ids:
                     tier = cfg_attach.vision_tier
+                    # AD-730-5: per-agent_type override resolves to a
+                    # specialized vision tier when configured; otherwise
+                    # returns the default. Pure function.
+                    from probos.cognitive.vision_dispatch import (
+                        resolve_vision_tier_for_agent,
+                    )
+                    _override = resolve_vision_tier_for_agent(
+                        cfg_attach, agent.agent_type, tier
+                    )
                     health = runtime.llm_client.get_health_status()
+                    if _override != tier and _override not in (
+                        health.get("tiers", {}) or {}
+                    ):
+                        logger.warning(
+                            "AD-730-5: vision_tier_overrides[%s]=%s not "
+                            "registered in LLM client; falling back to "
+                            "default tier=%s",
+                            agent.agent_type, _override, tier,
+                        )
+                    else:
+                        tier = _override
                     tier_status = (
                         health.get("tiers", {}).get(tier) or {}
                     ).get("status")

@@ -2165,3 +2165,16 @@ Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not jus
 
 **Files.** `src/probos/crew_profile.py` (CrewProfile field + to_dict/from_dict + CallsignRegistry plumbing). `config/standing_orders/crew_profiles/counselor.yaml` + `architect.yaml` (seed flag). `src/probos/routers/agents.py` (gate before image_ids vision branch). `tests/test_ad720d2_vision_capable.py` (new, 5 tests).
 
+
+### AD-730-5 — Per-agent_type vision tier override (Wave 154)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #635.
+
+**Problem.** AD-730/732 routed every agent's image-bearing DM through a single global `attachments.vision_tier`. A future Diagnostician variant might want a medical-imaging specialist model; an Imaging Officer might want a satellite-imagery model. v1 needs the config plumbing without locking the choice of model.
+
+**Decision.** Add `vision_tier_overrides: dict[str, str]` to `AttachmentsConfig` (default empty). Add pure helper `resolve_vision_tier_for_agent(attach_cfg, agent_type, default_tier) -> str` in `cognitive/vision_dispatch.py`. Three call sites consult it: `routers/agents.py:agent_chat` (passes `agent.agent_type`), `routers/chat.py:/api/chat` (passes `"` — vision branch is untargeted), and `cognitive/cognitive_agent.py:_decide_*` (passes `self.agent_type`). Health-validation: when the resolved override tier is unknown to the LLM client, `routers/agents.py` logs a warning and falls back to the default tier (tier-2 log-and-degrade). v1 only adds plumbing; no second LLM endpoint registered. Operators configure overrides via `config/system.yaml`.
+
+**Out of scope.** Adding a second LLM endpoint to `system.yaml` (ops decision); registering a `vision_medical` tier (separate AD when a real model lands).
+
+**Files.** `src/probos/config.py` (AttachmentsConfig field). `src/probos/cognitive/vision_dispatch.py` (helper). `src/probos/routers/agents.py` + `routers/chat.py` + `cognitive/cognitive_agent.py` (call sites). `tests/test_ad730_5_vision_tier_override.py` (new, 3 tests).
+

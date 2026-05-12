@@ -2125,6 +2125,16 @@ class CognitiveAgent(BaseAgent):
                 getattr(_attach_cfg, "vision_tier", None)
                 if _attach_cfg is not None else None
             )
+            # AD-730-5: per-agent_type override map (default empty).
+            if _attach_cfg is not None and _resolved_vision_tier:
+                from probos.cognitive.vision_dispatch import (
+                    resolve_vision_tier_for_agent,
+                )
+                _resolved_vision_tier = resolve_vision_tier_for_agent(
+                    _attach_cfg,
+                    getattr(self, "agent_type", "") or "",
+                    _resolved_vision_tier,
+                )
             _enriched_messages = _enrich_vision_messages_with_context(
                 _vision_messages, user_message
             )

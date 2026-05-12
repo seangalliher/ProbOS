@@ -308,6 +308,16 @@ async def chat(
 
             if image_ids:
                 tier = cfg_attach.vision_tier
+                # AD-730-5: /api/chat vision branch is untargeted (Captain
+                # composing with the LLM directly — no specific agent in
+                # scope), so agent_type is empty. The helper returns the
+                # default tier unchanged. The override map exists for
+                # per-agent DMs (routers/agents.py) and for future
+                # directed-mention cases.
+                from probos.cognitive.vision_dispatch import (
+                    resolve_vision_tier_for_agent,
+                )
+                tier = resolve_vision_tier_for_agent(cfg_attach, "", tier)
                 health = runtime.llm_client.get_health_status()
                 tier_status = (health.get("tiers", {}).get(tier) or {}).get("status")
                 from probos.cognitive.vision_dispatch import (

@@ -1143,6 +1143,15 @@ class AttachmentsConfig(BaseModel):
     # AD-720a: PDF text extraction is deferred to AD-720a-1 (needs pypdf).
     pdf_extraction_enabled: bool = False
 
+    # AD-730-5: per-agent_type vision tier override. Empty default means
+    # no overrides; behavior identical to today (every agent uses
+    # ``vision_tier``). Operator opts a specific agent type into a
+    # specialized vision tier registered in the LLM client (e.g.
+    # ``{"Diagnostician": "vision_medical"}``). When the override tier is
+    # unknown to the LLM client at dispatch time, the helper logs a
+    # warning and falls back to ``vision_tier`` (tier-2 log-and-degrade).
+    vision_tier_overrides: dict[str, str] = Field(default_factory=dict)
+
     @field_validator("vision_tier")
     @classmethod
     def _vision_tier_must_be_known(cls, v: str) -> str:

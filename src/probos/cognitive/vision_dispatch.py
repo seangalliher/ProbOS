@@ -73,6 +73,26 @@ def is_vision_tier_configured(cfg: Any, tier_name: str) -> bool:
     return bool(model and base_url)
 
 
+def resolve_vision_tier_for_agent(
+    attach_cfg: Any, agent_type: str, default_tier: str
+) -> str:
+    """AD-730-5: resolve the vision tier for a specific agent_type.
+
+    Returns the override from ``attach_cfg.vision_tier_overrides[agent_type]``
+    when present; otherwise ``default_tier``. Pure function — no side effects,
+    no LLM client lookup. Health-validation (does the resolved tier exist
+    in the LLM client?) is the caller's responsibility (tier-2 log-and-degrade
+    pattern at the dispatch site).
+
+    An empty ``agent_type`` (no agent context — e.g. untargeted captain
+    chat) short-circuits to ``default_tier`` without dict lookup.
+    """
+    if not agent_type:
+        return default_tier
+    overrides = getattr(attach_cfg, "vision_tier_overrides", None) or {}
+    return overrides.get(agent_type, default_tier)
+
+
 async def _resolve_one(
     attachment_id: str,
     store: AttachmentStore,
