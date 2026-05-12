@@ -1,10 +1,19 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { useStore } from '../../store/useStore';
-import type { WardRoomPost } from '../../store/types';
+import type { ChatAttachment, WardRoomPost } from '../../store/types';
 import { EndorsementButtons } from './WardRoomEndorsement';
 import { WardRoomPostItem } from './WardRoomPostItem';
 import { timeAgo } from './timeAgo';
+
+// AD-730-1: file-picker attachments for WardRoom DM replies. Mirrors the
+// ProfileChatTab pattern (same /api/agent/{id}/chat endpoint).
+const ALLOWED_ATTACHMENT_MIMES = [
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+  'application/pdf', 'text/plain', 'text/markdown',
+  'application/json', 'text/csv',
+] as const;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 // AD-574b: Resolve the target agent_id for the active DM thread by scanning
 // the wardRoomDmChannels listing for the channel that owns this thread.
@@ -42,6 +51,10 @@ export function WardRoomThreadDetail() {
   const dmChannels = useStore(s => s.wardRoomDmChannels);
   const dmPending = useStore(s => s.wardRoomDmPending);
   const [replyText, setReplyText] = useState('');
+  // AD-730-1: pending file-picker attachments for DM replies.
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!detail || !activeThread) return null;
 
@@ -91,7 +104,12 @@ export function WardRoomThreadDetail() {
       const res = await fetch(`/api/agent/${targetAgentId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({
+          message: text,
+          history,
+          // AD-730-1: surface picker-selected attachments to the backend.
+          attachment_ids: pendingAttachments.map(a => a.attachment_id),
+        }),
       });
       if (!res.ok) throw new Error(`chat ${res.status}`);
       const data = await res.json();
@@ -113,10 +131,49 @@ export function WardRoomThreadDetail() {
       // still respond on the next think tick.
       try { await postCaptain(); } catch { /* swallow */ }
     } finally {
+      // AD-730-1: clear picker buffer regardless of outcome so the chip
+      // strip resets between sends (matches ProfileChatTab).
+      setPendingAttachments([]);
       useStore.getState().setWardRoomDmPending(null);
       useStore.getState().selectWardRoomThread(activeThread);
     }
   };
+
+  // AD-730-1: upload a single file → /api/chat/attachments/multipart.
+  async function uploadAttachment(file: File): Promise<void> {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setAttachError(`Too large: ${file.name} (${file.size} bytes)`);
+      return;
+    }
+    try {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      const res = await fetch('/api/chat/attachments/multipart', { method: 'POST', body: fd });
+      if (!res.ok) {
+        let reason = 'unknown';
+        try { reason = (await res.json())?.error ?? reason; } catch { /* ignore */ }
+        setAttachError(`Upload failed: ${reason}`);
+        return;
+      }
+      const data = await res.json() as ChatAttachment;
+      setPendingAttachments(prev => [...prev, { ...data, filename: file.name }]);
+      setAttachError(null);
+    } catch (err) {
+      setAttachError(`Upload error: ${(err as Error).message}`);
+    }
+  }
+
+  async function onFilePickerChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    for (const file of files) {
+      await uploadAttachment(file);
+    }
+    if (e.target) e.target.value = '';
+  }
+
+  function removePendingAttachment(id: string) {
+    setPendingAttachments(prev => prev.filter(a => a.attachment_id !== id));
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -168,12 +225,94 @@ export function WardRoomThreadDetail() {
         }
       </div>
 
+      {/* AD-730-1: attachment chip strip (DM-only). Renders above the
+          textarea when the picker has staged at least one file or after a
+          failed upload so the operator sees the error. */}
+      {isDm && targetAgentId && (pendingAttachments.length > 0 || attachError) && (
+        <div
+          data-testid="wardroom-dm-attachment-chips"
+          style={{
+            padding: '4px 12px',
+            borderTop: '1px solid rgba(255,255,255,0.04)',
+            display: 'flex', flexWrap: 'wrap', gap: 4,
+            fontSize: 11,
+          }}
+        >
+          {pendingAttachments.map(a => (
+            <span key={a.attachment_id} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              background: 'rgba(240,176,96,0.10)',
+              border: '1px solid rgba(240,176,96,0.25)',
+              borderRadius: 4, padding: '2px 6px',
+              color: '#f0b060',
+              maxWidth: 200,
+            }}>
+              <span style={{
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{a.filename || a.attachment_id.slice(0, 12)}</span>
+              <button
+                type="button"
+                onClick={() => removePendingAttachment(a.attachment_id)}
+                aria-label="remove attachment"
+                style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: '#f0b060', fontSize: 11, padding: 0, lineHeight: 1,
+                }}
+              >×</button>
+            </span>
+          ))}
+          {attachError && (
+            <span style={{ color: '#ff8080' }}>{attachError}</span>
+          )}
+        </div>
+      )}
+
       {/* Reply input */}
       <div style={{
         borderTop: '1px solid rgba(255,255,255,0.06)',
         padding: '8px 12px',
         display: 'flex', gap: 6,
       }}>
+        {/* AD-730-1: paperclip + hidden file picker (DM-only). */}
+        {isDm && targetAgentId && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ALLOWED_ATTACHMENT_MIMES.join(',')}
+              onChange={onFilePickerChange}
+              style={{
+                position: 'absolute', width: 1, height: 1, opacity: 0,
+                pointerEvents: 'none', left: -9999,
+              }}
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            <button
+              type="button"
+              data-testid="wardroom-dm-attach-button"
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="attach file"
+              title="Attach a file"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#f0b060',
+                cursor: 'pointer',
+                padding: '4px',
+                borderRadius: 4,
+                flexShrink: 0,
+                alignSelf: 'flex-end',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                   stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M11 4l-5 5a2 2 0 002.8 2.8l5-5a3 3 0 00-4.2-4.2l-5 5a4 4 0 005.7 5.7" />
+              </svg>
+            </button>
+          </>
+        )}
         <textarea
           value={replyText}
           onChange={e => setReplyText(e.target.value)}

@@ -2200,3 +2200,16 @@ Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not jus
 
 **Files.** `src/probos/cognitive/self_perception.py` (new). `src/probos/cognitive/cognitive_agent.py` (one-line pipeline_version append in `_build_avatar_self_observation`). `tests/test_ad722e_self_perception.py` (new, 6 tests).
 
+
+### AD-730-1 — WardRoom DM attach button (Wave 154)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #631.
+
+**Problem.** `/api/agent/{id}/chat` accepts `attachment_ids` (AD-730) and the main composer + ProfileChatTab both surface a paperclip + chip strip, but `WardRoomThreadDetail.tsx` (the WardRoom DM reply composer) had no attach UI. Captain could attach in two places but not the third — visible gap in the captain experience.
+
+**Decision.** Mirror the ProfileChatTab paperclip + chip strip + hidden file-picker pattern in `WardRoomThreadDetail.tsx`. Same SVG paperclip (`strokeWidth: 1.5`, amber on hover/active, dim default). Hidden file input triggered by the paperclip button. Chip strip above the textarea shows pending attachments with × removal. Send body includes `attachment_ids: pendingAttachments.map(a => a.attachment_id)`. Pending attachments reset after every send (success OR failure) so the chip strip never persists stale state. UI gated by `isDm && targetAgentId` — non-DM (channels) view never renders the paperclip.
+
+**Forward markers.** AD-730-1.1 — drag-and-drop + paste-image in WardRoomThreadDetail (filed at wave close).
+
+**Files.** `ui/src/components/wardroom/WardRoomThreadDetail.tsx` (paperclip + chip strip + upload helpers + attachment_ids in submit body). `ui/src/__tests__/WardRoomThreadDetail.attach.test.tsx` (new, 3 Vitest tests: paperclip-hidden-in-non-DM, paperclip-visible-in-DM, attachment_id-flows-to-chat-body).
+
