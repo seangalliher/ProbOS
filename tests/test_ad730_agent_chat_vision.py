@@ -105,12 +105,21 @@ def _req(message: str = "look at this", attachment_ids: list[str] | None = None)
 
 
 def _fake_multimodal_messages(prompt: str, image_ids: list[str]):
-    """Build a representative multimodal messages array shape."""
+    """Build a representative multimodal messages array shape.
+
+    AD-731 (Wave 152): the wire shape is now an ``attachment_ref`` source
+    block with a SHA-256 reference, NOT inline base64. The LLM client
+    dereferences the ref to a base64 source block just before HTTP POST.
+    """
     content: list[dict] = [{"type": "text", "text": prompt}]
     for aid in image_ids:
         content.append({
             "type": "image",
-            "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"},
+            "source": {
+                "type": "attachment_ref",
+                "sha256": aid,
+                "media_type": "image/png",
+            },
         })
     return [{"role": "user", "content": content}]
 

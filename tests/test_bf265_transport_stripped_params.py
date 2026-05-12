@@ -1,31 +1,36 @@
-"""BF-265: Regression tests for transport-unsafe param stripping.
+"""AD-731 (Wave 152): regression tests asserting "no inline base64 ever crosses
+the bus" — inverted shape of the original BF-265 / Wave 151 suite.
 
-Wave 151 / AD-730 added IntentMessage.params['vision_messages'] carrying
-base64 image bytes. Without stripping, these payloads cross NATS transport
-and get retained in JetStream retry buffers — contributed to the 2026-05-11
-memory-exhaustion crash (GH #636).
+Originally BF-265 stripped IntentMessage.params['vision_messages'] from NATS
+transport because AD-730 packed inline base64 image bytes (150 KB-1 MB per
+attachment) into the bus, which triggered the 2026-05-11 memory-exhaustion
+crash (GH #636). AD-731 switched the wire format to content-addressable refs
+(SHA-256 + media_type, ~70 bytes per image) and reverted the strip — the
+uniform-NATS-transport invariant is restored.
 
-These tests verify that:
-1. IntentBus._serialize_intent strips vision_messages before NATS transport.
-2. FederationBridge.forward_intent strips vision_messages before federation send.
-3. Stripped intents carry a _transport_stripped marker indicating which keys
-   were removed (so log replay / debug tools can see the elision).
-4. The original IntentMessage is NOT mutated (caller still has the live data).
-5. Non-image intents (no vision_messages) round-trip identically.
+These tests now assert the AD-731 contract:
+1. ``IntentBus._serialize_intent`` no longer strips ``vision_messages`` — it
+   round-trips intact when carrying ref-shape blocks.
+2. The serialized payload stays small (< 4 KB for a 5-image ref-shape DM)
+   so the original OOM crash CANNOT recur via the same path.
+3. ``_transport_stripped`` marker is NOT added to ref-shape DMs.
+4. **Regression sentinel for the original mistake**: if someone re-introduces
+   inline base64 in ``vision_messages`` content blocks (the AD-730 shape that
+   caused #636), the size-bound sentinel test fires loudly.
+5. Federation bridge strip is preserved as a deliberate AD-731a forward
+   marker (cross-mesh attachment distribution unsolved; AD-731a-1 / AD-731a-2
+   will retire it).
 """
 from __future__ import annotations
 
-from typing import Any
-
-import pytest
+import json
 
 from probos.mesh.intent import IntentBus
 from probos.types import IntentMessage
 
 
-def _make_intent_with_vision() -> IntentMessage:
-    """Build an IntentMessage carrying a vision_messages payload (small stub
-    bytes — we're testing stripping behavior, not actual base64 content)."""
+def _make_intent_with_vision_refs() -> IntentMessage:
+    """Build an IntentMessage with AD-731 attachment_ref-shape vision_messages."""
     return IntentMessage(
         intent="direct_message",
         params={
@@ -39,10 +44,9 @@ def _make_intent_with_vision() -> IntentMessage:
                         {
                             "type": "image",
                             "source": {
-                                "type": "base64",
+                                "type": "attachment_ref",
+                                "sha256": "a" * 64,
                                 "media_type": "image/png",
-                                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAA"
-                                        "C0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
                             },
                         },
                     ],
@@ -66,28 +70,32 @@ def _make_intent_without_vision() -> IntentMessage:
 
 
 # ------------------------------------------------------------------
-# IntentBus serialization
+# IntentBus serialization — AD-731 contract
 # ------------------------------------------------------------------
 
 
-def test_serialize_intent_strips_vision_messages():
-    """vision_messages MUST NOT cross NATS transport."""
-    intent = _make_intent_with_vision()
+def test_serialize_intent_preserves_vision_messages_ref_shape():
+    """AD-731: vision_messages survives NATS serialization (no strip)."""
+    intent = _make_intent_with_vision_refs()
     serialized = IntentBus._serialize_intent(intent)
-    assert "vision_messages" not in serialized["params"]
+    assert "vision_messages" in serialized["params"]
+    block = serialized["params"]["vision_messages"][0]["content"][1]
+    assert block["type"] == "image"
+    assert block["source"]["type"] == "attachment_ref"
+    assert block["source"]["sha256"] == "a" * 64
+    assert block["source"]["media_type"] == "image/png"
 
 
-def test_serialize_intent_adds_transport_stripped_marker():
-    """Serialized output includes a marker listing stripped keys."""
-    intent = _make_intent_with_vision()
+def test_serialize_intent_no_transport_stripped_marker_for_refs():
+    """AD-731: the _transport_stripped marker is NOT added for ref-shape DMs."""
+    intent = _make_intent_with_vision_refs()
     serialized = IntentBus._serialize_intent(intent)
-    assert "_transport_stripped" in serialized["params"]
-    assert "vision_messages" in serialized["params"]["_transport_stripped"]
+    assert "_transport_stripped" not in serialized["params"]
 
 
 def test_serialize_intent_preserves_safe_params():
-    """Non-stripped params survive serialization."""
-    intent = _make_intent_with_vision()
+    """Non-vision params survive serialization unchanged."""
+    intent = _make_intent_with_vision_refs()
     serialized = IntentBus._serialize_intent(intent)
     assert serialized["params"]["text"] == "Hello Ezri, can you describe this image?"
     assert serialized["params"]["from"] == "hxi_profile"
@@ -95,15 +103,15 @@ def test_serialize_intent_preserves_safe_params():
 
 
 def test_serialize_intent_does_not_mutate_original():
-    """The live IntentMessage retains vision_messages for in-process consumers."""
-    intent = _make_intent_with_vision()
+    """The live IntentMessage is untouched by serialization."""
+    intent = _make_intent_with_vision_refs()
     _ = IntentBus._serialize_intent(intent)
     assert "vision_messages" in intent.params
     assert intent.params["vision_messages"][0]["content"][1]["type"] == "image"
 
 
 def test_serialize_intent_without_vision_unchanged():
-    """Intents without vision_messages serialize identically — no marker added."""
+    """Intents without vision_messages serialize identically — no marker."""
     intent = _make_intent_without_vision()
     serialized = IntentBus._serialize_intent(intent)
     assert "vision_messages" not in serialized["params"]
@@ -111,15 +119,64 @@ def test_serialize_intent_without_vision_unchanged():
     assert serialized["params"]["text"] == "Hello Ezri, text-only message."
 
 
-def test_serialize_intent_payload_size_dramatically_smaller():
-    """Sanity check: stripped payload is at least 10x smaller than the
-    un-stripped equivalent for a realistic image. We synthesize a 100KB
-    base64 blob (small for a real image; large for a NATS frame) and verify
-    the strip drops the serialized size below the threshold.
+def test_serialize_intent_ref_payload_is_size_bounded():
+    """AD-731 invariant: ref-shape vision DMs stay small enough to never
+    re-trigger #636. A 5-image DM with full 64-hex SHAs and the AD-730
+    shape overhead must serialize to well under 4 KB.
     """
-    import json
+    intent = IntentMessage(
+        intent="direct_message",
+        params={
+            "text": "Look at these five images",
+            "vision_messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Look at these"},
+                        *[
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "attachment_ref",
+                                    "sha256": f"{i:064x}",
+                                    "media_type": "image/png",
+                                },
+                            }
+                            for i in range(5)
+                        ],
+                    ],
+                }
+            ],
+        },
+        target_agent_id="counselor-001",
+    )
+    serialized = IntentBus._serialize_intent(intent)
+    payload_bytes = len(json.dumps(serialized).encode("utf-8"))
+    assert payload_bytes < 4_000, (
+        f"AD-731 size-bound violated: serialized payload is {payload_bytes} "
+        f"bytes for 5 ref-shape images. This should be ~600 bytes; if it has "
+        f"ballooned, someone likely re-introduced inline base64."
+    )
 
-    big_b64 = "A" * 100_000  # 100KB of base64 garbage simulates a real image
+
+# ------------------------------------------------------------------
+# Regression sentinel for the original AD-730 mistake (#636 cause)
+# ------------------------------------------------------------------
+
+
+def test_inline_base64_in_vision_messages_balloons_serialization():
+    """Regression sentinel: if someone re-introduces inline base64 in
+    vision_messages content blocks (the AD-730 shape that caused #636),
+    the serialized payload balloons. AD-731 made BF-265's transport strip
+    unnecessary by switching to content-addressable refs; a future change
+    that inlines base64 again would re-trigger the JetStream retry-buffer
+    accumulation that crashed the runtime on 2026-05-11.
+
+    Without the strip, an inline-base64 payload now passes through
+    serialize() unchanged. This sentinel pins that fact so the size-jump
+    is visible and the contract violation is loud.
+    """
+    big_b64 = "A" * 100_000  # 100KB simulates a real PNG
     intent = IntentMessage(
         intent="direct_message",
         params={
@@ -144,28 +201,32 @@ def test_serialize_intent_payload_size_dramatically_smaller():
         target_agent_id="counselor-001",
     )
     serialized = IntentBus._serialize_intent(intent)
-    serialized_bytes = len(json.dumps(serialized).encode("utf-8"))
-    raw_size = len(json.dumps({"params": intent.params}).encode("utf-8"))
-    # Stripped should be < 1KB; raw should be > 100KB.
-    assert serialized_bytes < 1_000, (
-        f"Stripped serialization too large: {serialized_bytes} bytes; "
-        f"raw was {raw_size}"
+    payload_bytes = len(json.dumps(serialized).encode("utf-8"))
+    # Inline base64 is now not stripped — so payload IS large. This
+    # sentinel test makes the size jump explicit: anyone going back to
+    # inline-base64 will see this assertion document the size cost.
+    assert payload_bytes > 100_000, (
+        "Sentinel inverted: inline base64 in vision_messages no longer "
+        "balloons serialization. Either the bus silently re-introduced a "
+        "strip (contract violation against AD-731) or the test fixture "
+        "drifted. Audit IntentBus._serialize_intent and AD-731 docs."
     )
-    assert raw_size > 100_000  # Sanity check that the test setup is realistic
 
 
 # ------------------------------------------------------------------
-# FederationBridge param stripping (mirrors IntentBus pattern)
+# Federation bridge — AD-731a forward marker
 # ------------------------------------------------------------------
 
 
-def test_federation_bridge_strips_vision_messages_in_payload():
-    """The federation bridge transport must also strip vision_messages.
-    Tested via a direct check of the strip logic since the bridge requires
-    a full transport stack to instantiate.
+def test_federation_bridge_still_strips_vision_messages_v1():
+    """AD-731a forward marker (#638): cross-mesh attachment distribution is
+    unsolved. The federation bridge still strips vision_messages from
+    cross-mesh transport because the receiving mesh may not have the local
+    AttachmentStore. AD-731a-1 (HTTP fetch) or AD-731a-2 (NATS Object Store)
+    will retire this strip when shipped. Pin the v1 behavior so the future
+    AD has a regression target to flip.
     """
-    # Replicate the strip logic from bridge.py to verify it does the right thing.
-    intent = _make_intent_with_vision()
+    intent = _make_intent_with_vision_refs()
     _stripped_keys = ("vision_messages",)
     if any(k in intent.params for k in _stripped_keys):
         params_for_transport = {
@@ -187,19 +248,19 @@ def test_federation_bridge_strips_vision_messages_in_payload():
 
 
 # ------------------------------------------------------------------
-# AD-730 receiver path — still works after stripping
+# AD-731 in-process consumer contract
 # ------------------------------------------------------------------
 
 
-def test_ad730_in_process_consumer_still_sees_vision_messages():
+def test_ad731_in_process_consumer_sees_ref_shape_vision_messages():
     """The DM perception path in cognitive_agent.py reads from the LIVE
-    IntentMessage, not the NATS-deserialized copy. Verify the source
-    of truth is the unstripped original.
+    IntentMessage. AD-731 keeps vision_messages intact through serialization
+    too, so both the in-process consumer and any NATS-deserialized copy
+    see the same ref-shape content.
     """
-    intent = _make_intent_with_vision()
-    # In-process consumers access intent.params directly.
+    intent = _make_intent_with_vision_refs()
     assert "vision_messages" in intent.params
     assert intent.params["has_image_attachment"] is True
-    # Stripped only happens at the transport boundary.
     serialized = IntentBus._serialize_intent(intent)
-    assert "vision_messages" not in serialized["params"]
+    # AD-731: serialized payload keeps vision_messages too.
+    assert "vision_messages" in serialized["params"]

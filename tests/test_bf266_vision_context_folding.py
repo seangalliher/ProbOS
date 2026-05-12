@@ -22,15 +22,19 @@ def _make_router_built_vision_messages(
     *,
     image_count: int = 1,
 ) -> list[dict]:
-    """Mirror what routers/agents.py builds via build_multimodal_messages."""
+    """Mirror what routers/agents.py builds via build_multimodal_messages.
+
+    AD-731 (Wave 152): wire shape is ``attachment_ref`` (SHA-256 + media_type),
+    not inline base64. The LLM client resolves refs just before HTTP POST.
+    """
     content: list[dict] = [{"type": "text", "text": raw_text}]
     for i in range(image_count):
         content.append({
             "type": "image",
             "source": {
-                "type": "base64",
+                "type": "attachment_ref",
+                "sha256": f"sha-image-{i}",
                 "media_type": "image/png",
-                "data": f"base64-blob-{i}",
             },
         })
     return [{"role": "user", "content": content}]
@@ -75,8 +79,8 @@ def test_enrich_preserves_image_blocks():
     content = out[0]["content"]
     image_blocks = [c for c in content if c.get("type") == "image"]
     assert len(image_blocks) == 2
-    assert image_blocks[0]["source"]["data"] == "base64-blob-0"
-    assert image_blocks[1]["source"]["data"] == "base64-blob-1"
+    assert image_blocks[0]["source"]["sha256"] == "sha-image-0"
+    assert image_blocks[1]["source"]["sha256"] == "sha-image-1"
 
 
 def test_enrich_returns_none_when_no_image_blocks():
