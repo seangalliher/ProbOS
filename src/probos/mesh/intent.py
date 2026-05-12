@@ -371,25 +371,43 @@ class IntentBus:
 
         _send_start = time.monotonic()  # AD-470: timing
         try:
-            # NATS path when connected
+            # BF-267 (2026-05-11): local-first dispatch when the target agent
+            # is in-process. Bypasses NATS serialization entirely, which
+            # preserves transient params keys like 'vision_messages' that
+            # BF-265 strips before NATS transport. Without this, image DMs
+            # to local crew lose their vision_messages payload during the
+            # local NATS request/reply round-trip (deserialization restores
+            # an IntentMessage without the stripped fields).
+            #
+            # Federation (cross-mesh) still goes through NATS — the strip
+            # is correct there: large transient payloads should not cross
+            # the wire. Locality is determined by subscriber presence: if
+            # the target is registered in _subscribers, this process owns
+            # the agent and direct-call is both safe and cheaper.
+            handler = self._subscribers.get(intent.target_agent_id)
+            if handler is not None:
+                try:
+                    result = await asyncio.wait_for(
+                        handler(intent), timeout=intent.ttl_seconds
+                    )
+                    return result
+                except asyncio.TimeoutError:
+                    return IntentResult(
+                        intent_id=intent.id,
+                        agent_id=intent.target_agent_id,
+                        success=False,
+                        error="Agent did not respond in time.",
+                        confidence=0.0,
+                    )
+
+            # Remote target (no local subscriber) — use NATS request/reply.
+            # The transport-strip in _serialize_intent applies here, which
+            # is the correct behavior for cross-mesh delivery.
             if self._nats_bus and self._nats_bus.connected:
                 return await self._nats_send(intent)
 
-            # Direct-call fallback when NATS disconnected
-            handler = self._subscribers.get(intent.target_agent_id)
-            if handler is None:
-                return None
-            try:
-                result = await asyncio.wait_for(handler(intent), timeout=intent.ttl_seconds)
-                return result
-            except asyncio.TimeoutError:
-                return IntentResult(
-                    intent_id=intent.id,
-                    agent_id=intent.target_agent_id,
-                    success=False,
-                    error="Agent did not respond in time.",
-                    confidence=0.0,
-                )
+            # Neither local nor NATS — nothing to deliver to.
+            return None
         finally:
             _elapsed_ms = (time.monotonic() - _send_start) * 1000
             self._metrics.record_send(intent.intent, _elapsed_ms)
