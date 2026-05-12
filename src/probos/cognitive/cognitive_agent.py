@@ -2131,9 +2131,10 @@ class CognitiveAgent(BaseAgent):
             if _enriched_messages is not None:
                 logger.info(
                     "AD-730 (BF-266): routing DM through vision_tier=%s with "
-                    "assembled user_message (%d chars) + image blocks",
+                    "assembled user_message (%d chars) + system_prompt (%d chars) + image blocks",
                     _resolved_vision_tier or "default",
                     len(user_message),
+                    len(composed or ""),
                 )
                 request = LLMRequest(
                     prompt="",  # content lives in messages
