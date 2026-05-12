@@ -9,7 +9,6 @@ content items.
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -117,13 +116,17 @@ async def build_multimodal_messages(
 
         if mime.startswith("image/"):
             image_ids.append(attachment_id)
-            data = base64.b64encode(blob).decode("ascii")
+            # AD-731: emit a content-addressable ref instead of inline base64.
+            # The receiver dereferences from the local AttachmentStore inside
+            # the LLM client immediately before the HTTP POST. This keeps the
+            # bus message ~70 bytes per image instead of 150 KB-1 MB and
+            # restores the uniform-NATS-transport invariant (AD-637z2).
             content.append({
                 "type": "image",
                 "source": {
-                    "type": "base64",
+                    "type": "attachment_ref",
+                    "sha256": attachment_id,
                     "media_type": mime,
-                    "data": data,
                 },
             })
             continue
@@ -181,6 +184,17 @@ async def build_multimodal_messages(
         })
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+    # AD-731: observability — log the wire size for vision DMs so the
+    # ~70-bytes-per-ref invariant is visible in logs (versus 150 KB-1 MB
+    # for the old inline-base64 shape).
+    if image_ids:
+        import json as _json
+        wire_size = len(_json.dumps(messages))
+        logger.info(
+            "AD-731: emitting %d attachment_ref block(s) for vision DM "
+            "(total wire size ~%d bytes)",
+            len(image_ids), wire_size,
+        )
     return (messages, image_ids)
 
 
