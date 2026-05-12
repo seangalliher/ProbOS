@@ -1779,7 +1779,9 @@ The split is **intentional and permanent**, mirroring Kahneman's dual-process th
 
 ### AD-727 — Safety constraints for AD-722e avatar self-perception (joint Counselor + Architect review gate)
 
-**Date:** 2026-05-10. **Status:** Forward marker, filed as [#585](https://github.com/seangalliher/ProbOS/issues/585).
+**Date:** 2026-05-10 (filed); **2026-05-12** (ratified, Wave 154). **Status:** Ratified, gate active. **Closes** [#585](https://github.com/seangalliher/ProbOS/issues/585).
+
+**Code-level enforcement.** The seven hard rules below are enforced by `tests/test_ad727_safety_constraints.py` (5 static-assertion tests). A failing test BLOCKS CI — the gate is active and cannot be bypassed by code-review courtesy. See also `docs/architecture/self-perception-framing.md` for the public-framing paragraph required by rule #8.
 
 **Decision.** AD-722e (avatar self-perception) is the first AD in ProbOS to confer a capacity that can cause **psychological** harm rather than operational harm. It requires its own constraint document and a joint-review gate before any build prompt advances to Builder. AD-727 captures the constraint stack; AD-722e captures the capability. Neither ships without the other.
 

@@ -35,6 +35,8 @@ Every agent maintains a confidence score and trust reputation. The system doesn'
 
 Five layers plus two cross-cutting concerns, each built on the one below:
 
+> See [docs/architecture/self-perception-framing.md](docs/architecture/self-perception-framing.md) for the public-framing paragraph on AD-722e self-perception (denser self-state injection, not consciousness).
+
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Experience    CLI shell, HXI (WebGL canvas),       │
