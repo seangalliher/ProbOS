@@ -334,9 +334,11 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 |----|-------|-------|----------|
 | AD-706a | Captain-watch streaming bridge — live browser session in HXI | [#516](https://github.com/seangalliher/ProbOS/issues/516) | 2 |
 | AD-706b | Browser session video recording + retention policy | [#517](https://github.com/seangalliher/ProbOS/issues/517) | 3 |
-| AD-706c | OmniParser-style vision extraction for DOM-less surfaces | [#518](https://github.com/seangalliher/ProbOS/issues/518) | 4 |
-| AD-706d | LLM-driven tier classifier for Browser Tool actions | [#519](https://github.com/seangalliher/ProbOS/issues/519) | 3 |
-| AD-706e | Browser Tool action vocabulary v2 — drag, key_combo, mouse, upload, download, eval_js | [#520](https://github.com/seangalliher/ProbOS/issues/520) | 3 |
+| AD-706c | OmniParser-style vision extraction — **SPLIT 2026-05-12** into AD-706c-1 + AD-706c-2 after AD-732 + BF-268..273 made prerequisites concrete | (closed-as-superseded [#518](https://github.com/seangalliher/ProbOS/issues/518)) | — |
+| AD-706c-1 | Visual verification of Browser Tool actions using existing local vision tier (qwen3.6:27b). Read-only "did the expected outcome appear?" flow. Builds on already-shipped AD-731/BF-268/AD-732 primitives. **Demo value**: agent narrates its own work | [#642](https://github.com/seangalliher/ProbOS/issues/642) | 2 |
+| AD-706c-2 | Coordinate-aware `compute_use` tier for DOM-less surfaces (Anthropic computer-use / OpenAI Operator-style). Click-target prediction with the eight-guard vision stack + two new guards (coordinate verification + cross-action trust budget extending AD-676). Operator opt-in: local coord-tuned model OR cloud API key, never both silently | [#643](https://github.com/seangalliher/ProbOS/issues/643) | 4 |
+| AD-706d | LLM-driven tier classifier for Browser Tool actions — should plug into AD-732's `_LLM_TIERS` shape (fast/standard/deep/vision + future compute_use) | [#519](https://github.com/seangalliher/ProbOS/issues/519) | 3 |
+| AD-706e | Browser Tool action vocabulary v2 — drag, key_combo, mouse, upload, download, eval_js. `eval_js` requires dual-control consensus per AD-676 | [#520](https://github.com/seangalliher/ProbOS/issues/520) | 3 |
 | AD-706f | Browser Tool credential vault integration for authenticated flows | [#521](https://github.com/seangalliher/ProbOS/issues/521) | 3 |
 
 **From Wave 133 deferred forward markers (AD-718 voice + AD-721 avatars follow-ups):**
