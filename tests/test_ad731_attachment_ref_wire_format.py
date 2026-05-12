@@ -184,10 +184,13 @@ async def test_llm_client_resolves_attachment_ref_to_base64_pre_post(tmp_path):
     ]
     resolved = await client._resolve_attachment_refs_for_openai(messages)
     image_block = resolved[0]["content"][1]
-    assert image_block["type"] == "image"
-    assert image_block["source"]["type"] == "base64"
-    assert image_block["source"]["media_type"] == "image/png"
-    assert base64.b64decode(image_block["source"]["data"]) == _PNG_1X1_BYTES
+    # BF-268: resolver emits OpenAI chat-completions vision shape (image_url
+    # + data URL), not Anthropic source.base64. _call_openai targets
+    # OpenAI-compatible endpoints (Copilot proxy, Ollama, OpenAI proper).
+    assert image_block["type"] == "image_url"
+    url = image_block["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,")
+    assert base64.b64decode(url.split(",", 1)[1]) == _PNG_1X1_BYTES
 
 
 @pytest.mark.asyncio
@@ -411,10 +414,11 @@ async def test_end_to_end_vision_dm_with_real_store(tmp_path):
     assert transport.captured_payload is not None
     sent_messages = transport.captured_payload["messages"]
     image_block = sent_messages[0]["content"][1]
-    assert image_block["type"] == "image"
-    assert image_block["source"]["type"] == "base64"
-    assert image_block["source"]["media_type"] == "image/png"
-    assert base64.b64decode(image_block["source"]["data"]) == _PNG_1X1_BYTES
+    # BF-268: OpenAI chat-completions vision shape on the wire to the proxy.
+    assert image_block["type"] == "image_url"
+    url = image_block["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,")
+    assert base64.b64decode(url.split(",", 1)[1]) == _PNG_1X1_BYTES
 
 
 # ------------------------------------------------------------------

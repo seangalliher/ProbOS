@@ -680,13 +680,20 @@ class OpenAICompatibleClient(BaseLLMClient):
     async def _resolve_attachment_refs_for_openai(
         self, messages: list[dict]
     ) -> list[dict]:
-        """AD-731: resolve ``attachment_ref`` source blocks to OpenAI/Anthropic-
-        compatible base64 source blocks just before the HTTP POST.
+        """AD-731 + BF-268: resolve ``attachment_ref`` source blocks to the
+        OpenAI chat-completions vision shape (``image_url`` + data URL) just
+        before the HTTP POST.
 
         Walks each message's ``content`` array. For each image content block
         whose ``source.type == "attachment_ref"``, reads bytes from
-        ``self._attachment_store`` and replaces the block with a ``base64``
-        source. Other blocks pass through unchanged.
+        ``self._attachment_store`` and replaces the block with an
+        ``{"type": "image_url", "image_url": {"url": "data:<mime>;base64,..."}}``
+        block. Other blocks pass through unchanged.
+
+        BF-268 (2026-05-11): originally emitted Anthropic ``source.base64``
+        shape, which the Copilot proxy silently dropped (proxy speaks OpenAI
+        chat-completions). Adaptation belongs at the vendor boundary — this
+        method targets OpenAI-compatible endpoints by name.
 
         Tier-2 log-and-degrade: a missing attachment is replaced with a
         ``failed_to_load`` text marker and a warning is logged. Never raises.
@@ -717,13 +724,23 @@ class OpenAICompatibleClient(BaseLLMClient):
                     mime = block["source"].get("media_type", "")
                     try:
                         blob = await self._attachment_store.read(sha)
+                        # BF-268: emit OpenAI chat-completions vision shape
+                        # (image_url + data URL), NOT Anthropic source.base64.
+                        # _call_openai targets OpenAI-compatible endpoints
+                        # (Copilot proxy, Ollama OpenAI compat, OpenAI proper).
+                        # The Copilot proxy silently dropped the Anthropic-
+                        # shape block, the model saw text only, and the agent
+                        # returned (no response). Anthropic-native callers
+                        # that want the source.base64 shape live behind a
+                        # different transport — adaptation belongs at the
+                        # vendor boundary, not on the bus (AD-731 invariant).
+                        data_url = (
+                            f"data:{mime};base64,"
+                            + base64.b64encode(blob).decode("ascii")
+                        )
                         new_content.append({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": mime,
-                                "data": base64.b64encode(blob).decode("ascii"),
-                            },
+                            "type": "image_url",
+                            "image_url": {"url": data_url},
                         })
                         resolved_count += 1
                     except FileNotFoundError:
