@@ -30,7 +30,7 @@ _PDF_DEFERRED_NOTE = "PDF extraction not yet wired (AD-720a-1)"
 VISION_UNCONFIGURED_MESSAGE = (
     "Vision LLM is not configured on this ProbOS instance. Image attachments "
     "require a vision-capable model. To enable it, install Ollama "
-    "(https://ollama.com), run `ollama pull llava:34b`, then uncomment the "
+    "(https://ollama.com), run `ollama pull qwen3.6:27b`, then uncomment the "
     "vision tier block in config/system.yaml. Alternatively, point "
     "cognitive.llm_base_url_vision and cognitive.llm_model_vision at "
     "OpenAI, Anthropic, or any other OpenAI-compatible vision endpoint."
