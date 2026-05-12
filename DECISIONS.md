@@ -2072,3 +2072,51 @@ NATS just enforces the discipline earlier (1 MiB default) than transports withou
 **Status:** SHIPPED. Closes #637 (AD-731 implementation) and #639 (AD-637z2 — BF-265 transport strip removal auto-closes as a consequence). AD-731a remains open as the cross-host distribution forward marker (#638), with sub-markers AD-731a-1 (HTTP fetch), AD-731a-2 (NATS Object Store), and AD-731a-3 (mime-only fast path in sender).
 
 **Files.** `src/probos/cognitive/vision_dispatch.py` (sender shape + observability log + drop base64 import), `src/probos/cognitive/llm_client.py` (constructor param + deferred setter + `_resolve_attachment_refs_for_openai` + `_call_openai` wiring), `src/probos/mesh/intent.py` (revert BF-265 strip), `src/probos/federation/bridge.py` (AD-731a forward-marker comment on the federation strip), `src/probos/runtime.py` (`attachment_store` property), `src/probos/__main__.py` (deferred-setter wiring after `ProbOSRuntime` construction), `tests/test_ad731_attachment_ref_wire_format.py` (new, 12 tests), `tests/test_bf265_transport_stripped_params.py` (inverted assertions + regression sentinel), `tests/test_bf266_vision_context_folding.py` and `tests/test_ad730_agent_chat_vision.py` (fixture shape flipped to `attachment_ref`).
+
+### AD-732 - Dedicated Vision LLM Tier + Honest Degrade (closes #640)
+
+**Date:** 2026-05-11
+**Decision:** Promote `vision` to a fourth peer-tier of `fast`/`standard`/`deep`. `CognitiveConfig` gains 7 vision-tier fields (`llm_base_url_vision`, `llm_api_key_vision`, `llm_model_vision`, `llm_timeout_vision`, `llm_api_format_vision`, `llm_temperature_vision`, `llm_top_p_vision`) with the same Optional-defaults pattern as the text tiers. `tier_config("vision")` resolves through the same map-dict shape. `OpenAICompatibleClient` tracks vision in every per-tier state dict via a new module-level `_LLM_TIERS = ("fast","standard","deep","vision")` single-source-of-truth constant; the fallback chain `_TIER_ORDER = ["fast","standard","deep"]` deliberately excludes vision because text-only tiers cannot see images. `AttachmentsConfig.vision_tier` default flips from `"standard"` to `"vision"` (validator allow-set extended). When the vision tier is unconfigured OR unhealthy, `/api/chat` and `/api/agent/{id}/chat` return one of two operator-facing honest-degrade messages (`VISION_UNCONFIGURED_MESSAGE` or `VISION_UNHEALTHY_MESSAGE`) instead of the pre-AD-732 "Try again in a moment" stub. The agent-side path early-returns BEFORE intent dispatch — the agent has no way to surface a missing endpoint to the crew, so the OS speaks for itself. OSS default: local Ollama + llava (`config/system.yaml` ships a documented commented-out block; operator uncomments + runs `ollama pull llava:34b`).
+
+**Rationale.** AD-731 wired content-addressable refs onto the bus; BF-268 emitted the correct OpenAI `image_url` shape at the vendor boundary. Together they fixed the wire format, but the LLM still couldn't see images. Captain's repro (Ezri: "no image visible on my end") + `/api/chat` repro (gpt-4o describing "Visual Studio Code editor with open files") confirmed the **endpoint** was the missing piece. Root cause: the Copilot proxy ([gratajik/vscode-copilot-proxy](https://github.com/gratajik/vscode-copilot-proxy)) is a passthrough over `vscode.lm.selectChatModels(...).sendRequest(...)`. The VS Code Language Model API (a) does not pipe arbitrary user-supplied images through for free-form turns, (b) strips non-text content parts when building `LanguageModelChatMessage`, (c) returns 200 OK even when image content was dropped (no error signal), (d) re-injects VS Code's own editor context into the prompt. Direct testing 2026-05-11 against the proxy with three shapes (Anthropic `source.base64`, OpenAI `image_url` to Claude, OpenAI `image_url` to gpt-4o) all confirmed: no shape gets images to the model through that proxy. No client-side wire-format adjustment can fix this — the vendor boundary for vision must point at an endpoint that can actually carry images.
+
+**Architectural separation (three orthogonal concerns).**
+- **AD-731 — bus shape.** Provider-agnostic `attachment_ref` source blocks. Owned by `vision_dispatch.build_multimodal_messages`. The bus carries refs; the store carries bytes.
+- **BF-268 — vendor adaptation.** OpenAI `image_url` vs Anthropic `source.base64` shape selection at the HTTP POST boundary. Owned by `llm_client._resolve_attachment_refs_for_openai` (and its Anthropic-shape sibling).
+- **AD-732 — endpoint selection.** Per-tier `base_url`/`model`/`api_key`/`timeout`/`api_format` for vision. Owned by `CognitiveConfig.tier_config("vision")` + `OpenAICompatibleClient._clients`. Vision is the fourth peer tier; the fallback chain deliberately excludes it (standard/deep cannot see images).
+
+Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not just the class scope.
+
+**See also: User-memory lesson 2026-05-11 — "Don't change the architecture to fix a symptom."** AD-732 is the right outcome of that lesson applied at the endpoint layer: don't fork the wire format; fork the endpoint. The bus stays one shape; the vendor boundary stays one shape per provider; the endpoint becomes per-tier addressable. The earlier BF-267 reflex (bypass NATS for in-process targets) would have been a load-bearing invariant change to dodge a payload-shape problem; AD-731 fixed the shape and AD-732 fixed the endpoint, leaving the bus invariant intact.
+
+**Honest-degrade routing semantic.** The chat/agents handlers gate on `(not is_vision_tier_configured(cfg, tier)) OR (tier_status != "operational")`. The two-clause gate is necessary: `get_health_status` reports 0 failures for an unconfigured vision tier (the connectivity short-circuit doesn't bump failure counters), so the operational check alone misses unconfigured. Two distinct messages because the remediations differ — `VISION_UNCONFIGURED_MESSAGE` names config keys and `ollama pull llava:34b`; `VISION_UNHEALTHY_MESSAGE` asks the operator to restart the endpoint.
+
+**In scope (this AD).**
+- 7 new vision-tier fields on `CognitiveConfig` + `tier_config("vision")` resolution.
+- `AttachmentsConfig.vision_tier` default flip + validator allow-set extension.
+- `_LLM_TIERS` module-level constant + grep-replace of 12 hardcoded tier tuples in `llm_client.py`.
+- Per-tier state dicts (failures, successes, request_timestamps, 429s) include vision.
+- `check_connectivity()` short-circuits the vision tier to False without an HTTP probe when `llm_model_vision` is unset.
+- `MockLLMClient.get_health_status` reports vision as operational (test scaffolding parity); text tiers stay offline (BF-108 invariant).
+- `vision_dispatch.is_vision_tier_configured(cfg, tier_name)` helper.
+- `VISION_UNCONFIGURED_MESSAGE` / `VISION_UNHEALTHY_MESSAGE` operator-facing constants.
+- `/api/chat` and `/api/agent/{id}/chat` honest-degrade routing (early return, no LLM call, no intent dispatch).
+- `config/system.yaml` documented commented-out vision-tier example block.
+- 15 new tests + minimal updates to existing fixtures (test_per_tier_llm, test_bf069_llm_health, test_ad484_ux_adoption, test_ad720d, test_ad730).
+
+**Out of scope (explicit Do-Not-Build list).**
+- Per-agent vision tier overrides — AD-732a forward marker.
+- Autodetection of local Ollama on startup — AD-732b forward marker.
+- Hot-reload of vision tier config — AD-732c forward marker.
+- Vision tier participation in the `_TIER_ORDER` fallback chain.
+- Changes to AD-731's `attachment_ref` shape.
+- Changes to BF-268's `image_url` adaptation.
+- Federation strip — still AD-731a's concern.
+- `image_generation` capability for agents — AD-730-3 remains a separate concern.
+- HXI UI changes.
+- Multi-image DMs in v1 — AD-730-2 forward marker stays open.
+- Fallback to a different vision endpoint when the primary fails — operator deploys redundancy at the endpoint layer (e.g., LiteLLM router).
+
+**Status:** SHIPPED. Closes #640.
+
+**Files.** `src/probos/config.py` (CognitiveConfig fields + tier_config map dicts + AttachmentsConfig default/validator), `src/probos/cognitive/llm_client.py` (`_LLM_TIERS` constant + grep-replace + vision short-circuit + docstring), `src/probos/cognitive/vision_dispatch.py` (`VISION_*_MESSAGE` constants + `is_vision_tier_configured` helper), `src/probos/routers/chat.py` and `src/probos/routers/agents.py` (honest-degrade routing), `src/probos/experience/commands/commands_llm.py` and `src/probos/__main__.py` (loop over 4 tiers in `/model` display + boot connectivity report + doctor), `config/system.yaml` (commented-out vision example), `tests/test_ad732_vision_tier.py` (new, 15 tests), `tests/test_ad720d_vision_pipethrough.py` / `tests/test_ad730_agent_chat_vision.py` / `tests/test_bf069_llm_health.py` / `tests/test_per_tier_llm.py` / `tests/test_ad484_ux_adoption.py` (fixture updates).

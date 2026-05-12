@@ -402,6 +402,10 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-731a-1 | HTTP fetch for cross-host single-tenant attachment retrieval | (sub-marker under AD-731a) | 3 |
 | AD-731a-2 | NATS Object Store integration for cross-mesh attachment distribution; retires federation/bridge.py vision_messages strip | (sub-marker under AD-731a) | 3 |
 | AD-731a-3 | Mime-only fast path in sender (skip blob read for image attachments) | (sub-marker under AD-731a, optional) | 4 |
+| AD-732 | Dedicated vision LLM tier + honest degrade (`vision` is the fourth peer of `fast`/`standard`/`deep`; `AttachmentsConfig.vision_tier` default flips to `"vision"`; unconfigured OR unhealthy returns `VISION_UNCONFIGURED_MESSAGE`/`VISION_UNHEALTHY_MESSAGE`) — **SHIPPED Wave 153** (15 new tests; +15 net) | [#640](https://github.com/seangalliher/ProbOS/issues/640) | 1 |
+| AD-732a | Per-agent vision tier override (`agent.vision_tier` config — different model for an Imaging Officer than the rest of the crew) | (forward marker) | 4 |
+| AD-732b | Vision tier autodetect on startup (probe localhost:11434 and auto-uncomment llava if available — zero-config OSS magic) | (forward marker) | 4 |
+| AD-732c | Vision tier hot-reload on config change (operator edits system.yaml; vision tier reloads without restart) | (forward marker) | 4 |
 
 ### Forcing-function deferrals
 
