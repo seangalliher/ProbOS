@@ -110,6 +110,11 @@ class FederationBridge:
         # for the canonical pattern. Local receivers consume from the live
         # IntentMessage; federation receivers don't have that path so they
         # get the marker only.
+        # AD-731a forward marker (#638): cross-mesh attachment distribution unsolved.
+        # Receiving meshes may not have the local AttachmentStore, so strip
+        # vision_messages from federation transport until AD-731a-1 (HTTP fetch) or
+        # AD-731a-2 (NATS Object Store) ships. In-mesh delivery uses attachment_ref
+        # shape (AD-731) which is small enough to cross NATS safely.
         _stripped_keys = ("vision_messages",)
         if any(k in intent.params for k in _stripped_keys):
             params_for_transport = {
