@@ -406,6 +406,9 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-732a | Per-agent vision tier override (`agent.vision_tier` config — different model for an Imaging Officer than the rest of the crew) | (forward marker) | 4 |
 | AD-732b | Vision tier autodetect on startup (probe localhost:11434 and auto-uncomment qwen3.6:27b if available — zero-config OSS magic) | (forward marker) | 4 |
 | AD-732c | Vision tier hot-reload on config change (operator edits system.yaml; vision tier reloads without restart) | (forward marker) | 4 |
+| AD-733 | Live camera stream perception (umbrella). HXI samples webcam frames → AttachmentStore → `vision_observation` intent on the bus → ObserverAgent maintains visual working memory + emits configured visual events. Same wire format / vendor adaptation as AD-731/BF-268; the new layer is cadence and proactive policy. **Demo-grade capability** — paired with AD-721 avatar this is what makes the mesh feel alive. | [#641](https://github.com/seangalliher/ProbOS/issues/641) | 4 |
+| AD-733a | Real-time vision tier (`llm_model_vision_fast` for sub-1s per-frame inference + `llm_model_vision_deep` for occasional narrative summaries) + agent visual working memory (last-N-frames hot buffer) | (sub-marker under AD-733) | 4 |
+| AD-733b | ObserverAgent + proactive event surfacing (graduated initiative for visual events; AD-674/AD-675 calibration extended from text to perceptual triggers) | (sub-marker under AD-733) | 4 |
 
 ### Forcing-function deferrals
 
