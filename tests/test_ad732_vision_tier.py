@@ -34,6 +34,7 @@ from probos.cognitive.vision_dispatch import (
     is_vision_tier_configured,
 )
 from probos.config import AttachmentsConfig, CognitiveConfig
+from probos.types import LLMRequest
 
 _PNG_HEADER = b"\x89PNG\r\n\x1a\n"
 
@@ -513,3 +514,59 @@ def test_vision_tier_not_in_fallback_chain():
     assert '_TIER_ORDER = ["fast", "standard", "deep"]' in src
     # Vision must not appear in the fallback list literal.
     assert '_TIER_ORDER = ["fast", "standard", "deep", "vision"]' not in src
+
+
+@pytest.mark.asyncio
+async def test_vision_request_does_not_fall_back_to_text_tiers():
+    """BF-269 regression: when LLMRequest(tier='vision') fails, the client
+    must NOT fall through to fast/standard/deep — those tiers silently drop
+    image content (BF-268), producing a coherent but image-blind reply that
+    the agent surfaces to the Captain. The honest-degrade gate at the router
+    boundary depends on vision failures propagating, not being silently
+    masked by a text-tier fallback.
+    """
+    import httpx
+    from probos.cognitive.llm_client import OpenAICompatibleClient
+    from probos.config import CognitiveConfig
+
+    cfg = CognitiveConfig(
+        llm_base_url_vision="http://127.0.0.1:65535/v1",  # always-unreachable port
+        llm_model_vision="qwen3.6:27b",
+        llm_api_format_vision="openai",
+        llm_timeout_vision=1.0,
+    )
+    client = OpenAICompatibleClient(config=cfg)
+
+    # Capture which base_urls get attempted.
+    attempts: list[str] = []
+
+    def _record_and_fail(request: httpx.Request) -> httpx.Response:
+        attempts.append(str(request.url))
+        return httpx.Response(503, json={"error": "unreachable"})
+
+    transport = httpx.MockTransport(_record_and_fail)
+    # Replace every constructed httpx client with our recorder.
+    for key in list(client._clients.keys()):
+        client._clients[key] = httpx.AsyncClient(
+            base_url=client._clients[key].base_url,
+            transport=transport,
+            timeout=1.0,
+        )
+
+    req = LLMRequest(
+        prompt="describe",
+        messages=[{"role": "user", "content": [{"type": "text", "text": "x"}]}],
+        tier="vision",
+    )
+    resp = await client.complete(req)
+
+    # Either the response carries an error OR content is empty — both are
+    # acceptable failure shapes. The hard requirement: ZERO requests landed
+    # on any non-vision base_url.
+    vision_url_host = "127.0.0.1:65535"
+    non_vision_attempts = [u for u in attempts if vision_url_host not in u]
+    assert non_vision_attempts == [], (
+        f"Vision request fell back to text tier(s): {non_vision_attempts}. "
+        "BF-269: vision must never fall back — text tiers drop image content."
+    )
+    await client.close()

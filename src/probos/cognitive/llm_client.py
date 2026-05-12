@@ -504,9 +504,20 @@ class OpenAICompatibleClient(BaseLLMClient):
                     request_id=request.id,
                 )
 
-        # Build fallback chain: requested tier first, then others in order
+        # Build fallback chain: requested tier first, then others in order.
+        # BF-269: vision tier must NEVER fall back to text tiers — they
+        # silently drop image content (BF-268 finding: Copilot proxy passes
+        # text but discards the unknown image_url block, returning a coherent
+        # but image-blind reply). Falling back is worse than failing because
+        # the agent receives plausible no-image text and surfaces it to the
+        # Captain as if vision had been attempted. When the requested tier
+        # is vision, the chain is vision-only — failures propagate to the
+        # honest-degrade gate at the router boundary.
         _TIER_ORDER = ["fast", "standard", "deep"]
-        fallback_tiers = [tier] + [t for t in _TIER_ORDER if t != tier]
+        if tier == "vision":
+            fallback_tiers = ["vision"]
+        else:
+            fallback_tiers = [tier] + [t for t in _TIER_ORDER if t != tier]
 
         last_error = ""
         for attempt_tier in fallback_tiers:
