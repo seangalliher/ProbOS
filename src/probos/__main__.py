@@ -71,12 +71,45 @@ def _probos_home() -> Path:
 
 
 def _setup_logging(log_level: str) -> None:
-    """Configure logging for shell mode — suppress noisy output."""
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper(), logging.WARNING),
-        format="%(asctime)s  %(levelname)-8s  %(name)-30s  %(message)s",
+    """Configure logging for shell mode — suppress noisy output.
+
+    BF (2026-05-12): always write a rotating file log to the platform data
+    dir. Captures all WARNING+ from probos.* and tier-status changes from
+    cognitive subsystems regardless of how the operator launched the
+    process. Removes the need for ``2>&1 | tee log.txt`` to capture
+    diagnostic output, which on Windows + Git Bash + Ctrl+C makes the
+    process unkillable from the launching terminal.
+    """
+    from logging.handlers import RotatingFileHandler
+    formatter = logging.Formatter(
+        "%(asctime)s  %(levelname)-8s  %(name)-30s  %(message)s",
         datefmt="%H:%M:%S",
     )
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, log_level.upper(), logging.WARNING))
+    # Console handler (stderr by default — Rich Console handles stdout).
+    _console_h = logging.StreamHandler()
+    _console_h.setFormatter(formatter)
+    root.addHandler(_console_h)
+    # File handler — best-effort; never block startup if the dir is missing.
+    try:
+        from probos.runtime import _platform_data_dir
+        _log_dir = _platform_data_dir() / "logs"
+        _log_dir.mkdir(parents=True, exist_ok=True)
+        _file_h = RotatingFileHandler(
+            _log_dir / "probos.log",
+            maxBytes=10 * 1024 * 1024,  # 10 MB
+            backupCount=5,               # keep 5 rotations
+            encoding="utf-8",
+        )
+        _file_h.setFormatter(formatter)
+        # File log captures INFO+ regardless of console level so diagnostics
+        # are always available without restarting with --log-level=INFO.
+        _file_h.setLevel(logging.INFO)
+        root.addHandler(_file_h)
+    except Exception:
+        # Best-effort — don't block boot on logging setup.
+        pass
     # Keep the noise down while the shell is active — the Rich UI
     # already shows execution progress visually.
     logging.getLogger("asyncio").setLevel(logging.WARNING)
