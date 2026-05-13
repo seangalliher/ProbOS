@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
+    from probos.crew_profile import EmotionProfile  # AD-737
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,36 @@ _TAG_RE: Final[re.Pattern[str]] = re.compile(
     r"<intent\s+emotion\s*=\s*([a-zA-Z_]+)\s*/?\s*>",
     re.IGNORECASE,
 )
+
+
+def _resolve_intent_name(
+    name: str,
+    custom_emotions: "dict[str, EmotionProfile] | None",
+) -> str | None:
+    """AD-737: resolve a parsed intent name to a v1 EmotionalIntent value.
+
+    Returns the v1 emotion name (one of ``EmotionalIntent.value``) if
+    ``name`` is either (a) a v1 name directly, or (b) a custom emotion
+    whose ``inherits`` field points at a v1 name. Returns ``None``
+    otherwise (caller short-circuits the divergence pipeline).
+    """
+    if name in INTENT_EXPECTED_RULES:
+        return name
+    if not custom_emotions:
+        return None
+    profile = custom_emotions.get(name)
+    if profile is None:
+        return None
+    parent = getattr(profile, "inherits", None)
+    if parent in INTENT_EXPECTED_RULES:
+        return parent
+    # Defensive: stale config drift could put a bad inherits past the
+    # CrewProfile validator (e.g. dataclass mutated post-construct).
+    logger.debug(
+        "AD-737: custom emotion %r has invalid inherits=%r; treating as unknown",
+        name, parent,
+    )
+    return None
 # Strip regex anchored to optional trailing whitespace at end-of-line.
 _TAG_STRIP_RE: Final[re.Pattern[str]] = re.compile(
     r"\s*<intent\s+emotion\s*=\s*[a-zA-Z_]+\s*/?\s*>\s*$",
@@ -170,12 +201,17 @@ class DivergenceHistoryEntry:
         )
 
 
-def parse_intent_self_tag(text: str) -> str | None:
+def parse_intent_self_tag(
+    text: str,
+    custom_emotions: "dict[str, EmotionProfile] | None" = None,
+) -> str | None:
     """Extract the emotion name from an ``<intent emotion=NAME>`` tag.
 
-    Returns the lowercased name when a valid taxonomy member is found,
-    otherwise ``None`` (graceful degrade -- the caller skips the
-    divergence pipeline entirely on None).
+    Returns the parsed name when it is either (a) a v1
+    ``EmotionalIntent`` value, or (b) AD-737 a custom emotion declared
+    in ``custom_emotions``. Returns ``None`` for unknown names --
+    graceful degrade; the caller short-circuits the divergence pipeline
+    on None.
     """
     if not text:
         return None
@@ -183,7 +219,7 @@ def parse_intent_self_tag(text: str) -> str | None:
     if match is None:
         return None
     name = match.group(1).strip().lower()
-    if name not in INTENT_EXPECTED_RULES:
+    if _resolve_intent_name(name, custom_emotions) is None:
         logger.debug(
             "AD-722a: parsed intent tag with unknown emotion=%r; ignoring",
             name,
@@ -354,6 +390,26 @@ def apply_divergence_check(
     model.
     """
     intent = parse_intent_self_tag(response_text)
+    # AD-737: look up the agent's custom emotion palette (tier-2
+    # log-and-degrade). Then re-parse with the palette so custom names
+    # like ``professional_concern`` resolve through ``inherits``.
+    custom_emotions: dict[str, Any] | None = None
+    store = getattr(runtime, "profile_store", None)
+    if store is not None:
+        try:
+            crew = store.get(agent_id) if hasattr(store, "get") else None
+            custom_emotions = (
+                getattr(crew, "custom_emotions", None) if crew else None
+            )
+        except Exception:
+            logger.debug(
+                "AD-737: profile_store custom_emotions lookup failed for %s",
+                agent_id, exc_info=True,
+            )
+    if intent is None and custom_emotions:
+        intent = parse_intent_self_tag(
+            response_text, custom_emotions=custom_emotions,
+        )
     # Strip unconditionally when feature ON -- even on parse failure
     # (unknown emotion / malformed tag), the visible tag must not leak.
     stripped = strip_intent_self_tag(response_text)
@@ -363,26 +419,34 @@ def apply_divergence_check(
     if intent is None or modulation is None:
         return stripped
 
-    # AD-722a-7: recompute the modulation with the parsed intent so
-    # ``fired_rules`` carries the ``intent_X`` rule the divergence calc
-    # is keyed against. Pure function call; the cached snap's signals
-    # already drove the operational-rule computation pre-reply, so we
-    # reuse them. The voice profile is looked up via the profile_store
-    # when available; if absent (test fakes, fresh agents), we fall back
-    # to a synthetic identity baseline -- ``fired_rules`` does not depend
-    # on profile baseline values, only on signal triple + intent.
+    # AD-722a-7 / AD-737: recompute the modulation with the parsed
+    # intent (custom or v1) so ``fired_rules`` carries both the parent
+    # ``intent_X`` rule (used by ``compute_divergence``'s
+    # ``startswith('intent_')`` filter) AND, for custom emotions, the
+    # ``custom_X`` tag for observability.
     signals = getattr(snap, "current_signals", None)
     if signals is not None:
         from probos.avatars.telemetry import apply_voice_modulation
         voice_profile = _resolve_voice_profile_for_intent(runtime, agent_id)
         modulation = apply_voice_modulation(
             voice_profile, signals, intent=intent,
+            custom_emotions=custom_emotions,
         )
 
+    # AD-737 critical scoring fix: ``compute_divergence`` keys
+    # ``expected`` on the v1 INTENT_EXPECTED_RULES table; a raw custom
+    # name yields ``frozenset()`` and the ``not expected and applied_set``
+    # branch forces ``match_score = 0.0`` (silent maximum-divergence
+    # corruption). Resolve to the v1 parent for scoring, then restore the
+    # custom name on the DivergenceResult for downstream observability.
+    resolved_v1 = _resolve_intent_name(intent, custom_emotions) or intent
     result = compute_divergence(
-        intent_emotion=intent,
+        intent_emotion=resolved_v1,
         applied_fired_rules=tuple(modulation.fired_rules),
     )
+    if resolved_v1 != intent:
+        import dataclasses as _dc
+        result = _dc.replace(result, intent_emotion=intent)
 
     # Centralized per-agent store; volatile across restarts.
     div_results = getattr(runtime, "divergence_results", None)

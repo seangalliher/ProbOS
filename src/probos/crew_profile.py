@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any, ClassVar, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from probos.substrate.registry import AgentRegistry
@@ -153,6 +153,70 @@ class VoiceProfile:
         })
 
 
+# AD-737: custom emotion key regex (lowercase, leading letter, ≤30 chars, no spaces).
+_CUSTOM_EMOTION_NAME_RE = re.compile(r"^[a-z][a-z_]{0,29}$")
+
+
+@dataclass
+class EmotionProfile:
+    """AD-737: per-agent custom emotion override.
+
+    A custom emotion is a NAME the LLM may emit in the ``<intent emotion=NAME>``
+    self-tag in place of (or in addition to) the v1 fixed eight. Each custom
+    emotion ``inherits`` from a v1 emotion — the divergence detector resolves
+    through ``inherits`` to compute INTENT_DIRECTION and INTENT_EXPECTED_RULES.
+
+    Voice deltas (``pitch_shift``, ``rate_shift``, ``volume_shift``) are
+    ADDITIVE on top of the parent's manifest factor and clamped to ±0.15.
+    The parent emotion's rule fires first; the delta composes on top.
+
+    The bound of 8 custom emotions per agent (enforced on ``CrewProfile``)
+    keeps the taxonomy small enough that agents stay distinct rather than
+    producing a 30-emotion zoo indistinguishable from no taxonomy at all.
+    All fields validated in ``__post_init__``.
+    """
+
+    inherits: str
+    pitch_shift: float = 0.0
+    rate_shift: float = 0.0
+    volume_shift: float = 0.0
+
+    SHIFT_BOUND: ClassVar[float] = 0.15
+
+    def __post_init__(self) -> None:
+        # Defer the EmotionalIntent import to avoid the avatars-pipeline
+        # import cycle (crew_profile is imported very early in startup).
+        from probos.avatars.divergence_detector import EmotionalIntent
+        valid = {e.value for e in EmotionalIntent}
+        if self.inherits not in valid:
+            raise ValueError(
+                f"EmotionProfile.inherits={self.inherits!r} must be one of "
+                f"{sorted(valid)}"
+            )
+        for name in ("pitch_shift", "rate_shift", "volume_shift"):
+            v = getattr(self, name)
+            if not isinstance(v, (int, float)) or isinstance(v, bool):
+                raise ValueError(
+                    f"EmotionProfile.{name} must be a number, got "
+                    f"{type(v).__name__}"
+                )
+            if abs(v) > self.SHIFT_BOUND:
+                raise ValueError(
+                    f"EmotionProfile.{name}={v} exceeds ±{self.SHIFT_BOUND}"
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "EmotionProfile":
+        return cls(**{
+            k: data[k] for k in (
+                "inherits", "pitch_shift", "rate_shift", "volume_shift",
+            ) if k in data
+        })
+
+
 @dataclass
 class AppearanceProfile:
     """AD-721: per-agent 3D avatar appearance.
@@ -247,12 +311,46 @@ class CrewProfile:
     # Appearance (AD-721)
     appearance: AppearanceProfile = field(default_factory=AppearanceProfile)
 
+    # AD-737: per-agent custom emotion taxonomy. Empty dict = use v1 fixed
+    # eight only (no behaviour change). Keys must match
+    # ``_CUSTOM_EMOTION_NAME_RE`` and must not collide with the v1 names.
+    # Max 8 entries per agent.
+    custom_emotions: dict[str, EmotionProfile] = field(default_factory=dict)
+
     # Performance
     reviews: list[PerformanceReview] = field(default_factory=list)
 
     # Timestamps
     commissioned: float = 0.0      # when profile was created
     last_updated: float = 0.0
+
+    def __post_init__(self) -> None:
+        # AD-737: validate custom_emotions
+        if len(self.custom_emotions) > 8:
+            raise ValueError(
+                f"custom_emotions max 8 entries, got "
+                f"{len(self.custom_emotions)}"
+            )
+        if self.custom_emotions:
+            from probos.avatars.divergence_detector import EmotionalIntent
+            v1_names = {e.value for e in EmotionalIntent}
+            for name, profile in self.custom_emotions.items():
+                if not _CUSTOM_EMOTION_NAME_RE.match(name):
+                    raise ValueError(
+                        f"custom_emotions key {name!r} must match "
+                        f"{_CUSTOM_EMOTION_NAME_RE.pattern}"
+                    )
+                if not isinstance(profile, EmotionProfile):
+                    raise ValueError(
+                        f"custom_emotions[{name!r}] must be EmotionProfile, "
+                        f"got {type(profile).__name__}"
+                    )
+                if name in v1_names:
+                    raise ValueError(
+                        f"custom emotion name {name!r} collides with v1 "
+                        f"taxonomy; use a distinct name (e.g. "
+                        f"'professional_concern' not 'concerned')"
+                    )
 
     def personality_drift(self) -> float:
         """How far current personality has drifted from baseline."""
@@ -293,6 +391,9 @@ class CrewProfile:
             "personality_baseline": self.personality_baseline.to_dict(),
             "voice": self.voice.to_dict(),
             "appearance": self.appearance.to_dict(),
+            "custom_emotions": {
+                k: v.to_dict() for k, v in self.custom_emotions.items()
+            },
             "reviews": [r.to_dict() for r in self.reviews],
             "commissioned": self.commissioned,
             "last_updated": self.last_updated,
@@ -324,6 +425,11 @@ class CrewProfile:
             profile.voice = VoiceProfile.from_dict(data["voice"])
         if "appearance" in data:
             profile.appearance = AppearanceProfile.from_dict(data["appearance"])
+        if "custom_emotions" in data:
+            profile.custom_emotions = {
+                k: EmotionProfile.from_dict(v)
+                for k, v in (data["custom_emotions"] or {}).items()
+            }
         if "reviews" in data:
             profile.reviews = [PerformanceReview.from_dict(r) for r in data["reviews"]]
         return profile

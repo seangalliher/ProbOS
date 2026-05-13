@@ -352,6 +352,7 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-718e | Multi-language voice selection | [#526](https://github.com/seangalliher/ProbOS/issues/526) | 4 |
 | AD-718f / AD-735 | Per-agent volume control surface — **SHIPPED Wave 156** (UI slider; backend chain shipped under AD-718) | [#527](https://github.com/seangalliher/ProbOS/issues/527) | 4 |
 | AD-705d / AD-736 | Mic-permission UX polish (4-state machine + `MicPermissionHint` overlay) — **SHIPPED Wave 156** | [#558](https://github.com/seangalliher/ProbOS/issues/558) | 4 |
+| AD-722a-3 / AD-737 | Per-agent custom emotion taxonomy (v2 — beyond fixed 8) — **SHIPPED Wave 156** | [#612](https://github.com/seangalliher/ProbOS/issues/612) | 3 |
 | AD-721a | Captain's avatar editor UI | [#528](https://github.com/seangalliher/ProbOS/issues/528) | 3 |
 | AD-721b | Phoneme-accurate lip-sync v1 (heuristic 5-vowel viseme driver, multi-mesh) — **SHIPPED Wave 138** | [#529](https://github.com/seangalliher/ProbOS/issues/529) | 3 |
 | AD-721b-1 | Server-side rhubarb-lip-sync backend (replaces heuristic phoneme schedule) — **SHIPPED Wave 155** | [#559](https://github.com/seangalliher/ProbOS/issues/559) | 3 |

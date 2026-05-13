@@ -43,11 +43,14 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from pydantic import ValidationError
 
 from probos.avatars.dsl import AvatarDSL
+
+if TYPE_CHECKING:
+    from probos.crew_profile import EmotionProfile  # AD-737
 from probos.bridge_alerts import AlertSeverity
 from probos.types import AgentState
 
@@ -397,6 +400,7 @@ def apply_voice_modulation(
     profile: Any,
     signals: AgentSignalsSnapshot,
     intent: str | None = None,
+    custom_emotions: "dict[str, EmotionProfile] | None" = None,
 ) -> ModulationSnapshot:
     """Pure function. Multiplicative composition matches voiceModulation.ts.
 
@@ -450,12 +454,31 @@ def apply_voice_modulation(
     # preserves the "intent declared and parsed" signal for divergence
     # detection.
     if intent is not None:
-        rule = INTENT_RULES.get(intent)
+        # AD-737: resolve custom emotion through ``inherits`` before lookup.
+        resolved_intent = intent
+        delta = None
+        if custom_emotions and intent in custom_emotions:
+            profile_em = custom_emotions[intent]
+            resolved_intent = getattr(profile_em, "inherits", intent)
+            delta = profile_em
+        rule = INTENT_RULES.get(resolved_intent)
         if rule is not None:
             pitch *= rule["pitch"]
             rate *= rule["rate"]
             volume *= rule["volume"]
-            fired.append(rule["rule_name"])
+            # AD-737: layer custom delta on top of parent factors.
+            if delta is not None:
+                pitch *= (1.0 + float(delta.pitch_shift))
+                rate *= (1.0 + float(delta.rate_shift))
+                volume *= (1.0 + float(delta.volume_shift))
+                # AD-737 critical: append BOTH the parent's ``intent_X``
+                # rule name (so it survives ``compute_divergence``'s
+                # ``startswith('intent_')`` filter and contributes to
+                # ``match_score``) AND the ``custom_X`` tag (for
+                # observability in journals, telemetry, and snapshots).
+                fired.extend([rule["rule_name"], f"custom_{intent}"])
+            else:
+                fired.append(rule["rule_name"])
 
     return ModulationSnapshot(
         pitch_factor=_clamp(pitch, PITCH_BOUNDS),
@@ -724,6 +747,7 @@ async def build_telemetry_snapshot(
         try:
             applied_modulation = apply_voice_modulation(
                 voice_profile, signals, intent=intent_emotion,
+                custom_emotions=crew.custom_emotions if crew else None,
             )
         except Exception:
             reasons.append("voice_modulation_failed")

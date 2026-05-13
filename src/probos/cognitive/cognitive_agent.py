@@ -3167,15 +3167,16 @@ class CognitiveAgent(BaseAgent):
             return ""
 
     def _build_intent_self_tag_instruction(self, observation: dict | None = None) -> str:
-        """AD-722a (feature-gated): instruct the LLM to emit a self-tag.
+        """AD-722a / AD-737 (feature-gated): instruct the LLM to emit a self-tag.
 
         Returns a one-line instruction when
         ``avatar_telemetry.divergence_detection`` is True; empty string
-        otherwise. The line is appended to the system prompt in DM and
-        chain reasoning paths so the parser at the chat handler can
-        extract + strip the tag and compute divergence.
+        otherwise. AD-737 extends the taxonomy: in addition to the fixed
+        v1 set, append the agent's custom emotions from
+        ``profile_store.get(agent_id).custom_emotions``.
 
-        Token cost: ~10 prompt tokens + ~5 reply tokens per cycle.
+        Token cost: ~10-25 prompt tokens depending on custom palette
+        size, + ~5 reply tokens per cycle.
 
         AD-723: ``observation`` parameter accepted (unused) for dispatcher
         signature compatibility; legacy no-arg callers still work.
@@ -3185,12 +3186,31 @@ class CognitiveAgent(BaseAgent):
         tcfg = getattr(cfg, "avatar_telemetry", None)
         if not getattr(tcfg, "divergence_detection", False):
             return ""
+        # v1 taxonomy (fixed).
+        names: list[str] = [
+            "warm", "concerned", "excited", "apologetic",
+            "formal", "playful", "reassuring", "neutral",
+        ]
+        # AD-737: append the agent's custom emotion names if profile_store
+        # is wired and the agent has any registered.
+        try:
+            store = getattr(self._runtime, "profile_store", None)
+            if store is not None:
+                crew = store.get(self.id) if hasattr(store, "get") else None
+                custom = getattr(crew, "custom_emotions", None) if crew else None
+                if custom:
+                    # Sort for prompt stability across runs.
+                    names.extend(sorted(custom.keys()))
+        except Exception:
+            # Tier-2 log-and-degrade: prompt construction must not fail
+            # because of a profile-store read.
+            logger.debug("AD-737: custom_emotions read failed", exc_info=True)
+        taxonomy = " | ".join(names)
         return (
             "After your reply, on a new line, emit "
-            "`<intent emotion=NAME>` where NAME is one of: "
-            "warm | concerned | excited | apologetic | formal | playful | "
-            "reassuring | neutral. The tag will be stripped server-side; "
-            "do not mention it in your prose."
+            f"`<intent emotion=NAME>` where NAME is one of: {taxonomy}. "
+            "The tag will be stripped server-side; do not mention it in "
+            "your prose."
         )
 
     # ------------------------------------------------------------------
