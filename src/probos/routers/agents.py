@@ -1124,6 +1124,45 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if response_text and sanity_gate is not None:
         sanity_result = sanity_gate.process(agent_id, response_text)
         response_text = sanity_result.cleaned_text
+        # AD-724-1: one controlled retry on rejection. Append a hint to the
+        # original Captain text so the agent sees what the gate flagged,
+        # without leaking gate internals into Captain-visible output. The
+        # gate's second pass honors warnings without a second retry — single
+        # bounded loop, never recursive.
+        if sanity_result.should_retry:
+            retry_hint = (
+                "\n\n[SYSTEM_HINT: previous reply was rejected by the DM "
+                "sanity gate (warnings: "
+                + ", ".join(name for name, _ in sanity_result.warnings)
+                + "). Please respond again, carefully.]"
+            )
+            retry_intent = IntentMessage(
+                intent="direct_message",
+                params={**_params, "text": message_text + retry_hint, "is_retry": True},
+                target_agent_id=agent_id,
+                ttl_seconds=60.0,
+            )
+            try:
+                retry_resp = await runtime.intent_bus.send(retry_intent)
+                retry_text = ""
+                if retry_resp and retry_resp.result:
+                    retry_text = str(retry_resp.result)
+                if retry_text:
+                    retry_result = sanity_gate.process(agent_id, retry_text)
+                    response_text = retry_result.cleaned_text
+                    logger.info(
+                        "AD-724-1: DM retry for agent %s — "
+                        "original_warnings=%s retry_warnings=%s",
+                        agent_id,
+                        [n for n, _ in sanity_result.warnings],
+                        [n for n, _ in retry_result.warnings],
+                    )
+            except Exception:
+                logger.warning(
+                    "AD-724-1: DM retry dispatch failed for agent %s; "
+                    "shipping original reply",
+                    agent_id, exc_info=True,
+                )
 
     # BF-119 (migrated to AD-724): Parse [CHALLENGE @callsign game_type] from DM response.
     if response_text and hasattr(runtime, 'recreation_service') and runtime.recreation_service:

@@ -32,6 +32,7 @@ from probos.events import EventType
 from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
+from probos.cognitive.dm_sanity_gate import apply_dm_sanity
 from probos.cognitive.orientation import OrientationContext, derive_watch_section
 from probos.types import AnchorFrame, IntentMessage, Priority
 from probos.utils import format_duration
@@ -2511,11 +2512,13 @@ class ProactiveCognitiveLoop:
         rank = Rank.from_trust(trust_score)
         actions_executed: list[dict] = []
 
-        # BF-120: Strip markdown formatting that wraps structured tags.
-        # LLMs sometimes emit **[COMMAND ...]** or `[COMMAND ...]` which
-        # prevents the regex patterns below from matching.
-        text = re.sub(r'[`*]{1,3}\[', '[', text)
-        text = re.sub(r'\][`*]{1,3}', ']', text)
+        # AD-724-5: lift BF-120 markdown strip + log-only quality checks
+        # (length floor, repetition, orphaned tags) into the shared DM sanity
+        # gate. The gate itself never blocks; warnings log only. When the
+        # runtime exposes no gate, apply_dm_sanity returns a no-op result
+        # that preserves the input — Tier-2 log-and-degrade.
+        _sanity = apply_dm_sanity(rt, agent.id, text)
+        text = _sanity.cleaned_text
 
         # --- Endorsements (Lieutenant+) ---
         if rank.value != Rank.ENSIGN.value:
@@ -3400,6 +3403,11 @@ class ProactiveCognitiveLoop:
                 reply_body, reply_cmd_actions = await self._extract_commands_from_reply(
                     agent, reply_body, callsign,
                 )
+                # AD-724-5: run reply body through the shared sanity gate so
+                # WR replies get the same orphaned-tag / repetition /
+                # length-floor visibility as DM one-shots.
+                _reply_sanity = apply_dm_sanity(rt, agent.id, reply_body)
+                reply_body = _reply_sanity.cleaned_text
                 reply_body = _strip_bracket_markers(reply_body)  # BF-174
                 if not reply_body:
                     continue

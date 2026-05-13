@@ -420,6 +420,9 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-718d-1 | Voice modulation activity indicator (`ModulationIndicator` SVG dim-pulse next to per-agent Speak toggle) — **SHIPPED Wave 154** (+2 Vitest tests) | [#553](https://github.com/seangalliher/ProbOS/issues/553) | 3 |
 | AD-730-1-1 | WardRoomThreadDetail drag/drop + paste image — **SHIPPED Wave 154** (+3 Vitest tests; #647 closed as duplicate pre-flight) | [#646](https://github.com/seangalliher/ProbOS/issues/646) | 3 |
 | AD-720d-1 | Multi-image batch send + per-attachment timing in episode outcomes + `multi_image_warn_threshold` soft warning — **SHIPPED Wave 154** (+5 pytest tests; 3 production destructure sites + 4 test destructure sites updated) | [#563](https://github.com/seangalliher/ProbOS/issues/563) | 3 |
+| AD-724-1 | DM sanity gate one-shot retry on rejection — **SHIPPED Wave 154** (+ shared with -2/-5 boundary tests) | [#627](https://github.com/seangalliher/ProbOS/issues/627) | 3 |
+| AD-724-2 | DM repetition similarity beyond exact-prefix (stdlib `difflib.SequenceMatcher`) — **SHIPPED Wave 154** | [#628](https://github.com/seangalliher/ProbOS/issues/628) | 3 |
+| AD-724-5 | DM sanity gate lifted into WR/chain reply paths via shared `apply_dm_sanity` helper — **SHIPPED Wave 154** (+12 pytest tests across -1/-2/-5) | [#629](https://github.com/seangalliher/ProbOS/issues/629) | 3 |
 
 ### Forcing-function deferrals
 

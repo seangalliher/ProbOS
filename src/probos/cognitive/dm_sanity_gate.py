@@ -18,8 +18,12 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from probos.runtime import RuntimeOS
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +49,38 @@ _ORPHANED_MOVE_RE = re.compile(r"\[MOVE\b(?![^\[\]]*\S+\s*\])")
 # unmatched single open/close bracket on a line.
 _EMPTY_BRACKETS_RE = re.compile(r"\[\s*\]")
 
+# AD-724-2: whitespace + structured-tag noise normalization for fuzzy
+# repetition detection.
+_WHITESPACE_RE = re.compile(r"\s+")
+_TAG_NOISE_RE = re.compile(
+    r"\[(?:CHALLENGE|MOVE|REPLY|/REPLY|DM|/DM|NOTEBOOK|/NOTEBOOK)[^\]]*\]"
+)
+
+
+def _normalize_for_repetition(text: str) -> str:
+    """AD-724-2: lowercase, strip structured-tag noise, collapse whitespace.
+
+    Used by the similarity-based repetition check so trivial whitespace or
+    structured-tag churn doesn't hide a repeated reply.
+    """
+    if not text:
+        return ""
+    out = _TAG_NOISE_RE.sub(" ", text)
+    out = _WHITESPACE_RE.sub(" ", out).strip().lower()
+    return out
+
+
+def _similarity_ratio(a: str, b: str) -> float:
+    """AD-724-2: stdlib ``difflib.SequenceMatcher`` ratio.
+
+    License hygiene: ``rapidfuzz`` is not installed (verified via
+    ``pip show rapidfuzz`` → exit 1). Stdlib only.
+    """
+    if not a or not b:
+        return 0.0
+    import difflib
+    return difflib.SequenceMatcher(a=a, b=b, autojunk=False).ratio()
+
 
 class DmSanityGateConfig(BaseModel):
     """AD-724: configuration for the DM sanity gate.
@@ -58,6 +94,17 @@ class DmSanityGateConfig(BaseModel):
     length_floor: int = 5
     repetition_prefix_chars: int = 100
 
+    # AD-724-2: similarity-based repetition. 0.85 ≈ "almost identical after
+    # normalization" — set high to avoid false positives on agents with
+    # characteristic phrasing. Exact-prefix check still gates the fast path.
+    repetition_similarity_threshold: float = 0.85
+
+    # AD-724-1: controlled one-shot retry on rejection.
+    retry_on_rejection: bool = True
+    retry_warnings: list[str] = Field(
+        default_factory=lambda: ["length_floor", "orphaned_tag"]
+    )
+
 
 @dataclass
 class DmSanityResult:
@@ -70,6 +117,10 @@ class DmSanityResult:
 
     cleaned_text: str
     warnings: list[tuple[str, str]] = field(default_factory=list)
+    # AD-724-1: True when a configurable subset of warnings fired AND the
+    # caller has not yet retried this turn. Caller decides whether to honor
+    # it; the gate itself never blocks.
+    should_retry: bool = False
 
 
 class DmSanityGate:
@@ -163,10 +214,13 @@ class DmSanityGate:
         return None
 
     def check_repetition(self, agent_id: str, text: str) -> tuple[str, str] | None:
-        """Return a warning if the first `repetition_prefix_chars` of `text`
-        exactly match the previous reply for this agent. Logs at WARNING.
+        """AD-724-2: similarity-based repetition (was exact-prefix only).
 
-        Does NOT update the cache — the caller does that via `process()`
+        Compares the normalized form of ``text`` against the normalized form
+        of the previous reply for this agent. The exact-prefix check is
+        preserved as the FAST PATH (ratio == 1.0). Logs at WARNING.
+
+        Does NOT update the cache — the caller does that via ``process()``
         after all checks have run.
         """
         prev = self._last_reply_by_agent.get(agent_id, "")
@@ -178,7 +232,24 @@ class DmSanityGate:
                 f"first {n} chars match previous reply (possible decoder loop)"
             )
             logger.warning(
-                "AD-724: DM repetition detected for agent %s: %s",
+                "AD-724: DM repetition detected for agent %s (exact-prefix): %s",
+                agent_id, detail,
+            )
+            return ("repetition", detail)
+        # AD-724-2: similarity ratio over normalized text — catches whitespace
+        # / structured-tag churn that the exact-prefix check would miss.
+        norm_a = _normalize_for_repetition(text)
+        norm_b = _normalize_for_repetition(prev)
+        if not norm_a or not norm_b:
+            return None
+        ratio = _similarity_ratio(norm_a, norm_b)
+        if ratio >= self.config.repetition_similarity_threshold:
+            detail = (
+                f"normalized similarity={ratio:.2f} >= "
+                f"threshold={self.config.repetition_similarity_threshold:.2f}"
+            )
+            logger.warning(
+                "AD-724-2: DM repetition detected for agent %s (similarity): %s",
                 agent_id, detail,
             )
             return ("repetition", detail)
@@ -240,4 +311,32 @@ class DmSanityGate:
         if cleaned.strip():
             self._last_reply_by_agent[agent_id] = cleaned
 
-        return DmSanityResult(cleaned_text=cleaned, warnings=warnings)
+        # AD-724-1: surface should_retry when configured warnings fired.
+        fired = {name for (name, _) in warnings}
+        should_retry = bool(
+            self.config.retry_on_rejection
+            and fired & set(self.config.retry_warnings)
+        )
+
+        return DmSanityResult(
+            cleaned_text=cleaned,
+            warnings=warnings,
+            should_retry=should_retry,
+        )
+
+
+def apply_dm_sanity(
+    runtime: "RuntimeOS", agent_id: str, text: str
+) -> DmSanityResult:
+    """AD-724-5: one-line helper for non-DM callers (WR replies, chain).
+
+    Fetches the DM sanity gate from the runtime via the public
+    ``dm_sanity_gate`` attribute (wired in ``runtime.py:566``). When the
+    gate is unavailable OR is not a real ``DmSanityGate`` (e.g. a test
+    ``MagicMock`` runtime that auto-creates the attribute), returns a no-op
+    ``DmSanityResult`` that preserves the input — Tier-2 log-and-degrade.
+    """
+    gate = getattr(runtime, "dm_sanity_gate", None)
+    if not isinstance(gate, DmSanityGate):
+        return DmSanityResult(cleaned_text=text)
+    return gate.process(agent_id, text)

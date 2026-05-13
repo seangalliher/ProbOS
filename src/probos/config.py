@@ -3244,11 +3244,25 @@ class DmSanityGateConfig(BaseModel):  # AD-724
     Default-ON: this config gates three previously-unconditional regex
     cleanups (BF-120, BF-119, AD-572) plus three new log-only checks.
     Disabling it preserves only the BF-120 markdown strip.
+
+    Must stay structurally identical to the ``DmSanityGateConfig`` copy in
+    ``cognitive/dm_sanity_gate.py`` (cluster invariant from the AD-724
+    archive prompt — do not split DmSanityGate / DmSanityGateConfig /
+    DmSanityResult across multiple files).
     """
 
     enabled: bool = True
     length_floor: int = 5
     repetition_prefix_chars: int = 100
+
+    # AD-724-2: similarity-based repetition.
+    repetition_similarity_threshold: float = 0.85
+
+    # AD-724-1: controlled one-shot retry on rejection.
+    retry_on_rejection: bool = True
+    retry_warnings: list[str] = Field(
+        default_factory=lambda: ["length_floor", "orphaned_tag"]
+    )
 
 
 class SystemConfig(BaseModel):
