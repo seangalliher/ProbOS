@@ -3366,6 +3366,30 @@ waves:
     issues_to_close: [640]
     status: drafted
 
+  - id: "154"
+    title: "Small follow-on cleanup — DM hardening + multimodal small wins + HXI polish"
+    # Label collision note: a previous informal "Wave 154" shipped 7 commits
+    # without a yaml entry (vision DM family + AD-722e self-perception). That
+    # archived dispatch lives at prompts/archive/WAVE-154-DISPATCH.md. THIS
+    # id "154" is the next free slot in the orchestrator-tracked plan.
+    #
+    # Scope reduction (architect, pre-dispatch): AD-722b-1 (crew-scope auth
+    # on telemetry, #598) deferred to a future security-focused wave per
+    # architect soft-recommendation. First HTTP auth in the codebase merits
+    # explicit security review beyond a small-cleanup wave's tolerance.
+    kind: main
+    depends_on: ["153"]
+    dispatch_prompt: "prompts/WAVE-154-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-724-dm-hardening.md"
+      - "prompts/ad-730-1-1-drag-paste-image.md"
+      - "prompts/ad-720d-1-multi-image-batch.md"
+      - "prompts/ad-719-718-hxi-polish.md"
+    builder_required: true
+    issues_to_close: [627, 628, 629, 548, 553, 563, 646]
+    status: pending
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process
