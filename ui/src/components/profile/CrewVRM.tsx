@@ -17,7 +17,11 @@ import {
   buildHeuristicTrack,
   type LipSyncTrack,
   type VowelKey,
+  type VisemeKey,
+  _VISEME_TARGETS,
 } from '../../audio/lipSyncTrack';
+import { useLipSyncCapture } from '../../audio/useLipSyncCapture';
+import type { LipSyncFrame } from '../../audio/lipSyncCapture';
 import type { AgentSignals } from './avatarSignals';
 
 /** AD-721b: collect every mesh whose ``morphTargetDictionary`` contains any
@@ -165,6 +169,31 @@ function applyExpressionsFromSignals(vrm: VRM, signals: AgentSignals, overrides:
   }
 }
 
+/** AD-721b-2: sample a rhubarb-derived viseme schedule at ``elapsedMs`` and
+ *  return per-vowel weights. Linear scan — schedules are short (typical ~50
+ *  frames for a 5s utterance). Reuses ``_VISEME_TARGETS`` so the AD-721b v1
+ *  vowel-weighting stays consistent. */
+function _sampleRhubarbFrames(
+  frames: LipSyncFrame[],
+  elapsedMs: number,
+): { aa: number; ih: number; ou: number; ee: number; oh: number } {
+  const zero = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+  const t = elapsedMs / 1000;
+  let active: LipSyncFrame | null = null;
+  for (const f of frames) {
+    if (t >= f.time && t < f.time + f.duration) { active = f; break; }
+  }
+  if (!active) return zero;
+  const target = _VISEME_TARGETS[active.viseme as VisemeKey] ?? zero;
+  return {
+    aa: target.aa,
+    ih: target.ih,
+    ou: target.ou,
+    ee: target.ee,
+    oh: target.oh,
+  };
+}
+
 export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError, restingExpression }: Props) {
   const vrmRef = useRef<VRM | null>(null);
   // BF: also keep VRM in state so React mounts <primitive> after load.
@@ -204,6 +233,15 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
   // AD-721b: active viseme track (null = fallback to amplitude path).
   const currentTrackRef = useRef<LipSyncTrack | null>(null);
   const startedAtMsRef = useRef<number>(0);
+
+  // AD-721b-2: real-audio capture path. Always-on — honest-degrade chains
+  // end-to-end on the server (capture-fail → 0-byte short-circuit, server-fail
+  // → backend: "heuristic" → empty frames). When the server returns a non-empty
+  // rhubarb schedule, prefer it. When empty, fall through to the existing
+  // heuristic path (currentTrackRef from buildHeuristicTrack).
+  const lipsync = useLipSyncCapture({ enabled: true, agentId });
+  const realFramesRef = useRef<LipSyncFrame[]>([]);
+  useEffect(() => { realFramesRef.current = lipsync.frames; }, [lipsync.frames]);
 
   // Load the VRM once per URL change.
   useEffect(() => {
@@ -330,6 +368,7 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         speakingRef.current = false;
         analyserRef.current = null;
         currentTrackRef.current = null;
+        lipsync.reset();   // AD-721b-2: clear stale rhubarb frames
         // Close all detected mouth shapes (legacy single-vowel set).
         const em = vrmRef.current?.expressionManager;
         if (em) for (const n of mouthShapesRef.current) em.setValue(n, 0);
@@ -378,8 +417,24 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
 
     if (speakingRef.current) {
       const em = vrm.expressionManager;
+      const rhubarbFrames = realFramesRef.current;
       const track = currentTrackRef.current;
-      if (track) {
+      if (rhubarbFrames.length > 0) {
+        // AD-721b-2: prefer the real-audio rhubarb schedule when present.
+        const now = (typeof performance !== 'undefined'
+          ? performance.now() : Date.now());
+        const elapsed = now - startedAtMsRef.current;
+        const w = _sampleRhubarbFrames(rhubarbFrames, elapsed);
+        const vowelKeys: VowelKey[] = ['aa', 'ih', 'ou', 'ee', 'oh'];
+        for (const v of vowelKeys) {
+          const target = w[v];
+          const k = target > smoothedVowelsRef.current[v] ? 0.30 : 0.18;
+          smoothedVowelsRef.current[v] +=
+            (target - smoothedVowelsRef.current[v]) * k;
+          const value = smoothedVowelsRef.current[v];
+          if (em) for (const n of vowelShapesRef.current[v]) em.setValue(n, value);
+        }
+      } else if (track) {
         // AD-721b viseme-weighted path: sample the track at the current
         // elapsed time, smooth per-vowel (faster attack than release), and
         // write each vowel's smoothed weight to its expression name AND to
