@@ -12,6 +12,9 @@ import React from 'react';
 vi.mock('../audio/voice', () => ({
   speakResponse: vi.fn(),
   stripMarkdownForSpeech: (s: string) => s,
+  // AD-718d-1: ModulationIndicator (transitively mounted by ProfileChatTab)
+  // subscribes via onSpeechEvent — return a no-op unsubscriber.
+  onSpeechEvent: vi.fn(() => () => {}),
 }));
 
 vi.mock('../audio/speechInput', () => ({

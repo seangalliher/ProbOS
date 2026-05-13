@@ -2213,3 +2213,27 @@ Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not jus
 
 **Files.** `ui/src/components/wardroom/WardRoomThreadDetail.tsx` (paperclip + chip strip + upload helpers + attachment_ids in submit body). `ui/src/__tests__/WardRoomThreadDetail.attach.test.tsx` (new, 3 Vitest tests: paperclip-hidden-in-non-DM, paperclip-visible-in-DM, attachment_id-flows-to-chat-body).
 
+
+
+### AD-719c — @-picker keyboard navigation (Wave 154)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #548.
+
+**Problem.** AD-719 shipped the @-picker with Enter + Esc only; ↑/↓/Tab were explicitly deferred as forward marker AD-719c. Mouse-only navigation of an 8-row popover is awkward for power users (Captain composes most multi-mention turns via keyboard).
+
+**Decision.** Add ArrowDown / ArrowUp / Tab cases to `IntentSurface.handleKeyDown`. ArrowDown advances `pickerIndex` modulo `pickerMatches.length`; ArrowUp wraps to last on underflow. Tab confirms the highlighted row (mirrors Enter behavior). Picker rows gain a `data-picker-index` attribute for tests and for a new `useEffect` that calls `scrollIntoView({ block: 'nearest' })` on the highlighted row as `pickerIndex` advances. Guard `scrollIntoView` with `typeof === 'function'` because JSDOM does not implement it; tests assert `pickerIndex` state, not scroll position.
+
+**Files.** `ui/src/components/IntentSurface.tsx` (handleKeyDown branches + data-picker-index attribute + scroll-into-view useEffect). `ui/src/__tests__/IntentSurface.pickerKeyboard.test.tsx` (new, 4 Vitest tests: ArrowDown advance, ArrowUp wrap, Tab confirms third row, Enter backward-compat).
+
+
+### AD-718d-1 — Voice modulation activity indicator (Wave 154)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #553.
+
+**Problem.** AD-718d (emotional voice modulation) shipped the modulation logic without a visible affordance. Operator cannot tell whether modulation is active for a given agent during a session. Indicator was deferred as forward marker because the ProfileChatTab Vitest harness scope would have pushed AD-718d past its blast radius.
+
+**Decision.** New `ui/src/components/profile/ModulationIndicator.tsx` (~75 lines). Stroke-only three-bar audio glyph (HXI Principle #3); amber `#f0b060` active / dim `#666680` idle (HXI palette); 1.2s `transform: scale()` keyframe pulse on active state (HXI Principle #4 — motion communicates state). Subscribes to `onSpeechEvent` from `audio/voice`; pulses on `start` with matching `agent_id`, fades on `end`, ignores events for other agents. Mounted in `ProfileChatTab` immediately after the existing per-agent Speak toggle. Existing `ProfileChatTab` Vitest mocks updated to include a no-op `onSpeechEvent` so the transitive mount does not break unrelated coverage.
+
+**Forward marker.** Per-agent listener bucket keyed by `agent_id` in `voice.ts:_fire` — current implementation registers one global listener per ModulationIndicator mount; acceptable at v1.
+
+**Files.** `ui/src/components/profile/ModulationIndicator.tsx` (new). `ui/src/components/profile/ProfileChatTab.tsx` (import + mount adjacent to Speak toggle). `ui/src/__tests__/ModulationIndicator.test.tsx` (new, 2 Vitest tests: pulses for matching agent, ignores other agents). `ui/src/__tests__/ProfileChatTab.test.tsx` and `ui/src/__tests__/ProfileChatTabVoice.test.tsx` (voice mock extended with no-op `onSpeechEvent`).

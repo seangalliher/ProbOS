@@ -8,7 +8,10 @@ back to OSS).
 **Authoritative state.**
 - `prompts/wave-plan.yaml` — wave roster (current wave: 150 done; next slot is 151).
 - `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-734).
-- `tests/` — 13268 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 582 vitest; gate runs `-n 8 --dist=loadfile`.
+- `tests/` — 13268 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 597 vitest; gate runs `-n 8 --dist=loadfile`.
+
+**Wave 154 in flight (2026-05-12):**
+- AD-719c + AD-718d-1 — HXI polish: @-picker keyboard nav (↑/↓/Tab) + ModulationIndicator pulse overlay (+6 Vitest tests; closes #548, #553).
 
 **Recent eras (archived):**
 - [Era I — Genesis](progress-era-1-genesis.md)

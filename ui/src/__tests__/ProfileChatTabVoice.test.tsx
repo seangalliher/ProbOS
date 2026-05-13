@@ -15,6 +15,9 @@ const { speakResponseMock, startListeningMock, stopListeningMock, supportedRef }
 vi.mock('../audio/voice', () => ({
   speakResponse: mocks.speakResponseMock,
   stripMarkdownForSpeech: (s: string) => s,
+  // AD-718d-1: ModulationIndicator (transitively mounted by ProfileChatTab)
+  // subscribes via onSpeechEvent — return a no-op unsubscriber.
+  onSpeechEvent: vi.fn(() => () => {}),
 }));
 
 vi.mock('../audio/speechInput', () => ({

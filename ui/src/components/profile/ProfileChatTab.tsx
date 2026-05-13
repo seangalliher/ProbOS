@@ -3,6 +3,7 @@ import { useStore } from '../../store/useStore';
 import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
 import type { ChatAttachment } from '../../store/types';
+import { ModulationIndicator } from './ModulationIndicator';
 
 interface Props {
   agentId: string;
@@ -345,6 +346,9 @@ export function ProfileChatTab({ agentId }: Props) {
             )}
           </svg>
         </button>
+        {/* AD-718d-1: voice modulation activity indicator (pulses while
+            applyEmotionalModulation is shaping a speech utterance). */}
+        <ModulationIndicator agentId={agentId} />
         {/* AD-718: Mic button for STT input (parity with IntentSurface). */}
         {isSpeechRecognitionSupported() && (
           <button

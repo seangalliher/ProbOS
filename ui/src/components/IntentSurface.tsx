@@ -298,6 +298,18 @@ export function IntentSurface() {
       });
   }
 
+  // AD-719c: scroll the highlighted picker row into view as ArrowUp/ArrowDown
+  // advance. Uses a guard for `scrollIntoView` because JSDOM does not
+  // implement it; tests assert `pickerIndex` state advancement, not scroll
+  // behavior, so the guard prevents non-deterministic JSDOM errors.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const el = document.querySelector(`[data-picker-index="${pickerIndex}"]`);
+    if (el && typeof (el as HTMLElement).scrollIntoView === 'function') {
+      (el as HTMLElement).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [pickerOpen, pickerIndex]);
+
   /* ── Escape key ── */
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -309,8 +321,8 @@ export function IntentSurface() {
         _cancelCurrentCapture();
         return;
       }
-      // AD-719: Esc on the input also closes the @-picker (a no-op for v1
-      // keyboard nav — full ↑/↓/Tab/Esc state machine is AD-719c).
+      // AD-719: Esc on the input also closes the @-picker. Full keyboard
+      // state machine (↑/↓/Tab/Enter/Esc) shipped in AD-719c below.
       if (pickerOpen) {
         setPickerOpen(false);
         return;
@@ -318,6 +330,24 @@ export function IntentSurface() {
       setActive(false);
       setInput('');
       inputRef.current?.blur();
+    }
+    // AD-719c: Arrow keys cycle through picker matches; Tab confirms.
+    if (pickerOpen && pickerMatches.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setPickerIndex((i) => (i + 1) % pickerMatches.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setPickerIndex((i) => (i - 1 + pickerMatches.length) % pickerMatches.length);
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        confirmPickerSelection(pickerMatches[pickerIndex]?.callsign ?? pickerMatches[0].callsign);
+        return;
+      }
     }
     if (e.key === 'Enter' && pickerOpen && pickerMatches.length > 0) {
       e.preventDefault();
@@ -1879,6 +1909,7 @@ export function IntentSurface() {
                     <div
                       key={m.callsign}
                       data-testid="at-picker-row"
+                      data-picker-index={i}
                       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); confirmPickerSelection(m.callsign); }}
                       onMouseEnter={() => setPickerIndex(i)}
                       style={{

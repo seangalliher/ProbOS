@@ -412,6 +412,13 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-733a | Real-time vision tier (`llm_model_vision_fast` for sub-1s per-frame inference + `llm_model_vision_deep` for occasional narrative summaries) + agent visual working memory (last-N-frames hot buffer) | (sub-marker under AD-733) | 4 |
 | AD-733b | ObserverAgent + proactive event surfacing (graduated initiative for visual events; AD-674/AD-675 calibration extended from text to perceptual triggers) | (sub-marker under AD-733) | 4 |
 
+**Wave 154 — DM hardening + multimodal small wins + HXI polish:**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-719c | @-picker keyboard navigation (↑/↓ cycle, Tab confirms, scroll-into-view) — **SHIPPED Wave 154** (+4 Vitest tests) | [#548](https://github.com/seangalliher/ProbOS/issues/548) | 3 |
+| AD-718d-1 | Voice modulation activity indicator (`ModulationIndicator` SVG dim-pulse next to per-agent Speak toggle) — **SHIPPED Wave 154** (+2 Vitest tests) | [#553](https://github.com/seangalliher/ProbOS/issues/553) | 3 |
+
 ### Forcing-function deferrals
 
 (Forward dependencies satisfied; build when need surfaces.)
