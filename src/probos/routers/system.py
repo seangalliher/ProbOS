@@ -284,14 +284,42 @@ async def system_circuit_breakers(runtime: Any = Depends(get_runtime)) -> dict[s
 @router.post("/system/shutdown")
 async def system_shutdown(
     req: ShutdownRequest,
+    request: Request,
     runtime: Any = Depends(get_runtime),
     track_task: Callable = Depends(get_task_tracker),
 ) -> dict[str, Any]:
-    """AD-436: Initiate system shutdown from HXI Bridge."""
+    """AD-436: Initiate system shutdown from HXI Bridge.
+
+    BF (2026-05-12): Log loudly on both entry and just before os._exit so silent
+    shutdowns no longer leave the operator guessing whether a kill came from
+    inside (this endpoint) or outside (Stop-Process / taskkill).
+    """
+    client_host = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    reason = req.reason or "(no reason)"
+    logger.warning(
+        "/api/system/shutdown invoked: client=%s reason=%r user_agent=%r pid=%d",
+        client_host, reason, user_agent, os.getpid(),
+    )
+
     async def _do_shutdown():
         await asyncio.sleep(1)
-        await runtime.stop(reason=req.reason)
+        try:
+            await runtime.stop(reason=req.reason)
+        except Exception:
+            logger.exception("runtime.stop() raised during /system/shutdown")
+        logger.warning(
+            "/api/system/shutdown calling os._exit(0): client=%s reason=%r pid=%d",
+            client_host, reason, os.getpid(),
+        )
+        # Flush stdlib logging so the warning above isn't lost across os._exit.
+        for h in logging.getLogger().handlers:
+            try:
+                h.flush()
+            except Exception:
+                pass
         os._exit(0)
+
     track_task(_do_shutdown(), name="system-shutdown")
     return {"status": "shutting_down", "reason": req.reason}
 

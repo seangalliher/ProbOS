@@ -556,6 +556,40 @@ async def _serve(
 
     console.print()
 
+    # Pidfile: external tooling (Builder cleanup scripts, ops) can read
+    # data/probos.pid to identify the live runtime and avoid killing it
+    # when sweeping pytest workers. Per-data-dir so cluster nodes don't
+    # collide.
+    _pidfile = runtime._data_dir / "probos.pid"
+    try:
+        _pidfile.write_text(str(os.getpid()))
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Could not write pidfile at %s", _pidfile, exc_info=True,
+        )
+
+    # Heartbeat: log every 60s so silent process death shows up as
+    # "log stopped" with a clear last-alive timestamp. Helps distinguish
+    # internal os._exit (from /api/system/shutdown — see system.py) from
+    # external TerminateProcess (Stop-Process / taskkill).
+    _hb_logger = logging.getLogger("probos.heartbeat")
+    async def _heartbeat_loop() -> None:
+        import time as _t
+        start = _t.monotonic()
+        while True:
+            try:
+                await asyncio.sleep(60)
+                uptime = int(_t.monotonic() - start)
+                _hb_logger.info(
+                    "runtime alive pid=%d uptime=%ds agents=%d",
+                    os.getpid(), uptime, len(runtime.registry.all()),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _hb_logger.exception("heartbeat loop iteration failed")
+    heartbeat_task = asyncio.create_task(_heartbeat_loop(), name="serve-heartbeat")
+
     try:
         if interactive:
             # Run API server + interactive shell concurrently
@@ -575,6 +609,17 @@ async def _serve(
             console.print()
             await server.serve()
     finally:
+        # Cancel heartbeat first so we stop emitting "alive" once shutdown begins.
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except BaseException:
+            pass
+        # Remove pidfile so external tooling knows the runtime is gone.
+        try:
+            _pidfile.unlink(missing_ok=True)
+        except Exception:
+            pass
         # BF-141: Write session record synchronously BEFORE async shutdown.
         try:
             import json as _json
