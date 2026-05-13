@@ -3388,7 +3388,7 @@ waves:
       - "prompts/ad-719-718-hxi-polish.md"
     builder_required: true
     issues_to_close: [627, 628, 629, 548, 553, 563, 646]
-    status: pending
+    status: done
 
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
