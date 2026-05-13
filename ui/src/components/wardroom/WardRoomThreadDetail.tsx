@@ -175,6 +175,40 @@ export function WardRoomThreadDetail() {
     setPendingAttachments(prev => prev.filter(a => a.attachment_id !== id));
   }
 
+  // AD-730-1-1: paste image from clipboard. Mirrors IntentSurface.handlePaste.
+  async function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (!isDm || !targetAgentId) return; // only DM threads accept attachments
+    const items = Array.from(event.clipboardData?.items ?? []);
+    const imageItem = items.find(it => it.type && it.type.startsWith('image/'));
+    if (!imageItem) return; // text paste — let the textarea handle it
+    event.preventDefault();
+    const blob = imageItem.getAsFile();
+    if (!blob) return;
+    // Wrap as File so uploadAttachment's MIME/size guards apply uniformly.
+    const ext = (blob.type.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '');
+    const file = new File([blob], `pasted-${Date.now()}.${ext}`, { type: blob.type });
+    await uploadAttachment(file);
+  }
+
+  // AD-730-1-1: drag/drop file upload. Targets the reply-input container; the
+  // ALLOWED_ATTACHMENT_MIMES allow-list inside uploadAttachment + the
+  // server-side check at /api/chat/attachments/multipart enforce MIME/size.
+  // Per-AD-730-1-2 forward marker: visible drop-zone hover state deferred.
+  async function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    if (!isDm || !targetAgentId) return;
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    for (const file of files) {
+      await uploadAttachment(file);
+    }
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+    if (!isDm || !targetAgentId) return;
+    // Required to allow the drop event to fire.
+    event.preventDefault();
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {/* Thread header — compact, fixed */}
@@ -268,11 +302,15 @@ export function WardRoomThreadDetail() {
       )}
 
       {/* Reply input */}
-      <div style={{
-        borderTop: '1px solid rgba(255,255,255,0.06)',
-        padding: '8px 12px',
-        display: 'flex', gap: 6,
-      }}>
+      <div
+        style={{
+          borderTop: '1px solid rgba(255,255,255,0.06)',
+          padding: '8px 12px',
+          display: 'flex', gap: 6,
+        }}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+      >
         {/* AD-730-1: paperclip + hidden file picker (DM-only). */}
         {isDm && targetAgentId && (
           <>
@@ -317,6 +355,7 @@ export function WardRoomThreadDetail() {
           value={replyText}
           onChange={e => setReplyText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply(); } }}
+          onPaste={handlePaste}
           placeholder="Reply..."
           rows={2}
           style={{

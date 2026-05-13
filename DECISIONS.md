@@ -2237,3 +2237,16 @@ Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not jus
 **Forward marker.** Per-agent listener bucket keyed by `agent_id` in `voice.ts:_fire` — current implementation registers one global listener per ModulationIndicator mount; acceptable at v1.
 
 **Files.** `ui/src/components/profile/ModulationIndicator.tsx` (new). `ui/src/components/profile/ProfileChatTab.tsx` (import + mount adjacent to Speak toggle). `ui/src/__tests__/ModulationIndicator.test.tsx` (new, 2 Vitest tests: pulses for matching agent, ignores other agents). `ui/src/__tests__/ProfileChatTab.test.tsx` and `ui/src/__tests__/ProfileChatTabVoice.test.tsx` (voice mock extended with no-op `onSpeechEvent`).
+
+
+### AD-730-1-1 — Drag/drop + paste-image in WardRoomThreadDetail (Wave 154)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #646. **Pre-flight:** #647 closed as duplicate of #646.
+
+**Problem.** AD-730-1 shipped the file-picker path in `WardRoomThreadDetail` (Wave 154 commit `2413bf6d`). Paste from clipboard and drag-drop — the two ergonomic input modes that `IntentSurface` has supported since AD-720/AD-720a — were missing on the WardRoom DM reply composer.
+
+**Decision.** Add `handlePaste` to the textarea (`onPaste`) and `handleDrop` / `handleDragOver` to the reply-input wrapper `<div>` (sibling of the chip strip — drops on the chip strip don't register; acceptable degradation tracked as forward marker AD-730-1-2). Pasted clipboard image blobs have no filename, so the handler synthesizes `pasted-<timestamp>.<ext>` (with a regex sanitizer for nontrivial MIME suffixes like `svg+xml`) before calling the existing `uploadAttachment(file: File)` helper. The shared helper's `ALLOWED_ATTACHMENT_MIMES` + `MAX_ATTACHMENT_BYTES` guards apply uniformly to picker / paste / drop. Server-side `/api/chat/attachments/multipart` is the actual MIME/size enforcement. Both new handlers early-return when `isDm && targetAgentId` is false so non-DM (channels) view drops are silently ignored.
+
+**Forward markers.** AD-730-1-2 — visible drop-zone hover state.
+
+**Files.** `ui/src/components/wardroom/WardRoomThreadDetail.tsx` (handlePaste / handleDrop / handleDragOver + wiring on textarea + reply container). `ui/src/__tests__/WardRoomThreadDetail.attach.test.tsx` (extended with AD-730-1-1 describe block: +3 Vitest tests — paste image triggers upload, drop image triggers upload, paste plain text no upload).

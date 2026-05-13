@@ -90,3 +90,71 @@ describe('AD-730-1 WardRoomThreadDetail attach button', () => {
     });
   });
 });
+
+// AD-730-1-1: paste and drag/drop image upload in the WardRoomThreadDetail
+// reply composer. Augments the AD-730-1 file-picker tests above.
+describe('AD-730-1-1 WardRoomThreadDetail paste/drop image', () => {
+  function mockMultipartFetch() {
+    return vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+      if (String(url).includes('/api/chat/attachments/multipart')) {
+        return new Response(
+          JSON.stringify({ attachment_id: 'att-cat-1', filename: 'cat.png', size: 4, mime: 'image/png' }),
+          { status: 200 },
+        );
+      }
+      return new Response('{}', { status: 200 });
+    }) as any;
+  }
+
+  it('paste image triggers upload and adds chip', async () => {
+    const fetchMock = mockMultipartFetch();
+    render(<WardRoomThreadDetail />);
+    const textarea = screen.getByPlaceholderText('Reply...') as HTMLTextAreaElement;
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'cat.png', { type: 'image/png' });
+    const clipboardData = { items: [{ type: 'image/png', getAsFile: () => file }] };
+    fireEvent.paste(textarea, { clipboardData });
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(calls).toContain('/api/chat/attachments/multipart');
+    });
+    const chips = await screen.findByTestId('wardroom-dm-attachment-chips');
+    // Pasted images get a synthesized name `pasted-<ts>.<ext>` because the
+    // clipboard File blob has no filename of its own.
+    expect(chips.textContent).toMatch(/pasted-\d+\.png/);
+  });
+
+  it('drop image triggers upload and adds chip', async () => {
+    const fetchMock = mockMultipartFetch();
+    render(<WardRoomThreadDetail />);
+    const textarea = screen.getByPlaceholderText('Reply...') as HTMLTextAreaElement;
+    // Reply container is the direct parent of the textarea (the wrapper that
+    // received onDrop/onDragOver).
+    const replyContainer = textarea.parentElement as HTMLElement;
+    expect(replyContainer).toBeTruthy();
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'cat.png', { type: 'image/png' });
+    fireEvent.dragOver(replyContainer, { dataTransfer: { files: [file] } });
+    fireEvent.drop(replyContainer, { dataTransfer: { files: [file] } });
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(calls).toContain('/api/chat/attachments/multipart');
+    });
+    const chips = await screen.findByTestId('wardroom-dm-attachment-chips');
+    expect(chips.textContent).toContain('cat.png');
+  });
+
+  it('paste plain text does not trigger upload', () => {
+    const fetchMock = mockMultipartFetch();
+    render(<WardRoomThreadDetail />);
+    const textarea = screen.getByPlaceholderText('Reply...') as HTMLTextAreaElement;
+
+    const clipboardData = { items: [{ type: 'text/plain', getAsFile: () => null }] };
+    fireEvent.paste(textarea, { clipboardData });
+
+    const calls = fetchMock.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(calls).not.toContain('/api/chat/attachments/multipart');
+  });
+});
