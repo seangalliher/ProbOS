@@ -359,6 +359,17 @@ avatar_telemetry:
   # ("reading a readout versus feeling it"). Flip ON to close the loop.
   divergence_detection: true
 
+# --- Lip-Sync (AD-721b-1, Wave 155) ---
+# Captain provides the rhubarb-lip-sync binary at tools/rhubarb/rhubarb.exe
+# (Windows) or tools/rhubarb/rhubarb (Linux/macOS). /tools/ is gitignored.
+# Missing binary / subprocess failure / timeout all log WARNING and degrade
+# to the heuristic path (speech must never stop animating).
+lipsync:
+  enabled: true
+  backend: rhubarb
+  binary_path: tools/rhubarb/rhubarb
+  timeout_seconds: 30.0
+
 # --- Temporal Context (AD-502) ---
 temporal:
   enabled: true
