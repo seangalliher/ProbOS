@@ -297,7 +297,7 @@ async def chat(
             async def _mime_lookup(content_hash: str) -> str | None:
                 return await store.mime_for(content_hash)
 
-            messages, image_ids = await build_multimodal_messages(
+            messages, image_ids, per_attachment = await build_multimodal_messages(
                 prompt=text,
                 attachment_ids=list(req.attachment_ids),
                 store=store,
@@ -307,6 +307,20 @@ async def chat(
             )
 
             if image_ids:
+                # AD-720d-1: soft warning when image count exceeds the operator
+                # threshold. Log-only; never blocks or truncates. Cap the
+                # logged attachment_ids list at the first 10 entries for log
+                # hygiene when the operator sends large batches.
+                warn_threshold = getattr(cfg_attach, "multi_image_warn_threshold", 0)
+                if warn_threshold and len(image_ids) > warn_threshold:
+                    capped = list(req.attachment_ids)[:10]
+                    logger.warning(
+                        "AD-720d-1: /api/chat vision turn includes %d images "
+                        "(threshold=%d); this may exceed the LLM's effective "
+                        "context budget — proceeding without truncation. "
+                        "attachment_ids[:10]=%s",
+                        len(image_ids), warn_threshold, capped,
+                    )
                 tier = cfg_attach.vision_tier
                 # AD-730-5: /api/chat vision branch is untargeted (Captain
                 # composing with the LLM directly — no specific agent in
@@ -389,6 +403,10 @@ async def chat(
                                 "response": (llm_response.content or "")[:500],
                                 "has_image_attachment": True,
                                 "image_count": len(image_ids),
+                                # AD-720d-1: partial-resolve metric +
+                                # per-attachment latency for dreaming/recall.
+                                "failed_image_count": sum(1 for r in per_attachment if not r["ok"]),
+                                "per_attachment_timing": per_attachment,
                                 "attachment_ids": list(req.attachment_ids),
                                 "llm_tier": tier,
                                 "llm_model": getattr(llm_response, "model", ""),

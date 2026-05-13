@@ -98,7 +98,7 @@ async def test_build_multimodal_messages_emits_attachment_ref_bus_shape(
     """Invariant #1 — sender emits the content-addressable bus shape."""
     store, sha = store_with_png
 
-    messages, image_ids = await build_multimodal_messages(
+    messages, image_ids, _per_attachment = await build_multimodal_messages(
         prompt="describe this",
         attachment_ids=[sha],
         store=store,  # type: ignore[arg-type]

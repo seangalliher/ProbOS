@@ -136,7 +136,7 @@ async def test_dm_image_routes_to_vision_tier():
     req = _req(attachment_ids=["sha-img-1"])
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
-        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids)
+        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids), []
 
     with _CREW_PATCH, \
          patch("probos.cognitive.vision_dispatch.build_multimodal_messages", side_effect=_bmm), \
@@ -158,7 +158,7 @@ async def test_dm_image_passes_vision_messages_through_intent_params():
     req = _req(attachment_ids=["sha-img-1"])
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
-        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids)
+        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids), []
 
     with _CREW_PATCH, \
          patch("probos.cognitive.vision_dispatch.build_multimodal_messages", side_effect=_bmm), \
@@ -183,7 +183,7 @@ async def test_dm_image_with_degraded_vision_tier_returns_unhealthy_message():
     req = _req(attachment_ids=["sha-img-1"])
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
-        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids)
+        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids), []
 
     aug = AsyncMock(return_value="look at this\n[Captain attached an image (id=sha-img-1)]")
 
@@ -224,7 +224,7 @@ async def test_dm_text_only_attachment_no_vision_branch():
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
         # No image — image_ids list is empty.
-        return _fake_multimodal_messages(prompt, []), []
+        return _fake_multimodal_messages(prompt, []), [], []
 
     aug = AsyncMock(return_value="look at this\n<ATTACHMENT id=sha-txt-1>hello</ATTACHMENT>")
 
@@ -248,7 +248,7 @@ async def test_dm_image_episode_has_image_attachment_flag():
     req = _req(attachment_ids=["sha-img-1"])
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
-        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids)
+        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids), []
 
     with _CREW_PATCH, \
          patch("probos.cognitive.vision_dispatch.build_multimodal_messages", side_effect=_bmm), \
@@ -286,7 +286,7 @@ async def test_dm_vision_messages_preserves_system_prompt():
     req = _req(message="describe this image", attachment_ids=["sha-img-1"])
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
-        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids)
+        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids), []
 
     with _CREW_PATCH, \
          patch("probos.cognitive.vision_dispatch.build_multimodal_messages", side_effect=_bmm), \
@@ -310,7 +310,7 @@ async def test_dm_vision_messages_set_alongside_text_when_image_present():
     req = _req(attachment_ids=["sha-img-1"])
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
-        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids)
+        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids), []
 
     with _CREW_PATCH, \
          patch("probos.cognitive.vision_dispatch.build_multimodal_messages", side_effect=_bmm), \
@@ -354,7 +354,7 @@ async def test_dm_multi_image_all_included_in_vision_messages():
     req = _req(attachment_ids=["sha-img-1", "sha-img-2"])
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
-        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids)
+        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids), []
 
     with _CREW_PATCH, \
          patch("probos.cognitive.vision_dispatch.build_multimodal_messages", side_effect=_bmm), \

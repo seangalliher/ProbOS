@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import time
 from typing import Any, Awaitable, Callable
 
 from probos.attachments.store import AttachmentStore
@@ -157,30 +158,54 @@ async def build_multimodal_messages(
     *,
     text_extraction_max_bytes: int,
     pdf_extraction_enabled: bool,
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
     """Build the OpenAI/Anthropic-shape ``messages`` content array.
 
-    Returns ``(messages, image_attachment_ids)`` where ``messages`` is the
-    one-element list ``[{"role": "user", "content": [<content_items>]}]`` and
-    ``image_attachment_ids`` is the subset of ``attachment_ids`` whose MIME is
-    ``image/*``. The caller uses ``image_attachment_ids`` to decide whether
-    the turn routes via the vision tier (image present) or whether the
-    augmented prompt flows through the standard decomposer (text-only).
+    Returns ``(messages, image_attachment_ids, per_attachment)`` where:
+
+    - ``messages`` is the one-element list ``[{"role": "user", "content": [...]}]``;
+    - ``image_attachment_ids`` is the subset of ``attachment_ids`` whose MIME is
+      ``image/*``;
+    - ``per_attachment`` (AD-720d-1, Wave 154) is a list of records, one per
+      input attachment_id in order, each with ``attachment_id``, ``mime``,
+      ``resolve_ms``, and ``ok``. Downstream callers record this list in the
+      episode outcomes so dreaming/recall can correlate latency with image
+      count and partial-resolve frequency.
+
+    The caller uses ``image_attachment_ids`` to decide whether the turn routes
+    via the vision tier (image present) or whether the augmented prompt flows
+    through the standard decomposer (text-only).
     """
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     image_ids: list[str] = []
+    per_attachment: list[dict[str, Any]] = []
+
+    # AD-720d-1: time each resolve so the episode outcome can record
+    # per-attachment latency. Failures are still gathered; ``ok`` flips False
+    # when ``_resolve_one`` returns a failure-stub triple.
+    async def _timed_resolve(
+        aid: str,
+    ) -> tuple[str | None, bytes | None, dict[str, Any] | None, float]:
+        t0 = time.monotonic()
+        mime, blob, failure_item = await _resolve_one(
+            aid, store, mime_lookup,
+            text_extraction_max_bytes, pdf_extraction_enabled,
+        )
+        return mime, blob, failure_item, (time.monotonic() - t0) * 1000.0
 
     resolved = await asyncio.gather(
-        *(
-            _resolve_one(
-                aid, store, mime_lookup,
-                text_extraction_max_bytes, pdf_extraction_enabled,
-            )
-            for aid in attachment_ids
-        )
+        *(_timed_resolve(aid) for aid in attachment_ids)
     )
 
-    for attachment_id, (mime, blob, failure_item) in zip(attachment_ids, resolved):
+    for attachment_id, (mime, blob, failure_item, resolve_ms) in zip(
+        attachment_ids, resolved,
+    ):
+        per_attachment.append({
+            "attachment_id": attachment_id,
+            "mime": mime,
+            "resolve_ms": round(resolve_ms, 2),
+            "ok": failure_item is None,
+        })
         if failure_item is not None:
             content.append(failure_item)
             continue
@@ -267,7 +292,7 @@ async def build_multimodal_messages(
         })
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
-    return (messages, image_ids)
+    return (messages, image_ids, per_attachment)
 
 
 async def augment_prompt_with_attachment_text(
@@ -291,7 +316,7 @@ async def augment_prompt_with_attachment_text(
     if not attachment_ids:
         return prompt
     try:
-        messages, image_ids = await build_multimodal_messages(
+        messages, image_ids, _per = await build_multimodal_messages(
             prompt=prompt,
             attachment_ids=list(attachment_ids),
             store=store,

@@ -892,6 +892,10 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # Tier-2 log-and-degrade throughout: failures revert to the original message.
     message_text = req.message
     vision_messages: list[dict[str, object]] | None = None
+    # AD-720d-1: per-attachment timing list; populated when the vision branch
+    # builds the multimodal messages. Stays empty for non-attachment DMs so
+    # the episode outcome block at lines ~1228-1252 always sees a list.
+    per_attachment: list[dict[str, object]] = []
     has_image_attachment = False
     if req.attachment_ids:
         cfg_attach = getattr(runtime.config, "attachments", None)
@@ -911,7 +915,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 # Build the multimodal array once; we may use either the
                 # vision-tier path (image_ids present + tier operational) or
                 # fall back to the text-only augmentation.
-                messages, image_ids = await build_multimodal_messages(
+                messages, image_ids, per_attachment = await build_multimodal_messages(
                     prompt=req.message,
                     attachment_ids=list(req.attachment_ids),
                     store=store,
@@ -919,6 +923,19 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                     text_extraction_max_bytes=cfg_attach.text_extraction_max_bytes,
                     pdf_extraction_enabled=cfg_attach.pdf_extraction_enabled,
                 )
+
+                # AD-720d-1: soft warning when image count exceeds the operator
+                # threshold. Log-only; never blocks or truncates. Cap the
+                # logged attachment_ids list at the first 10 entries.
+                warn_threshold = getattr(cfg_attach, "multi_image_warn_threshold", 0)
+                if image_ids and warn_threshold and len(image_ids) > warn_threshold:
+                    capped = list(req.attachment_ids)[:10]
+                    logger.warning(
+                        "AD-720d-1: per-agent DM vision turn includes %d images "
+                        "(threshold=%d); proceeding without truncation. "
+                        "agent_id=%s attachment_ids[:10]=%s",
+                        len(image_ids), warn_threshold, agent_id, capped,
+                    )
 
                 if image_ids:
                     # AD-720d-2: vision_capable gate. If the receiving
@@ -1238,6 +1255,13 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                     # AD-730: tag DM episodes that included an image so Counselor
                     # wellness and AD-722a divergence analysis can filter on it.
                     "has_image_attachment": has_image_attachment,
+                    # AD-720d-1: per-attachment timing + partial-resolve metric.
+                    "image_count": sum(
+                        1 for r in per_attachment
+                        if r["ok"] and (r.get("mime") or "").startswith("image/")
+                    ) if has_image_attachment else 0,
+                    "failed_image_count": sum(1 for r in per_attachment if not r["ok"]),
+                    "per_attachment_timing": per_attachment,
                 }],
                 reflection=f"Captain had a 1:1 conversation with {callsign or agent_id} via HXI.",
                 source="direct",

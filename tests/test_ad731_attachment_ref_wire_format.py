@@ -68,7 +68,7 @@ async def test_build_multimodal_messages_emits_attachment_ref_shape(tmp_path):
     store = FilesystemAttachmentStore(tmp_path)
     sha = await _write_png(store, _PNG_1X1_BYTES)
 
-    messages, image_ids = await build_multimodal_messages(
+    messages, image_ids, _per_attachment = await build_multimodal_messages(
         prompt="describe it",
         attachment_ids=[sha],
         store=store,
@@ -98,7 +98,7 @@ async def test_build_multimodal_messages_text_attachment_unchanged(tmp_path):
     sha = _sha256(blob)
     await store.write(sha, blob, "text/plain")
 
-    messages, image_ids = await build_multimodal_messages(
+    messages, image_ids, _per_attachment = await build_multimodal_messages(
         prompt="read this",
         attachment_ids=[sha],
         store=store,
@@ -124,7 +124,7 @@ async def test_build_multimodal_messages_mixed_image_and_text(tmp_path):
     await store.write(text_sha, text_blob, "text/plain")
     img_sha = await _write_png(store, _PNG_1X1_BYTES)
 
-    messages, image_ids = await build_multimodal_messages(
+    messages, image_ids, _per_attachment = await build_multimodal_messages(
         prompt="look + read",
         attachment_ids=[img_sha, text_sha],
         store=store,

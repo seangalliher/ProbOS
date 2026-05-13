@@ -419,6 +419,7 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-719c | @-picker keyboard navigation (↑/↓ cycle, Tab confirms, scroll-into-view) — **SHIPPED Wave 154** (+4 Vitest tests) | [#548](https://github.com/seangalliher/ProbOS/issues/548) | 3 |
 | AD-718d-1 | Voice modulation activity indicator (`ModulationIndicator` SVG dim-pulse next to per-agent Speak toggle) — **SHIPPED Wave 154** (+2 Vitest tests) | [#553](https://github.com/seangalliher/ProbOS/issues/553) | 3 |
 | AD-730-1-1 | WardRoomThreadDetail drag/drop + paste image — **SHIPPED Wave 154** (+3 Vitest tests; #647 closed as duplicate pre-flight) | [#646](https://github.com/seangalliher/ProbOS/issues/646) | 3 |
+| AD-720d-1 | Multi-image batch send + per-attachment timing in episode outcomes + `multi_image_warn_threshold` soft warning — **SHIPPED Wave 154** (+5 pytest tests; 3 production destructure sites + 4 test destructure sites updated) | [#563](https://github.com/seangalliher/ProbOS/issues/563) | 3 |
 
 ### Forcing-function deferrals
 

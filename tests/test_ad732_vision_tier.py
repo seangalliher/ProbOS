@@ -375,7 +375,7 @@ async def test_agent_chat_vision_unconfigured_returns_unconfigured_message():
     req = _req(attachment_ids=["sha-img-1"])
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
-        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids)
+        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids), []
 
     with _CREW_PATCH, \
          patch("probos.cognitive.vision_dispatch.build_multimodal_messages", side_effect=_bmm), \
@@ -398,7 +398,7 @@ async def test_agent_chat_vision_healthy_routes_through_to_agent():
     req = _req(attachment_ids=["sha-img-1"])
 
     async def _bmm(prompt, attachment_ids, store, mime_lookup, **kwargs):
-        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids)
+        return _fake_multimodal_messages(prompt, attachment_ids), list(attachment_ids), []
 
     with _CREW_PATCH, \
          patch("probos.cognitive.vision_dispatch.build_multimodal_messages", side_effect=_bmm), \

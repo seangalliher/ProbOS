@@ -2250,3 +2250,24 @@ Three concerns, three sites, three ADs. SOLID-S applied at the AD scope, not jus
 **Forward markers.** AD-730-1-2 — visible drop-zone hover state.
 
 **Files.** `ui/src/components/wardroom/WardRoomThreadDetail.tsx` (handlePaste / handleDrop / handleDragOver + wiring on textarea + reply container). `ui/src/__tests__/WardRoomThreadDetail.attach.test.tsx` (extended with AD-730-1-1 describe block: +3 Vitest tests — paste image triggers upload, drop image triggers upload, paste plain text no upload).
+
+
+### AD-720d-1 — Multi-image batch send + per-attachment timing (Wave 154)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #563.
+
+**Problem.** `build_multimodal_messages` already accepts N attachment_ids and emits N image content blocks — multi-image batches work at the wire level. What was missing: (1) per-attachment latency in the episode outcome so dreaming/recall can correlate latency with image count, (2) partial-resolve telemetry (`failed_image_count`) when individual attachments fail to load, (3) test coverage for N>=3, and (4) a soft operator warning when image count exceeds a configurable budget.
+
+**Decision.** Change `build_multimodal_messages` return signature from `(messages, image_ids)` to `(messages, image_ids, per_attachment)` where `per_attachment` is a list of `{attachment_id, mime, resolve_ms, ok}` records — one per input attachment_id, in input order. `_resolve_one` is wrapped in `time.monotonic()` boundaries via a `_timed_resolve` inner coroutine inside the existing `asyncio.gather`. The ~95-line zip-loop body (AD-731 ref-shape emission with BF-278 restoration note, PDF stub, three-tier text-extraction error handling) is preserved verbatim; only the loop header changes (adds `resolve_ms` to the unpack) and one `per_attachment.append({...})` line is added at the top of the body.
+
+Three production destructure sites updated in the same commit: `routers/chat.py:300`, `routers/agents.py:914`, `cognitive/vision_dispatch.py:294` (internal `augment_prompt_with_attachment_text` discards the new element as `_per`). Four test destructure sites updated identically: 3 in `test_ad731_attachment_ref_wire_format.py`, 1 in `test_ad734_wire_shape_contract.py`. The `_bmm` mock callbacks in `test_ad730_agent_chat_vision.py` (8 sites) and `test_ad732_vision_tier.py` (2 sites) extended with the empty third element.
+
+Episode outcomes (`routers/chat.py` `captain_chat_vision` and `routers/agents.py` `direct_message`) gain three new fields: `image_count` recomputed from `per_attachment` (counts successful image-mime resolves; previously `len(image_ids)`), `failed_image_count`, and `per_attachment_timing` (the full list — small dict per attachment, no inline base64; preserves AD-731 `IntentMessage.params` size invariant).
+
+New `AttachmentsConfig.multi_image_warn_threshold: int = 5` triggers a Tier-2 log warning when a single vision turn exceeds the threshold. Log-only, never blocks or truncates. Operators disable by setting to `0`. Logged `attachment_ids` capped at first 10 entries for log hygiene with large batches.
+
+**What this does NOT change.** AD-731 ref-shape (no inline base64 anywhere). AD-732 honest-degrade. ModelRouter, cache, rate-limiter, vision tier health probe. No new HTTP shape on the LLM side. No UI changes.
+
+**Forward markers.** AD-720d-1.1 — context-budget truncation policy when image count exceeds the warn threshold (v1 only warns, never truncates).
+
+**Files.** `src/probos/cognitive/vision_dispatch.py` (`import time` + return signature + `_timed_resolve` + per-attachment records + internal caller `_per` discard). `src/probos/routers/chat.py` (destructure + warn-threshold log + episode outcomes enrichment). `src/probos/routers/agents.py` (init `per_attachment` at line 894 + destructure + warn-threshold log + DM episode outcomes enrichment). `src/probos/config.py` (`multi_image_warn_threshold` field on `AttachmentsConfig`). `tests/test_ad720d_1_multi_image.py` (new, 5 boundary tests: 3-image happy path, per-attachment record count, partial-resolve, empty input, warn-threshold caplog). `tests/test_ad731_attachment_ref_wire_format.py` + `tests/test_ad734_wire_shape_contract.py` (destructure adapted). `tests/test_ad730_agent_chat_vision.py` + `tests/test_ad732_vision_tier.py` (mock callbacks updated).

@@ -1143,6 +1143,11 @@ class AttachmentsConfig(BaseModel):
     # AD-720a: PDF text extraction is deferred to AD-720a-1 (needs pypdf).
     pdf_extraction_enabled: bool = False
 
+    # AD-720d-1 (Wave 154): soft warning when a single vision turn includes
+    # more than this many images. Log-only; never blocks or truncates.
+    # Set to 0 to disable the warning entirely.
+    multi_image_warn_threshold: int = 5
+
     # AD-730-5: per-agent_type vision tier override. Empty default means
     # no overrides; behavior identical to today (every agent uses
     # ``vision_tier``). Operator opts a specific agent type into a
