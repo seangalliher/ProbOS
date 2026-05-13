@@ -2350,3 +2350,24 @@ New `AttachmentsConfig.multi_image_warn_threshold: int = 5` triggers a Tier-2 lo
 **Tests (+5 Vitest).** `ui/src/components/profile/__tests__/ProfileInfoTab.volumeSlider.test.tsx` — default 0.8 → 80%, persisted value 0.35 → 35%, persist via PUT on mouse-up, in-range boundary round-trip (0 and 1), accessible label via `getByRole('slider', { name: 'Volume' })`.
 
 **Files.** `ui/src/components/profile/ProfileInfoTab.tsx` (insertion of Volume slider row). `ui/src/components/profile/__tests__/ProfileInfoTab.volumeSlider.test.tsx` (new).
+
+### AD-736 — Mic-permission UX polish for wake-word loop (Wave 156)
+
+**Date:** 2026-05-13. **Status:** Shipped. **Closes** #558. **Parent AD:** AD-705 (always-on wake-word voice loop).
+
+**Problem.** AD-705's wake-word loop already detected three fallback reasons (onnx_load_failed, mic_permission_denied, speech_recognition_unavailable) but the only surface was `_emitFallbackToast` writing to `console.warn`. Captain hits "Voice on" → permission popup → "Block" → nothing visible happens, no path forward unless DevTools is open. Additionally, no current state distinguished `denied` (active user refusal — actionable: click the address-bar icon) from `unavailable` (no hardware / no SR support — actionable: plug in a mic, then refresh).
+
+**Decision.** Three pieces:
+1. **State machine extension** in `wakeWord.ts`: new exported `MicPermissionState` enum (`pending` / `granted` / `denied` / `unavailable`) separate from `WakeWordState` (the wake loop can be `off` for non-mic reasons too), with `onMicPermissionState` subscribe API + `getMicPermissionState` synchronous read. Fires the current state synchronously on subscribe so consumers don't need a separate getter call.
+2. **Pre-flight feature detect** at `startWakeWordLoop` using `navigator.mediaDevices.enumerateDevices()`: distinguishes "no microphone hardware" from "permission denied." If `enumerateDevices` is unavailable (Safari < 14, plain HTTP non-loopback) or rejects, fall through optimistically — the SR onerror path will still catch denial. Adds `audio-capture` SR-error handling for hardware-disconnect/in-use mid-session.
+3. **`MicPermissionHint.tsx` component** mounted once at the `App.tsx` HXI root (adjacent to `<AgentTooltip />`). Renders only on `denied`/`unavailable`; `denied` shows an instructional hint ("Click the microphone icon in your browser's address bar to enable it, then refresh") with a dismiss × button. `unavailable` shows a dim mic with slash and a non-dismissible label. Dismissal sticky via `localStorage[hxi_mic_hint_dismissed]`.
+
+**Inline SVG only, no emoji.** Mic glyph uses `strokeWidth: 1.5`, `strokeLinecap: round`, amber when audible / dim when denied or unavailable. Slash line drawn only in `unavailable` state (mirrors muted-speaker convention in `DecisionSurface.tsx`). Dismiss button is U+00D7 multiplication sign, not an emoji. HXI Design Principle #3 honoured.
+
+**No retry button in v1.** The hint already tells the Captain what to do; a retry button would re-prompt and immediately fail in Chrome's permanent-deny state. Refresh after granting is the canonical recovery path.
+
+**What this does NOT change.** Wake-word algorithm (ONNX path, substring fallback, transcript pump) unchanged. `speechInput.ts` unchanged. `WakeWordState` enum unchanged. No new dependencies (`navigator.mediaDevices.enumerateDevices` is a Web API standard). No HTTPS requirement added — over plain HTTP non-loopback, `mediaDevices` is undefined and the optional-chain skips the probe (the SR error path still catches denial). AD-731 attachment invariant respected.
+
+**Tests (+8 Vitest).** `ui/src/audio/__tests__/wakeWord.micPermission.test.ts` — 6 state-machine tests (initial pending; unavailable on SR-unsupported; unavailable on no-audioinput device; denied on not-allowed; granted on first transcript; subscribe-fires-synchronously). `ui/src/components/__tests__/MicPermissionHint.test.tsx` — 2 component tests (renders only for denied/unavailable; dismiss persists across remount).
+
+**Files.** `ui/src/audio/wakeWord.ts` (state machine + listener API + pre-flight probe + onerror branch + _ingestTranscript promotion + _teardown reset + _resetForTests extension). `ui/src/components/MicPermissionHint.tsx` (new). `ui/src/App.tsx` (mount + import). `ui/src/audio/__tests__/wakeWord.micPermission.test.ts` (new). `ui/src/components/__tests__/MicPermissionHint.test.tsx` (new).

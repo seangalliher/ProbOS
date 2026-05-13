@@ -12,6 +12,7 @@ import { GlassLayer } from './components/GlassLayer';
 import { IntentSurface } from './components/IntentSurface';
 import { DecisionSurface } from './components/DecisionSurface';
 import { AgentTooltip } from './components/AgentTooltip';
+import { MicPermissionHint } from './components/MicPermissionHint';
 import { AgentProfilePanel } from './components/profile';
 import { WardRoomPanel } from './components/wardroom';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
@@ -168,6 +169,8 @@ export default function App() {
       <IntentSurface />
       <DecisionSurface />
       <AgentTooltip />
+      {/* AD-736: mic-permission state surface (renders only on denied/unavailable). */}
+      <MicPermissionHint />
       <AgentProfilePanel />
       <GamePanel />
       <WardRoomPanel />

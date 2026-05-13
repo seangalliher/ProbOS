@@ -7,11 +7,12 @@ back to OSS).
 
 **Authoritative state.**
 - `prompts/wave-plan.yaml` — wave roster (current wave: 150 done; next slot is 151).
-- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-735).
-- `tests/` — 13396 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout + 1 dreaming flake outside this wave) + 613 vitest; gate runs `-n 4 --dist=loadfile`.
+- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-736).
+- `tests/` — 13396 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout + 1 dreaming flake outside this wave) + 621 vitest; gate runs `-n 4 --dist=loadfile`.
 
 **Wave 156 in flight (2026-05-13):**
 - AD-735 — Per-agent volume slider in `ProfileInfoTab.tsx` (+5 Vitest tests; closes #527). Backend chain (`VoiceProfile.volume`, `SetVoiceProfileRequest`, `PUT /api/agents/{id}/voice-profile`, `voice.ts` playback) was already shipped under AD-718; this AD exposed the UI slider with inline SVG speaker glyph (HXI Design Principle #3) and percent display. Mirrors Pitch/Rate `onMouseUp`/`onTouchEnd` persistence semantics. No backend, deps, or wire-shape changes.
+- AD-736 — Mic-permission UX polish (+8 Vitest tests; closes #558). New `MicPermissionState` enum (`pending` / `granted` / `denied` / `unavailable`) + `onMicPermissionState` listener API in `wakeWord.ts`. Pre-flight `navigator.mediaDevices.enumerateDevices` hardware probe distinguishes "no audio device" from "permission denied"; `audio-capture` SR error mapped to `unavailable`. New `MicPermissionHint.tsx` HXI overlay mounts at `App.tsx` root; renders only on `denied`/`unavailable`. Dismissal sticky via `localStorage[hxi_mic_hint_dismissed]`. Inline SVG mic glyph (HXI Design Principle #3) — no emoji. AD-705 wake-word algorithm + AD-731 attachment invariant unchanged.
 
 **Wave 155 in flight (2026-05-12):**
 - AD-721b-1 — Server-side rhubarb-lip-sync backend (+16 pytest tests; closes #559). MIT-licensed operator-provided binary at `tools/rhubarb/`; honest-degrade to AD-721b v1 heuristic when binary absent. Section 0.5 extends `AttachmentsConfig.allowed_mime_types`, `attachments/mime.py._SIGNATURES`, and `attachments/filesystem_store.py._MIME_TO_EXT` for `audio/webm` and `audio/wav`. `POST /api/avatars/lipsync` endpoint accepts AD-720 sha256 attachment refs and returns Oculus-mapped viseme schedule.

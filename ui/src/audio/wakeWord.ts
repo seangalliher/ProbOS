@@ -39,6 +39,52 @@ export type WakeFallbackReason =
   | 'mic_permission_denied'
   | 'speech_recognition_unavailable';
 
+/** AD-736: explicit mic-permission state machine. Separate from
+ *  ``WakeWordState`` — the wake loop can be ``off`` for multiple
+ *  reasons (mic denied, ONNX missing, SR unavailable); this enum
+ *  captures the *mic-permission* subset for Captain-visible UX. */
+export type MicPermissionState =
+  | 'pending'
+  | 'granted'
+  | 'denied'
+  | 'unavailable';
+
+const _micPermissionListeners = new Set<(s: MicPermissionState) => void>();
+let _micPermissionState: MicPermissionState = 'pending';
+
+/** AD-736: subscribe to mic-permission state changes. Fires the current
+ *  state synchronously so subscribers don't need a separate getter. */
+export function onMicPermissionState(
+  fn: (s: MicPermissionState) => void,
+): () => void {
+  _micPermissionListeners.add(fn);
+  try {
+    fn(_micPermissionState);
+  } catch (err) {
+    console.warn('[wakeWord] mic listener error', err);
+  }
+  return () => {
+    _micPermissionListeners.delete(fn);
+  };
+}
+
+/** AD-736: read the current mic-permission state. Synchronous; no Promise. */
+export function getMicPermissionState(): MicPermissionState {
+  return _micPermissionState;
+}
+
+function _setMicPermission(next: MicPermissionState): void {
+  if (next === _micPermissionState) return;
+  _micPermissionState = next;
+  for (const fn of _micPermissionListeners) {
+    try {
+      fn(next);
+    } catch (err) {
+      console.warn('[wakeWord] mic listener error', err);
+    }
+  }
+}
+
 export interface WakeWordStateDetail {
   fallbackReason?: WakeFallbackReason;
   /** For `capturing` states: which trigger fired. */
@@ -141,13 +187,38 @@ export async function startWakeWordLoop(
     }
   });
 
-  // Speech recognition is mandatory for both ONNX and fallback paths.
+  // AD-736: feature-detect SR support, then hardware presence. The two
+  // failure modes carry different Captain-facing guidance, so distinguish
+  // them at the boundary.
   if (!isSpeechRecognitionSupported()) {
+    _setMicPermission('unavailable');
     _setState('off', { fallbackReason: 'speech_recognition_unavailable' });
     _emitFallbackToast(
       'Voice loop unavailable: SpeechRecognition not supported in this browser.',
     );
     return;
+  }
+
+  // AD-736 Tier-2: hardware probe. If enumerateDevices is unavailable or
+  // rejects, fall through optimistically — the SR onerror path will still
+  // catch denial. Optimism preserves backward compat with browsers (Safari
+  // < 14) that gate mediaDevices behind getUserMedia. Note: enumerateDevices
+  // requires a secure context (HTTPS or localhost); over plain HTTP the
+  // mediaDevices object is undefined and the guard short-circuits.
+  try {
+    const mediaDevices = navigator.mediaDevices;
+    if (mediaDevices && typeof mediaDevices.enumerateDevices === 'function') {
+      const devices = await mediaDevices.enumerateDevices();
+      const hasAudioInput = devices.some((d) => d.kind === 'audioinput');
+      if (!hasAudioInput) {
+        _setMicPermission('unavailable');
+        _setState('off', { fallbackReason: 'speech_recognition_unavailable' });
+        console.info('[wakeWord] no audio input device detected; voice loop disabled');
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('[wakeWord] enumerateDevices probe failed; continuing', err);
   }
 
   // Try the ONNX path first. Tier-2 log-and-degrade on failure.
@@ -230,10 +301,19 @@ function _startContinuousRecognition(): void {
     },
     (err) => {
       if (err === 'not-allowed' || err === 'service-not-allowed') {
+        _setMicPermission('denied');
         _setState('off', { fallbackReason: 'mic_permission_denied' });
         _emitFallbackToast(
           'Voice loop disabled: microphone permission denied.',
         );
+        _teardown();
+      } else if (err === 'audio-capture') {
+        // AD-736: SpeechRecognition.error 'audio-capture' = mic hardware
+        // problem (disconnected, in use by another app). Distinct from
+        // permission denial; surfaces as 'unavailable'.
+        _setMicPermission('unavailable');
+        _setState('off', { fallbackReason: 'speech_recognition_unavailable' });
+        console.info('[wakeWord] audio-capture error; voice loop disabled');
         _teardown();
       }
       // Other errors are transient; speechInput auto-restarts.
@@ -247,6 +327,13 @@ function _startContinuousRecognition(): void {
 }
 
 function _ingestTranscript(transcript: string): void {
+  // AD-736: receiving any transcript means SR ran successfully, which
+  // means the browser honoured the mic-permission grant. Promote state
+  // once — subsequent calls short-circuit because _setMicPermission is
+  // idempotent.
+  if (_micPermissionState !== 'granted') {
+    _setMicPermission('granted');
+  }
   if (_bargedIn) return;
   if (_state === 'off') return;
 
@@ -458,6 +545,12 @@ function _teardown(): void {
   } catch {
     // Tier-1 swallow: stopListening is best-effort during teardown.
   }
+  // AD-736: when the loop tears down, mic-permission state reverts to
+  // pending UNLESS we know the browser refused permission. Permanent
+  // denial sticks until page reload (the browser does not re-prompt).
+  if (_micPermissionState !== 'denied' && _micPermissionState !== 'unavailable') {
+    _setMicPermission('pending');
+  }
 }
 
 function _emitFallbackToast(message: string): void {
@@ -519,6 +612,9 @@ export function _resetForTests(): void {
   _setState('off');
   _lastFallbackToastAt = 0;
   _stateListeners.clear();
+  // AD-736: reset mic permission state + listeners for test isolation.
+  _micPermissionState = 'pending';
+  _micPermissionListeners.clear();
 }
 
 export {
