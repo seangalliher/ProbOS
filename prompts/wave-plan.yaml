@@ -3404,7 +3404,7 @@ waves:
       - "prompts/ad-721b-2-browser-real-audio-capture.md"
     builder_required: true
     issues_to_close: [559, 560]
-    status: drafted
+    status: done
 
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
