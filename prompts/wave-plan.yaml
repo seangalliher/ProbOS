@@ -3406,6 +3406,20 @@ waves:
     issues_to_close: [559, 560]
     status: done
 
+  - id: "156"
+    title: "HXI ergonomics + agent expression — AD-718f volume + AD-705d mic UX + AD-722a-3 emotion taxonomy"
+    kind: main
+    depends_on: ["155"]
+    dispatch_prompt: "prompts/WAVE-156-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-718f-per-agent-volume.md"
+      - "prompts/ad-705d-mic-permission-ux.md"
+      - "prompts/ad-722a-3-emotion-taxonomy.md"
+    builder_required: true
+    issues_to_close: [527, 558, 612]
+    status: drafted
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

@@ -2336,3 +2336,17 @@ New `AttachmentsConfig.multi_image_warn_threshold: int = 5` triggers a Tier-2 lo
 **What this does NOT change.** `buildHeuristicTrack` / `lipSyncTrack.ts` are bit-for-bit identical. `voice.ts` is untouched (the existing `'start' | 'end' | 'boundary'` event set is unchanged). No new TTS path. No new npm dependencies (Web Audio + MediaRecorder + fetch + FormData are platform standards). No HXI Captain-facing UI surface.
 
 **Files.** `ui/src/audio/lipSyncCapture.ts` (new — capture + upload + `LipSyncFrame` / `LipSyncResponse` / `CaptureCapability` types). `ui/src/audio/useLipSyncCapture.ts` (new — React hook). `ui/src/components/profile/CrewVRM.tsx` (consumer wire: `useLipSyncCapture` call, `realFramesRef`, `_sampleRhubarbFrames` helper, per-frame preference check, `lipsync.reset()` on utterance end). `ui/src/audio/__tests__/lipSyncCapture.test.ts` (4 pure tests). `ui/src/audio/__tests__/useLipSyncCapture.test.tsx` (3 hook tests). `ui/src/__tests__/CrewVRM.realAudioFallback.test.tsx` (1 regression test, co-located with the existing CrewVRM tests at `ui/src/__tests__/` — the prompt's path (`ui/src/components/profile/__tests__/`) was based on a pass-1 review assertion that did not match the live codebase).
+
+### AD-735 — Per-agent volume slider in agent profile card (Wave 156)
+
+**Date:** 2026-05-13. **Status:** Shipped. **Closes** #527. **Parent AD:** AD-718 (per-agent voice profile).
+
+**Problem.** The `VoiceProfile.volume` field has been on `CrewProfile` since AD-718 (`crew_profile.py:108`), is round-tripped via `SetVoiceProfileRequest` (`api_models.py:243`) and `PUT /api/agents/{agent_id}/voice-profile` (`routers/agents.py:236`), is in the TS store type, and is applied at playback time (`ui/src/audio/voice.ts:139`, `utterance.volume = effective.volume ?? 0.8`). The UI never exposed a slider — Captain had no way to lower one chatty agent without muting the bridge.
+
+**Decision.** Add one Volume slider row in `ProfileInfoTab.tsx` between Rate and Wake-phrase, mirroring the Pitch/Rate slider pattern verbatim — same `onMouseUp` / `onTouchEnd` persistence semantics, same label width, native `<input type="range">`. Inline SVG speaker glyph (`strokeWidth: 1.5`, amber when audible / dim when muted) per HXI Design Principle #3 — no emoji. Numeric display is percent (`Math.round(value * 100)%`) rather than raw 2-decimal because volume is a perceptual ratio that reads more naturally as 70% than 0.70 (Pitch/Rate stay as raw decimals because octave-shift and time-stretch are physically meaningful as ratios).
+
+**What this does NOT change.** Wire shape unchanged (`SetVoiceProfileRequest.volume` already exists). VoiceProfile validators unchanged (`__post_init__` already clamps to `[0.0, 1.0]`). Emotional modulation composition unchanged — `applyEmotionalModulation` still multiplies onto the baseline volume, so lowering the slider lowers BOTH baseline and modulated outcomes proportionally (desired). AD-718a proposal flow untouched. AD-731 attachment invariant respected — no bus/RPC/attachment changes.
+
+**Tests (+5 Vitest).** `ui/src/components/profile/__tests__/ProfileInfoTab.volumeSlider.test.tsx` — default 0.8 → 80%, persisted value 0.35 → 35%, persist via PUT on mouse-up, in-range boundary round-trip (0 and 1), accessible label via `getByRole('slider', { name: 'Volume' })`.
+
+**Files.** `ui/src/components/profile/ProfileInfoTab.tsx` (insertion of Volume slider row). `ui/src/components/profile/__tests__/ProfileInfoTab.volumeSlider.test.tsx` (new).

@@ -356,6 +356,44 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
               />
               <span style={{ color: '#c0bab0', minWidth: 32 }}>{(currentProfile.rate ?? 0.95).toFixed(2)}</span>
             </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span
+                style={{ color: '#8888a0', minWidth: 50, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                {/* AD-735: inline SVG speaker glyph (HXI Design Principle #3 — no emoji).
+                    Matches the DecisionSurface speaker family. */}
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke={(currentProfile.volume ?? 0.8) > 0 ? '#f0b060' : '#666680'}
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M2 6v4l3 3h1V3H5L2 6z" />
+                  <path d="M9 5.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5" />
+                </svg>
+                <span>Volume</span>
+              </span>
+              <input
+                type="range"
+                min={0} max={1} step={0.05}
+                value={currentProfile.volume ?? 0.8}
+                onChange={(e) =>
+                  setCurrentProfile(p => ({ ...p, volume: parseFloat(e.target.value) }))
+                }
+                onMouseUp={() => persistVoiceProfile(currentProfile)}
+                onTouchEnd={() => persistVoiceProfile(currentProfile)}
+                aria-label="Volume"
+                data-testid="volume-slider"
+                style={{ flex: 1 }}
+              />
+              <span style={{ color: '#c0bab0', minWidth: 32 }}>
+                {Math.round((currentProfile.volume ?? 0.8) * 100)}%
+              </span>
+            </label>
             {/* AD-718c: per-agent wake phrase. Empty = no per-agent wake;
                 system-wide "Computer" still routes to the agent via @callsign. */}
             <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
