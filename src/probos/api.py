@@ -196,6 +196,7 @@ def create_app(runtime: Any) -> FastAPI:
         clinical, counselor, procedures, gaps,
         recreation, memory_graph, bills, emergent_leadership, orders,
         infodynamic, diagnostic_context, nl_graph_query,
+        avatars,  # AD-721b-1 (Wave 155): /api/avatars/lipsync
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -204,6 +205,7 @@ def create_app(runtime: Any) -> FastAPI:
         clinical, counselor, procedures, gaps,
         recreation, memory_graph, bills, emergent_leadership, orders,
         infodynamic, diagnostic_context, nl_graph_query,
+        avatars,
     ):
         app.include_router(r.router)
 

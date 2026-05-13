@@ -12,13 +12,20 @@ import io
 import json
 
 
-# Magic-byte signatures for the four allowed MIMEs.
-# Each entry: list of (offset, signature_bytes) tuples — ALL must match.
+# Magic-byte signatures for the allowed binary MIMEs.
+# Each entry: list of (offset, signature_bytes) tuples — ALL must match
+# unless the MIME is in ``_ANY_OF`` (any-of alternative match).
 _SIGNATURES: dict[str, list[tuple[int, bytes]]] = {
     "image/png":  [(0, b"\x89PNG\r\n\x1a\n")],
     "image/jpeg": [(0, b"\xff\xd8\xff")],
     "image/gif":  [(0, b"GIF87a"), (0, b"GIF89a")],   # either alternative
     "image/webp": [(0, b"RIFF"), (8, b"WEBP")],       # both required
+    # AD-721b-1 (Wave 155): browser-captured utterance audio for the
+    # rhubarb-lip-sync backend. WebM containers begin with the EBML magic
+    # (\x1a\x45\xdf\xa3); WAV files share RIFF with WebP but with WAVE at
+    # offset 8 (rhubarb-lip-sync supports WAV natively).
+    "audio/webm": [(0, b"\x1a\x45\xdf\xa3")],
+    "audio/wav":  [(0, b"RIFF"), (8, b"WAVE")],       # both required
 }
 
 # MIMEs whose sigs are alternatives (any-of) instead of conjunctions (all-of).

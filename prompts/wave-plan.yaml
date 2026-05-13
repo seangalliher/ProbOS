@@ -3390,6 +3390,22 @@ waves:
     issues_to_close: [627, 628, 629, 548, 553, 563, 646]
     status: done
 
+  - id: "155"
+    title: "Phoneme-accurate lip-sync v2 — AD-721b-1 (rhubarb backend) + AD-721b-2 (real-audio capture)"
+    # License: rhubarb-lip-sync is MIT (verified gh api repos/DanielSWolf/rhubarb-lip-sync/license).
+    # Per User License hygiene rule (2026-05-09): MIT is top permissive — clean to absorb.
+    # Operator brings the rhubarb binary (gitignored), ProbOS provides the wrapper.
+    kind: main
+    depends_on: ["154"]
+    dispatch_prompt: "prompts/WAVE-155-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-721b-1-rhubarb-lipsync-backend.md"
+      - "prompts/ad-721b-2-browser-real-audio-capture.md"
+    builder_required: true
+    issues_to_close: [559, 560]
+    status: drafted
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

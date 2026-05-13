@@ -30,6 +30,12 @@ _MIME_TO_EXT: dict[str, str] = {
     "text/markdown":     "md",
     "application/json":  "json",
     "text/csv":          "csv",
+    # AD-721b-1 (Wave 155): browser-captured utterance audio for the
+    # rhubarb-lip-sync backend. Magic-byte signatures are registered in
+    # ``attachments/mime.py._SIGNATURES``; the store needs the
+    # mime→extension mapping to persist captured blobs.
+    "audio/webm":        "webm",
+    "audio/wav":         "wav",
 }
 
 

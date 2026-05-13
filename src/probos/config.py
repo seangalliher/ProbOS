@@ -1132,6 +1132,12 @@ class AttachmentsConfig(BaseModel):
             "text/markdown",
             "application/json",
             "text/csv",
+            # AD-721b-1 (Wave 155): browser-captured utterance audio for the
+            # rhubarb-lip-sync backend. Both mimes have unambiguous magic
+            # bytes registered in attachments/mime.py._SIGNATURES; magic-byte
+            # sniffing remains the primary correctness signal.
+            "audio/webm",
+            "audio/wav",
         ],
     )
     # AD-720a/AD-732: tier selection for vision-capable LLM dispatch.
@@ -1166,6 +1172,37 @@ class AttachmentsConfig(BaseModel):
                 f"AD-720a/AD-732: vision_tier must be one of {sorted(allowed)}; got {v!r}"
             )
         return v
+
+
+class LipSyncConfig(BaseModel):
+    """AD-721b-1 — Server-side lip-sync backend selection.
+
+    Default: ``heuristic`` — the AD-721b v1 text→viseme driver in
+    ``ui/src/audio/lipSyncTrack.ts``. Operator opts in to ``rhubarb``
+    by setting ``backend: "rhubarb"`` AND providing the binary at
+    ``binary_path``. If the binary is missing or a probe fails, the
+    system logs WARNING and degrades to the heuristic path — speech
+    must NEVER stop animating because of a viseme failure.
+    """
+
+    enabled: bool = True
+    """Master switch for the lip-sync pipeline. ``False`` disables both
+    backends — CrewVRM falls back to the AD-721 D5 amplitude path."""
+
+    backend: Literal["heuristic", "rhubarb"] = "heuristic"
+    """``heuristic``: AD-721b v1 text→viseme. ``rhubarb``: subprocess to
+    rhubarb-lip-sync for phonetic alignment of real audio."""
+
+    binary_path: str = "tools/rhubarb/rhubarb"
+    """Path (relative to repo root or absolute) to the rhubarb binary.
+    On Windows the wrapper auto-appends ``.exe`` if the literal path
+    does not exist. Operator places the binary themselves; the repo
+    never ships it (gitignored under ``/tools/``)."""
+
+    timeout_seconds: float = 30.0
+    """Subprocess timeout. rhubarb on a 5-10s utterance typically takes
+    1-3s; the default leaves ample headroom for cold disk reads. Tier-2
+    log-and-degrade on TimeoutExpired — falls back to heuristic."""
 
 
 class A2APeerConfig(BaseModel):
@@ -3350,6 +3387,7 @@ class SystemConfig(BaseModel):
     avatar_telemetry: AvatarTelemetryConfig = Field(default_factory=AvatarTelemetryConfig)  # AD-722
     dm_sanity_gate: DmSanityGateConfig = Field(default_factory=DmSanityGateConfig)  # AD-724
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
+    lipsync: LipSyncConfig = Field(default_factory=LipSyncConfig)  # AD-721b-1 (Wave 155)
     spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481

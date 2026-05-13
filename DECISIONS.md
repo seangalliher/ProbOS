@@ -2292,3 +2292,27 @@ New `AttachmentsConfig.multi_image_warn_threshold: int = 5` triggers a Tier-2 lo
 **What this does NOT change.** Strict-mode (Tier-3 propagate) stays forward-marker AD-724-3. Repetition cache poisoning across the retry boundary is a documented deferral (forward marker for follow-up if false positives surface in production). No NATS / transport / event-type / consensus / agent-side changes.
 
 **Files.** `src/probos/cognitive/dm_sanity_gate.py` (3 new fields on `DmSanityGateConfig` + `Field` import + `TYPE_CHECKING` `RuntimeOS` guard + `_normalize_for_repetition` + `_similarity_ratio` + revised `check_repetition` + `should_retry` on `DmSanityResult` + `apply_dm_sanity` module helper). `src/probos/config.py` (mirror the 3 new fields on the `DmSanityGateConfig` duplicate at line 3236). `src/probos/routers/agents.py` (one-shot retry block after `sanity_gate.process()` at line ~1108). `src/probos/proactive.py` (module-top `apply_dm_sanity` import + call at `_extract_and_execute_actions` line 2514 replacing inline `re.sub` + call at `_extract_and_execute_replies` line 3403 before `_strip_bracket_markers`). `tests/test_ad724_dm_hardening.py` (new, 12 boundary tests covering all three sub-ADs).
+
+### AD-721b-1 — Server-side rhubarb-lip-sync backend (Wave 155)
+
+**Date:** 2026-05-12. **Status:** Shipped. **Closes** #559. **Parent AD:** AD-721b v1 (Wave 138).
+
+**Problem.** AD-721b v1 (Wave 138) drives the five VRoid vowel morphs from a text-only heuristic: `buildHeuristicTrack(text, {rate})` in `ui/src/audio/lipSyncTrack.ts`. "Cat" and "cot" produce identical viseme schedules because the heuristic does not see phonemes or audio timing. Counselor (Echo) flagged this on the 2026-05-09 follow-up.
+
+**Decision.** Add a server-side backend that wraps the MIT-licensed `rhubarb-lip-sync` binary (verified MIT via `gh api repos/DanielSWolf/rhubarb-lip-sync/license` -> `key: mit`). Operator drops the binary at `tools/rhubarb/rhubarb` (.exe on Windows); `/tools/` is gitignored. Default `lipsync.backend = "heuristic"` preserves v1 behavior bit-for-bit. Operator opts in with `lipsync.backend: "rhubarb"`.
+
+**9 -> 15 viseme mapping.** rhubarb emits the Preston Blair 9-set; the renderer consumes the Oculus 15-set. The wire boundary maps with explicit fallback to `sil` for any unknown shape (forward-compat). Consonant-side mapping is intentionally lossy because the renderer uses vowel morphs only.
+
+**Honest-degrade (Tier-2).** Every callable in `rhubarb_backend.py` returns False / None / [] on failure with a WARNING log; never raises. Endpoint returns `{backend: "heuristic", frames: []}` when the backend produces nothing — the client (AD-721b-2) treats the empty schedule as the cue to fall through to v1 heuristic. Speech never stops animating because of a viseme failure.
+
+**Section 0.5 — Validation seam.** Browser-captured audio (AD-721b-2) uploads via `POST /api/chat/attachments/multipart` which delegates to `_validate_and_store_attachment`. Three parallel registries needed audio MIME entries: `AttachmentsConfig.allowed_mime_types` (config.py), `_SIGNATURES` (attachments/mime.py), and `_MIME_TO_EXT` (attachments/filesystem_store.py). The third was a Builder-discovered completion of Section 0.5: the prompt called out the first two; the third is required for the store to actually persist audio blobs.
+
+**AD-731 invariant.** Audio bytes flow through `AttachmentStore` as content-addressable SHA-256 refs. The endpoint body carries only the 64-char hex ref; no inline base64 anywhere.
+
+**Subprocess discipline.** `asyncio.create_subprocess_exec` with absolute path, `-f json` for structured output, 30s default timeout, full stderr capture for diagnostic logs. Never `shell=True`. `proc.kill()` on timeout to prevent zombies.
+
+**What this does NOT change.** No client-side code; AD-721b-2 ships the consumer wiring. No change to `_validate_and_store_attachment` / `_get_attachment_store` / `AttachmentStore` Protocol. No federation. No caching. No streaming.
+
+**Files.** `src/probos/avatars/rhubarb_backend.py` (new — wrapper + mapping + `VisemeFrame`). `src/probos/routers/avatars.py` (new — `POST /api/avatars/lipsync`). `src/probos/config.py` (new `LipSyncConfig` model + `SystemConfig.lipsync` field + extended `AttachmentsConfig.allowed_mime_types`). `src/probos/attachments/mime.py` (extended `_SIGNATURES` with EBML + RIFF/WAVE). `src/probos/attachments/filesystem_store.py` (extended `_MIME_TO_EXT` with audio mappings). `src/probos/api.py` (router registration). `tests/test_ad721b1_rhubarb_backend.py` (new — 16 boundary tests).
+
+**Operator action item.** To exercise the rhubarb path end-to-end, download the platform binary from https://github.com/DanielSWolf/rhubarb-lip-sync/releases, drop it at `tools/rhubarb/rhubarb(.exe)`, set `lipsync.backend: rhubarb` in `config/system.yaml`, restart. Without the binary, the system stays on the AD-721b v1 heuristic — zero behavior change.

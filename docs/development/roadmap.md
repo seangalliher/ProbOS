@@ -353,7 +353,7 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-718f | Per-agent volume control surface | [#527](https://github.com/seangalliher/ProbOS/issues/527) | 4 |
 | AD-721a | Captain's avatar editor UI | [#528](https://github.com/seangalliher/ProbOS/issues/528) | 3 |
 | AD-721b | Phoneme-accurate lip-sync v1 (heuristic 5-vowel viseme driver, multi-mesh) — **SHIPPED Wave 138** | [#529](https://github.com/seangalliher/ProbOS/issues/529) | 3 |
-| AD-721b-1 | Server-side rhubarb-lip-sync backend (replaces heuristic phoneme schedule) | [#559](https://github.com/seangalliher/ProbOS/issues/559) | 3 |
+| AD-721b-1 | Server-side rhubarb-lip-sync backend (replaces heuristic phoneme schedule) — **SHIPPED Wave 155** | [#559](https://github.com/seangalliher/ProbOS/issues/559) | 3 |
 | AD-721b-2 | Browser-side real-audio capture via `MediaStreamDestination` | [#560](https://github.com/seangalliher/ProbOS/issues/560) | 3 |
 | AD-721b-3 | whisper.cpp WASM tiny.en for offline phoneme alignment (~75 MB model) | [#561](https://github.com/seangalliher/ProbOS/issues/561) | 4 |
 | AD-721c | VR / spatial-scene avatar mode | [#530](https://github.com/seangalliher/ProbOS/issues/530) | 4 |

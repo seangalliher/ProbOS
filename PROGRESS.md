@@ -8,7 +8,10 @@ back to OSS).
 **Authoritative state.**
 - `prompts/wave-plan.yaml` — wave roster (current wave: 150 done; next slot is 151).
 - `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-734).
-- `tests/` — 13381 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 600 vitest; gate runs `-n 4 --dist=loadfile`.
+- `tests/` — 13397 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout outside this wave) + 600 vitest; gate runs `-n 4 --dist=loadfile`.
+
+**Wave 155 in flight (2026-05-12):**
+- AD-721b-1 — Server-side rhubarb-lip-sync backend (+16 pytest tests; closes #559). MIT-licensed operator-provided binary at `tools/rhubarb/`; honest-degrade to AD-721b v1 heuristic when binary absent. Section 0.5 extends `AttachmentsConfig.allowed_mime_types`, `attachments/mime.py._SIGNATURES`, and `attachments/filesystem_store.py._MIME_TO_EXT` for `audio/webm` and `audio/wav`. `POST /api/avatars/lipsync` endpoint accepts AD-720 sha256 attachment refs and returns Oculus-mapped viseme schedule.
 
 **Wave 154 in flight (2026-05-12):**
 - AD-719c + AD-718d-1 — HXI polish: @-picker keyboard nav (↑/↓/Tab) + ModulationIndicator pulse overlay (+6 Vitest tests; closes #548, #553).
