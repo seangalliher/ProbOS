@@ -3418,7 +3418,7 @@ waves:
       - "prompts/ad-722a-3-emotion-taxonomy.md"
     builder_required: true
     issues_to_close: [527, 558, 612]
-    status: drafted
+    status: shipped
 
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
