@@ -2481,3 +2481,14 @@ Browser `voice.ts` `speakResponse` refactored. **Load-bearing zero-HTTP-per-utte
 
 **Why now / source of decision.** Architecture session 2026-05-13 reviewing letta-ai/letta scout report. The Letta "core memory blocks" pattern (always-in-context, agent-edited) is the inspiration; ProbOS adopts the *always-in-context* half and rejects the *agent-edited* half on governance grounds. Pattern-absorption per the OSS-license discipline (no Letta code imported).
 
+
+
+### AD-737a — Divergence-detector hygiene (Wave 158)
+
+**Date:** 2026-05-13. **Status:** SHIPPED. **Wave:** 158. **Closes:** [#648](https://github.com/seangalliher/ProbOS/issues/648). **Parent:** AD-737.
+
+Three small hygiene items in `src/probos/avatars/divergence_detector.py` surfaced during Wave 156 GATE 2 review. (1) Hoist `import dataclasses` to module-top; the inline `import dataclasses as _dc` inside `apply_divergence_check` is removed. (2) Collapse the two-pass `parse_intent_self_tag` re-parse. The Wave-156 implementation parsed v1-only first, then re-parsed with `custom_emotions` if v1 returned None. Caller audit confirmed only two production call sites, both inside `apply_divergence_check`. Collapsed to a single call by fetching the palette first then parsing once. Behavior is identical because `parse_intent_self_tag(text)` is `parse_intent_self_tag(text, custom_emotions=None)` and `_resolve_intent_name` short-circuits to the v1-only path on `None`. (3) Documented the test-fake contract for `runtime.profile_store` / `divergence_results` / `divergence_history` in the `apply_divergence_check` docstring. Promotion to a `ProbOSRuntimeProtocol` is deferred (forward marker: AD-737a-1) until a second detector needs the same shape.
+
+**Supersession.** The Wave-156 closure block reserved `AD-737a` as a forward marker for `TS-side parity for custom emotions`. That gap no longer exists: custom-emotion modulation is computed server-side and the TS layer only sees the v1 manifest names. The forward-marker prose in the Wave-156 block is retained as historical context.
+
+**Files:** `src/probos/avatars/divergence_detector.py` (imports + docstring + collapsed parse), `tests/test_ad737a_hygiene.py` (new — 3 boundary tests pinning the single-pass invariant with a counting wrapper).

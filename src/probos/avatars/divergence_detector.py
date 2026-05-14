@@ -15,6 +15,7 @@ AD-727 explicitly authorizes for trust wiring.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 from dataclasses import dataclass
@@ -388,11 +389,27 @@ def apply_divergence_check(
     because the signal is REASONING-vs-OUTPUT (intent self-tag vs.
     deterministic modulation projection). It never compares image to
     model.
+
+    Test-fake contract for ``runtime``-shaped objects (AD-737a):
+      - ``runtime.profile_store`` (optional): exposes ``get(agent_id) -> CrewProfile | None``.
+        Accessed via ``getattr(..., None)``; missing attribute = no custom emotions.
+        Test fakes MAY omit this attribute entirely (defaults to "no palette").
+      - ``runtime.divergence_results`` (optional): mutable ``dict[str, DivergenceResult]``.
+        Accessed via ``getattr(..., None)``; missing attribute = result not stored.
+        Test fakes MAY omit; production runtime allocates in startup.
+      - ``runtime.divergence_history`` (optional): mutable ``dict[str, deque]``.
+        Same shape as ``divergence_results``; test fakes MAY omit.
+      No ``ProbOSRuntime`` Protocol exists today (only the concrete class at
+      ``runtime.py:200``). Promotion to a Protocol is deferred until a second
+      detector needs the same shape (forward marker: AD-737a-1).
     """
-    intent = parse_intent_self_tag(response_text)
-    # AD-737: look up the agent's custom emotion palette (tier-2
-    # log-and-degrade). Then re-parse with the palette so custom names
-    # like ``professional_concern`` resolve through ``inherits``.
+    # AD-737a: single-pass parse -- fetch the agent's custom emotion
+    # palette FIRST (tier-2 log-and-degrade), then parse with the
+    # palette so v1 names AND custom names both resolve in one call.
+    # ``custom_emotions`` defaults to ``None`` which makes
+    # ``parse_intent_self_tag`` behave identically to the legacy v1-only
+    # signature, preserving backward compat with test callers that
+    # don't pass the kwarg.
     custom_emotions: dict[str, Any] | None = None
     store = getattr(runtime, "profile_store", None)
     if store is not None:
@@ -406,10 +423,9 @@ def apply_divergence_check(
                 "AD-737: profile_store custom_emotions lookup failed for %s",
                 agent_id, exc_info=True,
             )
-    if intent is None and custom_emotions:
-        intent = parse_intent_self_tag(
-            response_text, custom_emotions=custom_emotions,
-        )
+    intent = parse_intent_self_tag(
+        response_text, custom_emotions=custom_emotions,
+    )
     # Strip unconditionally when feature ON -- even on parse failure
     # (unknown emotion / malformed tag), the visible tag must not leak.
     stripped = strip_intent_self_tag(response_text)
@@ -445,8 +461,7 @@ def apply_divergence_check(
         applied_fired_rules=tuple(modulation.fired_rules),
     )
     if resolved_v1 != intent:
-        import dataclasses as _dc
-        result = _dc.replace(result, intent_emotion=intent)
+        result = dataclasses.replace(result, intent_emotion=intent)
 
     # Centralized per-agent store; volatile across restarts.
     div_results = getattr(runtime, "divergence_results", None)
