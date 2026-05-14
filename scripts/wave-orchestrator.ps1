@@ -293,6 +293,14 @@ DISPATCH (paste to Builder):
   Per-commit gate: full pytest passes, test count non-decreasing,
   pre-commit deletion sanity check.
 
+  UI gate (AD-738b / BF-279): if the prompt touches any file under
+  ``ui/src/**``, run BOTH ``cd ui; npx vitest run`` AND ``cd ui; npm run build``
+  before the commit. Vitest alone does NOT exercise ``tsc -b`` strict checks;
+  ``npm run build`` is the only signal that the production bundle compiles.
+  Detection: ``git diff --name-only HEAD~1..HEAD -- ui/src/`` after the
+  per-prompt edits; if non-empty, run both. The standing rule lives in
+  ``prompts/BUILDER-EXECUTION-PLAN.md`` Standing Rules section.
+
   Begin in dependency order; surface only on hard-stop conditions per
   BUILDER-EXECUTION-PLAN.md.
 

@@ -2505,3 +2505,16 @@ Two small hygiene items surfaced during Wave 157 GATE 2 review, plus a tracker-r
 **Supersession + slot reuse.** The Wave-157 closure block reserved AD-738a/b/c/d as forward markers for per-agent voice selection / GPU TTS eval / server-side voice modulation / TTS text caching. Those four markers are renumbered atomically in this AD to AD-738f / AD-738g / AD-738h / AD-738i so Wave 158 hygiene work can reuse the AD-738a / AD-738b / AD-738c slots (issues #650 / #651 / #652). The Tier-4 work remains unshipped under the new names in `docs/development/roadmap.md:361-364`; the original Wave-157 closure paragraph is retained verbatim above for audit history.
 
 **Files:** `scripts/wave-orchestrator.ps1` (Format-Gate2 COMMIT-COUNT AUDIT block), `ui/src/audio/voice.ts` (MODE-gate on `_resetTtsStatusForTests`), `ui/src/audio/__tests__/voice.testGate.test.tsx` (new — 2 Vitest tests pinning MODE-gate inertness and happy path), `docs/development/roadmap.md` (4 forward markers renumbered to AD-738f/g/h/i).
+
+
+### AD-738b — Per-wave UI gate must include npm run build (Wave 158)
+
+**Date:** 2026-05-13. **Status:** SHIPPED. **Wave:** 158. **Closes:** [#651](https://github.com/seangalliher/ProbOS/issues/651). **Parent:** BF-279 (2026-05-13, stale `ui/dist/` for ~32h).
+
+Codifies the BF-279 standing rule: any wave touching `ui/src/**` MUST run BOTH `cd ui; npx vitest run` AND `cd ui; npm run build` before each per-prompt commit. Vitest skips `tsc -b` strict checks, so a test suite can be 100% green while `vite build` errors. BF-279 was the canonical case study: Wave 156's `MicPermissionHint.tsx` introduced `JSX.Element` (unresolved under React 19 + bundler-mode tsconfig), `vite build` errored silently, `ui/dist/` stayed frozen for ~32 hours, and three waves' user-visible work never reached the operator's browser despite all Vitest tests passing.
+
+Two artifacts updated. `prompts/BUILDER-EXECUTION-PLAN.md` Standing Rules section gains a `UI gate (BF-279, 2026-05-13)` bullet citing the commit (`2d685bc5`). `scripts/wave-orchestrator.ps1:Format-BuildDispatch` emits a `UI gate (AD-738b / BF-279)` block in the dispatch text whenever Builder kicks off a new wave, with the explicit `git diff --name-only HEAD~1..HEAD -- ui/src/` detection recipe.
+
+**Slot reuse.** The Wave-157 closure block reserved `AD-738b` for `GPU-accelerated TTS backend eval (Kokoro / StyleTTS2)`; that forward marker was renumbered to `AD-738g` by AD-738a (Wave 158).
+
+**Files:** `prompts/BUILDER-EXECUTION-PLAN.md` (Standing Rules — new bullet), `scripts/wave-orchestrator.ps1` (Format-BuildDispatch — new UI gate paragraph). No code changes; no tests added (process-change-only).
