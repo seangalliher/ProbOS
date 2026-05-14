@@ -139,7 +139,14 @@ async def chat(
     # callsign edge cases (parse misses).
     if is_directed_mention(text):
         all_callsigns, remaining_message = extract_all_leading_callsign_mentions(text)
-        if len(all_callsigns) >= 1:
+        # BF-287 (2026-05-13): AD-719 spec was single-mention → legacy DM
+        # path (response field), multi-mention → fan-out (per_agent_replies).
+        # The original implementation used ``>= 1`` which caught EVERY mention
+        # in the fan-out branch, breaking the four AD-719 single-mention
+        # contract tests + producing "(callsign not recognized)" stubs for
+        # unresolved single mentions instead of falling through to NL. ``>= 2``
+        # restores the documented behavior.
+        if len(all_callsigns) >= 2:
             t_start_fanout = time.monotonic()
             from probos.api_models import PerAgentReply
             from probos.types import IntentMessage as _IntentMessage
