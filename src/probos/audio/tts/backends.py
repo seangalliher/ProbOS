@@ -30,6 +30,13 @@ class TTSBackend(Protocol):
 
     name: str
 
-    async def synthesize(self, text: str) -> TTSResult | None:
-        """Synthesize ``text`` to audio bytes. Return ``None`` on any failure."""
+    async def synthesize(
+        self, text: str, emotion: str | None = None
+    ) -> TTSResult | None:
+        """Synthesize ``text`` to audio bytes. Return ``None`` on any failure.
+
+        AD-738e-1: ``emotion`` is an optional v1 ``EmotionalIntent`` name
+        (lowercase) used to apply per-emotion prosody overrides. ``None``
+        or unknown names keep backend defaults (additive guarantee).
+        """
         ...

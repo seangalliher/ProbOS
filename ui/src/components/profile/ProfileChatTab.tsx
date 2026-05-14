@@ -121,7 +121,14 @@ export function ProfileChatTab({ agentId }: Props) {
       useStore.getState().addAgentMessage(agentId, 'agent', reply);
       // AD-718: TTS playback for agent reply only (skip system error placeholders).
       if (ttsEnabled && reply && !reply.startsWith('(')) {
-        speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, agentId);
+        // AD-738e-1: forward parsed emotion (v1 name) so the TTS endpoint
+        // applies per-emotion prosody. ``data.emotion`` may be null on
+        // older responses or when divergence detection is OFF — pass
+        // ``undefined`` so the speakResponse helper omits the field.
+        const _emotion = typeof data?.emotion === 'string' && data.emotion.length > 0
+          ? data.emotion
+          : undefined;
+        speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, agentId, _emotion);
       }
     } catch {
       useStore.getState().addAgentMessage(agentId, 'agent', '(communication error)');

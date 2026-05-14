@@ -162,9 +162,17 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
         # long input but a runaway prompt shouldn't tie up the subprocess.
         raise HTTPException(status_code=413, detail="text_too_long")
 
+    # AD-738e-1: optional ``emotion`` is a v1 EmotionalIntent name.
+    # Tier-1 boundary validation: non-string / overlong values are
+    # silently treated as None (no override). PiperBackend itself
+    # validates the name against the override table.
+    emotion = payload.get("emotion")
+    if not isinstance(emotion, str) or len(emotion) > 64 or not emotion.strip():
+        emotion = None
+
     from probos.audio.tts import select_backend
     backend = select_backend(cfg.backend, cfg)
-    result = await backend.synthesize(text)
+    result = await backend.synthesize(text, emotion=emotion)
     if result is None:
         return {
             "backend": "disabled",

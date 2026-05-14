@@ -1366,10 +1366,46 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if _avatar_event_bus is not None:
         _avatar_event_bus.notify(agent_id)
 
+    # AD-738e-1: expose the parsed + v1-resolved emotion so the browser
+    # can pass it to /api/avatars/tts for per-emotion prosody. Tier-2
+    # log-and-degrade: missing divergence result or unresolvable name
+    # falls through to ``None`` (browser then omits the field; server
+    # applies default prosody). Uses the public ``resolve_emotion_to_v1``
+    # alias (AD-738e-1 Section 5b) — no cross-module private access.
+    _emotion: str | None = None
+    try:
+        _dr = getattr(runtime, "divergence_results", None)
+        if _dr is not None:
+            _result = _dr.get(agent_id)
+            if _result is not None:
+                _raw = getattr(_result, "intent_emotion", None)
+                if isinstance(_raw, str) and _raw:
+                    from probos.avatars.divergence_detector import (
+                        resolve_emotion_to_v1,
+                    )
+                    _store = getattr(runtime, "profile_store", None)
+                    _custom = None
+                    if _store is not None and hasattr(_store, "get"):
+                        try:
+                            _crew = _store.get(agent_id)
+                            _custom = (
+                                getattr(_crew, "custom_emotions", None)
+                                if _crew else None
+                            )
+                        except Exception:
+                            _custom = None
+                    _emotion = resolve_emotion_to_v1(_raw, _custom) or _raw
+    except Exception:
+        logger.debug(
+            "AD-738e-1: emotion resolution failed for agent=%s",
+            agent_id, exc_info=True,
+        )
+
     response = {
         "response": response_text,
         "callsign": callsign,
         "agentId": agent_id,
+        "emotion": _emotion,
     }
     if game_move_result:
         response["gameMoveExecuted"] = True

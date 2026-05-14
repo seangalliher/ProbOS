@@ -23,6 +23,7 @@ import tempfile
 from pathlib import Path
 
 from probos.audio.tts.backends import TTSResult
+from probos.audio.tts.prosody import resolve_prosody_overrides
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +86,16 @@ class PiperBackend:
         self._noise_w = noise_w
         self._sentence_silence = sentence_silence
 
-    async def synthesize(self, text: str) -> TTSResult | None:
+    async def synthesize(
+        self, text: str, emotion: str | None = None
+    ) -> TTSResult | None:
         """Run piper, return WAV bytes or ``None`` on any failure.
+
+        AD-738e-1: ``emotion`` is an optional v1 ``EmotionalIntent`` name.
+        When provided and known, applies per-emotion prosody overrides
+        for THIS call only (no instance mutation). Unknown / ``None`` /
+        ``"neutral"`` falls through to constructor defaults — additive
+        guarantee, no regression for existing call paths.
 
         NEVER raises. Empty / whitespace-only ``text`` short-circuits to
         ``None`` (no point invoking the subprocess for nothing)."""
@@ -107,6 +116,14 @@ class PiperBackend:
                 self._voice_model,
             )
             return None
+        # AD-738e-1: resolve per-emotion prosody overrides for THIS call.
+        # Tier-2 log-and-degrade: bad / unknown emotion falls back to
+        # constructor defaults silently.
+        _ov = resolve_prosody_overrides(emotion)
+        _noise_scale      = _ov.get("noise_scale",      self._noise_scale)
+        _length_scale     = _ov.get("length_scale",     self._length_scale)
+        _noise_w          = _ov.get("noise_w",          self._noise_w)
+        _sentence_silence = _ov.get("sentence_silence", self._sentence_silence)
         try:
             # BF-282 (2026-05-13): write to a temp WAV file instead of stdout.
             # On Windows, ``--output_file -`` writes to stdout which Piper's
@@ -138,10 +155,10 @@ class PiperBackend:
                             # upstream defaults (0.667 / 1.0 / 0.8 / 0.2) sound
                             # monotone; our defaults bump expressiveness +
                             # rhythm variation at a small clarity cost.
-                            "--noise_scale", str(self._noise_scale),
-                            "--length_scale", str(self._length_scale),
-                            "--noise_w", str(self._noise_w),
-                            "--sentence_silence", str(self._sentence_silence),
+                            "--noise_scale", str(_noise_scale),
+                            "--length_scale", str(_length_scale),
+                            "--noise_w", str(_noise_w),
+                            "--sentence_silence", str(_sentence_silence),
                         ],
                         stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE,

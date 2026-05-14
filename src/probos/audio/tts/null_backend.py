@@ -15,6 +15,13 @@ class NullBackend:
 
     name: str = "null"
 
-    async def synthesize(self, text: str) -> TTSResult | None:
-        """No-op. Returns ``None`` for honest-degrade."""
+    async def synthesize(
+        self, text: str, emotion: str | None = None
+    ) -> TTSResult | None:
+        """No-op. Returns ``None`` for honest-degrade.
+
+        AD-738e-1: ``emotion`` accepted for Protocol compat; ignored
+        because the null backend produces no audio.
+        """
+        del emotion
         return None

@@ -120,6 +120,15 @@ def _resolve_intent_name(
         name, parent,
     )
     return None
+
+
+# AD-738e-1: public alias so cross-module consumers (e.g. ``routers/agents.py``)
+# can resolve custom emotion names to their v1 ``EmotionalIntent`` parent
+# without reaching into the underscore-prefixed private helper. Same signature,
+# same return contract: returns the v1 name, or ``None`` if unresolvable.
+resolve_emotion_to_v1 = _resolve_intent_name
+
+
 # Strip regex anchored to optional trailing whitespace at end-of-line.
 _TAG_STRIP_RE: Final[re.Pattern[str]] = re.compile(
     r"\s*<intent\s+emotion\s*=\s*[a-zA-Z_]+\s*/?\s*>\s*$",

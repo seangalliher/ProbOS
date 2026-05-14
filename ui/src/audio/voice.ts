@@ -175,6 +175,7 @@ export function speakResponse(
   text: string,
   profile?: VoiceProfile,
   agent_id?: string,
+  emotion?: string,
 ): void {
   if (!('speechSynthesis' in window) && typeof Audio !== 'function') return;
 
@@ -210,10 +211,17 @@ export function speakResponse(
       return;
     }
     try {
+      // AD-738e-1: pass v1 emotion name (resolved server-side) so the
+      // TTS endpoint can apply per-emotion prosody. Omit the field when
+      // emotion is undefined — server falls back to defaults.
+      const _body: { text: string; emotion?: string } = { text };
+      if (typeof emotion === 'string' && emotion.length > 0) {
+        _body.emotion = emotion;
+      }
       const resp = await fetch('/api/avatars/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(_body),
       });
       if (!resp.ok) {
         _invalidateTtsStatus();
