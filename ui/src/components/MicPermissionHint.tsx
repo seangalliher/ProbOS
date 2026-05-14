@@ -8,7 +8,7 @@
  *
  *  Dismissal is sticky via ``localStorage`` so refresh keeps it.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import {
   onMicPermissionState,
   type MicPermissionState,
@@ -16,7 +16,7 @@ import {
 
 const DISMISS_KEY = 'hxi_mic_hint_dismissed';
 
-export function MicPermissionHint(): JSX.Element | null {
+export function MicPermissionHint(): ReactElement | null {
   const [state, setState] = useState<MicPermissionState>('pending');
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
