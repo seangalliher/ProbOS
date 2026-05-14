@@ -3456,6 +3456,26 @@ waves:
     issues_to_close: [648, 650, 651, 652]
     status: done
 
+  - id: "159"
+    title: "Telemetry pipeline extensions + audio attachments + DM sub-intent dispatch"
+    # 5 prompts, ~10h. All internal Apache 2.0 — no new pip/npm deps required (audio
+    # playback via existing HTMLAudioElement, telemetry extensions reuse AD-722a/b
+    # plumbing). #653 AD-738e-2 (Refs-trailer standing rule) folded into whichever
+    # prompt edits BUILDER-EXECUTION-PLAN.md.
+    kind: main
+    depends_on: ["158"]
+    dispatch_prompt: "prompts/WAVE-159-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-722c-telemetry-history.md"
+      - "prompts/ad-722d-records-auto-write.md"
+      - "prompts/ad-722b-3-snapshot-diff.md"
+      - "prompts/ad-720e-audio-attachments.md"
+      - "prompts/ad-725-dm-subintent-dispatch.md"
+    builder_required: true
+    issues_to_close: [569, 570, 600, 566, 583, 653]
+    status: shipped
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process
