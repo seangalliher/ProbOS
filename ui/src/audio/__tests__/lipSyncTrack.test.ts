@@ -50,27 +50,27 @@ describe('AD-721b _textToVisemes — letter → viseme mapping', () => {
     expect(_VISEME_TARGETS[segs[0].viseme].ou).toBe(1.0);
   });
 
-  it("'p' maps to 'PP' viseme with residual aa=0.20", () => {
+  it("'p' maps to 'PP' viseme with residual aa=0.25 (AD-738c)", () => {
     const segs = _textToVisemes('p');
     expect(segs).toHaveLength(1);
     expect(segs[0].viseme).toBe<VisemeKey>('PP');
-    expect(_VISEME_TARGETS[segs[0].viseme].aa).toBeCloseTo(0.20, 5);
+    expect(_VISEME_TARGETS[segs[0].viseme].aa).toBeCloseTo(0.25, 5);
   });
 
   it("'th' is greedy-consumed as 'CH' digraph (single segment, ee residual)", () => {
     const segs = _textToVisemes('th');
     expect(segs).toHaveLength(1);
     expect(segs[0].viseme).toBe<VisemeKey>('CH');
-    expect(_VISEME_TARGETS[segs[0].viseme].ee).toBeCloseTo(0.10, 5);
+    expect(_VISEME_TARGETS[segs[0].viseme].ee).toBeCloseTo(0.20, 5);
   });
 
-  it("'rr' produces two consecutive 'RR' visemes with oh residual=0.20", () => {
+  it("'rr' produces two consecutive 'RR' visemes with oh residual=0.30 (AD-738c)", () => {
     const segs = _textToVisemes('rr');
     expect(segs).toHaveLength(2);
     expect(segs[0].viseme).toBe<VisemeKey>('RR');
     expect(segs[1].viseme).toBe<VisemeKey>('RR');
-    expect(_VISEME_TARGETS[segs[0].viseme].oh).toBeCloseTo(0.20, 5);
-    expect(_VISEME_TARGETS[segs[1].viseme].oh).toBeCloseTo(0.20, 5);
+    expect(_VISEME_TARGETS[segs[0].viseme].oh).toBeCloseTo(0.30, 5);
+    expect(_VISEME_TARGETS[segs[1].viseme].oh).toBeCloseTo(0.30, 5);
     // Phonemes back-to-back: second starts where first ends.
     expect(segs[1].startMs).toBeCloseTo(segs[0].startMs + segs[0].durationMs, 5);
   });

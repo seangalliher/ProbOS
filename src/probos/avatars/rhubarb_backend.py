@@ -38,9 +38,15 @@ OculusViseme = Literal[
     "aa", "E", "ih", "oh", "ou",
 ]
 
+# AD-738c (Wave 158): base 1-to-1 mapping. The actual lookup function
+# `_map_preston_blair_to_oculus` adds a duration-aware variant for the
+# `B` shape — when a `B` frame exceeds 80 ms it almost always renders
+# a short vowel sound (rhubarb misclassifies sustained "ih"/"uh" as
+# `B`-shaped mouth). Short `B` frames keep the `kk` mapping because
+# they really are stop consonants.
 _PRESTON_BLAIR_TO_OCULUS: dict[str, str] = {
     "A": "PP",   # closed mouth — m/b/p
-    "B": "kk",   # slightly open — k/g/n/t/d/s/z
+    "B": "kk",   # slightly open — k/g/n/t/d/s/z (DEFAULT — overridden for long frames; see _map_preston_blair_to_oculus)
     "C": "E",    # open mouth — e (as in "bed")
     "D": "aa",   # wide open — a (as in "father")
     "E": "oh",   # rounded — o (as in "go")
@@ -49,6 +55,13 @@ _PRESTON_BLAIR_TO_OCULUS: dict[str, str] = {
     "H": "RR",   # l/r
     "X": "sil",  # rest / silence
 }
+
+# AD-738c: duration threshold (milliseconds) above which a `B` frame is
+# routed to a full vowel (`ih`) instead of the consonant default (`kk`).
+# Empirical: 80 ms is the floor for sustained "ih"-class vowels in
+# Piper Amy MIT @ 22050 Hz; stop consonants in the same voice peak
+# at 60-75 ms.
+_B_LONG_DURATION_MS: float = 80.0
 
 
 @dataclass(frozen=True)
@@ -64,15 +77,29 @@ class VisemeFrame:
     viseme: str
 
 
-def _map_preston_blair_to_oculus(pb: str) -> str:
-    """Lookup with fallback to ``sil`` for any unknown shape (forward-compat
-    if rhubarb adds a viseme — log-and-degrade rather than crash)."""
+def _map_preston_blair_to_oculus(pb: str, duration_ms: float = 0.0) -> str:
+    """Lookup with duration-aware override for ``B`` (AD-738c).
+
+    Falls back to ``sil`` for any unknown shape (forward-compat if rhubarb
+    adds a viseme — log-and-degrade rather than crash).
+
+    When ``pb == "B"`` and ``duration_ms > _B_LONG_DURATION_MS`` (default
+    80 ms), routes to ``"ih"`` (full vowel) instead of ``"kk"`` (consonant
+    default). Rationale: rhubarb's ``B`` covers both short stop consonants
+    AND short unstressed vowels that fall below the wider C/D/E shapes.
+    Long B frames are almost always vowel-class sounds.
+
+    Backward compat: callers that pass ``duration_ms=0.0`` (or omit the
+    kwarg) get the legacy 1-to-1 mapping unchanged.
+    """
     mapped = _PRESTON_BLAIR_TO_OCULUS.get(pb)
     if mapped is None:
         logger.warning(
             "AD-721b-1: unknown Preston Blair viseme %r; degrading to sil", pb
         )
         return "sil"
+    if pb == "B" and duration_ms > _B_LONG_DURATION_MS:
+        return "ih"
     return mapped
 
 
@@ -248,6 +275,20 @@ async def generate_visemes(
         )
         return []
 
+    return _parse_rhubarb_output(payload)
+
+
+def _parse_rhubarb_output(payload: dict) -> list[VisemeFrame]:
+    """Convert a parsed rhubarb JSON payload into VisemeFrame list.
+
+    AD-738c (Wave 158): extracted so the duration-aware Preston-Blair
+    mapping is unit-testable without a subprocess. Silently skips malformed
+    cues (defense in depth — rhubarb output has been observed to drop
+    fields under rare conditions).
+    """
+    cues = payload.get("mouthCues") if isinstance(payload, dict) else None
+    if not isinstance(cues, list):
+        return []
     frames: list[VisemeFrame] = []
     for cue in cues:
         if not isinstance(cue, dict):
@@ -261,11 +302,12 @@ async def generate_visemes(
             continue
         if end < start:
             continue
+        duration_s = float(end - start)
         frames.append(
             VisemeFrame(
                 time=float(start),
-                duration=float(end - start),
-                viseme=_map_preston_blair_to_oculus(value),
+                duration=duration_s,
+                viseme=_map_preston_blair_to_oculus(value, duration_ms=duration_s * 1000.0),
             )
         )
     return frames

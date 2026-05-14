@@ -2518,3 +2518,20 @@ Two artifacts updated. `prompts/BUILDER-EXECUTION-PLAN.md` Standing Rules sectio
 **Slot reuse.** The Wave-157 closure block reserved `AD-738b` for `GPU-accelerated TTS backend eval (Kokoro / StyleTTS2)`; that forward marker was renumbered to `AD-738g` by AD-738a (Wave 158).
 
 **Files:** `prompts/BUILDER-EXECUTION-PLAN.md` (Standing Rules — new bullet), `scripts/wave-orchestrator.ps1` (Format-BuildDispatch — new UI gate paragraph). No code changes; no tests added (process-change-only).
+
+
+### AD-738c — rhubarb -> Oculus viseme mapping polish (Wave 158)
+
+**Date:** 2026-05-13. **Status:** SHIPPED. **Wave:** 158. **Closes:** [#652](https://github.com/seangalliher/seangalliher/issues/652). **Parent:** AD-721b-1 (rhubarb backend, Wave 155), AD-738 (Piper TTS, Wave 157).
+
+Cheap polish bundle addressing Captain's 2026-05-13 21:55 feedback (`mouth shapes don't perfectly match what's being said`) after the AD-738 + BF-279/280/281/282/283/284/285 stack landed. Two independent improvements:
+
+(1) **Duration-aware Preston-Blair -> Oculus mapping** (`src/probos/avatars/rhubarb_backend.py`). `_map_preston_blair_to_oculus` signature extended to `(pb, duration_ms=0.0)`. When `pb == 'B'` and `duration_ms > 80.0` the lookup routes to `'ih'` (full vowel) instead of `'kk'` (consonant default). Empirically (Piper Amy MIT @ 22050 Hz), stop consonants peak at 60-75 ms and sustained `ih`-class vowels start at ~80 ms. Short B frames stay as `kk` (correct for stops). Extracted `_parse_rhubarb_output(payload)` from the inline parse loop in `generate_visemes` so the duration routing is unit-testable without a subprocess. Backward compat: callers that omit `duration_ms` get the legacy 1-to-1 mapping unchanged.
+
+(2) **Bumped consonant residuals** (`ui/src/audio/lipSyncTrack.ts`). PP/FF/TH `aa` residuals 0.15-0.20 -> 0.25. DD/kk/SS/nn `ih` residuals 0.15-0.20 -> 0.25. RR `oh` 0.20 -> 0.30. CH `ee` 0.10 -> 0.20. Single uniform threshold (0.20 perceptual visibility floor in our amber/blue palette) lifts every consonant row above the morph-blend baseline while preserving the relative ordering (RR strongest, CH weakest). Existing `lipSyncTrack.test.ts` regression assertions updated to the bumped values; their previous 0.10/0.20 pins were captures of the old constants, not behavior invariants.
+
+**Slot reuse.** The Wave-157 closure block reserved `AD-738c` for `Server-side voice modulation`; that forward marker was renumbered to `AD-738h` by AD-738a (Wave 158).
+
+**Files:** `src/probos/avatars/rhubarb_backend.py` (table comment + duration kwarg + extracted `_parse_rhubarb_output`), `ui/src/audio/lipSyncTrack.ts` (consonant residuals + comment block), `tests/test_ad738c_viseme_mapping.py` (new — 4 pytest tests), `ui/src/audio/__tests__/lipSyncTrack.visemeTargets.test.ts` (new — 1 Vitest snapshot), `ui/src/audio/__tests__/lipSyncTrack.test.ts` (3 regression assertions updated to bumped values).
+
+**Forward markers.** AD-738c-1 (C-context vowel disambiguation requiring parse-loop lookahead). AD-721b-3 / [#561](https://github.com/seangalliher/ProbOS/issues/561) remains the long-term proper fix (whisper.cpp WASM tiny.en for offline phoneme alignment).

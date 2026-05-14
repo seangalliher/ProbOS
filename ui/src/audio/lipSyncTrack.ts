@@ -76,15 +76,22 @@ const VISEME_TARGETS: Record<VisemeKey, VowelWeights> = {
   E:   { aa: 0,    ih: 0,    ou: 0, ee: 1.0,  oh: 0    },
   oh:  { aa: 0,    ih: 0,    ou: 0, ee: 0,    oh: 1.0  },
   // Consonant visemes (small residual on closest vowel axis):
-  PP:  { aa: 0.20, ih: 0,    ou: 0, ee: 0,    oh: 0    },
-  FF:  { aa: 0.15, ih: 0,    ou: 0, ee: 0,    oh: 0    },
-  TH:  { aa: 0.15, ih: 0,    ou: 0, ee: 0,    oh: 0    },
-  DD:  { aa: 0,    ih: 0.20, ou: 0, ee: 0,    oh: 0    },
-  kk:  { aa: 0,    ih: 0.15, ou: 0, ee: 0,    oh: 0    },
-  SS:  { aa: 0,    ih: 0.15, ou: 0, ee: 0,    oh: 0    },
-  nn:  { aa: 0,    ih: 0.15, ou: 0, ee: 0,    oh: 0    },
-  RR:  { aa: 0,    ih: 0,    ou: 0, ee: 0,    oh: 0.20 },
-  CH:  { aa: 0,    ih: 0,    ou: 0, ee: 0.10, oh: 0    },
+  // AD-738c (Wave 158): consonant residuals bumped from 0.15-0.20 -> 0.25-0.30
+  // so stop consonants are visible in the morph blend instead of disappearing
+  // into the sil baseline. Preserves relative ordering (RR strongest, CH
+  // weakest). Captain feedback after AD-738/BF-279...285: "mouth shapes
+  // don't perfectly match what's being said" — these residuals contribute
+  // ~half of the visible mismatch (the rest is the inherent Preston-Blair
+  // -> Oculus mapping loss, addressed by rhubarb_backend.py duration-aware B).
+  PP:  { aa: 0.25, ih: 0,    ou: 0, ee: 0,    oh: 0    },
+  FF:  { aa: 0.25, ih: 0,    ou: 0, ee: 0,    oh: 0    },
+  TH:  { aa: 0.25, ih: 0,    ou: 0, ee: 0,    oh: 0    },
+  DD:  { aa: 0,    ih: 0.25, ou: 0, ee: 0,    oh: 0    },
+  kk:  { aa: 0,    ih: 0.25, ou: 0, ee: 0,    oh: 0    },
+  SS:  { aa: 0,    ih: 0.25, ou: 0, ee: 0,    oh: 0    },
+  nn:  { aa: 0,    ih: 0.25, ou: 0, ee: 0,    oh: 0    },
+  RR:  { aa: 0,    ih: 0,    ou: 0, ee: 0,    oh: 0.30 },
+  CH:  { aa: 0,    ih: 0,    ou: 0, ee: 0.20, oh: 0    },
 };
 
 /** Greedy-consumed digraphs (checked before single-letter map). */
