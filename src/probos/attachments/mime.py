@@ -26,10 +26,30 @@ _SIGNATURES: dict[str, list[tuple[int, bytes]]] = {
     # offset 8 (rhubarb-lip-sync supports WAV natively).
     "audio/webm": [(0, b"\x1a\x45\xdf\xa3")],
     "audio/wav":  [(0, b"RIFF"), (8, b"WAVE")],       # both required
+    # AD-720e (Wave 159): playback-only audio attachments. Multi-option
+    # signatures (MP3 sync bytes, MP4 ftyp brands) use the existing
+    # _ANY_OF mechanism below.
+    "audio/mpeg": [
+        (0, b"ID3"),                # MP3 with ID3v2 tag (most common)
+        (0, b"\xff\xfb"),            # MP3 frame sync (MPEG-1 Layer 3, no ID3)
+        (0, b"\xff\xf3"),            # MP3 frame sync (MPEG-2 Layer 3)
+        (0, b"\xff\xf2"),            # MP3 frame sync (MPEG-2.5 Layer 3)
+    ],
+    "audio/mp4": [
+        (4, b"ftypM4A "),            # M4A (most common form)
+        (4, b"ftypmp42"),            # MP4 brand mp42
+        (4, b"ftypisom"),            # MP4 brand isom
+    ],
+    "audio/ogg": [
+        (0, b"OggS"),                # Ogg container (any codec)
+    ],
 }
 
 # MIMEs whose sigs are alternatives (any-of) instead of conjunctions (all-of).
-_ANY_OF: frozenset[str] = frozenset({"image/gif"})
+# AD-720e (Wave 159): MP3 sync bytes (4 variants) and MP4 ftyp brands (3
+# variants) are genuine any-of alternatives at the same offset. WAV stays
+# out — its (RIFF, WAVE) pair are BOTH required for a valid file.
+_ANY_OF: frozenset[str] = frozenset({"image/gif", "audio/mpeg", "audio/mp4"})
 
 
 def validate_image_bytes(blob: bytes, declared_mime: str) -> tuple[bool, str]:

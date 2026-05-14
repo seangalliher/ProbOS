@@ -34,6 +34,11 @@ Read these in full **before** writing any code:
   1. `cd ui; npx vitest run` — logic correctness for the UI changes.
   2. `cd ui; npm run build` — TypeScript strict + Vite production bundle health.
   Vitest skips `tsc -b` strict checks. A test suite can be 100% green while `vite build` errors. BF-279 (commit `2d685bc5`) is the canonical case study: Wave 156's `MicPermissionHint.tsx` introduced `JSX.Element` (unresolved under React 19 + bundler-mode tsconfig), `vite build` errored, `ui/dist/` stayed frozen for ~32 hours, and three waves' user-visible work never reached the operator's browser despite all Vitest tests passing.
+- **Refs-trailer for orphan sub-ADs (AD-738e-2 / #653, Wave 159).** When a wave includes a sub-AD spawned from a parent BF that has no GH issue (e.g., AD-738e-1 born out of BF-285 commentary), the commit message has no `Closes #N` trailer. To preserve audit-trail traceability, the commit MUST include EITHER:
+  - A `Refs #N-of-parent-BF` trailer when the parent BF has a GH issue, OR
+  - A `See DECISIONS.md AD-NNN` reference in the commit body when the parent BF is internal-only.
+
+  Builder applies this rule automatically when drafting commit messages for sub-AD work — no architect approval at GATE 2 required when the trailer is present. Lineage: AD-738e-1 (`bb1ca160`) shipped with the DECISIONS reference in the body; this codifies that as the standard.
 
 ---
 

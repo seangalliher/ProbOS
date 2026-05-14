@@ -2549,7 +2549,7 @@ Bridges the AD-737 emotion taxonomy into AD-738e's prosody knobs. New module `sr
 
 **Files:** `src/probos/audio/tts/prosody.py` (new), `src/probos/audio/tts/backends.py` (Protocol signature), `src/probos/audio/tts/null_backend.py` (signature), `src/probos/audio/tts/piper_backend.py` (signature + import + per-call merge + arg references), `src/probos/routers/avatars.py` (POST body validation + kwarg forwarding), `src/probos/avatars/divergence_detector.py` (public `resolve_emotion_to_v1` alias), `src/probos/routers/agents.py` (chat response emotion field), `ui/src/audio/voice.ts` (signature + POST body), `ui/src/components/profile/ProfileChatTab.tsx` (forward data.emotion), `tests/test_ad738e_1_per_emotion_prosody.py` (new — 7 pytest tests), `ui/src/audio/__tests__/voice.perEmotion.test.tsx` (new — 2 Vitest tests), `tests/test_ad738_piper_tts.py` (3 stub backends updated to accept `emotion` kwarg for Protocol compat).
 
-**Forward markers.** AD-738e-2 (noise_w / sentence_silence per-emotion overrides). AD-738e-3 (per-agent emotion overrides). AD-738e-4 (UI surface for tuning the override table).
+**Forward markers.** AD-738e-2-prosody (noise_w / sentence_silence per-emotion overrides — renumbered from AD-738e-2 in Wave 159 when issue #653's Refs-trailer rule took the canonical AD-738e-2 slot). AD-738e-3 (per-agent emotion overrides). AD-738e-4 (UI surface for tuning the override table).
 
 
 ### AD-722c — Avatar telemetry JSONL history + query endpoint (Wave 159)
@@ -2607,3 +2607,33 @@ Per-frame field-level diffing on top of AD-722b's WS publish loop. Pure-function
 **Files:** `src/probos/avatars/snapshot_diff.py` (new ~80 lines, stdlib-only pure function), `src/probos/config.py` (3 fields + 2 validators), `src/probos/routers/agents.py` (per-connection state declarations + `nonlocal` in `_publish_loop` + initial-send wrapper + diff/full branch), `ui/src/components/profile/SelfImageTab.tsx` (closure-scoped `lastSnapshot` + onmessage merge branch), `tests/test_ad722b_3_snapshot_diff.py` (new — 6 boundary tests: first-frame minus skip, identical empty, below-threshold skipped, above-threshold included, nested recursion, skip-fields excluded), `ui/src/__tests__/SelfImageTab.diffFrame.test.tsx` (new — 1 Vitest test for the merge path), `tests/test_ad722b_websocket_push.py` (fixture update — diff disabled for legacy tests).
 
 **Forward markers.** AD-722b-3a (RFC 6902 JSON-Patch payload format for deeply-nested telemetry trees where shallow merge loses information). AD-722b-3b (server-side `SubscriberState` Protocol so a fan-out broker can serve N clients from one builder).
+
+
+### AD-720e - Audio attachment playback (Wave 159)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 159. **Parents:** AD-720 (image paste, Wave 135), AD-720a (file upload, Wave 139), AD-721b-1 (browser-captured audio/webm + audio/wav, Wave 155), AD-731 (content-addressable refs, Wave 152). **Closes:** #566.
+
+Playback-only audio attachments. `AttachmentsConfig.allowed_mime_types` defaults extend with `audio/mpeg`, `audio/mp4`, `audio/ogg` (existing `audio/webm` + `audio/wav` from AD-721b-1 unchanged). `attachments/mime.py._SIGNATURES` registers MP3 sync bytes (4 variants: ID3, MPEG-1 L3, MPEG-2 L3, MPEG-2.5 L3), MP4 ftyp brands (3: M4A, mp42, isom), and the Ogg `OggS` magic. `_ANY_OF` extends to include the two multi-option audio MIMEs so the existing any-of branch in `validate_image_bytes` (line 48) validates them without new code paths. `audio/ogg` stays out of `_ANY_OF` — its single signature is correctly handled by the default all-required path.
+
+**Frontend render.** `IntentSurface.tsx` attachment preview ternary becomes a 3-way: image -> `<img>`, audio -> `<audio controls preload="metadata">`, other -> inline-SVG file-icon (HXI Design Principle #3 — no emoji). The `<audio>` element's `src` is `/api/chat/attachments/<sha>` — same content-addressable URL as images. AD-731 invariant preserved: audio bytes never inline as base64 in `IntentMessage.params` or the prompt; the bus always carries refs.
+
+**WardRoom paste broaden + scope-collapse.** `WardRoomThreadDetail.tsx` `handlePaste` MIME filter accepts `audio/` in addition to `image/` so operator can paste audio into a DM. The chip-only render in WR/Profile stays unchanged (no inline `<audio>` element in those surfaces) — playback delivered through the canonical IntentSurface render seam per HXI Principle #11 (workstation pattern). Forward marker AD-720e-3 covers per-chip inline player if Captain requests later.
+
+**Transcription out of scope.** AD-705a (whisper.cpp WASM) remains the forward marker. This AD ships playback only.
+
+**Folded: AD-738e-2 (Refs-trailer standing rule, #653).** New BUILDER-EXECUTION-PLAN entry: when a sub-AD has no GH issue (born out of a parent BF's commentary), the commit MUST carry EITHER a `Refs #N-of-parent-BF` trailer OR a `See DECISIONS.md AD-NNN` reference in the body. Builder applies automatically; architect approval not required at GATE 2 when present. Lineage: AD-738e-1 (`bb1ca160`) shipped with the DECISIONS reference as the canonical example.
+
+**AD-738e-2 numbering note.** DECISIONS.md AD-738e-1 reserved the slot for "noise_w / sentence_silence per-emotion overrides." Issue #653 was filed AFTER that and took the slot; the prosody marker renumbers to **AD-738e-2-prosody** (forward marker, never built). DECISIONS AD-738e-1's "Forward markers" line updated in this commit.
+
+**Files:** `src/probos/config.py` (3 new audio MIMEs in default factory), `src/probos/attachments/mime.py` (3 new `_SIGNATURES` entries + `_ANY_OF` extension), `ui/src/components/IntentSurface.tsx` (3-way preview ternary), `ui/src/components/wardroom/WardRoomThreadDetail.tsx` (paste MIME filter), `prompts/BUILDER-EXECUTION-PLAN.md` (Refs-trailer standing rule), `DECISIONS.md` (AD-738e-1 forward-marker renumber), `tests/test_ad720e_audio_attachments.py` (new — 5 pytest tests covering MP3 ID3 + frame-sync, MP4 ftyp, Ogg, and allow-list defaults), `ui/src/__tests__/IntentSurface.audioRender.test.tsx` (new — 3 Vitest tests: audio renders `<audio>`, image still renders `<img>`, PDF falls back to file-icon).
+
+**Forward markers.** AD-720e-1 (drop-zone visual feedback for audio drag/drop). AD-720e-2 (waveform thumbnail via Web Audio API decode-on-demand). AD-720e-3 (inline `<audio>` player inside WardRoom + ProfileChatTab chip surfaces). AD-705a (whisper.cpp WASM transcription — unchanged forward marker).
+
+
+### AD-738e-2 - Refs-trailer standing rule for orphan sub-ADs (Wave 159)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 159. **Parents:** AD-738e-1 (per-emotion Piper prosody overrides, Wave 158). **Closes:** #653. **Folded into:** AD-720e commit.
+
+Codifies the Builder commit-message convention introduced by AD-738e-1 (`bb1ca160`) for sub-ADs spawned from a parent BF that has no GH issue. New entry in `prompts/BUILDER-EXECUTION-PLAN.md` Standing Rules section: commit MUST include EITHER a `Refs #N-of-parent-BF` trailer when the parent BF has a GH issue, OR a `See DECISIONS.md AD-NNN` reference in the commit body when the parent BF is internal-only. Builder applies automatically — no architect approval at GATE 2 required when the trailer/reference is present.
+
+**Numbering.** This AD reclaims the AD-738e-2 slot that AD-738e-1's DECISIONS entry had reserved as a forward marker for prosody knob extensions. The prosody marker renumbers to **AD-738e-2-prosody** (still a forward marker; never built). The renumber is recorded both in this entry and in AD-738e-1's "Forward markers" line.

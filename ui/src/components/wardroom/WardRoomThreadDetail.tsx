@@ -176,13 +176,16 @@ export function WardRoomThreadDetail() {
   }
 
   // AD-730-1-1: paste image from clipboard. Mirrors IntentSurface.handlePaste.
+  // AD-720e (Wave 159): also accept audio MIMEs (chip-only render — see AD).
   async function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
     if (!isDm || !targetAgentId) return; // only DM threads accept attachments
     const items = Array.from(event.clipboardData?.items ?? []);
-    const imageItem = items.find(it => it.type && it.type.startsWith('image/'));
-    if (!imageItem) return; // text paste — let the textarea handle it
+    const audioOrImageItem = items.find(
+      it => it.type && (it.type.startsWith('image/') || it.type.startsWith('audio/')),
+    );
+    if (!audioOrImageItem) return; // text paste — let the textarea handle it
     event.preventDefault();
-    const blob = imageItem.getAsFile();
+    const blob = audioOrImageItem.getAsFile();
     if (!blob) return;
     // Wrap as File so uploadAttachment's MIME/size guards apply uniformly.
     const ext = (blob.type.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '');

@@ -1973,6 +1973,14 @@ export function IntentSurface() {
                           alt={att.attachment_id.slice(0, 8)}
                           style={{ maxWidth: 128, maxHeight: 128, display: 'block', borderRadius: 2 }}
                         />
+                      ) : att.mime.startsWith('audio/') ? (
+                        <audio
+                          controls
+                          src={att.url}
+                          preload="metadata"
+                          style={{ maxWidth: 220, display: 'block' }}
+                          aria-label={`audio attachment ${att.attachment_id.slice(0, 8)}`}
+                        />
                       ) : (
                         <div style={{
                           display: 'flex', alignItems: 'center', gap: 6,

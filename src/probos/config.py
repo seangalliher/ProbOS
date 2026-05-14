@@ -1215,6 +1215,13 @@ class AttachmentsConfig(BaseModel):
             # sniffing remains the primary correctness signal.
             "audio/webm",
             "audio/wav",
+            # AD-720e (Wave 159): playback-only audio attachments (mpeg, m4a, ogg).
+            # AttachmentStore stores bytes content-addressably (AD-731); browser
+            # renders via <audio controls src=/api/chat/attachments/<sha>>.
+            # Transcription is OUT OF SCOPE — AD-705a forward marker.
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/ogg",
         ],
     )
     # AD-720a/AD-732: tier selection for vision-capable LLM dispatch.
