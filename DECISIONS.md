@@ -2584,3 +2584,26 @@ Subscribes the WS publish loop's snapshot stream to `TelemetryRecordsWriter`, wh
 **Files:** `src/probos/avatars/records_writer.py` (new ~180 lines, stdlib + RecordsStore), `src/probos/config.py` (four fields + three validators), `src/probos/runtime.py` (None declaration in __init__ + finalize block after Phase 4 records_store wiring), `src/probos/routers/agents.py` (two log-and-degrade hooks in WS publish loop — initial-send + per-interval, both AFTER the AD-722c history append), `tests/test_ad722d_records_auto_write.py` (new — 5 boundary tests: divergence happy path with no re-fire, working-state transition with seeded prior, throttle clamps multi-event window, unknown event names dropped, RecordsStore raise swallowed).
 
 **Forward markers.** AD-722d-1 (operator-defined `SignificanceClassifier` Protocol + plugin registry; trigger: Captain wants per-agent custom event names). AD-722d-2 (Records-side dedup/aggregation when N identical events fire within a configurable window).
+
+
+### AD-722b-3 - Fine-grained snapshot-diff for WS push (Wave 159)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 159. **Parents:** AD-722b (WS push channel, Wave 142), AD-722b-2 (sensorium freshness side-effect, Wave 142). **Closes:** #600.
+
+Per-frame field-level diffing on top of AD-722b's WS publish loop. Pure-function `compute_diff(prev, next, threshold, skip_fields)` returns a dict of changed top-level keys; empty dict means the publish loop suppresses the send entirely. `last_observed_at` is in `DEFAULT_SKIP_FIELDS` so jitter on a per-frame timestamp doesn't trigger emissions. Numeric fields use a relative-change threshold (default 0.05); nested dicts diff one level deep. Lists/tuples diff positional and length-aware.
+
+**Frame shape versioning.** Every WS frame now carries a `type` field: `{"type": "snapshot", ...flat snapshot fields}` on first-frame/Nth-tick/fallback, or `{"type": "diff", "agent_id": ..., "changed": {...}}` between. Frontend treats a frame without `type` as a snapshot (legacy compat).
+
+**Reconcile invariant.** Every Nth wake (default 10) sends a full snapshot regardless of diff, so a late subscriber that connected mid-diff-stream OR any client that missed a diff frame reconciles within at most N intervals. Set `ws_full_snapshot_every_n=1` to disable diff entirely (legacy behavior).
+
+**Per-connection state.** `last_sent_snap_dict` and `tick_count` live as closure-scoped locals in `agent_avatar_telemetry_stream` (declared `nonlocal` in `_publish_loop`). Reconnects start fresh with `last_sent_snap_dict=None` so the first server frame after reconnect is always a full snapshot.
+
+**Frontend merge.** `SelfImageTab.tsx` `onmessage` checks `data.type`: `"diff"` merges `data.changed` into a closure-scoped `lastSnapshot` via spread; `"snapshot"` replaces wholesale with the `type`-stripped object. The poll-fallback (HTTP GET) returns a flat snapshot without a `type` field; the existing branch handles that transparently.
+
+**Tier-2 safety.** `compute_diff` exception falls back to a full snapshot send (never blocks the publish). Loop continues even if a diff frame fails to serialize.
+
+**Test fixture wiring.** The shared `_ws_endpoint_runtime` fixture in `tests/test_ad722b_websocket_push.py` explicitly sets `cfg.avatar_telemetry.ws_diff_enabled = False` so the 31 existing AD-722b/722b-2 tests keep their one-frame-per-wake semantics. The new AD-722b-3 tests cover the diff path directly. `test_ws_endpoint_publishes_on_event_bus_notify` was the canary: under MagicMock-defaults the diff suppression was indistinguishable from a hang.
+
+**Files:** `src/probos/avatars/snapshot_diff.py` (new ~80 lines, stdlib-only pure function), `src/probos/config.py` (3 fields + 2 validators), `src/probos/routers/agents.py` (per-connection state declarations + `nonlocal` in `_publish_loop` + initial-send wrapper + diff/full branch), `ui/src/components/profile/SelfImageTab.tsx` (closure-scoped `lastSnapshot` + onmessage merge branch), `tests/test_ad722b_3_snapshot_diff.py` (new — 6 boundary tests: first-frame minus skip, identical empty, below-threshold skipped, above-threshold included, nested recursion, skip-fields excluded), `ui/src/__tests__/SelfImageTab.diffFrame.test.tsx` (new — 1 Vitest test for the merge path), `tests/test_ad722b_websocket_push.py` (fixture update — diff disabled for legacy tests).
+
+**Forward markers.** AD-722b-3a (RFC 6902 JSON-Patch payload format for deeply-nested telemetry trees where shallow merge loses information). AD-722b-3b (server-side `SubscriberState` Protocol so a fan-out broker can serve N clients from one builder).

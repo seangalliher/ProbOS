@@ -732,6 +732,11 @@ async def agent_avatar_telemetry_stream(
     event = event_bus.subscribe(agent_id)
     publish_task: asyncio.Task | None = None
     receive_task: asyncio.Task | None = None
+    # AD-722b-3: per-connection diff state. Each WS connection has its
+    # own "last sent" tracker so reconnects (which receive the full
+    # initial snapshot) don't depend on cross-connection memory.
+    last_sent_snap_dict: dict[str, Any] | None = None
+    tick_count = 0
     try:
         from probos.avatars.telemetry import build_telemetry_snapshot
 
@@ -741,7 +746,9 @@ async def agent_avatar_telemetry_stream(
         try:
             initial = await build_telemetry_snapshot(agent_id, runtime)
             agent._last_self_avatar_snap = initial
-            await websocket.send_json(initial.to_dict())
+            initial_dict = initial.to_dict()
+            await websocket.send_json({"type": "snapshot", **initial_dict})
+            last_sent_snap_dict = initial_dict
             # AD-722c: best-effort persistence. Never blocks the publish.
             _hist = getattr(runtime, "avatar_telemetry_history", None)
             if _hist is not None:
@@ -770,6 +777,7 @@ async def agent_avatar_telemetry_stream(
 
         async def _publish_loop() -> None:
             """Per-connection publish loop. Sleep-or-event-driven."""
+            nonlocal tick_count, last_sent_snap_dict
             while True:
                 rate_ms = sampling_state.current_rate_ms(agent_id)
                 interval_s = max(0.05, float(rate_ms) / 1000.0)
@@ -790,7 +798,49 @@ async def agent_avatar_telemetry_stream(
                 # AD-722b-2: same side-effect as initial — keep agent cache fresh.
                 snap = await build_telemetry_snapshot(agent_id, runtime)
                 agent._last_self_avatar_snap = snap
-                await websocket.send_json(snap.to_dict())
+                snap_dict = snap.to_dict()
+                tick_count += 1
+                cfg_t = getattr(runtime.config, "avatar_telemetry", None)
+                send_full = (
+                    cfg_t is None
+                    or not cfg_t.ws_diff_enabled
+                    or (tick_count % cfg_t.ws_full_snapshot_every_n) == 0
+                )
+                if send_full:
+                    await websocket.send_json({"type": "snapshot", **snap_dict})
+                    last_sent_snap_dict = snap_dict
+                else:
+                    try:
+                        from probos.avatars.snapshot_diff import compute_diff
+                        diff = compute_diff(
+                            last_sent_snap_dict,
+                            snap_dict,
+                            threshold=cfg_t.ws_diff_threshold,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "AD-722b-3: compute_diff raised; falling back to full snapshot",
+                            exc_info=True,
+                        )
+                        await websocket.send_json({"type": "snapshot", **snap_dict})
+                        last_sent_snap_dict = snap_dict
+                        diff = None
+                    if diff is not None:
+                        if not diff:
+                            # No significant change — skip the send entirely.
+                            # Still run the AD-722c/AD-722d side-effects below
+                            # so persistence + significance classification
+                            # never drop frames.
+                            pass
+                        else:
+                            await websocket.send_json({
+                                "type": "diff",
+                                "agent_id": snap.agent_id,
+                                "changed": diff,
+                            })
+                            last_sent_snap_dict = {
+                                **(last_sent_snap_dict or {}), **diff,
+                            }
                 # AD-722c: best-effort persistence. Never blocks the publish.
                 _hist = getattr(runtime, "avatar_telemetry_history", None)
                 if _hist is not None:

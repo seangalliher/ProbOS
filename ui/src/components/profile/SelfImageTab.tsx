@@ -92,6 +92,9 @@ export function SelfImageTab({ agentId, isActive }: SelfImageTabProps) {
     let reconnectAttempt = 0;
     let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
     const MAX_RECONNECT_ATTEMPTS = 10;
+    // AD-722b-3: last-known snapshot for diff-merge. Reset to null whenever
+    // we receive a fresh full snapshot frame (or reconnect).
+    let lastSnapshot: AvatarTelemetry | null = null;
 
     const fetchOnce = () => {
       fetch(`/api/agent/${agentId}/avatar-telemetry`)
@@ -163,7 +166,23 @@ export function SelfImageTab({ agentId, isActive }: SelfImageTabProps) {
               setError(String(data.reason ?? 'ws_error'));
               return;
             }
-            setSnap(data);
+            // AD-722b-3: diff frames merge into last-known snapshot. Frames
+            // without `type` (legacy server) default to snapshot semantics.
+            if (data && data.type === 'diff' && lastSnapshot) {
+              const merged = { ...lastSnapshot, ...(data.changed ?? {}) } as AvatarTelemetry;
+              lastSnapshot = merged;
+              setSnap(merged);
+              setError(null);
+              return;
+            }
+            // snapshot OR legacy: replace last-known wholesale. Strip the
+            // `type` field so the rendered shape matches the GET endpoint.
+            const next = data && data.type ? { ...data } as Record<string, unknown> : { ...data };
+            if ('type' in (next as Record<string, unknown>)) {
+              delete (next as Record<string, unknown>).type;
+            }
+            lastSnapshot = next as AvatarTelemetry;
+            setSnap(lastSnapshot);
             setError(null);
           } catch {
             // Ignore malformed frames.

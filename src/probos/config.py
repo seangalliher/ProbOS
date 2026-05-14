@@ -1082,6 +1082,17 @@ class AvatarTelemetryConfig(BaseModel):
         ],
     )
     sustained_silence_seconds: int = 1800          # 30 min
+    # AD-722b-3: WS frame diffing. Default ON — pure additive perf win.
+    # Disable to revert to AD-722b's always-full-snapshot behavior.
+    ws_diff_enabled: bool = True
+    # Relative-change threshold for numeric fields. Below this, the field
+    # is treated as unchanged for diff purposes (frame is suppressed if
+    # all numeric deltas are sub-threshold AND no non-numeric changes).
+    ws_diff_threshold: float = 0.05
+    # Send a full snapshot every N publish-loop wakes regardless of diff,
+    # so late-arriving subscribers and any browser that missed a diff
+    # reconcile. Set to 1 to disable diff entirely (behaves as full).
+    ws_full_snapshot_every_n: int = 10
 
     @field_validator("mouth_active_window_seconds")
     @classmethod
@@ -1153,6 +1164,24 @@ class AvatarTelemetryConfig(BaseModel):
         if v < 60:
             raise ValueError(
                 f"sustained_silence_seconds must be >= 60, got {v}"
+            )
+        return v
+
+    @field_validator("ws_diff_threshold")
+    @classmethod
+    def _bound_ws_diff_threshold(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(
+                f"ws_diff_threshold must be in [0.0, 1.0], got {v}"
+            )
+        return v
+
+    @field_validator("ws_full_snapshot_every_n")
+    @classmethod
+    def _bound_ws_full_snapshot_every_n(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"ws_full_snapshot_every_n must be >= 1, got {v}"
             )
         return v
 

@@ -275,6 +275,12 @@ def _ws_endpoint_runtime(
     cfg.avatar_telemetry.mouth_active_window_seconds = 3.0
     cfg.avatar_telemetry.polling_interval_ms = 2000
     cfg.avatar_telemetry.max_connections_per_agent = max_connections
+    # AD-722b-3: disable WS diffing in this fixture so existing tests
+    # asserting one-frame-per-wake semantics still hold. Per-test code
+    # can flip ws_diff_enabled=True locally to exercise the diff path.
+    cfg.avatar_telemetry.ws_diff_enabled = False
+    cfg.avatar_telemetry.ws_diff_threshold = 0.05
+    cfg.avatar_telemetry.ws_full_snapshot_every_n = 10
     runtime.config = cfg
 
     # Real AD-722f / AD-722b primitives so the handler's calls are observable.
