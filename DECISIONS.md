@@ -2550,3 +2550,18 @@ Bridges the AD-737 emotion taxonomy into AD-738e's prosody knobs. New module `sr
 **Files:** `src/probos/audio/tts/prosody.py` (new), `src/probos/audio/tts/backends.py` (Protocol signature), `src/probos/audio/tts/null_backend.py` (signature), `src/probos/audio/tts/piper_backend.py` (signature + import + per-call merge + arg references), `src/probos/routers/avatars.py` (POST body validation + kwarg forwarding), `src/probos/avatars/divergence_detector.py` (public `resolve_emotion_to_v1` alias), `src/probos/routers/agents.py` (chat response emotion field), `ui/src/audio/voice.ts` (signature + POST body), `ui/src/components/profile/ProfileChatTab.tsx` (forward data.emotion), `tests/test_ad738e_1_per_emotion_prosody.py` (new — 7 pytest tests), `ui/src/audio/__tests__/voice.perEmotion.test.tsx` (new — 2 Vitest tests), `tests/test_ad738_piper_tts.py` (3 stub backends updated to accept `emotion` kwarg for Protocol compat).
 
 **Forward markers.** AD-738e-2 (noise_w / sentence_silence per-emotion overrides). AD-738e-3 (per-agent emotion overrides). AD-738e-4 (UI surface for tuning the override table).
+
+
+### AD-722c — Avatar telemetry JSONL history + query endpoint (Wave 159)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 159. **Parents:** AD-722 (telemetry channel, Wave 140), AD-722b (WS push, Wave 142), AD-722a-5 (divergence ring buffer, Wave 147). **Closes:** #569.
+
+Append-only JSONL persistence for `AvatarTelemetrySnapshot` rows — one file per agent under `data/avatar_telemetry/<agent_id>.jsonl`. Adds `TelemetryHistoryWriter` (per-agent `asyncio.Lock` serialization, executor-backed sync write, `[A-Za-z0-9_.-]` agent_id sanitizer at boundary), three new `AvatarTelemetryConfig` fields (`history_enabled=True`, `history_retention_days=30` with `>= 1` validator, `history_dir="data/avatar_telemetry"`), and a `GET /api/agent/{id}/avatar-telemetry/history` endpoint that clamps `limit` to `[1, 1000]` and returns `{"agent_id", "rows"}`.
+
+**Why JSONL, not SQLite-via-ProtocolStore.** The issue body proposed AD-682 ProtocolStore. Three reasons we chose JSONL for v1: (1) rows are small (~400 B) and write-once — no update pattern means no SQL benefit; (2) zero new infrastructure (no aiosqlite connection, no migration scripts); (3) operator can `cat` the file. Pattern mirrors AD-575 ship-records (append-only, human-inspectable). The ProtocolStore pattern is filed as forward marker AD-722c-2 for when the commercial overlay needs a queryable backend.
+
+**Wire path.** `runtime.avatar_telemetry_history` is constructed next to `AvatarEventBus` (gated on `cfg.avatar_telemetry.enabled AND history_enabled`; `None` when off). `_publish_loop` (both the initial-send block at line 707 and the per-interval send at line 737) appends snapshots Tier-2 best-effort — log-and-degrade, never blocks the WS publish or the broadcast trigger. `query()` filters by `since` (defaults to `now - retention_days * 86400`), skips malformed lines, sorts newest-first, applies `limit`.
+
+**Files:** `src/probos/avatars/telemetry_history.py` (new — ~140 lines, stdlib-only), `src/probos/config.py` (three new fields + retention validator), `src/probos/runtime.py` (construction block), `src/probos/routers/agents.py` (new GET endpoint + two log-and-degrade hooks in the WS publish loop), `tests/test_ad722c_telemetry_history.py` (new — 6 boundary tests: roundtrip, malicious agent_id rejection, since filter, retention window, disk failure tolerance, malformed-line skip).
+
+**Forward markers.** AD-722c-1 (size-based JSONL rotation when per-agent files exceed N MiB). AD-722c-2 (`TelemetryHistoryStore` Protocol so commercial overlay can swap JSONL for SQLite/Postgres; closes AD-682 cloud-ready compliance gap for this surface).

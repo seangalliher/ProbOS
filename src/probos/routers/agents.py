@@ -631,6 +631,41 @@ async def agent_avatar_telemetry(agent_id: str, runtime: Any = Depends(get_runti
     return snap.to_dict()
 
 
+@router.get("/{agent_id}/avatar-telemetry/history")
+async def agent_avatar_telemetry_history(
+    agent_id: str,
+    limit: int = 100,
+    since: float | None = None,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-722c: query persisted telemetry snapshots for an agent.
+
+    Returns {"agent_id": ..., "rows": [{"ts": float, "snap": {...}}, ...]}.
+    Empty `rows` when feature disabled, agent not found, or no history yet.
+    """
+    cfg = getattr(runtime, "config", None)
+    telemetry_cfg = getattr(cfg, "avatar_telemetry", None)
+    if telemetry_cfg is None or not telemetry_cfg.enabled:
+        raise HTTPException(status_code=503, detail="avatar_telemetry_disabled")
+    if not telemetry_cfg.history_enabled:
+        return {"agent_id": agent_id, "rows": []}
+
+    # Boundary defense — clamp limit. Don't 4xx; just clamp.
+    limit = max(1, min(int(limit), 1000))
+
+    writer = getattr(runtime, "avatar_telemetry_history", None)
+    if writer is None:
+        return {"agent_id": agent_id, "rows": []}
+
+    rows = await writer.query(
+        agent_id,
+        limit=limit,
+        since=since,
+        retention_days=telemetry_cfg.history_retention_days,
+    )
+    return {"agent_id": agent_id, "rows": rows}
+
+
 @router.websocket("/{agent_id}/avatar-telemetry-stream")
 async def agent_avatar_telemetry_stream(
     websocket: WebSocket,
@@ -707,6 +742,16 @@ async def agent_avatar_telemetry_stream(
             initial = await build_telemetry_snapshot(agent_id, runtime)
             agent._last_self_avatar_snap = initial
             await websocket.send_json(initial.to_dict())
+            # AD-722c: best-effort persistence. Never blocks the publish.
+            _hist = getattr(runtime, "avatar_telemetry_history", None)
+            if _hist is not None:
+                try:
+                    await _hist.append(initial)
+                except Exception:
+                    logger.debug(
+                        "AD-722c: history append raised on initial send",
+                        exc_info=True,
+                    )
         except Exception:
             logger.warning(
                 "AD-722b: initial snapshot send failed for agent=%s",
@@ -736,6 +781,16 @@ async def agent_avatar_telemetry_stream(
                 snap = await build_telemetry_snapshot(agent_id, runtime)
                 agent._last_self_avatar_snap = snap
                 await websocket.send_json(snap.to_dict())
+                # AD-722c: best-effort persistence. Never blocks the publish.
+                _hist = getattr(runtime, "avatar_telemetry_history", None)
+                if _hist is not None:
+                    try:
+                        await _hist.append(snap)
+                    except Exception:
+                        logger.debug(
+                            "AD-722c: history append raised in publish loop",
+                            exc_info=True,
+                        )
 
         async def _receive_loop() -> None:
             """Drain client messages so WebSocketDisconnect surfaces.

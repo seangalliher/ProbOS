@@ -1061,6 +1061,13 @@ class AvatarTelemetryConfig(BaseModel):
     # AD-722a-5: window walked by the aggregate-metric calculation.
     # Clamped at read time to min(window, len(history)).
     divergence_aggregate_window: int = 50
+    # AD-722c: append-only JSONL persistence under {history_dir}/<agent_id>.jsonl.
+    # Operator opt-out via history_enabled=False. Retention is enforced lazily
+    # at query time (rows older than now - history_retention_days are
+    # filtered out; on-disk pruning is deferred to AD-722c-1 forward marker).
+    history_enabled: bool = True
+    history_retention_days: int = 30
+    history_dir: str = "data/avatar_telemetry"
 
     @field_validator("mouth_active_window_seconds")
     @classmethod
@@ -1105,6 +1112,15 @@ class AvatarTelemetryConfig(BaseModel):
         if v < 0:
             raise ValueError(
                 f"divergence_history_size / divergence_aggregate_window must be >= 0, got {v}"
+            )
+        return v
+
+    @field_validator("history_retention_days")
+    @classmethod
+    def _bound_history_retention_days(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"history_retention_days must be >= 1, got {v}"
             )
         return v
 

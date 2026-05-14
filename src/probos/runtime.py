@@ -432,6 +432,19 @@ class ProbOSRuntime:
             max_per_agent=self.config.avatar_telemetry.max_connections_per_agent,
         )
 
+        from probos.avatars.telemetry_history import TelemetryHistoryWriter
+        # AD-722c: append-only JSONL writer; None when feature is disabled
+        # so the WS publish loop's hasattr check degrades cleanly.
+        self.avatar_telemetry_history: TelemetryHistoryWriter | None = None
+        if (
+            getattr(self.config, "avatar_telemetry", None) is not None
+            and self.config.avatar_telemetry.enabled
+            and self.config.avatar_telemetry.history_enabled
+        ):
+            self.avatar_telemetry_history = TelemetryHistoryWriter(
+                self.config.avatar_telemetry.history_dir,
+            )
+
         # AD-722a: most-recent intent-vs-presentation divergence per agent.
         # Volatile (cleared on restart). Populated by the divergence detector
         # call site in routers/agents.py:agent_chat; consumed by
