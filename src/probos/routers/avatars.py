@@ -125,6 +125,22 @@ async def synthesize_tts(
           "mime": null, "visemes": [], "duration_ms": 0}`` — browser falls
           back to ``SpeechSynthesisUtterance``.
     """
+    try:
+        return await _synthesize_tts_impl(req, runtime)
+    except HTTPException:
+        raise
+    except Exception:
+        # BF-280: surface the actual error. Until the AD-738 endpoint's failure
+        # modes are mapped, a bare 500 from FastAPI's default handler leaves no
+        # log entry — operators only see "everything still sounds the same"
+        # because the browser silently falls back to SpeechSynthesis. Logging
+        # at exception level here gives diagnostic visibility without changing
+        # the user-visible response shape.
+        logger.exception("AD-738: /api/avatars/tts crashed")
+        raise
+
+
+async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
     cfg = getattr(runtime.config, "tts", None)
     if cfg is None or not cfg.enabled or cfg.backend == "browser":
         return {
