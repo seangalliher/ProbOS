@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,26 +115,33 @@ async def probe_version(
     """Run ``rhubarb --version`` and return the version string, or None on any
     failure. NEVER raises."""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            str(binary_path),
-            "--version",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, _stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_seconds
+        # BF-280 (2026-05-13): subprocess.Popen in thread executor to support
+        # WindowsSelectorEventLoop (which lacks create_subprocess_*).
+        def _probe_sync() -> tuple[int, bytes, bytes]:
+            proc = subprocess.Popen(
+                [str(binary_path), "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+            try:
+                out, err = proc.communicate(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                raise
+            return proc.returncode or 0, out, err
+
+        loop = asyncio.get_running_loop()
+        try:
+            returncode, stdout, _stderr = await loop.run_in_executor(None, _probe_sync)
+        except subprocess.TimeoutExpired:
             logger.warning(
                 "AD-721b-1: rhubarb --version timed out after %ss", timeout_seconds
             )
             return None
-        if proc.returncode != 0:
+        if returncode != 0:
             logger.warning(
-                "AD-721b-1: rhubarb --version returned %s", proc.returncode
+                "AD-721b-1: rhubarb --version returned %s", returncode
             )
             return None
         return stdout.decode("utf-8", errors="replace").strip()
@@ -170,29 +178,36 @@ async def generate_visemes(
         )
         return []
     try:
-        proc = await asyncio.create_subprocess_exec(
-            str(resolved_binary),
-            "-f", "json",
-            str(audio_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_seconds
+        # BF-280 (2026-05-13): subprocess.Popen in thread executor.
+        def _run_sync() -> tuple[int, bytes, bytes]:
+            proc = subprocess.Popen(
+                [str(resolved_binary), "-f", "json", str(audio_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+            try:
+                out, err = proc.communicate(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                raise
+            return proc.returncode or 0, out, err
+
+        loop = asyncio.get_running_loop()
+        try:
+            returncode, stdout_bytes, stderr_bytes = await loop.run_in_executor(
+                None, _run_sync,
+            )
+        except subprocess.TimeoutExpired:
             logger.warning(
                 "AD-721b-1: rhubarb timed out after %ss on %s; degrading",
                 timeout_seconds, audio_path.name,
             )
             return []
-        if proc.returncode != 0:
+        if returncode != 0:
             logger.warning(
                 "AD-721b-1: rhubarb exit=%s on %s; stderr=%s",
-                proc.returncode, audio_path.name,
+                returncode, audio_path.name,
                 stderr_bytes.decode("utf-8", errors="replace")[:500],
             )
             return []

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -98,31 +99,44 @@ class PiperBackend:
             )
             return None
         try:
-            proc = await asyncio.create_subprocess_exec(
-                str(binary),
-                "--model", str(model),
-                "--output_file", "-",  # WAV (with RIFF header) to stdout. See class docstring.
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(input=text.encode("utf-8")),
-                    timeout=self._timeout_seconds,
+            # BF-280 (2026-05-13): use subprocess.Popen in a thread executor
+            # instead of asyncio.create_subprocess_exec. The latter requires
+            # ProactorEventLoop, but ProbOS runtime uses WindowsSelectorEventLoop
+            # which raises NotImplementedError on Windows. Mirrors the
+            # shell_command.py:_run_sync pattern.
+            def _run_sync() -> tuple[int, bytes, bytes]:
+                proc = subprocess.Popen(
+                    [str(binary), "--model", str(model), "--output_file", "-"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
+                try:
+                    out, err = proc.communicate(
+                        input=text.encode("utf-8"),
+                        timeout=self._timeout_seconds,
+                    )
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    raise
+                return proc.returncode or 0, out, err
+
+            loop = asyncio.get_running_loop()
+            try:
+                returncode, stdout_bytes, stderr_bytes = await loop.run_in_executor(
+                    None, _run_sync,
+                )
+            except subprocess.TimeoutExpired:
                 logger.warning(
                     "AD-738: piper timed out after %ss synthesizing %d chars",
                     self._timeout_seconds, len(text),
                 )
                 return None
-            if proc.returncode != 0:
+            if returncode != 0:
                 logger.warning(
                     "AD-738: piper exit=%s; stderr=%s",
-                    proc.returncode,
+                    returncode,
                     stderr_bytes.decode("utf-8", errors="replace")[:500],
                 )
                 return None
