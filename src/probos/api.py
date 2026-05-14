@@ -284,7 +284,42 @@ def create_app(runtime: Any) -> FastAPI:
     _ui_dist = Path(__file__).resolve().parent.parent.parent / "ui" / "dist"
     if _ui_dist.is_dir():
         from fastapi.staticfiles import StaticFiles
-        app.mount("/", StaticFiles(directory=str(_ui_dist), html=True), name="hxi")
+        from starlette.types import Scope
+
+        class _CacheAwareStaticFiles(StaticFiles):
+            """BF-281 (2026-05-13): emit ``Cache-Control`` headers so browsers
+            don't serve a stale ``index.html`` from cache after the Vite bundle
+            hash rotates.
+
+            - ``index.html`` (and any ``/`` request that resolves to it) →
+              ``no-cache`` so the browser revalidates each load and picks up
+              the latest bundle filename.
+            - Hashed asset files under ``assets/`` (``index-<hash>.js`` /
+              ``index-<hash>.css``) → ``immutable, max-age=31536000`` because
+              the hash changes whenever the content changes, so the cache is
+              safe to keep forever.
+            - Everything else → default StaticFiles behavior.
+
+            The May-12 → May-13 stale-bundle incident (BF-279 + AD-738 silent
+            voice fallback) is the canonical case study — see
+            ``DECISIONS.md`` AD-738 / BF-281 entries.
+            """
+
+            async def get_response(self, path: str, scope: Scope):  # type: ignore[override]
+                response = await super().get_response(path, scope)
+                _path_lower = path.lower()
+                if _path_lower in ("", "/", "index.html"):
+                    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                elif _path_lower.startswith("assets/") and (
+                    _path_lower.endswith(".js")
+                    or _path_lower.endswith(".css")
+                    or _path_lower.endswith(".woff")
+                    or _path_lower.endswith(".woff2")
+                ):
+                    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                return response
+
+        app.mount("/", _CacheAwareStaticFiles(directory=str(_ui_dist), html=True), name="hxi")
     else:
         from fastapi.responses import HTMLResponse
 
