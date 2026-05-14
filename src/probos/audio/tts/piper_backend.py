@@ -19,6 +19,7 @@ import asyncio
 import logging
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from probos.audio.tts.backends import TTSResult
@@ -99,32 +100,58 @@ class PiperBackend:
             )
             return None
         try:
+            # BF-282 (2026-05-13): write to a temp WAV file instead of stdout.
+            # On Windows, ``--output_file -`` writes to stdout which Piper's
+            # C runtime opens in text mode by default, converting every 0x0A
+            # byte to 0x0D 0x0A and corrupting the PCM body — produces audio
+            # that sounds like static. Writing to a file bypasses the text-
+            # mode translation entirely. Identical behavior on Linux/macOS.
+            #
             # BF-280 (2026-05-13): use subprocess.Popen in a thread executor
             # instead of asyncio.create_subprocess_exec. The latter requires
             # ProactorEventLoop, but ProbOS runtime uses WindowsSelectorEventLoop
             # which raises NotImplementedError on Windows. Mirrors the
             # shell_command.py:_run_sync pattern.
             def _run_sync() -> tuple[int, bytes, bytes]:
-                proc = subprocess.Popen(
-                    [str(binary), "--model", str(model), "--output_file", "-"],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
+                # NamedTemporaryFile + delete=False so Piper can open it by
+                # name; we delete in the finally block after reading.
+                with tempfile.NamedTemporaryFile(
+                    suffix=".wav", delete=False
+                ) as tmp:
+                    tmp_path = Path(tmp.name)
                 try:
-                    out, err = proc.communicate(
-                        input=text.encode("utf-8"),
-                        timeout=self._timeout_seconds,
+                    proc = subprocess.Popen(
+                        [
+                            str(binary),
+                            "--model", str(model),
+                            "--output_file", str(tmp_path),
+                        ],
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
                     )
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
-                    raise
-                return proc.returncode or 0, out, err
+                    try:
+                        _stdout, err = proc.communicate(
+                            input=text.encode("utf-8"),
+                            timeout=self._timeout_seconds,
+                        )
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                        raise
+                    rc = proc.returncode or 0
+                    if rc != 0 or not tmp_path.is_file():
+                        return rc, b"", err
+                    return rc, tmp_path.read_bytes(), err
+                finally:
+                    try:
+                        tmp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
             loop = asyncio.get_running_loop()
             try:
-                returncode, stdout_bytes, stderr_bytes = await loop.run_in_executor(
+                returncode, wav_bytes, stderr_bytes = await loop.run_in_executor(
                     None, _run_sync,
                 )
             except subprocess.TimeoutExpired:
@@ -140,10 +167,10 @@ class PiperBackend:
                     stderr_bytes.decode("utf-8", errors="replace")[:500],
                 )
                 return None
-            if not stdout_bytes:
+            if not wav_bytes:
                 logger.warning("AD-738: piper produced 0 bytes; degrading")
                 return None
-            return TTSResult(audio_bytes=stdout_bytes, mime="audio/wav")
+            return TTSResult(audio_bytes=wav_bytes, mime="audio/wav")
         except (OSError, ValueError) as e:
             logger.warning(
                 "AD-738: piper subprocess failed: %s: %s", type(e).__name__, e
