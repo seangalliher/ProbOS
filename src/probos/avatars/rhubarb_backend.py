@@ -179,9 +179,23 @@ async def generate_visemes(
         return []
     try:
         # BF-280 (2026-05-13): subprocess.Popen in thread executor.
+        # BF-284 (2026-05-13): use --recognizer phonetic instead of the default
+        # pocketSphinx. PocketSphinx is ~2.5x slower because it runs a full
+        # English ASR pass with language modeling; phonetic is purely acoustic
+        # and language-agnostic. Our pipeline collapses rhubarb's output to the
+        # Preston Blair 9-set anyway (rhubarb_backend.py:41) and the renderer
+        # further collapses to 5 vowel axes, so the consonant-distinction loss
+        # from phonetic is invisible at the rendered-mouth level. --threads 0
+        # lets rhubarb use all available cores.
         def _run_sync() -> tuple[int, bytes, bytes]:
             proc = subprocess.Popen(
-                [str(resolved_binary), "-f", "json", str(audio_path)],
+                [
+                    str(resolved_binary),
+                    "-r", "phonetic",
+                    "--threads", "0",
+                    "-f", "json",
+                    str(audio_path),
+                ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
