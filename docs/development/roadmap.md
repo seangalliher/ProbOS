@@ -358,10 +358,10 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-721b-1 | Server-side rhubarb-lip-sync backend (replaces heuristic phoneme schedule) — **SHIPPED Wave 155** | [#559](https://github.com/seangalliher/ProbOS/issues/559) | 3 |
 | AD-721b-2 | Browser-side real-audio capture via `MediaStreamDestination` — **SHIPPED Wave 155** | [#560](https://github.com/seangalliher/ProbOS/issues/560) | 3 |
 | AD-721b-2.3 / AD-738 | Server-streamed TTS via Piper (closes the lip-sync loop — server is the source of audio bytes so rhubarb runs on real WAV) — **SHIPPED Wave 157** | none (was forward marker) | 3 |
-| AD-738a | Per-agent voice selection (CrewProfile.voice_model + UI selector with license display) | none | 4 |
-| AD-738b | GPU-accelerated TTS backend eval (Kokoro Apache 2.0 / StyleTTS2 MIT slot into TTSBackend Protocol) | none | 4 |
-| AD-738c | Server-side voice modulation (apply AD-735 pitch/rate at Piper synthesis, not `<audio>` post-processing) | none | 4 |
-| AD-738d | TTS text caching layer (LRU keyed `(agent_id, voice, sha256(text))` → `attachment_id`) | none | 4 |
+| AD-738f | Per-agent voice selection (CrewProfile.voice_model + UI selector with license display) — renumbered from AD-738a (Wave 158) | none | 4 |
+| AD-738g | GPU-accelerated TTS backend eval (Kokoro Apache 2.0 / StyleTTS2 MIT slot into TTSBackend Protocol) — renumbered from AD-738b (Wave 158) | none | 4 |
+| AD-738h | Server-side voice modulation (apply AD-735 pitch/rate at Piper synthesis, not `<audio>` post-processing) — renumbered from AD-738c (Wave 158) | none | 4 |
+| AD-738i | TTS text caching layer (LRU keyed `(agent_id, voice, sha256(text))` → `attachment_id`) — renumbered from AD-738d (Wave 158) | none | 4 |
 | AD-721b-3 | whisper.cpp WASM tiny.en for offline phoneme alignment (~75 MB model) | [#561](https://github.com/seangalliher/ProbOS/issues/561) | 4 |
 | AD-721c | VR / spatial-scene avatar mode | [#530](https://github.com/seangalliher/ProbOS/issues/530) | 4 |
 | AD-721d | Agent-authored appearance pipeline | [#531](https://github.com/seangalliher/ProbOS/issues/531) | 3 |

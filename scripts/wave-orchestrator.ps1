@@ -338,6 +338,15 @@ COMMANDS:
   git diff origin/main..HEAD --stat
   git log -p origin/main..HEAD | Select-String -Pattern 'TODO|XXX|FIXME|breakpoint'
 
+COMMIT-COUNT AUDIT (AD-738a — audit trail only, NEVER blocks a push):
+  `$expected = ($wave.prompt_paths | Measure-Object).Count
+  `$actual   = (git log --oneline origin/main..HEAD | Measure-Object).Count
+  if (`$expected -ne `$actual) {
+    Write-Host "AUDIT: wave $($wave.id) expected `$expected commit(s); HEAD has `$actual unpushed commit(s). Review the extra commits before pushing." -ForegroundColor Yellow
+  } else {
+    Write-Host "AUDIT: wave $($wave.id) commit count matches (`$expected)." -ForegroundColor Green
+  }
+
 Look for:
   - Unintended file changes (drift outside wave scope)
   - Commit messages match `AD-NNN: <one-line>` pattern

@@ -139,8 +139,15 @@ async function _fetchTtsStatus(): Promise<TtsStatus | null> {
  *  config change (browser → piper or vice versa) is picked up without refresh. */
 function _invalidateTtsStatus(): void { _ttsStatus = null; }
 
-/** AD-738: TEST-ONLY hook to reset the module-level probe cache between tests. */
+/** AD-738: TEST-ONLY hook to reset the module-level probe cache between tests.
+ *  AD-738a (Wave 158): gated behind ``import.meta.env.MODE === 'test'``.
+ *  Vitest sets MODE='test' at module load. Production builds (``vite build``)
+ *  set MODE='production' so this becomes a no-op — accidental production
+ *  callers cannot reset the cache and disturb the zero-HTTP-per-utterance
+ *  guarantee. The function is still exported so existing test imports
+ *  resolve without a binding error. */
 export function _resetTtsStatusForTests(): void {
+  if (import.meta.env.MODE !== 'test') return;
   _ttsStatus = null;
   _ttsStatusInflight = null;
   _activeAudio = null;
