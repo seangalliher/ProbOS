@@ -2415,3 +2415,34 @@ New `AttachmentsConfig.multi_image_warn_threshold: int = 5` triggers a Tier-2 lo
 **Tests (+8 pytest).** `tests/test_ad737_emotion_taxonomy.py` — (1) `inherits` must be v1, (2) ±0.15 shift bounds, (3) v1 name collision, (4) max 8 entries, (5) custom name parsed only when palette is passed, (6) modulation composes delta AND fired_rules contains BOTH `intent_X` and `custom_X`, (7) prompt builder includes custom names + all v1 names, (8) parent-equivalence (match_score / signed_divergence / magnitude equal to v1 parent; `match_score == 1.0`).
 
 **Files.** `src/probos/crew_profile.py` (`EmotionProfile` dataclass, `_CUSTOM_EMOTION_NAME_RE`, `CrewProfile.custom_emotions` field + `__post_init__` validator + to/from_dict round-trip, `ClassVar` import). `src/probos/avatars/divergence_detector.py` (`_resolve_intent_name` helper, `parse_intent_self_tag` `custom_emotions` kwarg, `apply_divergence_check` profile_store lookup + dual-resolution + `intent_emotion` replacement). `src/probos/avatars/telemetry.py` (`apply_voice_modulation` `custom_emotions` kwarg, additive delta layering, dual-tag fired_rules emit, `snapshot_for_agent` caller wiring, `TYPE_CHECKING` import). `src/probos/cognitive/cognitive_agent.py` (`_build_intent_self_tag_instruction` dynamic taxonomy rendering). `tests/test_ad737_emotion_taxonomy.py` (new, 8 tests).
+
+
+### AD-739 — Captain Card: operator self-card, always-in-context (planning)
+
+**Date:** 2026-05-13. **Status:** Planning (placeholder anchored from architecture session). **Related:** AD-733 / AD-733a (live camera perception umbrella, [#641](https://github.com/seangalliher/ProbOS/issues/641)) — this AD provides the identity reference the streaming-vision pipeline matches against.
+
+**Problem.** Every CognitiveAgent independently re-derives operator context from episodic recall on each request — expensive, inconsistent across crew, and fails on cold context (new agent, fresh thread, post-restart). Captain has no canonical, always-in-context identity surface; agents must guess or ask. Also blocks identity-aware perception: AD-733a "person appeared in frame" cannot become "the *Captain* appeared" without a recognition anchor.
+
+**Decision shape (to be sharpened at prompt time).** A small, system-maintained operator self-card stitched into every CognitiveAgent prompt. Includes identity (name, callsign, role), voice/style anchors (tone, formatting preferences, e.g. no-emoji), active context (current project, current wave), known preferences, recent high-importance corrections, and an optional `avatar_ref` (AttachmentStore SHA) usable as the identity-recognition anchor for AD-733a streaming vision.
+
+**Hard constraints (where this DIVERGES from Letta-style memory blocks).**
+- **System-maintained, NOT agent-self-edited.** Updates flow through Dreaming consolidation + correction-feedback (existing pipeline). No `memory_replace` tool exposed to designed agents. Preserves trust/Hebbian/episodic loop and CodeValidator/probationary-trust governance from self-mod.
+- **Validated at the prompt boundary.** Card content passes through the `_CAPABILITY_GAP_RE` + confabulation-guard surfaces (AD-588/589/592 lineage) before injection.
+- **Versioned in KnowledgeStore.** Git-backed for reversibility (Reversibility Preference axiom).
+- **Per-agent overlay optional.** Counselor needs different anchors than Engineering — base Card + per-department overlay, both system-managed.
+- **Avatar is read-only to agents.** Captain owns the asset; agents must never fabricate or modify it (confabulation territory).
+- **Not a personality dossier.** Facts and preferences only; no inferred psychology.
+
+**Open design questions for the build prompt.**
+1. Token budget — target ~200-500 tokens for the base Card; cap and truncation policy for overlays.
+2. Storage shape — KnowledgeStore record vs sidecar `data/captain-card/`. Lean toward KnowledgeStore for symmetry with crew profiles.
+3. Refresh cadence — how often does Dreaming touch the Card (every cycle, every N cycles, on-correction-only)?
+4. Recognition-embedding source for AD-733a coupling — moondream2 in embed mode vs paired tiny face-embedding model. Resolve when AD-733a starts.
+
+**Out of scope for v1.**
+- Agent-side self-cards (each agent maintaining a memory-block of its OWN persona). CognitiveAgent `instructions` already serves that role per Principle #6.
+- Multi-operator support (multiple humans with separate Cards). v1 is single Captain.
+- Live perception itself — that's AD-733/733a/733b. AD-739 only provides the identity anchor.
+
+**Why now / source of decision.** Architecture session 2026-05-13 reviewing letta-ai/letta scout report. The Letta "core memory blocks" pattern (always-in-context, agent-edited) is the inspiration; ProbOS adopts the *always-in-context* half and rejects the *agent-edited* half on governance grounds. Pattern-absorption per the OSS-license discipline (no Letta code imported).
+
