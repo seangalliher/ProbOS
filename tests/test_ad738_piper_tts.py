@@ -34,6 +34,16 @@ from probos.routers import chat as chat_router_mod
 
 
 class _StubProcess:
+    """Mimics subprocess.Popen for tests.
+
+    BF-286 (2026-05-13): PiperBackend migrated from
+    ``asyncio.create_subprocess_exec`` to ``subprocess.Popen + run_in_executor``
+    (BF-280 WindowsSelectorEventLoop) and from stdout to a ``--output_file``
+    tempfile (BF-282 Windows text-mode corruption). The stub now mirrors the
+    sync subprocess.Popen shape AND writes ``stdout`` to the ``--output_file``
+    path if one is present in the args, so the production code reads it back.
+    """
+
     def __init__(
         self,
         returncode: int = 0,
@@ -46,22 +56,47 @@ class _StubProcess:
         self._stderr = stderr
         self._hang = hang
         self.killed = False
+        self._output_file_path: str | None = None  # set by _make_subprocess_factory
 
-    async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
-        if self._hang:
-            import asyncio
-            await asyncio.sleep(60)
+    def communicate(
+        self, input: bytes | None = None, timeout: float | None = None
+    ) -> tuple[bytes, bytes]:
+        if self._hang and timeout is not None:
+            import subprocess as _sub
+            raise _sub.TimeoutExpired(cmd="stub-piper", timeout=timeout)
+        # BF-282 simulation: production code passes --output_file <tmp_path>
+        # and reads bytes back from the file. If we have such a path, write
+        # the configured stdout payload there.
+        if self._output_file_path is not None and self._stdout:
+            from pathlib import Path as _Path
+            try:
+                _Path(self._output_file_path).write_bytes(self._stdout)
+            except OSError:
+                pass
         return self._stdout, self._stderr
 
     def kill(self) -> None:
         self.killed = True
 
-    async def wait(self) -> int:
+    def wait(self, timeout: float | None = None) -> int:
         return self.returncode
 
 
 def _make_subprocess_factory(stub: _StubProcess):
-    async def _factory(*_args, **_kwargs):
+    """Returns a sync callable that replaces subprocess.Popen.
+
+    Captures ``--output_file`` path from args so the stub can simulate
+    BF-282's file-write behavior.
+    """
+    def _factory(args, *_pos, **_kwargs):
+        if isinstance(args, (list, tuple)):
+            try:
+                idx = list(args).index("--output_file")
+                stub._output_file_path = (
+                    args[idx + 1] if idx + 1 < len(args) else None
+                )
+            except ValueError:
+                pass
         return stub
     return _factory
 
@@ -156,11 +191,11 @@ async def test_piper_backend_missing_voice_model_returns_none(
 async def test_piper_backend_empty_text_short_circuits(monkeypatch, tmp_path):
     spawned: list[bool] = []
 
-    async def _fail_factory(*_a, **_k):
+    def _fail_factory(*_a, **_k):
         spawned.append(True)
         raise AssertionError("subprocess should not be spawned for empty text")
 
-    monkeypatch.setattr("asyncio.create_subprocess_exec", _fail_factory)
+    monkeypatch.setattr("subprocess.Popen", _fail_factory)
     fake_bin = tmp_path / "piper"
     fake_bin.write_bytes(b"")
     backend = PiperBackend(binary_path=str(fake_bin), voice_model="x")
@@ -180,7 +215,7 @@ async def test_piper_backend_subprocess_timeout_returns_none(
     _setup_voice_model(tmp_path / "tools" / "piper" / "voices", "v")
     stub = _StubProcess(hang=True)
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     backend = PiperBackend(
@@ -202,7 +237,7 @@ async def test_piper_backend_nonzero_exit_returns_none(
     _setup_voice_model(tmp_path / "tools" / "piper" / "voices", "v")
     stub = _StubProcess(returncode=1, stdout=b"", stderr=b"piper: bad model")
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     backend = PiperBackend(binary_path=str(fake_bin), voice_model="v")
@@ -224,7 +259,7 @@ async def test_piper_backend_zero_bytes_returns_none(
     _setup_voice_model(tmp_path / "tools" / "piper" / "voices", "v")
     stub = _StubProcess(returncode=0, stdout=b"", stderr=b"")
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     backend = PiperBackend(binary_path=str(fake_bin), voice_model="v")
@@ -241,7 +276,7 @@ async def test_piper_backend_happy_path_returns_wav(monkeypatch, tmp_path):
     wav = _make_minimal_wav(num_samples=8000, sample_rate=16000)
     stub = _StubProcess(returncode=0, stdout=wav, stderr=b"")
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     backend = PiperBackend(binary_path=str(fake_bin), voice_model="v")
@@ -401,7 +436,7 @@ async def test_endpoint_tts_browser_backend_returns_disabled(avatar_client, monk
         raise AssertionError("subprocess should not be spawned on browser path")
 
     monkeypatch.setattr("probos.audio.tts.select_backend", _fake_select)
-    monkeypatch.setattr("asyncio.create_subprocess_exec", _fail_factory)
+    monkeypatch.setattr("subprocess.Popen", _fail_factory)
 
     resp = await ac.post("/api/avatars/tts", json={"text": "hi"})
     assert resp.status_code == 200

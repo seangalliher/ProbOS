@@ -43,11 +43,14 @@ from probos.routers.deps import get_runtime
 
 
 class _StubProcess:
-    """Mimics asyncio.subprocess.Process for tests.
+    """Mimics subprocess.Popen for tests.
 
-    Configurable: returncode, stdout, stderr, and an optional "hang" flag that
-    causes communicate() to await asyncio.sleep(60) (so asyncio.wait_for can
-    cancel it).
+    BF-286 (2026-05-13): rhubarb_backend migrated from
+    ``asyncio.create_subprocess_exec`` to ``subprocess.Popen + run_in_executor``
+    (BF-280 WindowsSelectorEventLoop). Stub mirrors the sync subprocess.Popen
+    shape — ``communicate`` is sync, ``wait`` is sync, ``hang=True`` raises
+    ``subprocess.TimeoutExpired`` when a timeout is passed (matching
+    ``proc.communicate(timeout=...)`` semantics).
     """
 
     def __init__(
@@ -63,23 +66,25 @@ class _StubProcess:
         self._hang = hang
         self.killed = False
 
-    async def communicate(self) -> tuple[bytes, bytes]:
-        if self._hang:
-            import asyncio
-            await asyncio.sleep(60)
+    def communicate(
+        self, input: bytes | None = None, timeout: float | None = None
+    ) -> tuple[bytes, bytes]:
+        if self._hang and timeout is not None:
+            import subprocess as _sub
+            raise _sub.TimeoutExpired(cmd="stub-rhubarb", timeout=timeout)
         return self._stdout, self._stderr
 
     def kill(self) -> None:
         self.killed = True
 
-    async def wait(self) -> int:
+    def wait(self, timeout: float | None = None) -> int:
         return self.returncode
 
 
 def _make_subprocess_factory(stub: _StubProcess):
-    async def _factory(*_args, **_kwargs):
+    """Returns a sync callable that replaces subprocess.Popen."""
+    def _factory(*_args, **_kwargs):
         return stub
-
     return _factory
 
 
@@ -110,7 +115,7 @@ async def test_is_available_false_when_version_probe_times_out(
     # Pretend the binary exists (Path.is_file will return True on the real file).
     stub = _StubProcess(hang=True)
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     result = await is_available(str(fake_bin), timeout_seconds=0.2)
@@ -149,7 +154,7 @@ async def test_generate_visemes_subprocess_timeout_returns_empty(
     audio.write_bytes(b"RIFF\x00\x00\x00\x00WAVEdata")
     stub = _StubProcess(hang=True)
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     frames = await generate_visemes(audio, str(fake_bin), timeout_seconds=0.2)
@@ -169,7 +174,7 @@ async def test_generate_visemes_malformed_json_returns_empty(
     audio.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
     stub = _StubProcess(returncode=0, stdout=b"not json {{")
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     frames = await generate_visemes(audio, str(fake_bin))
@@ -188,7 +193,7 @@ async def test_generate_visemes_missing_mouthCues_returns_empty(
     audio.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
     stub = _StubProcess(returncode=0, stdout=b'{"metadata": {}}')
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     frames = await generate_visemes(audio, str(fake_bin))
@@ -211,7 +216,7 @@ async def test_generate_visemes_happy_path_maps_visemes(monkeypatch, tmp_path):
     }
     stub = _StubProcess(returncode=0, stdout=json.dumps(payload).encode("utf-8"))
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     frames = await generate_visemes(audio, str(fake_bin))
@@ -383,7 +388,7 @@ async def test_generate_visemes_empty_audio_file_returns_empty(
         stderr=b"rhubarb: input file is empty",
     )
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     frames = await generate_visemes(audio, str(fake_bin))
@@ -412,7 +417,7 @@ async def test_generate_visemes_filters_inverted_time_ranges(
     }
     stub = _StubProcess(returncode=0, stdout=json.dumps(payload).encode("utf-8"))
     monkeypatch.setattr(
-        "asyncio.create_subprocess_exec",
+        "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
     frames = await generate_visemes(audio, str(fake_bin))
