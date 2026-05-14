@@ -95,23 +95,162 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
 }
 
 /** AD-718: agent_id is optional; when provided it is forwarded to listeners
- *  so AD-721 can route mouth animation to the right avatar. */
+ *  so AD-721 can route mouth animation to the right avatar.
+ *  AD-738: try server-streamed Piper TTS first when the cached one-time
+ *  status probe reports backend=piper; fall back to SpeechSynthesisUtterance
+ *  on any failure. Public surface unchanged — still synchronous, still fires
+ *  'start'/'end' events. Default config (backend=browser) takes the fallback
+ *  path with ZERO POST traffic per utterance. */
+
+/** AD-738: cached server-feature probe. Populated on first speakResponse call;
+ *  invalidated on any non-200 response so a runtime restart with backend=piper
+ *  lights up without a browser refresh. */
+type TtsStatus = { enabled: boolean; backend: 'browser' | 'piper' | string };
+let _ttsStatus: TtsStatus | null = null;
+let _ttsStatusInflight: Promise<TtsStatus | null> | null = null;
+
+async function _fetchTtsStatus(): Promise<TtsStatus | null> {
+  if (_ttsStatus !== null) return _ttsStatus;
+  if (_ttsStatusInflight !== null) return _ttsStatusInflight;
+  _ttsStatusInflight = (async () => {
+    try {
+      const resp = await fetch('/api/avatars/tts/status', { method: 'GET' });
+      if (!resp.ok) {
+        _ttsStatus = { enabled: false, backend: 'browser' };
+        return _ttsStatus;
+      }
+      const data = await resp.json();
+      _ttsStatus = {
+        enabled: !!(data && data.enabled),
+        backend: (data && typeof data.backend === 'string') ? data.backend : 'browser',
+      };
+      return _ttsStatus;
+    } catch {
+      _ttsStatus = { enabled: false, backend: 'browser' };
+      return _ttsStatus;
+    } finally {
+      _ttsStatusInflight = null;
+    }
+  })();
+  return _ttsStatusInflight;
+}
+
+/** AD-738: invalidate cache on any failure during the POST path so a runtime
+ *  config change (browser → piper or vice versa) is picked up without refresh. */
+function _invalidateTtsStatus(): void { _ttsStatus = null; }
+
+/** AD-738: TEST-ONLY hook to reset the module-level probe cache between tests. */
+export function _resetTtsStatusForTests(): void {
+  _ttsStatus = null;
+  _ttsStatusInflight = null;
+  _activeAudio = null;
+}
+
+/** AD-738: track the active <audio> so a second speakResponse cancels the first. */
+let _activeAudio: HTMLAudioElement | null = null;
+
 export function speakResponse(
   text: string,
   profile?: VoiceProfile,
   agent_id?: string,
 ): void {
-  if (!('speechSynthesis' in window)) return;
+  if (!('speechSynthesis' in window) && typeof Audio !== 'function') return;
 
-  // Cancel any ongoing speech
-  speechSynthesis.cancel();
+  // Cancel any in-flight audio from a prior call (server path or browser path).
+  if ('speechSynthesis' in window) {
+    speechSynthesis.cancel();
+  }
+  if (_activeAudio !== null) {
+    try { _activeAudio.pause(); } catch { /* ignore */ }
+    _activeAudio = null;
+  }
 
-  const utterance = new SpeechSynthesisUtterance(text);
+  // Fast synchronous path: if fetch is unavailable OR the cached probe
+  // already says "not piper", run the browser fallback synchronously.
+  // This preserves the pre-AD-738 synchronous side-effect contract on the
+  // default-config path AND avoids an async hop on every warm-cache call.
+  if (typeof (globalThis as any).fetch !== 'function') {
+    _ttsStatus = { enabled: false, backend: 'browser' };
+    _speakBrowserFallback(text, profile, agent_id);
+    return;
+  }
+  if (_ttsStatus !== null && (!_ttsStatus.enabled || _ttsStatus.backend !== 'piper')) {
+    _speakBrowserFallback(text, profile, agent_id);
+    return;
+  }
 
-  // AD-718d: when an agent_id is supplied, modulate pitch/rate/volume
-  // from the live AgentSignals selector. Tier-2 log-and-degrade — any
-  // signals-read failure falls back to the unmodulated baseline; speech
-  // must NEVER fail because of modulation.
+  void (async () => {
+    // ZERO-HTTP guarantee for default config (Captain decision #9):
+    // probe once, cache, and skip the POST entirely when backend != "piper".
+    const status = await _fetchTtsStatus();
+    if (status === null || !status.enabled || status.backend !== 'piper') {
+      _speakBrowserFallback(text, profile, agent_id);
+      return;
+    }
+    try {
+      const resp = await fetch('/api/avatars/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) {
+        _invalidateTtsStatus();
+        _speakBrowserFallback(text, profile, agent_id);
+        return;
+      }
+      const data = await resp.json();
+      if (
+        !data ||
+        data.backend === 'disabled' ||
+        typeof data.audio_attachment_id !== 'string' ||
+        data.audio_attachment_id.length !== 64
+      ) {
+        // Server flipped to disabled — invalidate so the next call re-probes.
+        _invalidateTtsStatus();
+        _speakBrowserFallback(text, profile, agent_id);
+        return;
+      }
+      // Build a synthetic utterance object so existing 'start'/'end' listeners
+      // (AD-718 / AD-721) keep firing the same shape. agent_id propagates.
+      const synth = new SpeechSynthesisUtterance(text);
+      const audio = new Audio(`/api/chat/attachments/${data.audio_attachment_id}`);
+      _activeAudio = audio;
+      const effective = _resolveEffectiveProfile(profile, agent_id);
+      audio.volume = Math.max(0, Math.min(1, effective.volume ?? 0.8));
+      audio.playbackRate = Math.max(0.25, Math.min(4.0, effective.rate ?? 0.95));
+      try { (audio as any).preservesPitch = false; } catch { /* not supported */ }
+      const _clearActive = () => { if (_activeAudio === audio) _activeAudio = null; };
+      audio.addEventListener('play', () => _fire({ type: 'start', agent_id, utterance: synth }));
+      audio.addEventListener('ended', () => { _clearActive(); _fire({ type: 'end', agent_id, utterance: synth }); });
+      audio.addEventListener('error', () => { _clearActive(); _fire({ type: 'end', agent_id, utterance: synth }); });
+      // AD-738: feed visemes directly to useLipSyncCapture via the new injection setter.
+      if (Array.isArray(data.visemes) && data.visemes.length > 0) {
+        try {
+          const { injectLipSyncFrames } = await import('./useLipSyncCapture');
+          injectLipSyncFrames(data.visemes, agent_id);
+        } catch {
+          // ignore — visemes are best-effort
+        }
+      }
+      try {
+        await audio.play();
+      } catch {
+        _clearActive();
+        _speakBrowserFallback(text, profile, agent_id);
+      }
+    } catch {
+      _invalidateTtsStatus();
+      _speakBrowserFallback(text, profile, agent_id);
+    }
+  })();
+}
+
+/** AD-738: factor out per-agent modulation resolution so both server and
+ *  fallback paths apply AD-735 volume + AD-737 emotion modulation. */
+function _resolveEffectiveProfile(
+  profile: VoiceProfile | undefined,
+  agent_id: string | undefined,
+): VoiceProfile {
   let effective: VoiceProfile = profile ?? {};
   if (agent_id) {
     try {
@@ -130,22 +269,30 @@ export function speakResponse(
         signals,
       );
     } catch {
-      // fall through with unmodulated profile
+      /* fall through with unmodulated profile */
     }
   }
+  return effective;
+}
 
-  utterance.rate   = effective.rate   ?? 0.95;
-  utterance.pitch  = effective.pitch  ?? 0.9;
+/** AD-738: fallback path — the pre-AD-738 SpeechSynthesisUtterance flow. */
+function _speakBrowserFallback(
+  text: string,
+  profile?: VoiceProfile,
+  agent_id?: string,
+): void {
+  if (!('speechSynthesis' in window)) return;
+  const utterance = new SpeechSynthesisUtterance(text);
+  const effective = _resolveEffectiveProfile(profile, agent_id);
+  utterance.rate = effective.rate ?? 0.95;
+  utterance.pitch = effective.pitch ?? 0.9;
   utterance.volume = effective.volume ?? 0.8;
-
   const named = profile?.voice_name ? _resolveVoiceByName(profile.voice_name) : null;
   const voice = named ?? findPreferredVoice();
   if (voice) utterance.voice = voice;
-
   utterance.onstart = () => _fire({ type: 'start', agent_id, utterance });
-  utterance.onend   = () => _fire({ type: 'end',   agent_id, utterance });
+  utterance.onend = () => _fire({ type: 'end', agent_id, utterance });
   // 'boundary' reserved for AD-721b phoneme work; not wired in v1.
-
   speechSynthesis.speak(utterance);
 }
 

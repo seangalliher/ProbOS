@@ -31,6 +31,8 @@ describe('AD-718d speakResponse modulation', () => {
       'SpeechSynthesisUtterance',
       FakeUtterance as unknown as typeof SpeechSynthesisUtterance,
     );
+    // AD-738: route through synchronous browser fallback by removing fetch.
+    vi.stubGlobal('fetch', undefined);
   });
 
   afterEach(() => {

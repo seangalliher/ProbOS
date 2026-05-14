@@ -36,6 +36,8 @@ describe('voice.ts (AD-474a)', () => {
       addEventListener: vi.fn(),
     });
     vi.stubGlobal('SpeechSynthesisUtterance', FakeUtterance as unknown as typeof SpeechSynthesisUtterance);
+    // AD-738: route through synchronous browser fallback by removing fetch.
+    vi.stubGlobal('fetch', undefined);
     localStorage.clear();
     setPreferredVoiceName(null);  // reset module cache
   });

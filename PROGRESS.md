@@ -7,8 +7,11 @@ back to OSS).
 
 **Authoritative state.**
 - `prompts/wave-plan.yaml` — wave roster (current wave: 150 done; next slot is 151).
-- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-737).
-- `tests/` — 13404 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout + 1 dreaming flake outside this wave) + 621 vitest; gate runs `-n 4 --dist=loadfile`.
+- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-738).
+- `tests/` — 13431 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout + occasional dreaming/ward_room flakes outside this wave) + 628 vitest; gate runs `-n 4 --dist=loadfile`.
+
+**Wave 157 in flight (2026-05-13):**
+- AD-738 — Server-streamed TTS via Piper (+26 pytest tests + 6 Vitest tests + 1 regression Vitest; closes forward marker AD-721b-2.3). MIT-licensed operator-provided binary at `tools/piper/piper(.exe)` + MIT-licensed default voice model `en_US-amy-medium.onnx[.json]` at `tools/piper/voices/`. New `src/probos/audio/tts/` module with `TTSBackend` Protocol + `PiperBackend` subprocess wrapper + `NullBackend` honest-degrade. New `TTSConfig` Pydantic model (default `backend = "browser"` — zero behaviour change for operators who don't install Piper). New `GET /api/avatars/tts/status` probe endpoint + `POST /api/avatars/tts` synthesis endpoint (AD-731 ref-shape invariant — audio bytes flow through AttachmentStore as SHA-256 refs, never inline). Browser `speakResponse` caches the one-time status probe in module-level state and skips POST entirely when `backend != "piper"` (load-bearing zero-HTTP-per-utterance guarantee). On piper happy path, browser plays via `<audio>` element + injects visemes into `useLipSyncCapture` via new `injectLipSyncFrames` setter. AD-735 volume + AD-737 emotion modulation apply to BOTH paths. Honest-degrade chain preserves `SpeechSynthesisUtterance` fallback at three tiers. Forward markers AD-738a (per-agent voice selection), AD-738b (GPU TTS backend eval — Kokoro/StyleTTS2), AD-738c (server-side voice modulation), AD-738d (TTS text caching) filed.
 
 **Wave 156 in flight (2026-05-13):**
 - AD-735 — Per-agent volume slider in `ProfileInfoTab.tsx` (+5 Vitest tests; closes #527). Backend chain (`VoiceProfile.volume`, `SetVoiceProfileRequest`, `PUT /api/agents/{id}/voice-profile`, `voice.ts` playback) was already shipped under AD-718; this AD exposed the UI slider with inline SVG speaker glyph (HXI Design Principle #3) and percent display. Mirrors Pitch/Rate `onMouseUp`/`onTouchEnd` persistence semantics. No backend, deps, or wire-shape changes.

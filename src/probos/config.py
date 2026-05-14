@@ -1205,6 +1205,52 @@ class LipSyncConfig(BaseModel):
     log-and-degrade on TimeoutExpired — falls back to heuristic."""
 
 
+class TTSConfig(BaseModel):
+    """AD-738 — Server-side TTS backend selection.
+
+    Default: ``browser`` — every ``speakResponse()`` call uses
+    ``SpeechSynthesisUtterance`` (today's behaviour, zero regression).
+    Operator opts in to ``piper`` by setting ``backend: "piper"`` AND
+    placing the binary at ``binary_path`` AND placing the voice model
+    files at ``tools/piper/voices/<voice_model>.onnx`` (+ ``.onnx.json``).
+    Any failure (binary missing, model missing, subprocess error,
+    timeout) returns honest-degrade — the browser falls back to
+    SpeechSynthesisUtterance. Speech must NEVER stop because of a TTS
+    failure.
+    """
+
+    enabled: bool = True
+    """Master switch for the server-side TTS pipeline. ``False`` makes
+    ``POST /api/avatars/tts`` return ``{"backend": "disabled"}``; the
+    browser falls back to SpeechSynthesisUtterance."""
+
+    backend: Literal["browser", "piper"] = "browser"
+    """``browser``: server returns ``{"backend": "disabled"}``, browser
+    uses SpeechSynthesisUtterance (default — zero behaviour change for
+    operators who don't install Piper). ``piper``: subprocess wrapper
+    around the piper binary."""
+
+    binary_path: str = "tools/piper/piper"
+    """Path (relative to repo root or absolute) to the piper binary.
+    On Windows the wrapper auto-appends ``.exe`` if the literal path
+    does not exist. Operator places the binary; the repo never ships
+    it (gitignored under ``/tools/``)."""
+
+    voice_model: str = "en_US-amy-medium"
+    """Voice model name. Operator places ``tools/piper/voices/<name>.onnx``
+    AND ``tools/piper/voices/<name>.onnx.json`` (Piper requires both).
+    Default ``en_US-amy-medium`` is MIT-licensed (verified on the
+    rhasspy/piper-voices model card). Operator who picks a different
+    voice is responsible for the license check until AD-738a surfaces
+    a license display in the per-agent voice selector."""
+
+    timeout_seconds: float = 10.0
+    """Subprocess timeout. Piper on a sentence-length input typically
+    takes 0.3-1.5s on CPU; default leaves ample headroom for cold
+    model load on first call. Tier-2 log-and-degrade on TimeoutExpired —
+    endpoint returns honest-degrade, browser falls back."""
+
+
 class A2APeerConfig(BaseModel):
     """AD-480e: Outbound A2A peer registration entry."""
 
@@ -3388,6 +3434,7 @@ class SystemConfig(BaseModel):
     dm_sanity_gate: DmSanityGateConfig = Field(default_factory=DmSanityGateConfig)  # AD-724
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     lipsync: LipSyncConfig = Field(default_factory=LipSyncConfig)  # AD-721b-1 (Wave 155)
+    tts: TTSConfig = Field(default_factory=TTSConfig)  # AD-738 (Wave 157)
     spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481

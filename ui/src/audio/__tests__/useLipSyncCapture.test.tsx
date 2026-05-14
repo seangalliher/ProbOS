@@ -105,4 +105,21 @@ describe('useLipSyncCapture', () => {
     // Subscription was unwound.
     expect(unsub).toHaveBeenCalled();
   });
+
+  it('AD-738: receives injected frames from voice.ts via injectLipSyncFrames', async () => {
+    const { injectLipSyncFrames } = await import('../useLipSyncCapture');
+    const { result } = renderHook(() =>
+      useLipSyncCapture({ enabled: true, agentId: 'agent-1' }),
+    );
+    expect(result.current.frames).toEqual([]);
+    const visemes = [{ time: 0, duration: 0.1, viseme: 'aa' }];
+    act(() => injectLipSyncFrames(visemes, 'agent-1'));
+    expect(result.current.frames).toEqual(visemes);
+    // Mismatched agentId must NOT update state.
+    act(() => injectLipSyncFrames(
+      [{ time: 0, duration: 0.2, viseme: 'oh' }],
+      'other-agent',
+    ));
+    expect(result.current.frames).toEqual(visemes);
+  });
 });

@@ -85,9 +85,17 @@ export function useLipSyncCapture(
         }
       })();
     });
+    // AD-738: server-streamed TTS path injects frames directly via
+    // injectLipSyncFrames; mirror the agentId filter the start-listener uses.
+    const offInject = _subscribeInjection((frames, agentId) => {
+      if (!enabledRef.current) return;
+      if (agentIdRef.current && agentId !== agentIdRef.current) return;
+      if (mounted) setFrames(frames);
+    });
     return () => {
       mounted = false;
       off();
+      offInject();
       // The in-flight async task resolves on its own; mounted=false short-
       // circuits its setState calls. AudioContext cleanup happens in
       // captureUtteranceAudio's finally block.
@@ -96,4 +104,25 @@ export function useLipSyncCapture(
   }, []);
 
   return { frames, capturing, reset };
+}
+
+/** AD-738 — Module-level injection registry. ``voice.ts`` calls
+ *  ``injectLipSyncFrames`` after the server returns viseme data; every
+ *  mounted ``useLipSyncCapture`` hook with matching (or unset) ``agentId``
+ *  receives the frames. Mirrors the ``onSpeechEvent`` listener pattern. */
+
+type FrameInjector = (frames: LipSyncFrame[], agentId?: string) => void;
+const _injectListeners = new Set<FrameInjector>();
+
+/** Imperative entry point called from ``voice.ts`` after a successful
+ *  ``/api/avatars/tts`` round-trip. NEVER throws. */
+export function injectLipSyncFrames(frames: LipSyncFrame[], agentId?: string): void {
+  for (const fn of _injectListeners) {
+    try { fn(frames, agentId); } catch { /* ignore */ }
+  }
+}
+
+function _subscribeInjection(fn: FrameInjector): () => void {
+  _injectListeners.add(fn);
+  return () => { _injectListeners.delete(fn); };
 }

@@ -3420,6 +3420,22 @@ waves:
     issues_to_close: [527, 558, 612]
     status: shipped
 
+  - id: "157"
+    title: "Server-streamed TTS via Piper — AD-721b-2.3 (closes the lip-sync loop)"
+    # License: piper-tts is MIT (verified gh api repos/rhasspy/piper/license).
+    # Per User License hygiene rule: MIT top permissive — clean to absorb.
+    # Operator brings the piper binary + voice model (gitignored under /tools/).
+    # Browser SpeechSynthesis (Edge TTS) preserved as honest-degrade fallback.
+    kind: main
+    depends_on: ["156"]
+    dispatch_prompt: "prompts/WAVE-157-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-721b-2-3-server-streamed-tts.md"
+    builder_required: true
+    issues_to_close: []  # AD-721b-2.3 was a forward marker (no GH issue exists)
+    status: drafted
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

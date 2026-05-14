@@ -27,6 +27,8 @@ const fakeVoices: any[] = [
 beforeEach(() => {
   createdUtterances = [];
   speakCalls = [];
+  // AD-738: route through synchronous browser fallback by removing fetch.
+  (globalThis as any).fetch = undefined;
   (globalThis as any).SpeechSynthesisUtterance = FakeUtterance;
   (globalThis as any).window = globalThis;
   (globalThis as any).speechSynthesis = {

@@ -1,0 +1,137 @@
+"""AD-738 — piper-tts subprocess wrapper.
+
+License posture: piper-tts is MIT (verified 2026-05-13 via
+``gh api repos/rhasspy/piper/license``). ProbOS provides this wrapper;
+the operator provides the binary at ``tts.binary_path`` AND the voice
+model files at ``tools/piper/voices/<voice_model>.onnx`` (+ ``.onnx.json``).
+The repo never ships either — ``/tools/`` is gitignored.
+
+Tier-2 log-and-degrade: ``synthesize`` returns ``None`` on ANY failure
+(binary missing, model missing, subprocess error, timeout, malformed
+output). The endpoint treats ``None`` as the signal to return
+``{"backend": "disabled"}`` and the browser falls back to
+``SpeechSynthesisUtterance``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+from pathlib import Path
+
+from probos.audio.tts.backends import TTSResult
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_binary_path(configured: str) -> Path | None:
+    """Resolve ``configured``, auto-appending ``.exe`` on Windows. Returns
+    ``None`` if not found. NEVER raises. Mirrors the AD-721b-1 helper."""
+    p = Path(configured).resolve()
+    if p.is_file():
+        return p
+    if sys.platform == "win32" and p.suffix.lower() != ".exe":
+        with_exe = p.parent / (p.name + ".exe")
+        if with_exe.is_file():
+            return with_exe
+    return None
+
+
+def _resolve_voice_model(voice_model: str) -> Path | None:
+    """Resolve the ONNX model path under ``tools/piper/voices/``. Piper
+    requires BOTH ``<name>.onnx`` and ``<name>.onnx.json`` to exist;
+    returns ``None`` if either is missing. NEVER raises."""
+    base = Path("tools/piper/voices").resolve()
+    onnx = base / f"{voice_model}.onnx"
+    json_path = base / f"{voice_model}.onnx.json"
+    if not onnx.is_file() or not json_path.is_file():
+        return None
+    return onnx
+
+
+class PiperBackend:
+    """Subprocess wrapper around the piper binary.
+
+    Piper reads text on stdin and writes a complete WAV file (RIFF header
+    + PCM data) to stdout when invoked with ``--model <path> --output_file -``.
+    NOTE: ``--output_raw`` writes raw PCM samples WITHOUT a header — that is
+    NOT what we want; ``<audio>`` and rhubarb both require a WAV container.
+    Verified against rhasspy/piper README (MIT, archived 2025-10-06): the
+    ``-`` argument to ``--output_file`` is the documented stdout sink.
+    The wrapper passes text via stdin (UTF-8), reads the WAV from stdout,
+    and returns it as ``TTSResult(audio_bytes=..., mime="audio/wav")``.
+    """
+
+    name: str = "piper"
+
+    def __init__(
+        self,
+        binary_path: str,
+        voice_model: str,
+        timeout_seconds: float = 10.0,
+    ) -> None:
+        self._binary_path = binary_path
+        self._voice_model = voice_model
+        self._timeout_seconds = timeout_seconds
+
+    async def synthesize(self, text: str) -> TTSResult | None:
+        """Run piper, return WAV bytes or ``None`` on any failure.
+
+        NEVER raises. Empty / whitespace-only ``text`` short-circuits to
+        ``None`` (no point invoking the subprocess for nothing)."""
+        if not text or not text.strip():
+            return None
+        binary = _resolve_binary_path(self._binary_path)
+        if binary is None:
+            logger.warning(
+                "AD-738: piper binary not found at %s; degrading to browser",
+                self._binary_path,
+            )
+            return None
+        model = _resolve_voice_model(self._voice_model)
+        if model is None:
+            logger.warning(
+                "AD-738: piper voice model %r missing under tools/piper/voices/ "
+                "(need both <name>.onnx and <name>.onnx.json); degrading to browser",
+                self._voice_model,
+            )
+            return None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                str(binary),
+                "--model", str(model),
+                "--output_file", "-",  # WAV (with RIFF header) to stdout. See class docstring.
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(input=text.encode("utf-8")),
+                    timeout=self._timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                logger.warning(
+                    "AD-738: piper timed out after %ss synthesizing %d chars",
+                    self._timeout_seconds, len(text),
+                )
+                return None
+            if proc.returncode != 0:
+                logger.warning(
+                    "AD-738: piper exit=%s; stderr=%s",
+                    proc.returncode,
+                    stderr_bytes.decode("utf-8", errors="replace")[:500],
+                )
+                return None
+            if not stdout_bytes:
+                logger.warning("AD-738: piper produced 0 bytes; degrading")
+                return None
+            return TTSResult(audio_bytes=stdout_bytes, mime="audio/wav")
+        except (OSError, ValueError) as e:
+            logger.warning(
+                "AD-738: piper subprocess failed: %s: %s", type(e).__name__, e
+            )
+            return None
