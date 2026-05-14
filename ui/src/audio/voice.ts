@@ -149,6 +149,21 @@ export function _resetTtsStatusForTests(): void {
 /** AD-738: track the active <audio> so a second speakResponse cancels the first. */
 let _activeAudio: HTMLAudioElement | null = null;
 
+/** BF-283 (2026-05-13): expose the active audio's playback position so the
+ *  CrewVRM viseme sampler can anchor to the audio clock instead of wall
+ *  clock. ``audio.currentTime`` already accounts for ``playbackRate``, so
+ *  AD-735 volume / AD-737 emotion rate modulation never drift the visemes.
+ *  Returns ``null`` when no Piper-backed audio is playing — caller falls
+ *  back to its wall-clock path (used by the heuristic schedule). */
+export function getActiveAudioTimeMs(): number | null {
+  if (_activeAudio === null) return null;
+  try {
+    return _activeAudio.currentTime * 1000;
+  } catch {
+    return null;
+  }
+}
+
 export function speakResponse(
   text: string,
   profile?: VoiceProfile,

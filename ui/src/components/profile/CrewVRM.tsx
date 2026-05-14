@@ -11,7 +11,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, VRMHumanBoneName, type VRM } from '@pixiv/three-vrm';
-import { onSpeechEvent } from '../../audio/voice';
+import { onSpeechEvent, getActiveAudioTimeMs } from '../../audio/voice';
 import { _attachAnalyserOrSchedule, type FakeAnalyser } from '../../audio/speechAmplitude';
 import {
   buildHeuristicTrack,
@@ -421,9 +421,18 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
       const track = currentTrackRef.current;
       if (rhubarbFrames.length > 0) {
         // AD-721b-2: prefer the real-audio rhubarb schedule when present.
-        const now = (typeof performance !== 'undefined'
-          ? performance.now() : Date.now());
-        const elapsed = now - startedAtMsRef.current;
+        // BF-283 (2026-05-13): anchor to audio.currentTime when an <audio>
+        // element is playing (Piper TTS path) — playbackRate scales it
+        // automatically so AD-735 volume + AD-737 emotion rate modulation
+        // never drift visemes from audio. Fall back to wall-clock when the
+        // audio element is null (e.g. SpeechSynthesisUtterance fallback —
+        // rhubarbFrames is empty in that case so this branch isn't hit,
+        // but the fallback keeps the contract sound).
+        const audioMs = getActiveAudioTimeMs();
+        const elapsed = audioMs !== null
+          ? audioMs
+          : ((typeof performance !== 'undefined'
+              ? performance.now() : Date.now()) - startedAtMsRef.current);
         const w = _sampleRhubarbFrames(rhubarbFrames, elapsed);
         const vowelKeys: VowelKey[] = ['aa', 'ih', 'ou', 'ee', 'oh'];
         for (const v of vowelKeys) {
