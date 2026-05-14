@@ -3434,7 +3434,7 @@ waves:
       - "prompts/ad-721b-2-3-server-streamed-tts.md"
     builder_required: true
     issues_to_close: []  # AD-721b-2.3 was a forward marker (no GH issue exists)
-    status: drafted
+    status: shipped
 
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
