@@ -384,6 +384,14 @@ tts:
   binary_path: tools/piper/piper
   voice_model: en_US-amy-medium
   timeout_seconds: 10.0
+  # Prosody (AD-738e / BF-285). Higher noise_scale and noise_w trade a touch
+  # of clarity for noticeable expressiveness + natural rhythm variation.
+  # Captain noted "monotone" + "strange consistent rhythm" on upstream defaults
+  # (0.667 / 1.0 / 0.8 / 0.2); the values below soften both.
+  noise_scale: 0.85         # generator noise (pitch/expression variation)
+  length_scale: 1.0         # phoneme duration (>1 = slower, <1 = faster)
+  noise_w: 1.0              # phoneme-width noise (rhythm variation)
+  sentence_silence: 0.35    # seconds of silence between sentences
 
 # --- Temporal Context (AD-502) ---
 temporal:

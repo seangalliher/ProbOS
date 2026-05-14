@@ -1250,6 +1250,38 @@ class TTSConfig(BaseModel):
     model load on first call. Tier-2 log-and-degrade on TimeoutExpired —
     endpoint returns honest-degrade, browser falls back."""
 
+    # AD-738e (BF-285 2026-05-13): prosody controls. Piper-VITS exposes
+    # three inference knobs plus a sentence-silence gap. Defaults below
+    # are tuned for *more* natural variation than Piper's safe-minimum
+    # defaults — Captain reported "monotone" + "strange consistent rhythm"
+    # on the upstream defaults (noise_scale=0.667, noise_w=0.8,
+    # sentence_silence=0.2). Tuning higher trades a touch of clarity for
+    # noticeable expressiveness.
+
+    noise_scale: float = 0.85
+    """Piper ``--noise_scale``. Generator noise — controls pitch/expression
+    variation. Higher = more expressive, less robotic. Piper upstream
+    default 0.667. Range 0.0-1.5. At 0 the voice is robotically uniform;
+    at 1.5 it starts to wobble unnaturally."""
+
+    length_scale: float = 1.0
+    """Piper ``--length_scale``. Phoneme duration multiplier. >1.0 = slower
+    speech, <1.0 = faster. Operator-tunable for users who prefer slower
+    diction; per-agent AD-735 ``rate`` (browser-side ``playbackRate``)
+    still applies on top of this. Piper upstream default 1.0."""
+
+    noise_w: float = 1.0
+    """Piper ``--noise_w``. Phoneme-width (duration) variation. Higher =
+    more natural rhythm because each phoneme's duration varies. Piper
+    upstream default 0.8. Range 0.0-1.5. The Captain's "strange consistent
+    rhythm" comment maps directly to this knob — at 0.8 every phoneme is
+    the same length; at 1.0+ rhythm breathes."""
+
+    sentence_silence: float = 0.35
+    """Piper ``--sentence_silence``. Seconds of silence inserted after
+    each sentence boundary. Piper upstream default 0.2. A small bump
+    here adds natural pauses for paragraph-style replies. Range 0.0-2.0."""
+
 
 class A2APeerConfig(BaseModel):
     """AD-480e: Outbound A2A peer registration entry."""

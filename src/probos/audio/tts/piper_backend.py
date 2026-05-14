@@ -72,10 +72,18 @@ class PiperBackend:
         binary_path: str,
         voice_model: str,
         timeout_seconds: float = 10.0,
+        noise_scale: float = 0.85,
+        length_scale: float = 1.0,
+        noise_w: float = 1.0,
+        sentence_silence: float = 0.35,
     ) -> None:
         self._binary_path = binary_path
         self._voice_model = voice_model
         self._timeout_seconds = timeout_seconds
+        self._noise_scale = noise_scale
+        self._length_scale = length_scale
+        self._noise_w = noise_w
+        self._sentence_silence = sentence_silence
 
     async def synthesize(self, text: str) -> TTSResult | None:
         """Run piper, return WAV bytes or ``None`` on any failure.
@@ -125,6 +133,15 @@ class PiperBackend:
                             str(binary),
                             "--model", str(model),
                             "--output_file", str(tmp_path),
+                            # AD-738e prosody knobs — see TTSConfig docstrings
+                            # for tuning rationale. Captain Decision: piper
+                            # upstream defaults (0.667 / 1.0 / 0.8 / 0.2) sound
+                            # monotone; our defaults bump expressiveness +
+                            # rhythm variation at a small clarity cost.
+                            "--noise_scale", str(self._noise_scale),
+                            "--length_scale", str(self._length_scale),
+                            "--noise_w", str(self._noise_w),
+                            "--sentence_silence", str(self._sentence_silence),
                         ],
                         stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE,
