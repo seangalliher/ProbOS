@@ -2565,3 +2565,22 @@ Append-only JSONL persistence for `AvatarTelemetrySnapshot` rows — one file pe
 **Files:** `src/probos/avatars/telemetry_history.py` (new — ~140 lines, stdlib-only), `src/probos/config.py` (three new fields + retention validator), `src/probos/runtime.py` (construction block), `src/probos/routers/agents.py` (new GET endpoint + two log-and-degrade hooks in the WS publish loop), `tests/test_ad722c_telemetry_history.py` (new — 6 boundary tests: roundtrip, malicious agent_id rejection, since filter, retention window, disk failure tolerance, malformed-line skip).
 
 **Forward markers.** AD-722c-1 (size-based JSONL rotation when per-agent files exceed N MiB). AD-722c-2 (`TelemetryHistoryStore` Protocol so commercial overlay can swap JSONL for SQLite/Postgres; closes AD-682 cloud-ready compliance gap for this surface).
+
+
+### AD-722d - Auto-write significant telemetry events to Ship's Records (Wave 159)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 159. **Parents:** AD-722b (WS push, Wave 142), AD-722c (telemetry history, Wave 159), AD-477 (Records ledger), AD-575 (Records autoseed). **Closes:** #570.
+
+Subscribes the WS publish loop's snapshot stream to `TelemetryRecordsWriter`, which classifies frames into a v1 vocabulary of three named events and emits a narrative entry to Ship's Records per (agent, throttle-window). Three events: `emotion_divergence_high` (intent vs presentation magnitude > `divergence_negative_threshold` AND fresh rise vs prior per-agent magnitude), `working_state_transition_to_blocked` (prior frame had a non-blocked working_state), `sustained_silence` (no reply within `sustained_silence_seconds` AND <= 4h, prior reply was real). Priority pick when multiple fire: divergence > blocked > silence.
+
+**Throttle restart policy.** Per-agent `last_write` dict is in-memory. Restart resets it. Intentional: Records is a narrative ledger, not a metrics store. A restart-burst of significance lines is signal (something changed in the agent's environment), not noise to de-duplicate.
+
+**Two-phase wiring.** `runtime.avatar_telemetry_records_writer` is declared as `None` next to `AvatarEventBus` (so the WS publish loop's `getattr` guard degrades cleanly during the window between runtime `__init__` and finalize). The real `TelemetryRecordsWriter` is constructed immediately after `self._records_store = cog.records_store` finalize line (Phase 4). Gated independently from AD-722c — the Captain can have JSONL history without the Records ledger surface.
+
+**Tier-2 everywhere.** `observe()` wraps every branch in try/except. A `RecordsStore.write_entry` failure is logged and swallowed — must not disrupt the WS publish loop, the AD-722c JSONL append, or the agent's reply.
+
+**Config defaults (Captain opt-in).** `records_auto_write_enabled=False` (Records writes have audit weight), `records_throttle_seconds=3600`, `records_significant_events=[...3 v1 names...]` (default_factory; unknown names silently dropped at classify-time), `sustained_silence_seconds=1800`. Validators bound all three of the numeric fields (>= 1 / >= 1 / >= 60).
+
+**Files:** `src/probos/avatars/records_writer.py` (new ~180 lines, stdlib + RecordsStore), `src/probos/config.py` (four fields + three validators), `src/probos/runtime.py` (None declaration in __init__ + finalize block after Phase 4 records_store wiring), `src/probos/routers/agents.py` (two log-and-degrade hooks in WS publish loop — initial-send + per-interval, both AFTER the AD-722c history append), `tests/test_ad722d_records_auto_write.py` (new — 5 boundary tests: divergence happy path with no re-fire, working-state transition with seeded prior, throttle clamps multi-event window, unknown event names dropped, RecordsStore raise swallowed).
+
+**Forward markers.** AD-722d-1 (operator-defined `SignificanceClassifier` Protocol + plugin registry; trigger: Captain wants per-agent custom event names). AD-722d-2 (Records-side dedup/aggregation when N identical events fire within a configurable window).

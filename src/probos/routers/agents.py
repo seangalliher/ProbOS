@@ -752,6 +752,16 @@ async def agent_avatar_telemetry_stream(
                         "AD-722c: history append raised on initial send",
                         exc_info=True,
                     )
+            # AD-722d: best-effort Records significance write.
+            _rw = getattr(runtime, "avatar_telemetry_records_writer", None)
+            if _rw is not None:
+                try:
+                    await _rw.observe(initial)
+                except Exception:
+                    logger.debug(
+                        "AD-722d: records writer raised on initial send",
+                        exc_info=True,
+                    )
         except Exception:
             logger.warning(
                 "AD-722b: initial snapshot send failed for agent=%s",
@@ -789,6 +799,16 @@ async def agent_avatar_telemetry_stream(
                     except Exception:
                         logger.debug(
                             "AD-722c: history append raised in publish loop",
+                            exc_info=True,
+                        )
+                # AD-722d: best-effort Records significance write.
+                _rw = getattr(runtime, "avatar_telemetry_records_writer", None)
+                if _rw is not None:
+                    try:
+                        await _rw.observe(snap)
+                    except Exception:
+                        logger.debug(
+                            "AD-722d: records writer raised in publish loop",
                             exc_info=True,
                         )
 

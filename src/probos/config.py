@@ -1068,6 +1068,20 @@ class AvatarTelemetryConfig(BaseModel):
     history_enabled: bool = True
     history_retention_days: int = 30
     history_dir: str = "data/avatar_telemetry"
+    # AD-722d: auto-write significant telemetry events to Ship's Records.
+    # Default OFF — Records is a durable git-backed ledger; the Captain
+    # opts in. v1 vocabulary covers three event names; unknown event
+    # names in records_significant_events are silently ignored.
+    records_auto_write_enabled: bool = False
+    records_throttle_seconds: int = 3600           # max 1 Records entry per agent per hour
+    records_significant_events: list[str] = Field(
+        default_factory=lambda: [
+            "emotion_divergence_high",
+            "working_state_transition_to_blocked",
+            "sustained_silence",
+        ],
+    )
+    sustained_silence_seconds: int = 1800          # 30 min
 
     @field_validator("mouth_active_window_seconds")
     @classmethod
@@ -1121,6 +1135,24 @@ class AvatarTelemetryConfig(BaseModel):
         if v < 1:
             raise ValueError(
                 f"history_retention_days must be >= 1, got {v}"
+            )
+        return v
+
+    @field_validator("records_throttle_seconds")
+    @classmethod
+    def _bound_records_throttle_seconds(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"records_throttle_seconds must be >= 1, got {v}"
+            )
+        return v
+
+    @field_validator("sustained_silence_seconds")
+    @classmethod
+    def _bound_sustained_silence_seconds(cls, v: int) -> int:
+        if v < 60:
+            raise ValueError(
+                f"sustained_silence_seconds must be >= 60, got {v}"
             )
         return v
 

@@ -445,6 +445,14 @@ class ProbOSRuntime:
                 self.config.avatar_telemetry.history_dir,
             )
 
+        # AD-722d: significance-event Records writer. Gated independently
+        # so the Captain can have history (AD-722c) without the Records
+        # ledger write surface. records_store is wired in Phase 4 (see
+        # runtime.py around line 1528); the actual writer is instantiated
+        # there. Declared here as None so the WS publish loop's getattr
+        # guard degrades cleanly before finalize runs.
+        self.avatar_telemetry_records_writer: Any = None
+
         # AD-722a: most-recent intent-vs-presentation divergence per agent.
         # Volatile (cleared on restart). Populated by the divergence detector
         # call site in routers/agents.py:agent_chat; consumed by
@@ -1543,6 +1551,25 @@ class ProbOSRuntime:
         self._lifecycle_state = cog.lifecycle_state
         self._stasis_duration = cog.stasis_duration
         self._previous_session = cog.previous_session
+
+        # AD-722d: instantiate the records-writer once records_store is
+        # available. Two-phase wiring — the attribute was declared as None
+        # next to the AvatarEventBus construction; here we replace it.
+        if (
+            getattr(self.config, "avatar_telemetry", None) is not None
+            and self.config.avatar_telemetry.enabled
+            and self.config.avatar_telemetry.records_auto_write_enabled
+            and self._records_store is not None
+        ):
+            from probos.avatars.records_writer import TelemetryRecordsWriter
+            self.avatar_telemetry_records_writer = TelemetryRecordsWriter(
+                records_store=self._records_store,
+                runtime=self,
+                throttle_seconds=self.config.avatar_telemetry.records_throttle_seconds,
+                significant_events=self.config.avatar_telemetry.records_significant_events,
+                sustained_silence_seconds=self.config.avatar_telemetry.sustained_silence_seconds,
+                divergence_threshold=self.config.avatar_telemetry.divergence_negative_threshold,
+            )
         self._activation_tracker = cog.activation_tracker  # AD-567d
         self._social_verification = cog.social_verification  # AD-567f
         self._orientation_service = cog.orientation_service  # AD-567g
