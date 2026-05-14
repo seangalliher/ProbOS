@@ -2637,3 +2637,32 @@ Playback-only audio attachments. `AttachmentsConfig.allowed_mime_types` defaults
 Codifies the Builder commit-message convention introduced by AD-738e-1 (`bb1ca160`) for sub-ADs spawned from a parent BF that has no GH issue. New entry in `prompts/BUILDER-EXECUTION-PLAN.md` Standing Rules section: commit MUST include EITHER a `Refs #N-of-parent-BF` trailer when the parent BF has a GH issue, OR a `See DECISIONS.md AD-NNN` reference in the commit body when the parent BF is internal-only. Builder applies automatically — no architect approval at GATE 2 required when the trailer/reference is present.
 
 **Numbering.** This AD reclaims the AD-738e-2 slot that AD-738e-1's DECISIONS entry had reserved as a forward marker for prosody knob extensions. The prosody marker renumbers to **AD-738e-2-prosody** (still a forward marker; never built). The renumber is recorded both in this entry and in AD-738e-1's "Forward markers" line.
+
+
+### AD-725 - Targeted sub-intent dispatch on DM one-shot path (Wave 159)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 159. **Parents:** AD-722-addendum (System-1/System-2 ruling), AD-723 (sensorium dispatch unification), AD-723a-1 (DM_ONESHOT consumer), AD-724 (DM sanity gate), AD-686 (runtime.oracle public alias). **Closes:** #583.
+
+Bridges the largest cognitive-parity gap between System-1 (DM one-shot) and System-2 (chain) paths. Chains can reach for `oracle_lookup`, `episodic_query`, `codebase_query`, `knowledge_load` mid-flight; DMs had only pre-loaded working memory. AD-725 adds a SINGLE pre-LLM read-only lookup, gated by a fast classifier, before the LLM call. The result lands as a `--- Targeted Recall (<type>) ---` block prepended to `message_text` immediately before the IntentMessage is built in `agent_chat`.
+
+**Four firewall contracts (intentional, regression-tested):**
+1. At most one lookup per DM turn. No chains.
+2. Read-only. No episodic store, trust update, Hebbian edge, consensus broadcast.
+3. Hard `asyncio.wait_for` timeout (default 500 ms). Timeout -> None.
+4. No `intent_bus` broadcast — direct method calls on `runtime.oracle` / `runtime.episodic_memory` / `runtime.codebase_index` / `runtime.records_store`.
+
+Test #10 (`test_no_side_effects_on_runtime`) explicitly asserts zero `mock_calls` on `trust_network` / `intent_bus` / `hebbian_router` / `consensus_engine` after a full lookup turn — this is the firewall regression gate.
+
+**Classifier as Protocol.** `SubintentClassifier` Protocol defines `classify(message, *, agent_id) -> (LookupType, query)` so the v1 regex ladder (`RegexSubintentClassifier`: episodic -> codebase -> knowledge -> oracle -> none) can be swapped for an embedding router (AD-725-2 forward marker) without touching `LookupDispatcher` or the caller. The regex ladder is intentionally conservative; default-OFF gating lets operator opt in.
+
+**Defensive dispatch.** Each `_dispatch` branch checks `hasattr(runtime, '<store>')` and `hasattr(<store>, '<method>')` before calling. Missing methods log INFO and degrade to `""` content — never crash. Supports both sync and async return signatures via `asyncio.iscoroutine` check. `_stringify` flattens list/dict/dataclass returns; falls through to `repr()` for unknown shapes (forward marker AD-725-6 for Episode-specific row formatting).
+
+**Integration seam.** Wired in `routers/agents.py::agent_chat` after `is_crew_agent` validation, BEFORE the AD-730 vision pipe-through branch. Recall block prepends `message_text` immediately before the IntentMessage build (line ~1183). Does NOT touch `cognitive_agent._build_user_message` — that refactor is reserved for AD-726. Sensorium-path registration (`paths=(DM_ONESHOT,)`) deferred to AD-725-1 forward marker.
+
+**Default OFF.** `DmTargetedLookupConfig.enabled=False`. Captain opts in. `enable_codebase` is independently default-False (codebase queries can be slow). `timeout_ms=500` is the hard ceiling; classifier+lookup must complete within that or the lookup is silently dropped.
+
+**Verified signatures (live grep, 2026-05-14):** `runtime.oracle.query(query_text, *, agent_id="")` async (AD-686 public alias for `cog.oracle_service`, set at `runtime.py:1577`); `episodic_memory.recall_for_agent(agent_id, query, k=5)`; `codebase_index.query(concept)`; `records_store.search(query)` (degrades cleanly if absent).
+
+**Files:** `src/probos/cognitive/dm_targeted_lookup.py` (new ~230 lines, stdlib + asyncio), `src/probos/config.py` (new `DmTargetedLookupConfig` Pydantic model + `SystemConfig.dm_targeted_lookup` field), `src/probos/routers/agents.py` (dispatcher call top of `agent_chat` + recall-block prepend before IntentMessage build), `tests/test_ad725_dm_targeted_lookup.py` (new — 11 tests: disabled, classifier-none, episodic happy-path, codebase-default-off, oracle async, missing knowledge method, timeout, classifier exception, truncation, firewall side-effects, regex classifier smoke).
+
+**Forward markers.** AD-725-1 (sensorium-path registration; lookup result registers via AD-723 dispatcher as `paths=(DM_ONESHOT,)` block instead of raw text prepend). AD-725-2 (embedding-based classifier as drop-in Protocol impl). AD-725-3 (per-agent sub-intent vocabulary — Counselor's emotion sub-intents, Worf's threat sub-intents). AD-725-4 (multi-store fan-out gated by classifier confidence). AD-725-5 (`(text_hash, agent_id) -> TargetedLookupResult` LRU cache for repeat-query suppression). AD-725-6 (`_stringify` Episode-dataclass branch for cleaner LLM context).

@@ -1006,6 +1006,34 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if not is_crew_agent(agent, runtime.ontology):
         raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent — direct chat is crew-only")
 
+    # AD-725 (Wave 159): targeted sub-intent dispatch (DM one-shot pre-LLM
+    # lookup). Tier-2 — never blocks the DM. When the classifier matches and
+    # the lookup returns content, the recall block prepends message_text so
+    # the receiving agent's LLM call sees it as part of the user message.
+    # Default config: dm_targeted_lookup.enabled=False — opt-in only.
+    targeted_recall_block: str | None = None
+    try:
+        _dm_cfg = getattr(runtime.config, "dm_targeted_lookup", None)
+        if _dm_cfg is not None and _dm_cfg.enabled:
+            from probos.cognitive.dm_targeted_lookup import LookupDispatcher
+            _dispatcher = LookupDispatcher(runtime=runtime, config=_dm_cfg)
+            _result = await _dispatcher.maybe_lookup(
+                req.message, agent_id=agent_id,
+            )
+            if _result is not None and _result.content:
+                targeted_recall_block = (
+                    f"--- Targeted Recall ({_result.lookup_type}) ---\n"
+                    f"{_result.content}\n"
+                    f"--- End Recall ---"
+                )
+                logger.info(
+                    "AD-725: agent=%s lookup_type=%s elapsed_ms=%.1f chars=%d",
+                    agent_id, _result.lookup_type,
+                    _result.elapsed_ms, len(_result.content),
+                )
+    except Exception:
+        logger.debug("AD-725: dispatcher branch failed", exc_info=True)
+
     # AD-730 (Wave 151): vision pipe-through for per-agent DMs.
     # When req.attachment_ids includes an image MIME AND attachments.vision_tier
     # is operational, build the Anthropic-shape multimodal messages array and
@@ -1181,6 +1209,10 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 )
 
     from probos.types import IntentMessage
+    # AD-725 (Wave 159): prepend the targeted recall block so the receiving
+    # agent's LLM call sees it as part of the user message.
+    if targeted_recall_block is not None:
+        message_text = f"{targeted_recall_block}\n\n{message_text}"
     _params: dict[str, object] = {
         "text": message_text,
         "from": "hxi_profile",

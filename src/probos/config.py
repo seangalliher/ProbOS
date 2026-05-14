@@ -3464,6 +3464,42 @@ class DmSanityGateConfig(BaseModel):  # AD-724
     )
 
 
+class DmTargetedLookupConfig(BaseModel):  # AD-725 (Wave 159)
+    """AD-725: pre-LLM targeted sub-intent dispatch on the DM one-shot path.
+
+    Default OFF — opt-in because the lookup adds latency (max(classifier,
+    lookup) ~ 100-300ms) and the v1 regex classifier is intentionally
+    conservative. Per-store enables let the operator narrow the surface
+    further.
+    """
+
+    enabled: bool = False
+    classifier_tier: str = "regex"             # v1 ladder; "embedding" reserved for AD-725-2
+    timeout_ms: int = 500                      # hard cap; lookup ABORTS on timeout
+    enable_oracle: bool = True
+    enable_episodic: bool = True
+    enable_codebase: bool = False              # default OFF — codebase queries can be slow
+    enable_knowledge: bool = True
+    max_lookup_chars: int = 1500               # truncate lookup result before injection
+
+    @field_validator("classifier_tier")
+    @classmethod
+    def _bound_classifier_tier(cls, v: str) -> str:
+        allowed = {"regex", "embedding"}
+        if v not in allowed:
+            raise ValueError(
+                f"classifier_tier must be one of {sorted(allowed)}, got {v!r}"
+            )
+        return v
+
+    @field_validator("timeout_ms", "max_lookup_chars")
+    @classmethod
+    def _bound_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"must be >= 1, got {v}")
+        return v
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -3548,6 +3584,7 @@ class SystemConfig(BaseModel):
     avatars: AvatarsConfig = Field(default_factory=AvatarsConfig)  # AD-721
     avatar_telemetry: AvatarTelemetryConfig = Field(default_factory=AvatarTelemetryConfig)  # AD-722
     dm_sanity_gate: DmSanityGateConfig = Field(default_factory=DmSanityGateConfig)  # AD-724
+    dm_targeted_lookup: DmTargetedLookupConfig = Field(default_factory=DmTargetedLookupConfig)  # AD-725 (Wave 159)
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     lipsync: LipSyncConfig = Field(default_factory=LipSyncConfig)  # AD-721b-1 (Wave 155)
     tts: TTSConfig = Field(default_factory=TTSConfig)  # AD-738 (Wave 157)
