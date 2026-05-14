@@ -3436,6 +3436,26 @@ waves:
     issues_to_close: []  # AD-721b-2.3 was a forward marker (no GH issue exists)
     status: shipped
 
+  - id: "158"
+    title: "Hygiene + polish bundle — AD-737a + AD-738a/b/c + per-emotion prosody (closes carry-over follow-ups)"
+    # 5 prompts. Pure internal hygiene — no new external deps, no architectural shifts.
+    # Bundles every track-as-follow-up surfaced by Wave 154-157 architects/builders into
+    # one closure wave + 1 small feature (per-emotion prosody) leveraging the AD-738e knobs
+    # that just shipped. All Apache 2.0, no license concerns. Autonomous-overnight-safe.
+    kind: main
+    depends_on: ["157"]
+    dispatch_prompt: "prompts/WAVE-158-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-737a-hygiene-divergence-detector.md"
+      - "prompts/ad-738a-orchestrator-test-affordance.md"
+      - "prompts/ad-738b-ui-gate-npm-build.md"
+      - "prompts/ad-738c-viseme-mapping-polish.md"
+      - "prompts/ad-738e-1-per-emotion-prosody.md"
+    builder_required: true
+    issues_to_close: [648, 650, 651, 652]
+    status: done
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process
