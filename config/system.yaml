@@ -370,6 +370,21 @@ lipsync:
   binary_path: tools/rhubarb/rhubarb
   timeout_seconds: 30.0
 
+# --- Server-streamed TTS (AD-738, Wave 157) ---
+# Captain provides the piper binary at tools/piper/piper.exe (Windows) or
+# tools/piper/piper (Linux/macOS) plus the ONNX voice model under
+# tools/piper/voices/<name>.onnx + <name>.onnx.json. /tools/ is gitignored.
+# Default backend="browser" preserves SpeechSynthesisUtterance (Edge TTS on
+# Windows). Flipping to "piper" enables server-side synthesis -> rhubarb
+# visemes -> real lip-sync. Missing binary or model logs WARNING and
+# degrades back to the browser path automatically.
+tts:
+  enabled: true
+  backend: piper
+  binary_path: tools/piper/piper
+  voice_model: en_US-amy-medium
+  timeout_seconds: 10.0
+
 # --- Temporal Context (AD-502) ---
 temporal:
   enabled: true
