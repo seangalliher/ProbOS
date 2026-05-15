@@ -549,6 +549,13 @@ class CognitiveAgent(BaseAgent):
         # consume it without spawning an event loop.
         self._last_self_avatar_snap: Any = None
 
+        # AD-722a-2: per-audience ring buffer of chain-path divergence
+        # events. Maxlen 8 per audience tier. Scoped to prevent
+        # cross-channel surface pollution (AD-727 addendum h).
+        from collections import deque as _deque
+        self._chain_divergence_buffer: dict[str, Any] = {}
+        self._chain_divergence_buffer_factory = lambda: _deque(maxlen=8)
+
         # AD-594: Crew Consultation Protocol
         self._consultation_protocol: Any = None
 
@@ -2932,6 +2939,25 @@ class CognitiveAgent(BaseAgent):
             # Phase 2b: Detect undeclared actions in compose output
             if chain_result and intended_actions:
                 compose_text = chain_result.get("llm_output", "")
+                # AD-722a-2: canonical chain-output emit hook. The compose
+                # output is the chain's emit point; divergence detection
+                # against intent self-tag + applied modulation lands here.
+                # Audience derived from chain_result (defaults to "sensorium"
+                # — Builder-side AD-722a-2a may refine via chain phase tag).
+                try:
+                    self.mark_chain_output_emitted(
+                        compose_text,
+                        audience=str(chain_result.get("audience", "sensorium")),
+                        intent_self_tag=chain_result.get("intent_self_tag"),
+                        applied_modulation_rules=chain_result.get(
+                            "applied_modulation_rules"
+                        ),
+                    )
+                except Exception:
+                    logger.debug(
+                        "AD-722a-2: chain divergence hook failed",
+                        exc_info=True,
+                    )
                 undeclared = self._detect_undeclared_actions(compose_text, intended_actions)
                 if undeclared:
                     # Find which skills would have loaded
@@ -3089,6 +3115,100 @@ class CognitiveAgent(BaseAgent):
     def last_reply_emitted_at(self) -> float:
         """AD-722: UNIX seconds of last reply emission (0.0 if never)."""
         return self._last_reply_emit_ts
+
+    def mark_chain_output_emitted(
+        self,
+        output_text: str,
+        *,
+        audience: str,
+        intent_self_tag: str | None = None,
+        applied_modulation_rules: list[str] | None = None,
+    ) -> None:
+        """AD-722a-2: canonical chain-output emit hook (sibling of mark_reply_emitted).
+
+        Called when a chain phase produces output that will be rendered
+        (WR post, DM forward, sensorium block). Drives chain-path
+        divergence detection; results land in the per-audience ring buffer
+        (maxlen=8) keyed by ``audience``.
+
+        ``audience`` must be one of {"wr", "dm_forward", "sensorium"}.
+        Unknown audiences are accepted but logged at DEBUG; the buffer is
+        partitioned by the raw value so future audiences self-register.
+
+        Tier-2 throughout: detector failures log + degrade; never raises.
+        """
+        if not isinstance(output_text, str) or not output_text:
+            return
+        runtime = getattr(self, "_runtime", None)
+        if runtime is None:
+            return
+        if audience not in ("wr", "dm_forward", "sensorium"):
+            logger.debug(
+                "AD-722a-2: unknown chain-output audience=%r; bucketing under raw key",
+                audience,
+            )
+
+        # Compute divergence using the pure compute_divergence function — no
+        # need for the full DM-path apply_divergence_check helper (which
+        # carries DM-specific corrections + Hebbian wiring). Chain-path
+        # divergence is observation-only in v1.
+        if intent_self_tag is None or not applied_modulation_rules:
+            return  # no signal to score
+
+        try:
+            from probos.avatars.divergence_detector import compute_divergence
+            from probos.events import EventType
+
+            result = compute_divergence(
+                intent_emotion=intent_self_tag,
+                applied_fired_rules=tuple(applied_modulation_rules),
+            )
+        except Exception:
+            logger.debug(
+                "AD-722a-2: compute_divergence failed for agent=%s; honest-degrade",
+                self.id, exc_info=True,
+            )
+            return
+
+        # Per-audience ring buffer.
+        buf = self._chain_divergence_buffer.get(audience)
+        if buf is None:
+            buf = self._chain_divergence_buffer_factory()
+            self._chain_divergence_buffer[audience] = buf
+        buf.append(result)
+
+        # Tier-2 emit — observability only. DivergenceResult uses
+        # ``magnitude`` (0..1) instead of a boolean; treat magnitude > 0
+        # as the trigger for the observability event.
+        emit = getattr(runtime, "emit_event", None)
+        if emit is None or getattr(result, "magnitude", 0.0) <= 0.0:
+            return
+        try:
+            emit(
+                EventType.DIVERGENCE_OBSERVED_CHAIN,
+                {
+                    "agent_id": self.id,
+                    "audience": audience,
+                    "intent": intent_self_tag,
+                    "magnitude": getattr(result, "magnitude", 0.0),
+                    "path_tag": "chain",
+                },
+            )
+        except Exception:
+            logger.debug(
+                "AD-722a-2: emit DIVERGENCE_OBSERVED_CHAIN failed for agent=%s",
+                self.id, exc_info=True,
+            )
+
+    def chain_divergence_buffer_for(self, audience: str) -> list[Any]:
+        """AD-722a-2: snapshot of the per-audience chain divergence buffer.
+
+        Returns a list copy (no shared mutable state). Channel-scoped reads
+        must use this accessor to honor AD-727 addendum h (no cross-channel
+        surface pollution).
+        """
+        buf = self._chain_divergence_buffer.get(audience)
+        return list(buf) if buf is not None else []
 
     async def observe_self_avatar(self) -> "AvatarTelemetrySnapshot":  # type: ignore[name-defined]
         """AD-722: read-only snapshot of this agent's avatar state.

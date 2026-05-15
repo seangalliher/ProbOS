@@ -3037,3 +3037,30 @@ Adds a vision-LLM extension to the AD-722e self-perception family: compares the 
 **Cross-reference.** AD-728 (vision-LLM mirror primitive) - this AD and AD-722a-1 both consume the same shared `VisionLLMRateLimit` primitive; AD-728's eventual build will consolidate it into a dedicated `VisionLLMBudget` module (forward marker AD-728-1 from the Wave 162 dispatch).
 
 **Forward markers.** AD-722e-2a (HXI SelfImageTab surface for render-coherence observations - trigger: AD-721i ships AND self_render_verify_enabled flips True).
+
+### AD-722a-2 - Chain-path divergence detection at compose-step emit (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 162. **Parent:** AD-722a (Wave 143 DM-path divergence). **Closes:** #611.
+
+Removes AD-722a's `(f) chain reply-emission has no equivalent single emit point - chain-path divergence is forward marker AD-722a-2` deferral. AD-723 (Wave 144) shipped sensorium dispatch unification but only for INPUT/context-assembly; this AD adds the canonical chain-OUTPUT emit hook.
+
+**New public surface on CognitiveAgent.**
+- `mark_chain_output_emitted(output_text: str, *, audience: str, intent_self_tag: str | None = None, applied_modulation_rules: list[str] | None = None) -> None` - sibling of `mark_reply_emitted` (DM-path).
+- `chain_divergence_buffer_for(audience: str) -> list[DivergenceResult]` - channel-scoped read accessor (returns list copy; no shared mutable state).
+- `_chain_divergence_buffer: dict[str, deque[DivergenceResult]]` initialized in `__init__`; per-audience `deque(maxlen=8)`.
+
+**Wiring.** The chain compose consumer at `cognitive_agent.py:2934` (Phase 2b of _execute_sub_task_chain) now calls the hook immediately after `compose_text = chain_result.get('llm_output', '')`. Audience derived from `chain_result.get('audience', 'sensorium')`; intent + rules read from `chain_result['intent_self_tag']` / `chain_result['applied_modulation_rules']`. No new chain_result fields invented in this AD - missing signals short-circuit the hook (returns without recording). Forward marker AD-722a-2a tracks the future work to thread these signals through `_execute_sub_task_chain` reliably.
+
+**Scoring.** Uses the pure `compute_divergence(intent_emotion, applied_fired_rules)` function from AD-722a v1 - no parallel implementation. DivergenceResult's `magnitude` field (0.0..1.0) drives the emit gate; magnitude > 0 = divergence observed.
+
+**Events.** New `EventType.DIVERGENCE_OBSERVED_CHAIN` with payload `{agent_id, audience, intent, magnitude, path_tag: 'chain'}`. The `path_tag` field disambiguates chain-path events from any future DM-path events (the DM-path emit name is preserved as-is; lower-touch Section 0 choice).
+
+**AD-727 compliance.** Rule #1 (REASONING-vs-OUTPUT signal class) authorized by inheritance from AD-722a v1. Rule #8 (OUTPUT-as-subject phrasing) - the event payload exposes intent/magnitude facts only; no rendered observation text in this AD (rendering deferred to AD-722a-2's interoception suffix builder work, sibling forward marker). Rule h (no cross-channel surface pollution) enforced by per-audience buffer partitioning.
+
+**DM-path unchanged.** AD-722a v1 `apply_divergence_check` + `mark_reply_emitted` are untouched. The chain hook is purely additive. Regression test verifies DM state is not mutated by chain emit.
+
+**Tests.** +10 pytest in `tests/test_ad722a_2_chain_divergence.py`. Test scaffold binds the real `mark_chain_output_emitted` method onto a minimal stub (no full CognitiveAgent boot needed). Coverage: matching intent (no event), diverging intent (event fires), per-audience buffer isolation, DM-path unchanged regression, audience-scoped buffer reads, AD-727 #8 phrasing-free payload, path_tag='chain' contract, maxlen=8 capacity, runtime-None no-op, missing-signal short-circuit.
+
+**Files:** `src/probos/events.py` (+ DIVERGENCE_OBSERVED_CHAIN), `src/probos/cognitive/cognitive_agent.py` (mark_chain_output_emitted + chain_divergence_buffer_for + __init__ buffer state + Phase 2b callsite), `tests/test_ad722a_2_chain_divergence.py` (new, 10 tests).
+
+**Forward markers.** AD-722a-2a (thread intent_self_tag + applied_modulation_rules through _execute_sub_task_chain - trigger: chain phases reliably populate these signals AND multi-channel interoception consumers request the data).

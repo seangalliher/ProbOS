@@ -203,6 +203,7 @@ class EventType(str, Enum):
     VISION_CAPABILITY_RESOLVED = "vision_capability_resolved"  # AD-720d-2.1: Captain approves or denies
     VISION_INTENT_DIVERGENCE_OBSERVED = "vision_intent_divergence_observed"  # AD-722a-1: vision-LLM intent-vs-render
     SELF_RENDER_COHERENCE_OBSERVED = "self_render_coherence_observed"  # AD-722e-2: vision-LLM digital-vs-render
+    DIVERGENCE_OBSERVED_CHAIN = "divergence_observed_chain"  # AD-722a-2: chain-path divergence
     BROWSER_SESSION_CLOSED = "browser_session_closed"          # AD-706
     AGENTIC_TOOL_CALL_STARTED = "agentic_tool_call_started"      # AD-545
     AGENTIC_TOOL_CALL_COMPLETED = "agentic_tool_call_completed"  # AD-545
