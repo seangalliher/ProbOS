@@ -489,6 +489,12 @@ class CognitiveAgent(BaseAgent):
         "_intent_self_tag",
     )
 
+    # AD-723a-2: WR (Ward Room) sibling of _DM_SELF_WRAPPED_KEYS.
+    # Empty in v1 — no self-wrapped sensorium entries currently target
+    # SensoriumPath.WR_ONESHOT exclusively. New entries with
+    # ``paths=(WR_ONESHOT,)`` and self-wrapped output extend this tuple.
+    _WR_SELF_WRAPPED_KEYS: ClassVar[tuple[str, ...]] = ()
+
     def __init__(self, **kwargs: Any) -> None:
         # Extract instructions from kwargs if provided (overrides class attr)
         if "instructions" in kwargs:
@@ -6153,6 +6159,27 @@ class CognitiveAgent(BaseAgent):
             if wm_context:
                 wr_parts.append("")
                 wr_parts.append(wm_context)
+
+            # AD-723a-2 (Wave 161): WR sibling of the AD-723a-1 DM
+            # dispatcher path. Selector ``_WR_SELF_WRAPPED_KEYS`` is
+            # currently empty — the iteration below is a no-op until a
+            # future AD adds WR-only self-wrapped entries. Keeping the
+            # call site present means new entries cost zero diff.
+            try:
+                _wr_sensorium = await self._dispatch_sensorium_async(
+                    SensoriumPath.WR_ONESHOT, observation,
+                )
+                for _key in self._WR_SELF_WRAPPED_KEYS:
+                    _block = _wr_sensorium.get(_key)
+                    if _block:
+                        wr_parts.append("")
+                        wr_parts.append(_block)
+            except Exception:
+                logger.warning(
+                    "AD-723a-2: WR sensorium dispatch raised for agent=%s; "
+                    "falling through to hand-rolled WR fragments",
+                    self.id, exc_info=True,
+                )
 
             # BF-102: Cold-start system note in ward room context
             rt = getattr(self, '_runtime', None)

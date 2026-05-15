@@ -2804,3 +2804,24 @@ This AD adds an optional JSON sidecar bound at runtime startup via the new `conf
 **Files:** `src/probos/avatars/proposal_history.py` (configure + helpers + persist calls in mutators); `src/probos/runtime.py` (boot-time wiring; uses `self._data_dir` for default path - same pattern as AD-730-2-1); `src/probos/config.py` (`AvatarsConfig.proposal_history_path: str | None = None` field); `tests/test_ad721d_4_proposal_history_persist.py` (new, 5 pytest tests).
 
 **Forward markers.** AD-721d-4a (migrate to `ConnectionFactory`-backed history store - advances when AD-697/698 lands a non-SQLite backend OR sidecar file size > 1 MB OR a second module needs proposal-history-style restart-survival state). AD-721d-4b (periodic compaction - purge entries older than 30 days with no terminal action; advances when sidecar growth > 256 KB/week OR any single agent's history > 100 entries).
+
+
+### AD-723a-2 - WR branch consumer-side sensorium dispatch migration (Wave 161)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 161. **Parents:** AD-723a-1 (Wave 148 - DM consumer-side migration; `_DM_SELF_WRAPPED_KEYS` ClassVar pattern); AD-723a-3 (Wave 160 - `SensoriumEntry.injection_zone` + wrapper metadata). **Closes:** #625.
+
+Wave 148 (AD-723a-1) migrated the **DM** branch of `CognitiveAgent._build_user_message` to consume `SENSORIUM_REGISTRY` via the dispatcher. It deferred the **WR** (Ward Room) branch to AD-723a-2 because WR had 15 hand-rolled fragments vs DM's 13, and 0 self-wrapped sensorium entries that mapped cleanly to the `_DM_SELF_WRAPPED_KEYS` pattern at the time.
+
+This AD ships the WR sibling: a single dispatcher call site for self-wrapped WR entries, gated by a new `_WR_SELF_WRAPPED_KEYS` ClassVar. v1 ships the tuple **empty** - there are currently 0 self-wrapped WR entries. The infrastructure is in place; the first WR-only self-wrapped registry entry will trigger non-empty values without further code changes.
+
+**Byte-parity preserved.** With the empty selector tuple, the iteration is a no-op at runtime today - current WR prompts are byte-identical to HEAD. The byte-parity regression test verifies this.
+
+**Insertion point.** WR branch of `_build_user_message`, immediately after the AD-573 working-memory render block and before the BF-102 cold-start system note. Same Tier-2 try/except shape as AD-723a-1's DM path. Dispatcher failure logs WARNING with the `AD-723a-2` marker and falls through to hand-rolled fragments. `self.id` is included in the warning so multi-agent log triage works.
+
+**Phantom-API guard preserved.** `SensoriumPath.WR_ONESHOT` is the real enum member at `cognitive_agent.py:88` (Wave 160 dispatch confirmed in the WAVE-161-DISPATCH preflight). `SensoriumLayer` (PROPRIOCEPTION / INTEROCEPTION / EXTEROCEPTION) is a different enum at `cognitive_agent.py:54` and is NOT used in this AD - that was the Wave 160 phantom IDENTITY trap.
+
+**Files:** `src/probos/cognitive/cognitive_agent.py` (`_WR_SELF_WRAPPED_KEYS` ClassVar at line ~492; WR-branch dispatcher block at line ~6163); `tests/test_ad723a_2_wr_consumer_migration.py` (new, 6 pytest tests).
+
+**Regression gate.** All 6 prior AD-723a-1 tests in `tests/test_ad723a_1_consumer_migration.py` still pass at HEAD. This was the primary regression gate per the dispatch's wave-specific hard-stop rule.
+
+**Forward markers.** AD-723a-2a (populate `_WR_SELF_WRAPPED_KEYS` with first real consumer - advances when any new WR-only context fragment is proposed; no current candidate as of Wave 161). AD-723a-3a (per-entry migration of non-self-wrapped fragments using `SensoriumEntry.injection_zone` from AD-723a-3) was filed Wave 160 and remains open.
