@@ -489,6 +489,28 @@ class ProbOSRuntime:
             self._image_budget_path = self._data_dir / "image_budget.json"
         self.image_budget_tracker: dict[str, "_deque"] = _ibs_load(self._image_budget_path)
 
+        # AD-721d-4: bind proposal_history to its on-disk sidecar so DSL
+        # iterations survive restart. Path is configurable via
+        # AvatarsConfig.proposal_history_path; defaults to
+        # ``<data_dir>/proposal_history.json``. Tier-2 - configure failure
+        # logs and degrades to in-memory mode.
+        try:
+            from probos.avatars import proposal_history as _ph
+            _ph_cfg = getattr(self.config, "avatars", None)
+            _ph_path_str = (
+                getattr(_ph_cfg, "proposal_history_path", None) if _ph_cfg else None
+            )
+            if _ph_path_str:
+                _ph_path = Path(_ph_path_str)
+            else:
+                _ph_path = self._data_dir / "proposal_history.json"
+            _ph.configure(_ph_path)
+        except Exception:
+            logger.warning(
+                "AD-721d-4: proposal_history.configure failed; in-memory mode only",
+                exc_info=True,
+            )
+
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []
 

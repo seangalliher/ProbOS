@@ -980,6 +980,17 @@ class AvatarsConfig(BaseModel):
     # revisions. Bounded 1..10 to keep LLM cost predictable.
     max_proposal_iterations: int = 3
 
+    # AD-721d-4: optional disk-sidecar path for the per-agent proposal
+    # history. When None, defaults to ``<data_dir>/proposal_history.json``.
+    proposal_history_path: str | None = Field(
+        default=None,
+        description=(
+            "AD-721d-4: filesystem path for the per-agent DSL proposal "
+            "history JSON sidecar. When None, defaults to "
+            "``<runtime.data_dir>/proposal_history.json``."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:

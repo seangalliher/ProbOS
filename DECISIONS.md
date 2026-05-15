@@ -2785,3 +2785,22 @@ The AD-730-2 budget tracker (`runtime.image_budget_tracker`) lived only in memor
 **Files:** `src/probos/attachments/image_budget_store.py` (new, ~95 lines); `src/probos/runtime.py` (boot-time load swap, uses `self._data_dir` — the prompt's draft `self.config.data_dir` field does not exist on `SystemConfig`); `src/probos/attachments/image_policy.py` (`check_budget` persists on append + prune; new `_persist_tracker` helper); `src/probos/config.py` (`AttachmentsConfig.image_budget_path: str | None = None` field); `tests/test_ad730_2_1_image_budget_persistence.py` (new, 5 pytest tests).
 
 **Forward markers.** AD-730-2-1a (write throttle — batch persistence when write amplification > 1 write per DM AND file > 64 KB). AD-730-2-1b (migrate to `ConnectionFactory` Protocol from AD-697/698 when a non-SQLite backend lands AND a second runtime-state-with-disk-sidecar AD ships).
+
+
+### AD-721d-4 - Avatar proposal-history JSON sidecar persistence (Wave 161)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 161. **Parent:** AD-721d-1 (Wave 145 - in-memory module-level dict + RLock). **Closes:** #620 (and #623 as duplicate; both issues share an identical title and body).
+
+The AD-721d-1 module `src/probos/avatars/proposal_history.py` stored the per-agent DSL-proposal session history in a module-level dict guarded by an `RLock`. The module docstring explicitly anticipated this AD: "v1 is single-process; cluster-wide consistency, persistence across restarts, and quorum on the iteration counter are out of scope." The 5 public function signatures (`append`, `iteration_count`, `latest`, `clear`, `reset_all`) were documented as **stable** to support a drop-in persistence swap.
+
+This AD adds an optional JSON sidecar bound at runtime startup via the new `configure(path: Path | None)` function. When `path` is set, `configure` loads existing state into `_history` and rebinds the module-level `_persist_path`; mutations (`append` / `clear` / `reset_all`) then call `_persist_locked()` AFTER the in-memory update, inside the existing `with _lock:` block. When `path` is `None`, the module operates in pure in-memory mode (matches pre-AD behavior and is required for tests).
+
+**Persistence shape.** `{agent_id: [{"dsl": {...}, "captain_note": str, "timestamp": float}, ...]}` flat JSON. Atomic write via `tempfile.mkstemp` + `os.replace` (same pattern as AD-730-2-1). Empty agent lists are skipped to keep the file compact. The frozen `ProposalEntry` dataclass is reconstructed from each dict on load; malformed entries log WARNING and are dropped (one bad entry does not poison the rest).
+
+**Tier-2 throughout.** Disk I/O failure logs WARNING and degrades - the in-memory `_history` remains authoritative for the live process. `_persist_locked` wraps the file I/O in try/except that never propagates so a propose/approve call is never blocked on disk. `_load_from_disk_locked` tolerates missing files (no-op), corrupt JSON (empty dict + WARNING), non-dict roots (empty + WARNING), and per-entry corruption (skip + WARNING).
+
+**5 public signatures unchanged.** `configure` is a NEW function; the existing `append` / `iteration_count` / `latest` / `clear` / `reset_all` retain their exact signatures. Production callers (`routers/agents.py`) require zero modification. The autouse pytest fixture `_isolate_proposal_history` in the new test file calls `reset_all() + configure(None)` on teardown to prevent test-pollution across tests that share the module-level state.
+
+**Files:** `src/probos/avatars/proposal_history.py` (configure + helpers + persist calls in mutators); `src/probos/runtime.py` (boot-time wiring; uses `self._data_dir` for default path - same pattern as AD-730-2-1); `src/probos/config.py` (`AvatarsConfig.proposal_history_path: str | None = None` field); `tests/test_ad721d_4_proposal_history_persist.py` (new, 5 pytest tests).
+
+**Forward markers.** AD-721d-4a (migrate to `ConnectionFactory`-backed history store - advances when AD-697/698 lands a non-SQLite backend OR sidecar file size > 1 MB OR a second module needs proposal-history-style restart-survival state). AD-721d-4b (periodic compaction - purge entries older than 30 days with no terminal action; advances when sidecar growth > 256 KB/week OR any single agent's history > 100 entries).
