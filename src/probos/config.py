@@ -1259,6 +1259,29 @@ class AttachmentsConfig(BaseModel):
     # Set to 0 to disable the warning entirely.
     multi_image_warn_threshold: int = 5
 
+    # AD-730-2: hard cap on images per DM. When len(image_ids) exceeds
+    # this, the handler returns HTTP 413. multi_image_warn_threshold
+    # (soft warn) fires at 5; hard cap fires at 8 by default. Set to 0
+    # to disable the hard cap (warning still fires).
+    images_per_dm_hard_cap: int = 8
+
+    # AD-730-2: downscale bounding box for inbound vision images. When
+    # either image dimension exceeds this, the policy enforcer calls
+    # PIL.Image.thumbnail to fit a (image_max_dimension, image_max_dimension)
+    # box (aspect ratio preserved). The downscaled bytes are stored as a
+    # NEW content-addressable ref; the ORIGINAL ref is preserved
+    # (AD-731 invariant — refs are immutable). Set to 0 to disable
+    # downscaling.
+    image_max_dimension: int = 1024
+
+    # AD-730-2: per-Captain daily image budget (rolling 24h window). When
+    # the count of images included in DMs from this Captain in the last
+    # 24h exceeds the budget, the handler returns HTTP 429 with a
+    # Retry-After header. Tracking is in-memory (volatile across restart;
+    # AD-730-2-1 forward marker for persistence). Set to 0 to disable
+    # the budget gate entirely.
+    daily_image_budget_per_captain: int = 50
+
     # AD-730-5: per-agent_type vision tier override. Empty default means
     # no overrides; behavior identical to today (every agent uses
     # ``vision_tier``). Operator opts a specific agent type into a

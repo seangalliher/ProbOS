@@ -2711,3 +2711,23 @@ Test #10 (`test_no_side_effects_on_runtime`) explicitly asserts zero `mock_calls
 
 **Forward markers.** AD-722a-4-1 (per-emotion correction factors). AD-722a-4-2 (multi-utterance correction learning when post-correction-magnitude < pre-correction-magnitude stable above 60%).
 
+
+
+### AD-730-2 - Multi-image DM policy (Wave 160)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 160. **Parents:** AD-720 (image paste), AD-720d-1 (multi-image soft warn), AD-730 (vision pipe-through), AD-731 (content-addressable refs), AD-732 (vision tier). **Closes:** #632.
+
+Converts AD-720d-1's soft warning (5-image threshold, log-only) into a three-tier policy:
+
+1. **Hard cap (default 8 images per DM).** `ImagePolicyEnforcer.check_hard_cap` raises HTTP 413 when exceeded. The ONE strict reject (cost gate; honest-degrade would defeat the purpose). Soft warn at 5 preserved.
+2. **Downscale (default 1024px bounding box).** `downscale_if_needed` walks each content_hash, fetches the bytes via `store.read`, calls `PIL.Image.thumbnail` (aspect-preserving), and stores the downscaled bytes as a NEW content-addressable ref via `store.write`. The ORIGINAL ref is preserved (AD-731 invariant — refs are immutable). GIFs are skipped (animated-frame complexity). Tier-2: PIL failure logs WARNING, ships original hash. Returns substituted hash list so the caller rebuilds the multimodal payload.
+3. **Per-Captain daily budget (default 50, rolling 24h).** `check_budget` tracks a `deque[(timestamp, image_count)]` per Captain on `runtime.image_budget_tracker`. Ages out entries older than 24h on every check. On exhaustion raises HTTP 429 with `Retry-After` = seconds until the oldest counted image ages out. Tier-2: tracker absence logs WARNING and proceeds without the gate.
+
+`agent_chat` wires the enforcer between `build_multimodal_messages` (initial) and the vision-tier-or-fallback branch. When downscale substitutes any hash, `agent_chat` re-walks `req.attachment_ids` with a translation map and re-invokes `build_multimodal_messages` so the downscaled refs reach the LLM. Budget check runs LAST — operates on the final delivered count, not pre-compression.
+
+**Files:** `src/probos/config.py` (+3 AttachmentsConfig fields: `images_per_dm_hard_cap`, `image_max_dimension`, `daily_image_budget_per_captain`); `src/probos/attachments/image_policy.py` (new ~190 lines — `ImagePolicyEnforcer` + `ImagePolicyError`); `src/probos/routers/agents.py` (hook between soft-warn block and vision-tier branch in `agent_chat`); `src/probos/runtime.py` (`image_budget_tracker` allocated next to `divergence_history`); `tests/test_ad730_2_image_policy.py` (new, 9 boundary tests covering all three tiers + AD-731 invariant + PIL failure degrade).
+
+**Pillow verified resident.** `import PIL` -> 12.2.0 in venv as of 2026-05-14. NO new pip dep. Pillow license: HPND (permissive, Apache 2.0 compatible).
+
+**Forward markers.** AD-730-2-1 (persistent budget tracker for deployments requiring restart-survival). AD-730-2-2 (per-agent_type budget override).
+

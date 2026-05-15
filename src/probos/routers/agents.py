@@ -1090,6 +1090,55 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                         len(image_ids), warn_threshold, agent_id, capped,
                     )
 
+                # AD-730-2: hard cap + downscale + budget gates.
+                # Order: cap check first (cheapest), then downscale
+                # (rebuilds image_ids when any image was resized), then
+                # budget (after downscale because budget tracks final
+                # delivered images, not pre-compression count).
+                if image_ids:
+                    from probos.attachments.image_policy import (
+                        ImagePolicyEnforcer, ImagePolicyError,
+                    )
+                    _enforcer = ImagePolicyEnforcer(runtime, cfg_attach)
+                    try:
+                        _enforcer.check_hard_cap(len(image_ids))
+                    except ImagePolicyError as e:
+                        raise HTTPException(
+                            status_code=e.status_code, detail=e.detail,
+                        )
+                    _downscaled = await _enforcer.downscale_if_needed(
+                        image_ids, store,
+                    )
+                    if _downscaled != image_ids:
+                        # Rebuild the multimodal payload with the downscaled
+                        # hashes substituted for the originals. Walk the
+                        # caller's attachment_ids; only IMAGE hashes change.
+                        _trans = dict(zip(image_ids, _downscaled))
+                        _new_attach_ids = [
+                            _trans.get(a, a) for a in req.attachment_ids
+                        ]
+                        messages, image_ids, per_attachment = await build_multimodal_messages(
+                            prompt=req.message,
+                            attachment_ids=_new_attach_ids,
+                            store=store,
+                            mime_lookup=_mime_lookup,
+                            text_extraction_max_bytes=cfg_attach.text_extraction_max_bytes,
+                            pdf_extraction_enabled=cfg_attach.pdf_extraction_enabled,
+                        )
+                    # Budget last — operates on the final delivered count.
+                    _captain_id = getattr(runtime, "captain_id", None) or "default"
+                    try:
+                        _enforcer.check_budget(_captain_id, len(image_ids))
+                    except ImagePolicyError as e:
+                        headers: dict[str, str] = {}
+                        if e.retry_after_seconds is not None:
+                            headers["Retry-After"] = str(int(e.retry_after_seconds))
+                        raise HTTPException(
+                            status_code=e.status_code,
+                            detail=e.detail,
+                            headers=headers,
+                        )
+
                 if image_ids:
                     # AD-720d-2: vision_capable gate. If the receiving
                     # agent's CrewProfile.vision_capable is False, demote

@@ -477,6 +477,12 @@ class ProbOSRuntime:
         from collections import deque as _deque
         self.divergence_history: dict[str, "_deque"] = {}
 
+        # AD-730-2: per-Captain daily image budget tracker. In-memory
+        # rolling 24h window. Volatile across restart — AD-730-2-1
+        # forward marker for persistent backend (file-based or DB-backed
+        # deployments requiring restart-survival).
+        self.image_budget_tracker: dict[str, "_deque"] = {}
+
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []
 
