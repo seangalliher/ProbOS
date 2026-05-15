@@ -145,6 +145,7 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
         config=cfg,
         audit_log=audit_log,
         emit_event=emit_fn,
+        runtime=runtime,
     )
     runtime.tool_registry.register(
         browser_tool,

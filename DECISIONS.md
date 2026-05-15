@@ -2947,3 +2947,25 @@ Adds the Captain-mediated propose-and-approve flow for runtime vision-capability
 **Files:** `src/probos/api_models.py` (3 new models), `src/probos/events.py` (+2 EventType values), `src/probos/config.py` (+ vision_proposal_history_path on AvatarsConfig), `src/probos/crew_profile.py` (+ set_vision_capable method), `src/probos/avatars/vision_proposal_history.py` (new module), `src/probos/runtime.py` (configure call), `src/probos/routers/agents.py` (3 new handlers), `tests/test_ad720d_2_1_vision_approval.py` (new).
 
 **Forward markers.** AD-720d-2.1a (HXI UI surface for Captain pending-approval list - trigger: Captain operates ProbOS for >7 days with multiple pending proposals). AD-720d-2.1b (auto-deny TTL when Captain unresponsive >N hours - trigger: ProbOS adopts autonomous-Captain mode).
+
+### AD-706c-1 - Browser Tool visual verify via vision tier (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 162. **Parent:** AD-706 (BrowserTool, Wave 132). **Closes:** #642.
+
+Adds a new `verify(expectation: str)` action to BrowserTool's action vocabulary (10 -> 11). Tier-1 classification (read-only, no Captain ACK). The action captures a screenshot via Playwright, stores it through `AttachmentStore.write` keyed by SHA-256 (AD-731 invariant), calls the vision tier with the screenshot and a JSON-shaped prompt, and parses the response into `{ok: bool | None, observation: str, screenshot_ref: str, skipped_reason: str | None}`. The agent's expectation is truncated at 500 chars; empty expectation short-circuits to skipped without calling the LLM.
+
+**Tier-2 honest-degrade.** Six dedicated skipped_reason values - `missing_expectation`, `session_not_started`, `screenshot_error`, `attachment_store_unavailable`, `attachment_store_write_error`, `vision_unconfigured`, `vision_check_error`, `vision_unavailable`. NEVER raises. Verification is observational; the browser action sequence remains load-bearing.
+
+**Vision LLM call shape.** Reuses `build_multimodal_messages` (BF-268 OpenAI shape, AD-731 ref resolution) + `llm_client.complete(LLMRequest(tier='vision'))`. No new LLM client methods invented. The screenshot's sha256 ref is passed as a single attachment_id; `mime_lookup` is hard-coded to image/png.
+
+**Wiring.** BrowserTool constructor gained an optional `runtime: Any | None = None` parameter. `invoke()` special-cases `action == 'verify'` and dispatches to `action_verify(session, params, *, runtime, emit_event)` with the held runtime reference; all other actions stay on the existing `_HANDLERS` dispatch. `startup/finalize.py` now passes `runtime=runtime` to BrowserTool's constructor.
+
+**Events.** New `EventType.BROWSER_VERIFY_OBSERVED` emitted on every successful or honest-degrade verify call. The existing `BROWSER_ACTION_EXECUTED` emit path is preserved (the audit log records every action).
+
+**Tests.** +10 pytest in `tests/test_ad706c_1_browser_verify.py`. Covers: tier-1 classification, happy-path ok=true/false, missing expectation, 500-char truncation, vision unconfigured, LLM raises, AD-731 sha256 invariant on AttachmentStore, both event types emit, malformed-JSON parse fallback.
+
+**Out of scope.** Click-target prediction (AD-706c-2, #643 - vision tells the agent where to click). Cloud vision API integration (forward marker AD-706c-3, Anthropic computer-use beta). DOM-less surfaces (Flash, Canvas-heavy SPAs).
+
+**Files:** `src/probos/events.py` (+ BROWSER_VERIFY_OBSERVED), `src/probos/tools/browser/actions.py` (action_verify + _parse_verify_response + verify in classify_action silent set), `src/probos/tools/browser/tool.py` (runtime ctor param + verify in action enum + special-case dispatch + expectation in input_schema), `src/probos/startup/finalize.py` (pass runtime to BrowserTool), `tests/test_ad706c_1_browser_verify.py` (new, 10 tests).
+
+**Forward markers.** AD-706c-1a (journal aggregation for verification pass/fail rates - trigger: AD-674 graduated-initiative calibration consumer needs the signal). AD-706c-3 (Anthropic computer-use beta - trigger: operator configures cloud key + opts in via explicit flag).

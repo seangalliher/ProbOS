@@ -340,6 +340,210 @@ _HANDLERS: dict[str, Any] = {
 }
 
 
+# -- AD-706c-1: visual verification via vision tier ----------------------
+
+
+def _parse_verify_response(raw: str) -> dict[str, Any]:
+    """Parse the vision LLM response into ``{ok, observation}``.
+
+    Tier-2 honest-degrade: malformed JSON yields ``ok=None`` plus a clipped
+    observation rather than raising. Verification is observability — it
+    must never break the action sequence.
+    """
+    import json as _json
+    if not isinstance(raw, str) or not raw.strip():
+        return {"ok": None, "observation": "empty vision response"}
+    text = raw.strip()
+    # Strip code fences if the model wrapped JSON in ``` blocks.
+    if text.startswith("```"):
+        lines = [ln for ln in text.splitlines() if not ln.startswith("```")]
+        text = "\n".join(lines).strip()
+    try:
+        payload = _json.loads(text)
+    except (ValueError, TypeError):
+        return {"ok": None, "observation": text[:200]}
+    if not isinstance(payload, dict):
+        return {"ok": None, "observation": text[:200]}
+    ok = payload.get("ok")
+    if not isinstance(ok, bool):
+        ok = None
+    observation = payload.get("observation", "")
+    if not isinstance(observation, str):
+        observation = ""
+    return {"ok": ok, "observation": observation[:200]}
+
+
+async def action_verify(
+    session: BrowserSession,
+    params: dict[str, Any],
+    *,
+    runtime: Any,
+    emit_event: Any,
+) -> dict[str, Any]:
+    """AD-706c-1: vision-LLM verification of the current page state.
+
+    Returns ``{ok: bool | None, observation: str, screenshot_ref: str | None,
+    skipped_reason: str | None}``. Tier-2 honest-degrade: vision tier
+    unavailable / unhealthy / call-error returns ``ok=None`` with a
+    ``skipped_reason``. NEVER raises — the browser action sequence is
+    load-bearing; verification is observational.
+    """
+    import hashlib as _hashlib
+    from probos.events import EventType
+
+    expectation = params.get("expectation", "")
+    if not isinstance(expectation, str) or not expectation.strip():
+        return {
+            "ok": None,
+            "observation": "missing expectation",
+            "screenshot_ref": None,
+            "skipped_reason": "missing_expectation",
+        }
+    if len(expectation) > 500:
+        expectation = expectation[:500]
+
+    page = session.page
+    if page is None:
+        return {
+            "ok": None,
+            "observation": "browser session not started",
+            "screenshot_ref": None,
+            "skipped_reason": "session_not_started",
+        }
+    try:
+        png_bytes = await page.screenshot()
+    except Exception:
+        logger.warning("AD-706c-1: page.screenshot failed", exc_info=True)
+        return {
+            "ok": None,
+            "observation": "screenshot capture failed",
+            "screenshot_ref": None,
+            "skipped_reason": "screenshot_error",
+        }
+
+    # AD-731: store via AttachmentStore — refs not blobs through any later
+    # bus hop. The vision LLM call resolves the ref via the BF-268 OpenAI
+    # shape inside ``build_multimodal_messages``.
+    try:
+        from probos.routers.chat import _get_attachment_store
+        store = _get_attachment_store(runtime)
+    except Exception:
+        logger.warning(
+            "AD-706c-1: AttachmentStore lookup failed; skipping verification",
+            exc_info=True,
+        )
+        return {
+            "ok": None,
+            "observation": "attachment store unavailable",
+            "screenshot_ref": None,
+            "skipped_reason": "attachment_store_unavailable",
+        }
+
+    screenshot_ref = _hashlib.sha256(png_bytes).hexdigest()
+    try:
+        await store.write(screenshot_ref, png_bytes, "image/png")
+    except Exception:
+        logger.warning(
+            "AD-706c-1: AttachmentStore.write failed; skipping verification",
+            exc_info=True,
+        )
+        return {
+            "ok": None,
+            "observation": "attachment store write failed",
+            "screenshot_ref": None,
+            "skipped_reason": "attachment_store_write_error",
+        }
+
+    # Vision tier honest-degrade — AD-732 + 10-guard stack.
+    try:
+        from probos.cognitive.vision_dispatch import is_vision_tier_configured
+        cfg = getattr(runtime, "config", None)
+        cog_cfg = getattr(cfg, "cognitive", None)
+        if cog_cfg is None or not is_vision_tier_configured(cog_cfg, "vision"):
+            return {
+                "ok": None,
+                "observation": "vision tier unconfigured",
+                "screenshot_ref": screenshot_ref,
+                "skipped_reason": "vision_unconfigured",
+            }
+    except Exception:
+        return {
+            "ok": None,
+            "observation": "vision tier check failed",
+            "screenshot_ref": screenshot_ref,
+            "skipped_reason": "vision_check_error",
+        }
+
+    prompt_text = (
+        f"You are verifying a browser action outcome. The agent expected: "
+        f"\"{expectation}\". Look at the screenshot and answer in JSON: "
+        f"{{\"ok\": bool, \"observation\": \"<<=200 char description>\"}}. "
+        f"Respond with JSON only, no prose."
+    )
+    raw_response: str = ""
+    try:
+        from probos.cognitive.vision_dispatch import build_multimodal_messages
+        from probos.cognitive.llm_client import LLMRequest
+
+        attach_cfg = getattr(cfg, "attachments", None)
+        text_max = int(getattr(attach_cfg, "text_extraction_max_bytes", 32768))
+        pdf_on = bool(getattr(attach_cfg, "pdf_extraction_enabled", False))
+
+        async def _mime_lookup(_aid: str) -> str | None:
+            return "image/png"
+
+        messages, _image_ids, _per = await build_multimodal_messages(
+            prompt=prompt_text,
+            attachment_ids=[screenshot_ref],
+            store=store,
+            mime_lookup=_mime_lookup,
+            text_extraction_max_bytes=text_max,
+            pdf_extraction_enabled=pdf_on,
+        )
+        request = LLMRequest(
+            prompt=prompt_text,
+            tier="vision",
+            max_tokens=300,
+            messages=messages,
+        )
+        response = await runtime.llm_client.complete(request)
+        raw_response = getattr(response, "text", "") or ""
+    except Exception:
+        logger.warning(
+            "AD-706c-1: vision LLM call failed; honest-degrade",
+            exc_info=True,
+        )
+        return {
+            "ok": None,
+            "observation": "vision tier call failed",
+            "screenshot_ref": screenshot_ref,
+            "skipped_reason": "vision_unavailable",
+        }
+
+    parsed = _parse_verify_response(raw_response)
+    parsed["screenshot_ref"] = screenshot_ref
+    parsed["skipped_reason"] = None
+
+    if emit_event is not None:
+        try:
+            emit_event(
+                EventType.BROWSER_VERIFY_OBSERVED,
+                {
+                    "session_id": session.session_id,
+                    "expectation": expectation,
+                    "ok": parsed["ok"],
+                    "screenshot_ref": screenshot_ref,
+                    "observation": parsed["observation"],
+                },
+            )
+        except Exception:
+            logger.warning(
+                "AD-706c-1: emit_event(BROWSER_VERIFY_OBSERVED) failed",
+                exc_info=True,
+            )
+    return parsed
+
+
 # -- Tier classifier (D6) ------------------------------------------------
 
 
@@ -359,7 +563,7 @@ def classify_action(
       checkout/payment/transfer/subscribe/signup/register, OR the clicked
       element's text matches the tier-3 text regex.
     """
-    silent = {"state", "screenshot", "wait", "extract_text", "scroll", "back", "forward"}
+    silent = {"state", "screenshot", "wait", "extract_text", "scroll", "back", "forward", "verify"}
     if action in silent:
         return 1
     if action == "goto":

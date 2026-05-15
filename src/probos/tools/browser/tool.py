@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from probos.events import EventType
-from probos.tools.browser.actions import classify_action, dispatch_action
+from probos.tools.browser.actions import action_verify, classify_action, dispatch_action
 from probos.tools.browser.session import BrowserSession
 from probos.tools.protocol import ToolResult, ToolType
 
@@ -65,10 +65,12 @@ class BrowserTool:
         config: BrowserToolConfig,
         audit_log: AuditLog | None = None,
         emit_event: Any | None = None,
+        runtime: Any | None = None,
     ) -> None:
         self._config = config
         self._audit_log = audit_log
         self._emit_event = emit_event
+        self._runtime = runtime  # AD-706c-1: for vision-LLM verify action
         self._sessions: dict[str, BrowserSession] = {}
         # Token -> {token, session_id, action, params, created_at}
         self._pending_confirmations: dict[str, dict[str, Any]] = {}
@@ -113,6 +115,7 @@ class BrowserTool:
                     "enum": [
                         "goto", "state", "click", "type", "scroll",
                         "screenshot", "wait", "back", "forward", "extract_text",
+                        "verify",
                     ],
                 },
                 "session_id": {"type": "string", "description": "Reuse an existing session, or omit to create a fresh one."},
@@ -126,6 +129,7 @@ class BrowserTool:
                 "seconds": {"type": "number"},
                 "timeout_ms": {"type": "integer"},
                 "confirmation_token": {"type": "string", "description": "Captain-issued token for tier-3 actions."},
+                "expectation": {"type": "string", "description": "AD-706c-1: 'verify' action — natural-language statement to verify against the current screenshot."},
             },
         }
 
@@ -216,6 +220,7 @@ class BrowserTool:
         if action not in {
             "goto", "state", "click", "type", "scroll",
             "screenshot", "wait", "back", "forward", "extract_text",
+            "verify",
         }:
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self._audit(
@@ -309,7 +314,18 @@ class BrowserTool:
 
         # 6. Dispatch the action.
         try:
-            output = await dispatch_action(session, action, params)
+            if action == "verify":
+                # AD-706c-1: special-cased dispatch — needs runtime context
+                # for vision-LLM call + AttachmentStore. Falls back to
+                # honest-degrade if runtime is None (e.g., test fixture).
+                output = await action_verify(
+                    session,
+                    params,
+                    runtime=self._runtime,
+                    emit_event=self._emit_event,
+                )
+            else:
+                output = await dispatch_action(session, action, params)
         except Exception as exc:
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self._audit(
