@@ -1758,8 +1758,33 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
         response_text = str(result.result)
     elif result and result.error:
         response_text = f"(error: {result.error})"
+    elif result is None:
+        # BF-289: intent bus returned no result envelope — handler timed out or
+        # the agent has no subscriber for ``direct_message``. Distinct from the
+        # empty-content path so the Captain can tell "DM never reached the
+        # agent" from "agent's LLM tier returned empty content."
+        response_text = "(no reply — agent did not respond to intent)"
+        logger.warning(
+            "BF-289: agent=%s direct_message returned no IntentResult — "
+            "either no subscriber registered or handler timed out",
+            agent_id,
+        )
     else:
-        response_text = "(no response)"
+        # BF-289: result envelope present but ``result.result`` is empty AND
+        # ``result.error`` is empty. Almost always: the agent's LLM tier
+        # endpoint (Copilot proxy, local Ollama, etc.) returned an empty
+        # completion. Surface that explicitly so the Captain knows to check
+        # upstream rather than chasing an in-runtime bug.
+        response_text = (
+            "(no reply — agent's LLM endpoint returned empty content; "
+            "check upstream proxy/endpoint at the configured tier)"
+        )
+        logger.warning(
+            "BF-289: agent=%s direct_message returned empty content "
+            "(no error, no result) — likely LLM endpoint issue at the "
+            "agent's configured tier (Copilot proxy at 127.0.0.1:8080 by default)",
+            agent_id,
+        )
 
     # AD-726: post-LLM cleanup pipeline (AD-724/AD-572/AD-430b/AD-573/AD-722a/
     # AD-722f/AD-722b/AD-738e-1 cascade extracted into DmReplyPipeline). Each
