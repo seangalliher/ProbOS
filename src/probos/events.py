@@ -198,6 +198,8 @@ class EventType(str, Enum):
     TOOL_INTERVENTION_REQUIRED = "tool_intervention_required"  # AD-706: tier-3 action awaits Captain ACK
     BROWSER_ACTION_EXECUTED = "browser_action_executed"        # AD-706: per-action telemetry
     BROWSER_SESSION_OPENED = "browser_session_opened"          # AD-706
+    VISION_CAPABILITY_PROPOSED = "vision_capability_proposed"  # AD-720d-2.1: agent requests vision capability
+    VISION_CAPABILITY_RESOLVED = "vision_capability_resolved"  # AD-720d-2.1: Captain approves or denies
     BROWSER_SESSION_CLOSED = "browser_session_closed"          # AD-706
     AGENTIC_TOOL_CALL_STARTED = "agentic_tool_call_started"      # AD-545
     AGENTIC_TOOL_CALL_COMPLETED = "agentic_tool_call_completed"  # AD-545

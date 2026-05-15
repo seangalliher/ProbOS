@@ -2922,3 +2922,28 @@ Extends Standing Orders to cover peer observation - a class of crew action intro
 **Files:** `config/standing_orders/peer_observation.md` (new), `config/standing_orders/ship.md` (1-line append), `config/standing_orders/counselor.md` (pattern-review section append), `tests/test_ad729a_peer_observation_standing_orders.py` (new).
 
 **Unblocks:** AD-729 (capability AD) advances to build. AD-729b (training) and AD-729c (Counselor monitoring) remain sibling forward markers - this AD authors the rules; the others teach and enforce them.
+
+### AD-720d-2.1 - Captain vision-capability approval flow (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 162. **Parent:** AD-720d-2 (Wave 154 - static-default vision_capable field). **Closes:** #645.
+
+Adds the Captain-mediated propose-and-approve flow for runtime vision-capability enablement. Mirrors the AD-718a / AD-721d-1 pattern: agent requests vision capability with a rationale, Captain approves or denies, and on approval `CrewProfile.vision_capable` flips to True for that agent's type in the CallsignRegistry profile dict. The chat-time gate at `routers/agents.py:1391` (existing AD-720d-2 code) immediately reflects the new value.
+
+**Endpoints.** Three new under `/api/agent/{agent_id}`:
+- `POST vision-capability/propose` (body: `{rationale: str <=280 chars}`) returns `{agent_id, rationale, proposal_id, proposed_at}`.
+- `POST vision-capability/approve?proposal_id=X` (body: `{approve: bool, reason: str <=280 chars}`) flips registry on approve, marks proposal resolved either way.
+- `GET vision-capability/history` returns chronological proposal entries.
+
+**Persistence.** New `src/probos/avatars/vision_proposal_history.py` mirrors the AD-721d-4 sidecar pattern (module-level state + RLock + atomic temp-file + `os.replace`). Configured at runtime startup via the new `AvatarsConfig.vision_proposal_history_path` field (defaults to `<data_dir>/vision_proposal_history.json`). Tier-2 log-and-degrade on disk failure - in-memory state stays authoritative.
+
+**Registry.** New public method `CallsignRegistry.set_vision_capable(agent_id, value, *, reason='')` resolves agent_id to agent_type via the bound AgentRegistry, then updates the `_type_to_profile[agent_type]['vision_capable']` dict entry. Logs the flip at INFO level for audit. Reason does NOT flow into trust or Hebbian (this is an authorization grant, not a behavior observation).
+
+**Events.** Two new `EventType` values: `VISION_CAPABILITY_PROPOSED` and `VISION_CAPABILITY_RESOLVED`. Emitted via `runtime.emit_event` (AD-680 stable public method - direct call, no hasattr guard per pass-1 review fix).
+
+**Tests.** +8 pytest in `tests/test_ad720d_2_1_vision_approval.py`. All use real `CallsignRegistry` + real `AuthConfig()` (AD-722b-1a). Coverage: propose creates entry, approve flips registry, deny leaves registry, unknown proposal 404, already-resolved 404, persistence across configure, rationale length validation, history endpoint listing.
+
+**AD-731 invariant.** No image bytes touch this code path. Vision capability is an authorization bit; image transport remains AttachmentStore SHA-256 refs.
+
+**Files:** `src/probos/api_models.py` (3 new models), `src/probos/events.py` (+2 EventType values), `src/probos/config.py` (+ vision_proposal_history_path on AvatarsConfig), `src/probos/crew_profile.py` (+ set_vision_capable method), `src/probos/avatars/vision_proposal_history.py` (new module), `src/probos/runtime.py` (configure call), `src/probos/routers/agents.py` (3 new handlers), `tests/test_ad720d_2_1_vision_approval.py` (new).
+
+**Forward markers.** AD-720d-2.1a (HXI UI surface for Captain pending-approval list - trigger: Captain operates ProbOS for >7 days with multiple pending proposals). AD-720d-2.1b (auto-deny TTL when Captain unresponsive >N hours - trigger: ProbOS adopts autonomous-Captain mode).

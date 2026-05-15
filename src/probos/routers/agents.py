@@ -13,13 +13,16 @@ from fastapi.responses import JSONResponse
 
 from probos.api_models import (
     AgentChatRequest,
+    ApproveVisionCapability,
     ProposeAppearanceRequest,
     ProposeAppearanceResponse,
+    ProposeVisionCapability,
     ProposeVoiceProfileRequest,
     ProposeVoiceProfileResponse,
     SetAppearanceRequest,
     SetCooldownRequest,
     SetVoiceProfileRequest,
+    VisionCapabilityProposalResponse,
 )
 from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
@@ -605,6 +608,141 @@ async def clear_agent_appearance_proposal_history(
             agent_id, exc_info=True,
         )
     return {"agent_id": agent_id, "cleared_iterations": cleared}
+
+
+# ── AD-720d-2.1: Captain vision-capability approval ──────────────
+
+@router.post(
+    "/{agent_id}/vision-capability/propose",
+    response_model=VisionCapabilityProposalResponse,
+)
+async def propose_vision_capability(
+    agent_id: str,
+    req: ProposeVisionCapability,
+    runtime: Any = Depends(get_runtime),
+) -> VisionCapabilityProposalResponse:
+    """AD-720d-2.1: agent requests vision capability.
+
+    Captain reviews and approves/denies via the companion endpoint. The
+    proposal is recorded in the AD-720d-2.1 history sidecar (in-memory
+    + on-disk JSON).
+    """
+    import time as _time
+    import uuid as _uuid
+    from probos.avatars import vision_proposal_history as _vph
+    from probos.avatars.vision_proposal_history import VisionProposalEntry
+    from probos.events import EventType
+
+    if runtime.registry.get(agent_id) is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    entry = VisionProposalEntry(
+        proposal_id=str(_uuid.uuid4()),
+        agent_id=agent_id,
+        rationale=req.rationale,
+        proposed_at=_time.time(),
+    )
+    _vph.append(entry)
+
+    try:
+        runtime.emit_event(
+            EventType.VISION_CAPABILITY_PROPOSED,
+            {
+                "agent_id": agent_id,
+                "proposal_id": entry.proposal_id,
+                "rationale": req.rationale,
+            },
+        )
+    except Exception:
+        logger.warning(
+            "AD-720d-2.1: emit_event(VISION_CAPABILITY_PROPOSED) failed for %s; "
+            "proposal recorded but audit lost",
+            agent_id, exc_info=True,
+        )
+
+    return VisionCapabilityProposalResponse(
+        agent_id=agent_id,
+        rationale=req.rationale,
+        proposal_id=entry.proposal_id,
+        proposed_at=entry.proposed_at,
+    )
+
+
+@router.post("/{agent_id}/vision-capability/approve")
+async def approve_vision_capability(
+    agent_id: str,
+    proposal_id: str,
+    req: ApproveVisionCapability,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-720d-2.1: Captain approves or denies a pending vision-capability
+    proposal. On approve, the agent's registry profile flips
+    ``vision_capable=True``; on deny, the registry is unchanged. Either
+    way, the proposal is marked resolved and persisted.
+    """
+    from probos.avatars import vision_proposal_history as _vph
+    from probos.events import EventType
+
+    resolution = "approved" if req.approve else "denied"
+    resolved = _vph.resolve(proposal_id, resolution, req.reason)
+    if resolved is None:
+        raise HTTPException(
+            status_code=404,
+            detail="proposal_id not found or already resolved",
+        )
+    if resolved.agent_id != agent_id:
+        raise HTTPException(
+            status_code=400,
+            detail="proposal_id agent mismatch",
+        )
+
+    if req.approve:
+        ok = runtime.callsign_registry.set_vision_capable(
+            agent_id, True, reason=req.reason,
+        )
+        if not ok:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent {agent_id} not found in registry",
+            )
+
+    try:
+        runtime.emit_event(
+            EventType.VISION_CAPABILITY_RESOLVED,
+            {
+                "agent_id": agent_id,
+                "proposal_id": proposal_id,
+                "approved": req.approve,
+                "reason": req.reason,
+            },
+        )
+    except Exception:
+        logger.warning(
+            "AD-720d-2.1: emit_event(VISION_CAPABILITY_RESOLVED) failed for %s",
+            agent_id, exc_info=True,
+        )
+
+    return {"ok": True, "resolution": resolution, "approved": req.approve}
+
+
+@router.get("/{agent_id}/vision-capability/history")
+async def vision_capability_history(
+    agent_id: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-720d-2.1: list prior vision-capability proposals for ``agent_id``.
+
+    Mirrors AD-721d-1 ``appearance/proposal-history`` shape. Returns
+    entries in chronological order with resolution metadata.
+    """
+    from dataclasses import asdict
+    from probos.avatars import vision_proposal_history as _vph
+
+    entries = _vph.list_for_agent(agent_id)
+    return {
+        "agent_id": agent_id,
+        "entries": [asdict(e) for e in entries],
+    }
 
 
 @router.get("/{agent_id}/avatar-telemetry")

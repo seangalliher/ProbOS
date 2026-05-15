@@ -634,6 +634,43 @@ class CallsignRegistry:
         """Return the crew profile for the given agent type, or None."""
         return self._type_to_profile.get(agent_type)
 
+    def set_vision_capable(
+        self,
+        agent_id: str,
+        value: bool,
+        *,
+        reason: str = "",
+    ) -> bool:
+        """AD-720d-2.1: flip ``vision_capable`` for the agent's profile.
+
+        Resolves ``agent_id`` to the agent's ``agent_type`` via the bound
+        ``AgentRegistry``; if no agent is bound or the agent_id is unknown,
+        returns False. On success returns True and logs the flip at INFO
+        level (audit trail). Idempotent — setting to the same value still
+        returns True (the registry profile dict reflects the desired
+        value; no event is suppressed).
+
+        Reason is logged for audit; it does NOT flow into trust or Hebbian
+        — this is an authorization grant, not a behavior observation.
+        """
+        if self._agent_registry is None:
+            return False
+        agent = self._agent_registry.get(agent_id)
+        if agent is None:
+            return False
+        agent_type = agent.agent_type
+        profile = self._type_to_profile.get(agent_type)
+        if profile is None:
+            return False
+        prior = bool(profile.get("vision_capable", False))
+        profile["vision_capable"] = bool(value)
+        logger.info(
+            "AD-720d-2.1: vision_capable flipped for agent_id=%s "
+            "agent_type=%s prior=%s new=%s reason=%r",
+            agent_id, agent_type, prior, bool(value), reason,
+        )
+        return True
+
 
 def load_seed_profile(agent_type: str, profiles_dir: str = "") -> dict[str, Any]:
     """Load seed personality and identity from crew_profiles/ YAML.

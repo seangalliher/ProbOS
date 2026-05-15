@@ -991,6 +991,16 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-720d-2.1: optional disk-sidecar path for vision-capability proposal
+    # history. When None, defaults to ``<data_dir>/vision_proposal_history.json``.
+    vision_proposal_history_path: str | None = Field(
+        default=None,
+        description=(
+            "AD-720d-2.1: filesystem path for the vision-capability "
+            "proposal-history JSON sidecar."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:

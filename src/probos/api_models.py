@@ -304,6 +304,31 @@ class SetAppearanceRequest(BaseModel):
     dsl: dict
 
 
+# ── Vision-capability proposal models (AD-720d-2.1) ──────────────
+
+class ProposeVisionCapability(BaseModel):
+    """AD-720d-2.1: agent requests vision capability.
+
+    Rationale must be non-empty and ≤280 chars — matches AD-718a /
+    AD-721d-1 Captain-note budget.
+    """
+    rationale: str = Field(..., min_length=1, max_length=280)
+
+
+class VisionCapabilityProposalResponse(BaseModel):
+    """AD-720d-2.1: response to a propose call."""
+    agent_id: str
+    rationale: str
+    proposal_id: str
+    proposed_at: float
+
+
+class ApproveVisionCapability(BaseModel):
+    """AD-720d-2.1: Captain approve/deny payload."""
+    approve: bool
+    reason: str = Field(default="", max_length=280)
+
+
 # ── Assignment models (AD-408) ───────────────────────────────────
 
 class CreateAssignmentRequest(BaseModel):

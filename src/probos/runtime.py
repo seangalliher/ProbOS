@@ -511,6 +511,28 @@ class ProbOSRuntime:
                 exc_info=True,
             )
 
+        # AD-720d-2.1: bind vision-capability proposal-history sidecar.
+        # Mirrors the AD-721d-4 pattern; Tier-2 log-and-degrade on failure.
+        try:
+            from probos.avatars import vision_proposal_history as _vph
+            _vph_cfg = getattr(self.config, "avatars", None)
+            _vph_path_str = (
+                getattr(_vph_cfg, "vision_proposal_history_path", None)
+                if _vph_cfg
+                else None
+            )
+            if _vph_path_str:
+                _vph_path = Path(_vph_path_str)
+            else:
+                _vph_path = self._data_dir / "vision_proposal_history.json"
+            _vph.configure(_vph_path)
+        except Exception:
+            logger.warning(
+                "AD-720d-2.1: vision_proposal_history.configure failed; "
+                "in-memory mode only",
+                exc_info=True,
+            )
+
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []
 
