@@ -114,6 +114,21 @@ class SensoriumEntry:
     ``str`` or ``None`` and the dispatcher stores ``result`` under
     ``output_key`` in the merged dict.
     """
+    injection_zone: str | None = None
+    """AD-723a-3: opaque zone identifier describing where in the prompt the
+    entry renders. v1 reserved values: ``temporal_header``, ``working_memory``,
+    ``post_episodic``, ``self_recognition``. The dispatcher does NOT route by
+    zone in v1 — observation metadata only; consumers query as needed.
+    """
+    wrapper: object | None = None
+    """AD-723a-3: optional ``Callable[[str], str]`` that wraps the registered
+    method's output with framing markers (e.g., ``--- Temporal Awareness ---``).
+
+    Typed as ``object | None`` instead of ``Callable[[str], str] | None`` so
+    the frozen dataclass remains hashable under all Python versions (some
+    interpreters trip on the bound-method-vs-function hash divergence under
+    ``frozen=True``). The dispatcher runtime-checks via ``callable(...)``.
+    """
 
 
 def derive_communication_context(
@@ -4939,6 +4954,18 @@ class CognitiveAgent(BaseAgent):
                     method_name,
                 )
                 return
+            # AD-723a-3: optional wrapper applied to string outputs.
+            # Tier-2 — wrapper failure logs DEBUG and stores the
+            # raw output unchanged. Only applies when output_key is set
+            # (dict-return contract is string-in-string-out only).
+            if entry.wrapper is not None and callable(entry.wrapper):
+                try:
+                    result = entry.wrapper(result)
+                except Exception:
+                    logger.debug(
+                        "AD-723a-3: wrapper raised for entry %s; using raw output",
+                        method_name, exc_info=True,
+                    )
             merged[entry.output_key] = result
             return
         if isinstance(result, dict):

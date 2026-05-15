@@ -2680,3 +2680,20 @@ Test #10 (`test_no_side_effects_on_runtime`) explicitly asserts zero `mock_calls
 
 **Folded — AD-722c-3 (#654).** One bullet appended to `prompts/BUILDER-EXECUTION-PLAN.md` Standing Rules: forward markers must use TECHNICAL triggers, not commercial-tier language. Rationale: OSS repo describes WHAT extension points exist, not HOW they're priced or monetized (AD-450 / Wave 154 retrospective).
 
+
+
+### AD-723a-3 - SensoriumEntry metadata extension (Wave 160)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 160. **Parents:** AD-723 (sensorium dispatch unification), AD-723a-1 (DM_ONESHOT consumer migration). **Closes:** #626.
+
+`SensoriumEntry` (`src/probos/cognitive/cognitive_agent.py`) gains two new fields, both defaulting `None`:
+
+- `injection_zone: str | None` — opaque zone identifier describing where the entry renders in the prompt. v1 reserved values: `temporal_header`, `working_memory`, `post_episodic`, `self_recognition`. Observation-only in v1; zone-driven dispatch ordering deferred to AD-723a-3b.
+- `wrapper: object | None` — optional `Callable[[str], str]` that wraps the registered method's output with framing markers. Typed as `object | None` rather than `Callable[[str], str] | None` to dodge frozen-dataclass hashability divergence across Python versions; the dispatcher runtime-checks via `callable(...)`.
+
+`_apply_sensorium_result` applies the wrapper to string outputs only — the dict-return contract is unchanged (wrapping a dict makes no shape sense). Wrapper exceptions log DEBUG and store the raw output (Tier-2 log-and-degrade).
+
+`_DM_SELF_WRAPPED_KEYS` remains the v1 selector for which entries get rendered in the DM path (currently 2 entries). Per-entry migration off this tuple is AD-723a-3a forward marker (advances when 3+ entries gain `wrapper` set AND consumer code needs zone-driven iteration). No existing registry entry is migrated by this AD.
+
+**Files:** `src/probos/cognitive/cognitive_agent.py` (SensoriumEntry field extension + `_apply_sensorium_result` wrapper application); `tests/test_ad723a3_sensorium_metadata.py` (new, 7 boundary tests — backward-compat default construction, zone-only, wrapper-only, frozen immutability, dispatcher-applies-wrapper-on-str, dispatcher-skips-wrapper-on-dict, wrapper-exception-falls-back-to-raw).
+
