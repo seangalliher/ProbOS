@@ -542,6 +542,31 @@ class ProbOSRuntime:
         self.working_memory = WorkingMemoryManager(
             token_budget=cog_cfg.working_memory_token_budget,
         )
+
+        # AD-722a-1: vision-LLM intent-vs-render divergence detector.
+        # Default-OFF gating lives on AvatarsConfig; the detector itself is
+        # always constructed so callers can opt in per request.
+        try:
+            from probos.avatars.vision_intent_divergence import (
+                VisionIntentDivergenceDetector,
+            )
+            _av_cfg = getattr(self.config, "avatars", None)
+            _vid_max = int(
+                getattr(_av_cfg, "vision_intent_divergence_max_per_hour_per_agent", 3)
+                if _av_cfg else 3
+            )
+            self.vision_intent_divergence_detector = VisionIntentDivergenceDetector(
+                llm_client=self.llm_client,
+                max_per_hour=_vid_max,
+            )
+        except Exception:
+            logger.warning(
+                "AD-722a-1: vision_intent_divergence detector construction "
+                "failed; feature disabled at runtime",
+                exc_info=True,
+            )
+            self.vision_intent_divergence_detector = None
+
         # AD-573f: late-bind COMMITMENT_RECORDED emission
         self.working_memory.set_event_callback(self.emit_event)
         self.workflow_cache = WorkflowCache()

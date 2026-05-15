@@ -1001,6 +1001,23 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-722a-1: vision-LLM intent-divergence gating (default-OFF transitional).
+    vision_intent_divergence_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-722a-1: enable vision-LLM intent-vs-render divergence "
+            "detection. Default-OFF until AD-721i backend renderer ref "
+            "lookup is stable."
+        ),
+    )
+    vision_intent_divergence_max_per_hour_per_agent: int = Field(
+        default=3,
+        description=(
+            "AD-722a-1: per-agent hourly call cap for vision-LLM intent "
+            "divergence (aligns with AD-728 cost ceiling)."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:

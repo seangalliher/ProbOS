@@ -2969,3 +2969,37 @@ Adds a new `verify(expectation: str)` action to BrowserTool's action vocabulary 
 **Files:** `src/probos/events.py` (+ BROWSER_VERIFY_OBSERVED), `src/probos/tools/browser/actions.py` (action_verify + _parse_verify_response + verify in classify_action silent set), `src/probos/tools/browser/tool.py` (runtime ctor param + verify in action enum + special-case dispatch + expectation in input_schema), `src/probos/startup/finalize.py` (pass runtime to BrowserTool), `tests/test_ad706c_1_browser_verify.py` (new, 10 tests).
 
 **Forward markers.** AD-706c-1a (journal aggregation for verification pass/fail rates - trigger: AD-674 graduated-initiative calibration consumer needs the signal). AD-706c-3 (Anthropic computer-use beta - trigger: operator configures cloud key + opts in via explicit flag).
+
+### AD-722a-1 - Vision-LLM intent-vs-render divergence detector (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (detector + runtime construction; default-OFF flag; DivergenceDetector callsite wiring deferred to AD-721i). **Wave:** 162. **Parent:** AD-722a v1 (rule-table detector, Wave 143). **Closes:** #610.
+
+Adds a vision-LLM extension to the AD-722a divergence family: compares the agent's self-tagged intent against the rendered avatar image via a vision-tier LLM call. The rule-table detector (AD-722a v1) catches structured mismatches; this detector catches semantic mismatches the rules can't see (the LLM said warm, modulation fired warm, but the render still doesn't read as warm to a human).
+
+**Module.** New `src/probos/avatars/vision_intent_divergence.py` exports three primitives:
+- `VisionIntentDivergenceDetector` - the detector class, Tier-2 throughout (NEVER raises).
+- `VisionLLMRateLimit` - class-level shared rate-limit store keyed by `(scope, agent_id)`. Wave 162 step #6 (AD-722e-2 self-render verify) inherits this primitive with a different scope - one budget per agent across all vision-LLM observability uses.
+- `is_render_phrased(observation: str) -> bool` - AD-727 rule #8 phrasing-regex enforcer; True iff the observation is NOT agent-as-subject. Used by the parse path to reject violations.
+
+**Config.** Two new fields on `AvatarsConfig`: `vision_intent_divergence_enabled` (default False - transitional gate per Wave 10 convention #14) and `vision_intent_divergence_max_per_hour_per_agent` (default 3 - AD-728 cost ceiling).
+
+**AD-727 compliance.**
+- Rule #1 (REASONING-vs-OUTPUT): authorized by inheritance from AD-722a v1; OUTPUT is the rendered image.
+- Rule #5 (backend-server-side render only): `detect()` requires `provenance_backend=True`; non-backend refs short-circuit with `skipped_reason='provenance_invalid'`.
+- Rule #8 (OUTPUT-as-subject phrasing): observations matching the agent-as-subject regex are rejected with `skipped_reason='phrasing_violation'`.
+
+**AD-731 invariant.** Refs only; the detector takes a SHA-256 ref string and (when an AttachmentStore is bound) routes through `build_multimodal_messages` for OpenAI-shape resolution at the vendor boundary. Test `test_attachment_ref_not_inline_bytes` proves the contract.
+
+**Honest-degrade skipped_reason values.** `provenance_invalid` | `rate_limit` | `tier_unavailable` | `phrasing_violation` | `parse_error`.
+
+**Events.** New `EventType.VISION_INTENT_DIVERGENCE_OBSERVED` registered for future emit at the AD-722a callsite (Section 2 of the prompt - deferred until AD-721i backend renderer ref-lookup is stable).
+
+**Runtime wiring.** `self.vision_intent_divergence_detector` constructed at runtime startup (with Tier-2 log-and-degrade if construction fails). Always available for opt-in callers; the default-OFF gate sits on `AvatarsConfig.vision_intent_divergence_enabled` and is read at callsite, not construction.
+
+**What was NOT built.** Section 2 (`DivergenceDetector` callsite wiring) depends on AD-721i's stable backend renderer ref-lookup surface. The detector ships; the live wire-up will land in a follow-up AD once AD-721i is in place. Default-OFF flag ensures no behavior change at HEAD.
+
+**Tests.** +10 pytest in `tests/test_ad722a_1_vision_intent_divergence.py`. Coverage: happy-path match, happy-path mismatch, 3/hr rate-limit cap, rate-limit window expiry, provenance-invalid short-circuit, tier-unavailable honest-degrade, phrasing-regex enforcement, default-OFF flag regression, AD-731 ref-not-bytes invariant, `is_render_phrased` helper boundary cases.
+
+**Files:** `src/probos/events.py` (+ VISION_INTENT_DIVERGENCE_OBSERVED), `src/probos/config.py` (+ 2 AvatarsConfig fields), `src/probos/avatars/vision_intent_divergence.py` (new), `src/probos/runtime.py` (construct detector at startup), `tests/test_ad722a_1_vision_intent_divergence.py` (new, 10 tests).
+
+**Forward markers.** AD-722a-1a (HXI surface for vision-divergence events in SelfImageTab - trigger: AD-721i ships AND vision_intent_divergence_enabled flips True).

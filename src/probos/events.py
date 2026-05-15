@@ -201,6 +201,7 @@ class EventType(str, Enum):
     BROWSER_VERIFY_OBSERVED = "browser_verify_observed"        # AD-706c-1: vision-LLM verification result
     VISION_CAPABILITY_PROPOSED = "vision_capability_proposed"  # AD-720d-2.1: agent requests vision capability
     VISION_CAPABILITY_RESOLVED = "vision_capability_resolved"  # AD-720d-2.1: Captain approves or denies
+    VISION_INTENT_DIVERGENCE_OBSERVED = "vision_intent_divergence_observed"  # AD-722a-1: vision-LLM intent-vs-render
     BROWSER_SESSION_CLOSED = "browser_session_closed"          # AD-706
     AGENTIC_TOOL_CALL_STARTED = "agentic_tool_call_started"      # AD-545
     AGENTIC_TOOL_CALL_COMPLETED = "agentic_tool_call_completed"  # AD-545
