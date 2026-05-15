@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -212,14 +213,22 @@ async def generate_visemes(
         # and language-agnostic. Our pipeline collapses rhubarb's output to the
         # Preston Blair 9-set anyway (rhubarb_backend.py:41) and the renderer
         # further collapses to 5 vowel axes, so the consonant-distinction loss
-        # from phonetic is invisible at the rendered-mouth level. --threads 0
-        # lets rhubarb use all available cores.
+        # from phonetic is invisible at the rendered-mouth level.
+        # BF-290 (2026-05-15): pass an explicit positive thread count. Some
+        # rhubarb releases (observed: rhubarb-lip-sync 1.13.0) reject
+        # ``--threads 0`` with "Thread count must be 1 or higher" and exit 1.
+        # Older docs implied 0 = "all cores"; current binary requires a
+        # positive integer. Use os.cpu_count() (or 1 fallback) so the
+        # behaviour is identical to the original intent on every binary
+        # version. Capped at 16 because rhubarb is single-stream and gains
+        # nothing beyond a handful of cores.
+        _threads = max(1, min(16, os.cpu_count() or 1))
         def _run_sync() -> tuple[int, bytes, bytes]:
             proc = subprocess.Popen(
                 [
                     str(resolved_binary),
                     "-r", "phonetic",
-                    "--threads", "0",
+                    "--threads", str(_threads),
                     "-f", "json",
                     str(audio_path),
                 ],
