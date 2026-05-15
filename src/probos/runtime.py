@@ -567,6 +567,27 @@ class ProbOSRuntime:
             )
             self.vision_intent_divergence_detector = None
 
+        # AD-722e-2: vision-LLM self-render coherence verifier.
+        # Default-OFF gating on AvatarsConfig; verifier always constructed
+        # so the AD-722e self-perception path can opt in per cycle.
+        try:
+            from probos.cognitive.self_render_verify import SelfRenderVerifier
+            _srv_max = int(
+                getattr(_av_cfg, "self_render_verify_max_per_hour_per_agent", 3)
+                if _av_cfg else 3
+            )
+            self.self_render_verifier = SelfRenderVerifier(
+                llm_client=self.llm_client,
+                max_per_hour=_srv_max,
+            )
+        except Exception:
+            logger.warning(
+                "AD-722e-2: self_render_verifier construction failed; "
+                "feature disabled at runtime",
+                exc_info=True,
+            )
+            self.self_render_verifier = None
+
         # AD-573f: late-bind COMMITMENT_RECORDED emission
         self.working_memory.set_event_callback(self.emit_event)
         self.workflow_cache = WorkflowCache()

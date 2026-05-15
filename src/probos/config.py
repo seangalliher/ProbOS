@@ -1018,6 +1018,23 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-722e-2: vision-LLM self-render verification (default-OFF transitional).
+    self_render_verify_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-722e-2: enable vision-LLM digital-vs-render coherence "
+            "verification. Default-OFF until AD-721i backend renderer "
+            "ref lookup is stable."
+        ),
+    )
+    self_render_verify_max_per_hour_per_agent: int = Field(
+        default=3,
+        description=(
+            "AD-722e-2: per-agent hourly call cap for vision-LLM "
+            "self-render verification (aligns with AD-728 cost ceiling)."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:

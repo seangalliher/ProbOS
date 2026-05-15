@@ -3003,3 +3003,37 @@ Adds a vision-LLM extension to the AD-722a divergence family: compares the agent
 **Files:** `src/probos/events.py` (+ VISION_INTENT_DIVERGENCE_OBSERVED), `src/probos/config.py` (+ 2 AvatarsConfig fields), `src/probos/avatars/vision_intent_divergence.py` (new), `src/probos/runtime.py` (construct detector at startup), `tests/test_ad722a_1_vision_intent_divergence.py` (new, 10 tests).
 
 **Forward markers.** AD-722a-1a (HXI surface for vision-divergence events in SelfImageTab - trigger: AD-721i ships AND vision_intent_divergence_enabled flips True).
+
+### AD-722e-2 - Vision-LLM self-render coherence verifier (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (verifier + runtime construction; default-OFF; self_perception.py wire-up deferred to AD-721i). **Wave:** 162. **Parent:** AD-722e v1 (deterministic self-projection). **Closes:** #644.
+
+Adds a vision-LLM extension to the AD-722e self-perception family: compares the agent's digital state (avatar DSL summary) against the backend render via a vision-tier LLM call. Surfaces drift as a `self_perception` observation block when the integration enabled flag is flipped True.
+
+**Module.** New `src/probos/cognitive/self_render_verify.py` with `SelfRenderVerifier` + `RenderCoherenceObservation` dataclass. REUSES `VisionLLMRateLimit` and `is_render_phrased` from `probos.avatars.vision_intent_divergence` (AD-722a-1) - one budget per agent across all vision-LLM observability uses (different `scope` keys keep budgets keyed correctly).
+
+**Config.** Two new `AvatarsConfig` fields: `self_render_verify_enabled` (default False) + `self_render_verify_max_per_hour_per_agent` (default 3, AD-728 ceiling).
+
+**AD-727 compliance.**
+- Rule #1 (READ-ONLY on trust + Hebbian): digital-vs-render is OUTPUT-vs-OUTPUT, NOT REASONING-vs-OUTPUT - trust/Hebbian wiring NOT authorized. Verified by a source-scan regression test (`test_read_only_on_trust`) that grep-asserts the module imports nothing from trust_network / hebbian_router / record_outcome / update_weight.
+- Rule #5 (backend-server-side only): `provenance_backend=True` required; short-circuits otherwise.
+- Rule #8 (render-as-subject phrasing): observations matching agent-as-subject regex (she/he/they/role + looks/appears/seems/is) are rejected with `skipped_reason='phrasing_violation'`. Proper-name + verb constructions are NOT caught (deliberate - agents are referenced by name in render-subject sentences).
+- Joint review: inherited from AD-722e parent.
+
+**AD-731 invariant.** Refs only. Verifier takes a SHA-256 ref string and routes through `build_multimodal_messages` for OpenAI-shape resolution at the vendor boundary.
+
+**Honest-degrade skipped_reason values.** `provenance_invalid` | `rate_limit` | `tier_unavailable` | `phrasing_violation` | `parse_error`. NEVER raises; `coherent=True` is the conservative default on honest-degrade.
+
+**Events.** New `EventType.SELF_RENDER_COHERENCE_OBSERVED` registered for future emit at the self_perception callsite (Section 2 of the prompt - deferred until AD-721i backend renderer ref-lookup is stable).
+
+**Runtime wiring.** `self.self_render_verifier` constructed at runtime startup with Tier-2 log-and-degrade; default-OFF gate sits on `AvatarsConfig.self_render_verify_enabled`.
+
+**What was NOT built.** Section 2 (`self_perception.py` projection-builder wire-up) - depends on AD-721i's stable backend renderer ref-lookup surface. Detector ships; live wire-up follows in a sub-AD once AD-721i is in place.
+
+**Tests.** +9 pytest in `tests/test_ad722e_2_self_render_verify.py`. Coverage: coherent path, incoherent + render-subject phrasing, agent-as-subject phrasing rejection, 3/hr rate-limit, provenance enforcement, tier unavailable honest-degrade, default-OFF flag regression, AD-727 rule #1 source-scan, AD-731 ref invariant.
+
+**Files:** `src/probos/events.py` (+ SELF_RENDER_COHERENCE_OBSERVED), `src/probos/config.py` (+ 2 AvatarsConfig fields), `src/probos/cognitive/self_render_verify.py` (new), `src/probos/runtime.py` (construct verifier at startup), `tests/test_ad722e_2_self_render_verify.py` (new, 9 tests).
+
+**Cross-reference.** AD-728 (vision-LLM mirror primitive) - this AD and AD-722a-1 both consume the same shared `VisionLLMRateLimit` primitive; AD-728's eventual build will consolidate it into a dedicated `VisionLLMBudget` module (forward marker AD-728-1 from the Wave 162 dispatch).
+
+**Forward markers.** AD-722e-2a (HXI SelfImageTab surface for render-coherence observations - trigger: AD-721i ships AND self_render_verify_enabled flips True).
