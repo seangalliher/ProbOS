@@ -2339,6 +2339,22 @@ class PermissionsConfig(BaseModel):
     deny: list[str] = Field(default_factory=list)
 
 
+class AuthConfig(BaseModel):
+    """AD-722b-1: minimal crew-scope authentication.
+
+    v1 is single-secret. ``crew_scope_token`` empty (default) disables
+    auth entirely - backward-compatible with single-operator HXI installs.
+    """
+
+    crew_scope_token: str = Field(
+        default="",
+        description=(
+            "Shared bearer token for crew-scope auth on telemetry surfaces. "
+            "Empty string disables auth. Set via config/system.yaml to opt in."
+        ),
+    )
+
+
 class SecurityConfig(BaseModel):
     """Security Team configuration (AD-455).
 
@@ -3615,6 +3631,7 @@ class SystemConfig(BaseModel):
     bridge_alerts: BridgeAlertConfig = BridgeAlertConfig()
     firewall: FirewallConfig = FirewallConfig()
     security: SecurityConfig = SecurityConfig()  # AD-455
+    auth: AuthConfig = Field(default_factory=AuthConfig)  # AD-722b-1 (Wave 161)
     emergent_detector: EmergentDetectorConfig = EmergentDetectorConfig()
     emergence_collector: "EmergenceCollectorConfig" = Field(
         default_factory=lambda: EmergenceCollectorConfig()

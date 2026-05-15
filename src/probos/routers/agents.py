@@ -24,6 +24,7 @@ from probos.api_models import (
 from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
+from probos.routers.auth import require_crew_scope, verify_ws_token
 
 logger = logging.getLogger(__name__)
 
@@ -607,7 +608,11 @@ async def clear_agent_appearance_proposal_history(
 
 
 @router.get("/{agent_id}/avatar-telemetry")
-async def agent_avatar_telemetry(agent_id: str, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+async def agent_avatar_telemetry(
+    agent_id: str,
+    runtime: Any = Depends(get_runtime),
+    _: None = Depends(require_crew_scope),
+) -> dict[str, Any]:
     """AD-722: read-only avatar telemetry snapshot.
 
     Reuses the AD-721 ``_avatars_feature_check`` for the 3D-avatar gate
@@ -637,6 +642,7 @@ async def agent_avatar_telemetry_history(
     limit: int = 100,
     since: float | None = None,
     runtime: Any = Depends(get_runtime),
+    _: None = Depends(require_crew_scope),
 ) -> dict[str, Any]:
     """AD-722c: query persisted telemetry snapshots for an agent.
 
@@ -683,6 +689,10 @@ async def agent_avatar_telemetry_stream(
     Forward marker AD-722b-1 covers crew-scoped auth.
     """
     runtime = websocket.app.state.runtime
+    # AD-722b-1: crew-scope auth gate (pre-accept). Pass-through when
+    # ``auth.crew_scope_token`` is empty (default-OFF, backward-compat).
+    if not await verify_ws_token(websocket, runtime):
+        return
     cfg = getattr(runtime, "config", None)
     avatars_cfg = getattr(cfg, "avatars", None)
     telemetry_cfg = getattr(cfg, "avatar_telemetry", None)
@@ -943,6 +953,10 @@ async def agent_avatar_telemetry_stream(
 @router.websocket("/avatar-telemetry/stream")
 async def fleet_avatar_telemetry_stream(websocket: WebSocket) -> None:
     runtime = websocket.app.state.runtime
+    # AD-722b-1: crew-scope auth gate (pre-accept). Pass-through when
+    # ``auth.crew_scope_token`` is empty (default-OFF, backward-compat).
+    if not await verify_ws_token(websocket, runtime):
+        return
     cfg = getattr(runtime, "config", None)
     avatars_cfg = getattr(cfg, "avatars", None)
     telemetry_cfg = getattr(cfg, "avatar_telemetry", None)

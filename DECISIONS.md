@@ -2825,3 +2825,30 @@ This AD ships the WR sibling: a single dispatcher call site for self-wrapped WR 
 **Regression gate.** All 6 prior AD-723a-1 tests in `tests/test_ad723a_1_consumer_migration.py` still pass at HEAD. This was the primary regression gate per the dispatch's wave-specific hard-stop rule.
 
 **Forward markers.** AD-723a-2a (populate `_WR_SELF_WRAPPED_KEYS` with first real consumer - advances when any new WR-only context fragment is proposed; no current candidate as of Wave 161). AD-723a-3a (per-entry migration of non-self-wrapped fragments using `SensoriumEntry.injection_zone` from AD-723a-3) was filed Wave 160 and remains open.
+
+
+### AD-722b-1 - Crew-scope auth substrate for telemetry surfaces (Wave 161)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 161. **Parents:** AD-722b (Wave 142 HTTP snapshot), AD-722b-3 (Wave 159 WS diff push), AD-722b-4 (Wave 160 WS fleet stream). **Closes:** #598.
+
+**Substrate AD.** Verify-first against HEAD confirmed: NO existing crew-scope auth dep exists anywhere in `src/probos/routers/`. Every endpoint uses bare `Depends(get_runtime)`. The only auth-adjacent string in the tree is `"captain_auth_required"` in `conn.py:57` (a status enum, not a FastAPI dependency). This AD lands the FIRST auth pattern in the codebase; subsequent waves mirror it.
+
+**Design (Path A — single shared secret, default-OFF).** New module `src/probos/routers/auth.py` exposes two callables:
+- `require_crew_scope` — FastAPI `Depends` reading `Authorization: Bearer <token>` header. Empty configured token = pass-through (auth disabled). Missing/malformed/wrong header raises HTTP 401 with structured `detail` ("missing_or_malformed_authorization" / "invalid_token").
+- `verify_ws_token` — manual call inside WS handlers BEFORE `await websocket.accept()`, reads `?token=` query param. Returns False after `websocket.close(code=1008, reason="unauthorized")` on failure; True on pass.
+
+Both use `hmac.compare_digest` for constant-time token compare (OWASP requirement). `_configured_token` defensively only honors real `str` values - `MagicMock` fixtures pre-existing in the AD-722b-* test suites fall through to empty (auth disabled), preserving backward compat. This was a real discovery during the build: the first naive `_configured_token` broke 4 AD-722b-4 fleet-telemetry tests because their MagicMock configs returned truthy non-string sentinels. The defensive `isinstance(token, str)` check is the right substrate-side fix.
+
+**Default-OFF backward compat.** `AuthConfig.crew_scope_token: str = ""` (Pydantic field default). Empty disables auth entirely. Operators opt in by setting `auth.crew_scope_token` in `config/system.yaml`. Matches AD-721d / AD-722 feature-gate convention.
+
+**Applied to 4 endpoints (2 HTTP + 2 WS):**
+- `GET /api/agent/{id}/avatar-telemetry` (line 609 in `routers/agents.py`)
+- `GET /api/agent/{id}/avatar-telemetry/history` (line 638)
+- `WS /api/agent/{id}/avatar-telemetry-stream` (line 673) — `verify_ws_token` called immediately after `runtime = websocket.app.state.runtime` resolves, BEFORE the feature-gate close-checks and BEFORE `await websocket.accept()`
+- `WS /api/agent/avatar-telemetry/stream` fleet endpoint (line 949) — same insertion shape
+
+**WS handshake auth works.** The Path B scope-flag in the prompt anticipated WS handshake auth might be fragile under Starlette's pre-accept `query_params` semantics. Building this surface confirmed the pre-accept `websocket.query_params` IS populated reliably under the current Starlette version; tests pass for all four WS auth cases (disabled-allows, missing-1008, wrong-1008, correct-accepts). No split into AD-722b-1a needed.
+
+**Files:** `src/probos/routers/auth.py` (new, ~85 lines); `src/probos/config.py` (new `AuthConfig` Pydantic model placed above `SecurityConfig` for grouping; `auth: AuthConfig = Field(default_factory=AuthConfig)` field on `SystemConfig` next to `security`); `src/probos/routers/agents.py` (import + 4 endpoint modifications); `tests/test_ad722b_1_crew_scope_auth.py` (new, 8 pytest tests — 4 HTTP + 4 WS).
+
+**Forward markers.** AD-722b-1a (multi-Captain per-crew tokens — replace single shared secret with token store mapping captain_id → token; trigger: federation cross-mesh telemetry push lands OR more than one Captain operates the same runtime). AD-722b-1b (apply `require_crew_scope` to remaining read endpoints on agents/acm/assignments routers; trigger: AD-722b-1 ships AND any auth-required-endpoint feature request lands). AD-722b-1c (federation-bridge JWT verification — AD-480 integration; trigger: AD-480 federation framework adds cross-mesh agent reads). AD-722b-1d (token rotation + TTL; trigger: any single deployment runs > 90 days with a static secret OR security scanner flags long-lived shared-secret use).
