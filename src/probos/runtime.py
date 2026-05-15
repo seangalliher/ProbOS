@@ -460,6 +460,14 @@ class ProbOSRuntime:
         # injection. Type: dict[agent_id, DivergenceResult].
         self.divergence_results: dict[str, "DivergenceResult"] = {}
 
+        # AD-722a-4: post-correction results. Populated by
+        # apply_divergence_check when auto_correct_enabled and the
+        # original result's magnitude exceeded auto_correct_threshold.
+        # Cleared at the START of the NEXT DM reply by
+        # DmReplyPipeline.step_1_sanity_gate_retry (NOT at step_7;
+        # TTS reads the slot AFTER the reply returns).
+        self.divergence_corrections: dict[str, "DivergenceResult"] = {}
+
         # AD-722a-5: per-agent ring buffer of historical divergence entries.
         # Volatile (cleared on restart). Populated by the same single call
         # site as divergence_results (apply_divergence_check), gated by

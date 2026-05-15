@@ -2697,3 +2697,17 @@ Test #10 (`test_no_side_effects_on_runtime`) explicitly asserts zero `mock_calls
 
 **Files:** `src/probos/cognitive/cognitive_agent.py` (SensoriumEntry field extension + `_apply_sensorium_result` wrapper application); `tests/test_ad723a3_sensorium_metadata.py` (new, 7 boundary tests — backward-compat default construction, zone-only, wrapper-only, frozen immutability, dispatcher-applies-wrapper-on-str, dispatcher-skips-wrapper-on-dict, wrapper-exception-falls-back-to-raw).
 
+
+
+### AD-722a-4 - Auto-correction loop on high-magnitude divergence (Wave 160)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 160. **Parents:** AD-722a (divergence detector), AD-722a-7 (modulation recompute), AD-737/737a (custom-emotion palette resolution), AD-738e-1 (per-emotion prosody overrides). **Closes:** #613.
+
+`apply_divergence_check` previously fired trust + Hebbian updates on high-magnitude divergence but shipped the original modulation unchanged. AD-722a-4 closes that loop: when `result.magnitude > auto_correct_threshold` AND `auto_correct_enabled`, the detector re-invokes `apply_voice_modulation` with multiplicative correction factors (`noise_scale_factor` on pitch, `length_scale_factor` reciprocal on rate). The post-correction `DivergenceResult` is stored on `runtime.divergence_corrections[agent_id]` with `corrected=True`. TTS endpoint reads the slot AFTER the DM reply returns; the slot is cleared at the START of the NEXT DM reply by `DmReplyPipeline.step_1_sanity_gate_retry` (NOT step_7 — clearing at exit would race TTS to empty).
+
+**The firewall (AD-727 rule #1 carve-out):** default OFF. At most one re-modulation per utterance (slot-empty-check at write time + reply-entry clear). Re-modulation failure logs WARNING and ships ORIGINAL modulation. response_text NEVER rewritten — only the prosody parameters consumed by TTS change. Carve-out is intentionally narrow: aesthetic judgment influences DELIVERY, not content.
+
+**Files:** `src/probos/config.py` (AvatarTelemetryConfig +5 fields: `auto_correct_enabled`, `auto_correct_threshold`, `max_corrections_per_utterance`, `correction_noise_factor`, `correction_length_factor`); `src/probos/avatars/divergence_detector.py` (DivergenceResult +`corrected: bool`, `to_dict()` extended; `apply_divergence_check` correction branch inserted between div_results store and AD-722a-5 ring-buffer append); `src/probos/avatars/telemetry.py` (`apply_voice_modulation` gains kw-only `noise_scale_factor`/`length_scale_factor` with default-1.0 no-op, applied as outer multiplicative layer after intent rule layering); `src/probos/runtime.py` (`divergence_corrections: dict[str, DivergenceResult]` allocated next to `divergence_results`); `src/probos/cognitive/dm/reply_pipeline.py` (slot-clear prepended to `step_1_sanity_gate_retry`); `tests/test_ad722a4_auto_correction.py` (new, 9 boundary tests — 8 from spec + `apply_voice_modulation` default-kwargs no-op verification).
+
+**Forward markers.** AD-722a-4-1 (per-emotion correction factors). AD-722a-4-2 (multi-utterance correction learning when post-correction-magnitude < pre-correction-magnitude stable above 60%).
+

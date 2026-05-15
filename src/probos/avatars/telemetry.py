@@ -401,6 +401,9 @@ def apply_voice_modulation(
     signals: AgentSignalsSnapshot,
     intent: str | None = None,
     custom_emotions: "dict[str, EmotionProfile] | None" = None,
+    *,
+    noise_scale_factor: float = 1.0,
+    length_scale_factor: float = 1.0,
 ) -> ModulationSnapshot:
     """Pure function. Multiplicative composition matches voiceModulation.ts.
 
@@ -417,6 +420,17 @@ def apply_voice_modulation(
     appended to fired_rules even though all factors are 1.0). Unknown
     intent names are silently dropped -- ``parse_intent_self_tag`` already
     filters at the boundary.
+
+    AD-722a-4: ``noise_scale_factor`` and ``length_scale_factor`` are the
+    AUTO-CORRECTION outer multiplicative layer. Applied AFTER all
+    operational + intent rule layering, IMMEDIATELY BEFORE the final
+    ``_clamp`` / ``ModulationSnapshot`` construction so AD-738e-1
+    per-emotion overrides compose underneath the correction. Defaults
+    are ``1.0`` — preserves byte-identical no-op behavior for every
+    pre-AD-722a-4 caller. ``noise_scale_factor`` multiplies ``pitch``
+    (semantic: more noise = more pitch variation in Piper / vocoder
+    terminology). ``length_scale_factor`` multiplies ``rate`` reciprocally
+    (semantic: longer length = slower speech in Piper terminology).
     """
     base_pitch = float(getattr(profile, "pitch", DEFAULT_PITCH))
     base_rate = float(getattr(profile, "rate", DEFAULT_RATE))
@@ -479,6 +493,17 @@ def apply_voice_modulation(
                 fired.extend([rule["rule_name"], f"custom_{intent}"])
             else:
                 fired.append(rule["rule_name"])
+
+    # AD-722a-4: auto-correction outer multiplicative layer. Defaults
+    # 1.0 — no-op for every pre-AD-722a-4 caller (verified by test).
+    # Multiplies AFTER intent layering so AD-738e-1 per-emotion overrides
+    # compose underneath the correction.
+    if noise_scale_factor != 1.0:
+        pitch *= float(noise_scale_factor)
+    if length_scale_factor != 1.0:
+        # length_scale and rate are reciprocal (longer length = slower
+        # speech in Piper terminology; lower rate = slower speech here).
+        rate /= float(length_scale_factor)
 
     return ModulationSnapshot(
         pitch_factor=_clamp(pitch, PITCH_BOUNDS),

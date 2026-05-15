@@ -1061,6 +1061,27 @@ class AvatarTelemetryConfig(BaseModel):
     # AD-722a-5: window walked by the aggregate-metric calculation.
     # Clamped at read time to min(window, len(history)).
     divergence_aggregate_window: int = 50
+    # AD-722a-4: auto-correction loop on high-magnitude divergence.
+    # Default OFF — INVERTS the AD-727 rule #1 read-only contract for the
+    # MODULATION path (aesthetic judgment influences prosody output).
+    # Carve-out is intentionally narrow: re-modulation does NOT rewrite
+    # response_text; only the prosody parameters consumed by TTS change.
+    auto_correct_enabled: bool = False
+    # Magnitude above which a re-modulation attempt fires. Higher than
+    # divergence_negative_threshold (0.3) to avoid retry storms on mild
+    # misses. Operator can tune downward at their own risk.
+    auto_correct_threshold: float = 0.6
+    # Per-utterance budget. Set to 0 to disable corrections without flipping
+    # auto_correct_enabled (useful for A/B comparison runs).
+    max_corrections_per_utterance: int = 1
+    # Multiplicative factor applied to Piper noise_scale during correction.
+    # Higher noise = more prosodic variation; correction nudges TOWARD the
+    # intended emotion's expressive profile (verified by AD-738e-1 deltas).
+    correction_noise_factor: float = 1.15
+    # Multiplicative factor applied to Piper length_scale during correction.
+    # Lower length = faster speech; correction profile mirrors AD-738e-1's
+    # excited (faster) vs. concerned (slower) intent direction.
+    correction_length_factor: float = 0.92
     # AD-722c: append-only JSONL persistence under {history_dir}/<agent_id>.jsonl.
     # Operator opt-out via history_enabled=False. Retention is enforced lazily
     # at query time (rows older than now - history_retention_days are

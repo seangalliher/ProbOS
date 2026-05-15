@@ -162,6 +162,10 @@ class DivergenceResult:
     match_score: float
     signed_divergence: float
     magnitude: float
+    # AD-722a-4: True when this result is the post-correction recompute.
+    # The pre-correction result is preserved in runtime.divergence_results;
+    # the post-correction is stored in runtime.divergence_corrections.
+    corrected: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -170,6 +174,7 @@ class DivergenceResult:
             "match_score": self.match_score,
             "signed_divergence": self.signed_divergence,
             "magnitude": self.magnitude,
+            "corrected": self.corrected,
         }
 
 
@@ -476,6 +481,74 @@ def apply_divergence_check(
     div_results = getattr(runtime, "divergence_results", None)
     if div_results is not None:
         div_results[agent_id] = result
+
+    # AD-722a-4: auto-correction on high-magnitude divergence. Tier-2
+    # internally — re-modulation failure logs WARNING and leaves the
+    # original modulation untouched; never blocks a reply.
+    if (
+        getattr(t_cfg, "auto_correct_enabled", False)
+        and result.magnitude > getattr(t_cfg, "auto_correct_threshold", 0.6)
+    ):
+        corrections = getattr(runtime, "divergence_corrections", None)
+        if corrections is None:
+            # Wiring bug: feature is enabled but the runtime slot is missing.
+            # WARNING (not DEBUG) per .github/copilot-instructions.md standing
+            # rule — silent failure of an enabled feature is a diagnostic trap.
+            logger.warning(
+                "AD-722a-4: auto_correct_enabled=True but "
+                "runtime.divergence_corrections is missing for agent=%s; "
+                "correction skipped (allocate the slot in runtime.py startup)",
+                agent_id,
+            )
+        else:
+            budget = int(getattr(t_cfg, "max_corrections_per_utterance", 1))
+            # Per-utterance budget: the DM reply pipeline's step_1 clears
+            # the slot at the start of each reply. If the slot is empty,
+            # this is the first correction this utterance — fire. If it's
+            # populated, a prior correction already fired in this reply;
+            # skip (single-entry-per-utterance budget for v1).
+            if budget > 0 and corrections.get(agent_id) is None:
+                try:
+                    from probos.avatars.telemetry import apply_voice_modulation
+                    voice_profile = _resolve_voice_profile_for_intent(runtime, agent_id)
+                    if signals is not None:
+                        corrected_modulation = apply_voice_modulation(
+                            voice_profile, signals, intent=intent,
+                            custom_emotions=custom_emotions,
+                            noise_scale_factor=float(getattr(
+                                t_cfg, "correction_noise_factor", 1.15,
+                            )),
+                            length_scale_factor=float(getattr(
+                                t_cfg, "correction_length_factor", 0.92,
+                            )),
+                        )
+                        corrected_result = compute_divergence(
+                            intent_emotion=resolved_v1,
+                            applied_fired_rules=tuple(corrected_modulation.fired_rules),
+                        )
+                        # Mirror the existing line-478 pattern: restore the
+                        # custom emotion name when ``resolved_v1`` differs
+                        # from the operator-facing ``intent``.
+                        if resolved_v1 != intent:
+                            corrected_result = dataclasses.replace(
+                                corrected_result, intent_emotion=intent,
+                            )
+                        corrected_result = dataclasses.replace(
+                            corrected_result, corrected=True,
+                        )
+                        corrections[agent_id] = corrected_result
+                        logger.info(
+                            "AD-722a-4: auto-correction applied for agent=%s "
+                            "intent=%s pre_magnitude=%.3f post_magnitude=%.3f",
+                            agent_id, intent, result.magnitude,
+                            corrected_result.magnitude,
+                        )
+                except Exception:
+                    logger.warning(
+                        "AD-722a-4: re-modulation raised for agent=%s; "
+                        "shipping original modulation",
+                        agent_id, exc_info=True,
+                    )
 
     # AD-722a-5: append to per-agent ring buffer. Tier-2 -- buffer absence
     # or zero-sized buffer is a silent no-op (history surface degrades to

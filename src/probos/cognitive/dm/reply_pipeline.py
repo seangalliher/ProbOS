@@ -88,6 +88,14 @@ class DmReplyPipeline:
     # --- step 1: DM sanity gate one-shot retry (AD-724-1) ---
     async def step_1_sanity_gate_retry(self) -> None:
         """AD-724: DM sanity gate + AD-724-1 one-shot retry. Verbatim move."""
+        # AD-722a-4: clear the per-utterance correction slot from the
+        # PRIOR reply. TTS has had its chance to read it between the
+        # prior reply's return and this new reply's arrival. Clearing
+        # here — not in step_7 — keeps the slot populated through the
+        # TTS read window. Tier-2 guarded: missing slot is benign.
+        _corrections = getattr(self.ctx.runtime, "divergence_corrections", None)
+        if _corrections is not None:
+            _corrections.pop(self.ctx.agent_id, None)
         # AD-724: DM sanity gate (migrates BF-120 markdown strip + adds 3 log-only checks).
         # The gate NEVER blocks; warnings are logged and the cleaned text is returned.
         if self.ctx.response_text and self.ctx.sanity_gate is not None:
