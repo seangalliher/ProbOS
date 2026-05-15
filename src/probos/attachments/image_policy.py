@@ -153,8 +153,12 @@ class ImagePolicyEnforcer:
             window = 24 * 3600.0
             cutoff = now - window
             q = tracker.setdefault(captain_id, deque())
+            pruned = False
             while q and q[0][0] < cutoff:
                 q.popleft()
+                pruned = True
+            if pruned:
+                self._persist_tracker(tracker)
             used = sum(n for _, n in q)
             if used + image_count > budget:
                 # Retry-After = seconds until the oldest counted image
@@ -174,10 +178,26 @@ class ImagePolicyEnforcer:
                     retry_after_seconds=retry_after,
                 )
             q.append((now, image_count))
+            self._persist_tracker(tracker)
         except ImagePolicyError:
             raise
         except Exception:
             logger.warning(
                 "AD-730-2: budget tracker raised for captain=%s; proceeding without gate",
                 captain_id, exc_info=True,
+            )
+
+    def _persist_tracker(self, tracker: dict) -> None:
+        """AD-730-2-1: persist the budget tracker to disk. Tier-2 - never raises."""
+        path = getattr(self.runtime, "_image_budget_path", None)
+        if path is None:
+            return
+        try:
+            from probos.attachments.image_budget_store import save as _ibs_save
+            _ibs_save(path, tracker)
+        except Exception:
+            logger.warning(
+                "AD-730-2-1: budget persistence raised unexpectedly; "
+                "in-memory tracker remains authoritative",
+                exc_info=True,
             )

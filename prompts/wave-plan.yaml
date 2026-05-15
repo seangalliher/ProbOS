@@ -3494,7 +3494,19 @@ waves:
       - "prompts/ad-723a-3-sensorium-entry-metadata.md"
     builder_required: true
     issues_to_close: [584, 613, 601, 632, 626, 654]
-    status: shipped
+    status: done
+
+  - id: "161"
+    title: "Forward-marker follow-ups: fleet hook integration + image budget persistence + WR sensorium consumer + avatar proposal history + telemetry auth"
+    # 5 prompts, ~10h. All internal Apache 2.0 — no new pip/npm deps.
+    # Picks 5 small/medium open issues, mostly forward markers from Waves 158-160.
+    kind: main
+    depends_on: ["160"]
+    dispatch_prompt: "prompts/WAVE-161-DISPATCH.md"
+    prompts_already_drafted: false
+    builder_required: true
+    issues_to_close: [655, 656, 625, 620, 598]
+    status: drafting
 
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"

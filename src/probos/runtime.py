@@ -477,11 +477,17 @@ class ProbOSRuntime:
         from collections import deque as _deque
         self.divergence_history: dict[str, "_deque"] = {}
 
-        # AD-730-2: per-Captain daily image budget tracker. In-memory
-        # rolling 24h window. Volatile across restart — AD-730-2-1
-        # forward marker for persistent backend (file-based or DB-backed
-        # deployments requiring restart-survival).
-        self.image_budget_tracker: dict[str, "_deque"] = {}
+        # AD-730-2-1: load the per-Captain 24h image budget from disk if a
+        # sidecar exists; otherwise start empty. Tier-2 - load failure
+        # degrades to empty (logged in image_budget_store.load).
+        from probos.attachments.image_budget_store import load as _ibs_load
+        _ibs_cfg = getattr(self.config, "attachments", None)
+        _ibs_path_str = getattr(_ibs_cfg, "image_budget_path", None) if _ibs_cfg else None
+        if _ibs_path_str:
+            self._image_budget_path = Path(_ibs_path_str)
+        else:
+            self._image_budget_path = self._data_dir / "image_budget.json"
+        self.image_budget_tracker: dict[str, "_deque"] = _ibs_load(self._image_budget_path)
 
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []

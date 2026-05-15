@@ -10,6 +10,9 @@ back to OSS).
 - `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-738).
 - `tests/` — 13449 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout + occasional dreaming/ward_room flakes outside this wave) + 633 vitest; gate runs `-n 4 --dist=loadfile`.
 
+**Wave 161 in flight (2026-05-15):**
+- AD-730-2-1 — Image-budget tracker JSON sidecar persistence (+5 pytest tests; closes #656). New `src/probos/attachments/image_budget_store.py` (`load`/`save` module functions, atomic temp-file + `os.replace`). Runtime boot loads from `<data_dir>/image_budget.json` (configurable via `AttachmentsConfig.image_budget_path`). `ImagePolicyEnforcer.check_budget` persists on append AND on prune. Tier-2 throughout — disk failure logs and degrades; in-memory tracker remains authoritative. AD-731 invariant untouched (BUDGET tracker only — image bytes still flow through AttachmentStore SHA-256 refs). Forward markers AD-730-2-1a (write throttle) + AD-730-2-1b (ConnectionFactory backend swap) filed.
+
 **Wave 160 in flight (2026-05-14):**
 - AD-726 — DM post-LLM cleanup pipeline extracted to DmReplyPipeline (+12 pytest tests; closes #584 partial — pre-LLM prep deferred to AD-726a/b/c forward markers). `agent_chat` shrinks 574→~305 lines. AD-722c-3 (#654) folded — BEP standing rule bullet for technical-not-commercial forward-marker language.
 - AD-723a-3 — SensoriumEntry gains injection_zone + wrapper metadata (+7 pytest tests; closes #626). Backward-compatible — both fields default None. Dispatcher applies wrapper to string outputs only (dict-return contract unchanged). `_DM_SELF_WRAPPED_KEYS` still the v1 selector; per-entry migration deferred to AD-723a-3a.

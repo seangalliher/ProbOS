@@ -1286,6 +1286,15 @@ class AttachmentsConfig(BaseModel):
     # the budget gate entirely.
     daily_image_budget_per_captain: int = 50
 
+    image_budget_path: str | None = Field(
+        default=None,
+        description=(
+            "AD-730-2-1: filesystem path for the per-Captain image-budget "
+            "JSON sidecar. When None, defaults to "
+            "``<runtime.config.data_dir>/image_budget.json``."
+        ),
+    )
+
     # AD-730-5: per-agent_type vision tier override. Empty default means
     # no overrides; behavior identical to today (every agent uses
     # ``vision_tier``). Operator opts a specific agent type into a

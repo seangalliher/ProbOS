@@ -2770,3 +2770,18 @@ New WS endpoint `WS /api/agent/avatar-telemetry/stream` (full path under the `ag
 **Files:** `src/probos/config.py` (+1 `fleet_stream_enabled` field); `src/probos/routers/agents.py` (new `fleet_avatar_telemetry_stream` handler); `ui/src/avatars/useFleetAvatarTelemetry.ts` (new ~70-line hook stub); `ui/src/__tests__/useFleetAvatarTelemetry.test.ts` (new, 3 vitest tests); `tests/test_ad722b4_fleet_telemetry.py` (new, 6 pytest tests).
 
 **Forward markers.** AD-722b-4a (consumer-side per-agent store consolidation). AD-722b-4-1 (dynamic crew membership during connection lifetime).
+
+
+### AD-730-2-1 - Image-budget tracker JSON sidecar persistence (Wave 161)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 161. **Parent:** AD-730-2 (Wave 160 — in-memory per-Captain rolling 24h budget). **Closes:** #656.
+
+The AD-730-2 budget tracker (`runtime.image_budget_tracker`) lived only in memory: restart wiped the deque and the Captain's 24h spend reset on every boot, defeating the rate-limit's intent. This AD persists the tracker to a JSON sidecar (default `<data_dir>/image_budget.json`, configurable via new `AttachmentsConfig.image_budget_path`) loaded on runtime startup and rewritten on every mutation by `ImagePolicyEnforcer.check_budget` (append AND prune).
+
+**Persistence shape.** `{captain_id: [[timestamp, count], ...]}` flat JSON. New module `src/probos/attachments/image_budget_store.py` exposes `load(path) -> dict[str, deque]` and `save(path, tracker) -> None` module-level functions. `save` writes to a sibling temp file via `tempfile.mkstemp` then `os.replace` for atomicity; empty deques are skipped to keep the file compact. `load` tolerates missing files (returns empty dict, no exception) and corrupt JSON (logs WARNING and returns empty dict).
+
+**Tier-2 throughout.** Disk I/O failure logs WARNING and degrades — the in-memory tracker remains authoritative for the live process. `_persist_tracker` wraps the `image_budget_store.save` call in a try/except that never propagates so a DM is never blocked on disk failure. AD-731 invariant untouched: this AD touches the BUDGET tracker only; image bytes still flow through `AttachmentStore` as SHA-256 refs.
+
+**Files:** `src/probos/attachments/image_budget_store.py` (new, ~95 lines); `src/probos/runtime.py` (boot-time load swap, uses `self._data_dir` — the prompt's draft `self.config.data_dir` field does not exist on `SystemConfig`); `src/probos/attachments/image_policy.py` (`check_budget` persists on append + prune; new `_persist_tracker` helper); `src/probos/config.py` (`AttachmentsConfig.image_budget_path: str | None = None` field); `tests/test_ad730_2_1_image_budget_persistence.py` (new, 5 pytest tests).
+
+**Forward markers.** AD-730-2-1a (write throttle — batch persistence when write amplification > 1 write per DM AND file > 64 KB). AD-730-2-1b (migrate to `ConnectionFactory` Protocol from AD-697/698 when a non-SQLite backend lands AND a second runtime-state-with-disk-sidecar AD ships).
