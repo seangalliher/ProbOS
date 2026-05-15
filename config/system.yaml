@@ -389,7 +389,7 @@ tts:
   # Captain noted "monotone" + "strange consistent rhythm" on upstream defaults
   # (0.667 / 1.0 / 0.8 / 0.2); the values below soften both.
   noise_scale: 0.85         # generator noise (pitch/expression variation)
-  length_scale: 1.0         # phoneme duration (>1 = slower, <1 = faster)
+  length_scale: 0.92        # phoneme duration (>1 = slower, <1 = faster); 0.92 ≈ +8% rate
   noise_w: 1.0              # phoneme-width noise (rhythm variation)
   sentence_silence: 0.35    # seconds of silence between sentences
 
