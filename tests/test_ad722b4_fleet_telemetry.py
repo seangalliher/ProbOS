@@ -72,6 +72,7 @@ def _make_fleet_runtime(
         crew.appearance = AppearanceProfile(vrm_url="", dsl=None)
         crew.voice = VoiceProfile()
         profile_store.profiles[cid] = crew
+    runtime.registry.all.return_value = list(agents.values())
     runtime.registry.agents = agents
 
     runtime.profile_store = profile_store
@@ -240,3 +241,30 @@ def test_diff_frames_carry_agent_id_too() -> None:
         second = ws.receive_json()
         assert second["agent_id"] == "crew-a"
         assert second["type"] in ("snapshot", "diff", "ping")
+
+
+# --------------------------------------------------------------------------- #
+# BF-287 — registry crew discovery uses public .all(), not private .agents    #
+# --------------------------------------------------------------------------- #
+
+
+def test_bf287_crew_discovery_uses_public_registry_api() -> None:
+    """Regression: AD-722b-4 originally read runtime.registry.agents which is
+    a phantom attribute (real AgentRegistry stores agents in self._agents and
+    exposes .all() as the public accessor). On warm restart with a real
+    registry, the websocket endpoint crashed with AttributeError. This test
+    asserts the production endpoint reads via the public .all() accessor."""
+    import inspect
+
+    from probos.routers import agents as agents_module
+
+    src = inspect.getsource(agents_module.fleet_avatar_telemetry_stream)
+    assert "registry.all()" in src, (
+        "fleet_avatar_telemetry_stream must use runtime.registry.all() — "
+        "registry.agents is a phantom; real AgentRegistry uses ._agents "
+        "internally and .all() publicly. See BF-287."
+    )
+    assert "registry.agents" not in src, (
+        "fleet_avatar_telemetry_stream must NOT reference registry.agents "
+        "(phantom). See BF-287."
+    )

@@ -1176,7 +1176,7 @@ async def fleet_avatar_telemetry_stream(websocket: WebSocket) -> None:
     # up until the client reconnects. v1 simplification — AD-722b-4-1
     # forward marker for dynamic membership.
     crew_agents: list[tuple[str, Any]] = []
-    for agent in runtime.registry.agents.values():
+    for agent in runtime.registry.all():
         try:
             if is_crew_agent(agent, runtime.ontology):
                 crew_agents.append((agent.agent_id, agent))
