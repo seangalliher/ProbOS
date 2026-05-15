@@ -49,3 +49,24 @@ When adding a new third-party component:
    NOT bundle it in this repo — document operator-side installation.
 4. Surface the disposition in the relevant build prompt's License posture
    section before drafting deliverables.
+
+## pypdf (AD-720a-1)
+
+- Project: <https://github.com/py-pdf/pypdf>
+- License: BSD-3-Clause
+- Used by: `src/probos/cognitive/text_extractor.py` (`_extract_pdf`)
+- Installed via `pyproject.toml` `[project.dependencies]`: `pypdf>=4.0`.
+
+## python-docx (AD-720a-1)
+
+- Project: <https://github.com/python-openxml/python-docx>
+- License: MIT
+- Used by: `src/probos/cognitive/text_extractor.py` (`_extract_docx`)
+- Installed via `pyproject.toml` `[project.dependencies]`: `python-docx>=1.1`.
+
+## openpyxl (AD-720a-1)
+
+- Project: <https://foss.heptapod.net/openpyxl/openpyxl>
+- License: MIT
+- Used by: `src/probos/cognitive/text_extractor.py` (`_extract_xlsx`)
+- Installed via `pyproject.toml` `[project.dependencies]`: `openpyxl>=3.1`.

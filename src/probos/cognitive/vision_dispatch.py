@@ -239,11 +239,15 @@ async def build_multimodal_messages(
             })
             continue
 
-        if mime == "application/pdf" and not pdf_extraction_enabled:
+        if mime in (
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ) and not pdf_extraction_enabled:
             content.append({
                 "type": "text",
                 "text": (
-                    f'<ATTACHMENT id="{attachment_id}" mime="application/pdf" '
+                    f'<ATTACHMENT id="{attachment_id}" mime="{mime}" '
                     f'note="{_PDF_DEFERRED_NOTE}" />'
                 ),
             })

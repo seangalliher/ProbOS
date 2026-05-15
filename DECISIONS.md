@@ -3088,3 +3088,37 @@ Adds the Counselor-mediated path for avatar revision so the Captain can say "Cou
 **Files:** `src/probos/events.py` (+ APPEARANCE_REVISION_MEDIATED), `src/probos/api_models.py` (+ MediateAppearanceRevision), `src/probos/cognitive/counselor.py` (intent_descriptors + _handled_intents + act() route + _mediate_appearance_revision method), `src/probos/routers/agents.py` (+ mediate endpoint), `tests/test_ad721d_2_counselor_mediated_revision.py` (new, 8 tests).
 
 **Forward markers.** AD-721d-2a (`source` field on ProposalEntry when AD-721d-1 doesn't carry one - trigger: Captain audit signal needed). AD-721d-2b (per-domain mediator selection - trigger: >=2 domain agents need their own avatar palettes mediated). AD-721d-2c (HXI button + modal for CrewAvatarPopout - trigger: Captain operates mediated path more than Captain-driven OR HXI polish wave scheduled).
+
+### AD-720a-1 - PDF / DOCX / XLSX document text extraction (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 162. **Parent:** AD-720d (Wave 139 text/JSON/CSV extraction). **Closes:** #562.
+
+Replaces `raise NotImplementedError('AD-720a-1: PDF extraction not yet wired')` with a real dispatch table covering PDF, DOCX, XLSX. The flag `AttachmentsConfig.pdf_extraction_enabled` (already scaffolded in HEAD) gates all three MIMEs through `vision_dispatch.py` - default-OFF transitional per Wave 10 convention #14.
+
+**License posture (Captain-approved at acceptance).** Three permissive deps verified via `pip show` at install time:
+- `pypdf>=4.0` - BSD-3-Clause (`License-Expression: BSD-3-Clause` confirmed)
+- `python-docx>=1.1` - MIT (`License: MIT` confirmed)
+- `openpyxl>=3.1` - MIT (`License: MIT` confirmed)
+
+All three are Apache-2.0-compatible per the Captain rule (MIT > BSD > Apache). Added to `pyproject.toml` `[project.dependencies]`. `THIRD_PARTY_LICENSES.md` updated with three new entries.
+
+**Helpers.** Three new functions in `src/probos/cognitive/text_extractor.py`:
+- `_extract_pdf(blob, max_bytes)` - page-by-page via `pypdf.PdfReader`, capped at 100 pages. Per-page exceptions logged + emit empty page text (no silent skip).
+- `_extract_docx(blob, max_bytes)` - paragraphs + table cells (cell-by-cell, '' | '' separator) via `docx.Document`.
+- `_extract_xlsx(blob, max_bytes)` - `=== Sheet: <name> ===` headers + rows via `openpyxl.load_workbook(read_only=True, data_only=True)`, capped at 10k rows total.
+
+All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix on cap-hit.
+
+**Dispatch.** New `_DOCUMENT_DISPATCH: dict[str, callable]` mapping the three MIMEs to helpers. `extract_text` consults the dispatch first; misses fall through to the AD-720d text/json branch; unknown MIME still raises `ValueError('unsupported MIME')` (regression-tested).
+
+**Tier-2 honest-degrade.** Parser exceptions in any of the three helpers bubble out of `extract_text` as `ValueError('AD-720a-1: failed to extract text from <mime>: <err>')` - existing vision_dispatch / chat caller pattern decides whether to surface to the user or fall through to the `<ATTACHMENT ... note=deferred />` stub.
+
+**Gate wiring.** `vision_dispatch.py:242` previously short-circuited only `application/pdf` when the flag was False; this AD extends the gate to DOCX + XLSX MIMEs as well (consistent UX - all three document types respect the same flag).
+
+**AD-731 invariant.** Helpers operate on `blob: bytes` already-resolved from `AttachmentStore` - no inline bytes through the bus. Image attachments remain on the AD-731 SHA-256 ref path (vision tier, untouched).
+
+**Tests.** +12 pytest in `tests/test_ad720a_1_document_extraction.py` using in-memory PDF/DOCX/XLSX fixtures (pypdf.PdfWriter / Document() / Workbook()). Coverage: 3 happy paths, 3 byte caps, 2 page/row caps, 3 corrupt-bytes raises, 1 dispatch-unknown-MIME regression, 1 default-OFF flag regression. All use real `SystemConfig()` per AD-722b-1a (no MagicMock).
+
+**Files:** `pyproject.toml` (+3 deps), `src/probos/cognitive/text_extractor.py` (rewritten with dispatch + 3 helpers; AD-720d branches unchanged), `src/probos/cognitive/vision_dispatch.py` (extended gate to cover DOCX + XLSX), `THIRD_PARTY_LICENSES.md` (+3 entries), `tests/test_ad720a_1_document_extraction.py` (new, 12 tests).
+
+**Forward markers.** AD-720a-1-1 (flip `pdf_extraction_enabled` to True after operator feedback confirms quality). AD-720a-1-2 (OCR pipeline for scanned PDFs - image-bearing pages where pypdf returns empty text - trigger: when scanned PDFs are a real workload).
