@@ -3476,6 +3476,26 @@ waves:
     issues_to_close: [569, 570, 600, 566, 583, 653]
     status: shipped
 
+  - id: "160"
+    title: "DM path refactor + telemetry feedback loops + multi-image policy + sensorium metadata"
+    # 5 prompts, ~10h. All internal Apache 2.0 — no new pip/npm deps. Builds on
+    # AD-722a/b/c/d telemetry stack and AD-720d/AD-725 DM stack shipped Waves 158-159.
+    # #654 AD-722c-3 (forward-marker style guide) folded into the BUILDER-EXECUTION-PLAN
+    # edit in whichever prompt naturally touches it.
+    kind: main
+    depends_on: ["159"]
+    dispatch_prompt: "prompts/WAVE-160-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-726-dm-path-refactor.md"
+      - "prompts/ad-722a-4-divergence-auto-correction.md"
+      - "prompts/ad-722b-4-multi-agent-telemetry-stream.md"
+      - "prompts/ad-730-2-multi-image-dm-policy.md"
+      - "prompts/ad-723a-3-sensorium-entry-metadata.md"
+    builder_required: true
+    issues_to_close: [584, 613, 601, 632, 626, 654]
+    status: drafted
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

@@ -2666,3 +2666,17 @@ Test #10 (`test_no_side_effects_on_runtime`) explicitly asserts zero `mock_calls
 **Files:** `src/probos/cognitive/dm_targeted_lookup.py` (new ~230 lines, stdlib + asyncio), `src/probos/config.py` (new `DmTargetedLookupConfig` Pydantic model + `SystemConfig.dm_targeted_lookup` field), `src/probos/routers/agents.py` (dispatcher call top of `agent_chat` + recall-block prepend before IntentMessage build), `tests/test_ad725_dm_targeted_lookup.py` (new — 11 tests: disabled, classifier-none, episodic happy-path, codebase-default-off, oracle async, missing knowledge method, timeout, classifier exception, truncation, firewall side-effects, regex classifier smoke).
 
 **Forward markers.** AD-725-1 (sensorium-path registration; lookup result registers via AD-723 dispatcher as `paths=(DM_ONESHOT,)` block instead of raw text prepend). AD-725-2 (embedding-based classifier as drop-in Protocol impl). AD-725-3 (per-agent sub-intent vocabulary — Counselor's emotion sub-intents, Worf's threat sub-intents). AD-725-4 (multi-store fan-out gated by classifier confidence). AD-725-5 (`(text_hash, agent_id) -> TargetedLookupResult` LRU cache for repeat-query suppression). AD-725-6 (`_stringify` Episode-dataclass branch for cleaner LLM context).
+
+
+### AD-726 - DM post-LLM cleanup pipeline (Wave 160, partial close of #584)
+
+**Date:** 2026-05-14. **Status:** SHIPPED (partial). **Wave:** 160. **Parents:** AD-722 / AD-723 / AD-724 / AD-725. **Closes:** #584 (partial — pre-LLM extractions deferred to AD-726a/b/c forward markers). **Also lands:** AD-722c-3 (#654 — Standing Rule fold).
+
+`agent_chat` (`src/probos/routers/agents.py`) was 574 lines, well past the no-god-objects threshold. The post-LLM cleanup chain (8 ordered concerns from sanity-gate retry through emotion resolution) is now extracted to `src/probos/cognitive/dm/reply_pipeline.py`: `DmReplyPipeline` with eight `step_N_*` methods + `build_response()`, threaded through a mutable `DmReplyContext` dataclass. Each step body is a VERBATIM move of the prior inline block — same Tier-2 boundaries, log strings, AD references. The handler's post-LLM block shrinks from 295 lines (1278..1572) to 23 lines (sanity_gate hoist + pipeline construct + run + build_response). Net delta -272 lines; agent_chat ~305 lines post-refactor.
+
+**Out of scope (forward markers):** pre-LLM `DmContextPrep` (AD-726a); `DmPromptAssembler` extraction from `cognitive_agent._build_user_message` (AD-726b); frozen cross-phase shapes + byte-identical snapshot fixture suite (AD-726c).
+
+**Files:** new `src/probos/cognitive/dm/__init__.py` + `reply_pipeline.py` (~370 lines); `src/probos/routers/agents.py` shrinks 295→23 lines at the call site; `tests/test_ad726_dm_reply_pipeline.py` (new, 12 boundary tests — ordered execution, top-level guard, each step's degrade branch, build_response game/non-game branches); `tests/test_ad722_avatar_telemetry.py` test_mark_reply_emitted_singular_call_site updated to assert the single call site relocated to `reply_pipeline.py` (invariant preserved, location moved).
+
+**Folded — AD-722c-3 (#654).** One bullet appended to `prompts/BUILDER-EXECUTION-PLAN.md` Standing Rules: forward markers must use TECHNICAL triggers, not commercial-tier language. Rationale: OSS repo describes WHAT extension points exist, not HOW they're priced or monetized (AD-450 / Wave 154 retrospective).
+

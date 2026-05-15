@@ -1275,299 +1275,32 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     else:
         response_text = "(no response)"
 
-    # AD-724: DM sanity gate (migrates BF-120 markdown strip + adds 3 log-only checks).
-    # The gate NEVER blocks; warnings are logged and the cleaned text is returned.
+    # AD-726: post-LLM cleanup pipeline (AD-724/AD-572/AD-430b/AD-573/AD-722a/
+    # AD-722f/AD-722b/AD-738e-1 cascade extracted into DmReplyPipeline). Each
+    # step preserves its prior Tier-2 boundary; the top-level run() guard is
+    # belt-and-braces. Behavior is byte-identical to pre-AD-726 inline form.
+    # ``sanity_gate`` is resolved here (NOT inside the pipeline) so that step_1
+    # AND step_2/step_3 (which also call extract_challenge / extract_move) all
+    # see the same instance via ``self.ctx.sanity_gate``.
     sanity_gate = getattr(runtime, "dm_sanity_gate", None)
-    if response_text and sanity_gate is not None:
-        sanity_result = sanity_gate.process(agent_id, response_text)
-        response_text = sanity_result.cleaned_text
-        # AD-724-1: one controlled retry on rejection. Append a hint to the
-        # original Captain text so the agent sees what the gate flagged,
-        # without leaking gate internals into Captain-visible output. The
-        # gate's second pass honors warnings without a second retry — single
-        # bounded loop, never recursive.
-        if sanity_result.should_retry:
-            retry_hint = (
-                "\n\n[SYSTEM_HINT: previous reply was rejected by the DM "
-                "sanity gate (warnings: "
-                + ", ".join(name for name, _ in sanity_result.warnings)
-                + "). Please respond again, carefully.]"
-            )
-            retry_intent = IntentMessage(
-                intent="direct_message",
-                params={**_params, "text": message_text + retry_hint, "is_retry": True},
-                target_agent_id=agent_id,
-                ttl_seconds=60.0,
-            )
-            try:
-                retry_resp = await runtime.intent_bus.send(retry_intent)
-                retry_text = ""
-                if retry_resp and retry_resp.result:
-                    retry_text = str(retry_resp.result)
-                if retry_text:
-                    retry_result = sanity_gate.process(agent_id, retry_text)
-                    response_text = retry_result.cleaned_text
-                    logger.info(
-                        "AD-724-1: DM retry for agent %s — "
-                        "original_warnings=%s retry_warnings=%s",
-                        agent_id,
-                        [n for n, _ in sanity_result.warnings],
-                        [n for n, _ in retry_result.warnings],
-                    )
-            except Exception:
-                logger.warning(
-                    "AD-724-1: DM retry dispatch failed for agent %s; "
-                    "shipping original reply",
-                    agent_id, exc_info=True,
-                )
-
-    # BF-119 (migrated to AD-724): Parse [CHALLENGE @callsign game_type] from DM response.
-    if response_text and hasattr(runtime, 'recreation_service') and runtime.recreation_service:
-        challenge_parsed = (
-            sanity_gate.extract_challenge(response_text)
-            if sanity_gate is not None
-            else None
-        )
-        if challenge_parsed is not None:
-            target_callsign, game_type = challenge_parsed
-            try:
-                rec_svc = runtime.recreation_service
-                # Resolve target callsign
-                target_agent = None
-                if hasattr(runtime, 'callsign_registry'):
-                    target_agent = runtime.callsign_registry.resolve(target_callsign)
-                if target_agent:
-                    # Create Recreation channel thread
-                    thread_id = ""
-                    if runtime.ward_room:
-                        channels = await runtime.ward_room.list_channels()
-                        rec_ch = next((c for c in channels if c.name == "Recreation"), None)
-                        if rec_ch:
-                            thread = await runtime.ward_room.create_thread(
-                                channel_id=rec_ch.id,
-                                author_id=agent_id,
-                                title=f"[Challenge] {callsign} challenges {target_callsign} to {game_type}!",
-                                body=f"{callsign} has challenged {target_callsign} to a game of {game_type}! Reply to accept.",
-                                author_callsign=callsign,
-                            )
-                            thread_id = thread.id if thread else ""
-                    game_info = await rec_svc.create_game(
-                        game_type=game_type,
-                        challenger=callsign,
-                        opponent=target_callsign,
-                        thread_id=thread_id,
-                    )
-                    logger.info("BF-119: %s challenged %s to %s via DM (game %s)",
-                                callsign, target_callsign, game_type, game_info["game_id"])
-                    # Register game engagement in working memory
-                    try:
-                        wm = getattr(agent, 'working_memory', None)
-                        if wm:
-                            from probos.cognitive.agent_working_memory import ActiveEngagement
-                            wm.add_engagement(ActiveEngagement(
-                                engagement_type="game",
-                                engagement_id=game_info["game_id"],
-                                summary=f"Playing {game_type} against {target_callsign}",
-                                state={
-                                    "game_type": game_type,
-                                    "opponent": target_callsign,
-                                },
-                            ))
-                    except Exception:
-                        logger.debug("BF-119: Working memory game engagement record failed", exc_info=True)
-                else:
-                    logger.debug("BF-119: Target callsign %s not found", target_callsign)
-            except Exception as e:
-                logger.warning("BF-119: DM game challenge failed for %s: %s", callsign, e)
-            # AD-724: Strip [CHALLENGE] tag from Captain-visible text.
-            if sanity_gate is not None:
-                response_text = sanity_gate.strip_challenge(response_text)
-            else:
-                response_text = re.sub(r'\[CHALLENGE\s+@\w+\s+\w+\]', '', response_text).strip()
-
-    # AD-572 (migrated to AD-724): Parse [MOVE pos] and execute against RecreationService.
-    game_move_result = None
-    if response_text and hasattr(runtime, 'recreation_service') and runtime.recreation_service:
-        position = (
-            sanity_gate.extract_move(response_text)
-            if sanity_gate is not None
-            else None
-        )
-        if position is not None:
-            try:
-                rec_svc = runtime.recreation_service
-                game = rec_svc.get_game_by_player(callsign)
-                if game:
-                    game_move_result = await rec_svc.make_move(
-                        game_id=game["game_id"],
-                        player=callsign,
-                        move=position,
-                    )
-                    # Post board update to Ward Room thread (same as proactive path)
-                    if runtime.ward_room and game.get("thread_id"):
-                        try:
-                            result_info = game_move_result.get("result")
-                            if result_info:
-                                body = f"Game over! {'Winner: ' + result_info.get('winner', '') if result_info.get('winner') else 'Draw!'}"
-                            else:
-                                board = rec_svc.render_board(game["game_id"])
-                                body = f"```\n{board}\n```\nNext: {game_move_result['state']['current_player']}"
-                            await runtime.ward_room.create_post(
-                                thread_id=game["thread_id"],
-                                author_id=agent_id,
-                                body=body,
-                                author_callsign=callsign,
-                            )
-                        except Exception:
-                            logger.debug("AD-572: Board update post failed", exc_info=True)
-            except Exception as e:
-                logger.warning("AD-572: DM game move failed for %s: %s", callsign, e)
-
-            # AD-724: Strip [MOVE] tag from Captain-visible text.
-            if sanity_gate is not None:
-                response_text = sanity_gate.strip_move(response_text)
-            else:
-                response_text = re.sub(r'\[MOVE\s+\S+\]', '', response_text).strip()
-
-    # AD-430b: Store HXI 1:1 interaction as episodic memory
-    if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
-        try:
-            import time as _time
-            from probos.cognitive.episodic import resolve_sovereign_id
-            from probos.types import AnchorFrame, Episode
-            sovereign_id = resolve_sovereign_id(agent)
-            episode = Episode(
-                user_input=f"[1:1 with {callsign or agent_id}] Captain: {req.message}",
-                timestamp=_time.time(),
-                agent_ids=[sovereign_id],
-                outcomes=[{
-                    "intent": "direct_message",
-                    "success": True,
-                    "response": response_text[:500],
-                    "session_type": "1:1",
-                    "callsign": callsign,
-                    "source": "hxi_profile",
-                    "agent_type": agent.agent_type,
-                    # AD-730: tag DM episodes that included an image so Counselor
-                    # wellness and AD-722a divergence analysis can filter on it.
-                    "has_image_attachment": has_image_attachment,
-                    # AD-720d-1: per-attachment timing + partial-resolve metric.
-                    "image_count": sum(
-                        1 for r in per_attachment
-                        if r["ok"] and (r.get("mime") or "").startswith("image/")
-                    ) if has_image_attachment else 0,
-                    "failed_image_count": sum(1 for r in per_attachment if not r["ok"]),
-                    "per_attachment_timing": per_attachment,
-                }],
-                reflection=f"Captain had a 1:1 conversation with {callsign or agent_id} via HXI.",
-                source="direct",
-                anchors=AnchorFrame(
-                    channel="dm",
-                    trigger_type="direct_message",
-                    trigger_agent="captain",
-                    participants=["captain", callsign or agent_id],
-                ),
-            )
-            await runtime.episodic_memory.store(episode)
-        except Exception:
-            logger.debug("Failed to store HXI conversation episode", exc_info=True)
-
-    # AD-573: Record DM conversation to agent's working memory
-    try:
-        wm = getattr(agent, 'working_memory', None)
-        if wm:
-            captain_text = req.message[:100] if req.message else ""
-            wm.record_conversation(
-                f"Captain DM: '{captain_text}' → responded",
-                partner="Captain",
-                source="dm",
-            )
-    except Exception:
-        logger.debug("AD-573: Working memory DM record failed", exc_info=True)
-
-    # AD-722a: intent-vs-presentation divergence detection.
-    # Tier-2 wrapped — never blocks a reply. Default OFF
-    # (avatar_telemetry.divergence_detection). When ON, the LLM was
-    # instructed via _build_intent_self_tag_instruction to append a
-    # self-tag at end-of-reply. Parse + strip BEFORE the response leaves
-    # the handler; never leak the tag to the Captain. Trust + Hebbian
-    # wiring lives inside apply_divergence_check (single call site).
-    try:
-        _t_cfg = getattr(runtime.config, "avatar_telemetry", None)
-        if _t_cfg is not None and getattr(_t_cfg, "divergence_detection", False):
-            from probos.avatars.divergence_detector import apply_divergence_check
-            response_text = apply_divergence_check(
-                runtime=runtime,
-                agent_id=agent_id,
-                agent=agent,
-                response_text=response_text,
-                t_cfg=_t_cfg,
-            )
-    except Exception:
-        logger.debug(
-            "AD-722a: divergence detector failed for agent=%s",
-            agent_id, exc_info=True,
-        )
-
-    # AD-722: stamp the last-reply emission timestamp. Single source of truth.
-    if hasattr(agent, 'mark_reply_emitted'):
-        agent.mark_reply_emitted()
-
-    # AD-722f: matched exit for the enter_dm at the top of agent_chat.
-    # Spurious-exit clamp in the state machine handles the (rare)
-    # exception-path case where enter fired but exit didn't.
-    if _sampling_state is not None:
-        _sampling_state.exit_dm(agent_id)
-    # AD-722b: wake WS publish loop — DM-exit is a state change
-    # (working_state goes from 'responding' back to 'idle').
-    if _avatar_event_bus is not None:
-        _avatar_event_bus.notify(agent_id)
-
-    # AD-738e-1: expose the parsed + v1-resolved emotion so the browser
-    # can pass it to /api/avatars/tts for per-emotion prosody. Tier-2
-    # log-and-degrade: missing divergence result or unresolvable name
-    # falls through to ``None`` (browser then omits the field; server
-    # applies default prosody). Uses the public ``resolve_emotion_to_v1``
-    # alias (AD-738e-1 Section 5b) — no cross-module private access.
-    _emotion: str | None = None
-    try:
-        _dr = getattr(runtime, "divergence_results", None)
-        if _dr is not None:
-            _result = _dr.get(agent_id)
-            if _result is not None:
-                _raw = getattr(_result, "intent_emotion", None)
-                if isinstance(_raw, str) and _raw:
-                    from probos.avatars.divergence_detector import (
-                        resolve_emotion_to_v1,
-                    )
-                    _store = getattr(runtime, "profile_store", None)
-                    _custom = None
-                    if _store is not None and hasattr(_store, "get"):
-                        try:
-                            _crew = _store.get(agent_id)
-                            _custom = (
-                                getattr(_crew, "custom_emotions", None)
-                                if _crew else None
-                            )
-                        except Exception:
-                            _custom = None
-                    _emotion = resolve_emotion_to_v1(_raw, _custom) or _raw
-    except Exception:
-        logger.debug(
-            "AD-738e-1: emotion resolution failed for agent=%s",
-            agent_id, exc_info=True,
-        )
-
-    response = {
-        "response": response_text,
-        "callsign": callsign,
-        "agentId": agent_id,
-        "emotion": _emotion,
-    }
-    if game_move_result:
-        response["gameMoveExecuted"] = True
-        response["gameStatus"] = game_move_result.get("state", {}).get("status", "")
-    return response
+    from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+    pipeline = DmReplyPipeline(DmReplyContext(
+        runtime=runtime,
+        agent=agent,
+        agent_id=agent_id,
+        callsign=callsign,
+        req_message=req.message,
+        response_text=response_text,
+        has_image_attachment=has_image_attachment,
+        per_attachment=per_attachment,
+        sanity_gate=sanity_gate,
+        params=_params,
+        message_text=message_text,
+        sampling_state=_sampling_state,
+        avatar_event_bus=_avatar_event_bus,
+    ))
+    await pipeline.run()
+    return pipeline.build_response()
 
 
 @router.get("/{agent_id}/chat/history")

@@ -39,6 +39,7 @@ Read these in full **before** writing any code:
   - A `See DECISIONS.md AD-NNN` reference in the commit body when the parent BF is internal-only.
 
   Builder applies this rule automatically when drafting commit messages for sub-AD work — no architect approval at GATE 2 required when the trailer is present. Lineage: AD-738e-1 (`bb1ca160`) shipped with the DECISIONS reference in the body; this codifies that as the standard.
+- **AD-722c-3 — Architect forward markers use TECHNICAL triggers, not commercial-tier language.** Forward markers that describe when commercial-overlay extensions might trigger MUST use technical / capability-based phrasing. Examples: ❌ "enterprise tier requires queryable backend" → ✅ "queryable-backend deployment requires SQL replacement". ❌ "commercial overlay can swap JSONL for SQL" → ✅ "deployments needing queryable analytics can swap JSONL for SQL via the Protocol." Boundary rule (AD-450 / Wave 154 retrospective): OSS repo describes WHAT extension points exist, not HOW they're priced or monetized. The pre-commit boundary hook will fire on common pricing-adjacent words ("enterprise tier", "commercial overlay", "pricing").
 
 ---
 

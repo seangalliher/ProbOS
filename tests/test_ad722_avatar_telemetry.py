@@ -527,8 +527,10 @@ def test_mark_reply_emitted_singular_call_site():
     """``mark_reply_emitted()`` MUST have exactly one call site in production source.
 
     Multiple call sites are a Demeter / single-source-of-truth smell. The
-    contract is that the chat handler at ``routers/agents.py`` is the SINGLE
-    place that stamps the reply emission timestamp.
+    contract is that the DM reply pipeline at
+    ``src/probos/cognitive/dm/reply_pipeline.py`` (AD-726, extracted from
+    ``routers/agents.py``) is the SINGLE place that stamps the reply emission
+    timestamp.
     """
     src_root = Path("src/probos")
     pattern = re.compile(r"\bmark_reply_emitted\s*\(\s*\)")
@@ -543,4 +545,4 @@ def test_mark_reply_emitted_singular_call_site():
     assert len(call_sites) == 1, (
         f"Expected exactly 1 call site, found {len(call_sites)}: {call_sites}"
     )
-    assert call_sites[0].name == "agents.py"
+    assert call_sites[0].name == "reply_pipeline.py"
