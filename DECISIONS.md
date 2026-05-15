@@ -2731,3 +2731,42 @@ Converts AD-720d-1's soft warning (5-image threshold, log-only) into a three-tie
 
 **Forward markers.** AD-730-2-1 (persistent budget tracker for deployments requiring restart-survival). AD-730-2-2 (per-agent_type budget override).
 
+
+
+
+### AD-722b-4 - Fleet-level avatar telemetry stream (Wave 160)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 160. **Parents:** AD-722b (per-agent WS), AD-722b-3 (snapshot-diff frames), AD-722c (history append), AD-722d (records writer). **Closes:** #601.
+
+New WS endpoint `WS /api/agent/avatar-telemetry/stream` (full path under the `agents` router prefix `/api/agent`). On accept, iterates `runtime.registry.agents.values()`, filters by `is_crew_agent`, and runs the same per-agent publish-loop logic the per-agent endpoint runs today — wrapped per-agent with the `agent_id` interleaved into every frame. Every fleet frame carries an explicit `agent_id` field (mandatory at the FLEET endpoint, absent at the per-agent endpoint).
+
+**Concurrency:** one WS holds N (= crew count) per-agent publish coroutines, each gated by its own `sampling_state` rate and event signal. `asyncio.wait` with `FIRST_COMPLETED` over `{publish_tasks, receive_task}` cancels the group cleanly on either-side disconnect.
+
+**Backward compatibility:** per-agent endpoint at `/{agent_id}/avatar-telemetry-stream` (line 669) preserved unchanged. New endpoint is opt-in via `AvatarTelemetryConfig.fleet_stream_enabled: bool = True` — default-ON because no existing UI consumes it yet; flag exists for operator override.
+
+**Frontend stub:** `ui/src/avatars/useFleetAvatarTelemetry.ts` — single hook subscribes once and dispatches per-agent frames via callback. Drops malformed frames + frames missing `agent_id` silently. Closes WebSocket on unmount. Pure logic file, no JSX, no emoji vector. Hook is NOT imported by any existing component yet — store-side migration deferred to AD-722b-4a forward marker. Bundle hash unchanged because Vite tree-shakes unused exports — verifies the integration is properly opt-in.
+
+**Routing.** Path literals `/avatar-telemetry/stream` and `/{agent_id}/avatar-telemetry-stream` cannot collide: the static segment cannot satisfy a single-segment path parameter. Insertion order at the registration site is purely cosmetic.
+
+**Files:** `src/probos/config.py` (+1 `fleet_stream_enabled` field); `src/probos/routers/agents.py` (new `fleet_avatar_telemetry_stream` handler); `ui/src/avatars/useFleetAvatarTelemetry.ts` (new ~70-line hook stub); `ui/src/__tests__/useFleetAvatarTelemetry.test.ts` (new, 3 vitest tests); `tests/test_ad722b4_fleet_telemetry.py` (new, 6 pytest tests).
+
+**Forward markers.** AD-722b-4a (consumer-side per-agent store consolidation). AD-722b-4-1 (dynamic crew membership during connection lifetime).
+
+
+### AD-722b-4 - Fleet-level avatar telemetry stream (Wave 160)
+
+**Date:** 2026-05-14. **Status:** SHIPPED. **Wave:** 160. **Parents:** AD-722b (per-agent WS), AD-722b-3 (snapshot-diff frames), AD-722c (history append), AD-722d (records writer). **Closes:** #601.
+
+New WS endpoint `WS /api/agent/avatar-telemetry/stream` (full path under the `agents` router prefix `/api/agent`). On accept, iterates `runtime.registry.agents.values()`, filters by `is_crew_agent`, and runs the same per-agent publish-loop logic the per-agent endpoint runs today — wrapped per-agent with the `agent_id` interleaved into every frame. Every fleet frame carries an explicit `agent_id` field (mandatory at the FLEET endpoint, absent at the per-agent endpoint).
+
+**Concurrency:** one WS holds N (= crew count) per-agent publish coroutines, each gated by its own `sampling_state` rate and event signal. `asyncio.wait` with `FIRST_COMPLETED` over `{publish_tasks, receive_task}` cancels the group cleanly on either-side disconnect.
+
+**Backward compatibility:** per-agent endpoint at `/{agent_id}/avatar-telemetry-stream` (line 669) preserved unchanged. New endpoint is opt-in via `AvatarTelemetryConfig.fleet_stream_enabled: bool = True` — default-ON because no existing UI consumes it yet; flag exists for operator override.
+
+**Frontend stub:** `ui/src/avatars/useFleetAvatarTelemetry.ts` — single hook subscribes once and dispatches per-agent frames via callback. Drops malformed frames + frames missing `agent_id` silently. Closes WebSocket on unmount. Pure logic file, no JSX, no emoji vector. Hook is NOT imported by any existing component yet — store-side migration deferred to AD-722b-4a forward marker. Bundle hash unchanged because Vite tree-shakes unused exports — verifies the integration is properly opt-in.
+
+**Routing.** Path literals `/avatar-telemetry/stream` and `/{agent_id}/avatar-telemetry-stream` cannot collide: the static segment cannot satisfy a single-segment path parameter. Insertion order at the registration site is purely cosmetic.
+
+**Files:** `src/probos/config.py` (+1 `fleet_stream_enabled` field); `src/probos/routers/agents.py` (new `fleet_avatar_telemetry_stream` handler); `ui/src/avatars/useFleetAvatarTelemetry.ts` (new ~70-line hook stub); `ui/src/__tests__/useFleetAvatarTelemetry.test.ts` (new, 3 vitest tests); `tests/test_ad722b4_fleet_telemetry.py` (new, 6 pytest tests).
+
+**Forward markers.** AD-722b-4a (consumer-side per-agent store consolidation). AD-722b-4-1 (dynamic crew membership during connection lifetime).

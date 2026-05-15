@@ -934,6 +934,240 @@ async def agent_avatar_telemetry_stream(
             )
 
 
+# AD-722b-4: fleet-level avatar telemetry stream.
+# Same feature gates as the per-agent endpoint. Adds an additional
+# fleet_stream_enabled gate. Iterates all crew agents on accept and
+# fans out per-agent publish loops over a single WS connection.
+# Every frame carries an explicit "agent_id" field (the per-agent
+# endpoint omits it; HXI hooks distinguish by endpoint URL).
+@router.websocket("/avatar-telemetry/stream")
+async def fleet_avatar_telemetry_stream(websocket: WebSocket) -> None:
+    runtime = websocket.app.state.runtime
+    cfg = getattr(runtime, "config", None)
+    avatars_cfg = getattr(cfg, "avatars", None)
+    telemetry_cfg = getattr(cfg, "avatar_telemetry", None)
+
+    if avatars_cfg is None or not avatars_cfg.enabled:
+        await websocket.close(code=1008, reason="avatars_disabled")
+        return
+    if telemetry_cfg is None or not telemetry_cfg.enabled:
+        await websocket.close(code=1008, reason="avatar_telemetry_disabled")
+        return
+    if not getattr(telemetry_cfg, "fleet_stream_enabled", True):
+        await websocket.close(code=1008, reason="fleet_stream_disabled")
+        return
+
+    await websocket.accept()
+
+    sampling_state = getattr(runtime, "avatar_sampling_state", None)
+    event_bus = getattr(runtime, "avatar_event_bus", None)
+    if sampling_state is None or event_bus is None:
+        await websocket.send_json(
+            {"type": "error", "reason": "telemetry_runtime_unavailable"},
+        )
+        await websocket.close(code=1011, reason="runtime_unavailable")
+        return
+
+    # Build the per-agent task set on accept. Discovery is a snapshot;
+    # newly-spawned crew during the connection lifetime are NOT picked
+    # up until the client reconnects. v1 simplification — AD-722b-4-1
+    # forward marker for dynamic membership.
+    crew_agents: list[tuple[str, Any]] = []
+    for agent in runtime.registry.agents.values():
+        try:
+            if is_crew_agent(agent, runtime.ontology):
+                crew_agents.append((agent.agent_id, agent))
+        except Exception:
+            logger.debug(
+                "AD-722b-4: crew discovery skipped agent during fleet accept",
+                exc_info=True,
+            )
+
+    if not crew_agents:
+        # Honest-degrade: no crew yet → close cleanly.
+        await websocket.close(code=1008, reason="no_crew_agents")
+        return
+
+    events: dict[str, asyncio.Event] = {}
+    last_sent: dict[str, dict[str, Any] | None] = {}
+    tick_counts: dict[str, int] = {}
+
+    from probos.avatars.telemetry import build_telemetry_snapshot
+
+    for agent_id, _agent in crew_agents:
+        sampling_state.enter_popout(agent_id)
+        events[agent_id] = event_bus.subscribe(agent_id)
+        last_sent[agent_id] = None
+        tick_counts[agent_id] = 0
+
+    publish_tasks: list[asyncio.Task] = []
+    receive_task: asyncio.Task | None = None
+    try:
+        # Initial snapshot per agent.
+        for agent_id, agent in crew_agents:
+            try:
+                initial = await build_telemetry_snapshot(agent_id, runtime)
+                agent._last_self_avatar_snap = initial
+                initial_dict = initial.to_dict()
+                await websocket.send_json(
+                    {"type": "snapshot", "agent_id": agent_id, **initial_dict},
+                )
+                last_sent[agent_id] = initial_dict
+                _hist = getattr(runtime, "avatar_telemetry_history", None)
+                if _hist is not None:
+                    try:
+                        await _hist.append(initial)
+                    except Exception:
+                        logger.debug(
+                            "AD-722b-4: history append raised on initial for %s",
+                            agent_id, exc_info=True,
+                        )
+                _rw = getattr(runtime, "avatar_telemetry_records_writer", None)
+                if _rw is not None:
+                    try:
+                        await _rw.observe(initial)
+                    except Exception:
+                        logger.debug(
+                            "AD-722b-4: records writer raised on initial for %s",
+                            agent_id, exc_info=True,
+                        )
+            except Exception:
+                logger.warning(
+                    "AD-722b-4: initial snapshot failed for agent=%s",
+                    agent_id, exc_info=True,
+                )
+
+        async def _publish_one(agent_id: str, agent: Any) -> None:
+            """Per-agent publish loop, mirroring the per-agent endpoint."""
+            event = events[agent_id]
+            while True:
+                rate_ms = sampling_state.current_rate_ms(agent_id)
+                interval_s = max(0.05, float(rate_ms) / 1000.0)
+                event.clear()
+                wait_event = asyncio.create_task(event.wait())
+                wait_timer = asyncio.create_task(asyncio.sleep(interval_s))
+                try:
+                    await asyncio.wait(
+                        {wait_event, wait_timer},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    for t in (wait_event, wait_timer):
+                        if not t.done():
+                            t.cancel()
+                snap = await build_telemetry_snapshot(agent_id, runtime)
+                agent._last_self_avatar_snap = snap
+                snap_dict = snap.to_dict()
+                tick_counts[agent_id] += 1
+                cfg_t = getattr(runtime.config, "avatar_telemetry", None)
+                send_full = (
+                    cfg_t is None
+                    or not getattr(cfg_t, "ws_diff_enabled", False)
+                    or (tick_counts[agent_id] % cfg_t.ws_full_snapshot_every_n) == 0
+                )
+                if send_full:
+                    await websocket.send_json(
+                        {"type": "snapshot", "agent_id": agent_id, **snap_dict},
+                    )
+                    last_sent[agent_id] = snap_dict
+                else:
+                    diff: dict[str, Any] | None = None
+                    try:
+                        from probos.avatars.snapshot_diff import compute_diff
+                        diff = compute_diff(
+                            last_sent[agent_id],
+                            snap_dict,
+                            threshold=cfg_t.ws_diff_threshold,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "AD-722b-4: compute_diff raised; falling back to full snapshot for %s",
+                            agent_id, exc_info=True,
+                        )
+                        await websocket.send_json(
+                            {"type": "snapshot", "agent_id": agent_id, **snap_dict},
+                        )
+                        last_sent[agent_id] = snap_dict
+                    if diff:
+                        await websocket.send_json({
+                            "type": "diff",
+                            "agent_id": agent_id,
+                            "changed": diff,
+                        })
+                        last_sent[agent_id] = {
+                            **(last_sent[agent_id] or {}), **diff,
+                        }
+                _hist = getattr(runtime, "avatar_telemetry_history", None)
+                if _hist is not None:
+                    try:
+                        await _hist.append(snap)
+                    except Exception:
+                        logger.debug(
+                            "AD-722b-4: history append raised for %s",
+                            agent_id, exc_info=True,
+                        )
+                _rw = getattr(runtime, "avatar_telemetry_records_writer", None)
+                if _rw is not None:
+                    try:
+                        await _rw.observe(snap)
+                    except Exception:
+                        logger.debug(
+                            "AD-722b-4: records writer raised for %s",
+                            agent_id, exc_info=True,
+                        )
+
+        async def _receive_loop() -> None:
+            while True:
+                try:
+                    await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    await websocket.send_json(
+                        {"type": "ping", "timestamp": time.time()},
+                    )
+
+        for agent_id, agent in crew_agents:
+            publish_tasks.append(asyncio.create_task(_publish_one(agent_id, agent)))
+        receive_task = asyncio.create_task(_receive_loop())
+
+        done, pending = await asyncio.wait(
+            {*publish_tasks, receive_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+        for t in done:
+            exc = t.exception()
+            if exc is not None and not isinstance(exc, WebSocketDisconnect):
+                logger.warning(
+                    "AD-722b-4: fleet WS task ended with %s",
+                    type(exc).__name__, exc_info=exc,
+                )
+
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.warning("AD-722b-4: fleet WS handler error", exc_info=True)
+    finally:
+        for t in publish_tasks:
+            if not t.done():
+                t.cancel()
+        if receive_task is not None and not receive_task.done():
+            receive_task.cancel()
+        for agent_id in list(events):
+            try:
+                event_bus.unsubscribe(agent_id, events[agent_id])
+            except Exception:
+                logger.debug(
+                    "AD-722b-4: unsubscribe failed for %s", agent_id, exc_info=True,
+                )
+            try:
+                sampling_state.exit_popout(agent_id)
+            except Exception:
+                logger.debug(
+                    "AD-722b-4: exit_popout failed for %s", agent_id, exc_info=True,
+                )
+
+
 @router.get("/{agent_id}/avatar-telemetry/divergence-history")
 async def agent_avatar_divergence_history(
     agent_id: str,

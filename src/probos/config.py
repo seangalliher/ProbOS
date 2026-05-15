@@ -1114,6 +1114,10 @@ class AvatarTelemetryConfig(BaseModel):
     # so late-arriving subscribers and any browser that missed a diff
     # reconcile. Set to 1 to disable diff entirely (behaves as full).
     ws_full_snapshot_every_n: int = 10
+    # AD-722b-4: fleet-level telemetry stream — one WS, fan-out by agent_id.
+    # Default-ON: zero behavior change for operators because no UI consumer
+    # ships in v1; setting False mutes the endpoint (returns 1008 close).
+    fleet_stream_enabled: bool = True
 
     @field_validator("mouth_active_window_seconds")
     @classmethod
