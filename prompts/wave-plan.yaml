@@ -3494,7 +3494,7 @@ waves:
       - "prompts/ad-723a-3-sensorium-entry-metadata.md"
     builder_required: true
     issues_to_close: [584, 613, 601, 632, 626, 654]
-    status: drafted
+    status: shipped
 
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
