@@ -3122,3 +3122,27 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Files:** `pyproject.toml` (+3 deps), `src/probos/cognitive/text_extractor.py` (rewritten with dispatch + 3 helpers; AD-720d branches unchanged), `src/probos/cognitive/vision_dispatch.py` (extended gate to cover DOCX + XLSX), `THIRD_PARTY_LICENSES.md` (+3 entries), `tests/test_ad720a_1_document_extraction.py` (new, 12 tests).
 
 **Forward markers.** AD-720a-1-1 (flip `pdf_extraction_enabled` to True after operator feedback confirms quality). AD-720a-1-2 (OCR pipeline for scanned PDFs - image-bearing pages where pypdf returns empty text - trigger: when scanned PDFs are a real workload).
+
+### AD-722b-5 - Federation cross-mesh telemetry push (LOCAL-MESH PORTION) (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (local-mesh portion; federation hop forward-marked AD-722b-5a). **Wave:** 162. **Parent:** AD-722b (per-agent WS) + AD-722b-4 (fleet WS) + AD-480 family (federation framework). **Closes:** #602.
+
+**Section 0 CONDITIONAL gate verdict.** Per the prompt's pre-flight, `FederationBridge` was grepped for streaming/relay primitives (forward_stream / relay_ws / forward_telemetry). The bridge exposes ONLY `forward_intent` (single-shot RPC), `request_chain`, `request_transfer`, and `_gossip_loop`. No streaming primitive exists. Per the dispatch's instruction ("if federation streaming primitive isn't ready, ship the local-mesh portion only and forward-marker the federation hop"), this AD ships the local-mesh subscription + dispatch plumbing and forward-marks the bridge wiring as AD-722b-5a.
+
+**Module.** New `src/probos/federation/telemetry_relay.py` exports:
+- `PeerTelemetrySubscription` - frozen dataclass: peer_id + agent_ids frozenset.
+- `FederationTelemetryRelay` - subscription store + per-peer outbound rate-limit (default 10 frames/sec/peer, configurable via constructor) + agent_id filter + pluggable emit callback.
+
+**Public surface.** `register_peer(peer_id, agent_ids)`, `unregister_peer(peer_id)`, `set_emit_callback(callback)`, `on_local_telemetry_frame(*, agent_id, frame_type, payload) -> int` (returns number of peers dispatched-to). Test-observable: `dispatch_log()` returns recorded (peer_id, agent_id, frame) triples when the default callback is in effect; `reset_dispatch_log()` clears.
+
+**Future federation wiring.** `set_emit_callback` is the AD-722b-5a hookup point. When AD-480e/g lands a streaming primitive (likely `FederationBridge.forward_telemetry(peer_id, frame)`), the only change required here is wiring that method into `set_emit_callback`. Zero changes to subscription, rate-limit, or dispatch logic.
+
+**Tier-2 throughout.** Per-peer emit failures log + degrade; never raise. The user-facing telemetry pipeline never breaks due to a misbehaving peer.
+
+**Tests.** +8 pytest in `tests/test_ad722b_5_federation_telemetry.py`. Coverage: peer registration records subscription, agent_id filter, no-subscribers zero return, multicast to two peers, rate-limit cap (4th frame blocked), rate-limit window recovery after monkeypatch'd time advance, unregister stops emits, custom callback contract bypasses default dispatch_log.
+
+**Files:** `src/probos/federation/telemetry_relay.py` (new), `tests/test_ad722b_5_federation_telemetry.py` (new, 8 tests).
+
+**Forward markers.**
+- AD-722b-5a (wire FederationTelemetryRelay.set_emit_callback to FederationBridge.forward_telemetry - trigger: AD-480e/g matures the bridge with a streaming/relay primitive).
+- AD-722b-5b (HXI surface to render remote agents with origin_mesh_id badge - trigger: AD-722b-5a ships AND multi-mesh deployments are in production).
