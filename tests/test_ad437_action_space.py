@@ -206,8 +206,7 @@ class TestProactiveReplyExtraction:
         runtime.ontology = None
         runtime.callsign_registry = MagicMock(spec=CallsignRegistry)
         runtime.callsign_registry.get_callsign.return_value = "TestAgent"
-        runtime.config = MagicMock(spec=SystemConfig)
-        runtime.config.communications = MagicMock(dm_min_rank="ensign")
+        runtime.config = SystemConfig()
 
         loop = ProactiveCognitiveLoop(interval=60)
         loop.set_runtime(runtime)

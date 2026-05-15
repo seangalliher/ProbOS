@@ -270,8 +270,7 @@ def _make_loop():
     rt.ontology = None
     rt.callsign_registry = MagicMock(spec=CallsignRegistry)
     rt.callsign_registry.get_callsign = MagicMock(return_value="TestAgent")
-    rt.config = MagicMock(spec=SystemConfig)
-    rt.config.communications = MagicMock(dm_min_rank="ensign")
+    rt.config = SystemConfig()
     rt.episodic_memory = None
     rt.bridge_alerts = None
     rt.event_log = None

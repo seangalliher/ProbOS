@@ -193,12 +193,11 @@ def mock_runtime():
     rt.hebbian_router = MagicMock(spec=HebbianRouter)
     rt.event_log = AsyncMock(spec=EventLog)
 
-    rt.config = MagicMock(spec=SystemConfig)
-    rt.config.onboarding = MagicMock()
-    rt.config.onboarding.enabled = True
-    rt.config.onboarding.naming_ceremony = True
-    rt.config.proactive = MagicMock()
-    rt.config.proactive.enabled = False
+    # AD-722b-1a (Wave 162): real SystemConfig() — defaults already match the
+    # legacy MagicMock attribute assertions (onboarding.enabled=True,
+    # naming_ceremony=True). Removes the routers/auth.py:43 isinstance guard
+    # that previously absorbed MagicMock-shaped config objects.
+    rt.config = SystemConfig()
 
     rt.spawner = MagicMock(spec=AgentSpawner)
     rt.pools = {}

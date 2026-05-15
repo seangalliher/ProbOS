@@ -3508,6 +3508,18 @@ waves:
     issues_to_close: [655, 656, 625, 620, 598]
     status: done
 
+  - id: "162"
+    title: "10-pack forward-markers and capability slices — telemetry test hygiene + doc extraction + vision-divergence + self-render verify + Browser Tool visual verify + federation telemetry push + peer-observation Standing Orders + Captain vision approval + Counselor-mediated avatar revision + chain-path divergence"
+    # Doubling Wave 161 slate after Waves 160-161 finished in ~half estimated time.
+    # All internal Apache 2.0 — no new pip/npm deps (Pillow already resident from Wave 160).
+    kind: main
+    depends_on: ["161"]
+    dispatch_prompt: "prompts/WAVE-162-DISPATCH.md"
+    prompts_already_drafted: false
+    builder_required: true
+    issues_to_close: [657, 562, 645, 611, 610, 602, 642, 644, 588, 618]
+    status: drafting
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

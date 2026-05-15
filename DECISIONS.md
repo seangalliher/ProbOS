@@ -2890,3 +2890,19 @@ Hook is enabled by default when the canvas mounts; unmount closes the WS (handle
 **Files:** `ui/src/store/useStore.ts` (state field + initial value + action signature + action body); `ui/src/components/CognitiveCanvas.tsx` (import + hook call inside `CognitiveCanvas()`); `ui/src/__tests__/useStore.avatarTelemetry.test.ts` (new); `ui/src/__tests__/CognitiveCanvas.fleetHook.test.tsx` (new).
 
 **Forward markers.** AD-722b-4b (migrate `SelfImageTab.tsx` per-agent WS consumer to read from `useStore.avatarTelemetry`, eliminating the second WebSocket - trigger: `avatarTelemetry` map reaches 2+ canvas consumers AND fleet endpoint snapshot+diff parity with per-agent endpoint is verified by integration test). AD-722b-4c (add canvas-side selectors `useAgentEmotion(agent_id)` + `useAgentWorkingState(agent_id)` so `AgentNodes` / `Connections` can render telemetry without subscribing to the full map - trigger: more than one canvas component reads `avatarTelemetry` directly AND re-render cost becomes measurable).
+
+## Wave 162
+
+### AD-722b-1a - Replace MagicMock(spec=SystemConfig) test fixtures with real configs; remove routers/auth.py defensive guard (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 162. **Parent:** AD-722b-1 (Wave 161 - crew-scope auth substrate). **Closes:** #657.
+
+Replaced 7 sites where tests constructed runtime configs as `MagicMock(spec=SystemConfig)` with real `SystemConfig()` instances - violation of the engineering principle that tests must use real configs, not mock-shaped ones. Removed the corresponding defensive `if not isinstance(token, str): return ''` guard at `src/probos/routers/auth.py:43` that existed solely to absorb mock-shaped configs. The empty-token=auth-disabled invariant is preserved by `AuthConfig.crew_scope_token` defaulting to ''.
+
+**Sites migrated:** `tests/conftest.py:196` (shared rt fixture), `tests/test_ad437_action_space.py:209`, `tests/test_ad576_llm_unavailability.py:49`, `tests/test_circuit_breaker.py:273`, `tests/test_proactive.py:1787 + :1837`, `tests/test_proactive_quality.py:40`.
+
+**Auth-disabled contract preserved.** Three additional test helpers (`test_ad722_avatar_telemetry._make_runtime`, `test_ad722b_websocket_push._make_runtime`, `test_ad722b4_fleet_telemetry._make_runtime`) used bare `cfg = MagicMock()` without `spec=SystemConfig`. After guard removal these returned a MagicMock for `cfg.auth.crew_scope_token` instead of the empty string the contract expected, causing 18 FastAPI tests to return 401 instead of 200/503. Fixed by setting `cfg.auth = AuthConfig()` in each helper - the real Pydantic model returns the empty default and auth stays disabled. Minimum-touch consistent with Section 7 of the prompt (reconstruct minimal real sub-config; never re-introduce MagicMock at the `config=` boundary).
+
+**Files:** `tests/conftest.py`, `tests/test_ad437_action_space.py`, `tests/test_ad576_llm_unavailability.py`, `tests/test_circuit_breaker.py`, `tests/test_proactive.py`, `tests/test_proactive_quality.py`, `tests/test_ad722_avatar_telemetry.py`, `tests/test_ad722b_websocket_push.py`, `tests/test_ad722b4_fleet_telemetry.py`, `src/probos/routers/auth.py`.
+
+**Net test delta:** 0. Full parallel gate green; only documented flakes remain (skill_agent + task_scheduler + occasional dreaming/ward_room serial-pass).

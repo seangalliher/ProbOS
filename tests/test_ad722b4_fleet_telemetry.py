@@ -17,7 +17,7 @@ from probos.avatars.sampling_state import (
     AvatarSamplingStateMachine,
 )
 from probos.avatars.ws_connection_manager import AvatarTelemetryConnectionManager
-from probos.config import SamplingRatesConfig
+from probos.config import SamplingRatesConfig, AuthConfig
 from probos.crew_profile import AppearanceProfile, CrewProfile, VoiceProfile
 from probos.types import AgentState
 
@@ -93,6 +93,7 @@ def _make_fleet_runtime(
     cfg.avatar_telemetry.ws_diff_threshold = 0.05
     cfg.avatar_telemetry.ws_full_snapshot_every_n = 10
     cfg.avatar_telemetry.fleet_stream_enabled = fleet_stream_enabled
+    cfg.auth = AuthConfig()  # AD-722b-1a: empty token = auth-disabled.
     runtime.config = cfg
 
     rates = SamplingRatesConfig()

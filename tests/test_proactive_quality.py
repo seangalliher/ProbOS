@@ -37,8 +37,7 @@ def _make_engine_and_rt(trust_score=0.55):
     rt.ontology = None
     rt.callsign_registry = MagicMock(spec=CallsignRegistry)
     rt.callsign_registry.get_callsign = MagicMock(return_value="TestAgent")
-    rt.config = MagicMock(spec=SystemConfig)
-    rt.config.communications = MagicMock(dm_min_rank="ensign")
+    rt.config = SystemConfig()
     engine._runtime = rt
     return engine, rt
 

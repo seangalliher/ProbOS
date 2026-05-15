@@ -27,22 +27,14 @@ logger = logging.getLogger(__name__)
 
 
 def _configured_token(runtime: Any) -> str:
-    """Pull ``auth.crew_scope_token`` from runtime config; empty when unset.
-
-    Defensive: only honors a real ``str`` value. Tests / stubs that pass
-    a ``MagicMock`` for ``runtime.config`` will fall through to empty
-    (auth disabled), preserving backward-compat default-OFF behavior.
-    """
+    """Pull ``auth.crew_scope_token`` from runtime config; empty when unset."""
     cfg = getattr(runtime, "config", None)
     if cfg is None:
         return ""
     auth_cfg = getattr(cfg, "auth", None)
     if auth_cfg is None:
         return ""
-    token = getattr(auth_cfg, "crew_scope_token", "")
-    if not isinstance(token, str):
-        return ""
-    return token
+    return auth_cfg.crew_scope_token
 
 
 async def require_crew_scope(

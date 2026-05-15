@@ -46,8 +46,7 @@ def _make_loop(**kwargs):
     rt.ontology = None
     rt.callsign_registry = MagicMock(spec=CallsignRegistry)
     rt.callsign_registry.get_callsign = MagicMock(return_value="TestAgent")
-    rt.config = MagicMock(spec=SystemConfig)
-    rt.config.communications = MagicMock(dm_min_rank="ensign")
+    rt.config = SystemConfig()
     rt.episodic_memory = None
     rt.bridge_alerts = MagicMock()
     rt.event_log = None

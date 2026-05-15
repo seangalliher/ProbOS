@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from probos.avatars.dsl import AvatarDSL
+from probos.config import AuthConfig
 from probos.avatars.telemetry import (
     BLOCKED_PITCH_FACTOR,
     BLOCKED_RATE_FACTOR,
@@ -149,6 +150,7 @@ def _make_runtime(
     cfg.avatar_telemetry.inject_into_agent_context = False
     cfg.avatar_telemetry.mouth_active_window_seconds = 3.0
     cfg.avatar_telemetry.polling_interval_ms = 2000
+    cfg.auth = AuthConfig()  # AD-722b-1a: empty token = auth-disabled (no guard).
     runtime.config = cfg
 
     return runtime

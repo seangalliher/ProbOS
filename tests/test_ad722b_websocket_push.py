@@ -28,7 +28,7 @@ from probos.avatars.ws_connection_manager import (
     AvatarTelemetryConnectionManager,
     MaxConnectionsExceeded,
 )
-from probos.config import AvatarTelemetryConfig, SamplingRatesConfig
+from probos.config import AvatarTelemetryConfig, SamplingRatesConfig, AuthConfig
 from probos.crew_profile import AppearanceProfile, CrewProfile, VoiceProfile
 from probos.types import AgentState
 
@@ -281,6 +281,7 @@ def _ws_endpoint_runtime(
     cfg.avatar_telemetry.ws_diff_enabled = False
     cfg.avatar_telemetry.ws_diff_threshold = 0.05
     cfg.avatar_telemetry.ws_full_snapshot_every_n = 10
+    cfg.auth = AuthConfig()  # AD-722b-1a: empty token = auth-disabled.
     runtime.config = cfg
 
     # Real AD-722f / AD-722b primitives so the handler's calls are observable.
