@@ -12,6 +12,7 @@ back to OSS).
 
 **Wave 162 in flight (2026-05-15):**
 - AD-722b-1a — MagicMock(spec=SystemConfig) cleanup in tests, removed routers/auth.py:43 isinstance guard (closes #657). 7 sites migrated to real `SystemConfig()` (conftest fixture + 6 individual tests). 3 additional test helpers in test_ad722_avatar_telemetry / test_ad722b_websocket_push / test_ad722b4_fleet_telemetry received `cfg.auth = AuthConfig()` to preserve empty-token=auth-disabled contract after guard removal. Net test count unchanged.
+- AD-729a — Peer-observation Standing Orders extension (closes #588). New `config/standing_orders/peer_observation.md` with 5 sections verbatim from Captain ruling 2026-05-10. Cross-references appended to `ship.md` and `counselor.md`. +7 pytest tests verifying section phrases + cross-reference. Unblocks AD-729 capability AD.
 
 **Wave 161 in flight (2026-05-15):**
 - AD-730-2-1 — Image-budget tracker JSON sidecar persistence (+5 pytest tests; closes #656). New `src/probos/attachments/image_budget_store.py` (`load`/`save` module functions, atomic temp-file + `os.replace`). Runtime boot loads from `<data_dir>/image_budget.json` (configurable via `AttachmentsConfig.image_budget_path`). `ImagePolicyEnforcer.check_budget` persists on append AND on prune. Tier-2 throughout — disk failure logs and degrades; in-memory tracker remains authoritative. AD-731 invariant untouched (BUDGET tracker only — image bytes still flow through AttachmentStore SHA-256 refs). Forward markers AD-730-2-1a (write throttle) + AD-730-2-1b (ConnectionFactory backend swap) filed.

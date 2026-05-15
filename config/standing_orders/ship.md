@@ -250,3 +250,5 @@ When you have **no scheduled duty**, the opposite applies:
 - `[NO_RESPONSE]` is the expected default. Silence is professionalism.
 - Post only if you observe something genuinely noteworthy or actionable.
 - If you do post, include a brief justification for why it matters now.
+
+**Peer observation conduct:** see `peer_observation.md` (AD-729a extension of the AD-489 Code of Conduct).

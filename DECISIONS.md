@@ -2906,3 +2906,19 @@ Replaced 7 sites where tests constructed runtime configs as `MagicMock(spec=Syst
 **Files:** `tests/conftest.py`, `tests/test_ad437_action_space.py`, `tests/test_ad576_llm_unavailability.py`, `tests/test_circuit_breaker.py`, `tests/test_proactive.py`, `tests/test_proactive_quality.py`, `tests/test_ad722_avatar_telemetry.py`, `tests/test_ad722b_websocket_push.py`, `tests/test_ad722b4_fleet_telemetry.py`, `src/probos/routers/auth.py`.
 
 **Net test delta:** 0. Full parallel gate green; only documented flakes remain (skill_agent + task_scheduler + occasional dreaming/ward_room serial-pass).
+
+### AD-729a - Peer-observation Standing Orders extension (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 162. **Parent Code of Conduct:** AD-489. **Closes:** #588.
+
+Extends Standing Orders to cover peer observation - a class of crew action introduced by AD-729's capability surface. Captain ruling 2026-05-10 specified the five sections verbatim; this AD authors them, ratifies them, and wires them into the existing AD-586 prompt-assembly path via cross-references from `ship.md` and `counselor.md`.
+
+**Sections.** (1) Operational observation (always permitted, channel-appropriate, descriptive not evaluative). (2) Personal commentary (requires explicit permission-to-speak-freely; cross-rank elevated care; Counselor reviews drift toward judgment). (3) Prohibited behavior (cascade observation, aesthetic conformity pressure, privileged-tier leakage, static impressions). (4) Permission-to-speak-freely protocol (`[PERMISSION_REQUEST]` / `[PERMISSION_GRANTED]` / `[PERMISSION_DENIED]` DSL; single-exchange scope; repeated denial is observed-officer privilege, repeated requesting despite denial is Counselor-actionable). (5) Captain and chain-of-command exceptions (Captain bypasses request; department heads bypass for operational only; all subject to Counselor pattern review).
+
+**Wiring.** No new prompt-assembly code - the file lives in `config/standing_orders/` and is picked up by the AD-586 framework already in place. `ship.md` and `counselor.md` cross-references make the file discoverable from the Code of Conduct and the Counselor's standing orders.
+
+**Tests.** +7 pytest in `tests/test_ad729a_peer_observation_standing_orders.py` - one for file existence + four for section phrases + one for permission-protocol DSL tokens + one for `ship.md` cross-reference. All green at `-n 0`.
+
+**Files:** `config/standing_orders/peer_observation.md` (new), `config/standing_orders/ship.md` (1-line append), `config/standing_orders/counselor.md` (pattern-review section append), `tests/test_ad729a_peer_observation_standing_orders.py` (new).
+
+**Unblocks:** AD-729 (capability AD) advances to build. AD-729b (training) and AD-729c (Counselor monitoring) remain sibling forward markers - this AD authors the rules; the others teach and enforce them.
