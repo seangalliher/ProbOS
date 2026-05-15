@@ -3064,3 +3064,27 @@ Removes AD-722a's `(f) chain reply-emission has no equivalent single emit point 
 **Files:** `src/probos/events.py` (+ DIVERGENCE_OBSERVED_CHAIN), `src/probos/cognitive/cognitive_agent.py` (mark_chain_output_emitted + chain_divergence_buffer_for + __init__ buffer state + Phase 2b callsite), `tests/test_ad722a_2_chain_divergence.py` (new, 10 tests).
 
 **Forward markers.** AD-722a-2a (thread intent_self_tag + applied_modulation_rules through _execute_sub_task_chain - trigger: chain phases reliably populate these signals AND multi-channel interoception consumers request the data).
+
+### AD-721d-2 - Counselor-mediated avatar revision (Wave 162)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (server-side; HXI surface forward-marked AD-721d-2c). **Wave:** 162. **Parent:** AD-721d-1 (Wave 145 Captain-driven DSL revision). **Closes:** #618.
+
+Adds the Counselor-mediated path for avatar revision so the Captain can say "Counselor, Echo's avatar feels too formal - work with her on something warmer" and the Counselor mediates. The Counselor refines the Captain's hint via a standard-tier LLM call and forwards the refined hint to the target agent's existing AD-721d-1 `propose_appearance(captain_note=...)` path.
+
+**Intent.** New `mediate_appearance_revision` IntentDescriptor registered on `CounselorAgent.intent_descriptors` and added to `_handled_intents`. Params: `target_agent_id` + `captain_hint` (<=280 chars). `requires_consensus=False` (mediation is read-only / produces a NEW proposal via the existing AD-721d-1 path).
+
+**Handler.** New `CounselorAgent._mediate_appearance_revision(*, target_agent_id, captain_hint)` method invoked from `act()` when `plan['intent'] == 'mediate_appearance_revision'`. Resolves target via `runtime.registry.get(agent_id)` (real method, no phantom API), reads target's DSL through `agent.appearance.dsl` (with `runtime.profile_store` fallback), refines via `runtime.llm_client.complete(LLMRequest(tier='standard'))`, and invokes `target_agent.propose_appearance(captain_note=refined)` to land in the AD-721d-1 proposal sidecar. Tier-2 throughout - 7 distinct `reason` codes (invalid_hint_length, target_agent_unknown, target_dsl_unavailable, refinement_failed, refinement_empty, target_not_proposable, propose_failed).
+
+**Iteration accounting.** Reads `proposal_history.iteration_count(target_agent_id)` (real public function) into the response payload so the Captain sees the iteration the new proposal consumed. Mediated revisions count against the AD-721d-1 cap exactly like Captain-driven ones (the iteration counter is on the target, not the mediator).
+
+**API.** New `POST /api/agent/{agent_id}/appearance/mediate` endpoint where the path agent_id is the MEDIATOR (typically the Counselor). Uses `runtime.intent_bus.send(IntentMessage(target_agent_id=mediator, intent='mediate_appearance_revision', params={...}))` per pass-1 fix - NOT broadcast (broadcast would fan out to all subscribers and re-trigger the mediator when more than one Counselor-class agent is registered). Returns 503 on bus failure or null result, 422 on mediator-side reason codes.
+
+**Events.** New `EventType.APPEARANCE_REVISION_MEDIATED` emitted by the Counselor with payload `{target_agent_id, captain_hint, refined_hint, proposal_iteration}`.
+
+**HXI deferral.** The dispatch's small "Counselor-mediated revision" button on CrewAvatarPopout + Vitest tests are deferred to forward marker AD-721d-2c. Server-side flow is functionally complete; HXI surface is polish that doesn't block acceptance.
+
+**Tests.** +8 pytest in `tests/test_ad721d_2_counselor_mediated_revision.py`. Coverage: happy path (refinement + propose + event), empty hint 422, over-280 hint 422, target unknown, DSL unavailable, refinement empty, propose failure, endpoint contract test verifying `intent_bus.send` is called with `IntentMessage.target_agent_id=mediator` (the pass-1 fix is regression-protected).
+
+**Files:** `src/probos/events.py` (+ APPEARANCE_REVISION_MEDIATED), `src/probos/api_models.py` (+ MediateAppearanceRevision), `src/probos/cognitive/counselor.py` (intent_descriptors + _handled_intents + act() route + _mediate_appearance_revision method), `src/probos/routers/agents.py` (+ mediate endpoint), `tests/test_ad721d_2_counselor_mediated_revision.py` (new, 8 tests).
+
+**Forward markers.** AD-721d-2a (`source` field on ProposalEntry when AD-721d-1 doesn't carry one - trigger: Captain audit signal needed). AD-721d-2b (per-domain mediator selection - trigger: >=2 domain agents need their own avatar palettes mediated). AD-721d-2c (HXI button + modal for CrewAvatarPopout - trigger: Captain operates mediated path more than Captain-driven OR HXI polish wave scheduled).

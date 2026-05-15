@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from probos.api_models import (
     AgentChatRequest,
     ApproveVisionCapability,
+    MediateAppearanceRevision,
     ProposeAppearanceRequest,
     ProposeAppearanceResponse,
     ProposeVisionCapability,
@@ -743,6 +744,56 @@ async def vision_capability_history(
         "agent_id": agent_id,
         "entries": [asdict(e) for e in entries],
     }
+
+
+# ── AD-721d-2: Counselor-mediated avatar revision ──────────────
+
+@router.post("/{agent_id}/appearance/mediate")
+async def mediate_appearance_revision(
+    agent_id: str,
+    req: MediateAppearanceRevision,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-721d-2: route a Captain's revision hint through a mediator agent.
+
+    The mediator's agent_id is in the path (typically the Counselor). Body
+    carries ``target_agent_id`` + ``captain_hint``. Uses the targeted-RPC
+    primitive ``IntentBus.send(IntentMessage(target_agent_id=...))``, NOT
+    broadcast — broadcast would fan out to all subscribers and re-trigger
+    the mediator multiple times.
+    """
+    from probos.types import IntentMessage
+
+    msg = IntentMessage(
+        intent="mediate_appearance_revision",
+        target_agent_id=agent_id,
+        params={
+            "target_agent_id": req.target_agent_id,
+            "captain_hint": req.captain_hint,
+        },
+    )
+    try:
+        intent_result = await runtime.intent_bus.send(msg)
+    except Exception:
+        logger.warning(
+            "AD-721d-2: intent_bus.send failed mediator=%s",
+            agent_id, exc_info=True,
+        )
+        raise HTTPException(status_code=503, detail="mediator_unreachable")
+
+    if intent_result is None:
+        raise HTTPException(status_code=503, detail="mediator_unreachable")
+    payload = getattr(intent_result, "result", None)
+    if payload is None and isinstance(intent_result, dict):
+        payload = intent_result.get("result")
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        reason = (
+            payload.get("reason")
+            if isinstance(payload, dict)
+            else "mediation_failed"
+        ) or "mediation_failed"
+        raise HTTPException(status_code=422, detail=reason)
+    return payload
 
 
 @router.get("/{agent_id}/avatar-telemetry")

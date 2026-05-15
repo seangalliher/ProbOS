@@ -329,6 +329,14 @@ class ApproveVisionCapability(BaseModel):
     reason: str = Field(default="", max_length=280)
 
 
+class MediateAppearanceRevision(BaseModel):
+    """AD-721d-2: Captain-initiated request to route a revision hint through
+    a mediator (typically the Counselor).
+    """
+    target_agent_id: str
+    captain_hint: str = Field(..., min_length=1, max_length=280)
+
+
 # ── Assignment models (AD-408) ───────────────────────────────────
 
 class CreateAssignmentRequest(BaseModel):

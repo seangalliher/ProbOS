@@ -485,7 +485,8 @@ class CounselorAgent(CognitiveAgent):
     agent_type = "counselor"
     tier = "domain"
     _handled_intents = {"counselor_assess", "counselor_wellness_report",
-                        "counselor_promotion_fitness"}
+                        "counselor_promotion_fitness",
+                        "mediate_appearance_revision"}
     intent_descriptors = [
         IntentDescriptor(
             name="counselor_assess",
@@ -501,6 +502,17 @@ class CounselorAgent(CognitiveAgent):
             name="counselor_promotion_fitness",
             params={"agent_id": "ID of the agent being considered for promotion"},
             description="Assess an agent's fitness for promotion",
+        ),
+        IntentDescriptor(
+            name="mediate_appearance_revision",
+            params={
+                "target_agent_id": "ID of the agent whose avatar is being revised",
+                "captain_hint": "Captain's revision hint (<=280 chars)",
+            },
+            description=(
+                "AD-721d-2: refine the Captain's avatar-revision hint and "
+                "forward to the target agent's AD-721d-1 propose path"
+            ),
         ),
     ]
 
@@ -790,6 +802,127 @@ class CounselorAgent(CognitiveAgent):
         return metrics
 
     # -- AD-503: Wellness sweep --
+
+    async def _mediate_appearance_revision(
+        self,
+        *,
+        target_agent_id: str,
+        captain_hint: str,
+    ) -> dict[str, Any]:
+        """AD-721d-2: refine the Captain's avatar revision hint and forward
+        to the target agent's AD-721d-1 ``propose_appearance`` path.
+
+        Tier-2 throughout. Returns ``{ok: bool, reason?: str, refined_hint?,
+        proposal_iteration?, proposed_dsl?}``.
+        """
+        if not isinstance(captain_hint, str) or not captain_hint:
+            return {"ok": False, "reason": "invalid_hint_length"}
+        if len(captain_hint) > 280:
+            return {"ok": False, "reason": "invalid_hint_length"}
+        if not isinstance(target_agent_id, str) or not target_agent_id:
+            return {"ok": False, "reason": "target_agent_unknown"}
+
+        runtime = getattr(self, "_runtime", None)
+        registry = getattr(runtime, "registry", None) if runtime else None
+        target_agent = registry.get(target_agent_id) if registry else None
+        if target_agent is None:
+            return {"ok": False, "reason": "target_agent_unknown"}
+
+        # Pull the target's current DSL via the agent's appearance attribute
+        # or the runtime's profile_store. Either path is fine; missing DSL
+        # short-circuits.
+        target_dsl: Any = None
+        appearance = getattr(target_agent, "appearance", None)
+        if appearance is not None:
+            target_dsl = getattr(appearance, "dsl", None)
+        if target_dsl is None:
+            store = getattr(runtime, "profile_store", None)
+            if store is not None:
+                try:
+                    crew = store.get(target_agent_id)
+                    target_dsl = (
+                        getattr(getattr(crew, "appearance", None), "dsl", None)
+                        if crew is not None else None
+                    )
+                except Exception:
+                    target_dsl = None
+        if target_dsl is None:
+            return {"ok": False, "reason": "target_dsl_unavailable"}
+
+        refined: str
+        try:
+            from probos.cognitive.llm_client import LLMRequest
+            refine_prompt = (
+                "You are the Ship's Counselor. The Captain wants to revise "
+                f"{target_agent_id}'s avatar with this hint:\n\n"
+                f"\"{captain_hint}\"\n\n"
+                f"Their current avatar DSL (summary): {str(target_dsl)[:500]}\n\n"
+                "Refine the Captain's hint into a <=280 char directive for "
+                f"{target_agent_id} that respects: (a) their agency, "
+                "(b) the Captain's intent, (c) your own clinical judgment. "
+                "Output only the refined hint, no preface."
+            )
+            request = LLMRequest(prompt=refine_prompt, tier="standard", max_tokens=200)
+            response = await runtime.llm_client.complete(request)
+            refined = (getattr(response, "text", "") or "").strip()[:280]
+        except Exception:
+            logger.warning(
+                "AD-721d-2: refinement LLM call failed target=%s",
+                target_agent_id, exc_info=True,
+            )
+            return {"ok": False, "reason": "refinement_failed"}
+        if not refined:
+            return {"ok": False, "reason": "refinement_empty"}
+
+        if not hasattr(target_agent, "propose_appearance"):
+            return {"ok": False, "reason": "target_not_proposable"}
+        try:
+            proposed_dsl = await target_agent.propose_appearance(captain_note=refined)
+        except Exception:
+            logger.warning(
+                "AD-721d-2: target.propose_appearance failed target=%s",
+                target_agent_id, exc_info=True,
+            )
+            return {"ok": False, "reason": "propose_failed"}
+
+        try:
+            from probos.avatars import proposal_history
+            iteration = proposal_history.iteration_count(target_agent_id)
+        except Exception:
+            iteration = 0
+
+        emit_fn = getattr(self, "_emit_event_fn", None) or getattr(
+            runtime, "emit_event", None
+        )
+        if emit_fn is not None:
+            try:
+                from probos.events import EventType
+                emit_fn(
+                    EventType.APPEARANCE_REVISION_MEDIATED,
+                    {
+                        "target_agent_id": target_agent_id,
+                        "captain_hint": captain_hint,
+                        "refined_hint": refined,
+                        "proposal_iteration": iteration,
+                    },
+                )
+            except Exception:
+                logger.debug(
+                    "AD-721d-2: emit APPEARANCE_REVISION_MEDIATED failed",
+                    exc_info=True,
+                )
+
+        proposed_dict = (
+            proposed_dsl.model_dump()
+            if hasattr(proposed_dsl, "model_dump")
+            else proposed_dsl
+        )
+        return {
+            "ok": True,
+            "refined_hint": refined,
+            "proposal_iteration": iteration,
+            "proposed_dsl": proposed_dict,
+        }
 
     async def _run_wellness_sweep(self, max_agents: int = 50) -> list[CounselorAssessment]:
         """Iterate crew agents, gather metrics, assess, persist.
@@ -2789,6 +2922,15 @@ class CounselorAgent(CognitiveAgent):
                 "assessments": [r.to_dict() for r in results],
             }
             return {"success": True, "result": summary}
+
+        # AD-721d-2: Counselor-mediated avatar revision.
+        if isinstance(plan, dict) and plan.get("intent") == "mediate_appearance_revision":
+            params = plan.get("params") or {}
+            result = await self._mediate_appearance_revision(
+                target_agent_id=params.get("target_agent_id", ""),
+                captain_hint=params.get("captain_hint", ""),
+            )
+            return {"success": bool(result.get("ok")), "result": result}
 
         if isinstance(plan, dict) and plan.get("action") == "assess":
             agent_id = plan.get("agent_id", "")
