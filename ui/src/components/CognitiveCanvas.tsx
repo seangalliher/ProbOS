@@ -14,6 +14,7 @@ import {
 import { useStore } from '../store/useStore';
 import { modeGrading } from '../canvas/scene';
 import type { Agent } from '../store/types';
+import { useFleetAvatarTelemetry } from '../avatars/useFleetAvatarTelemetry';
 
 // Raycaster helper — resolve instanceId to agent (Fix 10)
 function AgentRaycastLayer() {
@@ -62,6 +63,16 @@ export function CognitiveCanvas() {
   const systemMode = useStore((s) => s.systemMode);
   const connected = useStore((s) => s.connected);
   const grading = modeGrading(systemMode);
+
+  // AD-722b-4a: open the fleet telemetry WS for as long as the canvas
+  // is mounted. Frames merge into useStore.avatarTelemetry; canvas
+  // children read via selectors (forward markers cover specific consumers).
+  const setAvatarTelemetryFrame = useStore((s) => s.setAvatarTelemetryFrame);
+  useFleetAvatarTelemetry({
+    onFrame: (frame) => {
+      setAvatarTelemetryFrame(frame.agent_id, frame.type, frame.payload);
+    },
+  });
 
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>

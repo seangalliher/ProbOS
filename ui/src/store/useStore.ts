@@ -251,6 +251,13 @@ export interface HXIState {
   hoveredAgent: Agent | null;
   tooltipPos: { x: number; y: number };
   pinnedAgent: Agent | null;
+
+  // AD-722b-4a: fleet-level avatar telemetry, keyed by agent_id.
+  // Populated by the WS at /api/agent/avatar-telemetry/stream via
+  // useFleetAvatarTelemetry. Per-agent SelfImageTab WS remains the
+  // canonical source for the profile view; this map is for canvas-wide
+  // consumers (AgentNodes / Connections) that need every agent's frame.
+  avatarTelemetry: Map<string, Record<string, unknown>>;
   // Agent Profile Panel (AD-406)
   activeProfileAgent: string | null;
   profilePanelPos: { x: number; y: number };
@@ -342,6 +349,12 @@ export interface HXIState {
   setConnected: (v: boolean) => void;
   setHoveredAgent: (agent: Agent | null, pos?: { x: number; y: number }) => void;
   setPinnedAgent: (agent: Agent | null) => void;
+  // AD-722b-4a: fleet telemetry frame ingestion.
+  setAvatarTelemetryFrame: (
+    agent_id: string,
+    type: 'snapshot' | 'diff' | 'ping' | 'error',
+    payload: Record<string, unknown>,
+  ) => void;
   // Agent Profile Panel actions (AD-406)
   openAgentProfile: (agentId: string) => void;
   closeAgentProfile: () => void;
@@ -532,6 +545,8 @@ export const useStore = create<HXIState>((set, get) => ({
   hoveredAgent: null,
   tooltipPos: { x: 0, y: 0 },
   pinnedAgent: null,
+  // AD-722b-4a: fleet telemetry map, populated by useFleetAvatarTelemetry.
+  avatarTelemetry: new Map(),
   // Agent Profile Panel (AD-406)
   activeProfileAgent: null,
   profilePanelPos: { x: 100, y: 100 },
@@ -631,6 +646,34 @@ export const useStore = create<HXIState>((set, get) => ({
   setConnected: (v) => { soundEngine.setConnected(v); set({ connected: v }); },
   setHoveredAgent: (agent, pos) => set(pos ? { hoveredAgent: agent, tooltipPos: pos } : { hoveredAgent: agent }),
   setPinnedAgent: (agent) => set({ pinnedAgent: agent }),
+
+  // AD-722b-4a: fleet telemetry frame ingestion.
+  setAvatarTelemetryFrame: (agent_id, type, payload) => {
+    if (type === 'ping') return;
+    if (type === 'error') {
+      if (typeof console !== 'undefined') {
+        console.warn('avatar-telemetry error frame for', agent_id, payload);
+      }
+      return;
+    }
+    set((state) => {
+      const next = new Map(state.avatarTelemetry);
+      if (type === 'snapshot') {
+        next.set(agent_id, payload);
+      } else {
+        // diff
+        const prev = next.get(agent_id);
+        if (prev === undefined) {
+          // No prior snapshot - drop the diff. The server's
+          // full_snapshot_every_n cadence guarantees a snapshot within N
+          // ticks; until then we have nothing to merge into.
+          return state;
+        }
+        next.set(agent_id, { ...prev, ...payload });
+      }
+      return { avatarTelemetry: next };
+    });
+  },
   // Agent Profile Panel actions (AD-406)
   openAgentProfile: (agentId) => set({
     activeProfileAgent: agentId,

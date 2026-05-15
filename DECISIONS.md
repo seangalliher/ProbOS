@@ -2852,3 +2852,41 @@ Both use `hmac.compare_digest` for constant-time token compare (OWASP requiremen
 **Files:** `src/probos/routers/auth.py` (new, ~85 lines); `src/probos/config.py` (new `AuthConfig` Pydantic model placed above `SecurityConfig` for grouping; `auth: AuthConfig = Field(default_factory=AuthConfig)` field on `SystemConfig` next to `security`); `src/probos/routers/agents.py` (import + 4 endpoint modifications); `tests/test_ad722b_1_crew_scope_auth.py` (new, 8 pytest tests — 4 HTTP + 4 WS).
 
 **Forward markers.** AD-722b-1a (multi-Captain per-crew tokens — replace single shared secret with token store mapping captain_id → token; trigger: federation cross-mesh telemetry push lands OR more than one Captain operates the same runtime). AD-722b-1b (apply `require_crew_scope` to remaining read endpoints on agents/acm/assignments routers; trigger: AD-722b-1 ships AND any auth-required-endpoint feature request lands). AD-722b-1c (federation-bridge JWT verification — AD-480 integration; trigger: AD-480 federation framework adds cross-mesh agent reads). AD-722b-1d (token rotation + TTL; trigger: any single deployment runs > 90 days with a static secret OR security scanner flags long-lived shared-secret use).
+
+
+### AD-722b-4a - HXI fleet-hook integration (Wave 161)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 161. **Parent:** AD-722b-4 (Wave 160 - fleet endpoint + hook stub). **Closes:** #655.
+
+Wave 160 shipped two pieces of fleet telemetry plumbing - the server WS endpoint `/api/agent/avatar-telemetry/stream` AND the React hook `ui/src/avatars/useFleetAvatarTelemetry.ts` - but no component imported the hook. Vite tree-shook it out of the production bundle (`ui/dist/assets/index-BDgoocuQ.js` hash unchanged across the Wave 160 deploy). This AD wires the hook into `CognitiveCanvas.tsx` so fleet frames merge into the zustand store.
+
+**Store additions.** `useStore.avatarTelemetry: Map<string, Record<string, unknown>>` (initialized to empty Map) + new `setAvatarTelemetryFrame(agent_id, type, payload)` action. Frame contract:
+- `snapshot`: replaces the per-agent entry entirely.
+- `diff`: shallow-merges `payload` into the existing entry; DROPS the frame if no prior snapshot (the server's `full_snapshot_every_n` cadence guarantees a snapshot within N ticks).
+- `ping`: no-op (keep-alive).
+- `error`: logs `console.warn` once per frame; no store write.
+
+**Canvas integration.** Single call site at the top of `CognitiveCanvas()`:
+
+\\\	sx
+const setAvatarTelemetryFrame = useStore((s) => s.setAvatarTelemetryFrame);
+useFleetAvatarTelemetry({
+  onFrame: (frame) => {
+    setAvatarTelemetryFrame(frame.agent_id, frame.type, frame.payload);
+  },
+});
+\\\
+
+Hook is enabled by default when the canvas mounts; unmount closes the WS (handled by hook's existing useEffect cleanup).
+
+**Per-agent path preserved.** `SelfImageTab.tsx` still uses `/api/agent/{id}/avatar-telemetry-stream` for the dense profile-view diff stream. Migration to read from `useStore.avatarTelemetry` is forward-marker AD-722b-4b. AgentNodes / Connections / Effects rendering logic unchanged in this AD - they MAY read from the unified map going forward, but adding consumers is out of scope here (wiring only).
+
+**Bundle proof.** `ui/dist/assets/index-BDgoocuQ.js` (HEAD baseline) -> `index-D0tUvFeA.js` (post-AD). Hash change confirms the new code is in the production bundle and not tree-shaken.
+
+**HXI Canvas regressions clear.** Tooltips (`AgentRaycastLayer.setHoveredAgent` path), bloom positioning (`SelfModBloom` reads agent positions, not telemetry), and raycasting (instanceId -> agent profile open) are all untouched by this change. The fleet hook is added as a leaf side effect at the top of `CognitiveCanvas()` - it does not alter any rendering primitive.
+
+**Vitest gate.** `ui/src/__tests__/useStore.avatarTelemetry.test.ts` (new, 3 tests) covers the action's snapshot/diff-drop/diff-merge branches. `ui/src/__tests__/CognitiveCanvas.fleetHook.test.tsx` (new, 1 test) mocks the hook + the three.js / r3f / canvas-child modules and asserts the hook is invoked exactly once with an `onFrame` callback. `npm run build` green (640 -> 644 vitest tests, bundle hash changed).
+
+**Files:** `ui/src/store/useStore.ts` (state field + initial value + action signature + action body); `ui/src/components/CognitiveCanvas.tsx` (import + hook call inside `CognitiveCanvas()`); `ui/src/__tests__/useStore.avatarTelemetry.test.ts` (new); `ui/src/__tests__/CognitiveCanvas.fleetHook.test.tsx` (new).
+
+**Forward markers.** AD-722b-4b (migrate `SelfImageTab.tsx` per-agent WS consumer to read from `useStore.avatarTelemetry`, eliminating the second WebSocket - trigger: `avatarTelemetry` map reaches 2+ canvas consumers AND fleet endpoint snapshot+diff parity with per-agent endpoint is verified by integration test). AD-722b-4c (add canvas-side selectors `useAgentEmotion(agent_id)` + `useAgentWorkingState(agent_id)` so `AgentNodes` / `Connections` can render telemetry without subscribing to the full map - trigger: more than one canvas component reads `avatarTelemetry` directly AND re-render cost becomes measurable).
