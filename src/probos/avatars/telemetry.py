@@ -555,10 +555,32 @@ def _resolve_sampling(
 
 
 def _warn(reason: str, agent_id: str, field: str) -> None:
-    logger.warning(
-        "AD-722 telemetry: %s for agent=%s; field=%s set to None/default",
-        reason, agent_id, field,
-    )
+    """BF-288: Throttle repeated identical warnings.
+
+    AD-722 telemetry rebuilds run at the sampling rate (~250ms for HIGH tier,
+    ~4/sec/agent). Persistent degraded states (e.g. ``insufficient_trust_history``
+    on a freshly-spawned agent) would otherwise emit a WARNING every snapshot —
+    60+ warnings/sec across 15 crew. We log the first occurrence per
+    ``(reason, agent_id, field)`` triple at WARNING and subsequent occurrences
+    at DEBUG until ``_WARN_THROTTLE_S`` has elapsed."""
+    key = (reason, agent_id, field)
+    now = time.monotonic()
+    last = _warn_last_emitted.get(key, 0.0)
+    if now - last >= _WARN_THROTTLE_S:
+        logger.warning(
+            "AD-722 telemetry: %s for agent=%s; field=%s set to None/default",
+            reason, agent_id, field,
+        )
+        _warn_last_emitted[key] = now
+    else:
+        logger.debug(
+            "AD-722 telemetry: %s for agent=%s; field=%s (throttled — see prior WARNING)",
+            reason, agent_id, field,
+        )
+
+
+_WARN_THROTTLE_S = 60.0
+_warn_last_emitted: dict[tuple[str, str, str], float] = {}
 
 
 async def build_telemetry_snapshot(

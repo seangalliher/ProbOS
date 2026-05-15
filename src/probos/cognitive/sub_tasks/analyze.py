@@ -620,10 +620,27 @@ class AnalyzeHandler:
             analysis = extract_json(response.content)
         except (ValueError, TypeError):
             duration = (time.monotonic() - start) * 1000
-            truncated = (response.content or "")[:_MAX_ERROR_CONTENT]
-            logger.warning(
-                "AD-632c: JSON parse failure, content: %s", truncated,
-            )
+            content = response.content or ""
+            truncated = content[:_MAX_ERROR_CONTENT]
+            if not content.strip():
+                # BF-288: distinguish empty-content from genuine parse-failure.
+                # Empty content is an LLM-side condition (model returned ""),
+                # not a JSON-shape issue. Logging "JSON parse failure, content:"
+                # with nothing after the colon is misleading.
+                logger.warning(
+                    "AD-632c: LLM returned empty content (tier=%s, prompt_tokens=%s); "
+                    "falling back via AD-643a",
+                    response.tier, response.prompt_tokens,
+                )
+                error_msg = (
+                    f"LLM returned empty content (tier={response.tier}); "
+                    "no JSON to parse"
+                )
+            else:
+                logger.warning(
+                    "AD-632c: JSON parse failure, content: %s", truncated,
+                )
+                error_msg = f"Failed to parse analysis JSON from LLM response: {truncated}"
             return SubTaskResult(
                 sub_task_type=SubTaskType.ANALYZE,
                 name=spec.name,
@@ -633,7 +650,7 @@ class AnalyzeHandler:
                 completion_tokens=response.completion_tokens,
                 duration_ms=duration,
                 success=False,
-                error=f"Failed to parse analysis JSON from LLM response: {truncated}",
+                error=error_msg,
                 tier_used=response.tier,
             )
 
