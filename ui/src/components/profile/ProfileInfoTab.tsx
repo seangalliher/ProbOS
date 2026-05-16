@@ -345,9 +345,13 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
                   padding: '4px 6px',
                 }}
               >
-                <option value="">(global default)</option>
+                <option value="" style={{ background: '#1a1a24', color: '#e0dcd4' }}>(global default)</option>
                 {availableVoices.map(v => (
-                  <option key={v.name} value={v.name}>
+                  <option
+                    key={v.name}
+                    value={v.name}
+                    style={{ background: '#1a1a24', color: '#e0dcd4' }}
+                  >
                     {v.quality ? `${v.name} (${v.quality})` : v.name}
                   </option>
                 ))}
