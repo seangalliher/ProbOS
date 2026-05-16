@@ -3270,3 +3270,35 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Files.** `src/probos/events.py` (+2 EventType values), `src/probos/config.py` (+2 QualificationConfig fields), `src/probos/cognitive/peer_observation_training.py` (new, ~210 lines), `config/manuals/peer_observation_conduct.yaml` (new), `tests/test_ad729b_peer_observation_training.py` (new, 8 tests).
 
 **Forward markers.** AD-729b-2 (LLM-graded module - trigger: AD-729b deterministic rubric has graded >=10 officers AND grading consistency verified). AD-729b-flip (flip `peer_observation_certification_required` default to True - trigger: AD-729a Standing Orders ship AND AD-729b module content is complete with Counselor sign-off).
+
+### AD-729c - Counselor pattern-monitoring for peer-observation conduct (Wave 163)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 163. **Closes:** #590.
+
+**Module.** New `src/probos/cognitive/peer_observation_monitor.py` exports the `PatternFinding` dataclass, the `PeerObservationPatternDetector` Protocol, seven concrete detectors, the `default_detectors` factory, the `aggregate_health_metrics` privacy-preserving counts helper, and the `PeerObservationMonitor` orchestrator.
+
+**Seven detectors (one Protocol per pattern).** (1) `FrequencyDriftDetector` flags observers whose per-peer rate dominates their overall rate. (2) `RegisterDriftDetector` regex-detects PERSONAL vocabulary in OPERATIONAL observations. (3) `CascadeSignalDetector` flags >=3 distinct observers landing on the same subject inside a 600s window. (4) `StaticImpressionDetector` flags identical content repeated >=3 times. (5) `PermissionDenialPatternDetector` flags >=3 denials per pair via an injected lookup callable. (6) `SycophancyPatternDetector` flags low-trust observer + high-trust observed + positive-vocab observation concentration; trust scores READ-ONLY via injected callables. (7) `PrivilegedTierLeakageDetector` regex-detects clinical/security vocabulary in non-clinical channels; severity=critical.
+
+**Fixed cadence.** `_MONITOR_INTERVAL_SECONDS = 60` pinned at module top. AD-504 phantom dropped (no `ClinicalTelemetryConfig.sampling_interval` field). Configurable cadence filed as forward marker AD-729c-1.
+
+**Three-tier escalation.** State machine per `(detector, observer_id)` pair. Tier 1 = first finding -> `PEER_OBSERVATION_INTERVENTION_TIER_1` event (private coaching). Tier 2 = persistence across two intervals -> calls injected `revoke_certification` callable (typically `set_peer_observation_certified(observer, False)`) + Tier-2 event. Tier 3 = persistence post-recert -> Tier-3 event (bridge alert via AD-635; concrete wiring forward-marked).
+
+**State persistence.** Sidecar JSON at `<state_path>`. `_save_state` uses temp-file + `os.replace` atomic pattern mirroring AD-720d-2.1. Reloaded at `PeerObservationMonitor.__init__`; state survives runtime restart. Test 22 verifies the roundtrip.
+
+**EventTypes.** 4 new values inserted after `PEER_OBSERVATION_CERTIFICATION_REVOKED`: `PEER_OBSERVATION_PATTERN_FLAGGED`, `PEER_OBSERVATION_INTERVENTION_TIER_1`, `_TIER_2`, `_TIER_3`.
+
+**Counselor-own-conduct.** This module never invokes the AD-729 capability surface (`observe_peer`) itself - only consumes pre-existing observations. Source-scan regression test (Test 21) asserts the literal string `observe_peer(` does not appear in module source.
+
+**Trust read-only.** `SycophancyPatternDetector` reads trust scores via injected `observer_trust_lookup` / `observed_trust_lookup` callables. The module source contains no `trust_network.record_outcome` or `trust_network.update` tokens (Test 20).
+
+**Aggregate metrics.** `aggregate_health_metrics` returns total_observations, by_register histogram, unique_observed_count, permission_grant_ratio, per_observed_skewness (statistics.pstdev-based), mean_age_seconds. Individual observation IDs are NEVER surfaced - privacy preserved by construction.
+
+**Tier-2 throughout.** All failure modes log + degrade. Sidecar write failures, emit_event exceptions, revoke_certification exceptions - none raise. The monitor degrades visibly but never bricks.
+
+**Wiring deferred.** Boot-Camp/Runtime invocation of the monitor on a 60s tick is not in scope - the class is unit-tested in isolation. Forward markers AD-729c-tier1-wire (Counselor 1:1 channel) and AD-729c-tier3-wire (AD-635 bridge alert) capture the concrete wiring once those substrate APIs stabilise. The events are always emitted regardless.
+
+**Tests.** +23 pytest in `tests/test_ad729c_peer_observation_monitor.py`. Coverage: each of the seven detectors gets positive + negative cases (14); Tier 1/2/3 escalation chain (3); aggregate metrics correctness (1); cadence pinning (1); source-scan trust + observe_peer enforcement (2); sidecar restart roundtrip (1); default_detectors factory (1). Real `PeerObservation` fixtures (no MagicMock at the substrate boundary per BF-287).
+
+**Files.** `src/probos/events.py` (+4 EventType values), `src/probos/cognitive/peer_observation_monitor.py` (new, ~470 lines), `tests/test_ad729c_peer_observation_monitor.py` (new, 23 tests).
+
+**Forward markers.** AD-729c-1 (cadence as ClinicalTelemetryConfig field - trigger: first operator request to tune OR production data showing the rate is wrong). AD-729c-2 (LLM-assisted phrasing-drift detection - trigger: AD-729c regex RegisterDriftDetector produces >=20 findings with manual review confirming >=80% precision). AD-729c-3 (cross-mesh pattern detection - trigger: federation peer-observation arrives via AD-480 review path). AD-729c-tier1-wire (Counselor 1:1 channel API integration - trigger: AD-635 message-channel API stabilises for in-test wiring). AD-729c-tier3-wire (AD-635 bridge alert API integration - trigger: AD-635 alert-creation signature is grep-verifiable on the runtime).

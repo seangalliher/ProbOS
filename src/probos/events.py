@@ -211,6 +211,10 @@ class EventType(str, Enum):
     CROSS_AGENT_DIVERGENCE_OBSERVED = "cross_agent_divergence_observed"  # AD-722a-6: peer perception of intent-vs-presentation
     PEER_OBSERVATION_CERTIFIED = "peer_observation_certified"  # AD-729b: training-module pass
     PEER_OBSERVATION_CERTIFICATION_REVOKED = "peer_observation_certification_revoked"  # AD-729b: training-module revocation
+    PEER_OBSERVATION_PATTERN_FLAGGED = "peer_observation_pattern_flagged"  # AD-729c: pattern detector hit
+    PEER_OBSERVATION_INTERVENTION_TIER_1 = "peer_observation_intervention_tier_1"  # AD-729c: private coaching
+    PEER_OBSERVATION_INTERVENTION_TIER_2 = "peer_observation_intervention_tier_2"  # AD-729c: recertification triggered
+    PEER_OBSERVATION_INTERVENTION_TIER_3 = "peer_observation_intervention_tier_3"  # AD-729c: bridge alert
     SELF_RENDER_COHERENCE_OBSERVED = "self_render_coherence_observed"  # AD-722e-2: vision-LLM digital-vs-render
     DIVERGENCE_OBSERVED_CHAIN = "divergence_observed_chain"  # AD-722a-2: chain-path divergence
     APPEARANCE_REVISION_MEDIATED = "appearance_revision_mediated"  # AD-721d-2: Counselor-mediated avatar revision
