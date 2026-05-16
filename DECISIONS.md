@@ -3302,3 +3302,25 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Files.** `src/probos/events.py` (+4 EventType values), `src/probos/cognitive/peer_observation_monitor.py` (new, ~470 lines), `tests/test_ad729c_peer_observation_monitor.py` (new, 23 tests).
 
 **Forward markers.** AD-729c-1 (cadence as ClinicalTelemetryConfig field - trigger: first operator request to tune OR production data showing the rate is wrong). AD-729c-2 (LLM-assisted phrasing-drift detection - trigger: AD-729c regex RegisterDriftDetector produces >=20 findings with manual review confirming >=80% precision). AD-729c-3 (cross-mesh pattern detection - trigger: federation peer-observation arrives via AD-480 review path). AD-729c-tier1-wire (Counselor 1:1 channel API integration - trigger: AD-635 message-channel API stabilises for in-test wiring). AD-729c-tier3-wire (AD-635 bridge alert API integration - trigger: AD-635 alert-creation signature is grep-verifiable on the runtime).
+
+### AD-729d - Peer-observation reinforcement loop FORWARD MARKER (Wave 163)
+
+**Date:** 2026-05-15. **Status:** FORWARD MARKER (doc-only filing). **Wave:** 163. **Closes:** #591 (as the marker; the build is a future wave).
+
+**Capability.** Peer-observation reinforcement would create an optimization gradient where positive peer observations of an agent's conduct reinforce the underlying AvatarDSL traits associated with that conduct. AD-729 mechanical constraint #1 (read-only with respect to reputation and routing) prevents trust drift, but reinforcement is the natural channel where that pressure could re-enter the system through DSL drift instead. This AD does NOT ship the capability - it captures the forward marker so the design is not lost, with TECHNICAL triggers (per AD-722c-3) governing when it advances.
+
+**Why doc-only in Wave 163.** Five hard preconditions, none currently met: (1) AD-729 operationally stable for >=2 quarters; (2) AD-729a Standing Orders extended with reinforcement-specific rules; (3) AD-729b Training extended with reinforcement content; (4) AD-729c monitoring extended with reinforcement-specific detectors; (5) Captain explicit design-stage review (Counselor + Architect joint). AD-729 ships in Wave 163; operational stability takes time, not code.
+
+**TECHNICAL triggers (per AD-722c-3).** The forward marker advances to a build prompt when ALL of: (A) `EventType.PEER_OBSERVATION_RECORDED` count >=100 events across >=3 distinct observer/observed pairs over a continuous 2-quarter window; (B) AD-729c `PEER_OBSERVATION_INTERVENTION_TIER_3` event count is 0 across the same window AND no `_TIER_2` events have escalated to `_TIER_3` retry; (C) AD-729a is shipped AND its Standing Orders content includes a reinforcement-specific section reviewed by Counselor; (D) AD-729b module YAML includes reinforcement content sections AND >=3 officers have passed the extended module; (E) Captain explicit ruling at design stage documented in DECISIONS.md.
+
+**Open design questions** (recorded for the future scoping pass, NOT answered here):
+  1. Reinforcement updates DSL directly vs. produces AD-721d Captain-approval proposals? Lean: proposals only.
+  2. Scoped to mentor-mentee relationships vs. any-peer-to-any-peer? Lean: mentor-mentee only in v1.
+  3. Does reinforcement decay? Lean: yes, mirroring AD-729 impression decay.
+  4. How does reinforcement interact with the Counselor's clinical role? Lean: clinical feedback bypasses peer-reinforcement entirely; uses the AD-503 channel.
+
+**Out of scope (deferred even beyond AD-729d).** Federation reinforcement (cross-mesh). Reinforcement that bypasses AD-721d Captain approval. Reinforcement that re-enters trust scoring through any path.
+
+**Files.** `DECISIONS.md` (this entry), `PROGRESS.md` (Wave 163 housekeeping note), `docs/development/roadmap.md` (AD-729d row with TECHNICAL triggers). No source code. No tests. No config.
+
+**Disposition.** GitHub issue #591 stays OPEN. Wave 163 disposition: documented; preconditions not met; advances on TECHNICAL triggers above.
