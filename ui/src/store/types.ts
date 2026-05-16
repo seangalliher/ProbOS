@@ -423,7 +423,7 @@ export interface WardRoomThread {
   last_activity: number;
   pinned: boolean;
   locked: boolean;
-  thread_mode: 'inform' | 'discuss' | 'action';  // AD-424
+  thread_mode: 'inform' | 'discuss' | 'action' | 'multi_agent';  // AD-424, AD-719a
   max_responders: number;                          // AD-424
   reply_count: number;
   net_score: number;

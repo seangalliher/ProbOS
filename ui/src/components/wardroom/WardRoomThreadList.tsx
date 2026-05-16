@@ -57,6 +57,26 @@ export function WardRoomThreadList() {
             cursor: 'pointer',
           }}>
             {t.pinned && <span style={{ color: '#f0b060', fontSize: 10, fontWeight: 700 }}>PINNED</span>}
+            {t.thread_mode === 'multi_agent' && (
+              <span
+                data-testid={`multi-agent-badge-${t.id}`}
+                title="Multi-agent thread (AD-719a)"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  marginLeft: 6,
+                  color: '#f0b060', fontSize: 10, fontWeight: 700,
+                }}
+              >
+                {/* Two-circle bridge glyph — stroke-based, no emoji. */}
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                     strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="4" cy="8" r="2" />
+                  <circle cx="12" cy="8" r="2" />
+                  <path d="M6 8h4" />
+                </svg>
+                MULTI
+              </span>
+            )}
             <div style={{ fontSize: 14, color: '#e0dcd4', fontWeight: 500 }}>
               {t.title}
             </div>

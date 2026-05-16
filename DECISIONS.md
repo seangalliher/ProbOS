@@ -3380,3 +3380,31 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Bundle.** vitest 648 -> 653. `npm run build` green. Bundle hash unchanged (`index-cAfin0aS.js`) because the rail is not yet imported - this is expected and correct; the hash will advance when AD-719b-parent-wire ships.
 
 **Forward markers.** AD-719b-parent-wire (import LeftRail into App.tsx + wire zustand stores for online agents + recent threads - trigger: AD-719b shipped AND parent layout has the slot reserved). AD-719b-2 (flip `hxi_left_rail_enabled` default to True - trigger: Captain has used the left rail across >=5 sessions per visit-count telemetry).
+
+### AD-719a - Persistent multi-agent chat threads under WardRoom (Wave 163, contract only)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (architectural contract). **Wave:** 163. **Closes:** #546.
+
+**Architectural decisions (Captain ruling 2026-05-15).** (1) YES agents observe other agents' messages mid-thread when @-mentioned in the thread. (2) NO agents do NOT observe threads they were never @-mentioned in (cross-thread observation out of scope; deferred to AD-719a-3). (3) Captain messages are always the seed (agent-to-agent without Captain prompt deferred to AD-719a-2).
+
+**Contract.** New src/probos/ward_room/multi_agent.py exports MULTI_AGENT_THREAD_MODE constant, create_multi_agent_thread helper, format_participant_trailer + parse_participants for the in-body participants-list encoding, is_participant + cross_agent_visibility for the Wave 163 visibility ruling.
+
+**Why contract-only.** The full AD-719a deliverable (rewriting AD-719 transient fan-out to persist + injecting thread history into participants' prompts) is a substantial backend wave. Wave 163 ships the architectural seam (the marker + helper + visibility rules) so the future wire-up is mechanical. AD-719a-wire forward marker captures the wire-up.
+
+**Storage.** No new schema migration. WardRoomThread.thread_mode gains a fourth value 'multi_agent' alongside inform/discuss/action. UI store type union extended.
+
+**UI delta.** Minimal MULTI badge in WardRoomThreadList for thread_mode==='multi_agent' rows. Stroke-based two-circle-bridge glyph + 'MULTI' label in amber. WardRoomThreadDetail unchanged.
+
+**Participants trailer.** Structured '@participants: id1,id2,id3' line at the bottom of the thread body. Recovered via regex. Comma-separated. When mentioned_agent_ids is empty, no trailer is added.
+
+**AD-731 invariant.** Multi-agent threads are textual. Module source-scan asserts no b64encode/base64.b64/image_url tokens.
+
+**Tier-2 throughout.** parse_participants returns [] on missing/malformed/empty input. create_multi_agent_thread raises only if the underlying service.create_thread raises.
+
+**Tests.** +6 pytest in tests/test_ad719a_multi_agent_threads.py. +4 vitest in ui/src/__tests__/WardRoomThreadList.multiAgent.test.tsx.
+
+**Files.** src/probos/ward_room/multi_agent.py (new), tests/test_ad719a_multi_agent_threads.py (new), ui/src/components/wardroom/WardRoomThreadList.tsx (+badge block), ui/src/store/types.ts (+union value), ui/src/__tests__/WardRoomThreadList.multiAgent.test.tsx (new).
+
+**Bundle.** vitest 653 -> 657. pytest 13715 -> 13730. Bundle hash index-cAfin0aS.js -> index-hKNByK6W.js.
+
+**Forward markers.** AD-719a-wire (rewrite AD-719 transient fan-out to persist via create_multi_agent_thread AND inject thread history into participant agents' prompts - trigger: AD-719a contract validated by >=3 distinct multi-agent threads in operation). AD-719a-2 (agent-to-agent without Captain seed - trigger: >=10 multi-agent threads with cross-agent visibility working). AD-719a-3 (cross-thread observation gated by AD-729 peer-perception - trigger: AD-729 default-ON for crew).
