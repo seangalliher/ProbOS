@@ -989,6 +989,42 @@ class BrowserToolConfig(BaseModel):
         ]
     )
 
+    # AD-706d: LLM-driven tier classifier (default-OFF augmentation of the
+    # rule-based classifier). When enabled, layered ON TOP of `classify_action`
+    # via the companion function `classify_action_with_llm`. The LLM can only
+    # UPGRADE risk, never DOWNGRADE — preserves the rule-based safety floor.
+    llm_classifier_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-706d: LLM-driven tier classifier for Browser Tool actions. "
+            "Augments the rule-based classifier; default OFF."
+        ),
+    )
+    llm_classifier_tier: str = Field(
+        default="fast",
+        description=(
+            "AD-706d: LLM tier for classification calls. Fast is cheapest "
+            "and adequate for tier classification."
+        ),
+    )
+    llm_classifier_max_per_hour: int = Field(
+        default=60,
+        ge=0,
+        description=(
+            "AD-706d: per-runtime hourly cap on LLM classifier calls. "
+            "0 disables. Reuses the AD-722a-1 VisionLLMRateLimit primitive "
+            "under scope 'browser_action_classifier'."
+        ),
+    )
+    llm_classifier_cache_ttl_seconds: int = Field(
+        default=300,
+        ge=0,
+        description=(
+            "AD-706d: in-memory cache TTL for identical (action, url-prefix, "
+            "element-text, page-title) tuples. 0 disables caching."
+        ),
+    )
+
 
 class AvatarsConfig(BaseModel):
     """AD-721: 3D crew avatars (VRM popout)."""

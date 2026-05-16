@@ -3438,3 +3438,31 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Files.** src/probos/captain_card/__init__.py (new), src/probos/captain_card/card.py (new, ~190 lines), src/probos/config.py (+4 CognitiveConfig fields), tests/test_ad739_captain_card.py (new, 10 tests).
 
 **Forward markers.** AD-739-prompt-wire (inject render_card_for_prompt output into prompt_builder.build_system_prompt and the per-CognitiveAgent system-prompt assembly - trigger: Captain validates the rendered Card content). AD-739-dreaming-wire (wire the Captain Card refresh into the Dreaming consolidation loop using captain_card_refresh_min_interval_seconds throttle - trigger: AD-739-prompt-wire ships AND >=10 high-importance correction episodes accumulate). AD-739a (per-department overlays - trigger: Captain operates >=3 distinct department-specific contexts). AD-739b (multi-operator support - trigger: ProbOS deployment supports >1 simultaneous Captain). AD-739c (LLM-driven Card refresh - trigger: deterministic refresh produces stale Cards in operator feedback).
+
+### AD-706d - LLM-driven Browser Tool tier classifier (Wave 163)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (default-OFF). **Wave:** 163. **Closes:** #519.
+
+**Augmentation.** New src/probos/tools/browser/llm_classifier.py exports classify_action_with_llm as a sync companion to the existing rule-based classify_action at tools/browser/actions.py:550. The rule-based function is UNCHANGED - its int 1/2/3 tier contract is preserved exactly. Existing callers continue to call classify_action; opt-in LLM augmentation routes through the new companion.
+
+**Critical safety property.** The LLM can only UPGRADE the rule-based tier (1->2->3), NEVER DOWNGRADE. When the rule classifier returns tier=3 the LLM is NOT called (short-circuit cost discipline + zero risk of LLM downgrading the highest tier). When LLM returns a tier strictly less than the rule tier, max() preserves the higher value.
+
+**Reuse not fork.** REUSES AD-722a-1's VisionLLMRateLimit under new scope browser_action_classifier. The pre-flight verify confirmed VisionLLMRateLimit is already used cross-module (self_render_verify.py:32,67 imports it for non-vision-coupled use) - the generalizability question is resolved. No fork to a new LLMCallRateLimit class.
+
+**Cache.** In-memory dict keyed by (action, url[:80], element_text[:120], page_title[:80]) with configurable TTL. Test 9 verifies cache-hit reuses prior tier without an LLM call. Persistent on-disk cache filed as AD-706d-3 forward marker.
+
+**Output parsing.** Strict single-word match against {auto_run, ack_required, destructive} plus synonyms {silent, logged, captain_ack}. Anything else honest-degrades to the rule tier. Maps to int 1/2/3 to match the existing classify_action int contract.
+
+**Sync entry point.** Browser Tool dispatches synchronously, so classify_action_with_llm is sync. It reads llm_client.complete_sync when present; runtimes that only expose async complete honest-degrade to the rule tier. The sync-vs-async distinction is read-only from the runtime - the classifier does not enforce a particular async pattern.
+
+**Config.** Four new BrowserToolConfig fields: llm_classifier_enabled (default False), llm_classifier_tier (default 'fast' - cheapest tier adequate for classification), llm_classifier_max_per_hour (default 60, ge=0), llm_classifier_cache_ttl_seconds (default 300, ge=0).
+
+**Tier-2 throughout.** Disabled gate, rate-limit exhaustion, missing llm_client, missing complete_sync, LLM exception, malformed output, unknown enum value - all honest-degrade to the rule tier. The classifier NEVER raises and NEVER returns a tier less than the rule tier.
+
+**AD-731 invariant.** n/a - text-only classifier. No image bytes flow through this code path. Vision-tier verify lives in AD-706c-1.
+
+**Tests.** +10 pytest in tests/test_ad706d_llm_action_classifier.py. Coverage: disabled preserves rule tier, destructive short-circuits, LLM upgrades 1->2, LLM cannot downgrade 2->1, LLM failure degrades, malformed output degrades, unknown enum degrades, rate-limit exhaustion degrades, cache hit reuses prior tier, source-scan asserts classify_action unchanged + companion exists + VisionLLMRateLimit reused.
+
+**Files.** src/probos/config.py (+4 BrowserToolConfig fields), src/probos/tools/browser/llm_classifier.py (new, ~175 lines), tests/test_ad706d_llm_action_classifier.py (new, 10 tests).
+
+**Forward markers.** AD-706d-2 (Counselor InterventionType pattern share with AD-561 - trigger: AD-561 InterventionType API stabilises). AD-706d-3 (persistent cache - trigger: in-memory cache hit rate is measurably low across operator sessions).
