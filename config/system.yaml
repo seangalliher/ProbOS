@@ -359,6 +359,22 @@ avatar_telemetry:
   # ("reading a readout versus feeling it"). Flip ON to close the loop.
   divergence_detection: true
 
+# --- Avatars (AD-721 family) ---
+# AD-728c (Wave 164): agent-initiated render self-check ("look in the mirror").
+# When enabled, crew agents can call CognitiveAgent.check_own_render(reason=...)
+# from their instructions. Two-budget rate limit:
+#   - hourly cap when NOT in an active conversation
+#   - per-conversation cap INSTEAD OF hourly when in an active DM
+# Throttle observations and divergence findings are injected back into the
+# agent's working memory as PROPRIOCEPTION entries so the agent literally
+# sees "vision-LLM reports my avatar shows X, I intended Y". Costs one
+# vision-tier LLM call per check.
+avatars:
+  render_self_check_enabled: true
+  render_self_check_max_per_hour_per_agent: 3
+  render_self_check_max_per_active_conversation: 2
+  render_self_check_active_window_seconds: 600
+
 # --- Lip-Sync (AD-721b-1, Wave 155) ---
 # Captain provides the rhubarb-lip-sync binary at tools/rhubarb/rhubarb.exe
 # (Windows) or tools/rhubarb/rhubarb (Linux/macOS). /tools/ is gitignored.
