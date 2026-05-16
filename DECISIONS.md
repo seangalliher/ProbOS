@@ -3408,3 +3408,33 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Bundle.** vitest 653 -> 657. pytest 13715 -> 13730. Bundle hash index-cAfin0aS.js -> index-hKNByK6W.js.
 
 **Forward markers.** AD-719a-wire (rewrite AD-719 transient fan-out to persist via create_multi_agent_thread AND inject thread history into participant agents' prompts - trigger: AD-719a contract validated by >=3 distinct multi-agent threads in operation). AD-719a-2 (agent-to-agent without Captain seed - trigger: >=10 multi-agent threads with cross-agent visibility working). AD-719a-3 (cross-thread observation gated by AD-729 peer-perception - trigger: AD-729 default-ON for crew).
+
+### AD-739 - Captain Card data model + render pipeline (Wave 163, contract only)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (data model + storage + render; consumer wiring deferred). **Wave:** 163. **Closes:** #649.
+
+**Capability.** Operator self-card always-in-context across all CognitiveAgent prompts. Closes the gap where every agent re-derives operator context from episodic recall on each turn. System-maintained - NOT agent-self-edited (per governance). Updates flow through Dreaming consolidation + correction-feedback only.
+
+**Why contract-only.** v1 ships data model + storage + render pipeline + validation guard. Prompt-builder injection (AD-739-prompt-wire) and Dreaming-loop integration (AD-739-dreaming-wire) are mechanical wire-ups deferred to forward markers; the model + renderer are the contract.
+
+**Data model.** New src/probos/captain_card/card.py exports CaptainCard Pydantic model (name/callsign/role identity, tone/formatting voice, current_project/current_wave context, preferences max-10, recent_corrections max-3 via CorrectionRef, avatar_ref reserved for AD-733a, version, updated_at). CorrectionRef carries episode_id + summary (template-rendered, max 200 chars) + timestamp.
+
+**Persistence.** Atomic JSON sidecar via load_card / save_card. Temp-file + replace pattern (mirrors AD-720d-2.1). load_card returns default_captain_card on FileNotFoundError or any parse failure (tier-2 degrade). save_card returns False on OSError; never raises.
+
+**Renderer.** render_card_for_prompt is pure-template (no LLM call, no embeddings). Approximates token budget as max_chars = max_tokens * 4. Tail-truncates preferences and recent_corrections until under budget while preserving identity fields (name, callsign, role, tone). Output is a compact YAML-like block.
+
+**Confabulation guard.** Reuses AD-588/589/592's _CAPABILITY_GAP_RE imported from probos.cognitive.decomposer. After rendering, every output line is scanned; lines matching the capability-gap regex (don't have, can't, cannot, unable to, ...) are dropped with a logged WARNING. This blocks the Card from injecting hallucinated capability denials into system prompts.
+
+**AD-731 invariant.** avatar_ref field has a Pydantic field_validator that enforces SHA-256 hex format (64 chars). Non-hash strings raise ValueError at construction. None / empty allowed. Module source-scan asserts no b64encode/base64.b64 anywhere.
+
+**Config.** Four new CognitiveConfig fields: captain_card_enabled (default True; benign anchor), captain_card_path (default captain_card.json), captain_card_max_tokens (default 500, ge=100 le=1500), captain_card_refresh_min_interval_seconds (default 3600, ge=60).
+
+**Default-ON rationale.** Unlike AD-729 / AD-722a-6 / AD-728 which default OFF until operational validation, the Captain Card defaults ON because it is a pure context anchor that cannot misbehave - the renderer's confabulation guard + token budget cap + truncation rules bound its blast radius. Risk is upper-bounded by max_tokens characters of structured text.
+
+**Tier-2 throughout.** load failures, save failures, render failures all log + degrade. The Card never blocks prompt assembly.
+
+**Tests.** +10 pytest in tests/test_ad739_captain_card.py. Coverage: bootstrap default, roundtrip persistence, render within budget, truncation preserves identity, capability-gap line stripped, avatar_ref SHA-256 validator (valid + invalid), avatar_ref None allowed, AD-731 source-scan, CognitiveConfig defaults, package public surface. Real SystemConfig() fixtures per BF-287.
+
+**Files.** src/probos/captain_card/__init__.py (new), src/probos/captain_card/card.py (new, ~190 lines), src/probos/config.py (+4 CognitiveConfig fields), tests/test_ad739_captain_card.py (new, 10 tests).
+
+**Forward markers.** AD-739-prompt-wire (inject render_card_for_prompt output into prompt_builder.build_system_prompt and the per-CognitiveAgent system-prompt assembly - trigger: Captain validates the rendered Card content). AD-739-dreaming-wire (wire the Captain Card refresh into the Dreaming consolidation loop using captain_card_refresh_min_interval_seconds throttle - trigger: AD-739-prompt-wire ships AND >=10 high-importance correction episodes accumulate). AD-739a (per-department overlays - trigger: Captain operates >=3 distinct department-specific contexts). AD-739b (multi-operator support - trigger: ProbOS deployment supports >1 simultaneous Captain). AD-739c (LLM-driven Card refresh - trigger: deterministic refresh produces stale Cards in operator feedback).

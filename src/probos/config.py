@@ -317,6 +317,38 @@ class CognitiveConfig(BaseModel):
             "max_tokens": max_tokens_map.get(tier),  # None = use request default
         }
 
+    # AD-739: Captain Card — operator self-card always-in-context.
+    captain_card_enabled: bool = Field(
+        default=True,
+        description=(
+            "AD-739: inject the Captain Card into CognitiveAgent system "
+            "prompts. Default ON — the Card is a benign context anchor."
+        ),
+    )
+    captain_card_path: str = Field(
+        default="captain_card.json",
+        description=(
+            "AD-739: relative path under runtime.data_dir for the "
+            "Captain Card JSON sidecar."
+        ),
+    )
+    captain_card_max_tokens: int = Field(
+        default=500,
+        ge=100,
+        le=1500,
+        description=(
+            "AD-739: token budget for the rendered Card text injected "
+            "into system prompts. Approximated as max chars / 4."
+        ),
+    )
+    captain_card_refresh_min_interval_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description=(
+            "AD-739: minimum interval between Dreaming-driven Card refreshes."
+        ),
+    )
+
 
 class SubTaskConfig(BaseModel):
     """AD-632a: Sub-task protocol configuration."""
