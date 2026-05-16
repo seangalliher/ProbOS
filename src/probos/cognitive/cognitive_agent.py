@@ -3116,6 +3116,117 @@ class CognitiveAgent(BaseAgent):
         """AD-722: UNIX seconds of last reply emission (0.0 if never)."""
         return self._last_reply_emit_ts
 
+    async def check_own_render(self, reason: str | None = None) -> None:
+        """AD-728c: agent-initiated render self-check ("look in the mirror").
+
+        Calls :func:`verify_render_coherence` with
+        ``trigger='agent_initiated_stub'`` and folds the result into the
+        agent's working memory as an observation. Both coherent and
+        divergent (and rate-limited / honest-degrade) outcomes are
+        surfaced so the agent's next LLM call can adapt.
+
+        Cost discipline: AD-728c PRESERVES the AD-728 event-bus rule —
+        coherent observations do NOT emit ``RENDER_DIVERGENCE_OBSERVED``.
+        The divergence is only in the agent's own working memory: a
+        private observation in the recent buffer, not an emitted event.
+
+        Args:
+            reason: Short tag (<=64 chars) describing why the agent is
+                checking (e.g. ``"before_reply"``, ``"mid_conversation"``,
+                ``"user_corrected_appearance"``). Stored on the resulting
+                :class:`WorkingMemoryEntry` metadata for downstream
+                salience. ``None`` becomes ``"unspecified"``.
+        """
+        # AD-728c §4 rationale: SENSORIUM_REGISTRY is class-level static
+        # dispatch metadata, NOT a runtime mailbox for ephemeral
+        # observations. The correct runtime ingress for "the agent just
+        # observed X" is AgentWorkingMemory.record_observation.
+        tag = (reason or "unspecified").strip()[:64] or "unspecified"
+        wm = getattr(self, "_working_memory", None)
+
+        def _record(summary: str, metadata: dict[str, Any]) -> None:
+            if wm is None:
+                return
+            try:
+                wm.record_observation(
+                    summary,
+                    source="render_self_check",
+                    metadata=metadata,
+                    knowledge_source="self_perception",
+                )
+            except Exception:
+                logger.warning(
+                    "AD-728c: working-memory record_observation failed for "
+                    "agent=%s; observation lost",
+                    self.id, exc_info=True,
+                )
+
+        try:
+            # Mirror the AD-728 captain_command path: pass empty/None and
+            # let verify_render_coherence honest-degrade. The captain
+            # callsite (`experience/shell.py:_cmd_verify_render`) does
+            # not reimplement projection either; the function's existing
+            # honest-degrade ("backend_render_unavailable") is the
+            # contract for "no projection available".
+            from probos.avatars.render_verification import verify_render_coherence
+
+            result = await verify_render_coherence(
+                runtime=self._runtime,
+                agent_id=self.id,
+                trigger="agent_initiated_stub",
+                digital_state_summary="",
+                backend_render_ref=None,
+            )
+        except Exception:
+            logger.warning(
+                "AD-728c: verify_render_coherence raised for agent=%s; "
+                "honest-degraded",
+                self.id, exc_info=True,
+            )
+            _record(
+                f"Self-check (reason={tag}) honest-degraded: internal error.",
+                {
+                    "reason": tag,
+                    "trigger": "agent_initiated_stub",
+                    "coherent": None,
+                    "skipped_reason": "internal_error",
+                },
+            )
+            return
+
+        if result.coherent is True:
+            summary = (
+                f"Self-check (reason={tag}): vision-LLM confirms my "
+                f"rendered avatar matches my intent."
+            )
+        elif result.coherent is False:
+            summary = (
+                f"Self-check (reason={tag}): vision-LLM reports my avatar "
+                f"shows '{result.analog_description}' but I intended "
+                f"'{result.digital_description}'. Summary: "
+                f"{result.divergence_summary}."
+            )
+        elif result.skipped_reason == "rate_limited_self_check":
+            summary = (
+                f"Self-check (reason={tag}) was throttled by rate limit; "
+                f"no observation captured this call."
+            )
+        else:
+            summary = (
+                f"Self-check (reason={tag}) honest-degraded: "
+                f"{result.skipped_reason}."
+            )
+
+        _record(
+            summary,
+            {
+                "reason": tag,
+                "trigger": "agent_initiated_stub",
+                "coherent": result.coherent,
+                "skipped_reason": result.skipped_reason,
+            },
+        )
+
     def mark_chain_output_emitted(
         self,
         output_text: str,

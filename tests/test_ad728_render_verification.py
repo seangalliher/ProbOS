@@ -223,10 +223,16 @@ async def test_divergence_followup_enabled_passes_through() -> None:
     assert r.trigger == "divergence_followup"
 
 
-# 7c. agent_initiated_stub hard-rejected.
+# 7c. agent_initiated_stub default-OFF preserves AD-728 baseline behavior.
+#     AD-728c flips this trigger to a gated path when
+#     render_self_check_enabled=True; with the gate OFF the AD-728 baseline
+#     ("agent_initiated_disabled") is preserved exactly.
 @pytest.mark.asyncio
-async def test_agent_initiated_stub_hard_rejected() -> None:
-    rt = _FakeRuntime(config=_config_enabled(), llm_client=_FakeLLMClient("unused"))
+async def test_agent_initiated_stub_default_off_preserves_baseline() -> None:
+    cfg = _config_enabled()
+    # AD-728c gate explicitly OFF (also the Pydantic default).
+    cfg.avatars.render_self_check_enabled = False
+    rt = _FakeRuntime(config=cfg, llm_client=_FakeLLMClient("unused"))
     r = await verify_render_coherence(
         runtime=rt, agent_id="ezri", trigger="agent_initiated_stub",
         digital_state_summary="x", backend_render_ref="sha256:1",

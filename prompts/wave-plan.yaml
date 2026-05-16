@@ -3536,6 +3536,21 @@ waves:
     issues_to_close: [658, 586, 615, 587, 589, 590, 591, 547, 546, 649, 519]
     status: shipped
 
+  - id: "164"
+    title: "AD-728c — Agent-initiated render self-check with contextual rate limits"
+    # Single-AD wave. Captain feedback from Counselor self-report:
+    # current AD-728 ships agent_initiated trigger as hard-rejected.
+    # Closes the perception gap: agents can look in the mirror, with
+    # a baseline hourly budget plus an extra budget while actively
+    # engaged in conversation ("before + during" pattern).
+    kind: main
+    depends_on: ["163"]
+    dispatch_prompt: "prompts/WAVE-164-DISPATCH.md"
+    prompts_already_drafted: false
+    builder_required: true
+    issues_to_close: [660]
+    status: drafting
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

@@ -20,6 +20,14 @@ this module never inlines base64.
 
 Cost discipline: coherent observations are NOT logged (only divergent ones
 emit ``EventType.RENDER_DIVERGENCE_OBSERVED``).
+
+AD-728c: the ``agent_initiated_stub`` trigger is gated by
+``cfg.avatars.render_self_check_enabled`` (default OFF). When enabled, it
+uses a two-budget contextual rate limit (hourly OR per-active-conversation,
+never additive). Event-bus cost discipline is preserved — coherent
+agent-initiated calls still emit nothing. The agent's own working-memory
+ingress (folding coherent observations back to the agent) is owned by the
+caller (``CognitiveAgent.check_own_render``), not by this module.
 """
 from __future__ import annotations
 
@@ -115,12 +123,18 @@ async def verify_render_coherence(
         )
         return _result(coherent=None, skipped="unknown_trigger")
 
-    if trigger == "agent_initiated_stub":
-        # Path exists so future AD flips the gate; currently hard-rejected.
-        return _result(coherent=None, skipped="agent_initiated_disabled")
-
     cfg = getattr(runtime, "config", None)
     avatars_cfg = getattr(cfg, "avatars", None) if cfg is not None else None
+
+    if trigger == "agent_initiated_stub":
+        # AD-728c: name retained for compat with AD-728 _VALID_TRIGGERS and
+        # public trigger surface; behavior is no longer a stub. When the
+        # config gate is off, preserve the AD-728 baseline hard-reject.
+        if avatars_cfg is None or not getattr(
+            avatars_cfg, "render_self_check_enabled", False
+        ):
+            return _result(coherent=None, skipped="agent_initiated_disabled")
+
     if avatars_cfg is None or not getattr(avatars_cfg, "render_verification_enabled", False):
         return _result(coherent=None, skipped="disabled")
 
@@ -132,13 +146,28 @@ async def verify_render_coherence(
     if not backend_render_ref:
         return _result(coherent=None, skipped="backend_render_unavailable")
 
-    max_per_hour = int(getattr(avatars_cfg, "render_verification_max_per_hour_per_agent", 0))
-    if max_per_hour <= 0:
-        return _result(coherent=None, skipped="disabled")
+    if trigger == "agent_initiated_stub":
+        # AD-728c: two-budget rate gate is the SOLE rate-limit authority
+        # for this trigger — bypass the AD-728 hourly gate below. Budget
+        # is consumed eagerly inside the helper (call attempt counts),
+        # so the post-LLM note_call path below is a no-op for this trigger.
+        self_check_reason = _agent_initiated_rate_check(
+            runtime=runtime,
+            agent_id=agent_id,
+            avatars_cfg=avatars_cfg,
+            now=now,
+        )
+        if self_check_reason is not None:
+            return _result(coherent=None, skipped=self_check_reason)
+        rate = None
+    else:
+        max_per_hour = int(getattr(avatars_cfg, "render_verification_max_per_hour_per_agent", 0))
+        if max_per_hour <= 0:
+            return _result(coherent=None, skipped="disabled")
 
-    rate = VisionLLMRateLimit(scope="render_verification", max_per_hour=max_per_hour)
-    if not rate.under_limit(agent_id):
-        return _result(coherent=None, skipped="rate_limited")
+        rate = VisionLLMRateLimit(scope="render_verification", max_per_hour=max_per_hour)
+        if not rate.under_limit(agent_id):
+            return _result(coherent=None, skipped="rate_limited")
 
     llm = getattr(runtime, "llm_client", None)
     if llm is None:
@@ -167,7 +196,8 @@ async def verify_render_coherence(
         )
         return _result(coherent=None, skipped="tier_unavailable")
 
-    rate.note_call(agent_id)
+    if rate is not None:
+        rate.note_call(agent_id)
 
     parsed = _parse_vision_payload(raw)
     if parsed is None:
@@ -186,7 +216,8 @@ async def verify_render_coherence(
                 "looks/appears/is ...'."
             )
             raw_retry = await _call_vision(llm, store, retry_prompt, backend_render_ref)
-            rate.note_call(agent_id)
+            if rate is not None:
+                rate.note_call(agent_id)
             parsed_retry = _parse_vision_payload(raw_retry)
             if parsed_retry is not None:
                 coherent_r, analog_r, divergence_r = parsed_retry
@@ -336,3 +367,91 @@ async def _emit_render_divergence(
 
 
 __all__ = ["RenderCoherenceResult", "verify_render_coherence"]
+
+
+def _last_reply_emitted_at(runtime: Any, agent_id: str) -> float:
+    """AD-728c: read the agent's last-reply timestamp via the public
+    registry API (BF-287: never reach into registry.agents directly).
+
+    Honest-degrade to 0.0 when the registry is missing the agent or the
+    agent lacks the AD-722 attribute.
+    """
+    registry = getattr(runtime, "registry", None)
+    if registry is None:
+        return 0.0
+    get = getattr(registry, "get", None)
+    if not callable(get):
+        return 0.0
+    try:
+        agent = get(agent_id)
+    except Exception:
+        return 0.0
+    if agent is None:
+        return 0.0
+    ts = getattr(agent, "last_reply_emitted_at", 0.0)
+    try:
+        return float(ts)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _agent_initiated_rate_check(
+    *,
+    runtime: Any,
+    agent_id: str,
+    avatars_cfg: Any,
+    now: float,
+) -> str | None:
+    """AD-728c: two-budget contextual rate gate for agent-initiated
+    self-checks.
+
+    Returns ``"rate_limited_self_check"`` when the call should be denied,
+    else ``None``. Budget selection:
+
+      * If the agent is in an active conversation (last_reply_emitted_at
+        within ``render_self_check_active_window_seconds``), apply the
+        per-conversation budget.
+      * Else, apply the hourly budget.
+
+    The two budgets are NEVER additive — the per-conversation budget is
+    the override while the agent is engaged, not an add-on.
+    """
+    active_window = int(
+        getattr(avatars_cfg, "render_self_check_active_window_seconds", 600)
+    )
+    last_reply = _last_reply_emitted_at(runtime, agent_id)
+    in_active = (
+        last_reply > 0.0
+        and active_window > 0
+        and (now - last_reply) <= active_window
+    )
+
+    if in_active:
+        budget = int(
+            getattr(avatars_cfg, "render_self_check_max_per_active_conversation", 0)
+        )
+        if budget <= 0:
+            return "rate_limited_self_check"
+        # AD-728c-3 forward marker: per-conversation scope keys accumulate
+        # in VisionLLMRateLimit._windows (one stale bucket per Captain
+        # reply, never GC'd). Tolerable because each bucket is a tiny
+        # deque[float] kept short by the 3600s sliding-window eviction.
+        rate = VisionLLMRateLimit(
+            scope=f"render_self_check_conv:{int(last_reply)}",
+            max_per_hour=budget,
+        )
+    else:
+        budget = int(
+            getattr(avatars_cfg, "render_self_check_max_per_hour_per_agent", 0)
+        )
+        if budget <= 0:
+            return "rate_limited_self_check"
+        rate = VisionLLMRateLimit(
+            scope="render_self_check_hour",
+            max_per_hour=budget,
+        )
+
+    if not rate.under_limit(agent_id):
+        return "rate_limited_self_check"
+    rate.note_call(agent_id)
+    return None

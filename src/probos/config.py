@@ -1130,6 +1130,47 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-728c: agent-initiated render self-check (default-OFF transitional).
+    render_self_check_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-728c: flip agent_initiated_stub trigger from hard-reject to "
+            "a gated, rate-limited self-check. Default OFF; flip after "
+            "AD-728 telemetry confirms vision-tier cost is bounded."
+        ),
+    )
+    render_self_check_max_per_hour_per_agent: int = Field(
+        default=3,
+        ge=0,
+        description=(
+            "AD-728c: per-agent hourly cap for agent-initiated render "
+            "self-checks. Applies when the agent is NOT in an active "
+            "conversation. 0 disables. Uses the AD-722a-1 "
+            "VisionLLMRateLimit primitive under scope "
+            "'render_self_check_hour'."
+        ),
+    )
+    render_self_check_max_per_active_conversation: int = Field(
+        default=2,
+        ge=0,
+        description=(
+            "AD-728c: per-agent budget within a single active conversation "
+            "window. Pattern: 'before reply + 1 mid-conversation'. Applies "
+            "INSTEAD OF the hourly budget while the agent is in an active "
+            "conversation. 0 disables self-check during active conversations."
+        ),
+    )
+    render_self_check_active_window_seconds: int = Field(
+        default=600,
+        ge=0,
+        description=(
+            "AD-728c: seconds since the agent's last reply emission to "
+            "consider it 'in an active conversation' for self-check budget "
+            "selection. Default 600s = 10 minutes. Uses CognitiveAgent."
+            "last_reply_emitted_at (AD-722)."
+        ),
+    )
+
     # AD-729: peer avatar perception governance contract (default-OFF
     # transitional). Capability stays OFF until AD-729a Standing Orders ship
     # and AD-729b certification grades at least one officer.
