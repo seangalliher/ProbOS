@@ -3350,3 +3350,33 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Bundle.** vitest 644 -> 648. `npm run build` green; bundle hash `index-a4x_HPw3.js` -> `index-cAfin0aS.js`.
 
 **Forward markers.** AD-721d-2c-parent-wire (wire `onMediateRevision` callback + `counselorOnline` lookup in `AgentProfilePanel.tsx` - trigger: first Captain feedback that the button is desired in the default revision flow OR HXI polish wave is scheduled).
+
+### AD-719b - Copilot-style left rail + Agents nav (Wave 163)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (default-OFF; parent wire deferred). **Wave:** 163. **Closes:** #547.
+
+**Shell component.** New self-contained `ui/src/components/leftrail/LeftRail.tsx` exports the `LeftRail` component plus `LeftRailAgent`, `LeftRailThread`, `LeftRailProps` types. Pure presentational - data flows in via props; parent wires the zustand stores. The rail's responsibility is rendering + interactivity + localStorage state; not data fetching.
+
+**Default-OFF.** Returns `null` until `localStorage.hxi_left_rail_enabled === 'true''`. This is zero-regression for existing users: the existing IntentSurface continues unchanged.
+
+**Collapse + width.** `localStorage.hxi_left_rail_collapsed` toggles 240px <-> 56px width; transition 'width 120ms ease''. Collapse-toggle button (stroke-based chevron glyph) at the top.
+
+**Progressive disclosure (HXI Design Principle #5).** Visit count tracked in `localStorage.hxi_visit_count` and incremented once per mount. First-time users (visits<10) see max 5 agents + 3 threads; veteran (visits>=10) see max 12 + 8.
+
+**Two sections.** (1) Agents online - filters incoming `agents` to `status==='online'`; each rendered as a click-button with an amber dot + callsign. (2) Recent threads - rendered as click-buttons with title; truncated with ellipsis when expanded, glyph-only ('.') when collapsed. Each section has a stroke-based icon glyph at its header.
+
+**Inline-SVG glyphs only (HXI Design Principle #3).** Three glyphs: agents (head + shoulders silhouette stroke), threads (three horizontal lines), collapse (chevron). All `strokeWidth=1.5`, `strokeLinecap=round`, no emoji, no fills. Active state `#f0b060`; inactive `#666680`.
+
+**Tooltips for collapsed state.** When collapsed, full agent/thread names render via the native `title` attribute, satisfying HXI Design Principle #1 (system understands the human - no decoding required even at high information density).
+
+**Parent wiring deferred.** `LeftRail` is built but NOT yet imported by `App.tsx`. The current bundle does not include it (Vite tree-shakes unreferenced modules - bundle hash unchanged from AD-721d-2c). Parent wiring is filed as forward marker AD-719b-parent-wire; default-flip is AD-719b-2.
+
+**No new global store, no new context.** Per the scope discipline, the rail is a consumer of existing state via props. AgentProfilePanel / WardRoomPanel callers will read `useStore` directly and pass the trimmed lists in.
+
+**Tests.** +5 vitest in `ui/src/__tests__/LeftRail.test.tsx`. Coverage: default-OFF renders null, enabled renders both sections + filters offline agents, click-agent fires callback with agent_id, click-thread fires callback with thread_id, collapse toggle persists localStorage AND updates rendered width.
+
+**Files.** `ui/src/components/leftrail/LeftRail.tsx` (new, ~230 lines), `ui/src/__tests__/LeftRail.test.tsx` (new, 5 tests).
+
+**Bundle.** vitest 648 -> 653. `npm run build` green. Bundle hash unchanged (`index-cAfin0aS.js`) because the rail is not yet imported - this is expected and correct; the hash will advance when AD-719b-parent-wire ships.
+
+**Forward markers.** AD-719b-parent-wire (import LeftRail into App.tsx + wire zustand stores for online agents + recent threads - trigger: AD-719b shipped AND parent layout has the slot reserved). AD-719b-2 (flip `hxi_left_rail_enabled` default to True - trigger: Captain has used the left rail across >=5 sessions per visit-count telemetry).
