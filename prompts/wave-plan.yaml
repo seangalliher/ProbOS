@@ -3549,7 +3549,7 @@ waves:
     prompts_already_drafted: false
     builder_required: true
     issues_to_close: [660]
-    status: drafting
+    status: shipped
 
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
