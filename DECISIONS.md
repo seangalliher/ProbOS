@@ -3146,3 +3146,35 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Forward markers.**
 - AD-722b-5a (wire FederationTelemetryRelay.set_emit_callback to FederationBridge.forward_telemetry - trigger: AD-480e/g matures the bridge with a streaming/relay primitive).
 - AD-722b-5b (HXI surface to render remote agents with origin_mesh_id badge - trigger: AD-722b-5a ships AND multi-mesh deployments are in production).
+
+### AD-728 - Vision-LLM render-coherence mirror function (Wave 163)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 163. **Closes:** #586.
+
+**Primitive.** Generalizes the AD-722e-2 self-render-verify pattern into a trigger-driven mirror function with three triggers (captain_command / divergence_followup / agent_initiated_stub) and a new alert payload type. PRIMITIVE for Wave 163 - AD-722a-6 and AD-729 family consume the EventType.RENDER_DIVERGENCE_OBSERVED shape.
+
+**Module.** New `src/probos/avatars/render_verification.py` exports `RenderCoherenceResult` (frozen dataclass with `agent_id`, `trigger`, `coherent` (bool|None), `digital_description`, `analog_description`, `divergence_summary`, `skipped_reason`, `timestamp`) and the module-level async function `verify_render_coherence(*, runtime, agent_id, trigger, digital_state_summary, backend_render_ref)`.
+
+**Reuse.** REUSES AD-722a-1's `VisionLLMRateLimit` (scope `render_verification`) and `is_render_phrased()` (AD-727 rule #8 phrasing helper). NO new rate-limit class; one shared budget per agent across vision-observability detectors.
+
+**Triggers.** `captain_command` wired through new `/verify-render <agent_id>` slash command in `experience/shell.py`. `divergence_followup` gated by `cfg.avatars.render_verification_followup_enabled` (default False) - actual VisionIntentDivergenceDetector post-hook wiring deferred (path exists, awaiting AD-721i renderer telemetry). `agent_initiated_stub` hard-rejected with `skipped_reason='agent_initiated_disabled'` (path exists for future flip).
+
+**Config.** Three new `AvatarsConfig` fields: `render_verification_enabled: bool = False` (default-OFF transitional), `render_verification_max_per_hour_per_agent: int = 3` (ge=0, 0 disables), `render_verification_followup_enabled: bool = False`. No new top-level config class - phantom `BridgeAlertsConfig` reference from issue body explicitly dropped per pre-flight verify.
+
+**Event.** New `EventType.RENDER_DIVERGENCE_OBSERVED` inserted between `VISION_INTENT_DIVERGENCE_OBSERVED` (AD-722a-1) and `SELF_RENDER_COHERENCE_OBSERVED` (AD-722e-2). Payload carries `agent_id`, `trigger`, `digital_description`, `analog_description`, `divergence_summary`, `severity` (low/high based on summary length), `timestamp`.
+
+**Phrasing.** Hard Rule 8 - render-as-subject. When the vision LLM returns agent-as-subject analog text (caught by `is_render_phrased` regex), the function re-prompts ONCE with an explicit constraint suffix; if the retry also fails the regex, the analog is dropped with `skipped_reason='phrasing_rejected'` and no event is emitted.
+
+**Cost discipline.** Coherent observations are NOT logged - only divergent observations emit `RENDER_DIVERGENCE_OBSERVED`. The cost of a 'nothing wrong' call is exactly one vision-LLM call; nothing else.
+
+**AD-731 invariant.** Image bytes flow through `AttachmentStore` SHA-256 refs via `build_multimodal_messages`; the module's own source-scan test asserts no `b64encode`/`base64.b64` token in the module. Test 10 is the regression guard.
+
+**AD-727 rule #1.** READ-ONLY on reputation + associative routing. The module source-scan test asserts no `trust_network` / `hebbian` token anywhere in the file.
+
+**Tier-2 throughout.** Every failure mode (unknown trigger, disabled, followup disabled, missing renderer ref, no llm_client, rate-limit exhausted, vision tier exception, parse error, phrasing rejected) returns a `RenderCoherenceResult` with `skipped_reason` set. The function NEVER raises.
+
+**Tests.** +15 pytest in `tests/test_ad728_render_verification.py`. Coverage: coherent no-event-emitted, divergent-emits-event, disabled honest-degrade, backend renderer unavailable, vision tier failure, rate-limit exhaustion, all three trigger paths (captain_command happy, divergence_followup disabled-by-default, divergence_followup enabled passes through, agent_initiated_stub hard-rejected), payload integrity, phrasing-rejected-after-reprompt, AD-731 invariant source-scan, AD-727 rule #1 source-scan, coherent-does-not-emit-event. Real `SystemConfig()` fixtures per AD-722b-1a.
+
+**Files.** `src/probos/events.py` (+1 EventType), `src/probos/config.py` (+3 AvatarsConfig fields), `src/probos/avatars/render_verification.py` (new, 280 lines), `src/probos/experience/shell.py` (+1 slash command + handler), `tests/test_ad728_render_verification.py` (new, 15 tests).
+
+**Forward markers.** AD-728a (richer embedding-distance coherence scoring - trigger: RENDER_DIVERGENCE_OBSERVED event volume exceeds 50/quarter). AD-728b (auto-correction proposals - trigger: AD-728a embedding scoring stable AND drift pattern catalog >=10 categorized causes).

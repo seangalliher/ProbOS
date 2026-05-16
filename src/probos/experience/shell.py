@@ -307,6 +307,7 @@ class ProbOSShell:
             "/explain":    lambda: self._handle_nl("what just happened?"),
             "/bridge":     lambda: self._cmd_bridge(),
             "/quit":       lambda: self._cmd_quit(arg),
+            "/verify-render": lambda: self._cmd_verify_render(arg),
         }
 
         handler = handlers.get(cmd)
@@ -333,6 +334,45 @@ class ProbOSShell:
     async def _cmd_bridge(self) -> None:
         """Exit 1:1 session — delegates to SessionManager."""
         self.session.exit_session(self.console)
+
+    async def _cmd_verify_render(self, arg: str) -> None:
+        """AD-728: Captain-triggered render-coherence mirror.
+
+        Usage: /verify-render <agent_id>
+        """
+        agent_id = arg.strip()
+        if not agent_id:
+            self.console.print(
+                "[yellow]Usage: /verify-render <agent_id>[/yellow]"
+            )
+            return
+        try:
+            from probos.avatars.render_verification import verify_render_coherence
+            result = await verify_render_coherence(
+                runtime=self.runtime,
+                agent_id=agent_id,
+                trigger="captain_command",
+                digital_state_summary="",
+                backend_render_ref=None,
+            )
+            if result.skipped_reason:
+                self.console.print(
+                    f"[yellow]Render verification skipped for {agent_id}: "
+                    f"{result.skipped_reason}[/yellow]"
+                )
+            elif result.coherent:
+                self.console.print(
+                    f"[green]Render coherent for {agent_id}[/green]"
+                )
+            else:
+                self.console.print(
+                    f"[red]Render divergence observed for {agent_id}: "
+                    f"{result.divergence_summary}[/red]"
+                )
+        except Exception as e:
+            self.console.print(
+                f"[red]/verify-render error: {e}[/red]"
+            )
 
     # ------------------------------------------------------------------
     # Quit (stays in shell — controls REPL loop)

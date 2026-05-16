@@ -1035,6 +1035,33 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-728: vision-LLM render-coherence mirror (default-OFF transitional).
+    render_verification_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-728: vision-LLM render-coherence mirror. Default OFF "
+            "until AD-721i backend renderer is stable."
+        ),
+    )
+    render_verification_max_per_hour_per_agent: int = Field(
+        default=3,
+        ge=0,
+        description=(
+            "AD-728: per-agent hourly cap for render-verification vision "
+            "calls. 0 disables. Shares the AD-722a-1 VisionLLMRateLimit "
+            "primitive under scope 'render_verification'."
+        ),
+    )
+    render_verification_followup_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-728: when True, an AD-722a-1 intent-divergence observation "
+            "triggers a render-coherence mirror call with "
+            "trigger='divergence_followup'. Default OFF; flip after AD-728 "
+            "RENDER_DIVERGENCE_OBSERVED telemetry is stable."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:
