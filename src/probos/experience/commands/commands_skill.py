@@ -17,13 +17,15 @@ logger = logging.getLogger(__name__)
 async def cmd_skill(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """/skill — cognitive skill catalog management.
 
-    Subcommands: list, discover, import, info, enrich, remove, validate.
+    Subcommands: list, loaded, discover, import, info, enrich, remove, validate.
     """
     parts = args.split(maxsplit=1) if args else []
     sub = parts[0].lower() if parts else ""
 
     if sub == "list":
         await _skill_list(runtime, console)
+    elif sub == "loaded":
+        await _skill_loaded(runtime, console, parts[1] if len(parts) > 1 else "")
     elif sub == "discover":
         await _skill_discover(runtime, console)
     elif sub == "import":
@@ -37,14 +39,76 @@ async def cmd_skill(runtime: ProbOSRuntime, console: Console, args: str) -> None
     elif sub == "validate":
         await _skill_validate(runtime, console, parts[1] if len(parts) > 1 else "")
     else:
-        console.print("[yellow]Usage: /skill <list|discover|import|info|enrich|remove|validate>[/yellow]")
+        console.print("[yellow]Usage: /skill <list|loaded|discover|import|info|enrich|remove|validate>[/yellow]")
         console.print("  list                               — List all cognitive skills")
+        console.print("  loaded <agent_id> \\[intent]         — Show augmentation skills that would load for an agent")
         console.print("  discover                           — Show pip-installed skills available for import")
         console.print("  import <path>                      — Import a skill from a directory path")
         console.print("  info <name>                        — Show full skill details")
         console.print("  enrich <name> --dept <d> --intents <i1 i2>  — Add ProbOS metadata")
         console.print("  remove <name>                      — Remove an external skill")
         console.print("  validate [name]                    — Validate skills (all or specific)")
+
+
+async def _skill_loaded(runtime: ProbOSRuntime, console: Console, args: str) -> None:
+    """AD-728d / Wave 165: show augmentation skills that would load for an agent.
+
+    Usage: /skill loaded <agent_id> [intent]
+    Default intent: direct_message (the most common surface for self-image-awareness).
+    """
+    parts = args.split() if args else []
+    if not parts:
+        console.print("[yellow]Usage: /skill loaded <agent_id> \\[intent][/yellow]")
+        console.print("  Default intent: direct_message")
+        return
+
+    agent_id = parts[0]
+    intent = parts[1] if len(parts) > 1 else "direct_message"
+
+    catalog = getattr(runtime, "cognitive_skill_catalog", None)
+    if not catalog:
+        console.print("[red]Cognitive skill catalog not available.[/red]")
+        return
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        console.print(f"[red]Agent not found: {agent_id}[/red]")
+        return
+
+    department = getattr(agent, "department", None)
+    rank = getattr(agent, "rank", None)
+    rank_val = rank.value if hasattr(rank, "value") else rank
+
+    entries = catalog.find_augmentation_skills(
+        intent, department=department, agent_rank=rank_val,
+    )
+
+    header = (
+        f"Loaded augmentation skills for agent={agent_id} "
+        f"(department={department or '?'}, rank={rank_val or '?'}, intent={intent})"
+    )
+    if not entries:
+        console.print(f"[dim]{header}[/dim]")
+        console.print("[dim]  (none — skill catalog returned no augmentation matches)[/dim]")
+        return
+
+    table = Table(title=header)
+    table.add_column("Name", style="cyan")
+    table.add_column("Department", style="bold")
+    table.add_column("Min Rank")
+    table.add_column("Intents")
+    table.add_column("Activation")
+
+    for e in entries:
+        table.add_row(
+            e.name,
+            e.department,
+            e.min_rank or "-",
+            ", ".join(e.intents) if e.intents else "-",
+            e.activation,
+        )
+
+    console.print(table)
 
 
 async def _skill_list(runtime: ProbOSRuntime, console: Console) -> None:
