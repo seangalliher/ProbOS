@@ -474,7 +474,7 @@ async def test_endpoint_tts_honest_degrade_when_backend_returns_none(
 
     class _NoneBackend:
         name = "piper"
-        async def synthesize(self, text, emotion=None):
+        async def synthesize(self, text, emotion=None, voice_override=None):
             return None
 
     monkeypatch.setattr(
@@ -502,7 +502,7 @@ async def test_endpoint_tts_happy_path_returns_attachment_and_visemes(
 
     class _StubBackend:
         name = "piper"
-        async def synthesize(self, text, emotion=None):
+        async def synthesize(self, text, emotion=None, voice_override=None):
             return TTSResult(audio_bytes=wav, mime="audio/wav")
 
     from probos.avatars.rhubarb_backend import VisemeFrame
@@ -549,7 +549,7 @@ async def test_endpoint_tts_omits_visemes_when_lipsync_heuristic(
 
     class _StubBackend:
         name = "piper"
-        async def synthesize(self, text, emotion=None):
+        async def synthesize(self, text, emotion=None, voice_override=None):
             return TTSResult(audio_bytes=wav, mime="audio/wav")
 
     called: list[bool] = []

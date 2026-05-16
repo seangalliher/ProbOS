@@ -16,12 +16,16 @@ class NullBackend:
     name: str = "null"
 
     async def synthesize(
-        self, text: str, emotion: str | None = None
+        self,
+        text: str,
+        emotion: str | None = None,
+        voice_override: str | None = None,
     ) -> TTSResult | None:
         """No-op. Returns ``None`` for honest-degrade.
 
-        AD-738e-1: ``emotion`` accepted for Protocol compat; ignored
-        because the null backend produces no audio.
+        AD-738e-1: ``emotion`` accepted for Protocol compat; ignored.
+        BF-291 / AD-738f: ``voice_override`` accepted for Protocol compat;
+        ignored because the null backend produces no audio.
         """
-        del emotion
+        del emotion, voice_override
         return None

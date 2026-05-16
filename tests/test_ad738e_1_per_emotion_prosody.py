@@ -189,7 +189,7 @@ async def test_tts_endpoint_forwards_emotion_to_backend(monkeypatch):
     captured_calls: list[dict] = []
 
     class _StubBackend:
-        async def synthesize(self, text, emotion=None):
+        async def synthesize(self, text, emotion=None, voice_override=None):
             captured_calls.append({"text": text, "emotion": emotion})
             return None
 

@@ -31,12 +31,21 @@ class TTSBackend(Protocol):
     name: str
 
     async def synthesize(
-        self, text: str, emotion: str | None = None
+        self,
+        text: str,
+        emotion: str | None = None,
+        voice_override: str | None = None,
     ) -> TTSResult | None:
         """Synthesize ``text`` to audio bytes. Return ``None`` on any failure.
 
         AD-738e-1: ``emotion`` is an optional v1 ``EmotionalIntent`` name
         (lowercase) used to apply per-emotion prosody overrides. ``None``
         or unknown names keep backend defaults (additive guarantee).
+
+        BF-291 / AD-738f: ``voice_override`` is an optional voice-model
+        name (e.g. ``en_US-ryan-medium``). When set and resolvable under
+        ``tools/piper/voices/``, the backend uses that voice for THIS
+        call only (no instance mutation). Unknown / unresolvable falls
+        back to the configured ``tts.voice_model`` silently.
         """
         ...

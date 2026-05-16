@@ -3,9 +3,15 @@ import { useStore } from '../../store/useStore';
 import { useEffect, useState } from 'react';
 import {
   getAvailableVoices,
+  getServerPiperVoices,
   speakResponse,
   type VoiceProfile,
 } from '../../audio/voice';
+
+/** BF-291: union of browser and Piper voice sources. Both share `.name`
+ *  which is all the picker needs; quality/lang are surfaced when the
+ *  server source is available. */
+type PickerVoice = { name: string; quality?: string; lang?: string };
 
 const TRAIT_LABELS: Record<string, string> = {
   openness: 'Openness',
@@ -58,7 +64,7 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
     // AD-718c: optional per-agent wake phrase.
     wake_phrase: profileData?.voiceProfile?.wake_phrase ?? '',
   });
-  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [availableVoices, setAvailableVoices] = useState<PickerVoice[]>([]);
   // AD-718a: agent-authored voice proposal preview state.
   const [proposal, setProposal] = useState<VoiceProfile | null>(null);
   const [proposalRationale, setProposalRationale] = useState<string>('');
@@ -67,7 +73,24 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
   const [revisionNote, setRevisionNote] = useState<string>('');
   const [showRevisionInput, setShowRevisionInput] = useState<boolean>(false);
   useEffect(() => {
-    setAvailableVoices(getAvailableVoices());
+    let cancelled = false;
+    // BF-291: prefer server-side Piper catalog when the runtime backend is
+    // piper; fall back to the browser SpeechSynthesisVoice list (Edge TTS
+    // on Windows) when the backend is browser or unreachable.
+    (async () => {
+      const piper = await getServerPiperVoices();
+      if (cancelled) return;
+      if (piper !== null) {
+        setAvailableVoices(piper.map(v => ({
+          name: v.name,
+          quality: v.quality,
+          lang: v.lang,
+        })));
+      } else {
+        setAvailableVoices(getAvailableVoices().map(v => ({ name: v.name })));
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
   // Re-sync when profileData arrives or agent changes.
   useEffect(() => {
@@ -324,7 +347,9 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
               >
                 <option value="">(global default)</option>
                 {availableVoices.map(v => (
-                  <option key={v.name} value={v.name}>{v.name}</option>
+                  <option key={v.name} value={v.name}>
+                    {v.quality ? `${v.name} (${v.quality})` : v.name}
+                  </option>
                 ))}
               </select>
             </label>

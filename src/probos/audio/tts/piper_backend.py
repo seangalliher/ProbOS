@@ -87,7 +87,10 @@ class PiperBackend:
         self._sentence_silence = sentence_silence
 
     async def synthesize(
-        self, text: str, emotion: str | None = None
+        self,
+        text: str,
+        emotion: str | None = None,
+        voice_override: str | None = None,
     ) -> TTSResult | None:
         """Run piper, return WAV bytes or ``None`` on any failure.
 
@@ -96,6 +99,13 @@ class PiperBackend:
         for THIS call only (no instance mutation). Unknown / ``None`` /
         ``"neutral"`` falls through to constructor defaults — additive
         guarantee, no regression for existing call paths.
+
+        BF-291 / AD-738f: ``voice_override`` is an optional Piper voice
+        model name (e.g. ``en_US-ryan-medium``). When set and resolvable
+        under ``tools/piper/voices/``, the backend uses that voice for
+        THIS call only. Unknown / unresolvable falls back to the
+        configured ``tts.voice_model`` silently with a debug log so the
+        per-call override path is observable.
 
         NEVER raises. Empty / whitespace-only ``text`` short-circuits to
         ``None`` (no point invoking the subprocess for nothing)."""
@@ -108,12 +118,30 @@ class PiperBackend:
                 self._binary_path,
             )
             return None
-        model = _resolve_voice_model(self._voice_model)
+        # BF-291 / AD-738f: per-call voice override. Resolve first; on
+        # failure log at DEBUG and fall back to the configured voice.
+        effective_voice = self._voice_model
+        if voice_override and isinstance(voice_override, str):
+            override_path = _resolve_voice_model(voice_override)
+            if override_path is not None:
+                effective_voice = voice_override
+                logger.debug(
+                    "BF-291: piper using per-call voice override %r "
+                    "(configured default: %r)",
+                    voice_override, self._voice_model,
+                )
+            else:
+                logger.debug(
+                    "BF-291: piper voice override %r missing under "
+                    "tools/piper/voices/; falling back to configured %r",
+                    voice_override, self._voice_model,
+                )
+        model = _resolve_voice_model(effective_voice)
         if model is None:
             logger.warning(
                 "AD-738: piper voice model %r missing under tools/piper/voices/ "
                 "(need both <name>.onnx and <name>.onnx.json); degrading to browser",
-                self._voice_model,
+                effective_voice,
             )
             return None
         # AD-738e-1: resolve per-emotion prosody overrides for THIS call.

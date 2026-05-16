@@ -214,9 +214,15 @@ export function speakResponse(
       // AD-738e-1: pass v1 emotion name (resolved server-side) so the
       // TTS endpoint can apply per-emotion prosody. Omit the field when
       // emotion is undefined — server falls back to defaults.
-      const _body: { text: string; emotion?: string } = { text };
+      // BF-291 / AD-738f: pass per-agent voice_name when set in the
+      // profile. Server resolves against tools/piper/voices/ and falls
+      // back to the configured tts.voice_model on miss.
+      const _body: { text: string; emotion?: string; voice_name?: string } = { text };
       if (typeof emotion === 'string' && emotion.length > 0) {
         _body.emotion = emotion;
+      }
+      if (profile && typeof profile.voice_name === 'string' && profile.voice_name.length > 0) {
+        _body.voice_name = profile.voice_name;
       }
       const resp = await fetch('/api/avatars/tts', {
         method: 'POST',
@@ -335,6 +341,35 @@ export function stopSpeaking(): void {
 export function getAvailableVoices(): SpeechSynthesisVoice[] {
   if (!('speechSynthesis' in window)) return [];
   return speechSynthesis.getVoices().filter(v => v.lang.startsWith('en'));
+}
+
+/** BF-291 / AD-738f: enumerate the server-side Piper voice catalog.
+ *  Returns `{name, lang, voice, quality, size_mb}[]` when the runtime
+ *  backend is `piper` and any voices are installed; returns `null`
+ *  otherwise so the picker can fall back to {@link getAvailableVoices}.
+ *  Tier-2 log-and-degrade — never throws. */
+export interface PiperVoiceEntry {
+  name: string;
+  lang: string;
+  voice: string;
+  quality: string;
+  size_mb: number;
+}
+export async function getServerPiperVoices(): Promise<PiperVoiceEntry[] | null> {
+  if (typeof fetch !== 'function') return null;
+  try {
+    const resp = await fetch('/api/avatars/tts/voices', { method: 'GET' });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data || data.backend !== 'piper') return null;
+    const voices = Array.isArray(data.voices) ? data.voices : [];
+    if (voices.length === 0) return null;
+    return voices.filter((v: unknown): v is PiperVoiceEntry =>
+      typeof v === 'object' && v !== null && typeof (v as PiperVoiceEntry).name === 'string'
+    );
+  } catch {
+    return null;
+  }
 }
 
 export function setPreferredVoiceName(name: string | null): void {

@@ -104,6 +104,62 @@ async def tts_status(
     }
 
 
+@router.get("/tts/voices")
+async def tts_voices(
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """BF-291 / AD-738f — Enumerate locally-installed Piper voice models.
+
+    Returns the voice catalog under ``tools/piper/voices/`` keyed by the
+    paired ``<name>.onnx`` + ``<name>.onnx.json`` files (both must exist
+    for the runtime to accept the voice). The HXI voice picker reads this
+    list when the TTS backend is ``piper`` and falls back to
+    ``speechSynthesis.getVoices()`` when the backend is ``browser``.
+
+    Voice names follow the Piper convention
+    ``<lang_country>-<voice>-<quality>`` (e.g. ``en_US-amy-medium``).
+    """
+    cfg = getattr(runtime.config, "tts", None)
+    backend = str(getattr(cfg, "backend", "browser")) if cfg is not None else "browser"
+    current = str(getattr(cfg, "voice_model", "")) if cfg is not None else ""
+
+    voices: list[dict[str, Any]] = []
+    try:
+        from pathlib import Path
+
+        base = Path("tools/piper/voices").resolve()
+        if base.is_dir():
+            for onnx in sorted(base.glob("*.onnx")):
+                if not onnx.is_file():
+                    continue
+                cfg_path = onnx.with_suffix(".onnx.json")
+                if not cfg_path.is_file():
+                    continue
+                name = onnx.stem  # strips .onnx -> "en_US-amy-medium"
+                # Parse "<lang>-<voice>-<quality>" with a best-effort split.
+                parts = name.split("-", 2)
+                lang = parts[0] if len(parts) >= 1 else ""
+                voice_id = parts[1] if len(parts) >= 2 else ""
+                quality = parts[2] if len(parts) >= 3 else ""
+                voices.append({
+                    "name": name,
+                    "lang": lang,
+                    "voice": voice_id,
+                    "quality": quality,
+                    "size_mb": round(onnx.stat().st_size / (1024 * 1024), 1),
+                })
+    except Exception:
+        # Tier-2 log-and-degrade — never raise here; the picker will fall
+        # back to its browser-voices source.
+        logger.warning("BF-291: tts_voices enumeration failed", exc_info=True)
+
+    return {
+        "backend": backend,
+        "current": current,
+        "voices": voices,
+    }
+
+
 @router.post("/tts")
 async def synthesize_tts(
     req: Request,
@@ -170,9 +226,23 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
     if not isinstance(emotion, str) or len(emotion) > 64 or not emotion.strip():
         emotion = None
 
+    # BF-291 / AD-738f: optional per-call ``voice_name`` (Piper voice model
+    # name e.g. ``en_US-ryan-medium``). Tier-1 boundary validation; bad
+    # values fall back to the configured ``tts.voice_model`` silently.
+    # Backend only honors this when its underlying engine supports per-call
+    # voice overrides (Piper does; null does not).
+    voice_name = payload.get("voice_name")
+    if not isinstance(voice_name, str) or len(voice_name) > 128 or not voice_name.strip():
+        voice_name = None
+    elif "/" in voice_name or "\\" in voice_name or ".." in voice_name:
+        # Defense-in-depth: voice_name is used to resolve a path under
+        # tools/piper/voices/. Reject path-traversal characters at the
+        # boundary even though _resolve_voice_model also validates.
+        voice_name = None
+
     from probos.audio.tts import select_backend
     backend = select_backend(cfg.backend, cfg)
-    result = await backend.synthesize(text, emotion=emotion)
+    result = await backend.synthesize(text, emotion=emotion, voice_override=voice_name)
     if result is None:
         return {
             "backend": "disabled",
