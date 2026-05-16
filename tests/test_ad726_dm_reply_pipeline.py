@@ -73,7 +73,7 @@ def _ctx(**overrides: Any) -> DmReplyContext:
 
 
 @pytest.mark.asyncio
-async def test_run_executes_all_eight_steps_in_order(
+async def test_run_executes_all_nine_steps_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pipeline = DmReplyPipeline(_ctx())
@@ -88,11 +88,12 @@ async def test_run_executes_all_eight_steps_in_order(
         "step_1_sanity_gate_retry",
         "step_2_challenge_parse",
         "step_3_move_parse",
-        "step_4_episodic_store",
-        "step_5_working_memory_record",
-        "step_6_divergence_check",
-        "step_7_mark_emitted",
-        "step_8_emotion_resolve",
+        "step_4_self_check_parse",
+        "step_5_episodic_store",
+        "step_6_working_memory_record",
+        "step_7_divergence_check",
+        "step_8_mark_emitted",
+        "step_9_emotion_resolve",
     ):
         monkeypatch.setattr(pipeline, name, await make(name))
     await pipeline.run()
@@ -100,11 +101,12 @@ async def test_run_executes_all_eight_steps_in_order(
         "step_1_sanity_gate_retry",
         "step_2_challenge_parse",
         "step_3_move_parse",
-        "step_4_episodic_store",
-        "step_5_working_memory_record",
-        "step_6_divergence_check",
-        "step_7_mark_emitted",
-        "step_8_emotion_resolve",
+        "step_4_self_check_parse",
+        "step_5_episodic_store",
+        "step_6_working_memory_record",
+        "step_7_divergence_check",
+        "step_8_mark_emitted",
+        "step_9_emotion_resolve",
     ]
 
 
@@ -130,15 +132,16 @@ async def test_run_continues_when_step_1_raises(
     for name in (
         "step_2_challenge_parse",
         "step_3_move_parse",
-        "step_4_episodic_store",
-        "step_5_working_memory_record",
-        "step_6_divergence_check",
-        "step_7_mark_emitted",
-        "step_8_emotion_resolve",
+        "step_4_self_check_parse",
+        "step_5_episodic_store",
+        "step_6_working_memory_record",
+        "step_7_divergence_check",
+        "step_8_mark_emitted",
+        "step_9_emotion_resolve",
     ):
         monkeypatch.setattr(pipeline, name, _ok)
     await pipeline.run()
-    assert len(reached) == 7  # steps 2..8 all ran
+    assert len(reached) == 8  # steps 2..9 all ran
 
 
 # --------------------------------------------------------------------------- #
@@ -198,68 +201,68 @@ async def test_step_3_move_parse_no_active_game_skips() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6. step 4 — no episodic memory ⇒ skip                                       #
+# 6. step 5 — no episodic memory ⇒ skip                                       #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
-async def test_step_4_episodic_store_no_episodic_memory_skips() -> None:
+async def test_step_5_episodic_store_no_episodic_memory_skips() -> None:
     pipeline = DmReplyPipeline(_ctx())  # runtime has no episodic_memory
     # Should not raise.
-    await pipeline.step_4_episodic_store()
+    await pipeline.step_5_episodic_store()
 
 
 # --------------------------------------------------------------------------- #
-# 7. step 5 — no working memory ⇒ skip                                        #
+# 7. step 6 — no working memory ⇒ skip                                        #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
-async def test_step_5_working_memory_no_wm_skips() -> None:
+async def test_step_6_working_memory_no_wm_skips() -> None:
     a = _FakeAgent(working_memory=None)
     pipeline = DmReplyPipeline(_ctx(agent=a))
-    await pipeline.step_5_working_memory_record()  # no exception
+    await pipeline.step_6_working_memory_record()  # no exception
 
 
 # --------------------------------------------------------------------------- #
-# 8. step 6 — divergence disabled ⇒ skip                                      #
+# 8. step 7 — divergence disabled ⇒ skip                                      #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
-async def test_step_6_divergence_disabled_skips() -> None:
+async def test_step_7_divergence_disabled_skips() -> None:
     @dataclass
     class _T:
         divergence_detection: bool = False
 
     rt = _FakeRuntime(config=_FakeConfig(avatar_telemetry=_T()))
     pipeline = DmReplyPipeline(_ctx(runtime=rt, response_text="x"))
-    await pipeline.step_6_divergence_check()
+    await pipeline.step_7_divergence_check()
     assert pipeline.ctx.response_text == "x"
 
 
 # --------------------------------------------------------------------------- #
-# 9. step 7 — no mark_reply_emitted ⇒ skip                                    #
+# 9. step 8 — no mark_reply_emitted ⇒ skip                                    #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
-async def test_step_7_mark_emitted_no_method_skips() -> None:
+async def test_step_8_mark_emitted_no_method_skips() -> None:
     class _Bare:
         agent_id = "x"
     pipeline = DmReplyPipeline(_ctx(agent=_Bare()))
-    await pipeline.step_7_mark_emitted()  # no exception
+    await pipeline.step_8_mark_emitted()  # no exception
 
 
 # --------------------------------------------------------------------------- #
-# 10. step 8 — no divergence_results ⇒ emotion stays None                     #
+# 10. step 9 — no divergence_results ⇒ emotion stays None                     #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
-async def test_step_8_emotion_no_divergence_results_emotion_stays_none() -> None:
+async def test_step_9_emotion_no_divergence_results_emotion_stays_none() -> None:
     pipeline = DmReplyPipeline(_ctx())
-    await pipeline.step_8_emotion_resolve()
+    await pipeline.step_9_emotion_resolve()
     assert pipeline.ctx.emotion is None
 
 

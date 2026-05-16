@@ -3551,6 +3551,20 @@ waves:
     issues_to_close: [660]
     status: shipped
 
+  - id: "165"
+    title: "AD-728d — self-image-awareness skill (LLM-discoverable self-check)"
+    # AD-728c shipped check_own_render() but agents have no LLM path
+    # to invoke it. AD-728d wraps the capability in the canonical
+    # AD-626 augmentation-skill pattern with a [SELF_CHECK reason]
+    # bracket marker (mirrors [ENDORSE]/[NO_RESPONSE]).
+    kind: main
+    depends_on: ["164"]
+    dispatch_prompt: "prompts/WAVE-165-DISPATCH.md"
+    prompts_already_drafted: false
+    builder_required: true
+    issues_to_close: [661]
+    status: shipped
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

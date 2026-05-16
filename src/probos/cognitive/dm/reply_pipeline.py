@@ -1,18 +1,21 @@
 """AD-726: post-LLM cleanup pipeline for the DM one-shot path.
 
-Eight ordered steps replicate the prior inline cascade in
+Nine ordered steps replicate the prior inline cascade in
 ``routers/agents.py:agent_chat``. Each step is a Tier-2
 log-and-degrade boundary internally; the orchestrator
 (:meth:`run`) wraps the whole chain in a top-level guard so a
 runaway step never blocks the reply. Step ordering is load-bearing:
 sanity gate MUST run before challenge / move parsers (challenge/move
-markers are stripped by the sanity gate's retry path); divergence
-check MUST run before ``mark_reply_emitted`` (snap-time invariant);
-emotion resolution MUST run after divergence (reads ``divergence_results``).
+markers are stripped by the sanity gate's retry path); self-check
+marker parse MUST run before episodic store so the marker does not
+leak into stored episode text; divergence check MUST run before
+``mark_reply_emitted`` (snap-time invariant); emotion resolution MUST
+run after divergence (reads ``divergence_results``).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -51,12 +54,16 @@ class DmReplyContext:
     avatar_event_bus: Any | None
     emotion: str | None = None
     game_move_result: dict[str, Any] | None = None
+    # AD-728d: task reference for the fire-and-forget check_own_render
+    # dispatch. Held on ctx so the asyncio runtime does not GC the
+    # coroutine mid-flight. Tier-2: read by tests, not by other steps.
+    _self_check_task: "asyncio.Task[None] | None" = None
     # NOTE: ``sanity_result`` is intentionally NOT a ctx field — it is
     # produced and consumed entirely within step_1_sanity_gate_retry.
 
 
 class DmReplyPipeline:
-    """Eight-step post-LLM cleanup chain for the DM one-shot path."""
+    """Nine-step post-LLM cleanup chain for the DM one-shot path."""
 
     def __init__(self, ctx: DmReplyContext) -> None:
         self.ctx = ctx
@@ -71,11 +78,12 @@ class DmReplyPipeline:
             self.step_1_sanity_gate_retry,
             self.step_2_challenge_parse,
             self.step_3_move_parse,
-            self.step_4_episodic_store,
-            self.step_5_working_memory_record,
-            self.step_6_divergence_check,
-            self.step_7_mark_emitted,
-            self.step_8_emotion_resolve,
+            self.step_4_self_check_parse,
+            self.step_5_episodic_store,
+            self.step_6_working_memory_record,
+            self.step_7_divergence_check,
+            self.step_8_mark_emitted,
+            self.step_9_emotion_resolve,
         ):
             try:
                 await step()
@@ -255,8 +263,55 @@ class DmReplyPipeline:
                 else:
                     self.ctx.response_text = re.sub(r'\[MOVE\s+\S+\]', '', self.ctx.response_text).strip()
 
-    # --- step 4: AD-430b HXI 1:1 episodic store ---
-    async def step_4_episodic_store(self) -> None:
+    # --- step 4: AD-728d self-image-awareness marker parse ---
+    async def step_4_self_check_parse(self) -> None:
+        """AD-728d: Parse [SELF_CHECK reason] markers, dispatch the first
+        valid one to ``agent.check_own_render``, strip all occurrences.
+
+        Tier-2 log-and-degrade. The dispatched coroutine is fire-and-forget
+        but its task reference is held on ``ctx._self_check_task`` so the
+        async runtime keeps it alive. Multiple markers in one reply: first
+        dispatches, all are stripped, a WARNING is logged for the collapse.
+        """
+        if not self.ctx.response_text:
+            return
+
+        reasons: list[str] = []
+        if self.ctx.sanity_gate is not None:
+            reasons = self.ctx.sanity_gate.extract_self_check(self.ctx.response_text)
+
+        if reasons:
+            if len(reasons) > 1:
+                logger.warning(
+                    "AD-728d: agent %s emitted %d [SELF_CHECK] markers in one "
+                    "reply; only first reason=%r dispatches, rest stripped",
+                    self.ctx.agent_id, len(reasons), reasons[0],
+                )
+            first = reasons[0]
+            try:
+                self.ctx._self_check_task = asyncio.create_task(
+                    self.ctx.agent.check_own_render(reason=first)
+                )
+            except Exception:
+                logger.warning(
+                    "AD-728d: failed to dispatch check_own_render for "
+                    "agent=%s reason=%r",
+                    self.ctx.agent_id, first, exc_info=True,
+                )
+
+        # Always strip ALL markers (well-formed + malformed) before
+        # downstream steps see ctx.response_text.
+        if self.ctx.sanity_gate is not None:
+            self.ctx.response_text = self.ctx.sanity_gate.strip_self_check(
+                self.ctx.response_text
+            )
+        else:
+            self.ctx.response_text = re.sub(
+                r"\[SELF_CHECK\b[^\]\n]*\]", "", self.ctx.response_text
+            ).strip()
+
+    # --- step 5: AD-430b HXI 1:1 episodic store ---
+    async def step_5_episodic_store(self) -> None:
         """AD-430b: Store HXI 1:1 interaction as episodic memory. Verbatim move."""
         # AD-430b: Store HXI 1:1 interaction as episodic memory
         if hasattr(self.ctx.runtime, 'episodic_memory') and self.ctx.runtime.episodic_memory:
@@ -301,8 +356,8 @@ class DmReplyPipeline:
             except Exception:
                 logger.debug("Failed to store HXI conversation episode", exc_info=True)
 
-    # --- step 5: AD-573 working-memory record ---
-    async def step_5_working_memory_record(self) -> None:
+    # --- step 6: AD-573 working-memory record ---
+    async def step_6_working_memory_record(self) -> None:
         """AD-573: Record DM conversation to agent's working memory. Verbatim move."""
         # AD-573: Record DM conversation to agent's working memory
         try:
@@ -317,8 +372,8 @@ class DmReplyPipeline:
         except Exception:
             logger.debug("AD-573: Working memory DM record failed", exc_info=True)
 
-    # --- step 6: AD-722a divergence check ---
-    async def step_6_divergence_check(self) -> None:
+    # --- step 7: AD-722a divergence check ---
+    async def step_7_divergence_check(self) -> None:
         """AD-722a: intent-vs-presentation divergence detection. Verbatim move."""
         # AD-722a: intent-vs-presentation divergence detection.
         # Tier-2 wrapped — never blocks a reply. Default OFF
@@ -344,8 +399,8 @@ class DmReplyPipeline:
                 self.ctx.agent_id, exc_info=True,
             )
 
-    # --- step 7: mark_reply_emitted + AD-722f exit_dm + AD-722b wake ---
-    async def step_7_mark_emitted(self) -> None:
+    # --- step 8: mark_reply_emitted + AD-722f exit_dm + AD-722b wake ---
+    async def step_8_mark_emitted(self) -> None:
         """AD-722: stamp last-reply emission + AD-722f exit_dm + AD-722b wake. Verbatim move."""
         # AD-722: stamp the last-reply emission timestamp. Single source of truth.
         if hasattr(self.ctx.agent, 'mark_reply_emitted'):
@@ -361,8 +416,8 @@ class DmReplyPipeline:
         if self.ctx.avatar_event_bus is not None:
             self.ctx.avatar_event_bus.notify(self.ctx.agent_id)
 
-    # --- step 8: AD-738e-1 emotion resolution ---
-    async def step_8_emotion_resolve(self) -> None:
+    # --- step 9: AD-738e-1 emotion resolution ---
+    async def step_9_emotion_resolve(self) -> None:
         """AD-738e-1: expose parsed + v1-resolved emotion for TTS. Verbatim move."""
         # AD-738e-1: expose the parsed + v1-resolved emotion so the browser
         # can pass it to /api/avatars/tts for per-emotion prosody. Tier-2

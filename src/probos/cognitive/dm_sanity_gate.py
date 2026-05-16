@@ -41,6 +41,15 @@ _CHALLENGE_STRIP_RE = re.compile(r"\[CHALLENGE\s+@\w+\s+\w+\]")
 _MOVE_RE = re.compile(r"\[MOVE\s+(\S+)\]")
 _MOVE_STRIP_RE = re.compile(r"\[MOVE\s+\S+\]")
 
+# AD-728d: self-image-awareness marker. Reason is 1-64 chars of
+# [a-z_-]+ — invalid reasons fall through to silent strip, no dispatch.
+_SELF_CHECK_RE = re.compile(r"\[SELF_CHECK\s+([a-z_-]{1,64})\]")
+# Strip ALL occurrences (including malformed bracket variants the regex
+# above did not capture but the agent emitted in error). The lax strip
+# regex removes obvious malformed `[SELF_CHECK ...]` leftovers so they
+# don't bleed into Captain-visible text.
+_SELF_CHECK_STRIP_RE = re.compile(r"\[SELF_CHECK\b[^\]\n]*\]")
+
 # AD-724: malformed tags (open bracket + keyword, but missing close bracket
 # OR missing value). These do NOT match the well-formed regexes above.
 _ORPHANED_CHALLENGE_RE = re.compile(r"\[CHALLENGE\b(?![^\[\]]*\])")
@@ -194,6 +203,30 @@ class DmSanityGate:
         if not text:
             return text
         return _MOVE_STRIP_RE.sub("", text).strip()
+
+    def extract_self_check(self, text: str) -> list[str]:
+        """AD-728d: return all valid [SELF_CHECK reason] reasons in order.
+
+        Only reasons matching ``[a-z_-]{1,64}`` are returned. Malformed
+        markers are not included in the result but are still stripped
+        by :meth:`strip_self_check`. Callers should dispatch only the
+        FIRST returned reason; additional ones are informational.
+        """
+        if not text:
+            return []
+        return [m.group(1) for m in _SELF_CHECK_RE.finditer(text)]
+
+    def strip_self_check(self, text: str) -> str:
+        """AD-728d: remove ALL `[SELF_CHECK ...]` markers from reply text.
+
+        Strips both well-formed and malformed variants so no bracket
+        marker leaks into Captain-visible output. Mirrors the
+        :meth:`strip_challenge` / :meth:`strip_move` contract including
+        the trailing ``.strip()``.
+        """
+        if not text:
+            return text
+        return _SELF_CHECK_STRIP_RE.sub("", text).strip()
 
     # --- New checks (Tier-2 log-and-degrade) ---
 
