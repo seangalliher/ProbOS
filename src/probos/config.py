@@ -1090,6 +1090,17 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-722a-6: peer perception of intent-vs-presentation divergence
+    # (default-OFF transitional; consumer of AD-722a-1 + AD-729).
+    cross_agent_divergence_observation_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-722a-6: peer perception of intent-vs-presentation. Default "
+            "OFF; requires peer_perception_enabled True AND AD-729a "
+            "Standing Orders shipped before being flipped."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:

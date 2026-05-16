@@ -3216,3 +3216,29 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Files.** `src/probos/events.py` (+5 EventType values), `src/probos/config.py` (+3 AvatarsConfig fields), `src/probos/crew_profile.py` (+PeerPerceptionProfile dataclass + CrewProfile.peer_perception field + to_dict/from_dict wiring), `src/probos/avatars/peer_perception.py` (new, ~410 lines), `tests/test_ad729_peer_perception.py` (new, 18 tests).
 
 **Forward markers.** AD-729-impressions-hookup (wire `composite_impressions_for` into `project_self_perception` - trigger: AD-729a Standing Orders shipped AND >=1 officer certified per AD-729b; the latter ships in this wave so the trigger is satisfied at wave close). AD-729-capability-flip (flip `peer_perception_enabled` default to True for crew agents - trigger: AD-729a shipped AND >=3 officers passed AD-729b certification).
+
+### AD-722a-6 - Cross-agent intent-vs-presentation divergence observation (Wave 163)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (dual default-OFF). **Wave:** 163. **Closes:** #615.
+
+**Consumer.** AD-722a-6 is the cross-agent analog of AD-722a-1 (per-agent self-observation). Observer Maya can now observe Ezri's intent-vs-presentation divergence pattern, with full AD-729 governance applied.
+
+**API.** New async `observe_peer_divergence(runtime, observer_id, observed_id, *, register, permission_grant_id, thread_id, window_seconds)` exported from `src/probos/avatars/peer_perception.py`. Reads AD-722a-1's per-agent `runtime.divergence_history` ring buffer (allocated lazily by the divergence detector), summarises the recent entries with a pure-template renderer, and delegates to `observe_peer` so the eight AD-729 governance gates apply uniformly.
+
+**Three pre-delegation gates.** (1) `cfg.avatars.cross_agent_divergence_observation_enabled` (default False); (2) AD-722a-1's `vision_intent_divergence_enabled` upstream gate (False -> nothing to observe); (3) the observed agent must have at least one `DivergenceHistoryEntry` inside `window_seconds` (default 24h). Each gate honest-degrades by returning None - no decline event at this layer; declines from the AD-729 delegate fire normally.
+
+**Pure-template summary.** `_format_divergence_summary` emits flat OPERATIONAL-register phrasing: ''Observed N intent-vs-presentation divergences in the recent window, dominant in the 'X' category, mean magnitude M.'' No LLM call, no embedding lookup, no value-judgment vocabulary. Phrasing predictability is a governance feature - PERSONAL phrasing leaks ('she seems stressed today') are blocked at the template, not at the AD-729 layer.
+
+**Dual default-OFF.** Wave 163 ships both flags default False: `peer_perception_enabled` (AD-729) AND `cross_agent_divergence_observation_enabled` (AD-722a-6). The capability surface fires only when BOTH are True. Forward marker AD-722a-6-flip files the trigger to flip the latter (advances when AD-729a Standing Orders ship AND AD-729 capability is default-ON for crew).
+
+**Event.** New `EventType.CROSS_AGENT_DIVERGENCE_OBSERVED` inserted after the AD-729 `PEER_OBSERVATION_*` cluster. Payload carries observer_id, observed_id, register, summary string, divergence_count, timestamp. Emitted ONLY after the AD-729 governance layer records the observation - decline paths do not fire this event (the AD-729 `PEER_OBSERVATION_DECLINED` is sufficient).
+
+**AD-731 invariant.** Textual payloads only. Module source-scan asserts no `b64encode`/`base64.b64`; runtime test asserts emitted payloads carry no `image_url`/`source` keys.
+
+**Tier-2 throughout.** All failure modes honest-degrade to None; the function never raises. AD-729's underlying decline events provide the audit trail when delegation reveals a governance violation.
+
+**Tests.** +10 pytest in `tests/test_ad722a_6_cross_agent_divergence.py`. Coverage: happy path, both pre-delegation gates failing, no recent data, delegated AD-729 declines (observer uncertified, observed opt-out, PERSONAL without grant), template phrasing regression (no PERSONAL vocabulary leaks), event payload integrity, AD-731 invariant. Real `SystemConfig()` + `AgentRegistry`-shape fixtures per BF-287.
+
+**Files.** `src/probos/events.py` (+1 EventType value), `src/probos/config.py` (+1 AvatarsConfig field), `src/probos/avatars/peer_perception.py` (+`_format_divergence_summary` + `observe_peer_divergence` + `__all__` update), `tests/test_ad722a_6_cross_agent_divergence.py` (new, 10 tests).
+
+**Forward markers.** AD-722a-6-flip (flip `cross_agent_divergence_observation_enabled` default to True for OPERATIONAL register - trigger: AD-729a Standing Orders shipped AND AD-729 capability is default-ON for crew).

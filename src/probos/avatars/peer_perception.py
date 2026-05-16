@@ -375,7 +375,121 @@ __all__ = [
     "PeerObservation",
     "composite_impressions_for",
     "observe_peer",
+    "observe_peer_divergence",
     "register_permission_listener",
     "request_permission",
     "reset_state",
 ]
+
+
+# ---------------------------------------------------------------------------
+# AD-722a-6 — Cross-agent intent-vs-presentation divergence observation.
+# Consumer of AD-722a-1 divergence history + AD-729 governance contract.
+# ---------------------------------------------------------------------------
+
+
+def _format_divergence_summary(history_entries: list[Any]) -> str:
+    """Render a stable, predictable OPERATIONAL-register summary of one
+    agent's recent intent-vs-presentation divergences.
+
+    Pure template — no LLM call, no embeddings. Phrasing is deliberately
+    flat (no value-judgment vocabulary) so the AD-729 governance layer's
+    expectations stay predictable.
+    """
+    if not history_entries:
+        return "No recent intent-vs-presentation divergences observed."
+    count = len(history_entries)
+    magnitudes: list[float] = []
+    emotion_counts: dict[str, int] = {}
+    for entry in history_entries:
+        result = getattr(entry, "result", None)
+        if result is None:
+            continue
+        magnitudes.append(float(getattr(result, "magnitude", 0.0)))
+        emo = str(getattr(result, "intent_emotion", "") or "unspecified")
+        emotion_counts[emo] = emotion_counts.get(emo, 0) + 1
+    mean_mag = sum(magnitudes) / len(magnitudes) if magnitudes else 0.0
+    dominant_emotion = "unspecified"
+    if emotion_counts:
+        dominant_emotion = max(emotion_counts.items(), key=lambda kv: kv[1])[0]
+    return (
+        f"Observed {count} intent-vs-presentation divergences in the "
+        f"recent window, dominant in the {dominant_emotion!r} category, "
+        f"mean magnitude {mean_mag:.2f}."
+    )
+
+
+async def observe_peer_divergence(
+    *,
+    runtime: Any,
+    observer_id: str,
+    observed_id: str,
+    register: ObservationRegister = ObservationRegister.OPERATIONAL,
+    permission_grant_id: str | None = None,
+    thread_id: str = "default",
+    window_seconds: float = 86400.0,
+) -> PeerObservation | None:
+    """AD-722a-6 peer perception of intent-vs-presentation divergence.
+
+    Reads AD-722a-1's per-agent divergence_history (lazily allocated on the
+    runtime by ``divergence_detector``), summarises the recent entries with
+    a flat OPERATIONAL-phrasing template, and routes the resulting
+    observation through ``observe_peer()`` so AD-729's governance gates
+    apply uniformly.
+
+    Hard gates BEFORE delegating to ``observe_peer``:
+      1. ``cfg.avatars.cross_agent_divergence_observation_enabled``
+      2. AD-722a-1's ``vision_intent_divergence_enabled`` upstream gate
+      3. observed has at least one divergence_history entry inside
+         ``window_seconds``
+    """
+    from probos.events import EventType
+
+    cfg = getattr(runtime, "config", None)
+    avatars_cfg = getattr(cfg, "avatars", None) if cfg is not None else None
+    if avatars_cfg is None or not getattr(
+        avatars_cfg, "cross_agent_divergence_observation_enabled", False
+    ):
+        return None
+    if not getattr(avatars_cfg, "vision_intent_divergence_enabled", False):
+        return None
+
+    history_map = getattr(runtime, "divergence_history", None)
+    if history_map is None:
+        return None
+    bucket = history_map.get(observed_id)
+    if bucket is None:
+        return None
+
+    now = time.time()
+    recent = [
+        entry for entry in bucket
+        if (now - float(getattr(entry, "timestamp", 0.0))) <= window_seconds
+    ]
+    if not recent:
+        return None
+
+    summary = _format_divergence_summary(recent)
+
+    observation = await observe_peer(
+        runtime=runtime,
+        observer_id=observer_id,
+        observed_id=observed_id,
+        register=register,
+        content=summary,
+        permission_grant_id=permission_grant_id,
+        thread_id=thread_id,
+        backend_render_available=True,
+    )
+    if observation is None:
+        return None
+
+    await _emit(runtime, EventType.CROSS_AGENT_DIVERGENCE_OBSERVED, {
+        "observer_id": observer_id,
+        "observed_id": observed_id,
+        "register": observation.register.value,
+        "summary": summary,
+        "divergence_count": len(recent),
+        "timestamp": observation.timestamp,
+    })
+    return observation
