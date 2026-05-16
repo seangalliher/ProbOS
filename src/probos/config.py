@@ -1062,6 +1062,34 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-729: peer avatar perception governance contract (default-OFF
+    # transitional). Capability stays OFF until AD-729a Standing Orders ship
+    # and AD-729b certification grades at least one officer.
+    peer_perception_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-729: peer avatar perception capability. Default OFF until "
+            "AD-729a Standing Orders ship and AD-729b certification grades "
+            "at least one officer."
+        ),
+    )
+    peer_observation_decay_seconds: int = Field(
+        default=86400 * 7,
+        ge=3600,
+        description=(
+            "AD-729: impression decay window in seconds. Observations older "
+            "than this are filtered from composite impressions."
+        ),
+    )
+    peer_observation_max_per_pair_per_thread: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "AD-729: mechanical floor — max observations per (observer, "
+            "observed) pair per WR thread. 0 disables capability entirely."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:

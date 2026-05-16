@@ -3178,3 +3178,41 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Files.** `src/probos/events.py` (+1 EventType), `src/probos/config.py` (+3 AvatarsConfig fields), `src/probos/avatars/render_verification.py` (new, 280 lines), `src/probos/experience/shell.py` (+1 slash command + handler), `tests/test_ad728_render_verification.py` (new, 15 tests).
 
 **Forward markers.** AD-728a (richer embedding-distance coherence scoring - trigger: RENDER_DIVERGENCE_OBSERVED event volume exceeds 50/quarter). AD-728b (auto-correction proposals - trigger: AD-728a embedding scoring stable AND drift pattern catalog >=10 categorized causes).
+
+### AD-729 - Peer avatar perception governance contract (Wave 163)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 163. **Closes:** #587.
+
+**Scope discipline.** Wave 163 ships the contract: DSL, dataclass, four mechanical floors, capability surface stub, RecordsStore artifact, federation gate. The Standing Orders content (AD-729a, shipped Wave 162) supplies the conduct policy; AD-729b training-completion flag and AD-729c Counselor pattern-monitoring ship in this wave too.
+
+**DSL.** New `ObservationRegister` enum (OPERATIONAL / PERSONAL). OPERATIONAL is work-related and requires no permission; PERSONAL is character/style/wellbeing and requires a fresh `permission_grant_id` from the observed agent via the speak-freely protocol.
+
+**Dataclass.** `PeerObservation` (frozen) carries observer_id, observed_id, register, content, timestamp, decay_after, permission_grant_id.
+
+**Four mechanical floors (code-enforced).** (1) Reputation/routing read-only - source-scan regression test asserts the module has zero `trust_network` / `hebbian` / `probos.mesh.routing` imports. (2) Observed opt-out via `CrewProfile.peer_perception.enabled` (default True for crew; AgentDesigner/spawner flips utility/system tiers to False). (3) Backend-render-only path - browser captures rejected. (4) Cross-federation observed honest-degrades with `federation_review_required` when the observed_id resolves outside the local AgentRegistry.
+
+**Capability surface.** Eight hard gates evaluated IN ORDER: (1) `cfg.avatars.peer_perception_enabled`, (2) observer's `peer_perception.enabled`, (3) observer's `peer_perception.certified` (AD-729b), (4) observed's `peer_perception.enabled` (opt-out), (5) register==PERSONAL requires valid `permission_grant_id`, (6) backend render available, (7) federation gate (same-mesh only via registry resolution), (8) `peer_observation_max_per_pair_per_thread` cap per (observer, observed, thread_id) tuple. Each gate failure emits `PEER_OBSERVATION_DECLINED` with a structured `reason` code.
+
+**Speak-freely protocol.** `request_permission` emits `PEER_OBSERVATION_PERMISSION_REQUESTED`, consults the per-observed registered listener (default deny-silent), then emits either `PEER_OBSERVATION_PERMISSION_GRANTED` with a fresh single-use grant_id (5-minute TTL) or `PEER_OBSERVATION_PERMISSION_DENIED`. Grants are atomically consumed by `observe_peer` via `_consume_grant`.
+
+**Records persistence.** Observations persist via the existing `RecordsStore.write_entry` API at `src/probos/knowledge/records_store.py:47` (verified by Architect pre-flight grep). Relative path `peer_observations/{observer}_{observed}_{ts_ms}.md`, classification `ship`, status `recorded`, department `counselor`, tag `peer_observation`.
+
+**Composite impressions.** Sync helper `composite_impressions_for(runtime, observed_id)` returns a single-paragraph string of undecayed observations, gated on capability_enabled AND observed.enabled. Section 6 v1 - actual integration into `project_self_perception` is deferred (forward marker AD-729-impressions-hookup).
+
+**CrewProfile extension.** New `PeerPerceptionProfile` dataclass (`enabled: bool = True`, `certified: bool = False`) with `to_dict`/`from_dict` roundtrip. Wired into `CrewProfile.to_dict`/`from_dict` so on-disk profiles serialise the new field.
+
+**Config.** Three new `AvatarsConfig` fields: `peer_perception_enabled: bool = False` (default-OFF transitional), `peer_observation_decay_seconds: int = 86400*7` (ge=3600), `peer_observation_max_per_pair_per_thread: int = 1` (ge=0, 0 disables capability).
+
+**EventTypes.** 5 new values inserted after `RENDER_DIVERGENCE_OBSERVED` (AD-728): `PEER_OBSERVATION_RECORDED`, `PEER_OBSERVATION_DECLINED`, `PEER_OBSERVATION_PERMISSION_REQUESTED`, `PEER_OBSERVATION_PERMISSION_GRANTED`, `PEER_OBSERVATION_PERMISSION_DENIED`.
+
+**AD-731 invariant.** Peer observations are textual. Module source-scan asserts no `b64encode`/`base64.b64`; runtime test asserts emitted payloads carry no `image_url`/`source` keys.
+
+**AD-727 inheritance.** Read-only on reputation + associative routing - the source-scan regression test (Test 12) is the gate.
+
+**Tier-2 throughout.** Every failure mode returns None with a PEER_OBSERVATION_DECLINED event carrying a structured reason code. The capability surface NEVER raises.
+
+**Tests.** +18 pytest in `tests/test_ad729_peer_perception.py`. Real `AgentRegistry`-shape fixture (no MagicMock at substrate boundary per BF-287). Coverage includes happy paths for both registers, all eight decline reasons, permission flow (request->grant->record AND request->deny-silent), grant expiry, impression decay, RecordsStore persistence, AD-727 + AD-731 source-scan regression guards.
+
+**Files.** `src/probos/events.py` (+5 EventType values), `src/probos/config.py` (+3 AvatarsConfig fields), `src/probos/crew_profile.py` (+PeerPerceptionProfile dataclass + CrewProfile.peer_perception field + to_dict/from_dict wiring), `src/probos/avatars/peer_perception.py` (new, ~410 lines), `tests/test_ad729_peer_perception.py` (new, 18 tests).
+
+**Forward markers.** AD-729-impressions-hookup (wire `composite_impressions_for` into `project_self_perception` - trigger: AD-729a Standing Orders shipped AND >=1 officer certified per AD-729b; the latter ships in this wave so the trigger is satisfied at wave close). AD-729-capability-flip (flip `peer_perception_enabled` default to True for crew agents - trigger: AD-729a shipped AND >=3 officers passed AD-729b certification).

@@ -273,6 +273,30 @@ class PerformanceReview:
 
 
 @dataclass
+class PeerPerceptionProfile:
+    """AD-729: per-agent governance flags for peer avatar perception.
+
+    ``enabled`` is the OPT-OUT flag. Default True for crew agents; the
+    AgentDesigner / spawner flips utility and system tiers to False so they
+    do not participate. ``certified`` is the AD-729b training-completion
+    flag — ``observe_peer`` requires the OBSERVER to have ``certified=True``
+    before it will record any observation.
+    """
+    enabled: bool = True
+    certified: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PeerPerceptionProfile":
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            certified=bool(data.get("certified", False)),
+        )
+
+
+@dataclass
 class CrewProfile:
     """Formal identity record for a ProbOS agent.
 
@@ -310,6 +334,12 @@ class CrewProfile:
 
     # Appearance (AD-721)
     appearance: AppearanceProfile = field(default_factory=AppearanceProfile)
+
+    # AD-729: peer avatar perception governance. Default-True for crew
+    # agents; AgentDesigner/spawner flips utility/system tiers to
+    # ``enabled=False``. ``certified=True`` is the AD-729b qualification
+    # flag that unlocks the capability for THIS observer.
+    peer_perception: PeerPerceptionProfile = field(default_factory=PeerPerceptionProfile)
 
     # AD-737: per-agent custom emotion taxonomy. Empty dict = use v1 fixed
     # eight only (no behaviour change). Keys must match
@@ -391,6 +421,7 @@ class CrewProfile:
             "personality_baseline": self.personality_baseline.to_dict(),
             "voice": self.voice.to_dict(),
             "appearance": self.appearance.to_dict(),
+            "peer_perception": self.peer_perception.to_dict(),
             "custom_emotions": {
                 k: v.to_dict() for k, v in self.custom_emotions.items()
             },
@@ -425,6 +456,8 @@ class CrewProfile:
             profile.voice = VoiceProfile.from_dict(data["voice"])
         if "appearance" in data:
             profile.appearance = AppearanceProfile.from_dict(data["appearance"])
+        if "peer_perception" in data:
+            profile.peer_perception = PeerPerceptionProfile.from_dict(data["peer_perception"])
         if "custom_emotions" in data:
             profile.custom_emotions = {
                 k: EmotionProfile.from_dict(v)
