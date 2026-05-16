@@ -3520,6 +3520,22 @@ waves:
     issues_to_close: [657, 562, 645, 611, 610, 602, 642, 644, 588, 618]
     status: shipped
 
+  - id: "163"
+    title: "11-pack: peer-observation governance stack (AD-729 umbrella + b/c/d + AD-722a-6 + AD-728) + HXI completions (AD-721d-2c + AD-719a/b) + planning (AD-739) + Browser Tool tier classifier (AD-706d)"
+    # Peer-observation cluster ships as a coherent batch:
+    # - AD-729 (umbrella capability AD; defines governance contract)
+    # - AD-729b/c/d (training, Counselor monitoring, reinforcement loop)
+    # - AD-722a-6 (cross-agent divergence observations -- consumer surface)
+    # - AD-728 (vision-LLM mirror function -- primitive used by peer obs)
+    # Plus 5 small independents to fill the slate.
+    kind: main
+    depends_on: ["162"]
+    dispatch_prompt: "prompts/WAVE-163-DISPATCH.md"
+    prompts_already_drafted: false
+    builder_required: true
+    issues_to_close: [658, 586, 615, 587, 589, 590, 591, 547, 546, 649, 519]
+    status: shipped
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process
