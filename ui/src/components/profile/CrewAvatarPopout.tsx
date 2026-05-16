@@ -33,6 +33,13 @@ interface Props {
   iteration?: number;                      // 1-based; defaults to 1 when absent
   maxIterations?: number;                  // defaults to 3
   onRequestRevision?: (note: string) => void | Promise<void>;
+  // AD-721d-2c: Counselor-mediated revision wiring.
+  onMediateRevision?: (note: string) => Promise<{
+    refined_hint?: string;
+    proposal_iteration?: number;
+    error?: string;
+  }>;
+  counselorOnline?: boolean;
 }
 
 const MIN_W = 220;
@@ -53,6 +60,8 @@ export function CrewAvatarPopout({
   iteration,
   maxIterations,
   onRequestRevision,
+  onMediateRevision,
+  counselorOnline,
 }: Props) {
   const [loadFailed, setLoadFailed] = useState(false);
   const useVRM = !!appearance?.vrm_url && !loadFailed;
@@ -60,6 +69,11 @@ export function CrewAvatarPopout({
   // AD-721d-1: revision-flow local UI state.
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionNote, setRevisionNote] = useState('');
+  // AD-721d-2c: Counselor-mediated revision local state.
+  const [mediating, setMediating] = useState(false);
+  const [mediateRefined, setMediateRefined] = useState<string | null>(null);
+  const [mediateError, setMediateError] = useState<string | null>(null);
+  const [mediateIteration, setMediateIteration] = useState<number | null>(null);
 
   // Window position + size state. Initialise to bottom-right (the previous fixed location).
   const [pos, setPos] = useState(() => {
@@ -411,6 +425,52 @@ export function CrewAvatarPopout({
                     {revisionNote.length} / 280
                   </span>
                   <span style={{ flex: 1 }} />
+                  {onMediateRevision && counselorOnline && (
+                    <button
+                      data-testid="mediate-revision-btn"
+                      onClick={async () => {
+                        const note = revisionNote.trim();
+                        if (!note || mediating) return;
+                        setMediating(true);
+                        setMediateError(null);
+                        try {
+                          const result = await onMediateRevision(note);
+                          if (result.error) {
+                            setMediateError(result.error);
+                          } else {
+                            setMediateRefined(result.refined_hint ?? null);
+                            setMediateIteration(result.proposal_iteration ?? null);
+                            if (result.refined_hint) {
+                              setRevisionNote(result.refined_hint.slice(0, 280));
+                            }
+                          }
+                        } catch (e: any) {
+                          setMediateError(String(e?.message || e));
+                        } finally {
+                          setMediating(false);
+                        }
+                      }}
+                      disabled={!revisionNote.trim() || mediating}
+                      aria-label="Counselor-mediate revision"
+                      title="Refine through Counselor before submitting"
+                      style={{
+                        background: 'none',
+                        border: '1px solid rgba(240, 176, 96, 0.4)',
+                        color: revisionNote.trim() && !mediating ? '#f0b060' : '#666680',
+                        cursor: revisionNote.trim() && !mediating ? 'pointer' : 'not-allowed',
+                        padding: '2px 6px', borderRadius: 3, display: 'flex', alignItems: 'center',
+                        marginRight: 4,
+                      }}
+                    >
+                      {/* Mediator / connector glyph — stroke-based. Two circles + bridge. */}
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                           strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="4" cy="8" r="2" />
+                        <circle cx="12" cy="8" r="2" />
+                        <path d="M6 8h4" />
+                      </svg>
+                    </button>
+                  )}
                   <button
                     data-testid="submit-revision-btn"
                     onClick={async () => {
@@ -439,6 +499,36 @@ export function CrewAvatarPopout({
                     </svg>
                   </button>
                 </div>
+                {mediateRefined && (
+                  <div
+                    data-testid="mediate-refined-panel"
+                    style={{
+                      fontSize: 10, color: '#aaaac0',
+                      background: 'rgba(0, 0, 0, 0.2)',
+                      padding: 4, borderRadius: 3,
+                      border: '1px solid rgba(240, 176, 96, 0.2)',
+                    }}
+                  >
+                    <strong style={{ color: '#f0b060' }}>Counselor refined:</strong>{' '}
+                    {mediateRefined}
+                    {mediateIteration != null && (
+                      <span
+                        data-testid="mediate-iteration-chip"
+                        style={{ marginLeft: 6, color: '#666680' }}
+                      >
+                        (iter {mediateIteration})
+                      </span>
+                    )}
+                  </div>
+                )}
+                {mediateError && (
+                  <div
+                    data-testid="mediate-error"
+                    style={{ fontSize: 10, color: '#cc6666' }}
+                  >
+                    Mediation error: {mediateError}
+                  </div>
+                )}
               </div>
             )}
           </div>

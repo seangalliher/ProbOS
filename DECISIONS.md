@@ -3324,3 +3324,29 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Files.** `DECISIONS.md` (this entry), `PROGRESS.md` (Wave 163 housekeeping note), `docs/development/roadmap.md` (AD-729d row with TECHNICAL triggers). No source code. No tests. No config.
 
 **Disposition.** GitHub issue #591 stays OPEN. Wave 163 disposition: documented; preconditions not met; advances on TECHNICAL triggers above.
+
+### AD-721d-2c - HXI Counselor-mediation button (Wave 163)
+
+**Date:** 2026-05-15. **Status:** SHIPPED. **Wave:** 163. **Closes:** #658.
+
+**HXI completion.** AD-721d-2 shipped server-side mediation in Wave 162; AD-721d-2c wires the UI button into `CrewAvatarPopout.tsx`.
+
+**Props.** Two new optional props on `CrewAvatarPopout`: `onMediateRevision?: (note: string) => Promise<{ refined_hint?: string; proposal_iteration?: number; error?: string }>` and `counselorOnline?: boolean`. Both default to undefined - existing call sites unchanged, byte-compatible.
+
+**UI affordance.** Inline-SVG mediate glyph (two circles + bridge stroke; `strokeWidth=1.5`; `strokeLinecap=round`; amber active state `#f0b060`) per HXI Design Principle #3 (no emoji). Rendered between the 280-char revision counter and the existing submit button when ALL of: callback prop present, `counselorOnline=true`, `revisionNote.trim()` non-empty. Disabled while in-flight.
+
+**Flow.** Click invokes `onMediateRevision(note)`. On success, the refined hint renders inline (`Counselor refined: ...`) with an iteration chip (`(iter N)`); the refined text populates the textarea so the Captain can review/edit before submitting via the existing submit-revision path. On error, a stroke-based error surface displays the message; the Captain's ORIGINAL hint is preserved (NOT clobbered).
+
+**Local state only.** `mediating`, `mediateRefined`, `mediateError`, `mediateIteration` live inside `CrewAvatarPopout`. No store mutations, no API client module added in this AD - the callback handles the network layer.
+
+**Online detection.** `counselorOnline` is a prop, not an internal store lookup. The parent (`AgentProfilePanel`) is responsible for determining counselor online status by inspecting the store's agent records (`agent.status === 'online'` per `ui/src/store/types.ts:590`). Wire-up of `AgentProfilePanel` itself is deferred (forward marker AD-721d-2c-parent-wire) - the new props default to undefined so the existing parent rendering is unchanged.
+
+**HXI Design Principles.** #3 (inline SVG glyphs, no emoji) - mediate glyph is stroke-based two-circle-plus-bridge. #10 (workstation tier) - the button helps the Captain delegate to the Counselor, nudging up the agentic-first hierarchy.
+
+**Tests.** +4 vitest in `ui/src/__tests__/CrewAvatarPopout.mediate.test.tsx`. Coverage: button visible when conditions met; button hidden when `counselorOnline=false`; happy path renders refined panel + iteration chip; error path renders error surface AND preserves Captain's hint.
+
+**Files.** `ui/src/components/profile/CrewAvatarPopout.tsx` (+2 props, +inline-SVG button block, +4 state hooks, +refined/error panels), `ui/src/__tests__/CrewAvatarPopout.mediate.test.tsx` (new, 4 tests).
+
+**Bundle.** vitest 644 -> 648. `npm run build` green; bundle hash `index-a4x_HPw3.js` -> `index-cAfin0aS.js`.
+
+**Forward markers.** AD-721d-2c-parent-wire (wire `onMediateRevision` callback + `counselorOnline` lookup in `AgentProfilePanel.tsx` - trigger: first Captain feedback that the button is desired in the default revision flow OR HXI polish wave is scheduled).
