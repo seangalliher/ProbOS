@@ -3433,6 +3433,24 @@ class QualificationConfig(BaseModel):
     drift_cooldown_seconds: float = 3600.0  # Min time between alerts per agent+test
     drift_check_tiers: list[int] = [1, 2, 3]  # AD-566d/e: Which tiers the drift scheduler runs
 
+    # AD-729b: peer-observation conduct training module path + gate.
+    peer_observation_module_path: str = Field(
+        default="config/manuals/peer_observation_conduct.yaml",
+        description=(
+            "AD-729b: training module YAML path. Loaded at Boot Camp graduation "
+            "gate when peer_observation_certification_required is True."
+        ),
+    )
+    peer_observation_certification_required: bool = Field(
+        default=False,
+        description=(
+            "AD-729b: when True, Boot Camp / Qualification gates block "
+            "advancement unless the peer-observation conduct module is "
+            "passed. Default False — flips to True after AD-729a Standing "
+            "Orders ship."
+        ),
+    )
+
 
 class NatsConfig(BaseModel):
     """NATS event bus configuration (AD-637)."""

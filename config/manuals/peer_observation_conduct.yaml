@@ -1,0 +1,62 @@
+# AD-729b — Peer observation conduct training module
+#
+# Six sections per AD-729b. Worked examples, scenarios, and role-plays
+# scaffold the deterministic grading rubric. Case-study section is
+# placeholder until AD-729c's monitoring corpus is available.
+#
+# Schema is the deliverable for Wave 163; full content is filed under
+# the forward marker AD-729a-content (Standing Orders content).
+
+module:
+  id: peer_observation_conduct
+  version: 1
+  required_for_ranks:
+    - Lieutenant
+    - LieutenantCommander
+    - Commander
+    - Captain  # AD-357 Earned Agency floor
+  pass_threshold: 0.8
+
+  sections:
+    - id: theory
+      reading_refs:
+        - "AD-729a"
+        - "AD-489"
+        - "naval_speak_freely_primer.md"
+
+    - id: register_identification
+      # 12 entries per AD-729b spec. Trainee classifies each as OPERATIONAL or PERSONAL.
+      worked_examples:
+        - text: "Maya observed that Ezri's response latency increased during the briefing."
+          register: operational
+        # TODO(AD-729a): expand to 12 worked examples once Standing Orders content lands.
+
+    - id: phrasing_practice
+      # 6 entries per AD-729b spec. Trainee picks the renderer-as-subject phrasing.
+      scenarios:
+        - prompt: "Ezri's render shows reduced amber luminance."
+          correct: "Render output for Ezri shows reduced amber luminance."
+          incorrect: "She looks dimmer today."
+        # TODO(AD-729a): expand to 6 scenarios.
+
+    - id: permission_protocol
+      # 3 role-plays exercising the speak-freely grant flow.
+      role_plays:
+        - id: rp1
+          scenario: "PERSONAL register without prior grant"
+          correct_action: "request_permission"
+          incorrect_action: "observe_directly"
+        # TODO(AD-729a): expand to 3 role-plays.
+
+    - id: pattern_recognition
+      # Populated from AD-729c monitoring corpus once available.
+      case_studies: []
+
+    - id: final_assessment
+      pass_threshold: 0.8
+      rubric:
+        # Section weights for the deterministic grading rubric.
+        register_identification: 0.30
+        phrasing_practice: 0.30
+        permission_protocol: 0.30
+        pattern_recognition: 0.10

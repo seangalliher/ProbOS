@@ -3242,3 +3242,31 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Files.** `src/probos/events.py` (+1 EventType value), `src/probos/config.py` (+1 AvatarsConfig field), `src/probos/avatars/peer_perception.py` (+`_format_divergence_summary` + `observe_peer_divergence` + `__all__` update), `tests/test_ad722a_6_cross_agent_divergence.py` (new, 10 tests).
 
 **Forward markers.** AD-722a-6-flip (flip `cross_agent_divergence_observation_enabled` default to True for OPERATIONAL register - trigger: AD-729a Standing Orders shipped AND AD-729 capability is default-ON for crew).
+
+### AD-729b - Peer-observation conduct training module (Wave 163)
+
+**Date:** 2026-05-15. **Status:** SHIPPED (mechanical gate + scaffold; content deferred to AD-729a). **Wave:** 163. **Closes:** #589.
+
+**Mechanical gate.** New `cognitive/peer_observation_training.py` exports four functions: `load_module(path)` reads + validates the YAML schema; `grade_module(*, module, responses)` applies the deterministic weighted-rubric pass/fail; `peer_observation_graduation_gate(*, profile, qualification_config)` is the Boot Camp / Qualification integration hook that returns `(allowed, reason)`; async `set_peer_observation_certified(*, runtime, agent_id, value, reason)` atomically flips the CrewProfile flag and emits the cert event.
+
+**Deterministic rubric.** v1 is deterministic - the trainee's responses are floats per section (each in [0,1]); the weighted sum compared against `final_assessment.pass_threshold` (default 0.8). LLM-graded variant filed as forward marker AD-729b-2 (trigger: when v1 rubric has graded >=10 officers AND consistency is verified).
+
+**YAML scaffold.** New `config/manuals/peer_observation_conduct.yaml` ships the schema for Wave 163. Six sections per AD-729b spec: theory, register_identification, phrasing_practice, permission_protocol, pattern_recognition (placeholder list until AD-729c monitoring corpus is available), final_assessment with per-section rubric weights (0.30 / 0.30 / 0.30 / 0.10). Worked-example / scenario / role-play arrays carry one example each + `# TODO(AD-729a)` markers showing where the full content lands once Standing Orders are authored.
+
+**EventTypes.** 2 new values inserted after `CROSS_AGENT_DIVERGENCE_OBSERVED`: `PEER_OBSERVATION_CERTIFIED` (training pass; agent gains the gate), `PEER_OBSERVATION_CERTIFICATION_REVOKED` (AD-729c second-tier intervention clears the flag).
+
+**Config.** Two new fields on `QualificationConfig`: `peer_observation_module_path: str` (default `config/manuals/peer_observation_conduct.yaml`); `peer_observation_certification_required: bool = False` (default-OFF transitional; flips True after AD-729a Standing Orders ship).
+
+**Integration hook style.** `peer_observation_graduation_gate` is exposed as a stateless helper - Boot Camp / Qualification call it as a pre-check. Actual wire-up into `crew_development/boot_camp.py` graduation pipeline is deferred (the pipeline does not currently expose a clean ''graduation gate'' hook). The function is unit-tested in isolation; Boot Camp consumers gain certification gating by importing + calling it.
+
+**Mutation API.** `set_peer_observation_certified` mirrors the AD-720d-2.1 `set_vision_capable` shape (per PROGRESS.md line 16): public-API registry lookup, atomic flag flip, event emission with structured reason. Tier-2 throughout - registry miss / profile missing / set failure all return False without raising.
+
+**Persistence.** Field roundtrips through the existing `CrewProfile.to_dict`/`from_dict` shape wired in AD-729 (see test 8). No new SQLite schema, no migration - the on-disk JSON blob carries the new `peer_perception.certified` boolean.
+
+**Tier-2 throughout.** Parse failures, malformed YAML, missing responses, schema mismatch - all return False without raising. The capability surface never fails closed in a way that brick the system.
+
+**Tests.** +8 pytest in `tests/test_ad729b_peer_observation_training.py`. Loads the actual YAML scaffold (real file path, not a MagicMock dict per BF-287). Coverage: load success, grading pass (weighted 0.84), grading fail (weighted 0.5), graduation gate blocks when required+uncertified, gate permits when flag-off, gate permits when certified, mutation API atomic + event-emitting, certification persists through CrewProfile.to_dict/from_dict roundtrip.
+
+**Files.** `src/probos/events.py` (+2 EventType values), `src/probos/config.py` (+2 QualificationConfig fields), `src/probos/cognitive/peer_observation_training.py` (new, ~210 lines), `config/manuals/peer_observation_conduct.yaml` (new), `tests/test_ad729b_peer_observation_training.py` (new, 8 tests).
+
+**Forward markers.** AD-729b-2 (LLM-graded module - trigger: AD-729b deterministic rubric has graded >=10 officers AND grading consistency verified). AD-729b-flip (flip `peer_observation_certification_required` default to True - trigger: AD-729a Standing Orders ship AND AD-729b module content is complete with Counselor sign-off).
