@@ -8,7 +8,7 @@ import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from probos.api_models import (
@@ -706,6 +706,99 @@ async def set_agent_appearance(
         )
 
     return {"agentId": agent_id, "dsl": dsl.model_dump()}
+
+
+@router.post("/{agent_id}/appearance/vrm")
+async def upload_agent_vrm(
+    agent_id: str,
+    file: UploadFile = File(...),
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-721h: Captain-driven VRM upload for an existing agent.
+
+    Multipart. Bytes are stored content-addressably via ``AttachmentStore``
+    (AD-731 invariant) AND copied to the named avatar cache
+    ``<avatars_dir>/<agent_id>.vrm`` so the existing
+    ``/system/avatars/{filename}`` serve route can dispatch. The
+    ``ProfileStore`` ``vrm_url`` field is updated so the read path picks
+    it up on the next request.
+
+    Defense-in-depth: glTF binary magic bytes verified before storage;
+    size cap mirrors ``cfg.avatars.max_vrm_size_bytes``; path-traversal
+    guard via ``Path.resolve().relative_to(avatars_dir.resolve())``.
+    """
+    _avatars_feature_check(runtime)
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    avatars_cfg = runtime.config.avatars
+    max_bytes = int(avatars_cfg.max_vrm_size_bytes)
+    blob = await file.read()
+    if len(blob) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail={"reason": "too_large", "size": len(blob), "max": max_bytes},
+        )
+    if len(blob) < 12:
+        raise HTTPException(status_code=400, detail={"reason": "too_small"})
+
+    # glTF binary magic = b"glTF" at offset 0 (VRM 1.0 = glTF binary container).
+    # Defense-in-depth security check: reject anything that isn't a glTF binary
+    # before we store the bytes anywhere.
+    if blob[:4] != b"glTF":
+        raise HTTPException(
+            status_code=415,
+            detail={"reason": "not_a_vrm", "detail": "missing glTF magic bytes"},
+        )
+
+    # AD-731: content-addressed write first.
+    import hashlib
+    sha = hashlib.sha256(blob).hexdigest()
+    from probos.routers.chat import _get_attachment_store
+    store = _get_attachment_store(runtime)
+    await store.write(sha, blob, "model/gltf-binary")
+
+    # Atomic named copy → <avatars_dir>/<agent_id>.vrm.
+    from probos.routers.system import _resolve_avatars_dir
+    avatars_dir = _resolve_avatars_dir(avatars_cfg.avatars_dir)
+    avatars_dir.mkdir(parents=True, exist_ok=True)
+    target = avatars_dir / f"{agent_id}.vrm"
+    try:
+        target.resolve().relative_to(avatars_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid agent_id")
+    import os
+    tmp = target.with_suffix(".vrm.tmp")
+    tmp.write_bytes(blob)
+    os.replace(tmp, target)
+
+    # Persist vrm_url so the read path resolves it without a re-render.
+    if hasattr(runtime, "profile_store") and runtime.profile_store is not None:
+        crew = runtime.profile_store.get_or_create(
+            agent.id, agent_type=agent.agent_type, pool=agent.pool,
+        )
+        crew.appearance.vrm_url = f"{agent_id}.vrm"
+        runtime.profile_store.update(crew)
+
+    try:
+        runtime.emit_event(
+            "appearance_vrm_uploaded",
+            {"agent_id": agent_id, "attachment_id": sha, "bytes": len(blob)},
+        )
+    except Exception:
+        logger.warning(
+            "AD-721h: emit_event('appearance_vrm_uploaded') failed for %s; "
+            "upload persisted but audit lost",
+            agent_id, exc_info=True,
+        )
+
+    return {
+        "agent_id": agent_id,
+        "attachment_id": sha,
+        "vrm_url": f"{agent_id}.vrm",
+        "bytes": len(blob),
+    }
 
 
 @router.delete("/{agent_id}/appearance/proposal-history")

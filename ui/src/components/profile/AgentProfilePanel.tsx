@@ -70,6 +70,10 @@ export function AgentProfilePanel() {
   const [previewVrmUrl, setPreviewVrmUrl] = useState<string | null>(null);
   const [previewInFlight, setPreviewInFlight] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  // AD-721h: VRM upload state.
+  const vrmFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [vrmUploadInFlight, setVrmUploadInFlight] = useState(false);
+  const [vrmUploadError, setVrmUploadError] = useState<string | null>(null);
   useEffect(() => {
     fetch('/api/config/avatars-enabled')
       .then(r => r.ok ? r.json() : null)
@@ -280,6 +284,82 @@ export function AgentProfilePanel() {
                 <path d="M10 4l2 2" />
               </svg>
             </button>
+          )}
+          {/* AD-721h: Upload VRM (crew only, gated on avatars.enabled). */}
+          {isCrew && avatarsEnabled && agentId && (
+            <>
+              <input
+                ref={vrmFileInputRef}
+                type="file"
+                accept=".vrm,application/octet-stream,model/gltf-binary"
+                data-testid="upload-vrm-input"
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!f || vrmUploadInFlight) return;
+                  setVrmUploadInFlight(true);
+                  setVrmUploadError(null);
+                  try {
+                    const fd = new FormData();
+                    fd.append('file', f);
+                    const r = await fetch(
+                      `/api/agent/${agentId}/appearance/vrm`,
+                      { method: 'POST', body: fd },
+                    );
+                    if (!r.ok) {
+                      let reason = `HTTP ${r.status}`;
+                      try {
+                        const body = await r.json();
+                        if (body?.detail?.reason) reason = body.detail.reason;
+                      } catch { /* swallow */ }
+                      setVrmUploadError(reason);
+                      return;
+                    }
+                    // Refresh profile so the new vrm_url is picked up.
+                    fetch(`/api/agent/${agentId}/profile`)
+                      .then(rr => rr.ok ? rr.json() : null)
+                      .then(d => { if (d) setProfileData(d); })
+                      .catch(() => {});
+                  } catch (err: any) {
+                    setVrmUploadError(String(err?.message || err));
+                  } finally {
+                    setVrmUploadInFlight(false);
+                  }
+                }}
+              />
+              <button
+                data-testid="upload-vrm-btn"
+                onClick={() => { if (!vrmUploadInFlight) vrmFileInputRef.current?.click(); }}
+                aria-label="Upload VRM"
+                aria-disabled={vrmUploadInFlight}
+                disabled={vrmUploadInFlight}
+                title={vrmUploadError
+                  ? `Upload failed: ${vrmUploadError}`
+                  : (vrmUploadInFlight ? 'Uploading…' : 'Upload VRM')}
+                style={{
+                  background: 'none', border: 'none',
+                  color: vrmUploadInFlight ? '#666680' : '#8888a0',
+                  cursor: vrmUploadInFlight ? 'wait' : 'pointer',
+                  padding: '0 4px',
+                }}
+                onMouseEnter={(e) => {
+                  if (!vrmUploadInFlight) e.currentTarget.style.color = '#f0b060';
+                }}
+                onMouseLeave={(e) => {
+                  if (!vrmUploadInFlight) e.currentTarget.style.color = '#8888a0';
+                }}
+              >
+                {/* Upload glyph — stroke-based, no emoji. */}
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                     stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+                     strokeLinejoin="round">
+                  <path d="M8 11V3" />
+                  <path d="M4 7l4-4 4 4" />
+                  <path d="M2 13h12" />
+                </svg>
+              </button>
+            </>
           )}
           {/* AD-721: Show avatar (crew only, gated on avatars.enabled). */}
           {isCrew && avatarsEnabled && (

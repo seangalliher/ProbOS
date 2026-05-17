@@ -371,7 +371,7 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-721e | Skeletal animation library (Mixamo) | [#532](https://github.com/seangalliher/ProbOS/issues/532) | 4 |
 | AD-721f | Cognitive-canvas avatar replacement | [#533](https://github.com/seangalliher/ProbOS/issues/533) | 4 |
 | AD-721g | Per-tier baseline VRMs — **SHIPPED Wave 167** (new `BaselineVRMManifest` Pydantic block on `AvatarsConfig` with four bare-filename slots ensign/lieutenant/commander/senior; new `avatars/baseline_resolver.py` maps rank → filename and verifies the file exists under `<avatars_dir>/_baselines/`; appearance read path inserts a baseline fallback between cache synthesis and parametric; no avatar bytes ship in the repo per AD-721i-1 license posture; +9 pytest; zero new deps) | [#534](https://github.com/seangalliher/ProbOS/issues/534) | 4 |
-| AD-721h | Browser-based VRM upload UI | [#535](https://github.com/seangalliher/ProbOS/issues/535) | 3 |
+| AD-721h | Browser-based VRM upload UI — **SHIPPED Wave 167** (new `POST /api/agent/{agent_id}/appearance/vrm` multipart endpoint validates glTF binary magic bytes, enforces `cfg.avatars.max_vrm_size_bytes`, dual-writes to `AttachmentStore` per AD-731 + named avatar cache via atomic `os.replace`, updates `ProfileStore.vrm_url`; HXI "Upload VRM" button + hidden file input on `AgentProfilePanel`; +8 pytest + 4 vitest; zero new deps) | [#535](https://github.com/seangalliher/ProbOS/issues/535) | 3 |
 
 **From 2026-05-09 agent-authored avatar pipeline (Captain decision; AD-721d refined; pair with AD-721i in Wave 134):**
 

@@ -3787,3 +3787,35 @@ Path-traversal is rejected via ``.resolve()`` prefix check against the recording
 **Full gate.** 13883 -> 13892 pytest. Vitest unchanged (no UI surface). No UI build needed.
 
 **Zero new deps.** Pure resolver + config + read-path wiring.
+
+### AD-721h - Browser-based VRM upload UI (Wave 167)
+
+**Date:** 2026-05-17. **Status:** Shipped. **Closes** #535.
+
+**Capability.** Captain drags a custom ``.vrm`` into the HXI avatar editor; backend validates type + size; file lands at ``<avatars_dir>/<agent_id>.vrm`` AND in the content-addressed AttachmentStore; ``ProfileStore.vrm_url`` updated so the next read picks up the new avatar.
+
+**Endpoint.** New multipart ``POST /api/agent/{agent_id}/appearance/vrm``. Reuses the AD-720a multipart pattern (``UploadFile = File(...)``). Defense-in-depth chain runs in this order:
+1. ``_avatars_feature_check(runtime)`` (503 when ``cfg.avatars.enabled=False``)
+2. ``runtime.registry.get(agent_id)`` (404 when missing)
+3. size cap: 413 ``too_large`` when ``len(blob) > cfg.avatars.max_vrm_size_bytes``
+4. minimum-size gate: 400 ``too_small`` when ``len(blob) < 12``
+5. glTF binary magic: 415 ``not_a_vrm`` when ``blob[:4] != b"glTF"``
+6. ``target.resolve().relative_to(avatars_dir.resolve())`` path-traversal guard
+
+**Dual-write per AD-731.** Content-addressed write FIRST via ``AttachmentStore.write(sha, blob, "model/gltf-binary")``, THEN atomic named copy via ``os.replace(<tmp>, <avatars_dir>/<agent_id>.vrm)``. Tests assert byte parity between the two locations and that no ``.tmp`` file leaks on the last-write-wins concurrent path.
+
+**Security note.** Magic-byte check rejects non-glTF blobs BEFORE storage. A test verifies that a 415 rejection leaves the named cache untouched on disk - no half-written state.
+
+**ProfileStore.** When a profile store is available, ``vrm_url`` is set to ``"<agent_id>.vrm"`` so the appearance read path resolves the new avatar via ``CrewVRM.tsx:250`` bare-filename pass-through (mirrors AD-721i E4 post-render persistence).
+
+**HXI.** ``AgentProfilePanel.tsx`` adds "Upload VRM" button + hidden ``<input type="file" accept=".vrm,application/octet-stream,model/gltf-binary">`` next to "Design avatar". Click triggers the file picker; ``onChange`` POSTs multipart; success refreshes ``/api/agent/{id}/profile`` so the CrewVRM viewer re-loads with the new URL. 413 / 415 surface as inline error reason on the button's ``title`` attribute (no toast spam, per HXI Principle #3 idiom of using ambient signal over noisy interrupts). Stroke-based SVG upload glyph (arrow over baseline).
+
+**Event.** New string event-type ``appearance_vrm_uploaded`` (not a new EventType enum value).
+
+**v1 scope.** Validates magic bytes only. Full VRM 1.0 schema validation (saturday06 add-on roundtrip) is deferred - file a forward marker AD-721h-2 if Captain wants it. Drag-and-drop zone is not in v1; the file-picker happy path is the contract.
+
+**Tests.** +8 pytest in ``tests/test_ad721h_vrm_upload.py`` (happy path with named-cache + ProfileStore update + sha parity; avatars-disabled 503; agent-missing 404; size cap 413 ``too_large``; min-size 400 ``too_small``; missing-magic 415 ``not_a_vrm`` with disk-state assertion that nothing landed; AttachmentStore-vs-named-cache byte parity; last-write-wins overwrite with no leaked ``.tmp``). +4 vitest in ``ui/src/__tests__/AgentProfilePanel.uploadVRM.test.tsx`` (button-clicks-input via ``vi.spyOn(input, 'click')``; happy-path multipart POST captures the ``FormData`` body; 413 inline error surfaces ``too_large`` on title; 415 inline error surfaces ``not_a_vrm`` on title). Real ``FilesystemAttachmentStore`` + real ``tmp_path`` avatars_dir per BF-287.
+
+**Full gate.** 13892 -> 13900 pytest. Vitest 670 -> 674. UI bundle ``index-1THkGO2n.js`` -> ``index-BTcSysUH.js``.
+
+**Zero new deps.** Reuses FastAPI ``UploadFile``, ``FilesystemAttachmentStore``, existing avatar-serve route. ``model/gltf-binary`` MIME was already added to ``_MIME_TO_EXT`` by AD-721d-3 in this same wave.
