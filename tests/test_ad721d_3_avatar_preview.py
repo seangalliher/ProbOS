@@ -267,7 +267,11 @@ def test_preview_attachment_store_contract_real_filesystem(tmp_path, monkeypatch
 
     # Round-trip through the real store: read the stored blob back.
     store = _chat._get_attachment_store(runtime)
-    stored_blob = asyncio.get_event_loop().run_until_complete(store.read(sha))
+    loop = asyncio.new_event_loop()
+    try:
+        stored_blob = loop.run_until_complete(store.read(sha))
+        mime = loop.run_until_complete(store.mime_for(sha))
+    finally:
+        loop.close()
     assert stored_blob == blob
-    mime = asyncio.get_event_loop().run_until_complete(store.mime_for(sha))
     assert mime == "model/gltf-binary"

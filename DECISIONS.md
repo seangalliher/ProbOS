@@ -3855,3 +3855,36 @@ Real ``ToolPermissionStore()`` in-memory + real ``AgentRegistry``-shape + real `
 **Full gate.** 13900 -> 13911 pytest. Vitest 674 -> 678. UI bundle ``index-BTcSysUH.js`` -> ``index-DzUHsZVI.js``.
 
 **Zero new deps.** Reuses ``ToolPermissionStore`` + ``ToolPermission`` enum + ``ToolRegistry`` (all shipped pre-Wave 167).
+
+### AD-721i-2 - VRoid Studio CLI alternative backend evaluation (Wave 167, REJECTED)
+
+**Date:** 2026-05-17. **Status:** REJECTED (research-only). **Closes** #543.
+
+**Disposition.** VRoid Studio CLI is NOT a viable alternative renderer backend for the OSS code path. Three independent blocking constraints found:
+1. **No headless mode.** VRoid Studio is GUI-only; no documented `--export` / `--import` / batch invocation in the official 1.x line.
+2. **Proprietary EULA.** Distributed under a Pixiv-controlled EULA, not an OSI-recognized license. No source published.
+3. **Linux-incompatible.** Windows + macOS only.
+
+Any one of those would be sufficient to reject. Together they make VRoid a non-starter as the OSS-default. The existing AD-721i Blender + saturday06 backend remains v1.
+
+**Operator-elected path preserved.** Captain or operators can still produce VRMs locally via VRoid Studio and install them via AD-721h upload UI or AD-721g `_baselines/` directory. Both paths consume operator-installed bytes and impose no license claim on the produced VRMs. The license metadata fields (`meta.licenseUrl`, `meta.allowedUser`, `meta.commercialUssageName`) must be populated by the operator before export -- VRoid's defaults are unset (a recurring source of downstream license ambiguity flagged in user-memory `License hygiene (2026-05-09)`).
+
+**Deliverable.** Single new file `docs/research/vroid-cli-evaluation.md` with the verdict, summary table, citations, recommendation, and (declined) implementation outline.
+
+**Forward markers.** None. Re-evaluation only triggers if Pixiv publishes a CLI or open-source release of VRoid Studio.
+
+**Zero code, zero tests, zero deps.** Pure research housekeeping.
+
+### AD-721i-2 - VRoid Studio CLI alternative backend evaluation (Wave 167, REJECTED)
+
+**Date:** 2026-05-17. **Status:** REJECTED (research-only). **Closes** #543.
+
+**Disposition.** VRoid Studio CLI is NOT a viable alternative renderer backend for the OSS code path. Three independent blocking constraints found: (1) no headless/CLI mode (GUI-only); (2) proprietary Pixiv EULA, not OSI-recognized, no source published; (3) Windows + macOS only (no Linux). Any one would be sufficient to reject; together they make VRoid a non-starter as OSS-default. The existing AD-721i Blender + saturday06 backend remains v1.
+
+**Operator-elected path preserved.** Operators can produce VRMs locally via VRoid Studio and install them via AD-721h upload UI or AD-721g `_baselines/` directory. License metadata fields must be populated before export -- VRoid defaults are unset.
+
+**Deliverable.** Single new file `docs/research/vroid-cli-evaluation.md` with verdict, summary table, citations, recommendation, and declined implementation outline.
+
+**Forward markers.** None. Re-evaluation only triggers if Pixiv ships a CLI or open-source release.
+
+**Zero code, zero tests, zero deps.** Pure research housekeeping.
