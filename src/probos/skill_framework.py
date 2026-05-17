@@ -302,6 +302,23 @@ BUILTIN_PCCS: list[SkillDefinition] = [
         domain="*",
         decay_rate_days=30,
     ),
+    # BF-295 / AD-634: same pattern — bind the cognitive skill at
+    # config/skills/notebook-quality/SKILL.md to the proficiency-tracking
+    # SkillRegistry. AD-634 (Wave 70) shipped the SKILL.md but never added the
+    # registry entry; warning has been silently emitting since then.
+    SkillDefinition(
+        skill_id="notebook-quality",
+        name="Notebook Analytical Quality",
+        category=SkillCategory.PCC,
+        description=(
+            "Analytical quality discipline for notebook entries — Analytical "
+            "Purpose Gate, Finding-First (Minto Pyramid), Temporal Threading, "
+            "Data vs Analysis, Ward Room Differentiation, Pre-Write Verification "
+            "Gate. Co-activates with communication-discipline on proactive_think."
+        ),
+        domain="*",
+        decay_rate_days=30,
+    ),
 ]
 
 # ── Role skill templates per department ────────────────────────────
