@@ -28,10 +28,39 @@ function fireStart() {
     type: 'start',
     agent_id: 'agent-1',
     utterance: {} as SpeechSynthesisUtterance,
+    source: 'browser',
+  }));
+}
+
+function fireStartFromServer() {
+  if (!listener) throw new Error('listener not registered');
+  act(() => listener!({
+    type: 'start',
+    agent_id: 'agent-1',
+    utterance: {} as SpeechSynthesisUtterance,
+    source: 'server',
   }));
 }
 
 describe('useLipSyncCapture', () => {
+  it('BF-293: server-source start events do NOT trigger capture', async () => {
+    // When the server-streamed Piper path fires its 'start' event (after
+    // visemes have already been injected via injectLipSyncFrames), the
+    // hook MUST NOT capture audio or upload anything. Otherwise it
+    // races the server visemes and burns a rhubarb call on webm.
+    const captureSpy = vi.spyOn(lipSyncCapture, 'captureUtteranceAudio');
+    const uploadSpy = vi.spyOn(lipSyncCapture, 'uploadAudioForLipSync');
+
+    renderHook(() =>
+      useLipSyncCapture({ enabled: true, agentId: 'agent-1' }),
+    );
+    fireStartFromServer();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(captureSpy).not.toHaveBeenCalled();
+    expect(uploadSpy).not.toHaveBeenCalled();
+  });
+
   it('exposes empty frames when capture returns null', async () => {
     vi.spyOn(lipSyncCapture, 'captureUtteranceAudio').mockResolvedValue(null);
     const uploadSpy = vi.spyOn(lipSyncCapture, 'uploadAudioForLipSync');

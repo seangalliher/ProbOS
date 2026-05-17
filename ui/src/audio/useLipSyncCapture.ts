@@ -63,6 +63,14 @@ export function useLipSyncCapture(
       if (!enabledRef.current) return;
       if (agentIdRef.current && e.agent_id !== agentIdRef.current) return;
       if (e.type !== 'start') return;
+      // BF-293: server-streamed Piper path already injects visemes via
+      // injectLipSyncFrames. Capturing the same audio from the browser's
+      // WebAudio destination and re-uploading it would (a) duplicate work,
+      // (b) produce a webm blob that rhubarb can't process (BF-292), and
+      // (c) overwrite the high-quality server visemes with empty/heuristic
+      // ones. Only capture when this event came from the BROWSER
+      // SpeechSynthesisUtterance fallback path.
+      if (e.source !== 'browser') return;
       // Spawn the capture. Do NOT await inside the listener — listeners are
       // synchronous and per voice.ts:42 a thrown exception would be caught
       // and other listeners would still fire.

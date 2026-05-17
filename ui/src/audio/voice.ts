@@ -19,13 +19,23 @@ export interface VoiceProfile {
 }
 
 /** AD-718 / AD-721 hook: subscribers fire on every utterance lifecycle event.
- *  Used by AD-721 CrewAvatarPopout to drive mouth blend-shape from audio.
- *  v1 emits 'start' and 'end' only; 'boundary' is reserved for AD-721b phoneme work. */
+/** AD-721: SpeechEvent lifecycle for TTS playback. Listeners drive avatar
+ *  mouth animation, lip-sync capture, and viseme handoff.
+ *  v1 emits 'start' and 'end' only; 'boundary' is reserved for AD-721b phoneme work.
+ *
+ *  BF-293: ``source`` distinguishes the server-streamed Piper path (visemes
+ *  already injected; consumers MUST NOT re-capture or re-upload) from the
+ *  browser SpeechSynthesisUtterance fallback path (no server visemes;
+ *  consumers MAY capture audio for server-side rhubarb processing). */
 export type SpeechEventType = 'start' | 'end' | 'boundary';
+export type SpeechEventSource = 'server' | 'browser';
 export interface SpeechEvent {
   type: SpeechEventType;
   agent_id?: string;     // present iff caller passed one to speakResponse
   utterance: SpeechSynthesisUtterance;
+  /** BF-293: which TTS path produced this event. Defaults to 'browser' for
+   *  back-compat with any listener that didn't read this field. */
+  source?: SpeechEventSource;
 }
 type SpeechListener = (e: SpeechEvent) => void;
 
@@ -256,9 +266,9 @@ export function speakResponse(
       audio.playbackRate = Math.max(0.25, Math.min(4.0, effective.rate ?? 0.95));
       try { (audio as any).preservesPitch = false; } catch { /* not supported */ }
       const _clearActive = () => { if (_activeAudio === audio) _activeAudio = null; };
-      audio.addEventListener('play', () => _fire({ type: 'start', agent_id, utterance: synth }));
-      audio.addEventListener('ended', () => { _clearActive(); _fire({ type: 'end', agent_id, utterance: synth }); });
-      audio.addEventListener('error', () => { _clearActive(); _fire({ type: 'end', agent_id, utterance: synth }); });
+      audio.addEventListener('play', () => _fire({ type: 'start', agent_id, utterance: synth, source: 'server' }));
+      audio.addEventListener('ended', () => { _clearActive(); _fire({ type: 'end', agent_id, utterance: synth, source: 'server' }); });
+      audio.addEventListener('error', () => { _clearActive(); _fire({ type: 'end', agent_id, utterance: synth, source: 'server' }); });
       // AD-738: feed visemes directly to useLipSyncCapture via the new injection setter.
       if (Array.isArray(data.visemes) && data.visemes.length > 0) {
         try {
@@ -326,8 +336,8 @@ function _speakBrowserFallback(
   const named = profile?.voice_name ? _resolveVoiceByName(profile.voice_name) : null;
   const voice = named ?? findPreferredVoice();
   if (voice) utterance.voice = voice;
-  utterance.onstart = () => _fire({ type: 'start', agent_id, utterance });
-  utterance.onend = () => _fire({ type: 'end', agent_id, utterance });
+  utterance.onstart = () => _fire({ type: 'start', agent_id, utterance, source: 'browser' });
+  utterance.onend = () => _fire({ type: 'end', agent_id, utterance, source: 'browser' });
   // 'boundary' reserved for AD-721b phoneme work; not wired in v1.
   speechSynthesis.speak(utterance);
 }
