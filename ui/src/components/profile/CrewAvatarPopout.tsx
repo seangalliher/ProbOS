@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { CrewVRM } from './CrewVRM';
+import { CrewAvatarEditor } from './CrewAvatarEditor';
 import { ParametricAvatar } from './ParametricAvatar';
 import { diffAvatarDsl } from './avatarDslDiff';
 import type { AgentSignals } from './avatarSignals';
@@ -76,9 +77,16 @@ export function CrewAvatarPopout({
   previewError,
 }: Props) {
   const [loadFailed, setLoadFailed] = useState(false);
+  // AD-721a: Captain inline avatar editor state. ``editorOpen`` controls the
+  // overlay mount; ``editorPreviewUrl`` is set by the editor's preview-fetch
+  // callback and takes precedence over the AD-721d-3 propose-preview URL.
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorPreviewUrl, setEditorPreviewUrl] = useState<string | null>(null);
   const useVRM = !!appearance?.vrm_url && !loadFailed;
   // AD-721d-3: when a preview URL is set, render it INSTEAD of the canonical VRM.
-  const activeVrmUrl = previewVrmUrl || (useVRM ? appearance!.vrm_url : null);
+  // AD-721a precedence: editor preview > propose preview > canonical VRM.
+  const activeVrmUrl =
+    editorPreviewUrl || previewVrmUrl || (useVRM ? appearance!.vrm_url : null);
   const showVRM = !!activeVrmUrl && !loadFailed;
   const tint = appearance?.color_palette_hint || departmentColor;
   // AD-721d-1: revision-flow local UI state.
@@ -201,27 +209,58 @@ export function CrewAvatarPopout({
         <span style={{ fontSize: 10, color: '#8888a0', fontFamily: "'JetBrains Mono', monospace" }}>
           {agentId}
         </span>
-        <button
-          data-avatar-close
-          onClick={onClose}
-          aria-label="Close avatar"
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#8888a0',
-            cursor: 'pointer',
-            padding: 2,
-            display: 'flex',
-            alignItems: 'center',
-          }}
-        >
-          {/* Inline SVG close glyph (HXI Design Principle #3 — no emoji). */}
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-               strokeWidth="1.5" strokeLinecap="round">
-            <line x1="3" y1="3" x2="13" y2="13" />
-            <line x1="13" y1="3" x2="3" y2="13" />
-          </svg>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {/* AD-721a: Captain Edit button. Disabled while the Counselor
+              propose flow has a pending proposedDsl (prevents dual-edit
+              collision). */}
+          <button
+            data-testid="avatar-edit-toggle"
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditorOpen((v) => !v);
+              if (editorOpen) {
+                // Closing -- clear any preview URL.
+                setEditorPreviewUrl(null);
+              }
+            }}
+            disabled={!!proposedDsl}
+            aria-label={editorOpen ? 'Close avatar editor' : 'Edit avatar'}
+            style={{
+              background: editorOpen ? 'rgba(96, 144, 240, 0.18)' : 'none',
+              border: '1px solid transparent',
+              borderColor: editorOpen ? 'rgba(96, 144, 240, 0.4)' : 'transparent',
+              color: proposedDsl ? '#444460' : (editorOpen ? '#6090f0' : '#8888a0'),
+              cursor: proposedDsl ? 'not-allowed' : 'pointer',
+              padding: '0 6px',
+              fontSize: 10,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            edit
+          </button>
+          <button
+            data-avatar-close
+            onClick={onClose}
+            aria-label="Close avatar"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#8888a0',
+              cursor: 'pointer',
+              padding: 2,
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            {/* Inline SVG close glyph (HXI Design Principle #3 — no emoji). */}
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                 strokeWidth="1.5" strokeLinecap="round">
+              <line x1="3" y1="3" x2="13" y2="13" />
+              <line x1="13" y1="3" x2="3" y2="13" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Canvas region. Explicit dimensions because R3F's ResizeObserver
@@ -262,6 +301,25 @@ export function CrewAvatarPopout({
           <OrbitControls target={[0, 1.42, 0]} enablePan={false} minDistance={0.3} maxDistance={3} />
         </Canvas>
       </div>
+
+      {/* AD-721a: Captain inline avatar editor. Mounted below the canvas
+          when the title-bar "edit" button is toggled on. Uses the AD-721d-3
+          preview path (does NOT consume AD-721d-1 iteration slots). */}
+      {editorOpen && (
+        <CrewAvatarEditor
+          agentId={agentId}
+          currentDsl={appearance?.dsl ?? null}
+          onPreviewUrlChange={setEditorPreviewUrl}
+          onApproved={() => {
+            setEditorOpen(false);
+            setEditorPreviewUrl(null);
+          }}
+          onCancelled={() => {
+            setEditorOpen(false);
+            setEditorPreviewUrl(null);
+          }}
+        />
+      )}
 
       {/* AD-721d + AD-721d-1: Captain approval bar with revision-cycle support. */}
       {proposedDsl && (() => {

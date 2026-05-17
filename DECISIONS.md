@@ -3946,3 +3946,29 @@ When enabled, each frame the closest `maxConcurrent` agents within `lodDistance`
 **Files.** `src/probos/config.py` (3 new `AvatarsConfig` fields + descriptions). `ui/src/canvas/agentVRM.tsx` (new component + pure `_pickCloseAgents` helper). `ui/src/canvas/agents.tsx` (config plumbing + frame-throttled cull + zero-scale orb hide + VRM siblings). `ui/src/canvas/__tests__/agentVRM.test.tsx` (8 passing + 1 skipped for AD-721f-1).
 
 **What this does NOT change.** `CrewVRM.tsx` / `CrewAvatarPopout.tsx` untouched. AD-721d preview/propose/approve endpoints untouched. Orb-path raycaster behavior preserved (zero-scaled instances do not intercept rays). No new pip or npm deps.
+
+### AD-721a - Captains avatar editor UI (Wave 168)
+
+**Date:** 2026-05-17. **Status:** Shipped. **Wave:** 168. **Closes** #528. **Parent:** AD-721d-3 preview endpoint (W167); AD-721d propose path (existing).
+
+**Problem.** The Captain can already view an agent VRM (CrewAvatarPopout), trigger LLM-driven `propose_appearance` via AD-721d/-1, and preview a proposed DSL via AD-721d-3. What was missing: direct Captain-driven inline DSL edits (color palette, body, hair, outfit, expression) without going through Counselor revision iterations.
+
+**Decision.** Add a new `CrewAvatarEditor` component mounted inline from `CrewAvatarPopout` via a title-bar `edit` toggle. The editor renders the current `AvatarDSL` as form controls (selects, color pickers, range sliders) and routes edits through the existing AD-721d-3 preview endpoint. On Approve, persists via the existing PUT `/api/agent/{id}/appearance`. No new server endpoints.
+
+**Key design constraints honored.**
+- **No new GET endpoint.** The current DSL is prop-passed from `CrewAvatarPopout` as `appearance.dsl`. The editor receives it via `currentDsl: AvatarDSLDict | null` (defaults to `_defaultDsl()` when null). Grep confirmed the appearance router has only POST/PUT/DELETE methods.
+- **AD-721d-1 iteration counter untouched.** Captain edits use the `/preview` path only -- they do NOT call `/propose`. Test `does NOT call /appearance/propose` is the regression guard.
+- **AD-731 invariant preserved.** Preview returns a SHA-256 ref (`attachment_id`); the editor sets the popout VRM viewer to `/api/chat/attachments/{sha}`. No inline VRM bytes anywhere in the editor message path.
+- **Honest-degrade.** 503 -> `preview-banner data-status=unavailable`, Approve remains enabled. 422 -> `field-error-*` inline per offending field. Other 4xx/5xx -> generic error banner.
+- **Dual-edit collision prevention.** The title-bar `edit` toggle is disabled while `proposedDsl` is present (Counselor flow has an iteration in flight).
+- **Debounced preview.** 500 ms debounce + token-based cancellation; rapid edits collapse into a single preview fetch.
+
+**Files.**
+- `ui/src/components/profile/CrewAvatarEditor.tsx` (new -- form controls + debounced preview + approve/cancel).
+- `ui/src/components/profile/CrewAvatarPopout.tsx` (title-bar `edit` button + editor mount + `editorPreviewUrl` state that takes precedence over `previewVrmUrl` in `activeVrmUrl`).
+- `ui/src/components/profile/__tests__/CrewAvatarEditor.test.tsx` (9 vitest -- mount, default DSL, debounced preview, 503 banner, 422 field errors, approve PUT body, cancel, hex<->hsl roundtrip, propose-path-not-called regression).
+- `ui/src/components/profile/__tests__/CrewAvatarPopout.editor.test.tsx` (3 vitest -- edit toggle mounts editor, toggle disabled while propose pending, cancel returns to non-edit state).
+
+**Tests.** +12 vitest (9 editor + 3 popout integration), all passing.
+
+**What this does NOT change.** No new server endpoints. `propose_appearance` LLM path untouched. AD-721d-1 iteration counter untouched. `AvatarDSL` Pydantic schema untouched. `CrewVRM.tsx` untouched. Zero new pip or npm deps.
