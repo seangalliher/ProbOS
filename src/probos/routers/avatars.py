@@ -325,3 +325,119 @@ def _wav_duration_ms(wav_bytes: bytes) -> int:
         return 0
     except (struct.error, IndexError, ZeroDivisionError):
         return 0
+
+
+# ==============================================================================
+# AD-721e (Wave 168): Skeletal animation library endpoints.
+# ==============================================================================
+
+
+def _build_animation_manifest(runtime: Any):
+    """Construct an ``AnimationManifest`` from ``runtime.config.avatars``.
+
+    Looks for ``<animations_dir>/manifest.json`` (operator-fetched, the
+    fetch script writes this file). Honest-degrades to an empty manifest
+    when the file is missing or unparseable.
+    """
+    from pathlib import Path
+    import json
+    from probos.avatars.asset_manifest import AnimationManifest, AnimationClipEntry
+
+    manifest = AnimationManifest()
+    avatars_cfg = getattr(runtime.config, "avatars", None)
+    if avatars_cfg is None or not getattr(avatars_cfg, "animations_enabled", False):
+        return manifest
+    base = Path(getattr(avatars_cfg, "animations_dir", "data/avatars/animations"))
+    manifest_path = base / "manifest.json"
+    if not manifest_path.is_file():
+        logger.info(
+            "AD-721e: animations manifest not found at %s; serving empty "
+            "list (procedural idle fallback active)",
+            manifest_path,
+        )
+        return manifest
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "AD-721e: failed to read animations manifest at %s: %s; serving "
+            "empty list",
+            manifest_path, exc,
+        )
+        return manifest
+    if not isinstance(payload, dict):
+        return manifest
+    for raw in payload.get("clips", []):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            entry = AnimationClipEntry(
+                name=str(raw["name"]),
+                file_path=base / str(raw["file"]),
+                sha256=str(raw["sha256"]),
+                license=str(raw["license"]),
+                source_url=str(raw.get("source_url", "")),
+                duration_s=float(raw.get("duration_s", 0.0)),
+            )
+            manifest.register(entry)
+        except (KeyError, ValueError) as exc:
+            logger.warning(
+                "AD-721e: skipping malformed/rejected clip entry %r: %s",
+                raw, exc,
+            )
+            continue
+    return manifest
+
+
+@router.get("/animations")
+async def list_animations(
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """List operator-installed skeletal animation clips available for VRMs.
+
+    Honest-degrade: returns ``{"clips": []}`` when no manifest is present
+    (operator has not fetched any clips) or the feature is disabled.
+    """
+    manifest = _build_animation_manifest(runtime)
+    clips_payload: list[dict[str, Any]] = []
+    for name in manifest.list_available():
+        entry = manifest.get(name)
+        if entry is None:
+            continue
+        clips_payload.append({
+            "name": entry.name,
+            "url": f"/api/avatars/animations/{entry.name}",
+            "duration_s": entry.duration_s,
+            "license": entry.license,
+        })
+    return {"clips": clips_payload}
+
+
+@router.get("/animations/{name}")
+async def get_animation_clip(
+    name: str,
+    runtime: Any = Depends(get_runtime),
+):
+    """Serve the raw .glb/.gltf bytes for a registered animation clip.
+
+    404 when the clip is unknown OR the underlying file has gone missing
+    between registration and the request.
+    """
+    from fastapi.responses import Response
+
+    # Sanitize -- clip names are operator-controlled but the registration
+    # path uses the manifest's ``name`` field; reject anything path-shaped.
+    if "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="invalid_clip_name")
+
+    manifest = _build_animation_manifest(runtime)
+    entry = manifest.get(name)
+    if entry is None or not entry.file_path.is_file():
+        raise HTTPException(status_code=404, detail="clip_not_found")
+    blob = entry.file_path.read_bytes()
+    # Clips are immutable per SHA; allow long-lived browser caching.
+    return Response(
+        content=blob,
+        media_type="model/gltf-binary",
+        headers={"Cache-Control": "public, max-age=3600, immutable"},
+    )

@@ -1409,6 +1409,27 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-721e: skeletal animation library (Quaternius CC0 default; Mixamo
+    # REJECTED per AD-721i-1). Operator runs scripts/animations-fetch.ps1 to
+    # populate ``animations_dir``; clips are SHA-256 integrity-checked at
+    # manifest registration time.
+    animations_dir: str = Field(
+        default="data/avatars/animations",
+        description=(
+            "AD-721e: directory of operator-installed CC0/MIT animation "
+            "clips. Gitignored; operator-fetched via "
+            "scripts/animations-fetch.ps1."
+        ),
+    )
+    animations_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-721e: enable AnimationMixer playback in CrewVRM. Default "
+            "OFF -- operators without animations installed keep the "
+            "procedural idle fallback."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:

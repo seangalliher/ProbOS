@@ -37,6 +37,8 @@ data/avatars/**/*.fbx
 data/avatars/**/*.glb
 data/avatars/**/*.dsl.yaml
 data/avatars/**/*.dsl.json
+# AD-721e: skeletal animation clips (operator-fetched via scripts/animations-fetch.ps1).
+data/avatars/animations/
 
 # AD-720: attachments dir is shipped (with .gitkeep), but image blobs are not.
 !data/attachments/

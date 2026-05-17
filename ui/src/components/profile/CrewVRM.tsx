@@ -69,6 +69,14 @@ interface Props {
   // (multi-material face splits where the VRM expression manager binding
   // only points at the first face mesh).
   restingExpression?: string | null;
+  // AD-721e: skeletal body state. When a matching CC0/MIT clip is
+  // registered in the AnimationManifest (operator-fetched via
+  // scripts/animations-fetch.ps1), CrewVRM plays it via THREE.AnimationMixer
+  // with cross-fade on state change. When no clip is available, the
+  // procedural breathing + sway loop runs unchanged (honest-degrade).
+  // Lip-sync (morphTargetInfluences) is orthogonal to body bones and
+  // continues regardless of the active body clip.
+  bodyState?: 'idle' | 'talking' | 'listening' | 'thinking';
 }
 
 // AD-721d: DSL resting-expression names → ordered list of VRM morph candidates.
@@ -194,13 +202,21 @@ function _sampleRhubarbFrames(
   };
 }
 
-export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError, restingExpression }: Props) {
+export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError, restingExpression, bodyState }: Props) {
   const vrmRef = useRef<VRM | null>(null);
   // BF: also keep VRM in state so React mounts <primitive> after load.
   // Updating a ref alone does not trigger a re-render, which previously
   // meant the avatar scene was loaded but never inserted into the R3F tree
   // until some unrelated event (e.g. dragging the window) re-rendered.
   const [vrmReady, setVrmReady] = useState<VRM | null>(null);
+  // AD-721e: AnimationMixer + cached clips. The clips cache is populated by
+  // a one-shot effect after the VRM mounts; cross-fade transitions on
+  // ``bodyState`` change. When no clip is available for the requested
+  // state, the procedural breathing loop in useFrame is the fallback.
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const clipsCacheRef = useRef<Map<string, THREE.AnimationClip>>(new Map());
+  const currentActionRef = useRef<THREE.AnimationAction | null>(null);
+  const currentBodyStateRef = useRef<string | null>(null);
   const analyserRef = useRef<AnalyserNode | FakeAnalyser | null>(null);
   const speakingRef = useRef(false);
   // Cache which mouth blendshape names this VRM actually exposes — different
@@ -348,6 +364,98 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vrmUrl]);
 
+  // AD-721e: load skeletal animation clips after the VRM mounts. Honest-
+  // degrades to procedural-only when the server returns an empty manifest
+  // (operator hasn't run scripts/animations-fetch.ps1). The cache is keyed
+  // by clip name; the cross-fade effect below consumes it.
+  useEffect(() => {
+    if (!vrmReady) return;
+    let cancelled = false;
+    mixerRef.current = new THREE.AnimationMixer(vrmReady.scene);
+    (async () => {
+      try {
+        const r = await fetch('/api/avatars/animations');
+        if (!r.ok) return;
+        const payload = await r.json();
+        const clipList: Array<{ name: string; url: string }> = Array.isArray(payload?.clips)
+          ? payload.clips
+          : [];
+        if (clipList.length === 0) return;
+        const { retargetMixamoToVRM } = await import('../../canvas/animation/retarget');
+        const clipLoader = new GLTFLoader();
+        for (const meta of clipList) {
+          if (cancelled) return;
+          await new Promise<void>((resolve) => {
+            clipLoader.load(
+              meta.url,
+              (gltf: any) => {
+                if (cancelled) { resolve(); return; }
+                const raw = (gltf.animations ?? [])[0] as THREE.AnimationClip | undefined;
+                if (raw !== undefined) {
+                  const retargeted = retargetMixamoToVRM(raw);
+                  clipsCacheRef.current.set(meta.name, retargeted);
+                }
+                resolve();
+              },
+              undefined,
+              (_err) => {
+                // eslint-disable-next-line no-console
+                console.warn(`[AD-721e] failed to load clip ${meta.name}; skipping`);
+                resolve();
+              },
+            );
+          });
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[AD-721e] animations manifest fetch failed; procedural fallback active', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      const mixer = mixerRef.current;
+      if (mixer) {
+        mixer.stopAllAction();
+        mixer.uncacheRoot(vrmReady.scene);
+      }
+      mixerRef.current = null;
+      currentActionRef.current = null;
+      currentBodyStateRef.current = null;
+      clipsCacheRef.current.clear();
+    };
+  }, [vrmReady]);
+
+  // AD-721e: cross-fade body state. When the requested state has a cached
+  // clip, fade from current action to the new one over ~300 ms. When no
+  // clip is registered for the state, stop any current action so the
+  // procedural breathing loop owns the body bones.
+  useEffect(() => {
+    const mixer = mixerRef.current;
+    if (!mixer) return;
+    const requested = bodyState ?? 'idle';
+    if (currentBodyStateRef.current === requested) return;
+    const clip = clipsCacheRef.current.get(requested);
+    const prev = currentActionRef.current;
+    if (!clip) {
+      // No clip for this state -> stop any running clip; procedural loop runs.
+      if (prev) {
+        prev.fadeOut(0.3);
+      }
+      currentActionRef.current = null;
+      currentBodyStateRef.current = requested;
+      return;
+    }
+    const next = mixer.clipAction(clip);
+    next.reset();
+    next.setLoop(THREE.LoopRepeat, Infinity);
+    next.fadeIn(0.3).play();
+    if (prev && prev !== next) {
+      prev.crossFadeTo(next, 0.3, false);
+    }
+    currentActionRef.current = next;
+    currentBodyStateRef.current = requested;
+  }, [bodyState, vrmReady]);
+
   // Subscribe to TTS events for mouth animation.
   useEffect(() => {
     const off = onSpeechEvent((e) => {
@@ -395,6 +503,15 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     if (!vrm) return;
     applyExpressionsFromSignals(vrm, signals, expressionOverrides);
 
+    // AD-721e: tick the AnimationMixer when present. The mixer drives bone
+    // transforms; the procedural breathing/sway loop below is skipped when
+    // a clip action is active to avoid double-writing bones.
+    const mixer = mixerRef.current;
+    if (mixer) {
+      mixer.update(delta);
+    }
+    const clipActive = currentActionRef.current !== null;
+
     // Idle body animation: breathing + gentle sway. Adds life when no clip exists.
     const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
     const h = vrm.humanoid;
@@ -402,14 +519,14 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     const chest = h?.getNormalizedBoneNode(VRMHumanBoneName.Chest)
                 ?? h?.getNormalizedBoneNode(VRMHumanBoneName.UpperChest)
                 ?? h?.getNormalizedBoneNode(VRMHumanBoneName.Spine);
-    if (head) {
+    if (head && !clipActive) {
       const sway = Math.sin(t * 0.6) * 0.03;
       const bob = Math.sin(t * 1.4) * 0.015;
       const speakBob = speakingRef.current ? Math.sin(t * 5) * 0.04 : 0;
       head.rotation.y = sway;
       head.rotation.x = bob + speakBob;
     }
-    if (chest) {
+    if (chest && !clipActive) {
       // Subtle breathing — 0.25 Hz, ±1.5%.
       const breathe = 1 + Math.sin(t * 2 * Math.PI * 0.25) * 0.015;
       chest.scale.set(breathe, breathe, breathe);

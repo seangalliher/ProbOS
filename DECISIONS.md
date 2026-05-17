@@ -3972,3 +3972,46 @@ When enabled, each frame the closest `maxConcurrent` agents within `lodDistance`
 **Tests.** +12 vitest (9 editor + 3 popout integration), all passing.
 
 **What this does NOT change.** No new server endpoints. `propose_appearance` LLM path untouched. AD-721d-1 iteration counter untouched. `AvatarDSL` Pydantic schema untouched. `CrewVRM.tsx` untouched. Zero new pip or npm deps.
+
+### AD-721e - Skeletal animation library (Wave 168)
+
+**Date:** 2026-05-17. **Status:** Shipped (default-OFF transitional). **Wave:** 168. **Closes** #532. **Parent:** AD-721 avatar pipeline; AD-721i-1 license whitelist (W166).
+
+**Problem.** CrewVRM had only relaxed A-pose + procedural breathing/sway + lip-sync. Issue #532 asked for AnimationClip-based skeletal motion (idle / talking / listening / thinking). Mixamo was suggested but REJECTED per AD-721i-1 license whitelist.
+
+**Decision.** Three-layer change:
+1. **Source CC0/MIT clips.** Quaternius "Ultimate Animated Character Pack" (CC0) is the v1 default; KayKit (CC0) is the documented backup. Mixamo bytes are NEVER shipped or auto-fetched. License whitelist guard in `scripts/animations-fetch.ps1` rejects any non-whitelisted entry. License disposition lives at `docs/research/skeletal-animations-license.md`.
+2. **AnimationManifest + endpoints.** New `AnimationManifest` class in `src/probos/avatars/asset_manifest.py` with SHA-256 integrity check on registration (when file present) and license whitelist enforcement at register-time. Two new endpoints in `src/probos/routers/avatars.py`: `GET /api/avatars/animations` lists registered clips (honest-degrades to `{"clips": []}` when disabled or empty); `GET /api/avatars/animations/{name}` serves the .glb bytes with `Cache-Control: public, max-age=3600, immutable`.
+3. **CrewVRM AnimationMixer integration.** New optional `bodyState?: 'idle' | 'talking' | 'listening' | 'thinking'` prop. After VRM mount, fetch the manifest, load each clip via `GLTFLoader`, apply `retargetMixamoToVRM` (mixamorig:* -> VRM Humanoid bone names), cache by name. On `bodyState` change, cross-fade between actions over ~300 ms. When no clip is registered for the requested state, the procedural breathing/sway loop owns the bones (honest-degrade). Mixer ticks in the existing `useFrame`; procedural loop is gated by `currentActionRef.current === null` to prevent double-writing bones.
+
+**Bone retargeting (the silent-fail trap).** Mixamo-rigged clips use `mixamorig:Hips`, `mixamorig:LeftArm`, etc. `THREE.AnimationMixer` matches `KeyframeTrack.name` to scene node names; an unmodified Mixamo clip played against a VRM scene SILENTLY fails to bind (mixer ticks but no bones move, no console warning). The runtime helper `ui/src/canvas/animation/retarget.ts:retargetMixamoToVRM(clip)` rewrites each track name from `mixamorig:<X>.<channel>` to `<vrmName>.<channel>` before `mixer.clipAction(clip).play()`. Tracks for bones not in the 22-entry VRM Humanoid required set (finger / facial bones) are dropped silently with a debug log. Source bytes stay verbatim on disk.
+
+**Configuration.** Two new `AvatarsConfig` fields: `animations_dir` (default `data/avatars/animations`) and `animations_enabled` (default `False`).
+
+**Honest-degrade matrix.**
+- `animations_enabled=False` -> endpoint returns `{"clips": []}` -> CrewVRM never mounts the mixer effect -> procedural loop runs (unchanged behavior).
+- Manifest missing on disk -> same as above.
+- Manifest present but no files extracted -> empty `list_available()` -> empty clips list -> procedural.
+- File present but SHA tampered -> `register()` raises `ValueError`, endpoint logs and skips -> clip excluded from response.
+- Clip present but `bodyState` requests an unmapped state -> previous action fades out, procedural loop resumes.
+
+**Lip-sync precedence preserved.** Viseme morph targets write to `morphTargetInfluences`; body animation writes to bone transforms. No conflict. Lip-sync continues regardless of active body clip.
+
+**Files.**
+- `src/probos/avatars/asset_manifest.py` (new `AnimationManifest`, `AnimationClipEntry`).
+- `src/probos/routers/avatars.py` (2 new endpoints + `_build_animation_manifest` helper).
+- `src/probos/config.py` (2 new `AvatarsConfig` fields).
+- `ui/src/canvas/animation/retarget.ts` (new -- `MIXAMO_TO_VRM` + `retargetMixamoToVRM`).
+- `ui/src/components/profile/CrewVRM.tsx` (new `bodyState` prop + mixer state + manifest-load effect + cross-fade effect + mixer tick + procedural-loop gate).
+- `scripts/animations-fetch.ps1` (new -- operator fetch helper with whitelist guard).
+- `.gitignore` (new entry: `data/avatars/animations/`).
+- `docs/research/skeletal-animations-license.md` (new -- license disposition).
+- `tests/test_ad721e_animation_manifest.py` (10 pytest -- manifest unit + endpoint integration).
+- `ui/src/canvas/animation/__tests__/retarget.test.ts` (6 vitest -- track rewrite + drop + passthrough + immutability).
+
+**Tests.** +10 pytest passing + 6 vitest passing. Total Wave 168 cluster 1 vitest delta: +26 (8 AD-721f + 12 AD-721a + 6 AD-721e).
+
+**Forward markers.**
+- **AD-721e-1** -- gesture / nod / shrug / typing animation packs. Trigger: Captain demand for more granular body language beyond the 4-state v1.
+
+**What this does NOT change.** Lip-sync wiring (AD-721 + AD-738e-1) untouched -- bone animation is orthogonal to morphTargetInfluences. A-pose fallback at load preserved. Procedural breathing/sway preserved (gated to clip-inactive frames). VRM file format unchanged. No new pip or npm deps. No animation bytes committed to the repo.
