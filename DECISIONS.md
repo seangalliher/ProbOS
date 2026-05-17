@@ -3763,3 +3763,27 @@ Path-traversal is rejected via ``.resolve()`` prefix check against the recording
 **Full gate.** 13875 -> 13883 pytest. Vitest 667 -> 670. UI bundle ``index-1THkGO2n.js``.
 
 **Zero new deps.** Reuses ``BlenderRenderer`` + ``AttachmentStore`` + three.js (all already present).
+
+### AD-721g - Per-tier baseline VRMs (Wave 167)
+
+**Date:** 2026-05-17. **Status:** Shipped. **Closes** #534.
+
+**Capability.** Per-rank baseline VRM resolution so an unconfigured Ensign in Engineering can default to a different avatar than an unconfigured Senior Officer in Medical. Closes the gap where every crew member without a custom VRM either inherited a seed `vrm_url` or fell back to the parametric capsule -- no notion of "default avatar for this tier."
+
+**License posture.** No avatar bytes ship in the repo (AD-721i-1 whitelist: CC0 / MIT / Apache / BSD / CC-BY). The manifest declares which filenames are acceptable; the operator installs the bytes locally under ``<avatars_dir>/_baselines/<filename>``. v1 manifest defaults are all ``""`` -- ProbOS still boots with zero config.
+
+**Config.** New ``BaselineVRMManifest`` Pydantic block with four bare-filename slots: ``ensign`` / ``lieutenant`` / ``commander`` / ``senior``. Hung off ``AvatarsConfig.baseline_vrms`` via ``Field(default_factory=BaselineVRMManifest)``.
+
+**Resolver.** New ``src/probos/avatars/baseline_resolver.py`` exposes two functions: ``resolve_baseline_vrm_filename(rank, manifest) -> str`` (pure mapping; does not touch the filesystem) and ``resolve_baseline_vrm_path(rank, manifest, avatars_dir) -> Path | None`` (verifies the file exists under ``<avatars_dir>/_baselines/``). Defense-in-depth: filenames containing ``/``, ``\``, or ``..`` are rejected with a logged warning before any path math; the resolved target is ``.resolve()``-checked to stay under ``avatars_dir``.
+
+**Read-path wire.** ``routers/agents.py`` inserts a baseline fallback step BETWEEN the AD-721d D8 cache synthesis block and the parametric fallback: when ``appearance_dict["vrm_url"]`` is still empty, the resolver maps ``Rank.from_trust(trust_score)`` to the manifest filename and synthesises ``_baselines/<filename>`` as the response ``vrm_url``. The existing ``CrewVRM.tsx:250`` bare-filename resolver already prepends ``/api/system/avatars/``, so the new path renders without any UI delta. ``routers/system.py:get_avatar`` already permits subdirectories under ``avatars_dir`` (its ``relative_to`` check is the gate); no new endpoint needed.
+
+**Rank-only in v1.** Department-aware baselines are explicitly deferred. The matrix would be 4 ranks * N departments; v1 keeps it tractable by keying on rank only. Future AD can extend ``BaselineVRMManifest`` with an optional ``by_department`` subfield without breaking the v1 contract.
+
+**Tests.** +9 pytest in ``tests/test_ad721g_baseline_vrms.py``. Eight resolver unit tests cover the pure-mapping happy path (empty manifest, populated + file present, populated + file missing), three hostile-filename rejections (slash, ``..``, backslash), and two ``Rank.from_trust`` mappings (ensign-trust -> ensign-entry, senior-trust -> senior-entry). One integration test exercises the read path through TestClient against a synthesised baseline file with agent_type ``ad721g_test_agent`` so it doesn't collide with seed-profile vrm_urls. Real ``AvatarsConfig`` + real ``BaselineVRMManifest`` throughout per BF-287 -- no MagicMock at the config boundary.
+
+**AD-731 invariant.** N/A -- the baseline path is a filename string, not blob bytes. Files are served by the existing avatar-serve route from the on-disk ``_baselines/`` subdir.
+
+**Full gate.** 13883 -> 13892 pytest. Vitest unchanged (no UI surface). No UI build needed.
+
+**Zero new deps.** Pure resolver + config + read-path wiring.

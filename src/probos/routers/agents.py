@@ -181,6 +181,37 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
             exc_info=True,
         )
 
+    # AD-721g: per-rank baseline VRM fallback (between cache synthesis and parametric).
+    # Only fires when no vrm_url is set by the seed profile, no DSL cache exists,
+    # and the operator has configured a non-empty filename for this rank under
+    # ``<avatars_dir>/_baselines/``. License-clean: no bytes ship in the repo.
+    try:
+        if (
+            not appearance_dict.get("vrm_url")
+            and getattr(runtime, "config", None) is not None
+            and getattr(runtime.config, "avatars", None) is not None
+        ):
+            from probos.avatars.baseline_resolver import (
+                _BASELINES_SUBDIR,
+                resolve_baseline_vrm_path,
+            )
+            from probos.routers.system import _resolve_avatars_dir
+
+            avatars_cfg = runtime.config.avatars
+            avatars_dir = _resolve_avatars_dir(avatars_cfg.avatars_dir)
+            rank_obj = Rank.from_trust(trust_score)
+            baseline_path = resolve_baseline_vrm_path(
+                rank_obj, avatars_cfg.baseline_vrms, avatars_dir
+            )
+            if baseline_path is not None:
+                appearance_dict["vrm_url"] = f"{_BASELINES_SUBDIR}/{baseline_path.name}"
+    except Exception:
+        logger.debug(
+            "AD-721g: baseline VRM resolution failed for %s; "
+            "falling back to parametric",
+            agent.id, exc_info=True,
+        )
+
     profile_data = {
         "id": agent.id,
         "sovereignId": getattr(agent, 'sovereign_id', ''),

@@ -1163,6 +1163,23 @@ class BrowserToolConfig(BaseModel):
     )
 
 
+class BaselineVRMManifest(BaseModel):
+    """AD-721g: per-rank baseline VRM filenames.
+
+    Resolved against ``<avatars_dir>/_baselines/<filename>``. Each entry is a
+    bare filename (no path separators, no parent-dir traversal). Empty string
+    disables the tier baseline — the resolver then falls back to the seed
+    profile, then to the parametric capsule. License-clean by construction:
+    no avatar bytes ship in the repo; operators install their own files
+    under the AD-721i-1 CC0/MIT/Apache/BSD/CC-BY whitelist.
+    """
+
+    ensign: str = ""
+    lieutenant: str = ""
+    commander: str = ""
+    senior: str = ""
+
+
 class AvatarsConfig(BaseModel):
     """AD-721: 3D crew avatars (VRM popout)."""
 
@@ -1184,6 +1201,19 @@ class AvatarsConfig(BaseModel):
     # or reject. Iteration 1 = initial proposal; iterations 2..N are
     # revisions. Bounded 1..10 to keep LLM cost predictable.
     max_proposal_iterations: int = 3
+
+    # AD-721g: per-rank baseline VRM filenames resolved under
+    # ``<avatars_dir>/_baselines/``. Empty string per rank → no tier baseline;
+    # resolver falls back to seed profile then parametric. License-clean:
+    # no avatar bytes ship in the repo.
+    baseline_vrms: BaselineVRMManifest = Field(
+        default_factory=BaselineVRMManifest,
+        description=(
+            "AD-721g: per-rank baseline VRM filenames. Each entry is a bare "
+            "filename resolved under ``<avatars_dir>/_baselines/<filename>``. "
+            "Empty string disables the tier baseline."
+        ),
+    )
 
     # AD-721d-4: optional disk-sidecar path for the per-agent proposal
     # history. When None, defaults to ``<data_dir>/proposal_history.json``.
