@@ -3581,6 +3581,22 @@ waves:
     issues_to_close: [663, 516, 517, 643, 520, 521, 526, 542]
     status: shipped
 
+  - id: "167"
+    title: "Avatar UX polish + tool/attachment integration: preview-before-persist + per-tier VRMs + browser VRM upload + VRoid eval + chat tool attach"
+    # 5-AD focused batch:
+    # - AD-721d-3: Visual avatar preview before DSL persistence (uses shipped AD-721i renderer)
+    # - AD-721g: Per-tier baseline VRMs (manifest + routing)
+    # - AD-721h: Browser-based VRM upload UI
+    # - AD-721i-2: VRoid Studio CLI evaluation (research-only)
+    # - AD-720b: Chat tool attach (BrowserTool, MCP)
+    kind: main
+    depends_on: ["166"]
+    dispatch_prompt: "prompts/WAVE-167-DISPATCH.md"
+    prompts_already_drafted: false
+    builder_required: true
+    issues_to_close: [619, 534, 535, 543, 550]
+    status: drafting
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

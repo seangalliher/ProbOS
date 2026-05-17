@@ -15,6 +15,7 @@ from probos.api_models import (
     AgentChatRequest,
     ApproveVisionCapability,
     MediateAppearanceRevision,
+    PreviewAppearanceRequest,
     ProposeAppearanceRequest,
     ProposeAppearanceResponse,
     ProposeVisionCapability,
@@ -495,6 +496,104 @@ async def propose_agent_appearance(
         "proposal_iteration": new_iteration,
         "max_iterations": cfg_max,
     }
+
+
+@router.post("/{agent_id}/appearance/preview")
+async def preview_agent_appearance(
+    agent_id: str,
+    req: PreviewAppearanceRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-721d-3: render an unpersisted AvatarDSL to a draft VRM and return
+    a SHA-256 AttachmentStore ref for client-side three.js rendering.
+
+    Does NOT persist. Does NOT consume an iteration slot. Does NOT touch
+    the canonical ``<avatars_dir>/<agent_id>.vrm`` cache. Honest-degrades
+    to 503 when ``renderer_enabled=False`` or Blender is unavailable; the
+    HXI keeps the parametric capsule fallback.
+
+    AD-731 invariant: rendered VRM bytes ride ``AttachmentStore.write(sha,
+    blob, mime)``, never inlined in the HTTP response body.
+    """
+    _avatars_feature_check(runtime)
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    avatars_cfg = runtime.config.avatars
+    if not getattr(avatars_cfg, "renderer_enabled", False):
+        raise HTTPException(
+            status_code=503,
+            detail={"reason": "renderer_unavailable", "detail": "renderer_enabled=False"},
+        )
+
+    from probos.avatars.dsl import AvatarDSL
+    try:
+        dsl = AvatarDSL.model_validate(req.dsl)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "schema_violation", "detail": str(exc)},
+        )
+
+    from probos.avatars.blender_renderer import (
+        BlenderNotFoundError,
+        BlenderRenderError,
+        BlenderRenderer,
+    )
+    from probos.routers.system import _resolve_avatars_dir
+    avatars_dir = _resolve_avatars_dir(avatars_cfg.avatars_dir)
+    drafts_dir = _resolve_avatars_dir(avatars_cfg.dsl_drafts_dir)
+
+    renderer = BlenderRenderer(
+        blender_path=avatars_cfg.blender_path or None,
+        timeout_s=int(avatars_cfg.blender_render_timeout_s),
+        drafts_dir=drafts_dir,
+        max_vrm_size_bytes=int(avatars_cfg.max_vrm_size_bytes),
+        avatars_dir=avatars_dir,
+        procedural_fallback=bool(avatars_cfg.procedural_base_mesh_fallback),
+    )
+
+    try:
+        vrm_path = await renderer.render(dsl, agent_id)
+    except BlenderNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"reason": "blender_not_found", "detail": str(exc)},
+        )
+    except BlenderRenderError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"reason": "render_failed", "detail": str(exc)},
+        )
+
+    # AD-731 invariant: bytes through AttachmentStore SHA-256 refs.
+    import hashlib
+    blob = vrm_path.read_bytes()
+    max_bytes = int(avatars_cfg.max_vrm_size_bytes)
+    if len(blob) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail={"reason": "preview_too_large", "detail": f"{len(blob)} > {max_bytes}"},
+        )
+    sha = hashlib.sha256(blob).hexdigest()
+    from probos.routers.chat import _get_attachment_store
+    store = _get_attachment_store(runtime)
+    await store.write(sha, blob, "model/gltf-binary")
+
+    try:
+        runtime.emit_event(
+            "appearance_preview_rendered",
+            {"agent_id": agent_id, "attachment_id": sha, "bytes": len(blob)},
+        )
+    except Exception:
+        logger.warning(
+            "AD-721d-3: emit_event('appearance_preview_rendered') failed for %s; "
+            "preview ref returned but audit lost",
+            agent_id, exc_info=True,
+        )
+
+    return {"agent_id": agent_id, "attachment_id": sha, "size_bytes": len(blob)}
 
 
 @router.put("/{agent_id}/appearance")

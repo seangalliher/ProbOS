@@ -36,6 +36,8 @@ _MIME_TO_EXT: dict[str, str] = {
     # mime→extension mapping to persist captured blobs.
     "audio/webm":        "webm",
     "audio/wav":         "wav",
+    # AD-721d-3 / AD-721h (Wave 167): VRM is a glTF-binary container.
+    "model/gltf-binary": "vrm",
 }
 
 

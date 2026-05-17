@@ -3740,3 +3740,26 @@ Path-traversal is rejected via ``.resolve()`` prefix check against the recording
 **Full gate.** 13869 -> 13875 pytest (incl. 1 known dreaming flake outside this wave per dispatch); vitest unchanged (no UI surface in this AD).
 
 **Forward markers (TECHNICAL triggers per AD-722c-3).** AD-721i-1a (bundle the first APPROVED Captain-ruled asset; trigger: Captain flips ≥1 RESEARCH row to APPROVED). AD-721i-1b (per-asset license file capture - download the LICENSE / NOTICE alongside the asset and check it into ``data/avatar-assets/licenses/``; trigger: any CC-BY APPROVED row lands AND attribution audit fails). AD-721i-1c (asset registry promotion to AttachmentStore SHA-256 refs; trigger: cross-machine avatar synchronization scenario lands).
+### AD-721d-3 - Visual avatar preview before DSL persistence (Wave 167)
+
+**Date:** 2026-05-17. **Status:** Shipped. **Closes** #619.
+
+**Capability.** Render an unpersisted ``AvatarDSL`` to a draft VRM so the Captain sees the 3D result BEFORE approving. Closes the gap where ``AgentProfilePanel`` rendered a parametric capsule fallback during review because the canonical ``<avatars_dir>/<agent_id>.vrm`` is only regenerated post-approval.
+
+**Endpoint.** New ``POST /api/agent/{agent_id}/appearance/preview`` accepts ``{dsl: AvatarDSL_dict}``, invokes ``BlenderRenderer.render(dsl, agent_id)`` directly (NOT via the ``regenerate_avatar`` intent - that path moves the result into the canonical cache via ``os.replace``). The endpoint reads the draft VRM bytes, writes them through ``AttachmentStore.write(sha, blob, mime)``, and returns ``{agent_id, attachment_id, size_bytes}``. Does NOT persist; does NOT consume an iteration slot; does NOT touch the canonical cache.
+
+**AD-731 invariant.** Preview VRM bytes ride ``AttachmentStore`` SHA-256 refs - never inlined in the HTTP response body. ``model/gltf-binary`` MIME added to ``_MIME_TO_EXT`` in ``FilesystemAttachmentStore`` (single source of truth for MIME-to-extension).
+
+**Honest-degrade taxonomy.** 503 ``renderer_unavailable`` when ``cfg.avatars.renderer_enabled=False``. 503 ``blender_not_found`` on ``BlenderNotFoundError``. 502 ``render_failed`` on ``BlenderRenderError``. 422 ``schema_violation`` on bad DSL. 413 ``preview_too_large`` when bytes exceed ``cfg.avatars.max_vrm_size_bytes``. The HXI keeps the parametric capsule fallback in every degraded case.
+
+**BF-280 boundary preserved.** Endpoint reuses the existing ``BlenderRenderer`` surface; introduces NO new ``asyncio.create_subprocess_*`` call site. The known latent risk inside ``blender_renderer.py:178`` is out of scope for this AD.
+
+**HXI.** ``CrewAvatarPopout.tsx`` gains four new props (``previewVrmUrl``, ``onRenderPreview``, ``previewInFlight``, ``previewError``) and a stroke-based SVG "Render preview" button (eye glyph - no emoji per HXI Design Principle #3). When ``previewVrmUrl`` is set, the existing ``<CrewVRM vrmUrl>`` swaps to that URL (reuses ``CrewVRM.tsx:252`` absolute-URL pass-through). ``AgentProfilePanel.tsx`` holds the state and wires ``onRenderPreview`` to POST the proposed DSL and stash the resulting ``/api/chat/attachments/<sha>`` URL; state cleared on approve / reject / close.
+
+**Event.** New string event-type ``appearance_preview_rendered`` (matches existing ``appearance_proposal`` / ``appearance_approved`` / ``appearance_revision_mediated`` pattern - NOT a new ``EventType`` enum value).
+
+**Tests.** +8 pytest in ``tests/test_ad721d_3_avatar_preview.py`` covering happy path, avatars-disabled 503, agent missing 404, invalid DSL 422, renderer-disabled 503, BlenderNotFoundError 503, BlenderRenderError 502, real ``FilesystemAttachmentStore`` round-trip (BF-287). +3 vitest in ``ui/src/__tests__/CrewAvatarPopout.preview.test.tsx`` covering click-invokes-callback, swap-pane-on-previewVrmUrl, disabled-and-error-inline-during-in-flight. Real ``AvatarsConfig()`` / ``AttachmentsConfig()`` per BF-287. Renderer monkey-patched at the source module so the in-function ``from probos.avatars.blender_renderer import BlenderRenderer`` resolves the stub.
+
+**Full gate.** 13875 -> 13883 pytest. Vitest 667 -> 670. UI bundle ``index-1THkGO2n.js``.
+
+**Zero new deps.** Reuses ``BlenderRenderer`` + ``AttachmentStore`` + three.js (all already present).

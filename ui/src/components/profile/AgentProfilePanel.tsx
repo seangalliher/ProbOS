@@ -66,6 +66,10 @@ export function AgentProfilePanel() {
   const [previousDsl, setPreviousDsl] = useState<AvatarDSLDict | null>(null);
   const [proposalIteration, setProposalIteration] = useState<number>(1);
   const [proposalMaxIterations, setProposalMaxIterations] = useState<number>(3);
+  // AD-721d-3: preview-render state.
+  const [previewVrmUrl, setPreviewVrmUrl] = useState<string | null>(null);
+  const [previewInFlight, setPreviewInFlight] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   useEffect(() => {
     fetch('/api/config/avatars-enabled')
       .then(r => r.ok ? r.json() : null)
@@ -370,6 +374,8 @@ export function AgentProfilePanel() {
             setAvatarOpen(false);
             setProposedDsl(null);
             setPreviousDsl(null);
+            setPreviewVrmUrl(null);
+            setPreviewError(null);
           }}
           proposedDsl={proposedDsl}
           previousDsl={previousDsl}
@@ -411,6 +417,8 @@ export function AgentProfilePanel() {
               setProposedDsl(null);
               setPreviousDsl(null);
               setProposalIteration(1);
+              setPreviewVrmUrl(null);
+              setPreviewError(null);
               // Refresh profile so any cached vrm_url is picked up.
               fetch(`/api/agent/${agentId}/profile`)
                 .then(rr => rr.ok ? rr.json() : null)
@@ -427,6 +435,40 @@ export function AgentProfilePanel() {
             setProposedDsl(null);
             setPreviousDsl(null);
             setProposalIteration(1);
+            setPreviewVrmUrl(null);
+            setPreviewError(null);
+          }}
+          previewVrmUrl={previewVrmUrl}
+          previewInFlight={previewInFlight}
+          previewError={previewError}
+          onRenderPreview={async () => {
+            if (!agentId || !proposedDsl || previewInFlight) return;
+            setPreviewInFlight(true);
+            setPreviewError(null);
+            try {
+              const r = await fetch(`/api/agent/${agentId}/appearance/preview`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dsl: proposedDsl }),
+              });
+              if (!r.ok) {
+                let detail = `HTTP ${r.status}`;
+                try {
+                  const body = await r.json();
+                  if (body?.detail?.reason) detail = body.detail.reason;
+                } catch { /* swallow — best-effort */ }
+                setPreviewError(detail);
+                return;
+              }
+              const data = await r.json();
+              if (data && data.attachment_id) {
+                setPreviewVrmUrl(`/api/chat/attachments/${data.attachment_id}`);
+              }
+            } catch (e: any) {
+              setPreviewError(String(e?.message || e));
+            } finally {
+              setPreviewInFlight(false);
+            }
           }}
         />
       )}

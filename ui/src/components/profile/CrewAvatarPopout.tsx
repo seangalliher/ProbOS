@@ -40,6 +40,14 @@ interface Props {
     error?: string;
   }>;
   counselorOnline?: boolean;
+  // AD-721d-3: preview-render wiring. When ``previewVrmUrl`` is set, the
+  // viewer swaps to that VRM (resolved as a normal CrewVRM URL) so the
+  // Captain sees the proposed DSL rendered BEFORE approval. ``onRenderPreview``
+  // POSTs to ``/api/agent/{id}/appearance/preview`` and returns the URL.
+  previewVrmUrl?: string | null;
+  onRenderPreview?: () => void | Promise<void>;
+  previewInFlight?: boolean;
+  previewError?: string | null;
 }
 
 const MIN_W = 220;
@@ -62,9 +70,16 @@ export function CrewAvatarPopout({
   onRequestRevision,
   onMediateRevision,
   counselorOnline,
+  previewVrmUrl,
+  onRenderPreview,
+  previewInFlight,
+  previewError,
 }: Props) {
   const [loadFailed, setLoadFailed] = useState(false);
   const useVRM = !!appearance?.vrm_url && !loadFailed;
+  // AD-721d-3: when a preview URL is set, render it INSTEAD of the canonical VRM.
+  const activeVrmUrl = previewVrmUrl || (useVRM ? appearance!.vrm_url : null);
+  const showVRM = !!activeVrmUrl && !loadFailed;
   const tint = appearance?.color_palette_hint || departmentColor;
   // AD-721d-1: revision-flow local UI state.
   const [revisionOpen, setRevisionOpen] = useState(false);
@@ -230,11 +245,11 @@ export function CrewAvatarPopout({
           <ambientLight intensity={0.4} />
           <directionalLight position={[1, 2, 2]} intensity={0.6} />
           <Suspense fallback={null}>
-            {useVRM ? (
+            {showVRM ? (
               <CrewVRM
-                vrmUrl={appearance!.vrm_url}
+                vrmUrl={activeVrmUrl!}
                 agentId={agentId}
-                expressionOverrides={appearance!.expression_overrides}
+                expressionOverrides={appearance?.expression_overrides ?? {}}
                 signals={agentSignals}
                 onLoadError={() => setLoadFailed(true)}
                 restingExpression={appearance?.dsl?.expression_resting ?? null}
@@ -333,6 +348,42 @@ export function CrewAvatarPopout({
             {/* Action row: Approve / Request revision / Reject */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ flex: 1 }} />
+              {/* AD-721d-3: Render preview — invokes the BlenderRenderer and
+                  swaps the viewer to the proposed VRM before approval. */}
+              {onRenderPreview && (
+                <button
+                  data-testid="render-preview-btn"
+                  onClick={() => { if (!previewInFlight) void onRenderPreview(); }}
+                  aria-label="Render avatar preview"
+                  aria-disabled={!!previewInFlight}
+                  disabled={!!previewInFlight}
+                  title={previewError
+                    ? `Preview unavailable: ${previewError}`
+                    : (previewInFlight ? 'Rendering preview…' : 'Render preview')}
+                  style={{
+                    background: 'none',
+                    border: `1px solid ${previewInFlight ? 'rgba(136,136,160,0.25)' : 'rgba(240,176,96,0.4)'}`,
+                    color: previewInFlight ? '#666680' : '#f0b060',
+                    cursor: previewInFlight ? 'wait' : 'pointer',
+                    padding: '2px 6px', borderRadius: 3, display: 'flex', alignItems: 'center',
+                  }}
+                >
+                  {/* Eye/preview glyph — stroke-based, no emoji. */}
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                       strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" />
+                    <circle cx="8" cy="8" r="2" />
+                  </svg>
+                </button>
+              )}
+              {previewError && (
+                <span
+                  data-testid="preview-error"
+                  style={{ color: '#8888a0', fontSize: 10, fontStyle: 'italic' }}
+                >
+                  preview unavailable
+                </span>
+              )}
               <button
                 data-testid="approve-dsl-btn"
                 onClick={() => onApproveDsl?.(proposedDsl)}

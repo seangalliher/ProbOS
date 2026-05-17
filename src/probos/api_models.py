@@ -304,6 +304,17 @@ class SetAppearanceRequest(BaseModel):
     dsl: dict
 
 
+class PreviewAppearanceRequest(BaseModel):
+    """AD-721d-3: render an unpersisted AvatarDSL to a draft VRM for Captain preview.
+
+    Does NOT persist. Does NOT consume an iteration slot. Does NOT touch the
+    canonical ``<avatars_dir>/<agent_id>.vrm`` cache. The endpoint writes the
+    rendered bytes through ``AttachmentStore`` (SHA-256 ref per AD-731
+    invariant) and returns ``{"attachment_id": "<sha>", ...}``.
+    """
+    dsl: dict
+
+
 # ── Vision-capability proposal models (AD-720d-2.1) ──────────────
 
 class ProposeVisionCapability(BaseModel):
