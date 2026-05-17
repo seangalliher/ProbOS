@@ -283,6 +283,25 @@ BUILTIN_PCCS: list[SkillDefinition] = [
         domain="*",
         decay_rate_days=30,
     ),
+    # BF-294 / AD-728d: bind the cognitive skill at config/skills/self-image-awareness/SKILL.md
+    # to the proficiency-tracking SkillRegistry so AD-596c's skill_bridge sync matches it
+    # ("matched" instead of "unmatched"). Without this entry the skill loads in
+    # augmentation mode but proficiency gating is inactive — observable as the boot
+    # warning "Cognitive skill 'self-image-awareness' references skill_id
+    # 'self-image-awareness' not found in SkillRegistry — proficiency gating will be inactive".
+    SkillDefinition(
+        skill_id="self-image-awareness",
+        name="Self-Image Awareness",
+        category=SkillCategory.PCC,
+        description=(
+            "Vision-based avatar self-check via the [SELF_CHECK reason] marker — "
+            "invoking the AD-728c render-coherence mirror to verify the rendered "
+            "avatar matches declared intent. Universal crew skill; budget-aware "
+            "(3/hr idle OR 2/active-conversation INSTEAD OF hourly)."
+        ),
+        domain="*",
+        decay_rate_days=30,
+    ),
 ]
 
 # ── Role skill templates per department ────────────────────────────

@@ -136,7 +136,7 @@ def test_skill_profile_to_dict():
 # ---------------------------------------------------------------------------
 
 def test_builtin_pccs_count():
-    assert len(BUILTIN_PCCS) == 7
+    assert len(BUILTIN_PCCS) == 8  # BF-294: +self-image-awareness
     assert all(p.category == SkillCategory.PCC for p in BUILTIN_PCCS)
 
 
@@ -177,7 +177,7 @@ async def test_registry_register_and_get(registry):
 async def test_registry_register_builtins(registry):
     await registry.register_builtins()
     pccs = registry.list_skills(category=SkillCategory.PCC)
-    assert len(pccs) == 7
+    assert len(pccs) == 8  # BF-294: +self-image-awareness
     role_skills = registry.list_skills(category=SkillCategory.ROLE)
     assert len(role_skills) > 0
 
@@ -190,7 +190,7 @@ async def test_registry_register_builtins(registry):
 async def test_registry_list_skills_filters(registry):
     await registry.register_builtins()
     pccs = registry.list_skills(category=SkillCategory.PCC)
-    assert len(pccs) == 7
+    assert len(pccs) == 8  # BF-294: +self-image-awareness
     security_roles = registry.list_skills(category=SkillCategory.ROLE, domain="security")
     assert len(security_roles) > 0
     assert all(s.domain == "security" for s in security_roles)
@@ -258,7 +258,7 @@ async def test_service_acquire_skill(service):
 async def test_service_commission_agent(service):
     svc, reg = service
     profile = await svc.commission_agent("worf", "security_officer")
-    assert len(profile.pccs) == 7
+    assert len(profile.pccs) == 8  # BF-294: +self-image-awareness
     assert len(profile.role_skills) > 0
     # All at FOLLOW
     for s in profile.all_skills:
@@ -419,7 +419,7 @@ async def test_check_prerequisites(service):
 async def test_get_profile_categorization(service):
     svc, reg = service
     profile = await svc.commission_agent("worf", "security_officer")
-    assert len(profile.pccs) == 7
+    assert len(profile.pccs) == 8  # BF-294: +self-image-awareness
     assert len(profile.role_skills) > 0
     assert all(s.skill_id in [p.skill_id for p in BUILTIN_PCCS] for s in profile.pccs)
     assert len(profile.acquired_skills) == 0
