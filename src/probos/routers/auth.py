@@ -19,7 +19,7 @@ import hmac
 import logging
 from typing import Any
 
-from fastapi import Depends, Header, HTTPException, WebSocket
+from fastapi import Depends, Header, HTTPException, Request, WebSocket
 
 from probos.routers.deps import get_runtime
 
@@ -38,24 +38,38 @@ def _configured_token(runtime: Any) -> str:
 
 
 async def require_crew_scope(
+    request: Request,
     authorization: str | None = Header(default=None),
     runtime: Any = Depends(get_runtime),
 ) -> None:
-    """FastAPI dependency: enforce ``Authorization: Bearer <token>`` when configured.
+    """FastAPI dependency: enforce crew-scope token when configured.
+
+    AD-722b-1: primary path is ``Authorization: Bearer <token>`` header.
+    AD-706a: query-param fallback (``?token=...``) when the header is absent.
+    The ``<img src>`` element cannot set HTTP headers, so MJPEG streaming
+    needs the query-param surface. Header-only callers are unchanged.
 
     When ``auth.crew_scope_token`` is empty, this dependency is a pass-through -
-    backward-compatible with single-operator HXI installs.
-
-    When configured, missing/malformed/wrong tokens raise HTTP 401.
+    backward-compatible with single-operator HXI installs. When configured,
+    missing / malformed / wrong tokens raise HTTP 401.
     """
     expected = _configured_token(runtime)
     if not expected:
         return  # auth disabled
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401, detail="missing_or_malformed_authorization"
-        )
-    presented = authorization[len("Bearer "):].strip()
+
+    presented = ""
+    if authorization and authorization.startswith("Bearer "):
+        presented = authorization[len("Bearer "):].strip()
+    else:
+        # AD-706a: query-param fallback for static surfaces (<img>, <video>).
+        # Empty string is treated as "no token presented" - NOT a pass.
+        query_token = request.query_params.get("token", "") or ""
+        presented = query_token.strip()
+        if not presented:
+            raise HTTPException(
+                status_code=401, detail="missing_or_malformed_authorization"
+            )
+
     if not hmac.compare_digest(presented, expected):
         raise HTTPException(status_code=401, detail="invalid_token")
 

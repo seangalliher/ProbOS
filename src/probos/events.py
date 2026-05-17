@@ -211,6 +211,9 @@ class EventType(str, Enum):
     CREDENTIAL_READ_DENIED = "credential_read_denied"                # AD-706f: capability scope mismatch
     CREDENTIAL_DELETED = "credential_deleted"                        # AD-706f: vault delete
     CREDENTIAL_FILL_REQUESTED = "credential_fill_requested"          # AD-706f: page.fill invoked
+    BROWSER_STREAM_OPENED = "browser_stream_opened"                  # AD-706a: Captain-watch viewer connected
+    BROWSER_STREAM_CLOSED = "browser_stream_closed"                  # AD-706a: viewer disconnected
+    BROWSER_STREAM_FRAME_DROPPED = "browser_stream_frame_dropped"    # AD-706a: viewer backpressure / frame skipped
     VISION_CAPABILITY_PROPOSED = "vision_capability_proposed"  # AD-720d-2.1: agent requests vision capability
     VISION_CAPABILITY_RESOLVED = "vision_capability_resolved"  # AD-720d-2.1: Captain approves or denies
     VISION_INTENT_DIVERGENCE_OBSERVED = "vision_intent_divergence_observed"  # AD-722a-1: vision-LLM intent-vs-render

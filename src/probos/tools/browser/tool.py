@@ -79,6 +79,11 @@ class BrowserTool:
         self._reaper_stop = asyncio.Event()
         # Allow tests to substitute a session factory.
         self._session_factory: Any = BrowserSession
+        # AD-706a: Captain-watch streaming viewer accounting. Public API
+        # (acquire_viewer_slot / release_viewer_slot / active_viewers) so the
+        # streaming router doesn't reach across module boundaries - Demeter.
+        self._active_viewers: int = 0
+        self._viewer_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Tool Protocol surface
@@ -466,6 +471,36 @@ class BrowserTool:
     @property
     def session_count(self) -> int:
         return len(self._sessions)
+
+    # ------------------------------------------------------------------
+    # AD-706a viewer accounting (public API for streaming router)
+    # ------------------------------------------------------------------
+
+    @property
+    def active_viewers(self) -> int:
+        """AD-706a: count of open Captain-watch streaming viewers."""
+        return self._active_viewers
+
+    async def acquire_viewer_slot(self) -> bool:
+        """AD-706a: try to reserve a streaming viewer slot.
+
+        Returns True on success; False when the configured
+        ``streaming_max_concurrent_viewers`` cap is exhausted. Callers MUST
+        pair every successful acquire with ``release_viewer_slot()`` in
+        ``finally``.
+        """
+        async with self._viewer_lock:
+            cap = int(getattr(self._config, "streaming_max_concurrent_viewers", 0) or 0)
+            if cap > 0 and self._active_viewers >= cap:
+                return False
+            self._active_viewers += 1
+            return True
+
+    async def release_viewer_slot(self) -> None:
+        """AD-706a: release a viewer slot previously acquired."""
+        async with self._viewer_lock:
+            if self._active_viewers > 0:
+                self._active_viewers -= 1
 
     # ------------------------------------------------------------------
     # Domain policy

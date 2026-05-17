@@ -3590,3 +3590,31 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Full gate.** 13816 -> 13832 passed (20 skipped).
 
 **Forward markers (TECHNICAL triggers per AD-722c-3).** AD-706f-1 (OS-keychain backend - Windows Credential Manager / macOS Keychain / Linux Secret Service; trigger: operator-requested cross-machine credential sync OR commercial-overlay). AD-706f-2 (per-credential audit log query API; trigger: >=3 audit-trail GET requests in production). AD-706f-3 (credential rotation API; trigger: any credential reaches expires_at in production). AD-706f-4 (multi-Captain per-crew vault, pairs with AD-722b-1a; trigger: AD-722b-1a lands).
+
+
+### AD-706a - Captain-watch MJPEG streaming bridge (Wave 166)
+
+**Date:** 2026-05-17
+**Decision:** Implement Captain-watch over `multipart/x-mixed-replace` MJPEG, not WebRTC. New `routers/browser_stream.py` exposes `GET /api/browser/sessions/{session_id}/stream`; the generator awaits Playwright `page.screenshot(type="jpeg", quality=N)` at `1/streaming_fps` cadence and yields each frame with the `--frame` boundary. Every browser renders the response natively in an `<img>` tag - zero client-side JS, zero new pip/npm deps.
+
+**Status:** Shipped Wave 166. Closes #516.
+
+**Rationale.** WebRTC requires STUN/TURN + SDP negotiation + a long-lived peer connection. For local-machine HXI watching a local Playwright session, that complexity is unjustified. MJPEG is supported by every browser image renderer, and the bandwidth trade-off (no inter-frame compression) is acceptable for localhost/LAN. Federation streaming + WebRTC upgrade are forward-marked, not v1.
+
+**Public viewer-slot API.** ``BrowserTool`` gains three public surfaces: ``active_viewers`` (property), ``acquire_viewer_slot()``, ``release_viewer_slot()``. Backed by an ``asyncio.Lock`` for cap enforcement. The streaming router does NOT touch ``_active_viewers`` - Demeter / SOLID. 503 + ``Retry-After: 5`` when cap exhausted.
+
+**``require_crew_scope`` extension.** ``<img src>`` cannot set HTTP headers, so MJPEG needs a query-param surface. Single-dep extension (BF-274 pattern - don't fork APIs when one extension covers both shapes): the dependency now takes ``request: Request`` and falls back to ``?token=`` when the ``Authorization:`` header is absent. Empty-string token is rejected explicitly (regression-protected). Header-only AD-722b-1 callers are byte-compatible (the new positional is FastAPI-injected, invisible to ``Depends`` consumers).
+
+**AD-731 invariant preserved.** JPEG frames are ephemeral on-wire bytes; they are NEVER stored in ``AttachmentStore``. The bus / message layer does not carry blobs - this AD adds an HTTP streaming surface, not a new IntentMessage flow.
+
+**Config (default-OFF).** Four new ``BrowserToolConfig`` fields: ``streaming_enabled`` (False, Wave 10 convention #14), ``streaming_fps`` (4, ge=1 le=15), ``streaming_jpeg_quality`` (60, ge=20 le=95), ``streaming_max_concurrent_viewers`` (4, ge=1 le=16). ``BrowserSession.get_streaming_url()`` returns the path-only URL when enabled; None otherwise.
+
+**Event types.** ``BROWSER_STREAM_OPENED``, ``BROWSER_STREAM_CLOSED``, ``BROWSER_STREAM_FRAME_DROPPED`` (last reserved for backpressure; emitted at warning threshold in v1 path is logged at debug). OPENED + CLOSED bracket every viewer lifecycle; ``CancelledError`` re-raised after the CLOSED emit per Async Discipline.
+
+**HXI surface.** ``ui/src/components/browser/BrowserStreamPanel.tsx`` renders a stroke-based SVG glyph when ``streamingUrl`` is null and a plain ``<img>`` otherwise (HXI Design Principle #3 - no emoji, no Material Design). Appends ``?token=`` only when a non-empty token is provided. Component is NOT yet wired into a parent panel in v1 - forward marker AD-706a-parent-wire.
+
+**Test pattern.** ``_FakePage.screenshot`` raises after a small ``max_frames`` count so the TestClient (which blocks until the generator finishes) doesn't deadlock on the production infinite loop. Real ``SystemConfig()`` + ``BrowserToolConfig()`` per BF-287; no MagicMock at substrate boundaries.
+
+**Full gate.** 13832 -> 13843 passed (20 skipped, 1 known dreaming flake outside this wave per dispatch).
+
+**Forward markers (TECHNICAL triggers per AD-722c-3).** AD-706a-1 (Federation-hop streaming; trigger: AD-722b-5a federation streaming primitive lands). AD-706a-2 (WebRTC upgrade with adaptive bitrate; trigger: >=3 operator reports of MJPEG bandwidth issues OR LAN viewer count exceeds 8). AD-706a-parent-wire (wire ``BrowserStreamPanel`` into agent-detail HXI surface; trigger: HXI agent-detail panel refactor lands OR Captain demand). AD-706a-frame-diff (diff-based frame transmission; trigger: bandwidth profiling shows >70% of frame bytes are unchanged regions).

@@ -1104,6 +1104,30 @@ class BrowserToolConfig(BaseModel):
         ),
     )
 
+    # AD-706a: Captain-watch MJPEG streaming bridge.
+    streaming_enabled: bool = Field(
+        default=False,
+        description="AD-706a: enable MJPEG-over-HTTP Captain-watch streaming. Default-OFF (Wave 10 convention #14).",
+    )
+    streaming_fps: int = Field(
+        default=4,
+        ge=1,
+        le=15,
+        description="AD-706a: frames-per-second for MJPEG streaming. Higher fps quickly overwhelms localhost.",
+    )
+    streaming_jpeg_quality: int = Field(
+        default=60,
+        ge=20,
+        le=95,
+        description="AD-706a: JPEG quality (Playwright page.screenshot quality param).",
+    )
+    streaming_max_concurrent_viewers: int = Field(
+        default=4,
+        ge=1,
+        le=16,
+        description="AD-706a: per-runtime cap on concurrent Captain-watch viewer slots.",
+    )
+
     # AD-706f: credential vault (encrypted-at-rest). Default-OFF gate.
     credential_vault: CredentialVaultConfig = Field(
         default_factory=CredentialVaultConfig,

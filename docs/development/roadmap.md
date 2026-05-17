@@ -332,7 +332,7 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 
 | AD | Title | Issue | Priority |
 |----|-------|-------|----------|
-| AD-706a | Captain-watch streaming bridge — live browser session in HXI | [#516](https://github.com/seangalliher/ProbOS/issues/516) | 2 |
+| AD-706a | Captain-watch streaming bridge — live browser session in HXI — **SHIPPED Wave 166** (new `routers/browser_stream.py` serves `multipart/x-mixed-replace` MJPEG from Playwright `page.screenshot(type="jpeg")`; `BrowserSession.get_streaming_url()` populated when `BrowserToolConfig.streaming_enabled` is True; 4 new config fields; public `acquire_viewer_slot`/`release_viewer_slot`/`active_viewers` API on BrowserTool (no private member access from router); 3 new EventType values; `require_crew_scope` extended with `?token=` query-param fallback for `<img>` surfaces, empty-string token explicitly rejected; new `BrowserStreamPanel.tsx` HXI component; +11 pytest + 4 vitest) | [#516](https://github.com/seangalliher/ProbOS/issues/516) | 2 |
 | AD-706b | Browser session video recording + retention policy | [#517](https://github.com/seangalliher/ProbOS/issues/517) | 3 |
 | AD-706c | OmniParser-style vision extraction — **SPLIT 2026-05-12** into AD-706c-1 + AD-706c-2 after AD-732 + BF-268..273 made prerequisites concrete | (closed-as-superseded [#518](https://github.com/seangalliher/ProbOS/issues/518)) | — |
 | AD-706c-1 | Visual verification of Browser Tool actions using existing local vision tier (qwen3.6:27b). Read-only "did the expected outcome appear?" flow. Builds on already-shipped AD-731/BF-268/AD-732 primitives. **Demo value**: agent narrates its own work | [#642](https://github.com/seangalliher/ProbOS/issues/642) | 2 |

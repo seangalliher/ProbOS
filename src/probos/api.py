@@ -197,6 +197,7 @@ def create_app(runtime: Any) -> FastAPI:
         recreation, memory_graph, bills, emergent_leadership, orders,
         infodynamic, diagnostic_context, nl_graph_query,
         avatars,  # AD-721b-1 (Wave 155): /api/avatars/lipsync
+        browser_stream,  # AD-706a: Captain-watch MJPEG streaming
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -206,6 +207,7 @@ def create_app(runtime: Any) -> FastAPI:
         recreation, memory_graph, bills, emergent_leadership, orders,
         infodynamic, diagnostic_context, nl_graph_query,
         avatars,
+        browser_stream,
     ):
         app.include_router(r.router)
 

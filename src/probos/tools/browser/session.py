@@ -120,13 +120,18 @@ class BrowserSession:
         return (time.time() - self._created_at) >= self._config.session_max_duration_seconds
 
     def get_streaming_url(self) -> str | None:
-        """v1: returns None.
+        """AD-706a: return MJPEG streaming endpoint when streaming is enabled.
 
-        v2 hook for the Captain-watch surface (CDP/WebSocket bridge into an
-        iframe served via routers/system.py's ``ui://`` resource path).
-        Populated in AD-706a.
+        Returns the path-only URL ``/api/browser/sessions/{sid}/stream`` when
+        ``BrowserToolConfig.streaming_enabled`` is True. Returns None when
+        disabled (Wave 10 convention #14: default-OFF transitional flag).
+
+        The HXI consumer appends the crew-scope token via the AD-706a
+        query-param fallback on ``require_crew_scope``.
         """
-        return None
+        if not getattr(self._config, "streaming_enabled", False):
+            return None
+        return f"/api/browser/sessions/{self.session_id}/stream"
 
     # ------------------------------------------------------------------
     # State snapshot bookkeeping
