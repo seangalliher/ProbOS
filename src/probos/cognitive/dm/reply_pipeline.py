@@ -79,6 +79,7 @@ class DmReplyPipeline:
             self.step_2_challenge_parse,
             self.step_3_move_parse,
             self.step_4_self_check_parse,
+            self.step_4b_dm_outbound_parse,
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
             self.step_7_divergence_check,
@@ -309,6 +310,53 @@ class DmReplyPipeline:
             self.ctx.response_text = re.sub(
                 r"\[SELF_CHECK\b[^\]\n]*\]", "", self.ctx.response_text
             ).strip()
+
+    # --- step 4b: BF-296 / AD-453 [DM @callsign]...[/DM] outbound parse ---
+    async def step_4b_dm_outbound_parse(self) -> None:
+        """BF-296: Parse [DM @callsign]...[/DM] blocks in the Captain-bound
+        reply, dispatch each as a real DM to the named crew member, strip
+        the markers from ``response_text`` before display.
+
+        Reuses ``ProactiveLoop.extract_and_execute_dms`` (AD-453) — same
+        tier-1/2/3 regex, same BF-163 per-pair cooldowns, same AD-614
+        self-similarity gate. When the proactive loop is not yet wired
+        (early-boot / test runtimes), honest-degrade by leaving the text
+        untouched.
+
+        Runs AFTER self_check_parse so any [SELF_CHECK] markers are
+        stripped before the outbound DM body could reflect them, and
+        BEFORE episodic_store so the recorded episode shows the cleaned
+        Captain-visible text.
+        """
+        if not self.ctx.response_text:
+            return
+        if "[DM" not in self.ctx.response_text:
+            return  # fast path: no marker present
+        proactive = getattr(self.ctx.runtime, "proactive_loop", None)
+        if proactive is None or not hasattr(proactive, "extract_and_execute_dms"):
+            logger.debug(
+                "BF-296: proactive_loop unavailable; leaving [DM] markers in "
+                "reply for agent=%s",
+                self.ctx.agent_id,
+            )
+            return
+        try:
+            cleaned, actions = await proactive.extract_and_execute_dms(
+                self.ctx.agent, self.ctx.response_text,
+            )
+            self.ctx.response_text = cleaned
+            if actions:
+                logger.info(
+                    "BF-296: dispatched %d outbound DM(s) from agent=%s "
+                    "DM-reply",
+                    len(actions), self.ctx.agent_id,
+                )
+        except Exception:
+            logger.warning(
+                "BF-296: [DM] extraction failed for agent=%s; leaving markers "
+                "in reply (Captain will see them as fallback signal)",
+                self.ctx.agent_id, exc_info=True,
+            )
 
     # --- step 5: AD-430b HXI 1:1 episodic store ---
     async def step_5_episodic_store(self) -> None:

@@ -2553,7 +2553,7 @@ class ProactiveCognitiveLoop:
         dm_min_rank = Rank[dm_min_rank_str.upper()] if dm_min_rank_str.upper() in Rank.__members__ else Rank.ENSIGN
         _RANK_ORDER_DM = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
         if _RANK_ORDER_DM.index(rank) >= _RANK_ORDER_DM.index(dm_min_rank):
-            text, dm_actions = await self._extract_and_execute_dms(agent, text)
+            text, dm_actions = await self.extract_and_execute_dms(agent, text)
             actions_executed.extend(dm_actions)
 
         # --- Notebook writes (AD-434) ---
@@ -3580,7 +3580,7 @@ class ProactiveCognitiveLoop:
 
         return reply_body, actions
 
-    async def _extract_and_execute_dms(
+    async def extract_and_execute_dms(
         self, agent: Any, text: str,
     ) -> tuple[str, list[dict]]:
         """AD-453: Extract [DM @callsign]...[/DM] blocks and send as DMs."""
