@@ -198,6 +198,24 @@ async def generate_visemes(
     if not audio_path.is_file():
         logger.warning("AD-721b-1: audio path missing: %s", audio_path)
         return []
+
+    # BF-292: rhubarb only accepts WAV and OGG. Browser MediaRecorder
+    # captures default to audio/webm (Chrome's only supported codec for
+    # MediaRecorder); without server-side ffmpeg conversion, every captured
+    # clip would fail with "Error processing file" + exit 1. Reject at the
+    # boundary, honest-degrade to the heuristic path. INFO not WARNING —
+    # this is wrong-input, not a runtime fault. Forward marker AD-721b-1a
+    # tracks adding ffmpeg-backed format conversion for webm/m4a/mp3.
+    _SUPPORTED_SUFFIXES = {".wav", ".ogg"}
+    if audio_path.suffix.lower() not in _SUPPORTED_SUFFIXES:
+        logger.info(
+            "AD-721b-1: rhubarb skipped — unsupported audio format %s on %s "
+            "(rhubarb accepts WAV/OGG only; client should convert before "
+            "POSTing to /api/avatars/lipsync, or operator can install ffmpeg "
+            "for server-side conversion via AD-721b-1a)",
+            audio_path.suffix, audio_path.name,
+        )
+        return []
     resolved_binary = _resolve_binary_path(binary_path)
     if resolved_binary is None:
         logger.warning(
