@@ -199,6 +199,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         if runtime._night_orders_mgr.active:
             runtime._night_orders_mgr.expire()
 
+    # AD-706b: Stop browser recording reaper (background retention sweeper)
+    if hasattr(runtime, 'recording_reaper') and runtime.recording_reaper is not None:
+        try:
+            await runtime.recording_reaper.stop()
+        except Exception:
+            logger.warning("AD-706b: recording_reaper.stop() failed", exc_info=True)
+        runtime.recording_reaper = None
+
     # Stop Persistent Task Store (Phase 25a)
     if runtime.persistent_task_store:
         await runtime.persistent_task_store.stop()

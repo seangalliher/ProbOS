@@ -120,7 +120,12 @@ def _wire_classification_gate(*, runtime: Any, config: "SystemConfig") -> bool:
 
 
 def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-706: Register BrowserTool in the ToolRegistry (default-disabled)."""
+    """AD-706: Register BrowserTool in the ToolRegistry (default-disabled).
+
+    Synchronous portion of the wiring; the async portion (RecordingReaper
+    start, AD-706b) is invoked separately via ``_start_recording_reaper``
+    from the async ``finalize_startup`` caller.
+    """
     cfg = getattr(config, "browser_tool", None)
     if not cfg or not cfg.enabled:
         return False
@@ -204,7 +209,37 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
             "is empty; vault disabled. Set auth.crew_scope_token in "
             "config/system.yaml to enable."
         )
+
+    # AD-706b: RecordingReaper attribute is declared here; the actual async
+    # start happens via ``_start_recording_reaper`` from the async caller.
+    runtime.recording_reaper = None
     return True
+
+
+async def _start_recording_reaper(*, runtime: Any, config: "SystemConfig") -> None:
+    """AD-706b: start the recording retention reaper if recording is enabled."""
+    cfg = getattr(config, "browser_tool", None)
+    if not cfg or not getattr(cfg, "enabled", False):
+        return
+    if not getattr(cfg, "recording_enabled", False):
+        return
+    try:
+        from probos.tools.browser.recording_reaper import RecordingReaper
+        emit_fn = getattr(runtime, "emit_event", None)
+        reaper = RecordingReaper(cfg=cfg, emit_event_fn=emit_fn)
+        await reaper.start()
+        runtime.recording_reaper = reaper
+        logger.info(
+            "AD-706b: RecordingReaper started (interval=%ds, retention=%dd, dir=%s)",
+            cfg.recording_reaper_interval_seconds,
+            cfg.recording_retention_days,
+            cfg.recording_dir,
+        )
+    except Exception:
+        logger.warning(
+            "AD-706b: RecordingReaper start failed; recordings will not be reaped this run",
+            exc_info=True,
+        )
 
 
 def _wire_curriculum_registry(*, runtime: Any, config: "SystemConfig") -> bool:
@@ -3308,6 +3343,12 @@ async def finalize_startup(
         _wire_browser_tool(runtime=runtime, config=config)
     except Exception:
         logger.warning("AD-706: _wire_browser_tool failed", exc_info=True)
+
+    # AD-706b: async portion of browser-tool wiring - start the recording reaper.
+    try:
+        await _start_recording_reaper(runtime=runtime, config=config)
+    except Exception:
+        logger.warning("AD-706b: _start_recording_reaper failed", exc_info=True)
 
     # AD-520: Wire Spatial Knowledge Explorer (default-False; constructs runtime.spatial_layout)
     try:

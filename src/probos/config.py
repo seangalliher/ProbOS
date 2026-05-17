@@ -1128,6 +1128,34 @@ class BrowserToolConfig(BaseModel):
         description="AD-706a: per-runtime cap on concurrent Captain-watch viewer slots.",
     )
 
+    # AD-706b: Browser session video recording (Playwright record_video_dir).
+    recording_enabled: bool = Field(
+        default=False,
+        description="AD-706b: enable Playwright record_video_dir on each BrowserSession. Default-OFF.",
+    )
+    recording_dir: str = Field(
+        default="data/browser-sessions",
+        description="AD-706b: directory tree where session subdirs (and .webm files) are written.",
+    )
+    recording_retention_days: int = Field(
+        default=7,
+        ge=1,
+        le=365,
+        description="AD-706b: delete recordings older than this many days.",
+    )
+    recording_reaper_interval_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="AD-706b: sleep interval between recording-reaper sweeps.",
+    )
+    recording_max_size_mb_per_session: int = Field(
+        default=500,
+        ge=10,
+        le=5000,
+        description="AD-706b: per-session size cap (MB); oldest webm files deleted when exceeded.",
+    )
+
     # AD-706f: credential vault (encrypted-at-rest). Default-OFF gate.
     credential_vault: CredentialVaultConfig = Field(
         default_factory=CredentialVaultConfig,

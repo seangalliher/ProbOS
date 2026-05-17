@@ -455,6 +455,7 @@ class BrowserTool:
             session_id=new_id,
             config=self._config,
             agent_id=agent_id,
+            emit_event=self._emit_event,
         )
         await session.start()
         self._sessions[new_id] = session

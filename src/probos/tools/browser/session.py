@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
@@ -55,10 +56,12 @@ class BrowserSession:
         session_id: str,
         config: BrowserToolConfig,
         agent_id: str,
+        emit_event: Any | None = None,
     ) -> None:
         self.session_id = session_id
         self._config = config
         self._agent_id = agent_id
+        self._emit_event = emit_event
         self._created_at = time.time()
         # Most recent state() snapshot — index -> {selector, role, text, ...}
         self._last_state_index: list[dict[str, Any]] = []
@@ -73,6 +76,10 @@ class BrowserSession:
         # when the session is destroyed.
         self._compute_use_consecutive_autonomous: int = 0
         self._compute_use_total_calls: int = 0
+        # AD-706b: recording-on-disk bookkeeping. Populated by start() when
+        # ``recording_enabled`` is True; consulted by stop() to emit
+        # BROWSER_RECORDING_STOPPED / FAILED events.
+        self._recording_path: Path | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -89,7 +96,22 @@ class BrowserSession:
 
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(headless=self._config.headless)
-        self._context = await self._browser.new_context()
+        # AD-706b: opt-in video recording via Playwright record_video_dir.
+        if getattr(self._config, "recording_enabled", False):
+            recording_path = Path(
+                getattr(self._config, "recording_dir", "data/browser-sessions")
+            ) / self.session_id
+            recording_path.mkdir(parents=True, exist_ok=True)
+            self._recording_path = recording_path
+            self._context = await self._browser.new_context(
+                record_video_dir=str(recording_path),
+            )
+            self._emit_recording_event(
+                "BROWSER_RECORDING_STARTED",
+                {"session_id": self.session_id, "path": str(recording_path)},
+            )
+        else:
+            self._context = await self._browser.new_context()
         self._page = await self._context.new_page()
         try:
             self._page.set_default_timeout(self._config.default_timeout_ms)
@@ -98,6 +120,7 @@ class BrowserSession:
 
     async def stop(self) -> None:
         """Close everything in reverse order. Idempotent."""
+        recording_failed = False
         for closer, attr in [
             (self._page, "_page"),
             (self._context, "_context"),
@@ -108,12 +131,62 @@ class BrowserSession:
                     await closer.close()
                 except Exception:
                     logger.debug("AD-706: close %s failed", attr, exc_info=True)
+                    # AD-706b: record_video finalization happens during
+                    # _context.close(); flag the failure here.
+                    if attr == "_context" and self._recording_path is not None:
+                        recording_failed = True
         if self._playwright is not None:
             try:
                 await self._playwright.stop()
             except Exception:
                 logger.debug("AD-706: playwright.stop failed", exc_info=True)
         self._page = self._context = self._browser = self._playwright = None
+
+        # AD-706b: emit recording lifecycle event after context.close() finalizes
+        # the .webm file. Tier-2: failures never raise.
+        if self._recording_path is not None:
+            if recording_failed:
+                self._emit_recording_event(
+                    "BROWSER_RECORDING_FAILED",
+                    {
+                        "session_id": self.session_id,
+                        "path": str(self._recording_path),
+                    },
+                )
+            else:
+                size = 0
+                try:
+                    for webm in self._recording_path.glob("*.webm"):
+                        size += webm.stat().st_size
+                except Exception:
+                    logger.warning(
+                        "AD-706b: failed to compute recording size for %s",
+                        self._recording_path,
+                        exc_info=True,
+                    )
+                self._emit_recording_event(
+                    "BROWSER_RECORDING_STOPPED",
+                    {
+                        "session_id": self.session_id,
+                        "path": str(self._recording_path),
+                        "size_bytes": size,
+                    },
+                )
+            self._recording_path = None
+
+    def _emit_recording_event(self, event_name: str, payload: dict[str, Any]) -> None:
+        """AD-706b: best-effort event emit (Tier-2 log-and-degrade)."""
+        if self._emit_event is None:
+            return
+        try:
+            from probos.events import EventType
+            event_type = getattr(EventType, event_name)
+            self._emit_event(event_type, payload)
+        except Exception:
+            logger.debug(
+                "AD-706b: recording event emit failed for %s", event_name,
+                exc_info=True,
+            )
 
     def is_expired(self) -> bool:
         """TTL check vs ``BrowserToolConfig.session_max_duration_seconds``."""

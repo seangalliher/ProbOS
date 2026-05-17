@@ -3618,3 +3618,41 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Full gate.** 13832 -> 13843 passed (20 skipped, 1 known dreaming flake outside this wave per dispatch).
 
 **Forward markers (TECHNICAL triggers per AD-722c-3).** AD-706a-1 (Federation-hop streaming; trigger: AD-722b-5a federation streaming primitive lands). AD-706a-2 (WebRTC upgrade with adaptive bitrate; trigger: >=3 operator reports of MJPEG bandwidth issues OR LAN viewer count exceeds 8). AD-706a-parent-wire (wire ``BrowserStreamPanel`` into agent-detail HXI surface; trigger: HXI agent-detail panel refactor lands OR Captain demand). AD-706a-frame-diff (diff-based frame transmission; trigger: bandwidth profiling shows >70% of frame bytes are unchanged regions).
+
+### AD-706b - Browser session video recording + retention reaper (Wave 166)
+
+**Date:** 2026-05-17
+**Decision:** Use Playwright's built-in ``record_video_dir`` context option to opt-in record live BrowserSession surfaces as ``.webm`` files under ``data/browser-sessions/<session_id>/``. A background ``RecordingReaper`` walks the recording tree at ``recording_reaper_interval_seconds`` cadence, deletes files older than ``recording_retention_days``, and enforces a per-session size cap by removing oldest-first. v1 keeps recordings on disk (no AttachmentStore promotion - forward marker AD-706b-2).
+
+**Status:** Shipped Wave 166. Closes #517.
+
+**Why Playwright's native recording (not MJPEG capture).** ``record_video_dir`` is built into Playwright's BrowserContext; the recorder runs inside the browser process and produces a single WebM file per page. Hooking this in start() + closing the context in stop() is byte-compatible with the existing lifecycle. v1 does NOT transcode to MP4 - the codec conversion belongs in a separate AD (706b-1) that consumes the AD-721b-1a ffmpeg helper shipping in this same wave.
+
+**Why on-disk (not AttachmentStore).** Each session recording can be tens of MB. AttachmentStore is for content-addressable refs (SHA-256 keys, small-ish blobs). Promoting video to AttachmentStore needs a separate decision: (1) does ChromaDB-backed retrieval make sense for videos? (2) what is the retention story when SHA-256 hashing the contents makes them effectively immortal? Forward-marked at AD-706b-2.
+
+**``runtime.stop()``, not ``runtime.shutdown()``.** ProbOSRuntime exposes ``async def stop(reason: str = '')`` at ``runtime.py:2227``. ``runtime.shutdown()`` is NOT a method on the runtime class (only ``shutdown()`` as a module-level function in ``startup/shutdown.py``). The recording reaper cleanup is added inside ``shutdown()`` so it runs as part of the standard async teardown.
+
+**``_wire_browser_tool`` split.** The synchronous portion declares ``runtime.recording_reaper = None`` next to BrowserTool construction. A new async helper ``_start_recording_reaper`` (called from ``finalize_startup`` after the sync wire) constructs and awaits ``reaper.start()`` when ``recording_enabled`` is True. This preserves the sync-call signature at the existing callsite while satisfying the new async dependency.
+
+**BrowserSession surface.** ``BrowserSession`` ctor now accepts an optional ``emit_event`` callable so recording lifecycle events surface from the session itself, without reaching across BrowserTool. ``start()`` creates the session subdir via ``Path.mkdir(parents=True, exist_ok=True)`` BEFORE handing the path to ``new_context(record_video_dir=...)``. ``stop()`` separates the close-context error path from the close-page / close-browser paths so ``BROWSER_RECORDING_FAILED`` is emitted only when the recording finalize step itself errored.
+
+**Tier-2 throughout the reaper.** FileNotFoundError / PermissionError on individual webm files are logged at warning and skipped, never raised. The async loop catches CancelledError, performs cleanup, and re-raises (standing Async Discipline). Blocking filesystem work is dispatched through ``loop.run_in_executor(None, self._reap_sync)``.
+
+**Admin endpoints.** ``routers/browser_recordings.py`` exposes three Captain-only surfaces:
+* ``GET /api/browser/recordings`` - list (session_id, filename, size_bytes, mtime).
+* ``GET /api/browser/recordings/{session_id}/{filename}`` - FileResponse (streams the webm).
+* ``DELETE /api/browser/recordings/{session_id}`` - shutil.rmtree on the subdir.
+
+Path-traversal is rejected via ``.resolve()`` prefix check against the recording root.
+
+**Config (default-OFF).** Five new ``BrowserToolConfig`` fields: ``recording_enabled`` (False, Wave 10 convention #14), ``recording_dir`` (``data/browser-sessions``), ``recording_retention_days`` (7, ge=1 le=365), ``recording_reaper_interval_seconds`` (3600, ge=60 le=86400), ``recording_max_size_mb_per_session`` (500, ge=10 le=5000).
+
+**Event types.** ``BROWSER_RECORDING_STARTED``, ``BROWSER_RECORDING_STOPPED`` (includes summed ``size_bytes`` across ``*.webm`` in the subdir), ``BROWSER_RECORDING_EXPIRED`` (per-delete with reason ``retention`` or ``size_cap``), ``BROWSER_RECORDING_FAILED`` (close-context error path).
+
+**AD-731 invariant preserved.** Recordings are large files written by Playwright's built-in recorder. They never traverse the bus / message layer; they live on disk and are surfaced through HTTP FileResponse. No inline base64 blob in any IntentMessage param.
+
+**Test pattern.** Hand-rolled ``_FakeBrowser`` / ``_FakeContext`` / ``_FakePlaywright`` chain installed via ``monkeypatch.setitem(sys.modules, ...)`` so the lazy ``from playwright.async_api import async_playwright`` inside ``BrowserSession.start()`` picks up the fake. Real ``BrowserToolConfig()`` per BF-287. ``tmp_path`` for recording directories. ``os.utime`` to backdate mtimes for retention testing.
+
+**Full gate.** 13843 -> 13852 passed (20 skipped).
+
+**Forward markers (TECHNICAL triggers per AD-722c-3).** AD-706b-1 (ffmpeg MP4 transcode using AD-721b-1a's ``_resolve_ffmpeg_binary`` helper; trigger: operator request OR codec compatibility issue with downstream tooling). AD-706b-2 (AttachmentStore promotion of recordings via content-addressable SHA-256 refs; trigger: AttachmentStore size-cap policy ratified OR operator requests cross-session retrieval). AD-706b-3 (HXI surface for recording playback - timeline scrubber + delete; trigger: Captain operates recording feature for >7 days OR HXI polish wave scheduled). AD-706b-4 (per-domain recording allowlist - record only on URL match; trigger: privacy-sensitive operator deployment).
