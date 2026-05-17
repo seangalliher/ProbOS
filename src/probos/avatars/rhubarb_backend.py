@@ -121,6 +121,107 @@ def _resolve_binary_path(configured: str) -> Path | None:
     return None
 
 
+def _resolve_ffmpeg_binary(configured: str) -> Path | None:
+    """AD-721b-1a: resolve the configured ffmpeg binary path.
+
+    Mirrors ``_resolve_binary_path`` (separate function so the two binary
+    discovery paths stay independently overridable in tests). Auto-appends
+    ``.exe`` on Windows. NEVER raises.
+    """
+    if not configured:
+        return None
+    p = Path(configured).resolve()
+    if p.is_file():
+        return p
+    if sys.platform == "win32" and p.suffix.lower() != ".exe":
+        with_exe = p.parent / (p.name + ".exe")
+        if with_exe.is_file():
+            return with_exe
+    return None
+
+
+async def _convert_to_wav(
+    audio_path: Path,
+    ffmpeg_binary: Path,
+    *,
+    timeout_seconds: float = 30.0,
+) -> Path | None:
+    """AD-721b-1a: convert ``audio_path`` to 16-bit mono 22050 Hz WAV via ffmpeg.
+
+    Returns the temp WAV path on success, None on any failure. Caller MUST
+    ``unlink(missing_ok=True)`` in finally. Tier-2 throughout - NEVER raises.
+
+    BF-280: ``subprocess.Popen`` in thread executor (WindowsSelectorEventLoop
+    does not support ``asyncio.create_subprocess_*``).
+    BF-282: writes to a tempfile via ffmpeg's ``-y <path>`` argument; the
+    binary's stdout is intentionally DEVNULL'd.
+    """
+    import tempfile
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp.close()
+    temp_path = Path(tmp.name)
+    args = [
+        str(ffmpeg_binary),
+        "-y",
+        "-i", str(audio_path),
+        "-ac", "1",
+        "-ar", "22050",
+        "-acodec", "pcm_s16le",
+        str(temp_path),
+    ]
+
+    def _run_sync() -> tuple[int, bytes]:
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            _, err = proc.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise
+        return proc.returncode or 0, err
+
+    try:
+        loop = asyncio.get_running_loop()
+        try:
+            returncode, stderr_bytes = await loop.run_in_executor(None, _run_sync)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "AD-721b-1a: ffmpeg timed out after %ss converting %s",
+                timeout_seconds, audio_path.name,
+            )
+            temp_path.unlink(missing_ok=True)
+            return None
+        if returncode != 0:
+            logger.warning(
+                "AD-721b-1a: ffmpeg exit=%s on %s; stderr=%s",
+                returncode, audio_path.name,
+                stderr_bytes.decode("utf-8", errors="replace")[:500],
+            )
+            temp_path.unlink(missing_ok=True)
+            return None
+        # Defense in depth: verify the output exists and is non-empty.
+        if not temp_path.is_file() or temp_path.stat().st_size == 0:
+            logger.warning(
+                "AD-721b-1a: ffmpeg produced empty / missing output for %s",
+                audio_path.name,
+            )
+            temp_path.unlink(missing_ok=True)
+            return None
+        return temp_path
+    except (OSError, ValueError) as e:
+        logger.warning(
+            "AD-721b-1a: ffmpeg subprocess failed on %s: %s: %s",
+            audio_path.name, type(e).__name__, e,
+        )
+        temp_path.unlink(missing_ok=True)
+        return None
+
+
 async def is_available(binary_path: str, timeout_seconds: float = 5.0) -> bool:
     """Check rhubarb is present at ``binary_path`` AND responds to ``--version``.
 
@@ -184,6 +285,8 @@ async def generate_visemes(
     audio_path: Path,
     binary_path: str,
     timeout_seconds: float = 30.0,
+    *,
+    ffmpeg_binary_path: str | None = None,
 ) -> list[VisemeFrame]:
     """Run rhubarb on ``audio_path``, return Oculus-mapped viseme schedule.
 
@@ -194,6 +297,12 @@ async def generate_visemes(
     The wav file at ``audio_path`` MUST be a path resolved through
     ``AttachmentStore.get_path()`` so it's already sandboxed under the
     platform data dir (AD-720 path-traversal guard).
+
+    AD-721b-1a: when ``audio_path`` is not WAV/OGG and ``ffmpeg_binary_path``
+    is provided + resolvable, the audio is transcoded to 16-bit mono 22050 Hz
+    WAV before being handed to rhubarb. The temp WAV is unlinked in finally.
+    If ffmpeg is missing or conversion fails, the BF-292 honest-degrade
+    contract is preserved (returns ``[]``).
     """
     if not audio_path.is_file():
         logger.warning("AD-721b-1: audio path missing: %s", audio_path)
@@ -207,15 +316,40 @@ async def generate_visemes(
     # this is wrong-input, not a runtime fault. Forward marker AD-721b-1a
     # tracks adding ffmpeg-backed format conversion for webm/m4a/mp3.
     _SUPPORTED_SUFFIXES = {".wav", ".ogg"}
+    converted_temp: Path | None = None
     if audio_path.suffix.lower() not in _SUPPORTED_SUFFIXES:
-        logger.info(
-            "AD-721b-1: rhubarb skipped — unsupported audio format %s on %s "
-            "(rhubarb accepts WAV/OGG only; client should convert before "
-            "POSTing to /api/avatars/lipsync, or operator can install ffmpeg "
-            "for server-side conversion via AD-721b-1a)",
-            audio_path.suffix, audio_path.name,
+        # AD-721b-1a: try ffmpeg conversion. If ffmpeg missing or fails,
+        # fall through to BF-292's honest-degrade path (return []).
+        ffmpeg_binary = (
+            _resolve_ffmpeg_binary(ffmpeg_binary_path) if ffmpeg_binary_path else None
         )
-        return []
+        if ffmpeg_binary is not None:
+            converted_temp = await _convert_to_wav(audio_path, ffmpeg_binary)
+        if converted_temp is None:
+            logger.info(
+                "AD-721b-1: rhubarb skipped — unsupported audio format %s on %s "
+                "(rhubarb accepts WAV/OGG only; client should convert before "
+                "POSTing to /api/avatars/lipsync, or operator can install ffmpeg "
+                "for server-side conversion via AD-721b-1a)",
+                audio_path.suffix, audio_path.name,
+            )
+            return []
+        audio_path = converted_temp  # use the converted file for the rest
+    try:
+        return await _run_rhubarb(audio_path, binary_path, timeout_seconds)
+    finally:
+        if converted_temp is not None:
+            converted_temp.unlink(missing_ok=True)
+
+
+async def _run_rhubarb(
+    audio_path: Path,
+    binary_path: str,
+    timeout_seconds: float,
+) -> list[VisemeFrame]:
+    """AD-721b-1a: extracted rhubarb invocation so generate_visemes can wrap
+    it in a finally that unlinks the optional ffmpeg-converted tempfile.
+    """
     resolved_binary = _resolve_binary_path(binary_path)
     if resolved_binary is None:
         logger.warning(

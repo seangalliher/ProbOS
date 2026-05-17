@@ -3656,3 +3656,31 @@ Path-traversal is rejected via ``.resolve()`` prefix check against the recording
 **Full gate.** 13843 -> 13852 passed (20 skipped).
 
 **Forward markers (TECHNICAL triggers per AD-722c-3).** AD-706b-1 (ffmpeg MP4 transcode using AD-721b-1a's ``_resolve_ffmpeg_binary`` helper; trigger: operator request OR codec compatibility issue with downstream tooling). AD-706b-2 (AttachmentStore promotion of recordings via content-addressable SHA-256 refs; trigger: AttachmentStore size-cap policy ratified OR operator requests cross-session retrieval). AD-706b-3 (HXI surface for recording playback - timeline scrubber + delete; trigger: Captain operates recording feature for >7 days OR HXI polish wave scheduled). AD-706b-4 (per-domain recording allowlist - record only on URL match; trigger: privacy-sensitive operator deployment).
+
+### AD-721b-1a - ffmpeg-backed audio format conversion (Wave 166)
+
+**Date:** 2026-05-17
+**Decision:** Add ffmpeg-backed audio format conversion in front of rhubarb-lip-sync so client-captured ``audio/webm`` (Chrome MediaRecorder default) reaches the phonetic-alignment path instead of the heuristic fallback. ffmpeg is operator-provided at ``tools/ffmpeg/ffmpeg(.exe)`` (gitignored); when missing, BF-292's honest-degrade contract is preserved (``generate_visemes`` returns ``[]``).
+
+**Status:** Shipped Wave 166. Closes #663.
+
+**BF-280 + BF-282 + BF-286 - the recurring subprocess discipline.** The conversion path is the canonical case study:
+* BF-280: ``subprocess.Popen`` dispatched via ``loop.run_in_executor`` (not ``asyncio.create_subprocess_*``) so the WindowsSelectorEventLoop runtime can shell out without ``NotImplementedError``.
+* BF-282: ffmpeg writes to ``tempfile.NamedTemporaryFile(suffix='.wav', delete=False)`` via ``-y <path>``; ``stdout`` is intentionally ``DEVNULL`` (NEVER capture binary on stdout - on Windows + pipe-redirected stdout, the C runtime opens it in text mode and corrupts every ``0x0A`` PCM byte).
+* BF-286: tests stub ``subprocess.Popen`` with a ``_FakePopen`` that records args + emulates ``communicate()`` / ``kill()`` / ``returncode`` - the production shape (last positional = output file path; ``-i`` is the input flag; ``-ac 1 -ar 22050 -acodec pcm_s16le`` are the encode params) is asserted directly in the success test.
+
+**Honest-degrade contract preserved.** BF-292 (Wave 165) added the boundary that turned every non-WAV/OGG audio path into ``return []`` + INFO log. AD-721b-1a inserts the ffmpeg attempt BEFORE that early return; on any failure (ffmpeg path empty, binary missing, timeout, non-zero exit, empty output), the fall-through is byte-identical to the BF-292 contract. The empty-list contract is the signal to the router to switch to the heuristic schedule client-side.
+
+**Signature change is backward-compatible.** ``generate_visemes(audio_path, binary_path, timeout_seconds=30.0, *, ffmpeg_binary_path: str | None = None)`` keeps all positional args. The new keyword-only parameter defaults to None, so any existing direct caller (no router or tests today besides this one and the two router callsites updated in lockstep) continues to honest-degrade for non-WAV/OGG.
+
+**Extracted ``_run_rhubarb``.** The rhubarb invocation moved into a private helper so ``generate_visemes`` can wrap it in ``try/finally`` that unlinks the optional converted tempfile. The body of ``_run_rhubarb`` is byte-identical to the previous rhubarb block; only the wrapping changed.
+
+**License posture.** ffmpeg is LGPL-2.1+ / GPL-2+. By keeping the binary operator-provided (gitignored under ``/tools/``, same pattern as piper + rhubarb), ProbOS distribution stays clean of any GPL propagation surface. The repo never ships the binary; the operator installs it locally.
+
+**Config.** One new ``LipSyncConfig`` field: ``ffmpeg_binary_path`` (default ``tools/ffmpeg/ffmpeg``). NO new ``enabled`` flag - the path is enabled-when-present, mirroring rhubarb's binary discovery pattern.
+
+**Router callsites.** Two call sites in ``routers/avatars.py`` thread ``ffmpeg_binary_path=lipsync_cfg.ffmpeg_binary_path`` into ``generate_visemes``: the ``/api/avatars/lipsync`` endpoint and the TTS reuse path that processes synthesized audio.
+
+**Full gate.** 13852 -> 13861 passed (20 skipped).
+
+**Forward markers (TECHNICAL triggers per AD-722c-3).** AD-721b-1a-1 (catalog the explicit set of supported input formats and surface ``Accept`` MIME in the router; trigger: HXI surfaces the supported-formats list to the captain). AD-721b-1a-2 (ffmpeg health probe on startup like rhubarb's ``probe_version``; trigger: operator reports silent fall-through and needs startup-time signal). AD-721b-1a-3 (ffmpeg discovery via ``PATH`` lookup as well as the explicit path; trigger: operator request for package-manager-installed ffmpeg).

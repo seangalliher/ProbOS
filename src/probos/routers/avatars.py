@@ -71,6 +71,7 @@ async def generate_lipsync(
         audio_path,
         binary_path=cfg.binary_path,
         timeout_seconds=cfg.timeout_seconds,
+        ffmpeg_binary_path=cfg.ffmpeg_binary_path,
     )
     if not frames:
         # generate_visemes already log-and-degraded; tell the client.
@@ -275,6 +276,7 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
             audio_path,
             binary_path=lipsync_cfg.binary_path,
             timeout_seconds=lipsync_cfg.timeout_seconds,
+            ffmpeg_binary_path=lipsync_cfg.ffmpeg_binary_path,
         )
         visemes_payload = [
             {"time": f.time, "duration": f.duration, "viseme": f.viseme}

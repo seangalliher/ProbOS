@@ -1712,6 +1712,15 @@ class LipSyncConfig(BaseModel):
     1-3s; the default leaves ample headroom for cold disk reads. Tier-2
     log-and-degrade on TimeoutExpired — falls back to heuristic."""
 
+    ffmpeg_binary_path: str = "tools/ffmpeg/ffmpeg"
+    """AD-721b-1a: optional ffmpeg binary for converting non-WAV/OGG audio
+    (e.g. Chrome MediaRecorder's audio/webm) to rhubarb's required format.
+    When the binary is missing, generate_visemes honest-degrades to the
+    heuristic lip-sync path (BF-292 contract preserved). Operator places
+    the binary; the repo never ships it (gitignored under ``/tools/``).
+    License posture: ffmpeg is LGPL-2.1+ / GPL-2+; the operator-provided
+    binary keeps ProbOS distribution clean."""
+
 
 class TTSConfig(BaseModel):
     """AD-738 — Server-side TTS backend selection.
