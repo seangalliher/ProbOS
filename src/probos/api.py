@@ -199,6 +199,7 @@ def create_app(runtime: Any) -> FastAPI:
         avatars,  # AD-721b-1 (Wave 155): /api/avatars/lipsync
         browser_stream,  # AD-706a: Captain-watch MJPEG streaming
         browser_recordings,  # AD-706b: session recording admin endpoints
+        cloud_pickers,  # AD-720c (Wave 168): OAuth cloud file picker
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -210,6 +211,7 @@ def create_app(runtime: Any) -> FastAPI:
         avatars,
         browser_stream,
         browser_recordings,
+        cloud_pickers,
     ):
         app.include_router(r.router)
 

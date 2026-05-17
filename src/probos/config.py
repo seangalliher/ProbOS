@@ -1765,6 +1765,44 @@ class AttachmentsConfig(BaseModel):
         return v
 
 
+class CloudPickerProviderConfig(BaseModel):
+    """AD-720c: per-provider OAuth client credentials. Operator-supplied (BYOC)."""
+
+    enabled: bool = Field(default=False, description="AD-720c: enable this provider.")
+    client_id: str = Field(default="", description="Operator-supplied OAuth client ID.")
+    client_secret: str = Field(
+        default="", description="Operator-supplied OAuth client secret."
+    )
+    redirect_uri: str = Field(
+        default="http://127.0.0.1:8081/api/cloud-pickers/{provider}/callback",
+        description=(
+            "AD-720c: OAuth redirect URI; must match the registration at the "
+            "provider. {provider} is substituted with the provider id."
+        ),
+    )
+
+
+class CloudPickersConfig(BaseModel):
+    """AD-720c: cloud file picker config (OAuth-bound). Default OFF."""
+
+    enabled: bool = Field(default=False, description="AD-720c master switch.")
+    max_file_size_bytes: int = Field(default=50_000_000, ge=1)
+    state_ttl_seconds: int = Field(
+        default=300,
+        ge=30,
+        description="AD-720c: CSRF state-token TTL (seconds).",
+    )
+    google_drive: CloudPickerProviderConfig = Field(
+        default_factory=CloudPickerProviderConfig
+    )
+    onedrive: CloudPickerProviderConfig = Field(
+        default_factory=CloudPickerProviderConfig
+    )
+    dropbox: CloudPickerProviderConfig = Field(
+        default_factory=CloudPickerProviderConfig
+    )
+
+
 class LipSyncConfig(BaseModel):
     """AD-721b-1 — Server-side lip-sync backend selection.
 
@@ -4137,6 +4175,7 @@ class SystemConfig(BaseModel):
     dm_sanity_gate: DmSanityGateConfig = Field(default_factory=DmSanityGateConfig)  # AD-724
     dm_targeted_lookup: DmTargetedLookupConfig = Field(default_factory=DmTargetedLookupConfig)  # AD-725 (Wave 159)
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
+    cloud_pickers: CloudPickersConfig = Field(default_factory=CloudPickersConfig)  # AD-720c
     lipsync: LipSyncConfig = Field(default_factory=LipSyncConfig)  # AD-721b-1 (Wave 155)
     tts: TTSConfig = Field(default_factory=TTSConfig)  # AD-738 (Wave 157)
     spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520

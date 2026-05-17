@@ -4015,3 +4015,57 @@ When enabled, each frame the closest `maxConcurrent` agents within `lodDistance`
 - **AD-721e-1** -- gesture / nod / shrug / typing animation packs. Trigger: Captain demand for more granular body language beyond the 4-state v1.
 
 **What this does NOT change.** Lip-sync wiring (AD-721 + AD-738e-1) untouched -- bone animation is orthogonal to morphTargetInfluences. A-pose fallback at load preserved. Procedural breathing/sway preserved (gated to clip-inactive frames). VRM file format unchanged. No new pip or npm deps. No animation bytes committed to the repo.
+
+### AD-720c - Cloud file picker (OAuth-bound source, Google Drive v1) (Wave 168)
+
+**Date:** 2026-05-17. **Status:** Shipped (default-OFF master switch). **Wave:** 168. **Closes** #551. **Parents:** AD-720a multipart (W139), AD-706f credential vault (W166), AD-731 AttachmentStore invariant (W151+).
+
+**Problem.** The Captain could attach files to chat from paste (AD-720) and multipart upload (AD-720a) but not from cloud-hosted storage (Google Drive / OneDrive / Dropbox). Issue #551 asks for an OAuth-bound third source. OSS-scope ruling: protocol + extension-point only, plus ONE working provider; the other two are stubs with forward markers.
+
+**Decision.** Five layers:
+1. **OAuth provider Protocol** (`src/probos/cloud_pickers/provider.py`) with `start_authorization`, `handle_callback`, `list_files`, `download_file`. Three concrete providers — `GoogleDriveProvider` (v1 working), `OneDriveProvider` / `DropboxProvider` (stubs that raise `NotImplementedError` with the AD-720c-1 / AD-720c-2 forward-marker text). All HTTP via `httpx.AsyncClient` (no new pip deps; Wave-162 resident).
+2. **`OAuthTokenBundle`** Pydantic model (`src/probos/cloud_pickers/tokens.py`) carries `access_token`, optional `refresh_token`, `expires_at`. Persisted via `bundle.model_dump_json()` into AD-706f `CredentialVault` under ref `cloud_provider:{provider_id}:{captain_id}` with `CredentialScope()` empty-frozenset = captain-only per `credentials.py:40-58`. **No new credential store** — AD-706f is reused verbatim.
+3. **CSRF state guard** (`CsrfStateStore` in tokens.py): in-memory, 32-byte url-safe token via stdlib `secrets`, single-consume (replay-protected), default 5-min TTL (`CloudPickersConfig.state_ttl_seconds`, ge=30).
+4. **Refresh-on-401.** `GoogleDriveProvider._with_refresh_retry` runs the request; on 401, attempts a single `grant_type=refresh_token` exchange. Preserves the original `refresh_token` if the response omits one (Google rotates rarely). Retries the original request EXACTLY once. Surfaces `ReauthorizationRequired` (→ 401 `reauthorization_required` + vault entry deleted) on refresh failure OR second 401 (avoid loops). Google consent URL includes `access_type=offline&prompt=consent` so the refresh_token is issued on every authorization (Google omits it on subsequent authorizations without `prompt=consent`).
+5. **REST router + UI.** `src/probos/routers/cloud_pickers.py` exposes 4 endpoints under `/api/cloud-pickers/{provider}` (POST start, GET callback, GET files, POST attach). `ui/src/components/CloudPicker.tsx` modal — provider selector, authorize popup + `oauth_complete` postMessage listener, paginated file list, file click → POST `/attach` → `onAttached({attachment_id, mime, size_bytes, filename})`. HXI Design Principle #3 honored (inline stroke SVG icons, no emoji).
+
+**PKCE skipped (intentional).** ProbOS is a confidential client with server-stored `client_secret` per `CloudPickerProviderConfig`. Per OAuth 2.1 §1.5, PKCE is REQUIRED for public clients and OPTIONAL for confidential clients holding a `client_secret`. State-token CSRF guard + client_secret is the chosen defense. If a future provider requires a public-client app type with no client_secret, PKCE becomes a forward marker.
+
+**AD-731 invariant preserved.** The `/attach` endpoint feeds downloaded bytes through the shared `_validate_and_store_attachment` (AD-720a, `routers/chat.py`) → `AttachmentStore.write(sha, blob, mime)` chain (the same defense-in-depth path used by the existing paste + multipart endpoints). The HTTP response carries only `{attachment_id, mime, size_bytes, filename}` — bytes never cross the browser boundary.
+
+**Honest-degrade matrix.**
+- `cloud_pickers.enabled=False` → 503 `feature_disabled`.
+- `runtime.credential_vault is None` → 503 `credential_vault_unavailable`.
+- Provider not in `_PROVIDER_CLASSES` → 404 `unknown_provider`.
+- Provider disabled OR missing client_id/secret → 503 `provider_disabled` / `provider_not_configured`.
+- Invalid / expired CSRF state → 403 `invalid_state_token`.
+- No bundle in vault → 401 `oauth_not_authorized`.
+- 401 from provider + no refresh_token OR refresh fails → 401 `reauthorization_required` + vault entry deleted.
+- Download > `max_file_size_bytes` (default 50 MB) → 413 `file_too_large`.
+
+**Files.**
+- `src/probos/cloud_pickers/__init__.py` (new package).
+- `src/probos/cloud_pickers/tokens.py` (new `OAuthTokenBundle` + `CsrfStateStore`).
+- `src/probos/cloud_pickers/provider.py` (new `CloudPickerProvider` Protocol + `ProviderError` + `ReauthorizationRequired` + `ProviderFile`).
+- `src/probos/cloud_pickers/google_drive.py` (new `GoogleDriveProvider` v1; refresh-on-401 helper).
+- `src/probos/cloud_pickers/onedrive.py` (new `OneDriveProvider` stub — AD-720c-1 forward marker).
+- `src/probos/cloud_pickers/dropbox.py` (new `DropboxProvider` stub — AD-720c-2 forward marker).
+- `src/probos/routers/cloud_pickers.py` (new — 4 endpoints).
+- `src/probos/api.py` (router registration).
+- `src/probos/config.py` (new `CloudPickerProviderConfig` + `CloudPickersConfig`; `ProbOSConfig.cloud_pickers` default-OFF field).
+- `ui/src/components/CloudPicker.tsx` (new modal).
+- `tests/test_ad720c_provider_protocol.py` (3 pytest).
+- `tests/test_ad720c_google_drive.py` (7 pytest, `httpx.MockTransport` via `http_client_factory` injection).
+- `tests/test_ad720c_state_store.py` (4 pytest — TTL + single-consume + provider-mismatch + purge).
+- `tests/test_ad720c_endpoints.py` (8 pytest — real `SystemConfig()` + real `EncryptedFileCredentialVault` per BF-287; full honest-degrade matrix; CSRF rejection; bundle persistence roundtrip; AD-731 SHA-ref-not-bytes assertion).
+- `ui/src/components/__tests__/CloudPicker.test.tsx` (7 vitest).
+
+**Tests.** +22 pytest passing + 7 vitest passing. Full gate: 13923 → 13951 (+22 from this AD; the other +6 came in with Wave 168 cluster-1 commits at origin/main).
+
+**Zero new deps.** `httpx` already resident from Wave 162. `cryptography` already resident from Wave 166 (AD-706f). OAuth state uses stdlib `secrets` + `urllib.parse`. No pyproject / lockfile / ui package changes.
+
+**Forward markers.**
+- **AD-720c-1** — OneDrive provider implementation. Trigger: operator demand once Google Drive v1 has been exercised end-to-end in production for at least one wave.
+- **AD-720c-2** — Dropbox provider implementation. Same trigger as AD-720c-1.
+
+**What this does NOT change.** `_validate_and_store_attachment` (AD-720a) reused verbatim. AD-706f `CredentialVault` Protocol surface untouched. `httpx` + `cryptography` versions unchanged. Browser chat compose `attachment_ids: string[]` shape extended, not redesigned. Existing paste / multipart upload paths untouched. No new pip / npm deps.
