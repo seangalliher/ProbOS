@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from probos.api_models import (
-    BuildRequest, ChatRequest, DesignRequest,
+    BuildRequest, ChatRequest, ChatToolGrantRequest, DesignRequest,
     EnrichRequest, SelfModRequest,
 )
 from probos.events import EventType
@@ -820,6 +820,93 @@ async def fetch_chat_attachment(
 # ------------------------------------------------------------------
 # Self-mod approval endpoint (async pipeline)
 # ------------------------------------------------------------------
+
+
+@router.post("/chat/tool-grant")
+async def chat_tool_grant(
+    req: ChatToolGrantRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-720b: Captain issues a scoped tool capability grant from inside a DM.
+
+    Persistence flows through the existing ``ToolPermissionStore.issue_grant``
+    (AD-423a/b/c) so a grant issued here is indistinguishable on disk from
+    one issued via ``/tool-access grant`` in the shell. ``issued_by`` is
+    always ``"captain"`` (matches the slash-command pattern; the HXI runs
+    in the Captain's process context).
+    """
+    from probos.tools.protocol import ToolPermission
+
+    if runtime.registry.get(req.agent_id) is None:
+        raise HTTPException(status_code=404, detail=f"Agent {req.agent_id} not found")
+
+    try:
+        perm = ToolPermission(req.permission)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "reason": "invalid_permission",
+                "valid": [p.value for p in ToolPermission],
+            },
+        )
+
+    tool_registry = getattr(runtime, "tool_registry", None)
+    if tool_registry is not None and tool_registry.get(req.tool_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"reason": "tool_not_found", "tool_id": req.tool_id},
+        )
+
+    store = getattr(runtime, "tool_permission_store", None)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="tool_permission_store_unavailable",
+        )
+
+    expires_at: float | None = None
+    if req.duration_hours is not None and req.duration_hours > 0:
+        import time as _time
+        expires_at = _time.time() + req.duration_hours * 3600.0
+
+    grant = await store.issue_grant(
+        agent_id=req.agent_id,
+        tool_id=req.tool_id,
+        permission=perm,
+        reason=req.reason,
+        issued_by="captain",
+        expires_at=expires_at,
+    )
+
+    try:
+        runtime.emit_event(
+            "tool_grant_issued",
+            {
+                "grant_id": grant.id,
+                "agent_id": grant.agent_id,
+                "tool_id": grant.tool_id,
+                "permission": grant.permission.value,
+                "expires_at": grant.expires_at,
+                "issued_by": grant.issued_by,
+                "source": "chat",
+            },
+        )
+    except Exception:
+        logger.warning(
+            "AD-720b: emit_event('tool_grant_issued') failed for grant %s; "
+            "grant persisted but audit lost",
+            grant.id, exc_info=True,
+        )
+
+    return {
+        "grant_id": grant.id,
+        "agent_id": grant.agent_id,
+        "tool_id": grant.tool_id,
+        "permission": grant.permission.value,
+        "expires_at": grant.expires_at,
+        "issued_at": grant.issued_at,
+    }
 
 
 @router.post("/selfmod/approve")

@@ -232,6 +232,61 @@ export function IntentSurface() {
     const text = input.trim();
     if (!text) return;
 
+    // AD-720b: in-chat tool capability grant.
+    // Format: `/grant <agent_id> <tool_id> <permission> [hours]`. Parsed client-side
+    // and routed to /api/chat/tool-grant; the command is NOT sent as a chat message.
+    if (text.startsWith('/grant ')) {
+      const parts = text.slice(7).trim().split(/\s+/);
+      if (parts.length < 3 || parts.length > 4) {
+        addChatMessage('system', '/grant usage: /grant <agent_id> <tool_id> <permission> [hours]');
+        return;
+      }
+      const [agentId, toolId, permission, hoursStr] = parts;
+      const duration_hours = hoursStr ? Number(hoursStr) : null;
+      if (hoursStr && (Number.isNaN(duration_hours as number) || (duration_hours as number) < 0)) {
+        addChatMessage('system', `/grant: invalid hours "${hoursStr}"`);
+        return;
+      }
+      setInput('');
+      fetch('/api/chat/tool-grant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agentId,
+          tool_id: toolId,
+          permission,
+          duration_hours,
+        }),
+      })
+        .then(async (r) => {
+          if (!r.ok) {
+            let reason = `HTTP ${r.status}`;
+            try {
+              const body = await r.json();
+              if (body?.detail?.reason) reason = body.detail.reason;
+              else if (typeof body?.detail === 'string') reason = body.detail;
+            } catch { /* swallow */ }
+            // Preserve typed text so the Captain can correct it.
+            setInput(text);
+            addChatMessage('system', `/grant rejected: ${reason}`);
+            return;
+          }
+          const body = await r.json();
+          const exp = body.expires_at
+            ? ` (expires in ${Math.round((body.expires_at - Date.now() / 1000) / 3600)}h)`
+            : ' (no expiry)';
+          addChatMessage(
+            'system',
+            `Granted ${body.tool_id} ${body.permission} to ${body.agent_id}${exp}`,
+          );
+        })
+        .catch((err) => {
+          setInput(text);
+          addChatMessage('system', `/grant error: ${String(err?.message || err)}`);
+        });
+      return;
+    }
+
     addChatMessage('user', text);
     setInput('');
     incPendingRequests();

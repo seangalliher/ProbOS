@@ -3819,3 +3819,39 @@ Path-traversal is rejected via ``.resolve()`` prefix check against the recording
 **Full gate.** 13892 -> 13900 pytest. Vitest 670 -> 674. UI bundle ``index-1THkGO2n.js`` -> ``index-BTcSysUH.js``.
 
 **Zero new deps.** Reuses FastAPI ``UploadFile``, ``FilesystemAttachmentStore``, existing avatar-serve route. ``model/gltf-binary`` MIME was already added to ``_MIME_TO_EXT`` by AD-721d-3 in this same wave.
+
+### AD-720b - Chat tool attach: in-chat capability grants (Wave 167)
+
+**Date:** 2026-05-17. **Status:** Shipped. **Closes** #550.
+
+**Scope clarification.** Wave 167 dispatch brief said "Captain attaches a tool output (browser session screenshot, MCP resource) to a DM via attachment marker." Issue #550 body says "attach AD-706 BrowserTool / AD-449 MCP tools to a chat surface as scoped capability grants." These are different features. Built per the issue body (capability grants) because the screenshot-attach path already works today: BrowserTool writes screenshots to AttachmentStore via ``tools/browser/compute_use.py:174-176`` and they ride existing ``attachment_ids`` through chat. The real gap is in-chat capability granting -- letting the Captain say "give Echo BrowserTool read access for the next 2 hours" without leaving the chat surface. If the attachment-marker feature is wanted later, file a separate AD (AD-720c).
+
+**Capability.** ``POST /api/chat/tool-grant`` accepts ``{agent_id, tool_id, permission, duration_hours?, reason?}``, calls ``ToolPermissionStore.issue_grant`` (AD-423a/b/c), and returns the grant record. ``issued_by="captain"`` always -- matches the existing ``/tool-access grant`` shell-slash-command pattern; the HXI runs in the Captain's process context. A grant issued via chat is indistinguishable on disk from one issued via shell.
+
+**Defense-in-depth chain (in order).**
+1. ``runtime.registry.get(agent_id)`` -- 404 if missing
+2. ``ToolPermission(permission)`` -- 422 ``invalid_permission`` with full ``valid: [enum...]`` list
+3. ``runtime.tool_registry.get(tool_id) is None`` -- 404 ``tool_not_found`` (when registry is present; passes through when absent)
+4. ``runtime.tool_permission_store is None`` -- 503 ``tool_permission_store_unavailable``
+
+**Pass-1 nit corrected.** The dispatch brief asserted ``tool_registry.has(req.tool_id)``. Real API on ``ToolRegistry`` is ``get(tool_id) -> ToolRegistration | None``. Implementation uses the real API. Source-scan test (``test_grant_source_scan_uses_tool_permission_module``) regression-protects the canonical ``from probos.tools.protocol import ToolPermission`` import.
+
+**Event.** ``tool_grant_issued`` (string event-type, not a new EventType enum value) with ``{grant_id, agent_id, tool_id, permission, expires_at, issued_by, source: "chat"}``. ``source`` distinguishes chat-issued grants from shell-issued ones in the audit log. Audit emit failure honest-degrades (Tier-2): grant is still returned even if the event bus is down.
+
+**Pydantic.** New ``ChatToolGrantRequest`` model with ``duration_hours`` bounded ``[0, 720]`` (30 days max) and ``reason`` capped at 500 chars -- enforced by Pydantic before the handler runs.
+
+**HXI.** ``IntentSurface.tsx`` ``handleSubmit`` recognises ``/grant <agent_id> <tool_id> <permission> [hours]`` BEFORE the normal "send DM" path. Recognized format: leading ``/grant `` (note trailing space). On match, POSTs to ``/api/chat/tool-grant``; the slash command itself is NOT sent as a chat message. Successful response renders inline as a system-styled message: ``"Granted BrowserTool read to e1 (expires in 2h)"``. On 422/error: inline ``/grant rejected: <reason>`` system message AND the typed text is restored to the composer so the Captain can correct it. Usage validation (parts count, NaN/negative hours) handled client-side with structured ``/grant usage:`` error message.
+
+**MCP namespace convention.** ``tool_id`` shape for MCP servers is ``mcp:<server_name>[:<resource_path>]``. ``ToolPermissionStore`` does NOT validate tool_id shape -- this is purely a convention captured here. Future MCP-specific UI affordances should follow it.
+
+**v1 scope.** System-styled inline messages are client-side only -- NOT persisted to ward-room threads. Persistence is filed as forward marker AD-720b-2.
+
+**Tests.** +11 pytest in ``tests/test_ad720b_chat_tool_grant.py``: happy path with expiry; happy path no duration -> null expiry; agent missing 404; invalid permission 422 with valid enum list; tool not in registry 404 ``tool_not_found``; tool_id passthrough when registry absent; store missing 503; ``duration_hours=1000`` -> 422 (Pydantic); ``reason`` >500 chars -> 422 (Pydantic); event-emit failure does not block grant (Tier-2 honest-degrade verified); source-scan asserts canonical ``from probos.tools.protocol import ToolPermission`` import.
+
++4 vitest in ``ui/src/__tests__/IntentSurface.toolGrant.test.tsx``: ``/grant e1 BrowserTool read 2`` POSTs ``duration_hours=2``; no-hours form POSTs ``duration_hours=null``; 422 preserves typed text in composer + renders system rejection message; success renders ``"Granted BrowserTool read to e1"`` system message in chatHistory.
+
+Real ``ToolPermissionStore()`` in-memory + real ``AgentRegistry``-shape + real ``ToolRegistry``-shape stub per BF-287. No MagicMock at substrate boundaries; the in-memory ``ToolPermissionStore`` exercises the real ``issue_grant`` + cache path.
+
+**Full gate.** 13900 -> 13911 pytest. Vitest 674 -> 678. UI bundle ``index-BTcSysUH.js`` -> ``index-DzUHsZVI.js``.
+
+**Zero new deps.** Reuses ``ToolPermissionStore`` + ``ToolPermission`` enum + ``ToolRegistry`` (all shipped pre-Wave 167).

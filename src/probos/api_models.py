@@ -315,6 +315,22 @@ class PreviewAppearanceRequest(BaseModel):
     dsl: dict
 
 
+class ChatToolGrantRequest(BaseModel):
+    """AD-720b: in-chat tool capability grant.
+
+    Captain grants an agent scoped access to a registered tool (BrowserTool
+    via AD-706, MCP servers via AD-449) from inside a DM, without leaving
+    the chat surface. Persistence flows through the existing
+    ``ToolPermissionStore.issue_grant`` so a grant issued here is
+    indistinguishable on disk from one issued via ``/tool-access grant``.
+    """
+    agent_id: str = Field(..., min_length=1)
+    tool_id: str = Field(..., min_length=1)
+    permission: str = Field(..., description="ToolPermission enum value")
+    duration_hours: float | None = Field(default=None, ge=0.0, le=720.0)
+    reason: str = Field(default="", max_length=500)
+
+
 # ── Vision-capability proposal models (AD-720d-2.1) ──────────────
 
 class ProposeVisionCapability(BaseModel):
