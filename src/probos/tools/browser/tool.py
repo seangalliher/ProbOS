@@ -326,6 +326,38 @@ class BrowserTool:
                 )
             else:
                 output = await dispatch_action(session, action, params)
+                # AD-706e: per-action event types for the three highest-risk
+                # vocabulary-v2 verbs. BROWSER_ACTION_EXECUTED still fires
+                # below as the global per-action telemetry channel.
+                if action == "upload_file" and isinstance(output, dict):
+                    self._safe_emit(
+                        EventType.BROWSER_FILE_UPLOAD_REQUESTED,
+                        {
+                            "session_id": session.session_id,
+                            "agent_id": agent_id,
+                            "selector": output.get("selector"),
+                            "used_credential": output.get("used_credential", False),
+                        },
+                    )
+                elif action == "download" and isinstance(output, dict):
+                    self._safe_emit(
+                        EventType.BROWSER_DOWNLOAD_REQUESTED,
+                        {
+                            "session_id": session.session_id,
+                            "agent_id": agent_id,
+                            "target": output.get("target"),
+                            "suggested_filename": output.get("suggested_filename"),
+                        },
+                    )
+                elif action == "eval_js" and isinstance(output, dict):
+                    self._safe_emit(
+                        EventType.BROWSER_EVAL_JS_EXECUTED,
+                        {
+                            "session_id": session.session_id,
+                            "agent_id": agent_id,
+                            "script_preview": output.get("script_preview", ""),
+                        },
+                    )
         except Exception as exc:
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self._audit(

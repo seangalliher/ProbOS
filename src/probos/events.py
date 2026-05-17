@@ -203,6 +203,9 @@ class EventType(str, Enum):
     BROWSER_COMPUTE_USE_CLICK_VERIFIED = "browser_compute_use_click_verified"  # AD-706c-2: handshake succeeded
     BROWSER_COMPUTE_USE_CLICK_ABORTED = "browser_compute_use_click_aborted"    # AD-706c-2: verification disagreed
     BROWSER_COMPUTE_USE_CLICK_EXECUTED = "browser_compute_use_click_executed"  # AD-706c-2: click sent to page
+    BROWSER_FILE_UPLOAD_REQUESTED = "browser_file_upload_requested"  # AD-706e: upload_file invoked
+    BROWSER_DOWNLOAD_REQUESTED = "browser_download_requested"        # AD-706e: download invoked
+    BROWSER_EVAL_JS_EXECUTED = "browser_eval_js_executed"            # AD-706e: eval_js executed
     VISION_CAPABILITY_PROPOSED = "vision_capability_proposed"  # AD-720d-2.1: agent requests vision capability
     VISION_CAPABILITY_RESOLVED = "vision_capability_resolved"  # AD-720d-2.1: Captain approves or denies
     VISION_INTENT_DIVERGENCE_OBSERVED = "vision_intent_divergence_observed"  # AD-722a-1: vision-LLM intent-vs-render

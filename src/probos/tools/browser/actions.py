@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 
 # -- Tier-3 keyword/path heuristics --------------------------------------
 
+# AD-706e: destructive keyboard combinations that always require Captain ACK.
+_KEY_COMBO_TIER_3_PATTERNS: frozenset[str] = frozenset({
+    "control+w", "control+q", "alt+f4", "control+shift+w",
+})
+
+# AD-706e: download file suffixes that escalate the action to tier-3.
+_DOWNLOAD_TIER_3_SUFFIXES: tuple[str, ...] = (".exe", ".dll", ".dmg", ".msi")
+
+# AD-706e: eval_js script length cap (chars). Captain-supervised escape hatch.
+_EVAL_JS_MAX_SCRIPT_LEN: int = 4096
+
 _TIER_3_PATH_TOKENS: tuple[str, ...] = (
     "checkout", "payment", "transfer", "subscribe", "signup", "register",
 )
@@ -326,6 +337,219 @@ async def _action_extract_text(session: BrowserSession, params: dict[str, Any]) 
     return {"session_id": session.session_id, "text": text or ""}
 
 
+# -- AD-706e: vocabulary v2 ---------------------------------------------
+
+
+async def _action_drag(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
+    """Drag from one element to another via Playwright's locator.drag_to()."""
+    page = session.page
+    if page is None:
+        raise RuntimeError("browser session is not started")
+    from_selector = params.get("from_selector")
+    to_selector = params.get("to_selector")
+    if not from_selector or not to_selector:
+        # Allow index-based resolution as a fallback (mirrors click/type).
+        from_idx = params.get("from_index")
+        to_idx = params.get("to_index")
+        if isinstance(from_idx, int):
+            rec = session.resolve_index(from_idx)
+            if rec is not None:
+                from_selector = rec.get("selector")
+        if isinstance(to_idx, int):
+            rec = session.resolve_index(to_idx)
+            if rec is not None:
+                to_selector = rec.get("selector")
+    if not from_selector or not to_selector:
+        raise ValueError("drag requires 'from_selector'/'to_selector' or 'from_index'/'to_index'")
+    if hasattr(page, "drag_and_drop"):
+        await page.drag_and_drop(from_selector, to_selector)
+    else:
+        # Stub-friendly fallback: locator.drag_to.
+        src = page.locator(from_selector)
+        dst = page.locator(to_selector)
+        await src.drag_to(dst)
+    return {
+        "session_id": session.session_id,
+        "from_selector": from_selector,
+        "to_selector": to_selector,
+    }
+
+
+async def _action_key_combo(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
+    """Press a keyboard combination via page.keyboard.press('Control+S')."""
+    page = session.page
+    if page is None:
+        raise RuntimeError("browser session is not started")
+    keys = params.get("keys")
+    if not isinstance(keys, list) or not keys:
+        raise ValueError("key_combo requires 'keys' as a non-empty list of key names")
+    combo = "+".join(str(k) for k in keys)
+    keyboard = getattr(page, "keyboard", None)
+    if keyboard is None:
+        raise RuntimeError("page has no keyboard handle")
+    await keyboard.press(combo)
+    return {"session_id": session.session_id, "combo": combo}
+
+
+async def _action_mouse_move(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
+    """Move the mouse cursor to (x, y) without clicking. Silent observation."""
+    page = session.page
+    if page is None:
+        raise RuntimeError("browser session is not started")
+    x = params.get("x")
+    y = params.get("y")
+    if not isinstance(x, int) or not isinstance(y, int):
+        raise ValueError("mouse_move requires int 'x' and 'y' coordinates")
+    mouse = getattr(page, "mouse", None)
+    if mouse is None:
+        raise RuntimeError("page has no mouse handle")
+    await mouse.move(x, y)
+    return {"session_id": session.session_id, "x": x, "y": y}
+
+
+async def _action_mouse_button(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
+    """Press, release, or click a specific mouse button at the current position."""
+    page = session.page
+    if page is None:
+        raise RuntimeError("browser session is not started")
+    button = params.get("button", "left")
+    if button not in ("left", "right", "middle"):
+        raise ValueError("mouse_button 'button' must be one of: left, right, middle")
+    action = params.get("action", "click")
+    if action not in ("down", "up", "click"):
+        raise ValueError("mouse_button 'action' must be one of: down, up, click")
+    mouse = getattr(page, "mouse", None)
+    if mouse is None:
+        raise RuntimeError("page has no mouse handle")
+    if action == "down":
+        await mouse.down(button=button)
+    elif action == "up":
+        await mouse.up(button=button)
+    else:
+        await mouse.click(0, 0, button=button) if not hasattr(mouse, "click_button") else await mouse.click_button(button)
+    return {"session_id": session.session_id, "button": button, "action": action}
+
+
+async def _action_upload_file(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
+    """Upload a file via page.set_input_files(). Tier 3 always.
+
+    Optional ``credential_ref`` param hooks into AD-706f credential vault:
+    when set, the file path is materialised from the vault to a tempfile.
+    When the vault is unavailable, honest-degrade rather than crash.
+    """
+    page = session.page
+    if page is None:
+        raise RuntimeError("browser session is not started")
+    selector = params.get("selector")
+    if not selector or not isinstance(selector, str):
+        raise ValueError("upload_file requires 'selector' (CSS selector for <input type=file>)")
+    credential_ref = params.get("credential_ref")
+    file_path = params.get("file_path")
+    temp_path: str | None = None
+    try:
+        if credential_ref:
+            # AD-706f forward-compatible hook.
+            vault = getattr(params.get("_runtime"), "credential_vault", None) if params.get("_runtime") else None
+            if vault is None:
+                return {
+                    "session_id": session.session_id,
+                    "ok": False,
+                    "skipped_reason": "credential_vault_unavailable",
+                    "message": (
+                        "upload_file received credential_ref but no credential_vault "
+                        "is wired on the runtime. AD-706f required."
+                    ),
+                }
+            temp_path = await vault.materialize_to_temp(credential_ref)
+            file_path = temp_path
+        if not file_path or not isinstance(file_path, str):
+            raise ValueError("upload_file requires 'file_path' (or 'credential_ref' with vault)")
+        await page.set_input_files(selector, file_path)
+        return {
+            "session_id": session.session_id,
+            "ok": True,
+            "selector": selector,
+            "file_path": file_path,
+            "used_credential": bool(credential_ref),
+        }
+    finally:
+        if temp_path:
+            try:
+                import os as _os
+                _os.unlink(temp_path)
+            except OSError:
+                logger.debug("AD-706e: tempfile unlink failed for %s", temp_path, exc_info=True)
+
+
+async def _action_download(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
+    """Trigger a download by clicking a selector or navigating to a URL.
+
+    v1 surface: the handler returns metadata about the triggered download
+    (suggested filename, target URL); the actual bytes are written by the
+    browser to its default downloads dir. AD-706e-3 forward marker covers
+    routing into AttachmentStore.
+    """
+    page = session.page
+    if page is None:
+        raise RuntimeError("browser session is not started")
+    target = params.get("selector_or_url")
+    if not target or not isinstance(target, str):
+        raise ValueError("download requires 'selector_or_url'")
+    suggested_filename: str | None = None
+    try:
+        if hasattr(page, "expect_download"):
+            async with page.expect_download() as dl_info:
+                if target.startswith(("http://", "https://")):
+                    await page.goto(target)
+                else:
+                    await page.click(target)
+            download = await dl_info.value
+            suggested_filename = getattr(download, "suggested_filename", None)
+        else:
+            if target.startswith(("http://", "https://")):
+                await page.goto(target)
+            else:
+                await page.click(target)
+    except Exception:
+        logger.warning("AD-706e: download trigger failed for %s", target, exc_info=True)
+        raise
+    return {
+        "session_id": session.session_id,
+        "target": target,
+        "suggested_filename": suggested_filename,
+    }
+
+
+async def _action_eval_js(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
+    """Execute arbitrary JavaScript in the page context. Tier 3 always.
+
+    Captain-supervised escape hatch. Script length capped at
+    ``_EVAL_JS_MAX_SCRIPT_LEN`` chars. Result serialised via json.dumps(default=str).
+    """
+    import json as _json
+
+    page = session.page
+    if page is None:
+        raise RuntimeError("browser session is not started")
+    script = params.get("script")
+    if not script or not isinstance(script, str):
+        raise ValueError("eval_js requires 'script' (str)")
+    if len(script) > _EVAL_JS_MAX_SCRIPT_LEN:
+        raise ValueError(
+            f"eval_js 'script' too long: {len(script)} > {_EVAL_JS_MAX_SCRIPT_LEN} chars"
+        )
+    raw_result = await page.evaluate(script)
+    try:
+        result_str = _json.dumps(raw_result, default=str)
+    except (TypeError, ValueError):
+        result_str = repr(raw_result)
+    return {
+        "session_id": session.session_id,
+        "script_preview": script[:200],
+        "result": result_str,
+    }
+
+
 _HANDLERS: dict[str, Any] = {
     "goto": _action_goto,
     "state": _action_state,
@@ -553,6 +777,17 @@ async def action_verify(
 from probos.tools.browser.compute_use import action_compute_use_click  # noqa: E402
 _HANDLERS["compute_use_click"] = action_compute_use_click
 
+# AD-706e: vocabulary v2 — register the 7 new verbs alongside compute_use_click.
+# fill_credential is added by AD-706f via a separate late-bind block (owns
+# that slot). AD-706e is NO-OP for compute_use_click and fill_credential.
+_HANDLERS["drag"] = _action_drag
+_HANDLERS["key_combo"] = _action_key_combo
+_HANDLERS["mouse_move"] = _action_mouse_move
+_HANDLERS["mouse_button"] = _action_mouse_button
+_HANDLERS["upload_file"] = _action_upload_file
+_HANDLERS["download"] = _action_download
+_HANDLERS["eval_js"] = _action_eval_js
+
 
 def classify_action(
     session: BrowserSession,
@@ -576,12 +811,36 @@ def classify_action(
     # always-tier-3 entries can stack without re-shaping this branch.
     if action == "compute_use_click":
         return 3
-    silent = {"state", "screenshot", "wait", "extract_text", "scroll", "back", "forward", "verify"}
+    # AD-706e: additional always-tier-3 verbs. Each verb has its own
+    # short-circuit (vs a set membership) so AD-706f's fill_credential add
+    # is a single new branch with no merge conflict on the set literal.
+    if action == "upload_file":
+        return 3
+    if action == "eval_js":
+        return 3
+    silent = {"state", "screenshot", "wait", "extract_text", "scroll", "back", "forward", "verify", "mouse_move"}
     if action in silent:
         return 1
     if action == "goto":
         return 2
-    if action not in {"click", "type"}:
+    # AD-706e: key_combo destructive-pattern check (Control+W, Alt+F4, etc.).
+    if action == "key_combo":
+        keys = params.get("keys") or []
+        if isinstance(keys, list):
+            joined = "+".join(str(k).lower() for k in keys)
+            if joined in _KEY_COMBO_TIER_3_PATTERNS:
+                return 3
+        return 2
+    # AD-706e: download URL/suffix check for executable types.
+    if action == "download":
+        target = params.get("selector_or_url") or ""
+        if isinstance(target, str) and any(
+            target.lower().endswith(suf) for suf in _DOWNLOAD_TIER_3_SUFFIXES
+        ):
+            return 3
+        return 2
+    # AD-706e: drag + mouse_button join click/type for the URL/text checks.
+    if action not in {"click", "type", "drag", "mouse_button"}:
         return 2
 
     # Click / type: inspect URL + element text for tier-3 indicators.

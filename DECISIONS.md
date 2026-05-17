@@ -3530,3 +3530,27 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Full gate.** 13778 -> 13794 passed.
 
 **Forward markers (TECHNICAL triggers per AD-722c-3).** AD-706c-2a (native-app compute use - Windows accessibility / macOS AT-SPI; trigger: operator-reported demand from non-browser surfaces with >=3 distinct app categories). AD-706c-2b (multi-monitor compute use; trigger: HXI multi-display deployment lands). AD-706c-2c (vision-based form filling - text into coordinate-located field; trigger: AD-706e type action proves insufficient for >=3 sites in production). AD-706c-2d (demonstration learning; trigger: >=10 distinct compute_use_click sequences land in operator-recorded sessions per #517 dataset). AD-706c-2-trust-reset (session-level trust-budget decay on time/idle; trigger: operator-reported false-positive budget exhaustion in normal use).
+
+### AD-706e - Browser Tool action vocabulary v2 (Wave 166)
+
+**Date:** 2026-05-16. **Status:** SHIPPED. **Wave:** 166. **Closes:** #520.
+
+**Verbs added.** drag (tier 2, tier 3 on tier-3 hosts via the existing click/type URL+text+host check path), key_combo (tier 2; tier 3 for destructive combos Control+W/Control+Q/Alt+F4/Control+Shift+W via new _KEY_COMBO_TIER_3_PATTERNS frozenset), mouse_move (tier 1, silent observation - added to the silent set), mouse_button (tier 2, validates button in {left/right/middle} and action in {down/up/click}), upload_file (always tier 3; forward-compatible credential_ref hook degrades to skipped_reason='credential_vault_unavailable' until AD-706f lands), download (tier 2; tier 3 for executable suffixes .exe/.dll/.dmg/.msi via new _DOWNLOAD_TIER_3_SUFFIXES tuple), eval_js (always tier 3, script length capped at 4096 chars via new _EVAL_JS_MAX_SCRIPT_LEN constant, result serialised via json.dumps(default=str)).
+
+**Per-verb short-circuits.** classify_action uses per-verb if-branches (vs a set membership for always-tier-3) so AD-706f's fill_credential add is a single new branch with no merge conflict on a literal. AD-706e is NO-OP for compute_use_click (owned by AD-706c-2) and fill_credential (owned by AD-706f).
+
+**LLM classifier compat.** classify_action_with_llm unchanged — its existing rule_tier >= 3 short-circuit handles the new always-tier-3 verbs automatically; new tier-1/2 verbs flow through unchanged.
+
+**Events.** Three new EventType values (BROWSER_FILE_UPLOAD_REQUESTED, BROWSER_DOWNLOAD_REQUESTED, BROWSER_EVAL_JS_EXECUTED) emitted from BrowserTool.invoke() post-dispatch (alongside the existing per-action BROWSER_ACTION_EXECUTED telemetry channel). drag/key_combo/mouse_move/mouse_button reuse the global per-action telemetry only - no new event types.
+
+**Forward-compat hooks.** upload_file accepts optional credential_ref param: when set, materialises file path from runtime.credential_vault.materialize_to_temp(credential_ref) (AD-706f) into a tempfile, then unlinks in finally. When vault is absent, honest-degrade with skipped_reason='credential_vault_unavailable'. The literal file_path path is the default v1 mode.
+
+**eval_js safety.** Tier 3 (Captain ACK required). Script length cap of 4096 chars. No sandbox isolation in v1 (operator-supervised escape hatch only); AD-706e-2 forward marker covers sandbox isolation via headless context isolation.
+
+**Tests.** +23 pytest in tests/test_ad706e_action_vocab_v2.py: happy + error path per verb (14), _HANDLERS registration (1), classify_action rules (8: mouse_move tier-1, drag default tier-2, drag-to-tier-3-host tier-3, key_combo destructive-combo tier-3, key_combo benign tier-2, upload_file always tier-3, eval_js always tier-3, download exe-suffix tier-3 + zip-suffix tier-2). Real BrowserToolConfig() + _FakePage/_FakeMouse/_FakeKeyboard dataclass stubs per BF-287.
+
+**Files.** src/probos/events.py (+3 EventType values), src/probos/tools/browser/actions.py (+_KEY_COMBO_TIER_3_PATTERNS, +_DOWNLOAD_TIER_3_SUFFIXES, +_EVAL_JS_MAX_SCRIPT_LEN, +7 _action_* handlers, _HANDLERS late-bind extension, classify_action ladder extension), src/probos/tools/browser/tool.py (post-dispatch event emission for upload_file/download/eval_js), tests/test_ad706e_action_vocab_v2.py (new, 23 tests).
+
+**Full gate.** 13794 -> 13816 passed (1 known dreaming flake outside this wave per Wave 166 dispatch).
+
+**Forward markers (TECHNICAL triggers per AD-722c-3).** AD-706e-1 (vision-based form filling - text into coordinate-located field; trigger per AD-706c-2c). AD-706e-2 (eval_js sandbox isolation via headless context isolation; trigger: operator-reported eval_js misuse incident OR commercial-overlay request). AD-706e-3 (download to AttachmentStore - auto-write SHA-256; trigger: AD-720b chat-attach lands and downloads need to surface as attachments).
