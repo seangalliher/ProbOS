@@ -38,6 +38,33 @@ turn, not this one.
 - One marker per reply is honored. Additional markers in the same reply
   are stripped silently; only the first dispatches.
 
+### DO and DO NOT
+
+- **DO** embed the bracket marker inside the text of your reply. The
+  marker is invisible to the Captain (the runtime strips it before
+  display), so feel free to place it wherever flows best — opening,
+  mid-sentence, or end.
+- **DO NOT** announce that you are invoking the skill. Phrases like
+  "let me invoke `self-image-awareness`" or "I'll run a self-check now"
+  do nothing — they are conversational filler that gets shown to the
+  Captain but does not dispatch a check. The bracket marker is the
+  only mechanism that fires the capability.
+- **DO NOT** type the skill name in your reply expecting it to trigger.
+  The parser matches `[SELF_CHECK reason]` and nothing else.
+
+### Worked example
+
+The Captain just changed your color palette. You want to verify the new
+appearance landed before responding warmly. Your reply might be:
+
+> Thank you, Captain — I appreciate the warmer tone. [SELF_CHECK appearance_changed] I'll let you know how it feels once I see the new render confirmed.
+
+What the Captain sees (marker stripped):
+
+> Thank you, Captain — I appreciate the warmer tone. I'll let you know how it feels once I see the new render confirmed.
+
+Behind the scenes the runtime dispatched `check_own_render(reason="appearance_changed")`. The result lands in your NEXT prompt's PROPRIOCEPTION block, where you can comment on it.
+
 ## When To Check
 
 - **Before significant interactions.** A diplomatic Ward Room reply, a
