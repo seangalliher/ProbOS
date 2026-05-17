@@ -3922,3 +3922,27 @@ Any one of those would be sufficient to reject. Together they make VRoid a non-s
 **Extension point preserved.** `ui/src/audio/voice.ts:134` `backend: 'browser' | 'piper' | string` and `src/probos/audio/tts/backends.py` remain open for AD-718b-N implementations.
 
 **No code shipped.** Zero new pip deps. Zero new npm deps. Zero new model downloads.
+
+### AD-721f - Cognitive Canvas VRM avatar replacement (Wave 168)
+
+**Date:** 2026-05-17. **Status:** Shipped (default-OFF transitional). **Wave:** 168. **Closes** #533. **Parent:** AD-721 avatar pipeline; AD-721g per-tier baselines (W167).
+
+**Problem.** The Cognitive Canvas renders all agents as glowing instanced spheres (orb path via `THREE.InstancedMesh` in `ui/src/canvas/agents.tsx:33-34`). With the AD-721 avatar pipeline mature (designed avatars + per-tier baselines + browser upload), idle agents should be able to render as their actual VRM at canvas scale.
+
+**Decision.** Add a per-agent VRM render path to `<AgentNodes>` gated by a default-OFF `CanvasVrmConfig` prop and three new `AvatarsConfig` fields:
+- `canvas_render_vrm_avatars: bool = False` -- master toggle.
+- `canvas_max_concurrent_vrms: int = 12` (0..64) -- concurrency cap.
+- `canvas_vrm_lod_distance: float = 15.0` -- camera-distance LOD threshold.
+
+When enabled, each frame the closest `maxConcurrent` agents within `lodDistance` (excluding load-failed agents) are mounted as `<AgentVRM>` siblings. Their orb instances are zero-scaled to hide them; remaining agents stay on the orb path unchanged. Per-VRM load errors silently fall back to the orb instance (`failedVrmAgentIds` set, no retry).
+
+**Honest-degrade matrix.** Flag off -> orb path bit-for-bit equivalent. Resolver returns null -> orb. Load error -> orb (logged warning). Outside LOD distance -> orb. Concurrency cap hit -> closest-N as VRM, rest as orbs.
+
+**Per-frame budget bounded by.** (1) Frustum-style LOD via camera-distance threshold, (2) explicit concurrency cap, (3) shared `GLTFLoader` + `VRMLoaderPlugin` pipeline from CrewVRM (no duplicate code path), (4) frame-throttled cull (every 15 frames ~250 ms at 60 fps) instead of per-frame React state churn.
+
+**Forward markers.**
+- **AD-721f-1** -- per-frame `useFrame` budget instrumentation. vitest under jsdom has no WebGL renderer, so a synthetic cost measurement of the cumulative `useFrame` cost across N=12 mounted `AgentVRM` instances is not stable. Test 5 ships as `test.skip` with this forward marker; revisit when a stable instrumentation pattern lands.
+
+**Files.** `src/probos/config.py` (3 new `AvatarsConfig` fields + descriptions). `ui/src/canvas/agentVRM.tsx` (new component + pure `_pickCloseAgents` helper). `ui/src/canvas/agents.tsx` (config plumbing + frame-throttled cull + zero-scale orb hide + VRM siblings). `ui/src/canvas/__tests__/agentVRM.test.tsx` (8 passing + 1 skipped for AD-721f-1).
+
+**What this does NOT change.** `CrewVRM.tsx` / `CrewAvatarPopout.tsx` untouched. AD-721d preview/propose/approve endpoints untouched. Orb-path raycaster behavior preserved (zero-scaled instances do not intercept rays). No new pip or npm deps.

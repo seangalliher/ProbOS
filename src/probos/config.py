@@ -1377,6 +1377,38 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-721f: Cognitive Canvas VRM avatar rendering (default-OFF
+    # transitional). When enabled, agents within ``canvas_vrm_lod_distance``
+    # render as VRMs (capped at ``canvas_max_concurrent_vrms`` simultaneous);
+    # remaining agents stay on the orb instanced-mesh path.
+    canvas_render_vrm_avatars: bool = Field(
+        default=False,
+        description=(
+            "AD-721f: render registered VRMs in the Cognitive Canvas at "
+            "canvas scale for agents within the LOD distance threshold. "
+            "Default OFF -- operators with low-end GPUs keep the orb-only "
+            "path."
+        ),
+    )
+    canvas_max_concurrent_vrms: int = Field(
+        default=12,
+        ge=0,
+        le=64,
+        description=(
+            "AD-721f: max VRMs rendered simultaneously in the canvas. "
+            "Agents beyond this count fall back to orb instances."
+        ),
+    )
+    canvas_vrm_lod_distance: float = Field(
+        default=15.0,
+        gt=0.0,
+        description=(
+            "AD-721f: camera-distance threshold (world units) under which "
+            "agents render as VRMs. Beyond this distance, the orb path is "
+            "used."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:

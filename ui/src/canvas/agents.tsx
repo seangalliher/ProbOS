@@ -1,10 +1,37 @@
 /* Agent node rendering — instanced spheres with trust+pool color, confidence glow (Fix 2,3,5) */
 
-import { useRef, useMemo, useEffect } from 'react';
-import { useFrame, ThreeEvent } from '@react-three/fiber';
+import { useRef, useMemo, useEffect, useState, useCallback } from 'react';
+import { useFrame, useThree, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useStore } from '../store/useStore';
 import { poolTintBlend, confidenceToIntensity, agentNodeSize } from './scene';
+import { AgentVRM, _pickCloseAgents } from './agentVRM';
+import type { Agent } from '../store/types';
+
+// AD-721f: Cognitive-Canvas VRM avatar config (default OFF; opt-in via
+// parent <CognitiveCanvas vrmConfig=...>). When ``enabled`` is false the
+// orb instanced-mesh path is bit-for-bit equivalent to the pre-AD-721f path.
+export interface CanvasVrmConfig {
+  enabled: boolean;
+  maxConcurrent: number;
+  lodDistance: number;
+  /** Resolve an agent to its VRM URL (bare filename or absolute). Return
+   *  null/empty to keep that agent on the orb path. The default resolver
+   *  returns null for every agent, which means the canvas stays orb-only
+   *  even when ``enabled`` is true until a resolver is provided. */
+  resolveVrmUrl?: (agent: Agent) => string | null;
+  /** Optional world-unit scale applied to every mounted VRM. Defaults to
+   *  ``agentNodeSize(agent.tier, agent.confidence)`` so VRMs match the orb
+   *  size envelope. */
+  vrmScale?: (agent: Agent) => number;
+}
+
+const DEFAULT_VRM_CONFIG: CanvasVrmConfig = {
+  enabled: false,
+  maxConcurrent: 12,
+  lodDistance: 15.0,
+  resolveVrmUrl: () => null,
+};
 
 const _tempObj = new THREE.Object3D();
 const _tempColor = new THREE.Color();
@@ -26,15 +53,88 @@ interface AgentNodesProps {
   onPointerMove?: (e: ThreeEvent<PointerEvent>) => void;
   onPointerOut?: () => void;
   onClick?: (e: ThreeEvent<MouseEvent>) => void;
+  /** AD-721f: optional canvas-VRM configuration. When omitted or
+   *  ``enabled=false``, the orb path is used for every agent (unchanged). */
+  vrmConfig?: CanvasVrmConfig;
 }
 
-export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesProps = {}) {
+export function AgentNodes({ onPointerMove, onPointerOut, onClick, vrmConfig }: AgentNodesProps = {}) {
   const agents = useStore((s) => s.agents);
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const ringRef = useRef<THREE.InstancedMesh>(null);
 
+  // AD-721f: agents whose VRM load failed -- never retried this session;
+  // they stay on the orb path. Reset by a remount of <AgentNodes />.
+  const [failedVrmAgentIds, setFailedVrmAgentIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const onVrmLoadError = useCallback((agentId: string) => {
+    setFailedVrmAgentIds((prev) => {
+      if (prev.has(agentId)) return prev;
+      const next = new Set(prev);
+      next.add(agentId);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[AD-721f] agent=${agentId} VRM load failed; orb instance restored`,
+      );
+      return next;
+    });
+  }, []);
+
+  const cfg: CanvasVrmConfig = vrmConfig ?? DEFAULT_VRM_CONFIG;
+  const vrmEnabled = cfg.enabled === true;
+  // useThree hook must be called unconditionally to satisfy React rules;
+  // its result is only consulted when vrmEnabled is true.
+  const three = useThree();
+
   const agentList = useMemo(() => Array.from(agents.values()), [agents]);
   const count = agentList.length;
+
+  // AD-721f: compute the set of agents currently rendered as VRMs (camera-
+  // distance closest N within lodDistance, excluding load-failed agents and
+  // agents whose resolver returns null). Updated on a frame-throttled cadence
+  // to avoid React re-renders every frame; the orb path stays smooth.
+  const [vrmAgentIds, setVrmAgentIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const vrmCullTickRef = useRef(0);
+  useFrame(() => {
+    if (!vrmEnabled) {
+      if (vrmAgentIds.size > 0) setVrmAgentIds(new Set<string>());
+      return;
+    }
+    vrmCullTickRef.current = (vrmCullTickRef.current + 1) % 15;
+    if (vrmCullTickRef.current !== 0) return;
+    const cam = three.camera?.position;
+    const camPos: [number, number, number] = cam
+      ? [cam.x, cam.y, cam.z]
+      : [0, 0, 0];
+    const eligible = cfg.resolveVrmUrl
+      ? agentList.filter((a) => {
+          const url = cfg.resolveVrmUrl!(a);
+          return typeof url === 'string' && url.length > 0;
+        })
+      : [];
+    const picked = _pickCloseAgents(
+      eligible,
+      camPos,
+      cfg.lodDistance,
+      cfg.maxConcurrent,
+      failedVrmAgentIds,
+    );
+    const next = new Set(picked.map((a) => a.id));
+    // Cheap set-equality check before triggering a re-render.
+    if (next.size !== vrmAgentIds.size) {
+      setVrmAgentIds(next);
+      return;
+    }
+    for (const id of next) {
+      if (!vrmAgentIds.has(id)) {
+        setVrmAgentIds(next);
+        return;
+      }
+    }
+  });
 
   // Per-instance colors (initial)
   const colors = useMemo(() => {
@@ -132,8 +232,14 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
       const baseSize = agentNodeSize(agent.tier, agent.confidence);
       const size = baseSize * breathScale;
 
+      // AD-721f: when this agent is mounted as a VRM, hide its orb instance
+      // by zeroing the scale. Raycaster on the orb mesh ignores zero-scaled
+      // instances; the VRM root group carries pointer handlers instead.
+      const renderedAsVrm = vrmEnabled && vrmAgentIds.has(agent.id);
+      const effectiveSize = renderedAsVrm ? 0 : size;
+
       _tempObj.position.set(...agent.position);
-      _tempObj.scale.setScalar(size);
+      _tempObj.scale.setScalar(effectiveSize);
       _tempObj.updateMatrix();
       mesh.setMatrixAt(i, _tempObj.matrix);
 
@@ -264,6 +370,11 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
 
   if (count === 0) return null;
 
+  // AD-721f: VRM siblings (one per agent currently in the VRM set).
+  const vrmAgents = vrmEnabled
+    ? agentList.filter((a) => vrmAgentIds.has(a.id))
+    : [];
+
   return (
     <>
       <instancedMesh
@@ -303,6 +414,29 @@ export function AgentNodes({ onPointerMove, onPointerOut, onClick }: AgentNodesP
           args={[ringColors, 3]}
         />
       </instancedMesh>
+      {/* AD-721f: canvas-scale VRMs for the close-N set when enabled. */}
+      {vrmAgents.map((agent) => {
+        const url = cfg.resolveVrmUrl?.(agent);
+        if (!url) return null;
+        const scale = cfg.vrmScale
+          ? cfg.vrmScale(agent)
+          : agentNodeSize(agent.tier, agent.confidence);
+        const setHovered = useStore.getState().setHoveredAgent;
+        const openProfile = useStore.getState().openAgentProfile;
+        return (
+          <AgentVRM
+            key={`vrm-${agent.id}`}
+            agentId={agent.id}
+            position={agent.position}
+            vrmUrl={url}
+            scale={scale}
+            onLoadError={onVrmLoadError}
+            onPointerOver={() => setHovered?.(agent, { x: 0, y: 0 })}
+            onPointerOut={() => setHovered?.(null, { x: 0, y: 0 })}
+            onClick={() => openProfile?.(agent.id)}
+          />
+        );
+      })}
     </>
   );
 }
