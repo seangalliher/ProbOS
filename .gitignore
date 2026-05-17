@@ -77,3 +77,13 @@ meta.inf
 
 
 prompts/wave-orchestrator-state.json
+
+# AD-721i-1: operator-fetched avatar assets (license-audited per data/avatar-assets/MANIFEST.md)
+!data/avatar-assets/
+data/avatar-assets/*
+!data/avatar-assets/MANIFEST.md
+data/avatar-assets/_base_meshes/
+data/avatar-assets/_hair/
+data/avatar-assets/_outfits/
+data/avatar-assets/_materials/
+data/avatar-assets/ATTRIBUTION.txt

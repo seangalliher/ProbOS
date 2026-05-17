@@ -3709,3 +3709,34 @@ Path-traversal is rejected via ``.resolve()`` prefix check against the recording
 **Full gate.** 13861 -> 13869 pytest; vitest 657 -> 667 (close to dispatch target ≥668 - one test moved in cluster 1; +5 net this AD across 3 voice + 2 ProfileInfoTab tests).
 
 **Forward markers (TECHNICAL triggers per AD-722c-3).** AD-718e-1 (auto-switch ``voice_name`` when the language tag changes; trigger: operator reports manual re-selection burden on multilingual agents). AD-718e-2 (BCP 47 script + region full-form validation per ``Intl.Locale``; trigger: international operator deployment OR LLM emits a non-canonical tag). AD-718e-3 (server-side TTS catalog union with browser SpeechSynthesisVoice; trigger: HXI surfaces "all voices the operator could use" instead of source-specific lists). AD-718e-4 (piper voice download script per-language toggle so operators don't fetch every language; trigger: operator deployment with bandwidth constraints).
+
+### AD-721i-1 - License-audited starter asset pack (manifest only, no asset bytes) (Wave 166)
+
+**Date:** 2026-05-17
+**Decision:** Ship the **audit infrastructure** for AD-721i (DSL → Blender VRM renderer) without bundling any asset bytes. New ``data/avatar-assets/MANIFEST.md`` is the audit ledger: every candidate asset is listed with its source URL, license, attribution string, and disposition. v1 has **zero APPROVED rows** — every candidate is RESEARCH until Captain ruling flips it.
+
+**Status:** Shipped Wave 166. Closes #542.
+
+**Why ship the manifest before the bytes.** ProbOS's license hygiene rules (``.github/copilot-instructions.md`` + the 2026-05-09 license-posture user-memory note) require per-asset provenance evidence before any binary is committed. Architect-time research can identify clean candidates (Quaternius CC0, KayKit CC0, Khronos glTF CC0, Poly Haven CC0); operator-time execution generates the SHA-256 + ATTRIBUTION audit trail by running the fetcher script against the upstream source at build time. Splitting the work this way lets Captain ruling gate the irreversible step (committing binaries) without blocking the reviewable step (documenting the policy).
+
+**License whitelist is hard-coded.** ``probos.avatars.asset_manifest.validate_license`` returns True iff the license string is one of ``{CC0, CC0-1.0, MIT, Apache-2.0, Apache 2.0, BSD, BSD-2-Clause, BSD-3-Clause, CC-BY-4.0, CC-BY}``. Anything else (GPL, AGPL, CC-BY-SA, CC-BY-NC, proprietary, "per-file metadata") returns False. The validator is the only boundary that decides what is allowed; the manifest's ``disposition`` column is informational (REJECTED rows must still document the license string so the audit trail explains the decision).
+
+**REJECTED rows document the decision.** v1 manifest carries four explicit REJECTED entries with rationale:
+* **MakeHuman Community** (AGPL-3.0): pattern-only absorption is acceptable; absorbing binaries propagates copyleft.
+* **Mixamo** (Adobe TOS): redistribution restricted, Adobe-account tied.
+* **Ready Player Me** (Proprietary): commercial overlay only.
+* **VRoid Studio outputs** (per-file VRM metadata): each VRM file has author terms baked in; per 2026-05-09 user-memory note on file-level licensing metadata.
+
+**The fetcher script is shipped but does nothing in v1.** ``scripts/avatar-assets-fetch.ps1`` parses MANIFEST.md, filters to APPROVED, downloads via ``Invoke-WebRequest``, SHA-256-verifies (mismatch → delete + non-zero exit), and writes attribution to ``ATTRIBUTION.txt``. Because v1 has zero APPROVED rows, running the script is a no-op with an informative "0 assets approved" message. Operators see the manifest as the source of truth and the script as the executor.
+
+**.gitignore policy.** ``data/avatar-assets/_<category>/`` and ``ATTRIBUTION.txt`` are gitignored — bytes are operator-fetched. ``MANIFEST.md`` itself is **tracked** (it's the audit ledger that every PR review touches).
+
+**Workflow.** Propose: PR adds RESEARCH row → Captain reviews → flips to APPROVED. Operator runs fetcher → downloads + verifies + attributes. Revoke: flip APPROVED → REJECTED → operator manually deletes; ATTRIBUTION regenerated on next run. Documented in ``docs/development/avatar-assets.md``.
+
+**Renderer wire-up unchanged.** ``src/probos/avatars/_blender/render_avatar.py`` already reads ``<avatars_dir>/_base_meshes/<body_type>.blend`` and falls through to the E10 procedural capsule when missing. The capsule path stays functional v1; the realistic-humanoid path lights up incrementally as operators approve and fetch assets.
+
+**AD-731 invariant n/a.** Asset bytes flow through the filesystem to Blender, not the bus.
+
+**Full gate.** 13869 -> 13875 pytest (incl. 1 known dreaming flake outside this wave per dispatch); vitest unchanged (no UI surface in this AD).
+
+**Forward markers (TECHNICAL triggers per AD-722c-3).** AD-721i-1a (bundle the first APPROVED Captain-ruled asset; trigger: Captain flips ≥1 RESEARCH row to APPROVED). AD-721i-1b (per-asset license file capture - download the LICENSE / NOTICE alongside the asset and check it into ``data/avatar-assets/licenses/``; trigger: any CC-BY APPROVED row lands AND attribution audit fails). AD-721i-1c (asset registry promotion to AttachmentStore SHA-256 refs; trigger: cross-machine avatar synchronization scenario lands).
