@@ -53,6 +53,39 @@ $voices = @(
     # en_GB high
     @{ lang = "en"; region = "en_GB"; voice = "alan";         quality = "high"   }
     @{ lang = "en"; region = "en_GB"; voice = "cori";         quality = "high"   }
+    # AD-718e: Multi-language voices. All entries sourced from
+    # huggingface.co/rhasspy/piper-voices (Apache 2.0 / MIT - verified
+    # 2026-05-16 on the rhasspy HF repo). Voice availability is subject to
+    # upstream catalog stability; failed downloads honest-degrade in the
+    # per-voice try/catch below. The catalog is empirical, not normative -
+    # entries that 404 should be pruned in a follow-up.
+    # es_ES medium
+    @{ lang = "es"; region = "es_ES"; voice = "mls_9972";     quality = "medium" }
+    @{ lang = "es"; region = "es_ES"; voice = "carlfm";       quality = "medium" }
+    # es_MX low (only low ships)
+    @{ lang = "es"; region = "es_MX"; voice = "ald";          quality = "low"    }
+    # fr_FR medium
+    @{ lang = "fr"; region = "fr_FR"; voice = "siwis";        quality = "medium" }
+    @{ lang = "fr"; region = "fr_FR"; voice = "tom";          quality = "medium" }
+    @{ lang = "fr"; region = "fr_FR"; voice = "upmc";         quality = "medium" }
+    # fr_FR low
+    @{ lang = "fr"; region = "fr_FR"; voice = "mls_1840";     quality = "low"    }
+    # de_DE medium
+    @{ lang = "de"; region = "de_DE"; voice = "thorsten";     quality = "medium" }
+    @{ lang = "de"; region = "de_DE"; voice = "kerstin";      quality = "medium" }
+    @{ lang = "de"; region = "de_DE"; voice = "ramona";       quality = "low"    }
+    @{ lang = "de"; region = "de_DE"; voice = "eva_k";        quality = "medium" }
+    @{ lang = "de"; region = "de_DE"; voice = "karlsson";     quality = "medium" }
+    @{ lang = "de"; region = "de_DE"; voice = "pavoque";      quality = "low"    }
+    # it_IT medium
+    @{ lang = "it"; region = "it_IT"; voice = "riccardo";     quality = "medium" }
+    @{ lang = "it"; region = "it_IT"; voice = "paola";        quality = "medium" }
+    # nl_NL / nl_BE medium
+    @{ lang = "nl"; region = "nl_NL"; voice = "mls";          quality = "medium" }
+    @{ lang = "nl"; region = "nl_BE"; voice = "nathalie";     quality = "medium" }
+    # pt_BR
+    @{ lang = "pt"; region = "pt_BR"; voice = "edresson";     quality = "low"    }
+    @{ lang = "pt"; region = "pt_BR"; voice = "faber";        quality = "medium" }
 )
 
 if (-not (Test-Path $DestDir)) {

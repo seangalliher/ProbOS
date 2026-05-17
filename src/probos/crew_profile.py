@@ -92,6 +92,11 @@ class PersonalityTraits:
                        "agreeableness", "neuroticism") if k in data})
 
 
+# AD-718e: BCP 47-shape language tag. Two/three lowercase letters, optional
+# region/variant after _ or -. Conservative on purpose; not full BCP 47.
+_LANGUAGE_RE = re.compile(r"^[a-z]{2,3}([_-][A-Za-z0-9]{2,8})?$")
+
+
 @dataclass
 class VoiceProfile:
     """AD-718: per-agent voice override for browser SpeechSynthesis playback.
@@ -112,6 +117,12 @@ class VoiceProfile:
     # so the dataclass is also a defense-in-depth boundary on PUT-from-UI
     # (the AD-718a parser already rejects these at the LLM-output surface).
     wake_phrase: str = ""
+    # AD-718e: ISO 639-1 language code (or BCP 47 short tag like 'en-US').
+    # Used by the HXI voice picker to filter the available voice list, and
+    # by browser SpeechSynthesis fallback resolution (prefer voices whose
+    # ``lang`` field starts with this prefix before falling back to en).
+    # Empty string is normalized to 'en' for backward-compat.
+    language: str = "en"
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.pitch <= 2.0:
@@ -140,6 +151,24 @@ class VoiceProfile:
             raise ValueError(
                 "wake_phrase must not contain YAML anchor/alias/tag tokens"
             )
+        # AD-718e: language normalisation. Strip → empty maps to 'en'
+        # BEFORE the regex validation so backward-compat default-empty rows
+        # round-trip cleanly.
+        if not isinstance(self.language, str):
+            raise ValueError(
+                f"language must be str, got {type(self.language).__name__}"
+            )
+        self.language = self.language.strip()
+        if not self.language:
+            self.language = "en"
+        if len(self.language) > 16:
+            raise ValueError(
+                f"language must be ≤ 16 chars, got {len(self.language)}"
+            )
+        if not _LANGUAGE_RE.match(self.language):
+            raise ValueError(
+                f"language must match {_LANGUAGE_RE.pattern!r}, got {self.language!r}"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -149,6 +178,7 @@ class VoiceProfile:
         return cls(**{
             k: data[k] for k in (
                 "voice_name", "pitch", "rate", "volume", "wake_phrase",
+                "language",
             ) if k in data
         })
 

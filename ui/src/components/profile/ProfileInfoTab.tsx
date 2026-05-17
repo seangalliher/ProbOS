@@ -65,6 +65,8 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
     wake_phrase: profileData?.voiceProfile?.wake_phrase ?? '',
   });
   const [availableVoices, setAvailableVoices] = useState<PickerVoice[]>([]);
+  // AD-718e: language filter for the voice picker. Empty string = "All".
+  const [voiceLangFilter, setVoiceLangFilter] = useState<string>('');
   // AD-718a: agent-authored voice proposal preview state.
   const [proposal, setProposal] = useState<VoiceProfile | null>(null);
   const [proposalRationale, setProposalRationale] = useState<string>('');
@@ -325,6 +327,44 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
             Voice
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {/* AD-718e: language filter dropdown. Distinct ``lang`` codes
+                pulled from availableVoices; ``All`` = no filter. */}
+            <label
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              data-testid="ad718e-lang-filter-label"
+            >
+              <span style={{ color: '#8888a0', minWidth: 50 }}>Lang</span>
+              <select
+                aria-label="Voice language filter"
+                data-testid="ad718e-lang-filter"
+                value={voiceLangFilter}
+                onChange={(e) => setVoiceLangFilter(e.target.value)}
+                style={{
+                  flex: 1,
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 4,
+                  color: '#e0dcd4',
+                  fontSize: 11,
+                  padding: '4px 6px',
+                }}
+              >
+                <option value="" style={{ background: '#1a1a24', color: '#e0dcd4' }}>All</option>
+                {Array.from(
+                  new Set(
+                    availableVoices
+                      .map(v => (v.lang ?? '').split(/[_-]/)[0])
+                      .filter(Boolean)
+                  ),
+                )
+                  .sort()
+                  .map(code => (
+                    <option key={code} value={code} style={{ background: '#1a1a24', color: '#e0dcd4' }}>
+                      {code}
+                    </option>
+                  ))}
+              </select>
+            </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ color: '#8888a0', minWidth: 50 }}>Voice</span>
               <select
@@ -346,7 +386,13 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
                 }}
               >
                 <option value="" style={{ background: '#1a1a24', color: '#e0dcd4' }}>(global default)</option>
-                {availableVoices.map(v => (
+                {availableVoices
+                  .filter(v => {
+                    if (!voiceLangFilter) return true;
+                    const code = (v.lang ?? '').split(/[_-]/)[0];
+                    return code === voiceLangFilter;
+                  })
+                  .map(v => (
                   <option
                     key={v.name}
                     value={v.name}

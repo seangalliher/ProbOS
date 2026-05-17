@@ -16,6 +16,10 @@ export interface VoiceProfile {
   /** AD-718c: optional per-agent wake phrase (≤ 50 chars). Empty = no
    *  per-agent wake; system-wide "Computer" still works via @callsign. */
   wake_phrase?: string;
+  /** AD-718e: ISO 639-1 / BCP 47 short tag for the preferred language.
+   *  When set, voice fallback prefers voices whose ``lang`` starts with
+   *  this prefix before degrading to en. Defaults to 'en' server-side. */
+  language?: string;
 }
 
 /** AD-718 / AD-721 hook: subscribers fire on every utterance lifecycle event.
@@ -59,6 +63,18 @@ function _resolveVoiceByName(name: string): SpeechSynthesisVoice | null {
   if (!name || !('speechSynthesis' in window)) return null;
   const v = speechSynthesis.getVoices().find(x => x.name === name);
   return v ?? null;
+}
+
+/** AD-718e: Resolve a voice that matches the profile's language prefix.
+ *  Returns null when no match exists; caller then falls back to
+ *  ``findPreferredVoice`` (which prefers en). Empty / undefined language
+ *  returns null so the existing AD-718 behaviour is preserved. */
+function _resolveVoiceByLanguage(lang: string | undefined): SpeechSynthesisVoice | null {
+  if (!lang || !('speechSynthesis' in window)) return null;
+  const norm = lang.toLowerCase().split(/[_-]/)[0];
+  if (!norm) return null;
+  const voices = speechSynthesis.getVoices();
+  return voices.find(v => v.lang.toLowerCase().startsWith(norm)) ?? null;
 }
 
 function findPreferredVoice(): SpeechSynthesisVoice | null {
@@ -334,7 +350,10 @@ function _speakBrowserFallback(
   utterance.pitch = effective.pitch ?? 0.9;
   utterance.volume = effective.volume ?? 0.8;
   const named = profile?.voice_name ? _resolveVoiceByName(profile.voice_name) : null;
-  const voice = named ?? findPreferredVoice();
+  // AD-718e: prefer the profile's language family over the en fallback
+  // before degrading to ``findPreferredVoice`` (which still prefers en).
+  const langMatch = !named ? _resolveVoiceByLanguage(profile?.language) : null;
+  const voice = named ?? langMatch ?? findPreferredVoice();
   if (voice) utterance.voice = voice;
   utterance.onstart = () => _fire({ type: 'start', agent_id, utterance, source: 'browser' });
   utterance.onend = () => _fire({ type: 'end', agent_id, utterance, source: 'browser' });

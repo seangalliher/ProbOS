@@ -3684,3 +3684,28 @@ Path-traversal is rejected via ``.resolve()`` prefix check against the recording
 **Full gate.** 13852 -> 13861 passed (20 skipped).
 
 **Forward markers (TECHNICAL triggers per AD-722c-3).** AD-721b-1a-1 (catalog the explicit set of supported input formats and surface ``Accept`` MIME in the router; trigger: HXI surfaces the supported-formats list to the captain). AD-721b-1a-2 (ffmpeg health probe on startup like rhubarb's ``probe_version``; trigger: operator reports silent fall-through and needs startup-time signal). AD-721b-1a-3 (ffmpeg discovery via ``PATH`` lookup as well as the explicit path; trigger: operator request for package-manager-installed ffmpeg).
+
+### AD-718e - Multi-language voice selection (Wave 166)
+
+**Date:** 2026-05-17
+**Decision:** Add ``language: str = "en"`` to ``VoiceProfile`` (BCP 47-shape ISO-639-1 tag with optional region). Extend ``voice.ts`` voice resolution to prefer the profile's language family over the en fallback. Add a language filter dropdown to ``ProfileInfoTab``. Expand the piper voice fetcher with es/fr/de/it/nl/pt voices from rhasspy/piper-voices (Apache-2.0 / MIT).
+
+**Status:** Shipped Wave 166. Closes #526.
+
+**Backward compatibility is the load-bearing constraint.** Every existing on-disk profile predates the field. The ``__post_init__`` validation strips whitespace and maps empty string to ``"en"`` BEFORE the regex check; ``from_dict`` accepts a missing ``language`` key (the dataclass default kicks in). Both paths are regression-tested.
+
+**Regex shape.** ``^[a-z]{2,3}([_-][A-Za-z0-9]{2,8})?$`` - conservative, not full BCP 47. Lowercase prefix only; region/variant after ``_`` or ``-``. Uppercase prefixes (``"EN"``) are rejected explicitly. The browser SpeechSynthesis API hands back lang tags like ``"en-US"`` / ``"es-ES"`` / ``"fr-FR"``, so the prefix-only match (``v.lang.toLowerCase().startsWith(norm)``) is enough at the resolver.
+
+**Resolution ladder.** ``named ?? langMatch ?? findPreferredVoice()``. The operator-chosen ``voice_name`` is still authoritative when present; the language tag is the next preference, and only if neither matches do we degrade to the original en-first ``findPreferredVoice``. AD-718 default behavior is byte-identical when ``language`` is undefined.
+
+**UI filter is additive.** A new ``<select data-testid="ad718e-lang-filter">`` dropdown above the voice picker; distinct lang codes are extracted from the loaded piper catalog. Selecting a code filters ``availableVoices`` by ``lang.split(/[_-]/)[0] === voiceLangFilter``. "All" (empty) shows the full catalog (today's behavior).
+
+**Piper catalog expansion.** 18 new entries across es/fr/de/it/nl/pt sourced from ``huggingface.co/rhasspy/piper-voices`` (Apache-2.0 / MIT - verified against the upstream HF repo, same posture as the existing en_US / en_GB blocks). The fetcher's per-voice try/catch honest-degrades on 404, so catalog drift is non-fatal. The entries are empirical, not normative - upstream catalog changes should be pruned in follow-ups.
+
+**Voice resolution does NOT silently re-route per language.** The operator-chosen ``voice_name`` is still the authoritative selection. The language tag biases the fallback path only - this AD is a selection UX improvement, not a runtime re-routing engine. AD-718e-1 forward marker covers "auto-switch voice when language tag changes" if that turns out to be wanted in practice.
+
+**AD-731 invariant n/a.** No new bus payloads; no new attachment flow. Voice settings are short strings (≤ 16 chars language tag).
+
+**Full gate.** 13861 -> 13869 pytest; vitest 657 -> 667 (close to dispatch target ≥668 - one test moved in cluster 1; +5 net this AD across 3 voice + 2 ProfileInfoTab tests).
+
+**Forward markers (TECHNICAL triggers per AD-722c-3).** AD-718e-1 (auto-switch ``voice_name`` when the language tag changes; trigger: operator reports manual re-selection burden on multilingual agents). AD-718e-2 (BCP 47 script + region full-form validation per ``Intl.Locale``; trigger: international operator deployment OR LLM emits a non-canonical tag). AD-718e-3 (server-side TTS catalog union with browser SpeechSynthesisVoice; trigger: HXI surfaces "all voices the operator could use" instead of source-specific lists). AD-718e-4 (piper voice download script per-language toggle so operators don't fetch every language; trigger: operator deployment with bandwidth constraints).
