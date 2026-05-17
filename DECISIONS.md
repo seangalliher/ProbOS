@@ -3888,3 +3888,21 @@ Any one of those would be sufficient to reject. Together they make VRoid a non-s
 **Forward markers.** None. Re-evaluation only triggers if Pixiv ships a CLI or open-source release.
 
 **Zero code, zero tests, zero deps.** Pure research housekeeping.
+
+### AD-705b - Offline TTS (Coqui / Piper) - SUPERSEDED (Wave 168)
+
+**Date:** 2026-05-17. **Status:** SUPERSEDED -- closed without separate implementation. **Wave:** 168. **Closes** #556.
+
+**Disposition.** The Wave 137 forward marker AD-705b ("replace browser SpeechSynthesis with an offline-capable engine such as Coqui or Piper, or expose multiple per-agent voice characters") is satisfied by three already-shipped ADs:
+
+- **AD-738 (Wave 157)** -- Server-streamed TTS via Piper. Fully-offline MIT-licensed engine at `src/probos/audio/tts/piper_backend.py`. Browser `SpeechSynthesisUtterance` remains as Tier-2 fallback when `backend=browser`.
+- **AD-718e (Wave 166)** -- Multi-language voice selection with 27-voice catalog (BF-291). Per-agent `voice_name` selection from server-resolved catalog.
+- **AD-738e-1 (Wave 158)** -- Per-emotion Piper prosody overrides. AD-718d emotional modulation hook preserved end-to-end.
+
+**Acceptance audit (per #556 body).**
+- License posture clean: Piper is MIT -- operator-friendly, no copyleft propagation. Coqui evaluation deferred to AD-718b (Wave 168 research-only audit).
+- Operator-install pattern for model files: shipped via `scripts/piper-voice-fetch.ps1` (Wave 165 / BF-291 download script).
+- AD-718d emotional modulation: preserved through AD-738e-1 prosody overrides.
+- Browser-TTS Tier-2 fallback: preserved in `ui/src/audio/voice.ts` (`backend=browser` default + probe-based escalation).
+
+**No code change required.** Closed for tracking hygiene; the AD number is retired and will not be reused. Coqui/Bark/ElevenLabs evaluation continues under AD-718b (Wave 168).
