@@ -25,16 +25,16 @@ class TestDmSelfSimilarityGate:
         assert "dict[str, str]" in src
 
     def test_similarity_gate_exists_in_source(self):
-        """Self-similarity gate code exists in _extract_and_execute_dms."""
+        """Self-similarity gate code exists in extract_and_execute_dms."""
         src = open("src/probos/proactive.py", encoding="utf-8").read()
         tree = ast.parse(src)
         for node in ast.walk(tree):
-            if isinstance(node, ast.AsyncFunctionDef) and node.name == "_extract_and_execute_dms":
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "extract_and_execute_dms":
                 body_src = ast.dump(node)
                 assert "jaccard_similarity" in body_src
                 assert "last_dm_body" in body_src
                 return
-        pytest.fail("_extract_and_execute_dms not found")
+        pytest.fail("extract_and_execute_dms not found")
 
     def test_identical_dm_suppressed(self):
         """Jaccard 1.0 (identical body) should be suppressed."""

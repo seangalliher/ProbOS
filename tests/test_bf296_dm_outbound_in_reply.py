@@ -4,7 +4,7 @@ Captain-bound replies and dispatches them as outbound DMs.
 Captain log 2026-05-17: Ezri tried to DM Atlas from within a Captain
 chat — the [DM @Atlas]...[/DM] marker leaked through to the displayed
 reply because DmReplyPipeline had no extractor. AD-453 already implemented
-the extraction logic in ProactiveLoop._extract_and_execute_dms; BF-296
+the extraction logic in ProactiveCognitiveLoop.extract_and_execute_dms; BF-296
 exposes it as a public method and wires it into a new pipeline sub-step
 (step_4b_dm_outbound_parse).
 """
@@ -50,7 +50,7 @@ def test_bf296_method_calls_proactive_extract_helper() -> None:
 
 def test_bf296_proactive_extract_is_public() -> None:
     """ProactiveCognitiveLoop.extract_and_execute_dms is the public API
-    (was private _extract_and_execute_dms in AD-453)."""
+    (was private _extract_and_execute_dms in AD-453, renamed public BF-296)."""
     from probos import proactive
 
     assert hasattr(proactive.ProactiveCognitiveLoop, "extract_and_execute_dms"), (

@@ -91,7 +91,7 @@ class TestDmActionTag:
         agent.callsign = "Troi"
 
         text = "[DM @Bones]\nHave you checked the crew health reports today?\n[/DM]"
-        cleaned, actions = await loop._extract_and_execute_dms(agent, text)
+        cleaned, actions = await loop.extract_and_execute_dms(agent, text)
 
         assert len(actions) == 1
         assert actions[0]["type"] == "dm"
@@ -116,7 +116,7 @@ class TestDmActionTag:
         agent.id = "couns-001"
 
         text = "[DM @nobody]\nHello?\n[/DM]"
-        cleaned, actions = await loop._extract_and_execute_dms(agent, text)
+        cleaned, actions = await loop.extract_and_execute_dms(agent, text)
         assert len(actions) == 0
 
     @pytest.mark.asyncio
@@ -137,7 +137,7 @@ class TestDmActionTag:
         agent.id = "couns-001"
 
         text = "[DM @Troi]\nNote to self.\n[/DM]"
-        cleaned, actions = await loop._extract_and_execute_dms(agent, text)
+        cleaned, actions = await loop.extract_and_execute_dms(agent, text)
         assert len(actions) == 0
 
     @pytest.mark.asyncio
@@ -213,7 +213,7 @@ class TestAD485CaptainDmAndArchival:
         agent.callsign = "Bones"
 
         text = "[DM @captain]\nCaptain, there is an urgent medical concern.\n[/DM]"
-        cleaned, actions = await loop._extract_and_execute_dms(agent, text)
+        cleaned, actions = await loop.extract_and_execute_dms(agent, text)
 
         assert len(actions) == 1
         assert actions[0]["target_callsign"] == "captain"

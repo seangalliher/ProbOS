@@ -3597,6 +3597,23 @@ waves:
     issues_to_close: [619, 534, 535, 543, 550]
     status: shipped
 
+  - id: "168"
+    title: "Avatar UX completion + audio extensions + cloud picker"
+    # 6-AD ~10h batch:
+    # - AD-705b: close as obsolete (Piper already IS offline TTS, shipped Wave 157)
+    # - AD-721f: cognitive-canvas avatar replacement (medium)
+    # - AD-721a: Captain's avatar editor UI (medium)
+    # - AD-721e: skeletal animation library (medium-large)
+    # - AD-718b: extra TTS backends (research-only audit, AD-721i-1 pattern)
+    # - AD-720c: cloud file picker (OAuth-bound source, medium-large)
+    kind: main
+    depends_on: ["167"]
+    dispatch_prompt: "prompts/WAVE-168-DISPATCH.md"
+    prompts_already_drafted: false
+    builder_required: true
+    issues_to_close: [556, 533, 528, 532, 523, 551]
+    status: drafting
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

@@ -1,6 +1,6 @@
 """BF-163: DM send flood rate limiting tests.
 
-Verifies that _extract_and_execute_dms() enforces a per-agent per-target
+Verifies that extract_and_execute_dms() enforces a per-agent per-target
 cooldown of 60 seconds to prevent DM flood loops that overwhelm the LLM proxy.
 """
 
@@ -21,7 +21,7 @@ class TestDmSendCooldownExists:
         assert "dict[str, float]" in source
 
     def test_cooldown_check_in_extract_dms(self):
-        """Rate-limit check must appear inside _extract_and_execute_dms."""
+        """Rate-limit check must appear inside extract_and_execute_dms."""
         import ast
 
         source = Path("src/probos/proactive.py").read_text()
@@ -29,7 +29,7 @@ class TestDmSendCooldownExists:
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
-                if node.name == "_extract_and_execute_dms":
+                if node.name == "extract_and_execute_dms":
                     body_source = ast.get_source_segment(source, node)
                     assert body_source is not None
                     assert "dm_pair_key" in body_source
@@ -37,7 +37,7 @@ class TestDmSendCooldownExists:
                     assert "continue" in body_source
                     break
         else:
-            pytest.fail("_extract_and_execute_dms not found")
+            pytest.fail("extract_and_execute_dms not found")
 
     def test_cooldown_key_is_composite(self):
         """Cooldown key must use agent.id:target_callsign composite."""

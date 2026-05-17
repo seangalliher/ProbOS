@@ -168,7 +168,7 @@ class TestHebbianSocial:
         agent.callsign = "Troi"
 
         text = "[DM @Bones]\nCrew wellness check needed.\n[/DM]"
-        await loop._extract_and_execute_dms(agent, text)
+        await loop.extract_and_execute_dms(agent, text)
 
         weight = router.get_weight("couns-001", "diag-001", rel_type=REL_SOCIAL)
         assert weight > 0.0, "DM should create Hebbian social connection"
