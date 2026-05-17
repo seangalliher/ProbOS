@@ -257,6 +257,7 @@ class TestOpenAICompatibleClientMultiEndpoint:
             "standard": "cloud-model-a",
             "deep": "cloud-model-b",
             "vision": None,  # AD-732: vision peer tier, unconfigured by default
+            "compute_use": None,  # AD-706c-2: compute_use peer tier, unconfigured by default
         }
 
 
@@ -278,8 +279,9 @@ class TestConnectivityCheck:
         try:
             result = await client.check_connectivity()
             assert isinstance(result, dict)
-            # AD-732: vision is the fourth peer tier in the connectivity report.
-            assert set(result.keys()) == {"fast", "standard", "deep", "vision"}
+            # AD-732 + AD-706c-2: vision and compute_use are peer tiers in
+            # the connectivity report.
+            assert set(result.keys()) == {"fast", "standard", "deep", "vision", "compute_use"}
             for tier, reachable in result.items():
                 assert isinstance(reachable, bool)
         finally:

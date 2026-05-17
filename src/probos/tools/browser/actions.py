@@ -547,6 +547,13 @@ async def action_verify(
 # -- Tier classifier (D6) ------------------------------------------------
 
 
+# AD-706c-2: register coordinate-aware click handler. Late-bound after
+# ``action_verify`` is defined because compute_use reuses it for the Guard
+# #9 verification handshake (avoiding a circular import).
+from probos.tools.browser.compute_use import action_compute_use_click  # noqa: E402
+_HANDLERS["compute_use_click"] = action_compute_use_click
+
+
 def classify_action(
     session: BrowserSession,
     action: str,
@@ -563,6 +570,12 @@ def classify_action(
       checkout/payment/transfer/subscribe/signup/register, OR the clicked
       element's text matches the tier-3 text regex.
     """
+    # AD-706c-2: coordinate-aware click is always tier-3 (destructive click
+    # at an unverified pixel coordinate). Captain ACK required every call.
+    # Checked BEFORE the silent/goto bands so AD-706e's later additive
+    # always-tier-3 entries can stack without re-shaping this branch.
+    if action == "compute_use_click":
+        return 3
     silent = {"state", "screenshot", "wait", "extract_text", "scroll", "back", "forward", "verify"}
     if action in silent:
         return 1

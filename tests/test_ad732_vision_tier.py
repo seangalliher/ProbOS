@@ -541,20 +541,28 @@ def test_vision_tier_not_in_fallback_chain():
     """_TIER_ORDER (the fallback chain) deliberately excludes vision.
 
     Vision failures degrade to the honest-degrade message — they never
-    silently fall through to a blind tier. This is asserted at the module
-    level by reading _LLM_TIERS vs _TIER_ORDER from llm_client.
+    silently fall through to a blind tier. AD-706c-2 (Wave 166) added
+    ``compute_use`` as a fifth peer; like vision, it must NOT appear in
+    the fallback chain (BF-269 lesson: text tiers can't see images).
     """
     import probos.cognitive.llm_client as llm_module
+    from probos.cognitive.llm_client import _TIER_ORDER
 
-    # _LLM_TIERS includes all four peer tiers.
+    # _LLM_TIERS includes all peer tiers (fast/standard/deep/vision plus
+    # AD-706c-2 compute_use).
     assert "vision" in _LLM_TIERS
-    assert set(_LLM_TIERS) == {"fast", "standard", "deep", "vision"}
+    assert "compute_use" in _LLM_TIERS
+    assert set(_LLM_TIERS) == {"fast", "standard", "deep", "vision", "compute_use"}
 
-    # The fallback chain is defined inside complete(); read the source.
+    # AD-706c-2 promoted _TIER_ORDER to a module-level constant; it must
+    # remain text-only.
+    assert set(_TIER_ORDER) == {"fast", "standard", "deep"}
     src = Path(llm_module.__file__).read_text(encoding="utf-8")
-    assert '_TIER_ORDER = ["fast", "standard", "deep"]' in src
-    # Vision must not appear in the fallback list literal.
-    assert '_TIER_ORDER = ["fast", "standard", "deep", "vision"]' not in src
+    # The literal-source assertion now reads the module-level tuple form.
+    assert '_TIER_ORDER: tuple[str, ...] = ("fast", "standard", "deep")' in src
+    # Vision/compute_use must not appear in the fallback chain definition.
+    assert '"vision"' not in src.split("_TIER_ORDER:")[1].split("\n")[0]
+    assert '"compute_use"' not in src.split("_TIER_ORDER:")[1].split("\n")[0]
 
 
 @pytest.mark.asyncio

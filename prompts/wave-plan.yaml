@@ -3565,6 +3565,22 @@ waves:
     issues_to_close: [661]
     status: shipped
 
+  - id: "166"
+    title: "Browser Tool cluster (5) + ffmpeg conversion + multi-language voice + starter asset pack license audit"
+    # 8-AD focused batch:
+    # - Browser Tool cluster: AD-706a (Captain-watch streaming), AD-706b (session video),
+    #   AD-706c-2 (coord-aware compute_use), AD-706e (action vocab v2), AD-706f (credential vault)
+    # - AD-721b-1a: ffmpeg audio conversion (finishes BF-292 honest-degrade with full quality path)
+    # - AD-718e: multi-language voice selection (leverages Wave 165 voice catalog)
+    # - AD-721i-1: starter asset pack license audit (mostly research + manifest)
+    kind: main
+    depends_on: ["165"]
+    dispatch_prompt: "prompts/WAVE-166-DISPATCH.md"
+    prompts_already_drafted: false
+    builder_required: true
+    issues_to_close: [663, 516, 517, 643, 520, 521, 526, 542]
+    status: drafting
+
   - id: "audit-yaml-defaults"
     title: "Process improvement — audit Pydantic feature-gate defaults against config/system.yaml at retrospective"
     kind: process

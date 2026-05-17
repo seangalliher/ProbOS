@@ -67,11 +67,16 @@ def is_vision_tier_configured(cfg: Any, tier_name: str) -> bool:
     override is set). Only "vision" requires the explicit configured-check
     because it is opt-in by default (see AttachmentsConfig.vision_tier).
     """
-    if tier_name != "vision":
-        return True
-    model = getattr(cfg, "llm_model_vision", None) or ""
-    base_url = getattr(cfg, "llm_base_url_vision", None)
-    return bool(model and base_url)
+    if tier_name == "vision":
+        model = getattr(cfg, "llm_model_vision", None) or ""
+        base_url = getattr(cfg, "llm_base_url_vision", None)
+        return bool(model and base_url)
+    if tier_name == "compute_use":
+        # AD-706c-2: opt-in coordinate-prediction tier. Same shape as vision.
+        model = getattr(cfg, "llm_model_compute_use", None) or ""
+        base_url = getattr(cfg, "llm_base_url_compute_use", None)
+        return bool(model and base_url)
+    return True
 
 
 def resolve_vision_tier_for_agent(

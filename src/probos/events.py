@@ -199,6 +199,10 @@ class EventType(str, Enum):
     BROWSER_ACTION_EXECUTED = "browser_action_executed"        # AD-706: per-action telemetry
     BROWSER_SESSION_OPENED = "browser_session_opened"          # AD-706
     BROWSER_VERIFY_OBSERVED = "browser_verify_observed"        # AD-706c-1: vision-LLM verification result
+    BROWSER_COMPUTE_USE_CLICK_PROPOSED = "browser_compute_use_click_proposed"  # AD-706c-2: coordinate predicted
+    BROWSER_COMPUTE_USE_CLICK_VERIFIED = "browser_compute_use_click_verified"  # AD-706c-2: handshake succeeded
+    BROWSER_COMPUTE_USE_CLICK_ABORTED = "browser_compute_use_click_aborted"    # AD-706c-2: verification disagreed
+    BROWSER_COMPUTE_USE_CLICK_EXECUTED = "browser_compute_use_click_executed"  # AD-706c-2: click sent to page
     VISION_CAPABILITY_PROPOSED = "vision_capability_proposed"  # AD-720d-2.1: agent requests vision capability
     VISION_CAPABILITY_RESOLVED = "vision_capability_resolved"  # AD-720d-2.1: Captain approves or denies
     VISION_INTENT_DIVERGENCE_OBSERVED = "vision_intent_divergence_observed"  # AD-722a-1: vision-LLM intent-vs-render

@@ -214,6 +214,21 @@ class CognitiveConfig(BaseModel):
     llm_timeout_vision: float | None = None
     llm_api_format_vision: str | None = None  # "openai" or "ollama"
 
+    # AD-706c-2: compute_use tier — fifth peer of fast/standard/deep/vision.
+    # Coordinate-aware image LLM for DOM-less surfaces (canvas, embedded VNC,
+    # screenshot-only PDFs). Default unconfigured; opt-in via system.yaml.
+    # When unconfigured OR unhealthy, BrowserTool ``compute_use_click``
+    # honest-degrades with the shared VISION_UNCONFIGURED_MESSAGE.
+    # Does NOT participate in the fast→standard→deep fallback chain.
+    llm_base_url_compute_use: str | None = None
+    llm_api_key_compute_use: str | None = None
+    llm_model_compute_use: str | None = None
+    llm_timeout_compute_use: float | None = None
+    llm_api_format_compute_use: str | None = None  # "openai" or "ollama"
+    llm_temperature_compute_use: float | None = None
+    llm_top_p_compute_use: float | None = None
+    llm_max_tokens_compute_use: int | None = None
+
     # Per-tier sampling overrides (None = use request-level value)
     llm_temperature_fast: float | None = None
     llm_temperature_standard: float | None = None
@@ -263,48 +278,56 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_model_standard,
             "deep": self.llm_model_deep,
             "vision": self.llm_model_vision,
+            "compute_use": self.llm_model_compute_use,
         }
         url_map = {
             "fast": self.llm_base_url_fast,
             "standard": self.llm_base_url_standard,
             "deep": self.llm_base_url_deep,
             "vision": self.llm_base_url_vision,
+            "compute_use": self.llm_base_url_compute_use,
         }
         key_map = {
             "fast": self.llm_api_key_fast,
             "standard": self.llm_api_key_standard,
             "deep": self.llm_api_key_deep,
             "vision": self.llm_api_key_vision,
+            "compute_use": self.llm_api_key_compute_use,
         }
         timeout_map = {
             "fast": self.llm_timeout_fast,
             "standard": self.llm_timeout_standard,
             "deep": self.llm_timeout_deep,
             "vision": self.llm_timeout_vision,
+            "compute_use": self.llm_timeout_compute_use,
         }
         format_map = {
             "fast": self.llm_api_format_fast,
             "standard": self.llm_api_format_standard,
             "deep": self.llm_api_format_deep,
             "vision": self.llm_api_format_vision,
+            "compute_use": self.llm_api_format_compute_use,
         }
         temp_map = {
             "fast": self.llm_temperature_fast,
             "standard": self.llm_temperature_standard,
             "deep": self.llm_temperature_deep,
             "vision": self.llm_temperature_vision,
+            "compute_use": self.llm_temperature_compute_use,
         }
         top_p_map = {
             "fast": self.llm_top_p_fast,
             "standard": self.llm_top_p_standard,
             "deep": self.llm_top_p_deep,
             "vision": self.llm_top_p_vision,
+            "compute_use": self.llm_top_p_compute_use,
         }
         max_tokens_map = {
             "fast": self.llm_max_tokens_fast,
             "standard": self.llm_max_tokens_standard,
             "deep": self.llm_max_tokens_deep,
             "vision": self.llm_max_tokens_vision,
+            "compute_use": self.llm_max_tokens_compute_use,
         }
         return {
             "base_url": url_map.get(tier) or self.llm_base_url,
@@ -1022,6 +1045,27 @@ class BrowserToolConfig(BaseModel):
         description=(
             "AD-706d: in-memory cache TTL for identical (action, url-prefix, "
             "element-text, page-title) tuples. 0 disables caching."
+        ),
+    )
+
+    # AD-706c-2: coordinate-aware compute_use trust budget (Guard #10).
+    compute_use_max_consecutive_autonomous_actions: int = Field(
+        default=5,
+        ge=0,
+        le=20,
+        description=(
+            "AD-706c-2: per-session cap on consecutive ``compute_use_click`` "
+            "actions without a Captain ACK. Resets on any tier-3 ACK signal. "
+            "0 disables compute_use entirely."
+        ),
+    )
+    compute_use_max_per_session: int = Field(
+        default=50,
+        ge=0,
+        le=500,
+        description=(
+            "AD-706c-2: per-session hard cap on total ``compute_use_click`` "
+            "calls. Independent of the consecutive-autonomous cap. 0 disables."
         ),
     )
 

@@ -68,6 +68,11 @@ class BrowserSession:
         self._page: Any = None
         # Last URL we navigated to (used by tier classifier for click/type)
         self._last_url: str = ""
+        # AD-706c-2: compute_use trust budget. ``_compute_use_consecutive_autonomous``
+        # resets on any Captain ACK; ``_compute_use_total_calls`` only resets
+        # when the session is destroyed.
+        self._compute_use_consecutive_autonomous: int = 0
+        self._compute_use_total_calls: int = 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -152,6 +157,32 @@ class BrowserSession:
 
     def set_last_url(self, url: str) -> None:
         self._last_url = url
+
+    # ------------------------------------------------------------------
+    # AD-706c-2: compute_use trust budget
+    # ------------------------------------------------------------------
+
+    @property
+    def compute_use_consecutive_autonomous(self) -> int:
+        """Count of compute_use_click calls since the last Captain ACK."""
+        return self._compute_use_consecutive_autonomous
+
+    @property
+    def compute_use_total_calls(self) -> int:
+        """Lifetime count of compute_use_click calls on this session."""
+        return self._compute_use_total_calls
+
+    def note_compute_use_call(self) -> None:
+        """Increment both counters. Called once per executed compute_use_click."""
+        self._compute_use_consecutive_autonomous += 1
+        self._compute_use_total_calls += 1
+
+    def note_captain_ack(self) -> None:
+        """Reset the consecutive-autonomous counter. Called when the Captain
+        ACKs ANY tier-3 action — the ACK signals fresh oversight, so the
+        autonomous-streak budget refreshes.
+        """
+        self._compute_use_consecutive_autonomous = 0
 
     # ------------------------------------------------------------------
     # Per-domain rate limiting

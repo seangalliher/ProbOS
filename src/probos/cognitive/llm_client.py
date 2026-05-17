@@ -23,12 +23,19 @@ logger = logging.getLogger(__name__)
 
 # AD-732: single source of truth for the LLM tier set. State-init loops, health
 # probes, and per-tier dict construction MUST iterate this constant. The
-# fallback chain (_TIER_ORDER, defined inside complete() near line ~483) is a
-# SEPARATE concern — vision deliberately does NOT participate in fallback
-# because fallback exists for text-completion graceful degrade, and
-# standard/deep cannot see images. Vision failures route to the honest-degrade
-# message defined in cognitive/vision_dispatch.py.
-_LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision")
+# fallback chain (``_TIER_ORDER`` below) is a SEPARATE concern — vision and
+# compute_use deliberately do NOT participate in fallback because fallback
+# exists for text-completion graceful degrade, and text tiers cannot see
+# images. Vision/compute_use failures route to honest-degrade messages
+# defined in cognitive/vision_dispatch.py.
+_LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision", "compute_use")
+
+# AD-706c-2: fallback chain is text-only. ``vision`` and ``compute_use`` are
+# excluded — text tiers silently drop image content (BF-269) and coordinate
+# prediction failures must surface as honest-degrade, never confident wrong
+# clicks. Module-level so source-scan tests can assert membership without
+# scanning function bodies.
+_TIER_ORDER: tuple[str, ...] = ("fast", "standard", "deep")
 
 
 class BaseLLMClient(ABC):
@@ -251,7 +258,11 @@ class OpenAICompatibleClient(BaseLLMClient):
         as a 16ms (no response) at the agent surface. Skip the router for
         vision; the explicit tier config is authoritative.
         """
-        if tier == "vision":
+        if tier in ("vision", "compute_use"):
+            # AD-706c-2: compute_use joins vision in router bypass — the
+            # AD-463 ModelRouter registry has no entries for either tier and
+            # would otherwise fall through to "pick first available text
+            # model", routing requests to an endpoint that cannot fulfill them.
             return None
         # Defensive: tests that construct via __new__ (bypassing __init__) won't
         # have the model_router attribute. Treat that the same as not wired.
@@ -539,9 +550,12 @@ class OpenAICompatibleClient(BaseLLMClient):
         # Captain as if vision had been attempted. When the requested tier
         # is vision, the chain is vision-only — failures propagate to the
         # honest-degrade gate at the router boundary.
-        _TIER_ORDER = ["fast", "standard", "deep"]
-        if tier == "vision":
-            fallback_tiers = ["vision"]
+        # AD-706c-2: vision + compute_use never fall back to text tiers
+        # (BF-269 lesson: text tiers can't see images and would silently
+        # return image-blind text; coordinate predictions must honest-degrade,
+        # never confident wrong clicks).
+        if tier in ("vision", "compute_use"):
+            fallback_tiers = [tier]
         else:
             fallback_tiers = [tier] + [t for t in _TIER_ORDER if t != tier]
 
