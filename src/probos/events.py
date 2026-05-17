@@ -206,6 +206,11 @@ class EventType(str, Enum):
     BROWSER_FILE_UPLOAD_REQUESTED = "browser_file_upload_requested"  # AD-706e: upload_file invoked
     BROWSER_DOWNLOAD_REQUESTED = "browser_download_requested"        # AD-706e: download invoked
     BROWSER_EVAL_JS_EXECUTED = "browser_eval_js_executed"            # AD-706e: eval_js executed
+    CREDENTIAL_STORED = "credential_stored"                          # AD-706f: vault write
+    CREDENTIAL_READ = "credential_read"                              # AD-706f: vault read (audit row)
+    CREDENTIAL_READ_DENIED = "credential_read_denied"                # AD-706f: capability scope mismatch
+    CREDENTIAL_DELETED = "credential_deleted"                        # AD-706f: vault delete
+    CREDENTIAL_FILL_REQUESTED = "credential_fill_requested"          # AD-706f: page.fill invoked
     VISION_CAPABILITY_PROPOSED = "vision_capability_proposed"  # AD-720d-2.1: agent requests vision capability
     VISION_CAPABILITY_RESOLVED = "vision_capability_resolved"  # AD-720d-2.1: Captain approves or denies
     VISION_INTENT_DIVERGENCE_OBSERVED = "vision_intent_divergence_observed"  # AD-722a-1: vision-LLM intent-vs-render

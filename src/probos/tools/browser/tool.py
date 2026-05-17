@@ -324,6 +324,26 @@ class BrowserTool:
                     runtime=self._runtime,
                     emit_event=self._emit_event,
                 )
+            elif action == "compute_use_click":
+                # AD-706c-2: same special-cased dispatch signature as verify.
+                from probos.tools.browser.compute_use import action_compute_use_click
+                output = await action_compute_use_click(
+                    session,
+                    params,
+                    runtime=self._runtime,
+                    emit_event=self._emit_event,
+                )
+            elif action == "fill_credential":
+                # AD-706f: same special-cased dispatch — vault read + page.fill.
+                from probos.tools.browser.credentials import action_fill_credential
+                merged_params = dict(params)
+                merged_params.setdefault("agent_id", agent_id)
+                output = await action_fill_credential(
+                    session,
+                    merged_params,
+                    runtime=self._runtime,
+                    emit_event=self._emit_event,
+                )
             else:
                 output = await dispatch_action(session, action, params)
                 # AD-706e: per-action event types for the three highest-risk

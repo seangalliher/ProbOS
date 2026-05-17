@@ -956,6 +956,41 @@ class MCPAppHostConfig(BaseModel):
     bundles_dir: str = ""
 
 
+class CredentialVaultConfig(BaseModel):
+    """AD-706f: Browser Tool credential vault.
+
+    Default-OFF transitional gate. Requires ``auth.crew_scope_token`` to be
+    non-empty for KEK derivation; the runtime startup wires the vault only
+    when both ``enabled=True`` AND the auth token is set.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="AD-706f: enable encrypted credential vault. Default OFF.",
+    )
+    backend: str = Field(
+        default="file",
+        description="AD-706f: backend kind. v1 only supports 'file'.",
+    )
+    file_path: str = Field(
+        default="data/credential_vault.json",
+        description="AD-706f: JSON sidecar path for the EncryptedFileCredentialVault.",
+    )
+    max_credentials: int = Field(
+        default=100,
+        ge=1,
+        le=10000,
+        description="AD-706f: per-vault hard cap on stored credentials.",
+    )
+    require_https_for_fill: bool = Field(
+        default=True,
+        description=(
+            "AD-706f: when True, fill_credential blocks page.fill on http:// "
+            "URLs. Operators override only for explicit dev/local scenarios."
+        ),
+    )
+
+
 class BrowserToolConfig(BaseModel):
     """AD-706: BrowserTool (Computer Use via Playwright).
 
@@ -1067,6 +1102,12 @@ class BrowserToolConfig(BaseModel):
             "AD-706c-2: per-session hard cap on total ``compute_use_click`` "
             "calls. Independent of the consecutive-autonomous cap. 0 disables."
         ),
+    )
+
+    # AD-706f: credential vault (encrypted-at-rest). Default-OFF gate.
+    credential_vault: CredentialVaultConfig = Field(
+        default_factory=CredentialVaultConfig,
+        description="AD-706f: nested credential vault config; default-OFF.",
     )
 
 

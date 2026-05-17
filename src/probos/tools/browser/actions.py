@@ -788,6 +788,12 @@ _HANDLERS["upload_file"] = _action_upload_file
 _HANDLERS["download"] = _action_download
 _HANDLERS["eval_js"] = _action_eval_js
 
+# AD-706f: credential vault fill action. Tier-3 always (Captain ACK every
+# call). Late-bind from credentials.py to avoid forcing the import on
+# environments where the vault is disabled.
+from probos.tools.browser.credentials import action_fill_credential  # noqa: E402
+_HANDLERS["fill_credential"] = action_fill_credential
+
 
 def classify_action(
     session: BrowserSession,
@@ -817,6 +823,9 @@ def classify_action(
     if action == "upload_file":
         return 3
     if action == "eval_js":
+        return 3
+    # AD-706f: credential fill always-tier-3 (Captain ACK every credential read).
+    if action == "fill_credential":
         return 3
     silent = {"state", "screenshot", "wait", "extract_text", "scroll", "back", "forward", "verify", "mouse_move"}
     if action in silent:

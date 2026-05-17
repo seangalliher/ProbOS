@@ -166,6 +166,44 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
         "AD-706: BrowserTool registered (headless=%s, allowlist=%s)",
         cfg.headless, cfg.domain_allowlist,
     )
+
+    # AD-706f: credential vault — opt-in via cfg.credential_vault.enabled AND
+    # auth.crew_scope_token non-empty. Honest-degrade silently when either
+    # precondition fails (runtime.credential_vault stays None).
+    runtime.credential_vault = None
+    vault_cfg = getattr(cfg, "credential_vault", None)
+    auth_cfg = getattr(config, "auth", None)
+    crew_token = getattr(auth_cfg, "crew_scope_token", "") if auth_cfg else ""
+    if vault_cfg is not None and vault_cfg.enabled and crew_token:
+        try:
+            from pathlib import Path
+            from probos.tools.browser.credentials import (
+                EncryptedFileCredentialVault,
+                _derive_kek,
+            )
+            kek = _derive_kek(crew_token)
+            vault = EncryptedFileCredentialVault(
+                path=Path(vault_cfg.file_path),
+                kek=kek,
+                crew_scope_token=crew_token,
+            )
+            runtime.credential_vault = vault
+            # Sync count via the in-memory loaded state (avoid async dispatch
+            # at startup time — vault constructor already loaded the sidecar).
+            n_refs = len(getattr(vault, "_refs", {}))
+            logger.info("AD-706f credential vault enabled (%d credentials loaded)", n_refs)
+        except Exception:
+            logger.warning(
+                "AD-706f: credential vault construction failed; "
+                "runtime.credential_vault stays None (vault disabled this run)",
+                exc_info=True,
+            )
+    elif vault_cfg is not None and vault_cfg.enabled and not crew_token:
+        logger.warning(
+            "AD-706f: credential_vault.enabled=True but auth.crew_scope_token "
+            "is empty; vault disabled. Set auth.crew_scope_token in "
+            "config/system.yaml to enable."
+        )
     return True
 
 

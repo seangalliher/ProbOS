@@ -70,3 +70,11 @@ When adding a new third-party component:
 - License: MIT
 - Used by: `src/probos/cognitive/text_extractor.py` (`_extract_xlsx`)
 - Installed via `pyproject.toml` `[project.dependencies]`: `openpyxl>=3.1`.
+
+## cryptography (AD-706f)
+
+- Project: <https://github.com/pyca/cryptography>
+- License: Apache-2.0 OR BSD-3-Clause (dual-licensed; verified via `pip show cryptography` License-Expression field)
+- Version pinned: `cryptography>=42` (installed: 48.0.0)
+- Used by: `src/probos/tools/browser/credentials.py` (`cryptography.fernet.Fernet` for symmetric authenticated encryption of stored credentials)
+- Installed via `pyproject.toml` `[project.dependencies]`: `cryptography>=42`.

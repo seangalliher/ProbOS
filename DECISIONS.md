@@ -3554,3 +3554,39 @@ All three honor `max_bytes` at the UTF-8 boundary and emit `[TRUNCATED]` suffix 
 **Full gate.** 13794 -> 13816 passed (1 known dreaming flake outside this wave per Wave 166 dispatch).
 
 **Forward markers (TECHNICAL triggers per AD-722c-3).** AD-706e-1 (vision-based form filling - text into coordinate-located field; trigger per AD-706c-2c). AD-706e-2 (eval_js sandbox isolation via headless context isolation; trigger: operator-reported eval_js misuse incident OR commercial-overlay request). AD-706e-3 (download to AttachmentStore - auto-write SHA-256; trigger: AD-720b chat-attach lands and downloads need to surface as attachments).
+
+### AD-706f - Browser Tool credential vault (Wave 166)
+
+**Date:** 2026-05-16. **Status:** SHIPPED. **Wave:** 166. **Closes:** #521.
+
+**Problem.** Anthropic safety guideline #2 (avoid giving the model access to sensitive data) is honored in AD-706 v1 by NOT storing credentials at all. The agent cannot perform authenticated browser flows (login, OAuth consent, API key entry) without crossing that line. AD-706f is the deliberate decision to add scoped credential storage with full audit trail.
+
+**Solution.** New src/probos/tools/browser/credentials.py exports CredentialScope + CredentialMetadata frozen dataclasses, CredentialVault Protocol, EncryptedFileCredentialVault v1 backend, _derive_kek helper, and action_fill_credential. JSON sidecar + Fernet symmetric authenticated encryption. KEK derived from AuthConfig.crew_scope_token (AD-722b-1 substrate) via stdlib hashlib.scrypt (n=2**14 r=8 p=1 dklen=32, salt=b'probos-credential-vault-v1'). No new shared secret - REUSES the existing crew-scope token.
+
+**One new pip dep: cryptography>=42 (Apache-2.0 OR BSD-3-Clause dual-licensed).** Verified via `pip show cryptography` License-Expression field. Apache-2.0 OR BSD-3-Clause is the cleanest possible posture for OSS absorption per .github/copilot-instructions.md license whitelist. Captain ruling required in dispatch (the brief targeted 0 new pip deps); Captain approved at GATE 1. Alternatives considered: (a) DIY XOR+HMAC - security-fragile rejected; (b) `keyring` - adds Linux libsecret dep, defers cross-platform; (c) defer AD-706f - rejected, blocking authenticated flows that ship in the same wave (AD-706e upload_file.credential_ref hook).
+
+**Scope contract.** CredentialScope is a frozen dataclass: allowed_agent_ids (empty set = Captain-only), allowed_domains (fnmatch against page host), expires_at (Unix timestamp, None = no expiry). list_refs returns CredentialMetadata with NO value field (regression-protected by test).
+
+**Tier-3 always.** fill_credential is tier-3 unconditionally (Captain ACK every credential read). The action validates selector + credential_ref, honest-degrades when runtime.credential_vault is None, blocks http:// when require_https_for_fill (default True), checks scope.allowed_domains BEFORE decryption (fast path - reject without touching the KEK), then vault.read + page.fill. AD-731 invariant n/a (credentials are short strings).
+
+**Events.** Five new EventType values inserted after BROWSER_EVAL_JS_EXECUTED: CREDENTIAL_STORED, CREDENTIAL_READ, CREDENTIAL_READ_DENIED, CREDENTIAL_DELETED, CREDENTIAL_FILL_REQUESTED.
+
+**Config.** New nested CredentialVaultConfig under BrowserToolConfig.credential_vault (default-OFF transitional gate): enabled=False, backend='file' (v1 only), file_path='data/credential_vault.json', max_credentials=100 (ge=1 le=10000), require_https_for_fill=True.
+
+**Two-phase startup wiring.** startup/finalize.py:_wire_browser_tool sets runtime.credential_vault=None next to BrowserTool construction; constructs the vault only when cfg.credential_vault.enabled AND cfg.auth.crew_scope_token is non-empty. Empty crew_scope_token at vault ctor raises RuntimeError with operator remediation message (set auth.crew_scope_token in config/system.yaml OR set credential_vault.enabled=False). When enabled but token missing, logs WARNING with operator remediation.
+
+**Dispatch.** tool.py special-cases fill_credential (and compute_use_click) like AD-706c-1 verify - kwargs runtime + emit_event are passed in. agent_id from session._agent_id merged into params at dispatch boundary so the handler does not need to dig into session internals.
+
+**Atomic persistence.** RLock for concurrent access; tmp+rename atomic writes mirror AD-720d-2.1 / AD-721d-4 patterns. Async API dispatches blocking I/O through asyncio.get_running_loop().run_in_executor (BF-280 pattern - subprocess_exec banned but executor + sync I/O is the right shape).
+
+**materialize_to_temp contract.** Decrypts plaintext to a tempfile.mkstemp path, returns Path. CALLER MUST UNLINK in finally - contract documented in module + AD-706e upload_file consumer's finally block was already designed for this.
+
+**Tests.** +15 pytest in tests/test_ad706f_credential_vault.py: default-off, ctor rejection on empty token, KEK determinism (same token same KEK, different token different KEK, len=32), store/read roundtrip, scope denies unauthorized agent + Captain not in non-empty allow-list, expires_at enforced, restart persistence (load existing sidecar), materialize_to_temp returns path caller unlinks, delete, list_refs returns metadata with NO value field, action honest-degrade when vault None, https required blocks http://, domain mismatch fast-rejected with event, happy path with CREDENTIAL_READ + CREDENTIAL_FILL_REQUESTED events, always-tier-3 classification. Real EncryptedFileCredentialVault against tmp_path per BF-287 (no MagicMock at substrate boundary).
+
+**License audit.** THIRD_PARTY_LICENSES.md appended: cryptography 48.0.0, Apache-2.0 OR BSD-3-Clause, used by tools/browser/credentials.py (cryptography.fernet.Fernet).
+
+**Files.** pyproject.toml (+cryptography>=42), THIRD_PARTY_LICENSES.md (+cryptography section), src/probos/events.py (+5 EventType values), src/probos/config.py (+CredentialVaultConfig + BrowserToolConfig.credential_vault field), src/probos/tools/browser/credentials.py (new, ~330 lines), src/probos/tools/browser/actions.py (fill_credential late-bind + classify_action tier-3 short-circuit), src/probos/tools/browser/tool.py (dispatch special-cases for compute_use_click and fill_credential), src/probos/startup/finalize.py (vault construction with two-phase init), tests/test_ad706f_credential_vault.py (new, 15 tests).
+
+**Full gate.** 13816 -> 13832 passed (20 skipped).
+
+**Forward markers (TECHNICAL triggers per AD-722c-3).** AD-706f-1 (OS-keychain backend - Windows Credential Manager / macOS Keychain / Linux Secret Service; trigger: operator-requested cross-machine credential sync OR commercial-overlay). AD-706f-2 (per-credential audit log query API; trigger: >=3 audit-trail GET requests in production). AD-706f-3 (credential rotation API; trigger: any credential reaches expires_at in production). AD-706f-4 (multi-Captain per-crew vault, pairs with AD-722b-1a; trigger: AD-722b-1a lands).
