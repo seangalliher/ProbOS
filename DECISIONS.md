@@ -3906,3 +3906,19 @@ Any one of those would be sufficient to reject. Together they make VRoid a non-s
 - Browser-TTS Tier-2 fallback: preserved in `ui/src/audio/voice.ts` (`backend=browser` default + probe-based escalation).
 
 **No code change required.** Closed for tracking hygiene; the AD number is retired and will not be reused. Coqui/Bark/ElevenLabs evaluation continues under AD-718b (Wave 168).
+
+### AD-718b - Extra TTS Backends Audit (Wave 168)
+
+**Date:** 2026-05-17. **Status:** RESEARCH AUDIT -- code deferred. **Wave:** 168. **Closes** #523. **Parent:** AD-738 (Piper TTS, Wave 157).
+
+**Audit deliverable.** `docs/research/tts-backends-evaluation.md` documents license posture, install footprint, voice quality, cross-platform support, and verdict for each of Coqui-TTS, Bark, ElevenLabs.
+
+**Verdicts.**
+
+- Coqui-TTS: **DEFER** to AD-718b-1. MPL-2.0 lib is acceptable but XTTS v2 weights are CPML (non-commercial) -- REJECTED for OSS auto-download. Per-voice MIT/Apache allowlist required. Heavy install (~1 GB torch + ~2 GB weights). Quality higher than Piper for multilingual; comparable for VITS English.
+- Bark: **DEFER** to AD-718b-2. MIT lib + MIT weights (clean). ~4 GB model footprint + torch runtime overhead is the friction; quality comparable to Piper with stronger non-speech expressivity but 5-15s per-call latency and no streaming.
+- ElevenLabs: **REJECT.** Paid commercial API conflicts with Captain rule 2026-05-09 ("never absorb anything in the OSS repo that requires a paid license"). OSS tree does not integrate. No forward marker filed.
+
+**Extension point preserved.** `ui/src/audio/voice.ts:134` `backend: 'browser' | 'piper' | string` and `src/probos/audio/tts/backends.py` remain open for AD-718b-N implementations.
+
+**No code shipped.** Zero new pip deps. Zero new npm deps. Zero new model downloads.
