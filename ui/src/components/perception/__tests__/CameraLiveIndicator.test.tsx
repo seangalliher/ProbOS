@@ -27,4 +27,32 @@ describe('CameraLiveIndicator (AD-733)', () => {
     expect(screen.getByTestId('camera-live-revoke')).toBeTruthy();
     expect(screen.getByText('CAMERA LIVE')).toBeTruthy();
   });
+
+  it('BF-301: defaults to top-right corner', () => {
+    act(() => { useCameraStore.setState({ active: true, indicatorCorner: 'tr' }); });
+    render(<CameraLiveIndicator />);
+    const indicator = screen.getByTestId('camera-live-indicator');
+    expect(indicator.getAttribute('data-corner')).toBe('tr');
+  });
+
+  it('BF-301: move button cycles through all four corners and persists to localStorage', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    act(() => { useCameraStore.setState({ active: true, indicatorCorner: 'tr' }); });
+    render(<CameraLiveIndicator />);
+    const moveBtn = screen.getByTestId('camera-live-move');
+
+    fireEvent.click(moveBtn);
+    expect(screen.getByTestId('camera-live-indicator').getAttribute('data-corner')).toBe('bl');
+
+    fireEvent.click(moveBtn);
+    expect(screen.getByTestId('camera-live-indicator').getAttribute('data-corner')).toBe('br');
+
+    fireEvent.click(moveBtn);
+    expect(screen.getByTestId('camera-live-indicator').getAttribute('data-corner')).toBe('tl');
+
+    fireEvent.click(moveBtn);
+    expect(screen.getByTestId('camera-live-indicator').getAttribute('data-corner')).toBe('tr');
+
+    expect(setItem).toHaveBeenCalledWith('probos.camera.indicator_corner', expect.any(String));
+  });
 });
