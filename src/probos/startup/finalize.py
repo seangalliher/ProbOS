@@ -3947,6 +3947,47 @@ async def finalize_startup(
         except Exception:
             logger.debug("Auto-welcome announcement failed", exc_info=True)
 
+    # AD-733a (Wave 171): VisionConsumer — bridge vision_observation -> WM.
+    # Tier-2 honest-degrade: any wiring failure logs WARNING and leaves
+    # vision_observation intents unconsumed (matches AD-733 v1 behaviour).
+    try:
+        _perception_cfg = getattr(getattr(runtime, "config", None), "perception", None)
+        if (
+            _perception_cfg is not None
+            and _perception_cfg.enabled
+            and getattr(_perception_cfg, "vision_consumer_enabled", False)
+        ):
+            from probos.perception.consumer import VisionConsumer
+
+            consumer = VisionConsumer(
+                runtime,
+                min_interval_seconds=_perception_cfg.vision_min_interval_seconds,
+                novelty_threshold=_perception_cfg.vision_novelty_threshold,
+                working_memory_capacity=_perception_cfg.working_memory_capacity,
+                vision_tier=_perception_cfg.vision_tier,
+            )
+            # BF-287: never reach into registry.agents — use public all().
+            for agent in runtime.registry.all():
+                _prof = runtime.callsign_registry.get_profile(
+                    getattr(agent, "agent_type", "")
+                )
+                if (_prof or {}).get("vision_capable", False):
+                    consumer.register_observer(agent.id)
+            consumer.subscribe()
+            runtime.vision_consumer = consumer
+            logger.info(
+                "AD-733a: VisionConsumer wired with %d observers",
+                len(consumer.observer_agent_ids),
+            )
+        else:
+            runtime.vision_consumer = None
+    except Exception:
+        logger.warning(
+            "AD-733a: VisionConsumer wiring failed; "
+            "vision_observation intents will be silently dropped",
+            exc_info=True,
+        )
+
     # AD-637d: System Events subscription wiring (stream ensured in startup/nats.py)
     # Placed after ALL add_event_listener() calls (game completion, Counselor, etc.)
     # so _setup_nats_event_subscriptions() catches every registered listener.

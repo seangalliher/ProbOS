@@ -3657,3 +3657,15 @@ waves:
       AD-741 Settings/Control Panel HXI shell (new) — Captain mockup, 6-domain sidebar, YAML-driven, APPLY/DISCARD/in-sync flow
       AD-733 Camera streaming v1 (#641 parent) — frame ingestion + vision_observation intent + Perception section in settings
       AD-733a + AD-733b remain forward markers (sub-waves per #641 umbrella)
+
+  - id: "171"
+    title: "End-to-end live camera perception — Ezri sees the Captain"
+    issues_to_close: [665, 666]
+    estimated_hours: 16
+    status: drafting
+    notes: |
+      AD-733a (#665) vision consumer + supervisor + working memory + DM integration
+      AD-733b (#666) proactive observer surfacing on scene change
+      BF-298 Settings parent/child toggle UX + status badge
+      Research absorption: Neural Companion 3-tier Source/Supervisor/Reply pattern
+      Captain authorized over-budget; loop until end-to-end testable.

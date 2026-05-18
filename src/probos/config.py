@@ -1933,6 +1933,23 @@ class PerceptionConfig(BaseModel):
         description="Reject frame uploads larger than this. Default 512 KB.",
     )
 
+    # AD-733a (Wave 171): VisionConsumer cost-discipline + buffer sizing.
+    vision_consumer_enabled: bool = Field(default=True,
+        description="Run the VisionConsumer that calls the vision LLM on supervisor-flagged frames.",
+    )
+    vision_min_interval_seconds: float = Field(default=5.0, ge=1.0, le=120.0,
+        description="Minimum seconds between vision LLM calls per session. Cost-discipline floor.",
+    )
+    vision_novelty_threshold: float = Field(default=0.15, ge=0.0, le=1.0,
+        description="Perceptual aHash diff threshold above which a frame is flagged as novel.",
+    )
+    working_memory_capacity: int = Field(default=8, ge=1, le=64,
+        description="Per-agent vision working memory ring buffer size.",
+    )
+    vision_tier: str = Field(default="vision",
+        description="LLM tier name for vision describe calls. AD-742a forward marker for vision_fast split.",
+    )
+
 
 class LipSyncConfig(BaseModel):
     """AD-721b-1 — Server-side lip-sync backend selection.

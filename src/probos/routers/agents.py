@@ -1922,6 +1922,28 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # agent's LLM call sees it as part of the user message.
     if targeted_recall_block is not None:
         message_text = f"{targeted_recall_block}\n\n{message_text}"
+
+    # AD-733a (Wave 171): prepend the agent's current visual context.
+    # Confabulation guard (BF-294 lesson): render_for_prompt returns a
+    # non-empty "no data" sentinel when the buffer is empty, so the agent
+    # never silently invents a scene. Tier-2 — failure logs at debug and
+    # drops the visual block; the DM still goes through. The injection is
+    # gated on perception.enabled so disabling the subsystem cleanly
+    # removes the block from every DM (BF-294: silent-omit is acceptable
+    # when the subsystem is off; the agent has no vision expectation).
+    try:
+        _perception_cfg = getattr(getattr(runtime, "config", None), "perception", None)
+        if _perception_cfg is not None and getattr(_perception_cfg, "enabled", False):
+            from probos.perception.consumer import get_or_create_working_memory
+            _wm = get_or_create_working_memory(agent_id)
+            _scene_block = _wm.render_for_prompt()
+            if _scene_block:
+                message_text = f"{_scene_block}\n\n{message_text}"
+    except Exception:
+        logger.debug(
+            "AD-733a: scene-context injection failed for %s",
+            agent_id, exc_info=True,
+        )
     _params: dict[str, object] = {
         "text": message_text,
         "from": "hxi_profile",

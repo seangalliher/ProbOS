@@ -4243,3 +4243,37 @@ When enabled, each frame the closest `maxConcurrent` agents within `lodDistance`
 - **AD-733b** (issue #666) — `ObserverAgent` type derived from `CognitiveAgent`. Proactively surfaces detected events (faces, objects, posture changes) into the bridge alerts stream. Integrates with AD-674 (graduated initiative) + AD-411 (emergent detector). Trigger: AD-733a in place + Captain asks for proactive observation notifications.
 - **AD-733-1** (issue #667) — AttachmentStore retention reaper for frames tagged `source=camera`. Default: delete frames older than 1 hour, configurable. Trigger: disk fills with stored frames after 24h of camera-on time.
 - **AD-733-2** (issue #668) — Multi-source camera/screen capture (front + back webcam, `getDisplayMedia` screen capture). Trigger: operator asks for desktop screen sensing alongside webcam.
+
+### AD-733a — Vision consumer + supervisor + working memory + DM context injection (Wave 171)
+
+**Date:** 2026-05-17
+**Decision:** Close the loop on AD-733 by shipping the three-tier vision pipeline that consumes the `vision_observation` intents broadcast in Wave 170. Three new modules under `src/probos/perception/`:
+
+- `supervisor.py` — pluggable per-frame admission gate (Strategy `Protocol` + default `PerceptualHashStrategy`). v1 strategy: temporal throttle (default 5s floor) + 64-bit aHash diff (default novelty threshold 0.15). Pure Python, Pillow-only.
+- `working_memory.py` — per-agent ring buffer (default capacity 8) holding `VisionObservation(timestamp, attachment_ref, description, novelty_score, subject_identity, session_id)`. `render_for_prompt` emits the `--- Current Visual Context ---` block. **BF-294 confabulation guard:** empty buffer renders an explicit "no current visual data" sentinel so the agent never silently invents a scene.
+- `consumer.py` — runtime-owned `VisionConsumer` subscribes to `vision_observation`, runs the supervisor gate, calls the AD-732 vision tier via `build_multimodal_messages` (BF-268 OpenAI-shape), writes to every registered observer's working memory, and anchors an Episode at `importance=6` with `AnchorFrame(channel="perception", trigger_type="vision_described")`. Tier-2 honest-degrade at every step.
+
+Also ships:
+- `PerceptionConfig` extended with five fields (`vision_consumer_enabled`, `vision_min_interval_seconds`, `vision_novelty_threshold`, `working_memory_capacity`, `vision_tier`).
+- `startup/finalize.py` wires the consumer per BF-287 (`runtime.registry.all()` iteration, never private `_agents`).
+- `routers/agents.py` prepends `render_for_prompt()` into `message_text` ahead of the bus send, mirroring AD-725's `targeted_recall_block` pattern. Gated on `perception.enabled` so disabling the subsystem cleanly removes the block.
+
+**Source/Supervisor/Reply three-tier pattern absorbed from NeuralCompanion (MIT).** Architecture only, no code copied. AD-742d forward marker (#672) covers pluggable supervisor strategy variants (motion / CLIP / classifier).
+
+**AD-731 invariant preserved end-to-end.** Frame bytes flow through `AttachmentStore.read(sha)`; the bus message carries only the SHA. Source-scan test `test_ad731_invariant_no_inline_base64_in_perception_modules` enforces zero `b64encode` / `base64.b64` / `blob_b64` in any new perception module.
+
+**Eight-guard catalog NOT retriggered.** Reuses the existing AD-732 `vision` tier; AD-742a (#669) carries the per-frame `vision_fast` split when it ships.
+
+**Forward markers referenced.** AD-742a (#669), AD-742d (#672), AD-742f (#674).
+
+**Files.**
+- `src/probos/perception/{supervisor,working_memory,consumer}.py` (new, ~480 lines combined)
+- `src/probos/config.py` (+18 lines: PerceptionConfig fields)
+- `src/probos/startup/finalize.py` (+40 lines: consumer wiring)
+- `src/probos/routers/agents.py` (+19 lines: scene-block injection)
+- `tests/test_ad733a_vision_consumer.py` (new, 19 tests: 6 supervisor, 4 WM, 5 consumer, 3 integration, 1 AD-731 source scan)
+- `tests/test_wave171_acceptance.py` (new, Captain's acceptance test — Captain holds glass / Ezri describes it end-to-end)
+
+**Tests.** +19 pytest in `test_ad733a_vision_consumer.py`, +1 pytest in `test_wave171_acceptance.py`. Full gate baseline 14012 -> 14032.
+
+**Closes:** #665.
