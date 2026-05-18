@@ -382,6 +382,8 @@ async def _boot_runtime(
         episodic_memory=episodic_memory,
     )
     runtime._eviction_audit = eviction_audit  # AD-541f: expose for shutdown/SIF
+    # AD-741: record the YAML path so the Settings panel can write back to it.
+    runtime.config_path = str(resolved_path) if resolved_path else None
 
     # AD-731: wire the runtime's content-addressable AttachmentStore into the
     # LLM client so it can resolve attachment_ref source blocks to base64 just

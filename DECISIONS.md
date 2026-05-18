@@ -4137,3 +4137,63 @@ When enabled, each frame the closest `maxConcurrent` agents within `lodDistance`
 - **AD-730-3-3** - Provenance watermarking + C2PA-shape metadata embedding. Trigger: operator deployment publishes generated images to a third-party channel.
 - **AD-730-3-4** - HXI rendering of agent-generated `attachment_ids` on the DM reply surface. Trigger: this AD merges AND Captain reports inability to see generated images in the HXI. (V1 confirmed: HXI currently sends `attachment_ids` outbound only via IntentSurface.tsx; no inbound render path exists.)
 - **AD-730-3-5** - Ward Room wiring of `[GEN_IMAGE ...]` bracket marker in the WR reply pipeline. Trigger: documented WR use-case requiring agent-generated images.
+
+
+### AD-741 — Settings / Control Panel HXI shell (Wave 170)
+
+**Status.** Shipped Wave 170. New AD (no GitHub issue — net-new feature).
+
+**Motivation.** ProbOS had no operator-facing surface to read or modify `system.yaml` at runtime. Every configuration change required editing the file by hand and restarting. The Captain mockup (Claude Artifact, 2026-05-17) sketched a multi-domain control panel with draft buffer + explicit APPLY ↵; the original 28-entry, 6-domain sidebar was an aspirational sketch — SystemConfig has 180+ Pydantic classes but only ~10 expose operator-actionable knobs that make sense in a control panel.
+
+**Scope.** v1 ships the API surface, the section registry, the overlay HXI panel, and the secret-field rule. Hot-reload is uniformly restart-required.
+
+**API.**
+- `GET /api/config` → live `SystemConfig.model_dump(mode="json")` (secrets redacted to None) + section registry + `secret_present` map + uptime + single-consume CSRF token (5-min TTL).
+- `GET /api/config/yaml` → current YAML text with secret values scrubbed to literal `"<redacted>"`.
+- `POST /api/config` → validates a sparse patch via `SystemConfig(**merged)`, writes atomically to `runtime.config_path`, returns `restart_required=True` + `changed_fields` dot-paths. Rejects 400 `secret_field_readonly` when patch touches a secret-flagged path; 422 on Pydantic validation failure; 503 `config_path_unavailable` when runtime was constructed in-memory; 403 on missing/expired CSRF.
+
+**Section registry.** `src/probos/settings/section_registry.py` is the single source of truth — 10 wired sections from AD-741 + 1 (`perception`) inserted by AD-733. Domains render in canonical order: Core → Perception & Voice → Identity & Presentation → Connectivity. Every `field_id` resolves to a real Pydantic attribute path under `SystemConfig` (guarded by `test_every_field_id_resolves_against_system_config` — the standing-rule wall against phantom fields).
+
+**Secret-field rule.** Terminal-segment regex `(?i)(secret|token|password|api_key|private_key)`. Enforced at three layers (defense in depth): GET redaction with `secret_present` map, YAML scrub to `<redacted>`, POST rejection with 400 `secret_field_readonly`. Single helper `is_secret_field_id(field_id)` exported from the registry; used by both API + UI.
+
+**Pre-flight grep corrections.** Builder pre-flight against HEAD caught two phantom-field classes in the original prompt:
+- Per-tier LLM fields live on `cognitive.*`, not `system.*` (e.g. `cognitive.llm_base_url_vision`, not `system.llm_base_url_vision`). All 15 LLM-tier field ids corrected.
+- Channels `webhook_url` / `url` fields do NOT exist on `DiscordConfig` / `SlackConfig` / `WebhookConfig`. Dropped from v1; wired the real fields instead: `channels.discord.command_prefix` / `mention_required` / `token` (secret); `channels.slack.default_thread_ts` / `bot_token` (secret) / `signing_secret` (secret); `channels.webhook.shared_secret` (secret).
+
+**Runtime change.** Added `ProbOSRuntime.config_path: str | None = None`; set during `_load_config_with_fallback` in `__main__.py`. v1 does NOT mutate `runtime.config` in-process — every field is restart-required. Forward marker AD-741-1 wires per-field hot reload later.
+
+**CSRF.** Endpoint-scoped single-consume token. No app-wide middleware (no Project-wide CSRF middleware exists today; AD-720c-style pattern). Forward marker AD-741-5 covers multi-Captain auth + audit log.
+
+**YAML round-trip.** Pydantic `model_dump` loses comments + key ordering. v1 accepts this loss and stamps a `# Edited via HXI YYYY-MM-DD HH:MM:SS UTC` header on write. Operators editing YAML by hand keep their comments only until the first HXI-driven APPLY. UI's VIEW YAML modal footer documents this.
+
+**HXI Design Principle compliance.** Every glyph is inline stroke SVG (`strokeWidth: 1.5`, `strokeLinecap: round`); amber `#f0b060` active / dim `#666680` inactive (HXI #3, no emoji). Engineering-orange `#e08040` reserved for unsynced / failed-APPLY states (HXI #9 alert-driven layout). Settings is a workstation tier (operator action), accessed from TopNav; the Crew Roster handles per-agent settings via the existing AgentProfilePanel (HXI #11).
+
+**Files.**
+- `src/probos/settings/__init__.py` (module doc).
+- `src/probos/settings/section_registry.py` (new, ~330 lines): `FieldDescriptor`, `SectionDescriptor`, `SECTIONS` tuple, `is_secret_field_id`, `get_section`, `domain_counts`, `domain_render_order`, `resolve_dot_path`, `insert_section`.
+- `src/probos/routers/config.py` (new): GET/GET-yaml/POST endpoints + CSRF + secret-redaction helpers + atomic YAML write.
+- `src/probos/runtime.py` (3-line addition: `config_path` attribute).
+- `src/probos/__main__.py` (1-line addition: set `runtime.config_path` after construction).
+- `src/probos/api.py` (router registration).
+- `ui/src/store/useSettingsStore.ts` (new, ~190 lines): Zustand slice, kept separate from the giant `useStore.ts` to minimize blast radius.
+- `ui/src/components/settings/SettingsPanel.tsx` (root overlay; mirrors WardRoomPanel shape).
+- `ui/src/components/settings/SettingsSidebar.tsx` (grouped sidebar + search + Advanced affordance).
+- `ui/src/components/settings/SettingsMain.tsx` (per-field controls).
+- `ui/src/components/settings/SettingsTopBar.tsx` (TopBar + StatusBar + YamlModal).
+- `ui/src/components/settings/icons.tsx` (stroke-SVG glyph mapping per HXI #3).
+- `ui/src/App.tsx` (NavButton + overlay mount).
+
+**Invariants preserved.** AD-731 invariant n/a (no bytes flow through `IntentMessage.params`; config bytes flow YAML → disk). BF-287 enforced: tests use real `SystemConfig()` + real `tmp_path` YAML + only the runtime shell is MagicMock; new `test_no_magicmock_at_substrate_boundary` sentinel asserts `MagicMock` does NOT appear in `src/probos/routers/config.py` or `src/probos/settings/section_registry.py`. BF-274 honoured (no `multi_replace_string_in_file` with adjacent blocks on the new files). BF-280 n/a (no subprocess). BF-282 n/a (no binary output).
+
+**Tests.** +19 pytest in `tests/test_ad741_config_api.py` (9), `tests/test_ad741_section_registry.py` (4), `tests/test_ad741_secret_redaction.py` (4), `tests/test_ad741_integration.py` (2). +10 vitest in `ui/src/components/settings/__tests__/SettingsPanel.test.tsx` (7) + `SettingsSidebar.test.tsx` (3). Full gate: 13980 → 13999. Vitest gate: 711 → 721. UI build green (`dist/assets/index-Cq1Q7Rbf.js`).
+
+**Zero new deps.** `pyyaml` already resident. No pyproject / lockfile / ui package changes. Zero-line license diff.
+
+**Forward markers.**
+- **AD-741-1** — Per-field hot-reload paths (no restart) for safe fields (e.g. `system.log_level` via `logging.getLogger().setLevel`). **Trigger:** Captain reports "I changed log level but it didn't take effect without restart."
+- **AD-741-2** — Structured editors for collection-shaped fields (`mcp.servers`, `federation.peers`, etc.). **Trigger:** Captain asks "how do I add an MCP server from the panel?"
+- **AD-741-3** — YAML diff preview before APPLY. **Trigger:** Captain rejects an APPLY because they couldn't see exactly what would change.
+- **AD-741-4** — Restart-in-place modal: "saved + restarting now" flow. **Trigger:** Captain hits APPLY 3+ times and forgets to restart manually.
+- **AD-741-5** — Multi-Captain auth + audit log of who-changed-what. **Trigger:** more than one operator with `crew_scope_token` in production.
+- **AD-741-6** — Raw YAML editor mode: editable textarea + Pydantic validate-on-save (POST `/api/config/yaml`). **Trigger:** Captain needs to edit a field the registry doesn't surface.
+- **AD-741-7** — Per-agent settings deep-link from Settings → Crew Roster → Agent Profile via `location.hash`. **Trigger:** Captain asks "how do I get to Counselor's settings from here?"

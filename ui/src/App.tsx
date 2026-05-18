@@ -23,6 +23,8 @@ import BehavioralMetricsPanel from './components/BehavioralMetricsPanel';
 import CommercialOverlayBadge from './components/CommercialOverlayBadge';
 import SpatialExplorerPanel from './components/SpatialExplorerPanel';
 import KnowledgeBrowserPanel from './components/KnowledgeBrowserPanel';
+import SettingsPanel from './components/settings/SettingsPanel';
+import { useSettingsStore } from './store/useSettingsStore';
 
 // ── Top navigation ───────────────────────────────────────────────
 // One flex container instead of 6 abs-positioned toggles. Items
@@ -111,6 +113,9 @@ function TopNav() {
   const metricsOpen = useStore(s => s.behavioralMetricsOpen);
   const openMetrics = useStore(s => s.openBehavioralMetrics);
 
+  const settingsOpen = useSettingsStore(s => s.open);
+  const openSettings = useSettingsStore(s => s.openSettings);
+
   return (
     <div
       style={{
@@ -137,6 +142,7 @@ function TopNav() {
       <NavSeparator />
       {/* Diagnostics */}
       <NavButton label="METRICS" active={metricsOpen} onOpen={openMetrics} testId="behavioral-metrics-toggle" />
+      <NavButton label="SETTINGS" active={settingsOpen} onOpen={() => { void openSettings(); }} testId="topnav-settings" />
       {/* AD-697-1: commercial overlay badge — invisible when no overlay loaded */}
       <CommercialOverlayBadge />
     </div>
@@ -179,6 +185,7 @@ export default function App() {
       <BehavioralMetricsPanel />
       <SpatialExplorerPanel />
       <KnowledgeBrowserPanel />
+      <SettingsPanel />
       <TopNav />
       <WelcomeOverlay />
     </div>

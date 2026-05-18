@@ -524,6 +524,14 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-730-3-3 | Provenance watermarking + C2PA-shape metadata embedding on generated images | (forward marker, filed Wave 169) | 4 |
 | AD-730-3-4 | HXI rendering of agent-generated `attachment_ids` on the DM reply surface | (forward marker, filed Wave 169) | 4 |
 | AD-730-3-5 | Ward Room wiring of `[GEN_IMAGE ...]` bracket marker in the WR reply pipeline | (forward marker, filed Wave 169) | 4 |
+| AD-741 | Settings / Control Panel HXI shell — **SHIPPED Wave 170** (new `/api/config` GET/GET-yaml/POST endpoints + single-consume CSRF token; new `src/probos/settings/section_registry.py` SECTIONS tuple of 10 wired sections across 4 domains; `runtime.config_path` attribute added; secret-field rule with three-layer defense (GET redaction + YAML scrub + POST rejection); new HXI overlay `SettingsPanel` wired into TopNav; +19 pytest; +10 vitest; zero new deps; forward markers AD-741-1/-2/-3/-4/-5/-6/-7) | (new AD; no GH issue) | 2 |
+| AD-741-1 | Per-field hot-reload paths for safe fields (e.g. `system.log_level` via `logging.getLogger().setLevel`) — restart-required removed per field | (forward marker, filed Wave 170) | 4 |
+| AD-741-2 | Structured editors for collection-shaped fields (`mcp.servers`, `federation.peers`, etc.) — add/remove from the panel | (forward marker, filed Wave 170) | 4 |
+| AD-741-3 | YAML diff preview before APPLY — operator sees exactly what will change | (forward marker, filed Wave 170) | 4 |
+| AD-741-4 | Restart-in-place modal — guided "saved + restarting now" flow that reconnects when the runtime comes back up | (forward marker, filed Wave 170) | 4 |
+| AD-741-5 | Multi-Captain auth + audit log of who-changed-what (config change ledger) | (forward marker, filed Wave 170) | 4 |
+| AD-741-6 | Raw YAML editor mode — editable textarea + Pydantic validate-on-save (POST `/api/config/yaml`) | (forward marker, filed Wave 170) | 4 |
+| AD-741-7 | Per-agent settings deep-link from Settings → Crew Roster → Agent Profile via `location.hash` glue | (forward marker, filed Wave 170) | 4 |
 
 **Wave 154 — DM hardening + multimodal small wins + HXI polish:**
 

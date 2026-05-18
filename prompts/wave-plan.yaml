@@ -3647,3 +3647,13 @@ waves:
     notes: |
       AD-739a drift detector for self-image-awareness (#664, Ezri verbatim request)
       AD-730-3 agent image generation in DM replies (#633, multimodal DM symmetry)
+
+  - id: "170"
+    title: "Settings/Control Panel shell + Camera Streaming v1"
+    issues_to_close: [641]
+    estimated_hours: 12
+    status: drafting
+    notes: |
+      AD-741 Settings/Control Panel HXI shell (new) — Captain mockup, 6-domain sidebar, YAML-driven, APPLY/DISCARD/in-sync flow
+      AD-733 Camera streaming v1 (#641 parent) — frame ingestion + vision_observation intent + Perception section in settings
+      AD-733a + AD-733b remain forward markers (sub-waves per #641 umbrella)

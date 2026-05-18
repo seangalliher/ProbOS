@@ -757,6 +757,10 @@ class ProbOSRuntime:
         self._start_time: float = time.monotonic()
         self._recent_errors: list[str] = []    # last 5 error summaries (AD-318)
         self._last_capability_gap: str = ""    # last unhandled intent (AD-318)
+        # AD-741: path to the system.yaml that was loaded into this runtime.
+        # Set externally by ``_load_config_with_fallback`` after construction.
+        # None when the runtime is constructed in-memory (tests).
+        self.config_path: str | None = None
 
         # --- Self-modification ---
         self.self_mod_pipeline: SelfModificationPipeline | None = None
