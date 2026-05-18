@@ -3652,7 +3652,7 @@ waves:
     title: "Settings/Control Panel shell + Camera Streaming v1"
     issues_to_close: [641]
     estimated_hours: 12
-    status: drafting
+    status: shipped
     notes: |
       AD-741 Settings/Control Panel HXI shell (new) — Captain mockup, 6-domain sidebar, YAML-driven, APPLY/DISCARD/in-sync flow
       AD-733 Camera streaming v1 (#641 parent) — frame ingestion + vision_observation intent + Perception section in settings
