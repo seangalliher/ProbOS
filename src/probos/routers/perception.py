@@ -163,3 +163,30 @@ async def upload_camera_frame(
     await _write_anchor_episode(runtime, session_id, sha, captured_at)
 
     return {"ok": True, "attachment_ref": sha, "captured_at": captured_at}
+
+
+@router.get("/recent", dependencies=[Depends(require_crew_scope)])
+async def get_recent_observations(limit: int = 8) -> Any:
+    """BF-303: return the most recent vision observations across all per-agent
+    working memories, newest first. Operator-facing debug surface for the
+    preview panel — lets the Captain see what the perception gateway last
+    described.
+    """
+    from probos.perception.consumer import _WORKING_MEMORIES
+
+    items: list[dict[str, Any]] = []
+    for agent_id, wm in _WORKING_MEMORIES.items():
+        for obs in wm.entries():
+            items.append(
+                {
+                    "agent_id": agent_id,
+                    "timestamp": obs.timestamp,
+                    "attachment_ref": obs.attachment_ref,
+                    "description": obs.description,
+                    "novelty_score": obs.novelty_score,
+                    "subject_identity": obs.subject_identity,
+                    "session_id": obs.session_id,
+                }
+            )
+    items.sort(key=lambda it: it["timestamp"], reverse=True)
+    return {"observations": items[: max(1, min(limit, 32))]}

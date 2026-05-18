@@ -13,8 +13,13 @@ vi.mock('../../../hooks/useCameraStream', () => ({
 function reset() {
   useCameraStore.setState({
     active: false, sessionId: null, error: null, framesSent: 0, fps: 1,
-    indicatorCorner: 'tr', previewEnabled: false,
+    indicatorCorner: 'tr', previewEnabled: false, previewCorner: 'bl',
   });
+  // BF-303: stub fetch so the polling effect doesn't hit a real network.
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    json: async () => ({ observations: [] }),
+  })));
 }
 
 describe('CameraPreviewPanel (BF-302)', () => {
@@ -39,7 +44,7 @@ describe('CameraPreviewPanel (BF-302)', () => {
     expect(screen.getByTestId('camera-preview-panel')).toBeTruthy();
     expect(screen.getByTestId('camera-preview-video')).toBeTruthy();
     expect(screen.getByTestId('camera-preview-force')).toBeTruthy();
-    expect(screen.getByText(/frames sent: 17/)).toBeTruthy();
+    expect(screen.getByText(/sent: 17/)).toBeTruthy();
   });
 
   it('FORCE DESCRIBE button calls forceNextFrame', async () => {
@@ -52,13 +57,26 @@ describe('CameraPreviewPanel (BF-302)', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('anchors opposite the indicator corner (tr indicator -> panel bottom-left)', () => {
-    act(() => { useCameraStore.setState({ active: true, previewEnabled: true, indicatorCorner: 'tr' }); });
+  it('uses its own previewCorner (BF-303), independent of indicator corner', () => {
+    act(() => {
+      useCameraStore.setState({
+        active: true, previewEnabled: true,
+        indicatorCorner: 'tr', previewCorner: 'br',
+      });
+    });
     render(<CameraPreviewPanel />);
     const panel = screen.getByTestId('camera-preview-panel');
+    expect(panel.getAttribute('data-corner')).toBe('br');
     expect(panel.style.bottom).toBe('8px');
-    expect(panel.style.left).toBe('8px');
-    expect(panel.style.top).toBe('');
-    expect(panel.style.right).toBe('');
+    expect(panel.style.right).toBe('8px');
+  });
+
+  it('move button cycles preview corner (BF-303)', () => {
+    act(() => {
+      useCameraStore.setState({ active: true, previewEnabled: true, previewCorner: 'bl' });
+    });
+    render(<CameraPreviewPanel />);
+    fireEvent.click(screen.getByTestId('camera-preview-move'));
+    expect(screen.getByTestId('camera-preview-panel').getAttribute('data-corner')).toBe('br');
   });
 });

@@ -158,9 +158,12 @@ class VisionConsumer:
 
         # 2) Supervisor gate. BF-302: ``force=True`` in intent params bypasses
         # the supervisor entirely — operator-driven preview / debug path.
+        # BF-303: novelty_score must be defined for BOTH branches because the
+        # downstream VisionObservation + anchor episode reference it.
         is_forced = bool(msg.params.get("force", False))
         if is_forced:
             logger.info("AD-733a: forced describe sha=%s (supervisor bypassed)", sha[:8])
+            novelty_score = 1.0  # forced frames are "maximally novel" by operator decree
         else:
             decision = self._supervisor.admit(frame_bytes)
             if not decision.allow:
@@ -169,6 +172,7 @@ class VisionConsumer:
                     sha[:8], decision.reason,
                 )
                 return
+            novelty_score = decision.novelty_score
 
         # 3) Vision LLM describe.
         description = await self._describe(sha)
@@ -191,7 +195,7 @@ class VisionConsumer:
             timestamp=time.time(),
             attachment_ref=sha,
             description=description[:400],
-            novelty_score=decision.novelty_score,
+            novelty_score=novelty_score,
             subject_identity=subject_identity,
             session_id=session_id,
         )
@@ -200,7 +204,7 @@ class VisionConsumer:
             wm.append(obs)
 
         # 5) Anchor an episode (AD-541b — importance=6, lower than camera_began=8).
-        await self._anchor_episode(sha, description, decision.novelty_score, session_id)
+        await self._anchor_episode(sha, description, novelty_score, session_id)
 
         # 6) AD-733b: proactive observer — may emit one DM per observer if
         # the scene-introduction or high-novelty trigger fires. Tier-2:

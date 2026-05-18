@@ -230,3 +230,57 @@ def test_force_flag_default_false_when_absent(tmp_path: Path) -> None:
 
     msg = runtime._broadcast_log[0]
     assert msg.params.get("force") is False
+
+
+def test_recent_endpoint_returns_observations(tmp_path: Path) -> None:
+    """BF-303: GET /api/perception/recent returns observations from
+    working memories so the preview panel can display the last description."""
+    from probos.perception.consumer import (
+        _WORKING_MEMORIES,
+        reset_working_memories_for_tests,
+        get_or_create_working_memory,
+    )
+    from probos.perception.working_memory import VisionObservation
+
+    reset_working_memories_for_tests()
+    wm = get_or_create_working_memory("agent.test")
+    wm.append(VisionObservation(
+        timestamp=1000.0,
+        attachment_ref="a" * 64,
+        description="orange tabby cat with paw extended",
+        novelty_score=0.42,
+        subject_identity="unknown",
+        session_id="sess-r",
+    ))
+    wm.append(VisionObservation(
+        timestamp=2000.0,
+        attachment_ref="b" * 64,
+        description="captain holding a coffee mug",
+        novelty_score=0.31,
+        subject_identity="captain",
+        session_id="sess-r",
+    ))
+    try:
+        runtime = _build_runtime(tmp_path)
+        client = TestClient(create_app(runtime))
+        r = client.get("/api/perception/recent?limit=8")
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["observations"]) == 2
+        # newest first
+        assert body["observations"][0]["description"] == "captain holding a coffee mug"
+        assert body["observations"][0]["subject_identity"] == "captain"
+        assert body["observations"][1]["description"] == "orange tabby cat with paw extended"
+    finally:
+        reset_working_memories_for_tests()
+
+
+def test_recent_endpoint_empty_when_no_observations(tmp_path: Path) -> None:
+    """BF-303: /recent honest-degrades to empty list rather than 404 / 500."""
+    from probos.perception.consumer import reset_working_memories_for_tests
+    reset_working_memories_for_tests()
+    runtime = _build_runtime(tmp_path)
+    client = TestClient(create_app(runtime))
+    r = client.get("/api/perception/recent")
+    assert r.status_code == 200
+    assert r.json() == {"observations": []}
