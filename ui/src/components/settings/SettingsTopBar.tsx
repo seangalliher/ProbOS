@@ -1,6 +1,7 @@
 /* AD-741 — Top bar (DISCARD, APPLY, VIEW YAML) + status bar + YAML modal. */
 
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useCameraStore } from '../../store/useCameraStore';
 
 const STROKE_AMBER = '#f0b060';
 const STROKE_DIM = '#666680';
@@ -13,6 +14,7 @@ export function SettingsTopBar() {
   const openYaml = useSettingsStore(s => s.openYaml);
   const closeSettings = useSettingsStore(s => s.closeSettings);
   const applyStatus = useSettingsStore(s => s.applyStatus);
+  const cameraActive = useCameraStore(s => s.active);
   const dirty = draftCount > 0;
 
   return (
@@ -22,6 +24,10 @@ export function SettingsTopBar() {
         alignItems: 'center',
         gap: 10,
         padding: '8px 14px',
+        // BF-300: reserve space on the right for the persistent CAMERA LIVE
+        // indicator (position:fixed, top:8, right:8, ~170px wide) so it does
+        // not occlude the close (×) button or APPLY/DISCARD.
+        paddingRight: cameraActive ? 190 : 14,
         borderBottom: '1px solid rgba(240,176,96,0.15)',
         background: 'rgba(10,10,18,0.7)',
       }}
