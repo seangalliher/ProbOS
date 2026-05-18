@@ -1,8 +1,9 @@
-/* BF-302/303 — Operator preview panel for the camera pipeline.
+/* BF-302/303/305 — Operator preview panel for the camera pipeline.
  *
  * Renders a small floating mirror of the live MediaStream + the most recent
  * description from the perception gateway. Captain can:
- *   - Move the panel between four corners independently of the indicator
+ *   - Drag the panel anywhere on screen (free positioning, BF-305)
+ *   - Double-click the header to reset to default corner
  *   - Force-describe the next captured frame (supervisor bypass)
  *   - See what the perception gateway last described
  *
@@ -10,26 +11,14 @@
  * already capturing — it does NOT request additional camera access.
  */
 import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
-import { useCameraStore, type IndicatorCorner } from '../../store/useCameraStore';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
+import { useCameraStore } from '../../store/useCameraStore';
 import { forceNextFrame, getCameraStream } from '../../hooks/useCameraStream';
-
-const CORNER_STYLES: Record<IndicatorCorner, CSSProperties> = {
-  tl: { top: 8, left: 8 },
-  tr: { top: 8, right: 8 },
-  bl: { bottom: 8, left: 8 },
-  br: { bottom: 8, right: 8 },
-};
-
-const CORNER_LABEL: Record<IndicatorCorner, string> = {
-  tl: 'top-left',
-  tr: 'top-right',
-  bl: 'bottom-left',
-  br: 'bottom-right',
-};
 
 const STROKE_AMBER = '#f0b060';
 const STROKE_DIM = '#666680';
+const PANEL_WIDTH = 300;
+const PANEL_HEIGHT_ESTIMATE = 360; // approx — used only for default position clamping
 
 interface Observation {
   agent_id: string;
@@ -48,13 +37,28 @@ function _formatAge(seconds: number): string {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
+function _clamp(value: number, lo: number, hi: number): number {
+  if (Number.isNaN(value)) return lo;
+  return Math.max(lo, Math.min(hi, value));
+}
+
+function _defaultPosition(): { x: number; y: number } {
+  // Default: bottom-left corner with 8px inset.
+  const w = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  const h = typeof window !== 'undefined' ? window.innerHeight : 768;
+  return { x: 8, y: Math.max(8, h - PANEL_HEIGHT_ESTIMATE - 8) };
+}
+
 export default function CameraPreviewPanel() {
   const active = useCameraStore((s) => s.active);
   const previewEnabled = useCameraStore((s) => s.previewEnabled);
-  const previewCorner = useCameraStore((s) => s.previewCorner);
-  const cyclePreviewCorner = useCameraStore((s) => s.cyclePreviewCorner);
+  const previewPosition = useCameraStore((s) => s.previewPosition);
+  const setPreviewPosition = useCameraStore((s) => s.setPreviewPosition);
+  const resetPreviewPosition = useCameraStore((s) => s.resetPreviewPosition);
   const framesSent = useCameraStore((s) => s.framesSent);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{ startX: number; startY: number; panelX: number; panelY: number } | null>(null);
   const [latest, setLatest] = useState<Observation | null>(null);
   const [now, setNow] = useState(() => Date.now() / 1000);
 
@@ -118,16 +122,70 @@ export default function CameraPreviewPanel() {
   if (!active || !previewEnabled) return null;
 
   const ageSec = latest ? Math.max(0, now - latest.timestamp) : null;
+  const pos = previewPosition ?? _defaultPosition();
+
+  const onHeaderPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // Ignore drag-start when the click landed on a button inside the header.
+    if ((e.target as HTMLElement).closest('button')) return;
+    e.preventDefault();
+    // BF-305: anchor the drag at the current rendered position (which is
+    // exactly the store position). We use the store value directly rather
+    // than getBoundingClientRect() so the math is deterministic regardless
+    // of layout engine state (real browsers + jsdom in tests both work).
+    dragStateRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      panelX: pos.x,
+      panelY: pos.y,
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      const start = dragStateRef.current;
+      if (!start) return;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const dx = ev.clientX - start.startX;
+      const dy = ev.clientY - start.startY;
+      const rectNow = panelRef.current?.getBoundingClientRect();
+      const panelH = (rectNow && rectNow.height > 0) ? rectNow.height : PANEL_HEIGHT_ESTIMATE;
+      const next = {
+        x: _clamp(start.panelX + dx, 0, Math.max(0, w - PANEL_WIDTH)),
+        y: _clamp(start.panelY + dy, 0, Math.max(0, h - panelH)),
+      };
+      setPreviewPosition(next);
+    };
+    const onUp = () => {
+      dragStateRef.current = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  const headerStyle: CSSProperties = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 6,
+    cursor: 'grab',
+    userSelect: 'none',
+    touchAction: 'none',
+  };
 
   return (
     <div
+      ref={panelRef}
       data-testid="camera-preview-panel"
-      data-corner={previewCorner}
       style={{
         position: 'fixed',
-        ...CORNER_STYLES[previewCorner],
+        top: pos.y,
+        left: pos.x,
         zIndex: 998,
-        width: 300,
+        width: PANEL_WIDTH,
         background: 'rgba(10,10,18,0.92)',
         border: `1px solid ${STROKE_DIM}`,
         borderRadius: 6,
@@ -139,13 +197,11 @@ export default function CameraPreviewPanel() {
       aria-label="camera preview"
     >
       <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 6,
-          gap: 6,
-        }}
+        data-testid="camera-preview-header"
+        style={headerStyle}
+        onPointerDown={onHeaderPointerDown}
+        onDoubleClick={() => resetPreviewPosition()}
+        title="Drag to move · double-click to reset position"
       >
         <span style={{ fontSize: 9, letterSpacing: 1.5, color: STROKE_AMBER, fontWeight: 700 }}>
           PREVIEW
@@ -153,30 +209,15 @@ export default function CameraPreviewPanel() {
         <span style={{ fontSize: 9, color: STROKE_DIM, flex: 1, textAlign: 'right' }}>
           sent: {framesSent}
         </span>
-        <button
-          data-testid="camera-preview-move"
-          onClick={cyclePreviewCorner}
-          title={`Move preview (currently ${CORNER_LABEL[previewCorner]}; click to cycle)`}
-          aria-label="move camera preview"
-          style={{
-            padding: '0 4px',
-            background: 'transparent',
-            border: `1px solid ${STROKE_DIM}`,
-            color: STROKE_AMBER,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-          }}
-        >
-          <svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M8 2 L8 14" />
-            <path d="M2 8 L14 8" />
-            <path d="M5 5 L8 2 L11 5" />
-            <path d="M5 11 L8 14 L11 11" />
-            <path d="M5 5 L2 8 L5 11" />
-            <path d="M11 5 L14 8 L11 11" />
-          </svg>
-        </button>
+        {/* Drag-handle SVG glyph — purely decorative, header is the drag surface */}
+        <svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke={STROKE_DIM} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="5" cy="4" r="0.5" fill={STROKE_DIM} />
+          <circle cx="11" cy="4" r="0.5" fill={STROKE_DIM} />
+          <circle cx="5" cy="8" r="0.5" fill={STROKE_DIM} />
+          <circle cx="11" cy="8" r="0.5" fill={STROKE_DIM} />
+          <circle cx="5" cy="12" r="0.5" fill={STROKE_DIM} />
+          <circle cx="11" cy="12" r="0.5" fill={STROKE_DIM} />
+        </svg>
       </div>
       <video
         ref={videoRef}

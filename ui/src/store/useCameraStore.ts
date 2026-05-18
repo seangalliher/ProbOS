@@ -3,9 +3,10 @@
 import { create } from 'zustand';
 
 export type IndicatorCorner = 'tl' | 'tr' | 'bl' | 'br';
+export interface PreviewPosition { x: number; y: number }
 const INDICATOR_CORNER_KEY = 'probos.camera.indicator_corner';
 const PREVIEW_ENABLED_KEY = 'probos.camera.preview_enabled';
-const PREVIEW_CORNER_KEY = 'probos.camera.preview_corner';
+const PREVIEW_POSITION_KEY = 'probos.camera.preview_position';
 const _CORNERS: readonly IndicatorCorner[] = ['tl', 'tr', 'bl', 'br'] as const;
 
 function _loadCorner(): IndicatorCorner {
@@ -44,23 +45,33 @@ function _savePreview(enabled: boolean): void {
   }
 }
 
-function _loadPreviewCorner(): IndicatorCorner {
+function _loadPreviewPosition(): PreviewPosition | null {
   try {
-    const raw = localStorage.getItem(PREVIEW_CORNER_KEY);
-    if (raw && (_CORNERS as readonly string[]).includes(raw)) {
-      return raw as IndicatorCorner;
+    const raw = localStorage.getItem(PREVIEW_POSITION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed.x === 'number' &&
+      typeof parsed.y === 'number' &&
+      Number.isFinite(parsed.x) &&
+      Number.isFinite(parsed.y)
+    ) {
+      return { x: parsed.x, y: parsed.y };
     }
   } catch {
-    // ignore
+    // ignore corrupt entry; fall back to corner default
   }
-  // BF-303 default: opposite of the indicator's default ('tr') so they
-  // don't overlap on first paint.
-  return 'bl';
+  return null;
 }
 
-function _savePreviewCorner(corner: IndicatorCorner): void {
+function _savePreviewPosition(pos: PreviewPosition | null): void {
   try {
-    localStorage.setItem(PREVIEW_CORNER_KEY, corner);
+    if (pos === null) {
+      localStorage.removeItem(PREVIEW_POSITION_KEY);
+    } else {
+      localStorage.setItem(PREVIEW_POSITION_KEY, JSON.stringify(pos));
+    }
   } catch {
     // ignore
   }
@@ -76,8 +87,8 @@ export interface CameraState {
   indicatorCorner: IndicatorCorner;
   /** BF-302: operator preview panel — mirror video + force-describe button. */
   previewEnabled: boolean;
-  /** BF-303: independent corner for the preview panel (movable, persisted). */
-  previewCorner: IndicatorCorner;
+  /** BF-305: free-drag pixel position; null = default corner (bottom-left). */
+  previewPosition: PreviewPosition | null;
 
   setError: (msg: string | null) => void;
   setActive: (active: boolean, sessionId?: string | null) => void;
@@ -86,8 +97,8 @@ export interface CameraState {
   cycleIndicatorCorner: () => void;
   setIndicatorCorner: (corner: IndicatorCorner) => void;
   togglePreview: () => void;
-  cyclePreviewCorner: () => void;
-  setPreviewCorner: (corner: IndicatorCorner) => void;
+  setPreviewPosition: (pos: PreviewPosition) => void;
+  resetPreviewPosition: () => void;
   reset: () => void;
 }
 
@@ -99,7 +110,7 @@ export const useCameraStore = create<CameraState>((set) => ({
   framesSent: 0,
   indicatorCorner: _loadCorner(),
   previewEnabled: _loadPreview(),
-  previewCorner: _loadPreviewCorner(),
+  previewPosition: _loadPreviewPosition(),
 
   setError: (msg) => set({ error: msg }),
   setActive: (active, sessionId = null) => set({ active, sessionId }),
@@ -121,15 +132,13 @@ export const useCameraStore = create<CameraState>((set) => ({
       _savePreview(next);
       return { previewEnabled: next };
     }),
-  cyclePreviewCorner: () =>
-    set((s) => {
-      const next = _CORNERS[(_CORNERS.indexOf(s.previewCorner) + 1) % _CORNERS.length];
-      _savePreviewCorner(next);
-      return { previewCorner: next };
-    }),
-  setPreviewCorner: (corner) => {
-    _savePreviewCorner(corner);
-    set({ previewCorner: corner });
+  setPreviewPosition: (pos) => {
+    _savePreviewPosition(pos);
+    set({ previewPosition: pos });
+  },
+  resetPreviewPosition: () => {
+    _savePreviewPosition(null);
+    set({ previewPosition: null });
   },
   // BF-301: reset preserves indicatorCorner — user's spatial preference
   // should survive a camera revoke/restart cycle.

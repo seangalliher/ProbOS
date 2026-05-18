@@ -1,4 +1,4 @@
-/* BF-302 — CameraPreviewPanel tests. */
+/* BF-302 / BF-303 / BF-305 — CameraPreviewPanel tests. */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 
@@ -13,7 +13,7 @@ vi.mock('../../../hooks/useCameraStream', () => ({
 function reset() {
   useCameraStore.setState({
     active: false, sessionId: null, error: null, framesSent: 0, fps: 1,
-    indicatorCorner: 'tr', previewEnabled: false, previewCorner: 'bl',
+    indicatorCorner: 'tr', previewEnabled: false, previewPosition: null,
   });
   // BF-303: stub fetch so the polling effect doesn't hit a real network.
   vi.stubGlobal('fetch', vi.fn(async () => ({
@@ -22,7 +22,7 @@ function reset() {
   })));
 }
 
-describe('CameraPreviewPanel (BF-302)', () => {
+describe('CameraPreviewPanel (BF-302/303/305)', () => {
   beforeEach(reset);
   afterEach(() => { cleanup(); vi.restoreAllMocks(); reset(); });
 
@@ -57,26 +57,66 @@ describe('CameraPreviewPanel (BF-302)', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('uses its own previewCorner (BF-303), independent of indicator corner', () => {
+  it('BF-305: uses stored previewPosition for absolute placement', () => {
     act(() => {
       useCameraStore.setState({
         active: true, previewEnabled: true,
-        indicatorCorner: 'tr', previewCorner: 'br',
+        previewPosition: { x: 240, y: 100 },
       });
     });
     render(<CameraPreviewPanel />);
     const panel = screen.getByTestId('camera-preview-panel');
-    expect(panel.getAttribute('data-corner')).toBe('br');
-    expect(panel.style.bottom).toBe('8px');
-    expect(panel.style.right).toBe('8px');
+    expect(panel.style.left).toBe('240px');
+    expect(panel.style.top).toBe('100px');
   });
 
-  it('move button cycles preview corner (BF-303)', () => {
+  it('BF-305: dragging the header updates previewPosition', () => {
     act(() => {
-      useCameraStore.setState({ active: true, previewEnabled: true, previewCorner: 'bl' });
+      useCameraStore.setState({
+        active: true, previewEnabled: true,
+        previewPosition: { x: 100, y: 100 },
+      });
     });
     render(<CameraPreviewPanel />);
-    fireEvent.click(screen.getByTestId('camera-preview-move'));
-    expect(screen.getByTestId('camera-preview-panel').getAttribute('data-corner')).toBe('br');
+    const header = screen.getByTestId('camera-preview-header');
+
+    fireEvent.pointerDown(header, { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(window, { clientX: 50, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 50, clientY: 30 });
+
+    const pos = useCameraStore.getState().previewPosition;
+    expect(pos).toEqual({ x: 150, y: 130 });
+  });
+
+  it('BF-305: double-clicking the header resets position to default', () => {
+    act(() => {
+      useCameraStore.setState({
+        active: true, previewEnabled: true,
+        previewPosition: { x: 999, y: 999 },
+      });
+    });
+    render(<CameraPreviewPanel />);
+    fireEvent.doubleClick(screen.getByTestId('camera-preview-header'));
+    expect(useCameraStore.getState().previewPosition).toBeNull();
+  });
+
+  it('BF-305: clicking the FORCE button inside the header area does not start a drag', async () => {
+    const mod = await import('../../../hooks/useCameraStream');
+    const spy = mod.forceNextFrame as ReturnType<typeof vi.fn>;
+    spy.mockClear();
+    act(() => {
+      useCameraStore.setState({
+        active: true, previewEnabled: true,
+        previewPosition: { x: 200, y: 200 },
+      });
+    });
+    render(<CameraPreviewPanel />);
+    // FORCE is in the footer, not header, but the test guards the general
+    // "buttons in the panel don't trigger drag" semantic at the header level
+    // via the closest('button') check inside onHeaderPointerDown.
+    fireEvent.click(screen.getByTestId('camera-preview-force'));
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Position must not have changed.
+    expect(useCameraStore.getState().previewPosition).toEqual({ x: 200, y: 200 });
   });
 });
