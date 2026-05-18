@@ -34,8 +34,8 @@ from pydantic import ValidationError
 from probos.config import SystemConfig
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
+from probos.settings import section_registry
 from probos.settings.section_registry import (
-    SECTIONS,
     domain_counts,
     domain_render_order,
     is_secret_field_id,
@@ -181,7 +181,7 @@ def _section_payload() -> list[dict[str, Any]]:
                 for f in s.fields
             ],
         }
-        for s in SECTIONS
+        for s in section_registry.SECTIONS
     ]
 
 
@@ -198,7 +198,7 @@ async def get_config(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
         "sections": _section_payload(),
         "domain_counts": domain_counts(),
         "domain_order": list(domain_render_order()),
-        "section_count": len(SECTIONS),
+        "section_count": len(section_registry.SECTIONS),
         "config_path": str(getattr(runtime, "config_path", "") or ""),
         "uptime_seconds": round(time.monotonic() - start, 1),
         "csrf_token": _issue_csrf(),

@@ -53,3 +53,22 @@ def test_yaml_modal_never_leaks_secret(tmp_path: Path) -> None:
     text = client.get("/api/config/yaml").text
     assert "leak-me-not" not in text
     assert "<redacted>" in text
+
+
+def test_perception_section_appears_in_sections_list(tmp_path: Path) -> None:
+    """BF-297: routers/config.py must read live section_registry.SECTIONS,
+    not the stale tuple captured at from-import time. AD-733's perception
+    section is inserted at module-import of probos.perception; if config.py
+    captured SECTIONS before that import ran, the Settings UI silently
+    drops the Perception section.
+    """
+    runtime = _runtime(tmp_path)
+    client = TestClient(create_app(runtime))
+
+    payload = client.get("/api/config").json()
+    section_ids = [s["section_id"] for s in payload["sections"]]
+    assert "perception" in section_ids, (
+        f"perception section missing from /api/config response; "
+        f"got {section_ids}. Likely stale from-import capture of SECTIONS."
+    )
+    assert payload["section_count"] == len(section_ids)
