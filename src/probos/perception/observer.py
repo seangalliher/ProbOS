@@ -176,6 +176,19 @@ class ProactiveVisionObserver:
                 "AD-733b: proactive vision DM dispatched agent=%s reason=%s novelty=%.2f",
                 agent_id, reason, observation.novelty_score,
             )
+            # AD-733c-2: nudge the mode controller on high-novelty emissions
+            # so AMBIENT -> ENGAGED. Scene introductions also pass through
+            # this path; the controller's AMBIENT -> ENGAGED transition is
+            # idempotent and trigger-tagged "novelty" for both cases.
+            _mode_ctrl = getattr(self._runtime, "perception_mode_controller", None)
+            if _mode_ctrl is not None:
+                try:
+                    _mode_ctrl.note_high_novelty_event()
+                except Exception:
+                    logger.debug(
+                        "AD-733c-2: note_high_novelty_event raised",
+                        exc_info=True,
+                    )
         except Exception:
             logger.warning(
                 "AD-733b: proactive DM dispatch failed agent=%s reason=%s",

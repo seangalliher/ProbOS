@@ -9,9 +9,17 @@
  */
 import type { CSSProperties } from 'react';
 import { useCameraStore, type IndicatorCorner } from '../../store/useCameraStore';
+import { usePerceptionModeStore, type PerceptionMode } from '../../store/usePerceptionModeStore';
 import { stopCameraStream } from '../../hooks/useCameraStream';
 
 const STROKE_AMBER = '#f0b060';
+const STROKE_DIM = '#666680';
+
+const MODE_COLOR: Record<PerceptionMode, string> = {
+  engaged: STROKE_AMBER,
+  ambient: '#a07840',
+  dormant: STROKE_DIM,
+};
 
 const CORNER_STYLES: Record<IndicatorCorner, CSSProperties> = {
   tl: { top: 8, left: 8 },
@@ -33,6 +41,7 @@ export default function CameraLiveIndicator() {
   const cycleCorner = useCameraStore((s) => s.cycleIndicatorCorner);
   const previewEnabled = useCameraStore((s) => s.previewEnabled);
   const togglePreview = useCameraStore((s) => s.togglePreview);
+  const mode = usePerceptionModeStore((s) => s.mode);
   if (!active) return null;
   return (
     <div
@@ -70,6 +79,24 @@ export default function CameraLiveIndicator() {
       >
         CAMERA LIVE
       </span>
+      {mode && (
+        <span
+          data-testid="perception-mode-badge"
+          data-mode={mode}
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: 1.5,
+            color: MODE_COLOR[mode],
+            fontFamily: "'JetBrains Mono', monospace",
+            padding: '1px 5px',
+            border: `1px solid ${MODE_COLOR[mode]}`,
+            borderRadius: 2,
+          }}
+        >
+          {mode.toUpperCase()}
+        </span>
+      )}
       <button
         data-testid="camera-live-move"
         onClick={cycleCorner}

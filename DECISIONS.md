@@ -4329,3 +4329,34 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 **Tests.** +6 pytest.
 
 **Forward markers (Wave 172).** AD-733c-5 (#676 per-agent engagement), AD-733c-6 (#677 budget guard), AD-733c-7 (#678 Silero VAD + dormant-pauses-capture). All filed at GATE 1.
+
+### AD-733c-2 - PerceptionModeController (Wave 172)
+
+**Part of #675.** Introduces the engagement-aware mode controller that drives the supervisor's tuning knobs based on conversational tempo. Three modes map to Captain's metaphor: DORMANT ("in another room"), AMBIENT ("same room, reading a book"), ENGAGED ("looking at you while we talk"). Each is a baked-in `ModePreset` bundle pushed to the live `PerceptualHashStrategy` via the BF-308 setters.
+
+**API.** `PerceptionModeController` exposes `current_mode` / `mode_since` / `last_dm_activity_at` read properties, `recent_transitions(limit=3)` newest-first history, `get_preset(mode)` lookup, `transition_to(mode, *, trigger="manual") -> bool` (idempotent; 1s programmatic cooldown bypassed by manual trigger), and three engagement hooks: `note_dm_activity()` (step-wise DORMANT->AMBIENT->ENGAGED), `note_high_novelty_event()` (AMBIENT->ENGAGED), `note_wake_word()` (stub rewritten by AD-733c-3). The `_run()` watchdog body is a 30s no-op tick stub; AD-733c-4 replaces it with the idle drop-back logic.
+
+**Timestamps.** All wall-clock timestamps use `time.time()` rather than `time.monotonic()`. Captain Required override at GATE 1: the `/api/perception/mode` GET response surfaces `since` / `last_dm_activity` / transition `at` values to the operator UI; monotonic values are meaningless to humans. NTP drift over the 30s watchdog tick is negligible for minutes-scale idle thresholds.
+
+**Endpoints.** New `GET /api/perception/mode` returns `{mode, since, last_dm_activity, presets, transitions}`; `POST /api/perception/mode {mode}` is the manual override (trigger="manual" bypasses cooldown). Both behind `require_crew_scope`.
+
+**Wiring.** `startup/finalize.py` constructs the controller next to `VisionConsumer` with `initial_mode=AMBIENT` and `await controller.start()`. `startup/shutdown.py` mirrors the `recording_reaper` pattern. `routers/agents.py:agent_chat` extends the AD-733c-1 force-describe block with a `controller.note_dm_activity()` call. `perception/observer.py` nudges the controller after a successful proactive DM dispatch.
+
+**HXI.** New `ui/src/store/usePerceptionModeStore.ts` Zustand slice. `CameraLiveIndicator.tsx` adds a stroke-bordered Mode badge after the CAMERA LIVE span (amber DORMANT/AMBIENT/ENGAGED, no emoji per HXI #3). `PerceptionLivePanel.tsx` gets a MODE section with three text buttons + last-3-transitions list.
+
+**AD-731 invariant.** `test_ad731_invariant_no_inline_base64_in_perception_modules` extended to scan `mode_controller.py`.
+
+**Files.**
+- `src/probos/perception/mode_controller.py` (new, ~245 lines)
+- `src/probos/routers/perception.py` (+72 lines: BaseModel import, GET + POST /mode endpoints)
+- `src/probos/routers/agents.py` (+11 lines: note_dm_activity hook in agent_chat)
+- `src/probos/perception/observer.py` (+13 lines: note_high_novelty_event hook after dispatch)
+- `src/probos/startup/finalize.py` (+19 lines: controller wiring)
+- `src/probos/startup/shutdown.py` (+11 lines: stop hook)
+- `ui/src/store/usePerceptionModeStore.ts` (new, ~90 lines)
+- `ui/src/components/perception/CameraLiveIndicator.tsx` (+26 lines: Mode badge)
+- `ui/src/components/settings/sections/PerceptionLivePanel.tsx` (+75 lines: MODE section)
+- `tests/test_ad733c2_mode_controller.py` (new, 13 tests including AD-731 invariant)
+- vitest: `CameraLiveIndicator.modeBadge.test.tsx` (3) + `PerceptionLivePanel.modeSection.test.tsx` (3)
+
+**Tests.** +13 pytest, +6 vitest. UI bundle `index-CUG-925p.js`.

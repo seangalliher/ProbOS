@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from probos.routers.auth import require_crew_scope
 from probos.routers.chat import _validate_and_store_attachment
@@ -205,3 +206,71 @@ async def get_recent_observations(limit: int = 8, runtime: Any = Depends(get_run
         "observations": items[: max(1, min(limit, 32))],
         "recent_decisions": decisions,
     }
+
+
+# AD-733c-2 (Wave 172) - Mode status + manual override.
+
+@router.get("/mode", dependencies=[Depends(require_crew_scope)])
+async def get_perception_mode(runtime: Any = Depends(get_runtime)) -> Any:
+    """Return the current PerceptionMode, when it transitioned, the last DM
+    activity, the three preset bundles, and the most recent transitions.
+    """
+    controller = getattr(runtime, "perception_mode_controller", None)
+    if controller is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "perception_mode_controller_unavailable"},
+        )
+    from probos.perception.mode_controller import PRESETS
+
+    presets = {
+        m.value: {
+            "min_interval_seconds": p.min_interval_seconds,
+            "novelty_threshold": p.novelty_threshold,
+            "baseline_max_age_seconds": p.baseline_max_age_seconds,
+        }
+        for m, p in PRESETS.items()
+    }
+    transitions = [
+        {
+            "at": t.at,
+            "from_mode": t.from_mode.value,
+            "to_mode": t.to_mode.value,
+            "trigger": t.trigger,
+        }
+        for t in controller.recent_transitions(limit=3)
+    ]
+    return {
+        "mode": controller.current_mode.value,
+        "since": controller.mode_since,
+        "last_dm_activity": controller.last_dm_activity_at,
+        "presets": presets,
+        "transitions": transitions,
+    }
+
+
+class _PerceptionModeRequest(BaseModel):
+    mode: str
+
+
+@router.post("/mode", dependencies=[Depends(require_crew_scope)])
+async def post_perception_mode(
+    body: _PerceptionModeRequest,
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """Manual operator override. Trigger='manual' bypasses the programmatic cooldown."""
+    controller = getattr(runtime, "perception_mode_controller", None)
+    if controller is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "perception_mode_controller_unavailable"},
+        )
+    from probos.perception.mode_controller import Mode
+    try:
+        target = Mode(body.mode.strip().lower())
+    except ValueError:
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_mode", "value": body.mode},
+        )
+    changed = controller.transition_to(target, trigger="manual")
+    return {"ok": True, "mode": controller.current_mode.value, "changed": changed}

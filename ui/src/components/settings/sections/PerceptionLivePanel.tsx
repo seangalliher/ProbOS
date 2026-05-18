@@ -8,17 +8,32 @@
  */
 import { useCameraStore } from '../../../store/useCameraStore';
 import { useSettingsStore } from '../../../store/useSettingsStore';
+import {
+  usePerceptionModeStore,
+  type PerceptionMode,
+} from '../../../store/usePerceptionModeStore';
 import { startCameraStream, stopCameraStream } from '../../../hooks/useCameraStream';
 
 const STROKE_AMBER = '#f0b060';
 const STROKE_DIM = '#666680';
 const STROKE_ENGINEERING = '#e08040';
 
+const MODE_COLOR: Record<PerceptionMode, string> = {
+  engaged: STROKE_AMBER,
+  ambient: '#a07840',
+  dormant: STROKE_DIM,
+};
+
+const MODE_ORDER: PerceptionMode[] = ['dormant', 'ambient', 'engaged'];
+
 export default function PerceptionLivePanel() {
   const snapshot = useSettingsStore((s) => s.snapshot);
   const cameraActive = useCameraStore((s) => s.active);
   const cameraError = useCameraStore((s) => s.error);
   const framesSent = useCameraStore((s) => s.framesSent);
+  const mode = usePerceptionModeStore((s) => s.mode);
+  const modeTransitions = usePerceptionModeStore((s) => s.transitions);
+  const setPerceptionMode = usePerceptionModeStore((s) => s.setMode);
 
   if (!snapshot) return null;
 
@@ -126,6 +141,77 @@ export default function PerceptionLivePanel() {
           </span>
         </span>
         <span>frames sent: {framesSent}</span>
+      </div>
+
+      {/* AD-733c-2: PerceptionModeController status + manual override. */}
+      <div
+        data-testid="perception-mode-section"
+        style={{
+          marginTop: 12,
+          paddingTop: 10,
+          borderTop: `1px solid ${STROKE_DIM}`,
+        }}
+      >
+        <div
+          style={{
+            color: '#c8c8d8',
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 1.5,
+            marginBottom: 6,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          MODE
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+          {MODE_ORDER.map((candidate) => (
+            <button
+              key={candidate}
+              data-testid={`perception-mode-button-${candidate}`}
+              onClick={() => { void setPerceptionMode(candidate); }}
+              aria-pressed={mode === candidate}
+              style={{
+                flex: 1,
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: 1.5,
+                color: mode === candidate ? MODE_COLOR[candidate] : STROKE_DIM,
+                background:
+                  mode === candidate
+                    ? `${MODE_COLOR[candidate]}22`
+                    : 'transparent',
+                border: `1px solid ${
+                  mode === candidate ? MODE_COLOR[candidate] : STROKE_DIM
+                }`,
+                padding: '4px 6px',
+                cursor: 'pointer',
+                fontFamily: "'JetBrains Mono', monospace",
+                borderRadius: 2,
+              }}
+            >
+              {candidate.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        {modeTransitions.length > 0 && (
+          <div
+            data-testid="perception-mode-transitions"
+            style={{
+              fontSize: 9,
+              color: STROKE_DIM,
+              fontFamily: "'JetBrains Mono', monospace",
+              lineHeight: 1.5,
+            }}
+          >
+            {modeTransitions.slice(0, 3).map((t, idx) => (
+              <div key={`${t.at}-${idx}`}>
+                {t.from_mode} {'->'} {t.to_mode}{' '}
+                <span style={{ color: '#888' }}>({t.trigger})</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {!visionConfigured && (

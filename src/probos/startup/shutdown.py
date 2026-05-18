@@ -199,6 +199,17 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         if runtime._night_orders_mgr.active:
             runtime._night_orders_mgr.expire()
 
+    # AD-733c-2: stop the perception mode controller's idle watchdog.
+    if (
+        hasattr(runtime, 'perception_mode_controller')
+        and runtime.perception_mode_controller is not None
+    ):
+        try:
+            await runtime.perception_mode_controller.stop()
+        except Exception:
+            logger.warning("AD-733c-2: mode_controller.stop() failed", exc_info=True)
+        runtime.perception_mode_controller = None
+
     # AD-706b: Stop browser recording reaper (background retention sweeper)
     if hasattr(runtime, 'recording_reaper') and runtime.recording_reaper is not None:
         try:

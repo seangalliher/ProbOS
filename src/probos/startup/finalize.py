@@ -3981,6 +3981,24 @@ async def finalize_startup(
                 len(consumer.observer_agent_ids),
             )
 
+            # AD-733c-2 (Wave 172): PerceptionModeController -- drives the
+            # BF-308 setters based on engagement state. Default: AMBIENT
+            # when perception enabled; the idle watchdog (AD-733c-4) will
+            # eventually drop to DORMANT after extended idle.
+            from probos.perception.mode_controller import (
+                Mode as _PerceptionMode,
+                PerceptionModeController,
+            )
+            _controller = PerceptionModeController(
+                runtime, initial_mode=_PerceptionMode.AMBIENT
+            )
+            # Apply the AMBIENT preset to the live supervisor so the
+            # default boot state matches the mode.
+            _controller.transition_to(_PerceptionMode.AMBIENT, trigger="init")
+            await _controller.start()
+            runtime.perception_mode_controller = _controller
+            logger.info("AD-733c-2: PerceptionModeController wired (initial=ambient)")
+
             if getattr(_perception_cfg, "proactive_observer_enabled", False):
                 from probos.perception.observer import (
                     ProactiveBudget,
@@ -4002,6 +4020,7 @@ async def finalize_startup(
         else:
             runtime.vision_consumer = None
             runtime.vision_observer = None
+            runtime.perception_mode_controller = None
     except Exception:
         logger.warning(
             "AD-733a: VisionConsumer wiring failed; "

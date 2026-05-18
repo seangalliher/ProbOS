@@ -1950,6 +1950,17 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                         "AD-733c-1: force_describe raised for %s",
                         agent_id, exc_info=True,
                     )
+            # AD-733c-2: notify the mode controller of DM activity so the
+            # AMBIENT -> ENGAGED transition (and ENGAGED freshness) tracks
+            # the real conversational tempo.
+            _mode_ctrl = getattr(runtime, "perception_mode_controller", None)
+            if _mode_ctrl is not None:
+                try:
+                    _mode_ctrl.note_dm_activity()
+                except Exception:
+                    logger.debug(
+                        "AD-733c-2: note_dm_activity raised", exc_info=True,
+                    )
             from probos.perception.consumer import get_or_create_working_memory
             _wm = get_or_create_working_memory(agent_id)
             _scene_block = _wm.render_for_prompt()
