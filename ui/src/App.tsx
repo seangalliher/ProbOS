@@ -25,6 +25,8 @@ import SpatialExplorerPanel from './components/SpatialExplorerPanel';
 import KnowledgeBrowserPanel from './components/KnowledgeBrowserPanel';
 import SettingsPanel from './components/settings/SettingsPanel';
 import { useSettingsStore } from './store/useSettingsStore';
+import CameraLiveIndicator from './components/perception/CameraLiveIndicator';
+import { stopCameraStream } from './hooks/useCameraStream';
 
 // ── Top navigation ───────────────────────────────────────────────
 // One flex container instead of 6 abs-positioned toggles. Items
@@ -168,6 +170,14 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleGlobalKey);
   }, []);
 
+  /* AD-733: release the camera stream on page unload — never leave the
+   * MediaStream alive across navigation. */
+  useEffect(() => {
+    const onUnload = () => { void stopCameraStream(); };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, []);
+
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       {mainViewer === 'canvas' ? <CognitiveCanvas /> : mainViewer === 'kanban' ? <FullKanban /> : mainViewer === 'work' ? <WorkBoard /> : mainViewer === 'bills' ? <BillDashboard /> : <FullSystem />}
@@ -186,6 +196,7 @@ export default function App() {
       <SpatialExplorerPanel />
       <KnowledgeBrowserPanel />
       <SettingsPanel />
+      <CameraLiveIndicator />
       <TopNav />
       <WelcomeOverlay />
     </div>

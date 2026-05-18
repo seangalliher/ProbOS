@@ -1897,6 +1897,43 @@ class CloudPickersConfig(BaseModel):
     )
 
 
+class CameraStreamConfig(BaseModel):
+    """AD-733: client-side camera streaming controls."""
+
+    enabled: bool = False
+    """Default-OFF per privacy posture; operator flips explicitly."""
+
+    default_fps: int = Field(default=1, ge=1, le=4,
+        description=(
+            "Client-side capture cadence. Vision tier inference budget caps "
+            "this; 1 fps is the safe default."
+        ),
+    )
+
+    frame_jpeg_quality: float = Field(default=0.6, ge=0.2, le=0.95)
+
+    frame_max_dimension: int = Field(default=512, ge=128, le=1024,
+        description="Longest-edge downsample target for capture.",
+    )
+
+
+class PerceptionConfig(BaseModel):
+    """AD-733: visual sensor input from operator-side capture devices."""
+
+    enabled: bool = False
+    """Master switch for the entire perception subsystem."""
+
+    camera: CameraStreamConfig = Field(default_factory=CameraStreamConfig)
+
+    camera_max_fps_server: int = Field(default=4, ge=1, le=10,
+        description="Server-side hard cap on frame ingestion rate per session.",
+    )
+
+    frame_max_size_bytes: int = Field(default=512 * 1024, ge=4096, le=5 * 1024 * 1024,
+        description="Reject frame uploads larger than this. Default 512 KB.",
+    )
+
+
 class LipSyncConfig(BaseModel):
     """AD-721b-1 — Server-side lip-sync backend selection.
 
@@ -4271,13 +4308,13 @@ class SystemConfig(BaseModel):
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     cloud_pickers: CloudPickersConfig = Field(default_factory=CloudPickersConfig)  # AD-720c
     lipsync: LipSyncConfig = Field(default_factory=LipSyncConfig)  # AD-721b-1 (Wave 155)
-    tts: TTSConfig = Field(default_factory=TTSConfig)  # AD-738 (Wave 157)
-    spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
+    tts: TTSConfig = Field(default_factory=TTSConfig)  # AD-738 (Wave 157)    spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
     threshold_alerts: ThresholdAlertConfig = Field(default_factory=ThresholdAlertConfig)  # AD-695
     ward_room_hebbian: WardRoomHebbianConfig = Field(default_factory=WardRoomHebbianConfig)  # AD-641b
+    perception: PerceptionConfig = Field(default_factory=PerceptionConfig)  # AD-733 (Wave 170)
     engineering_sensors: EngineeringSensorsConfig = Field(default_factory=EngineeringSensorsConfig)  # AD-641f
     learned_shortcuts: LearnedShortcutsConfig = Field(default_factory=LearnedShortcutsConfig)  # AD-641e
     thread_priority: ThreadPriorityConfig = Field(default_factory=ThreadPriorityConfig)  # AD-641c

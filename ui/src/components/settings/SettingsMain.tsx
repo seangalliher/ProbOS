@@ -3,6 +3,7 @@
 import { useSettingsStore } from '../../store/useSettingsStore';
 import type { FieldDescriptorDTO, SectionDescriptorDTO } from '../../store/useSettingsStore';
 import { SectionIcon } from './icons';
+import PerceptionLivePanel from './sections/PerceptionLivePanel';
 
 const STROKE_AMBER = '#f0b060';
 const STROKE_DIM = '#666680';
@@ -256,6 +257,8 @@ export default function SettingsMain() {
       >
         {section.description}
       </div>
+
+      {section.section_id === 'perception' && <PerceptionLivePanel />}
 
       {section.fields.map(field => {
         const initial = getNested(snapshot.config, field.field_id);

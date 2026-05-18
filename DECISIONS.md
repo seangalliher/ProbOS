@@ -4197,3 +4197,49 @@ When enabled, each frame the closest `maxConcurrent` agents within `lodDistance`
 - **AD-741-5** — Multi-Captain auth + audit log of who-changed-what. **Trigger:** more than one operator with `crew_scope_token` in production.
 - **AD-741-6** — Raw YAML editor mode: editable textarea + Pydantic validate-on-save (POST `/api/config/yaml`). **Trigger:** Captain needs to edit a field the registry doesn't surface.
 - **AD-741-7** — Per-agent settings deep-link from Settings → Crew Roster → Agent Profile via `location.hash`. **Trigger:** Captain asks "how do I get to Counselor's settings from here?"
+
+### AD-733 — Camera streaming v1 — frame ingestion + Perception section (Wave 170)
+
+**Status.** Shipped Wave 170. Closes #641 umbrella; sub-markers AD-733a / AD-733b filed as new GitHub issues #665 / #666, AD-733-1 / AD-733-2 filed as #667 / #668.
+
+**Motivation.** The agent fleet has had a vision tier since AD-732 (Wave 153) but no visual sensor stream — image DMs were paste-only (AD-720 Wave 138). Issue #641 calls for a continuous webcam frame pipeline so future ObserverAgents (AD-733b) can react to the Captain's physical environment. The pipeline must be safety-first (instant kill switch, explicit "camera live" indicator, default-OFF at two layers) and must NOT inline blobs into IntentMessages (AD-731 invariant).
+
+**Scope.** v1 ships the wire shape: frame ingestion, AD-731-compliant content-addressable storage, `vision_observation` intent broadcast, AD-541b anchored episode on first frame, and the Settings Perception section. v1 does NOT add an LLM consumer for `vision_observation` (intentional — AD-733a forward marker covers the 1-Hz tick batcher + ObserverAgent).
+
+**Architecture.**
+- `PerceptionConfig` + nested `CameraStreamConfig` on `SystemConfig`. Default-OFF on both `perception.enabled` AND `perception.camera.enabled` (two-switch privacy posture).
+- `VISION_OBSERVATION_DESCRIPTOR` registered in `src/probos/perception/__init__.py`: non-destructive (`requires_consensus=False`), tier `"domain"`. The decomposer prompt now knows about the intent name. v1 has no claimed handler; unconsumed broadcasts are silently dropped (the dynamic intent discovery design supports this — see `runtime.intent_bus.broadcast` semantics).
+- `POST /api/perception/camera/frame` multipart endpoint behind `require_crew_scope`. Defense in depth: feature gate (503), camera gate (503), per-session token-bucket rate limit (429 + `Retry-After: 1`), size cap (413), minimum-size gate (400 — JPEG magic enforced via the shared AD-720 `_validate_and_store_attachment` chain). Bytes flow through `AttachmentStore.write(sha, blob, "image/jpeg")`; the response carries only `{ok, attachment_ref, captured_at}` — never bytes.
+- `IntentMessage.params` carries ONLY `{attachment_ref, mime, captured_at, source, session_id}`. Source-scan test `test_router_source_has_no_inline_blob_patterns` asserts that `b64encode` / `base64.b64` / `b64decode` / `blob_b64` literals do NOT appear in `routers/perception.py` — the AD-731 invariant is rigorously enforced at the source level.
+- AD-541b anchored episode written on the first frame per session per runtime boot. Importance 8; `AnchorFrame(channel="perception", trigger_type="camera_stream_began", trigger_agent="captain")`. Defends future agents from confabulating "I saw something before the camera was on." Tier-2 honest-degrade — if episodic store is unavailable, log WARNING and continue; the frame upload still succeeds.
+
+**HXI surface.**
+- `useCameraStream` hook owns the `MediaStream` lifecycle. `startCameraStream` calls `navigator.mediaDevices.getUserMedia` (browser-native consent gate), creates an offscreen `<video>` + `<canvas>`, runs `setInterval(fps)` that downsamples longest-edge to `frame_max_dimension` (512 default), encodes JPEG via `canvas.toBlob('image/jpeg', q=0.6)`, and POSTs multipart. `stopCameraStream` calls `track.stop()` on every track and clears the interval.
+- `CameraLiveIndicator` is rendered top-right of every HXI view from `App.tsx` whenever `useCameraStore.active === true`. Inline SVG red dot with `<animate>` pulse + REVOKE button. Per HXI Design Principle #3: stroke SVG only, no emoji.
+- `App.tsx` adds a top-level `useEffect` that registers a `beforeunload` handler calling `stopCameraStream()` unconditionally — never leave the camera alive across navigation.
+- `PerceptionLivePanel` renders inside `SettingsMain` when the Perception section is selected. Live START/STOP button toggles `startCameraStream` directly (camera is live, not draft — does NOT wait for APPLY). Honest-degrade banner if `cognitive.llm_base_url_vision` is empty ("Vision tier not configured. Frames will be stored, but no agent will observe them. AD-733a forward marker adds the consumer."). HTTPS warning if `window.location.protocol !== "https:"` AND hostname is not `localhost` / `127.0.0.1`.
+- AD-741 registry: `insert_section(...)` adds the Perception section in the Perception & Voice domain. The fields are wired via the standard registry field-rendering path (no special-case code in `SettingsMain` other than the `PerceptionLivePanel` injection above the generic field rows).
+
+**Files.**
+- `src/probos/config.py` (+33 lines: `CameraStreamConfig` + `PerceptionConfig`; one-line wire onto `SystemConfig`).
+- `src/probos/perception/__init__.py` (new, ~85 lines: descriptor + section registration via `insert_section`).
+- `src/probos/routers/perception.py` (new, ~155 lines: token bucket + anchor write + multipart endpoint).
+- `src/probos/api.py` (one-line router registration).
+- `ui/src/store/useCameraStore.ts` (new): minimal Zustand slice for camera state.
+- `ui/src/hooks/useCameraStream.ts` (new): MediaStream + interval + multipart POST.
+- `ui/src/components/perception/CameraLiveIndicator.tsx` (new): persistent top-bar indicator.
+- `ui/src/components/settings/sections/PerceptionLivePanel.tsx` (new): live controls in Settings.
+- `ui/src/components/settings/SettingsMain.tsx` (one-line conditional render).
+- `ui/src/App.tsx` (top-level mount + `beforeunload` handler).
+
+**Invariants preserved.** AD-731 invariant enforced at four layers: (1) IntentMessage.params allowed-key whitelist in test, (2) source-scan test asserts no inline-base64 literals in router source, (3) `_validate_and_store_attachment` chain stores by SHA, (4) endpoint response shape carries no bytes. AD-541b anchored episode (importance=8, `anchors.trigger_type="camera_stream_began"`) defends future confabulation. BF-280 n/a (no subprocess — `getUserMedia` is browser-native + Python-side `subprocess.Popen` is not used). BF-282 n/a (no binary stdout). BF-287 enforced: tests use real `SystemConfig()` + real `FilesystemAttachmentStore(tmp_path)` per the substrate-boundary rule.
+
+**Tests.** +13 pytest in `tests/test_ad733_perception_config.py` (3), `tests/test_ad733_intent_descriptor.py` (2), `tests/test_ad733_frame_endpoint.py` (8). +5 vitest in `ui/src/components/perception/__tests__/CameraLiveIndicator.test.tsx` (2) + `ui/src/hooks/__tests__/useCameraStream.test.ts` (3). Full gate: 13999 → 14012. UI build green (`dist/assets/index-bhtBkOzv.js`).
+
+**Zero new deps.** All browser-native APIs (`getUserMedia`, `<canvas>`, `Blob`, `crypto.randomUUID`) + already-resident `pyyaml`/`pillow`/`fastapi` on the Python side. No pyproject / lockfile / ui package changes. Zero-line license diff.
+
+**Forward markers.**
+- **AD-733a** (issue #665) — Fast vision tier split (`llm_model_vision_fast` + `llm_model_vision_deep` on `CognitiveConfig`) + 1-Hz working-memory tick batcher + LLM consumer subscribed to `vision_observation`. Trigger: Captain enables camera and asks "what does Ezri see right now?"
+- **AD-733b** (issue #666) — `ObserverAgent` type derived from `CognitiveAgent`. Proactively surfaces detected events (faces, objects, posture changes) into the bridge alerts stream. Integrates with AD-674 (graduated initiative) + AD-411 (emergent detector). Trigger: AD-733a in place + Captain asks for proactive observation notifications.
+- **AD-733-1** (issue #667) — AttachmentStore retention reaper for frames tagged `source=camera`. Default: delete frames older than 1 hour, configurable. Trigger: disk fills with stored frames after 24h of camera-on time.
+- **AD-733-2** (issue #668) — Multi-source camera/screen capture (front + back webcam, `getDisplayMedia` screen capture). Trigger: operator asks for desktop screen sensing alongside webcam.
