@@ -23,6 +23,19 @@ let _sessionId: string | null = null;
 let _fps = 1;
 let _jpegQuality = 0.6;
 let _maxDim = 512;
+// BF-302: when set, the next capture is sent with force=1 so the consumer
+// bypasses the supervisor's throttle + novelty gate. One-shot flag.
+let _forceNext = false;
+
+/** BF-302: expose the live MediaStream so the preview panel can mirror it. */
+export function getCameraStream(): MediaStream | null {
+  return _stream;
+}
+
+/** BF-302: arm the next capture to bypass supervisor (operator preview). */
+export function forceNextFrame(): void {
+  _forceNext = true;
+}
 
 function _generateSessionId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -71,6 +84,10 @@ async function _captureAndUpload() {
   const form = new FormData();
   form.append('file', blob, 'frame.jpg');
   form.append('session_id', _sessionId);
+  if (_forceNext) {
+    form.append('force', '1');
+    _forceNext = false;
+  }
 
   try {
     const resp = await fetch(FRAME_ENDPOINT, { method: 'POST', body: form });

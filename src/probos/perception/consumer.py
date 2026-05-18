@@ -156,14 +156,19 @@ class VisionConsumer:
             logger.warning("AD-733a: attachment %s missing; skipping frame", sha[:8])
             return
 
-        # 2) Supervisor gate.
-        decision = self._supervisor.admit(frame_bytes)
-        if not decision.allow:
-            logger.debug(
-                "AD-733a: supervisor dropped frame sha=%s reason=%s",
-                sha[:8], decision.reason,
-            )
-            return
+        # 2) Supervisor gate. BF-302: ``force=True`` in intent params bypasses
+        # the supervisor entirely — operator-driven preview / debug path.
+        is_forced = bool(msg.params.get("force", False))
+        if is_forced:
+            logger.info("AD-733a: forced describe sha=%s (supervisor bypassed)", sha[:8])
+        else:
+            decision = self._supervisor.admit(frame_bytes)
+            if not decision.allow:
+                logger.debug(
+                    "AD-733a: supervisor dropped frame sha=%s reason=%s",
+                    sha[:8], decision.reason,
+                )
+                return
 
         # 3) Vision LLM describe.
         description = await self._describe(sha)

@@ -31,6 +31,8 @@ export default function CameraLiveIndicator() {
   const active = useCameraStore((s) => s.active);
   const corner = useCameraStore((s) => s.indicatorCorner);
   const cycleCorner = useCameraStore((s) => s.cycleIndicatorCorner);
+  const previewEnabled = useCameraStore((s) => s.previewEnabled);
+  const togglePreview = useCameraStore((s) => s.togglePreview);
   if (!active) return null;
   return (
     <div
@@ -91,6 +93,29 @@ export default function CameraLiveIndicator() {
           <path d="M5 11 L8 14 L11 11" />
           <path d="M5 5 L2 8 L5 11" />
           <path d="M11 5 L14 8 L11 11" />
+        </svg>
+      </button>
+      <button
+        data-testid="camera-live-preview-toggle"
+        onClick={togglePreview}
+        title={previewEnabled ? 'Hide camera preview' : 'Show camera preview'}
+        aria-label="toggle camera preview"
+        aria-pressed={previewEnabled}
+        style={{
+          padding: '0 4px',
+          background: previewEnabled ? 'rgba(240,176,96,0.18)' : 'transparent',
+          border: '1px solid #c84030',
+          color: previewEnabled ? '#f0b060' : '#e0a0a0',
+          cursor: 'pointer',
+          fontFamily: "'JetBrains Mono', monospace",
+          display: 'flex',
+          alignItems: 'center',
+        }}
+      >
+        {/* BF-302: eye glyph — inline SVG only, HXI Principle #3 */}
+        <svg width={11} height={11} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M1 8 C 3.5 4, 12.5 4, 15 8 C 12.5 12, 3.5 12, 1 8 Z" />
+          <circle cx="8" cy="8" r="2.2" />
         </svg>
       </button>
       <button

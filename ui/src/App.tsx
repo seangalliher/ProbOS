@@ -26,6 +26,7 @@ import KnowledgeBrowserPanel from './components/KnowledgeBrowserPanel';
 import SettingsPanel from './components/settings/SettingsPanel';
 import { useSettingsStore } from './store/useSettingsStore';
 import CameraLiveIndicator from './components/perception/CameraLiveIndicator';
+import CameraPreviewPanel from './components/perception/CameraPreviewPanel';
 import { stopCameraStream } from './hooks/useCameraStream';
 
 // ── Top navigation ───────────────────────────────────────────────
@@ -197,6 +198,7 @@ export default function App() {
       <KnowledgeBrowserPanel />
       <SettingsPanel />
       <CameraLiveIndicator />
+      <CameraPreviewPanel />
       <TopNav />
       <WelcomeOverlay />
     </div>

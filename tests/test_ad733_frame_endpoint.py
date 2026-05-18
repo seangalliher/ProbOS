@@ -118,7 +118,7 @@ def test_broadcast_carries_only_ref_no_inline_blob(tmp_path: Path) -> None:
     assert len(runtime._broadcast_log) == 1
     msg = runtime._broadcast_log[0]
     assert msg.intent == "vision_observation"
-    allowed_keys = {"attachment_ref", "mime", "captured_at", "source", "session_id"}
+    allowed_keys = {"attachment_ref", "mime", "captured_at", "source", "session_id", "force"}
     assert set(msg.params.keys()) <= allowed_keys
     # Belt-and-suspenders: no key whose value is a long string (>128 chars =
     # likely base64 blob — the SHA is exactly 64 hex chars).
@@ -197,3 +197,36 @@ def test_anchor_episode_written_on_first_frame_per_session(tmp_path: Path) -> No
     )
     assert r2.status_code == 200
     assert runtime.episodic_memory.store.await_count == 1
+
+
+def test_force_flag_propagates_to_intent_message(tmp_path: Path) -> None:
+    """BF-302: when the operator preview POSTs force=1, the resulting
+    IntentMessage carries force=True so the consumer's supervisor bypass
+    fires."""
+    runtime = _build_runtime(tmp_path)
+    client = TestClient(create_app(runtime))
+
+    files = {"file": ("frame.jpg", _make_jpeg(), "image/jpeg")}
+    r = client.post(
+        "/api/perception/camera/frame",
+        files=files,
+        data={"session_id": "sess-force", "force": "1"},
+    )
+    assert r.status_code == 200, r.text
+
+    assert len(runtime._broadcast_log) == 1
+    msg = runtime._broadcast_log[0]
+    assert msg.params.get("force") is True
+
+
+def test_force_flag_default_false_when_absent(tmp_path: Path) -> None:
+    """BF-302: omitting force => force=False (preserves default supervisor gating)."""
+    runtime = _build_runtime(tmp_path)
+    client = TestClient(create_app(runtime))
+
+    files = {"file": ("frame.jpg", _make_jpeg(), "image/jpeg")}
+    r = client.post("/api/perception/camera/frame", files=files, data={"session_id": "sess-noforce"})
+    assert r.status_code == 200
+
+    msg = runtime._broadcast_log[0]
+    assert msg.params.get("force") is False

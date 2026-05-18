@@ -103,6 +103,7 @@ async def _write_anchor_episode(
 async def upload_camera_frame(
     file: UploadFile = File(...),
     session_id: str = Form(...),
+    force: str = Form(""),
     runtime: Any = Depends(get_runtime),
 ) -> Any:
     cfg = getattr(runtime.config, "perception", None)
@@ -133,8 +134,12 @@ async def upload_camera_frame(
 
     sha = result["attachment_id"]
     captured_at = time.time()
+    is_forced = force.lower() in {"1", "true", "yes"}
 
     # AD-731 invariant: refs only — NEVER inline bytes in IntentMessage.params.
+    # BF-302: ``force`` carries Captain's explicit "describe this frame even
+    # if the supervisor would normally drop it" intent. Used by the operator
+    # preview panel for testing the pipeline without waiting on novelty.
     msg = IntentMessage(
         intent="vision_observation",
         params={
@@ -143,6 +148,7 @@ async def upload_camera_frame(
             "captured_at": captured_at,
             "source": "camera",
             "session_id": session_id,
+            "force": is_forced,
         },
     )
     try:
