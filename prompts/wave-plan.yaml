@@ -3662,7 +3662,7 @@ waves:
     title: "End-to-end live camera perception — Ezri sees the Captain"
     issues_to_close: [665, 666]
     estimated_hours: 16
-    status: drafting
+    status: shipped
     notes: |
       AD-733a (#665) vision consumer + supervisor + working memory + DM integration
       AD-733b (#666) proactive observer surfacing on scene change
