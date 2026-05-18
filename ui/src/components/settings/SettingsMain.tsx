@@ -25,6 +25,8 @@ function FieldRow({
   secretPresent,
   errors,
   onChange,
+  disabled = false,
+  disabledReason = '',
 }: {
   field: FieldDescriptorDTO;
   initialValue: any;
@@ -32,6 +34,8 @@ function FieldRow({
   secretPresent: boolean | undefined;
   errors: { msg: string }[];
   onChange: (value: any) => void;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   const value = draftValue !== undefined ? draftValue : initialValue;
   const dirty = draftValue !== undefined;
@@ -64,7 +68,10 @@ function FieldRow({
   } else if (field.kind === 'bool') {
     control = (
       <button
-        onClick={() => onChange(!value)}
+        onClick={() => { if (!disabled) onChange(!value); }}
+        disabled={disabled}
+        aria-disabled={disabled}
+        title={disabled ? disabledReason : undefined}
         data-testid={`field-bool-${field.field_id}`}
         style={{
           background: value ? 'rgba(240,176,96,0.12)' : 'transparent',
@@ -73,8 +80,9 @@ function FieldRow({
           padding: '3px 10px',
           fontSize: 10,
           letterSpacing: 1,
-          cursor: 'pointer',
+          cursor: disabled ? 'not-allowed' : 'pointer',
           borderRadius: 3,
+          opacity: disabled ? 0.4 : 1,
         }}
       >
         {value ? 'ON' : 'OFF'}
@@ -88,7 +96,10 @@ function FieldRow({
           return (
             <button
               key={opt}
-              onClick={() => onChange(opt)}
+              onClick={() => { if (!disabled) onChange(opt); }}
+              disabled={disabled}
+              aria-disabled={disabled}
+              title={disabled ? disabledReason : undefined}
               style={{
                 background: selected ? 'rgba(240,176,96,0.12)' : 'transparent',
                 border: `1px solid ${selected ? STROKE_AMBER : STROKE_DIM}`,
@@ -96,8 +107,9 @@ function FieldRow({
                 padding: '3px 8px',
                 fontSize: 10,
                 letterSpacing: 0.5,
-                cursor: 'pointer',
+                cursor: disabled ? 'not-allowed' : 'pointer',
                 borderRadius: 3,
+                opacity: disabled ? 0.4 : 1,
               }}
             >
               {opt}
@@ -111,6 +123,9 @@ function FieldRow({
       <input
         type="number"
         value={value ?? ''}
+        disabled={disabled}
+        aria-disabled={disabled}
+        title={disabled ? disabledReason : undefined}
         data-testid={`field-number-${field.field_id}`}
         onChange={e => {
           const raw = e.target.value;
@@ -130,6 +145,8 @@ function FieldRow({
           fontFamily: "'JetBrains Mono', monospace",
           borderRadius: 3,
           width: 180,
+          opacity: disabled ? 0.4 : 1,
+          cursor: disabled ? 'not-allowed' : 'text',
         }}
       />
     );
@@ -138,6 +155,9 @@ function FieldRow({
       <input
         type="text"
         value={value ?? ''}
+        disabled={disabled}
+        aria-disabled={disabled}
+        title={disabled ? disabledReason : undefined}
         data-testid={`field-text-${field.field_id}`}
         onChange={e => onChange(e.target.value)}
         style={{
@@ -149,6 +169,8 @@ function FieldRow({
           fontFamily: "'JetBrains Mono', monospace",
           borderRadius: 3,
           width: 320,
+          opacity: disabled ? 0.4 : 1,
+          cursor: disabled ? 'not-allowed' : 'text',
         }}
       />
     );
@@ -265,6 +287,22 @@ export default function SettingsMain() {
         const draftValue = draft[field.field_id];
         const secretPresent = snapshot.secret_present?.[field.field_id];
         const fieldErrors = errorsByField[field.field_id] ?? [];
+        // BF-298: parent/child gating — when a section's master toggle is OFF,
+        // every other field in the section is functionally inert until APPLY.
+        // The master toggle itself stays enabled so the operator can flip it on.
+        let disabled = false;
+        let disabledReason = '';
+        if (section.section_id === 'perception') {
+          const masterDraft = draft['perception.enabled'];
+          const masterValue = masterDraft !== undefined
+            ? masterDraft
+            : getNested(snapshot.config, 'perception.enabled');
+          const masterOn = Boolean(masterValue);
+          if (!masterOn && field.field_id !== 'perception.enabled') {
+            disabled = true;
+            disabledReason = 'Enable the Perception subsystem first.';
+          }
+        }
         return (
           <FieldRow
             key={field.field_id}
@@ -274,6 +312,8 @@ export default function SettingsMain() {
             secretPresent={secretPresent}
             errors={fieldErrors}
             onChange={value => setDraftField(field.field_id, value)}
+            disabled={disabled}
+            disabledReason={disabledReason}
           />
         );
       })}

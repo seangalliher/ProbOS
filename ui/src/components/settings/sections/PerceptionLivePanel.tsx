@@ -35,6 +35,23 @@ export default function PerceptionLivePanel() {
     window.location.hostname !== 'localhost' &&
     window.location.hostname !== '127.0.0.1';
 
+  // BF-298: status badge — compute from live snapshot + camera-store state.
+  const perceptionEnabled = Boolean(
+    (snapshot.config as any).perception?.enabled,
+  );
+  let badgeText: string;
+  let badgeColor: string;
+  if (!perceptionEnabled) {
+    badgeText = 'subsystem: OFF';
+    badgeColor = STROKE_DIM;
+  } else if (cameraActive) {
+    badgeText = 'subsystem: ON · camera live';
+    badgeColor = STROKE_AMBER;
+  } else {
+    badgeText = 'subsystem: ON · 0 modalities active';
+    badgeColor = STROKE_ENGINEERING;
+  }
+
   return (
     <div
       data-testid="perception-live-panel"
@@ -46,6 +63,19 @@ export default function PerceptionLivePanel() {
         background: cameraActive ? 'rgba(240,176,96,0.06)' : 'transparent',
       }}
     >
+      <div
+        data-testid="perception-status-badge"
+        style={{
+          fontSize: 9,
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: 1.5,
+          color: badgeColor,
+          marginBottom: 8,
+          textTransform: 'uppercase',
+        }}
+      >
+        {badgeText}
+      </div>
       <div
         style={{
           display: 'flex',
