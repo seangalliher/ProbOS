@@ -518,6 +518,12 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-740-1 | Auto-correction of sustained drift (longest_streak ≥ 4 → corrective intervention pathway) | (forward marker, filed Wave 169) | 4 |
 | AD-740-2 | Cross-agent drift comparison surface (counselor-mediated clinical pattern detection across ≥2 agents) | (forward marker, filed Wave 169) | 4 |
 | AD-740-3 | Persistence beyond in-memory ring (SQLite sidecar for longitudinal drift study across process restarts) | (forward marker, filed Wave 169) | 4 |
+| AD-730-3 | Agent image generation in DM replies via `[GEN_IMAGE prompt]` bracket marker — **SHIPPED Wave 169** (new `cognitive/image_gen_dispatch.py` OpenAI Images API v1 client + new sixth peer `image_gen` LLM tier + AD-731-compliant `AttachmentStore.write` SHA refs on the response payload + `step_4c_image_gen_parse` letter-suffix pipeline step + AD-727 first-invocation wellness review WARNING + AD-541b anchored episode + full eight-guard audit (`_LLM_TIERS` extended, `_TIER_ORDER` excluded, ModelRouter bypassed, LLMResponseCache bypassed, all 8 `tier_config` maps extended, health probe scaffolding extended); 5 `AvatarsConfig` knobs default-OFF; +20 pytest; zero new deps; forward markers AD-730-3-1/-2/-3/-4/-5) | [#633](https://github.com/seangalliher/ProbOS/issues/633) | 2 |
+| AD-730-3-1 | Per-conversation + per-day cost gating budget for image_gen (Captain ACK on overrun) | (forward marker, filed Wave 169) | 4 |
+| AD-730-3-2 | Image moderation classifier (NSFW / safety / policy review on generated images) | (forward marker, filed Wave 169) | 4 |
+| AD-730-3-3 | Provenance watermarking + C2PA-shape metadata embedding on generated images | (forward marker, filed Wave 169) | 4 |
+| AD-730-3-4 | HXI rendering of agent-generated `attachment_ids` on the DM reply surface | (forward marker, filed Wave 169) | 4 |
+| AD-730-3-5 | Ward Room wiring of `[GEN_IMAGE ...]` bracket marker in the WR reply pipeline | (forward marker, filed Wave 169) | 4 |
 
 **Wave 154 — DM hardening + multimodal small wins + HXI polish:**
 

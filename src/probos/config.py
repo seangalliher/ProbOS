@@ -229,6 +229,22 @@ class CognitiveConfig(BaseModel):
     llm_top_p_compute_use: float | None = None
     llm_max_tokens_compute_use: int | None = None
 
+    # AD-730-3: image_gen tier — sixth peer of fast/standard/deep/vision/
+    # compute_use. Image generation via OpenAI-compatible
+    # POST /v1/images/generations (DALL-E 3 / gpt-image-1 / local SD via
+    # ComfyUI/A1111 OpenAI-shape adapter). Default unconfigured; opt-in
+    # via system.yaml. When unconfigured OR unhealthy, agent
+    # [GEN_IMAGE ...] markers honest-degrade to silent strip.
+    # Does NOT participate in the fast→standard→deep fallback chain
+    # (text tiers can't generate images, per BF-269 lesson).
+    # ModelRouter bypassed at call site (BF-273 lesson).
+    # LLMResponseCache bypassed (BF-272 lesson).
+    llm_base_url_image_gen: str | None = None
+    llm_api_key_image_gen: str | None = None
+    llm_model_image_gen: str | None = None
+    llm_timeout_image_gen: float | None = None
+    llm_api_format_image_gen: str | None = None  # "openai" (only supported shape)
+
     # Per-tier sampling overrides (None = use request-level value)
     llm_temperature_fast: float | None = None
     llm_temperature_standard: float | None = None
@@ -279,6 +295,7 @@ class CognitiveConfig(BaseModel):
             "deep": self.llm_model_deep,
             "vision": self.llm_model_vision,
             "compute_use": self.llm_model_compute_use,
+            "image_gen": self.llm_model_image_gen,
         }
         url_map = {
             "fast": self.llm_base_url_fast,
@@ -286,6 +303,7 @@ class CognitiveConfig(BaseModel):
             "deep": self.llm_base_url_deep,
             "vision": self.llm_base_url_vision,
             "compute_use": self.llm_base_url_compute_use,
+            "image_gen": self.llm_base_url_image_gen,
         }
         key_map = {
             "fast": self.llm_api_key_fast,
@@ -293,6 +311,7 @@ class CognitiveConfig(BaseModel):
             "deep": self.llm_api_key_deep,
             "vision": self.llm_api_key_vision,
             "compute_use": self.llm_api_key_compute_use,
+            "image_gen": self.llm_api_key_image_gen,
         }
         timeout_map = {
             "fast": self.llm_timeout_fast,
@@ -300,6 +319,7 @@ class CognitiveConfig(BaseModel):
             "deep": self.llm_timeout_deep,
             "vision": self.llm_timeout_vision,
             "compute_use": self.llm_timeout_compute_use,
+            "image_gen": self.llm_timeout_image_gen,
         }
         format_map = {
             "fast": self.llm_api_format_fast,
@@ -307,6 +327,7 @@ class CognitiveConfig(BaseModel):
             "deep": self.llm_api_format_deep,
             "vision": self.llm_api_format_vision,
             "compute_use": self.llm_api_format_compute_use,
+            "image_gen": self.llm_api_format_image_gen,
         }
         temp_map = {
             "fast": self.llm_temperature_fast,
@@ -314,6 +335,7 @@ class CognitiveConfig(BaseModel):
             "deep": self.llm_temperature_deep,
             "vision": self.llm_temperature_vision,
             "compute_use": self.llm_temperature_compute_use,
+            "image_gen": None,
         }
         top_p_map = {
             "fast": self.llm_top_p_fast,
@@ -321,6 +343,7 @@ class CognitiveConfig(BaseModel):
             "deep": self.llm_top_p_deep,
             "vision": self.llm_top_p_vision,
             "compute_use": self.llm_top_p_compute_use,
+            "image_gen": None,
         }
         max_tokens_map = {
             "fast": self.llm_max_tokens_fast,
@@ -328,6 +351,7 @@ class CognitiveConfig(BaseModel):
             "deep": self.llm_max_tokens_deep,
             "vision": self.llm_max_tokens_vision,
             "compute_use": self.llm_max_tokens_compute_use,
+            "image_gen": None,
         }
         return {
             "base_url": url_map.get(tier) or self.llm_base_url,
@@ -1358,6 +1382,53 @@ class AvatarsConfig(BaseModel):
             "AD-740: match-score threshold below which an entry counts as "
             "a 'divergent' turn in the drift summary. Default 0.7 mirrors "
             "the conservative end of the AD-722a divergence band."
+        ),
+    )
+
+    # AD-730-3: agent image generation in DM replies.
+    image_gen_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-730-3: master switch for agent image generation via "
+            "[GEN_IMAGE ...] bracket marker. Default OFF (transitional). "
+            "Requires CognitiveConfig.llm_base_url_image_gen to be set."
+        ),
+    )
+    image_gen_max_prompt_chars: int = Field(
+        default=512,
+        ge=8,
+        le=4000,
+        description=(
+            "AD-730-3: hard cap on the [GEN_IMAGE ...] prompt length. "
+            "Markers exceeding this are silently stripped and a single "
+            "WARNING is logged."
+        ),
+    )
+    image_gen_wellness_review_required: bool = Field(
+        default=True,
+        description=(
+            "AD-730-3: when True, the FIRST image_gen invocation per "
+            "agent per process triggers a Counselor wellness review log "
+            "entry (AD-727 governance pattern). Subsequent invocations "
+            "by the same agent skip the review until process restart."
+        ),
+    )
+    image_gen_max_image_bytes: int = Field(
+        default=4 * 1024 * 1024,
+        ge=64 * 1024,
+        le=25 * 1024 * 1024,
+        description=(
+            "AD-730-3: per-image size cap on bytes written to "
+            "AttachmentStore. Defense in depth alongside the upstream "
+            "API's own limits."
+        ),
+    )
+    image_gen_mime: str = Field(
+        default="image/png",
+        description=(
+            "AD-730-3: declared MIME for stored images. PNG is OpenAI's "
+            "default. Operator may set to image/jpeg if their endpoint "
+            "returns JPEG."
         ),
     )
 

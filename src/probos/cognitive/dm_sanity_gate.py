@@ -50,6 +50,16 @@ _SELF_CHECK_RE = re.compile(r"\[SELF_CHECK\s+([a-z_-]{1,64})\]")
 # don't bleed into Captain-visible text.
 _SELF_CHECK_STRIP_RE = re.compile(r"\[SELF_CHECK\b[^\]\n]*\]")
 
+# AD-730-3: image generation marker. Prompt is 1..N chars of free-form
+# text (the 4000 ceiling here is to prevent runaway regex backtracking;
+# the per-call enforcement happens against
+# AvatarsConfig.image_gen_max_prompt_chars at extraction time). Closing
+# bracket terminates the prompt; embedded ] is not supported in v1.
+_GEN_IMAGE_RE = re.compile(r"\[GEN_IMAGE\s+([^\]\n]{1,4000})\]")
+# Lax strip removes well-formed AND malformed variants so no marker
+# leaks into Captain-visible text.
+_GEN_IMAGE_STRIP_RE = re.compile(r"\[GEN_IMAGE\b[^\]\n]*\]?")
+
 # AD-724: malformed tags (open bracket + keyword, but missing close bracket
 # OR missing value). These do NOT match the well-formed regexes above.
 _ORPHANED_CHALLENGE_RE = re.compile(r"\[CHALLENGE\b(?![^\[\]]*\])")
@@ -227,6 +237,35 @@ class DmSanityGate:
         if not text:
             return text
         return _SELF_CHECK_STRIP_RE.sub("", text).strip()
+
+    def extract_gen_image(self, text: str, *, max_chars: int = 512) -> list[str]:
+        """AD-730-3: return all valid ``[GEN_IMAGE prompt]`` prompts in order.
+
+        Prompts whose length is not in ``[1, max_chars]`` are excluded
+        from the result but still stripped by :meth:`strip_gen_image`.
+        Callers should dispatch only the FIRST returned prompt;
+        additional ones are informational and stripped silently.
+        """
+        if not text:
+            return []
+        prompts: list[str] = []
+        for m in _GEN_IMAGE_RE.finditer(text):
+            p = m.group(1).strip()
+            if 1 <= len(p) <= max_chars:
+                prompts.append(p)
+        return prompts
+
+    def strip_gen_image(self, text: str) -> str:
+        """AD-730-3: remove ALL ``[GEN_IMAGE ...]`` markers from reply text.
+
+        Strips both well-formed and malformed variants so no bracket
+        marker leaks into Captain-visible output. Mirrors the
+        :meth:`strip_self_check` contract including the trailing
+        ``.strip()``.
+        """
+        if not text:
+            return text
+        return _GEN_IMAGE_STRIP_RE.sub("", text).strip()
 
     # --- New checks (Tier-2 log-and-degrade) ---
 

@@ -7,7 +7,7 @@ back to OSS).
 
 **Authoritative state.**
 - `prompts/wave-plan.yaml` — wave roster (current wave: 150 done; next slot is 151).
-- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-740 — affect-vs-intent drift trend, Wave 169 cluster part 1).
+- `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-740 — affect-vs-intent drift trend; AD-730-3 also shipped Wave 169 as agent image generation in DM replies).
 - `tests/` — 13449 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout + occasional dreaming/ward_room flakes outside this wave) + 633 vitest; gate runs `-n 4 --dist=loadfile`.
 
 **Wave 168 in flight (2026-05-17):**

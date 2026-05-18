@@ -23,9 +23,9 @@ class TestLLMClientHealthTracking:
         from probos.cognitive.llm_client import OpenAICompatibleClient
         client = OpenAICompatibleClient.__new__(OpenAICompatibleClient)
         # Initialize the health tracking state
-        # AD-732: vision is the fourth peer tier; state dicts must include it.
-        client._consecutive_failures = {t: 0 for t in ("fast", "standard", "deep", "vision", "compute_use")}
-        client._consecutive_successes = {t: 0 for t in ("fast", "standard", "deep", "vision", "compute_use")}
+        # AD-732 + AD-706c-2 + AD-730-3: include vision + compute_use + image_gen.
+        client._consecutive_failures = {t: 0 for t in ("fast", "standard", "deep", "vision", "compute_use", "image_gen")}
+        client._consecutive_successes = {t: 0 for t in ("fast", "standard", "deep", "vision", "compute_use", "image_gen")}
         client._min_consecutive_healthy = 3
         client._last_success = {}
         client._last_failure = {}
@@ -61,9 +61,10 @@ class TestLLMClientHealthTracking:
     def test_health_status_all_unreachable(self):
         """3+ failures on all tiers → overall offline."""
         client = self._make_client()
-        # AD-732 + AD-706c-2: vision and compute_use are peer tiers; mark
-        # them unreachable too so the overall-offline assertion holds.
-        for tier in ("fast", "standard", "deep", "vision", "compute_use"):
+        # AD-732 + AD-706c-2 + AD-730-3: vision, compute_use, and image_gen
+        # are peer tiers; mark them unreachable too so the overall-offline
+        # assertion holds.
+        for tier in ("fast", "standard", "deep", "vision", "compute_use", "image_gen"):
             client._consecutive_failures[tier] = 3
         status = client.get_health_status()
         assert status["overall"] == "offline"
@@ -537,8 +538,8 @@ class TestDwellTimeCriterion:
         from probos.cognitive.llm_client import OpenAICompatibleClient
         client = OpenAICompatibleClient.__new__(OpenAICompatibleClient)
         client.default_tier = "fast"
-        # AD-732 + AD-706c-2: include vision + compute_use in state-init dicts.
-        _tiers = ("fast", "standard", "deep", "vision", "compute_use")
+        # AD-732 + AD-706c-2 + AD-730-3: include vision + compute_use + image_gen in state-init dicts.
+        _tiers = ("fast", "standard", "deep", "vision", "compute_use", "image_gen")
         client._tier_configs = {
             tier: {
                 "base_url": f"http://{tier}.example/v1",

@@ -4092,3 +4092,48 @@ When enabled, each frame the closest `maxConcurrent` agents within `lodDistance`
 - **AD-740-1** - Auto-correction of drift. Trigger: when >=3 ProbOS deployments accumulate >=7-day drift telemetry showing a stable causal relationship between sustained drift (longest_streak >= 4) and Captain corrections.
 - **AD-740-2** - Cross-agent drift comparison surface (counselor-mediated). Trigger: Counselor agent surfaces >=1 production complaint that single-agent drift alone is insufficient for clinical pattern detection.
 - **AD-740-3** - Persistence beyond in-memory ring (dedicated SQLite sidecar). Trigger: operator request to survive process restart for longitudinal drift study.
+
+### AD-730-3 - Agent image generation in DM replies (Wave 169)
+
+**Closes #633.** Agents can now emit images in their DM replies via the `[GEN_IMAGE prompt]` bracket marker. Image generation is a sixth peer LLM tier (`image_gen`) alongside fast/standard/deep/vision/compute_use, using the OpenAI-compatible Images API v1 wire shape (`POST /v1/images/generations` returning `data[].b64_json`). Default-OFF master switch; opt-in via `AvatarsConfig.image_gen_enabled` AND `CognitiveConfig.llm_base_url_image_gen` + `llm_model_image_gen`.
+
+**Bracket marker.** `[GEN_IMAGE <prompt>]` where `<prompt>` is up to `AvatarsConfig.image_gen_max_prompt_chars` chars (default 512). One marker per reply honored; additional markers stripped with WARNING. Identical contract to AD-728d's `[SELF_CHECK reason]`.
+
+**Eight-guard catalog audit** (per AD-732 / user-memory 2026-05-12 lesson). Every tier-enumerating surface explicitly handles `image_gen`:
+
+| # | Surface | Handling |
+|---|---------|----------|
+| 1 | `_LLM_TIERS` in `cognitive/llm_client.py` | Added as sixth peer. |
+| 2 | `_TIER_ORDER` (fallback chain) | Excluded - text tiers can't generate images (BF-269). |
+| 3 | `CognitiveConfig.tier_config()` 8 internal maps | All extended with `image_gen` entries. |
+| 4 | `is_vision_tier_configured` | New sibling `is_image_gen_tier_configured` mirrors the pattern. |
+| 5 | ModelRouter `by_tier()` | Explicit bypass at dispatch_image_gen call site (BF-273). |
+| 6 | LLMResponseCache | Explicit bypass - no caching of image bytes (BF-272). |
+| 7 | Health probe / tier_configs / consecutive_failures | Added at `_LLM_TIERS` builder + test scaffolding updated per BF-286. |
+| 8 | Fallback recovery chain | Excluded - failures return honest-degrade dict, never fall to text. |
+
+**Files.**
+- `src/probos/cognitive/image_gen_dispatch.py` (new ~240 lines: `dispatch_image_gen`, `is_image_gen_tier_configured`, `_maybe_emit_wellness_review`, `_maybe_write_anchored_episode`, four honest-degrade message constants).
+- `src/probos/cognitive/llm_client.py` (`_LLM_TIERS` extended to include `image_gen`; comment updated for the BF-269 exclusion).
+- `src/probos/cognitive/dm_sanity_gate.py` (new `_GEN_IMAGE_RE` + `_GEN_IMAGE_STRIP_RE` regex constants; new `extract_gen_image` + `strip_gen_image` methods).
+- `src/probos/cognitive/dm/reply_pipeline.py` (`DmReplyContext.generated_attachment_ids: list[str]` field via `field(default_factory=list)`; new `step_4c_image_gen_parse` between step_4 and step_4b; step tuple in `run()` extended; `build_response` surfaces `attachment_ids` only when non-empty).
+- `src/probos/config.py` (`CognitiveConfig` `llm_*_image_gen` 5-field block + all 8 `tier_config` maps extended; `AvatarsConfig` 5-field block: `image_gen_enabled=False` master switch + `image_gen_max_prompt_chars=512` + `image_gen_wellness_review_required=True` + `image_gen_max_image_bytes=4MB` + `image_gen_mime="image/png"`).
+- `tests/test_ad730_3_agent_image_gen.py` (+20 pytest: real `SystemConfig()` + `_FakeAttachmentStore` + `_FakeRuntime` + `httpx.MockTransport` per BF-287; covers dispatch happy path + 6 honest-degrade paths + wellness review dedupe + extract/strip + pipeline integration + 4 eight-guard regressions).
+- `tests/test_per_tier_llm.py`, `tests/test_ad732_vision_tier.py`, `tests/test_ad706c2_compute_use.py`, `tests/test_bf069_llm_health.py` (tier-set assertions and `_make_client` scaffolding extended to include `image_gen` per BF-286).
+
+**Invariants preserved.** AD-731 (refs not blobs: every byte path flows through `AttachmentStore.write(sha, blob, mime)`; `dm/reply_pipeline.py` contains no `b64encode` / `b64_json`; source-scan test enforces); AD-732/8-guard (full table above); AD-727 (first `image_gen` invocation per agent per process emits a single WARNING log line tagged `WELLNESS REVIEW`); AD-728d (new step `step_4c_image_gen_parse` uses letter suffix - trailing 5 steps NOT renumbered); AD-541b (successful image gen writes `importance=8` `anchored=True` episode via `episodic_memory.store_episode` when present); BF-269/BF-272/BF-273 (no fallback, no cache, no ModelRouter participation); BF-286/287 (real config + real fixtures in tests, no MagicMock at substrate boundary).
+
+**Counselor wellness review (v1).** Logger WARNING line on first `image_gen` invocation per agent per process. Process-scoped (`_WELLNESS_REVIEW_SEEN` module-level set), intentionally NOT persisted - restart resets. Interactive Captain ACK is AD-730-3-1 territory.
+
+**Vendor choice.** OpenAI Images API v1 wire shape is the de-facto OpenAI-compatible standard - DALL-E 3, gpt-image-1, openrouter, litellm, AUTOMATIC1111/ComfyUI/SD.next OpenAI-shape adapters all speak it. Operators wanting other vendors layer a translator or use openrouter as base_url.
+
+**Tests.** +20 pytest in the new file (14 core + 4 eight-guard + 2 extract/strip). Full gate: 13960 -> 13973 (+13 net visible after subtracting the documented xdist flake set; serial -n 0 run of the new file alone reports 20 passed).
+
+**Zero new deps.** `httpx` already resident (Wave 162). `base64` / `hashlib` / `logging` / `re` / `asyncio` stdlib. No pyproject / lockfile / ui package changes. Zero-line license diff.
+
+**Forward markers.**
+- **AD-730-3-1** - Per-conversation + per-day cost gating budget (config flag + counter + Captain ACK on overrun). Trigger: operator reports >/day image-gen cost OR >=3 agents reach >=10 generations/day without Captain approval.
+- **AD-730-3-2** - Image moderation classifier (NSFW / safety / policy). Trigger: image_gen exercised in production for >=30 days AND a single moderation incident is documented in a deployment.
+- **AD-730-3-3** - Provenance watermarking + C2PA-shape metadata embedding. Trigger: operator deployment publishes generated images to a third-party channel.
+- **AD-730-3-4** - HXI rendering of agent-generated `attachment_ids` on the DM reply surface. Trigger: this AD merges AND Captain reports inability to see generated images in the HXI. (V1 confirmed: HXI currently sends `attachment_ids` outbound only via IntentSurface.tsx; no inbound render path exists.)
+- **AD-730-3-5** - Ward Room wiring of `[GEN_IMAGE ...]` bracket marker in the WR reply pipeline. Trigger: documented WR use-case requiring agent-generated images.

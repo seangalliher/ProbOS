@@ -23,18 +23,18 @@ logger = logging.getLogger(__name__)
 
 # AD-732: single source of truth for the LLM tier set. State-init loops, health
 # probes, and per-tier dict construction MUST iterate this constant. The
-# fallback chain (``_TIER_ORDER`` below) is a SEPARATE concern — vision and
-# compute_use deliberately do NOT participate in fallback because fallback
-# exists for text-completion graceful degrade, and text tiers cannot see
-# images. Vision/compute_use failures route to honest-degrade messages
-# defined in cognitive/vision_dispatch.py.
-_LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision", "compute_use")
+# fallback chain (``_TIER_ORDER`` below) is a SEPARATE concern — vision,
+# compute_use, and image_gen deliberately do NOT participate in fallback
+# because fallback exists for text-completion graceful degrade, and text
+# tiers cannot see images or generate images. Vision/compute_use/image_gen
+# failures route to honest-degrade messages defined in
+# cognitive/vision_dispatch.py and cognitive/image_gen_dispatch.py.
+_LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision", "compute_use", "image_gen")
 
-# AD-706c-2: fallback chain is text-only. ``vision`` and ``compute_use`` are
-# excluded — text tiers silently drop image content (BF-269) and coordinate
-# prediction failures must surface as honest-degrade, never confident wrong
-# clicks. Module-level so source-scan tests can assert membership without
-# scanning function bodies.
+# AD-706c-2: fallback chain is text-only. ``vision``, ``compute_use``, and
+# ``image_gen`` are excluded — text tiers silently drop image content (BF-269)
+# and image generation has no text-tier substitute. Module-level so
+# source-scan tests can assert membership without scanning function bodies.
 _TIER_ORDER: tuple[str, ...] = ("fast", "standard", "deep")
 
 
