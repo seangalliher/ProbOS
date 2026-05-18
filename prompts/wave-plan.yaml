@@ -3643,7 +3643,7 @@ waves:
     title: "Self-awareness drift detector + agent image generation in DM replies"
     issues_to_close: [664, 633]
     estimated_hours: 5
-    status: drafting
+    status: shipped
     notes: |
       AD-739a drift detector for self-image-awareness (#664, Ezri verbatim request)
       AD-730-3 agent image generation in DM replies (#633, multimodal DM symmetry)
