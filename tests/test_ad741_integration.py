@@ -126,3 +126,35 @@ def test_mixed_hot_reload_and_restart_field_still_requires_restart(tmp_path: Pat
     assert body["restart_required"] is True, body
     # Runtime NOT mutated because mixed-mode requires restart.
     assert runtime.config.perception.enabled is False
+
+
+def test_bf308_perception_threshold_hot_reload(tmp_path: Path) -> None:
+    """BF-308: tuning perception.vision_novelty_threshold via /api/config
+    propagates LIVE into the in-flight VisionConsumer's supervisor
+    strategy (no restart needed)."""
+    from probos.perception.consumer import VisionConsumer
+
+    runtime = _runtime(tmp_path)
+    consumer = VisionConsumer(runtime, min_interval_seconds=5.0, novelty_threshold=0.15)
+    runtime.vision_consumer = consumer
+
+    client = TestClient(create_app(runtime))
+    csrf = client.get("/api/config").json()["csrf_token"]
+
+    resp = client.post(
+        "/api/config",
+        json={"patch": {"perception": {
+            "vision_novelty_threshold": 0.05,
+            "vision_min_interval_seconds": 2.0,
+        }}},
+        headers={"X-Probos-CSRF": csrf},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["restart_required"] is False
+
+    # Runtime config mutated AND in-flight supervisor received the new values.
+    assert runtime.config.perception.vision_novelty_threshold == 0.05
+    assert runtime.config.perception.vision_min_interval_seconds == 2.0
+    assert consumer._supervisor._strategy._threshold == 0.05
+    assert consumer._supervisor._strategy._min_interval == 2.0

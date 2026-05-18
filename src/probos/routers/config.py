@@ -302,6 +302,33 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
                 new_parent = getattr(new_parent, p)
             setattr(rt_parent, parts[-1], getattr(new_parent, parts[-1]))
 
+        # BF-308: perception tuning knobs need a downstream push into the
+        # live VisionConsumer's supervisor strategy. The Pydantic mutation
+        # alone updates runtime.config but the supervisor instance was
+        # constructed at startup with the old values. Forward only the
+        # subset of changed paths the consumer cares about.
+        _PERCEPTION_LIVE_PUSH = {
+            "perception.vision_novelty_threshold",
+            "perception.vision_min_interval_seconds",
+        }
+        if any(p in _PERCEPTION_LIVE_PUSH for p in changed_fields):
+            consumer = getattr(runtime, "vision_consumer", None)
+            strategy = getattr(consumer, "_supervisor", None)
+            strategy = getattr(strategy, "_strategy", None) if strategy is not None else None
+            if strategy is not None:
+                try:
+                    if "perception.vision_novelty_threshold" in changed_fields and hasattr(strategy, "set_novelty_threshold"):
+                        strategy.set_novelty_threshold(runtime.config.perception.vision_novelty_threshold)
+                    if "perception.vision_min_interval_seconds" in changed_fields and hasattr(strategy, "set_min_interval_seconds"):
+                        strategy.set_min_interval_seconds(runtime.config.perception.vision_min_interval_seconds)
+                except Exception:
+                    logger.warning(
+                        "AD-741/BF-308: perception live-push to VisionConsumer "
+                        "supervisor failed; new values written to disk + config "
+                        "but in-flight supervisor still has prior values until restart.",
+                        exc_info=True,
+                    )
+
     logger.info(
         "AD-741 config write: path=%s changed=%s; restart_required=%s.",
         cfg_path,

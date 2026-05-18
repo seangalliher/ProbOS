@@ -83,12 +83,14 @@ _PERCEPTION_SECTION = SectionDescriptor(
             "Novelty threshold",
             "float",
             description="0.00–1.00. Lower = more sensitive (more LLM calls). 0.08 default after BF-307 empirical evidence. Above this aHash diff, a frame is described.",
+            hot_reload=True,
         ),
         FieldDescriptor(
             "perception.vision_min_interval_seconds",
             "Min seconds between describes",
             "float",
             description="Cost-discipline floor. 3s default. Lower = more responsive, higher LLM cost.",
+            hot_reload=True,
         ),
     ),
 )

@@ -48,6 +48,14 @@ class PerceptualHashStrategy:
         self._last_allow_at: float = 0.0
         self._last_hash: int | None = None
 
+    def set_min_interval_seconds(self, value: float) -> None:
+        """BF-308: live update without reconstructing the strategy."""
+        self._min_interval = float(value)
+
+    def set_novelty_threshold(self, value: float) -> None:
+        """BF-308: live update without reconstructing the strategy."""
+        self._threshold = float(value)
+
     def evaluate(self, frame_bytes: bytes, *, now: float) -> SupervisorDecision:
         # Tier-2: if hash computation fails (corrupt JPEG, PIL not available),
         # honest-degrade to "allow first frame, then throttle" — never raise.
