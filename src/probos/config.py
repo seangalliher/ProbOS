@@ -1950,6 +1950,26 @@ class PerceptionConfig(BaseModel):
         description="LLM tier name for vision describe calls. AD-742a forward marker for vision_fast split.",
     )
 
+    # AD-733b (Wave 171): Captain reference avatar SHA in AttachmentStore.
+    # v1 manual config — AD-742b replaces with face-embedding enrollment.
+    captain_avatar_ref: str = Field(default="",
+        description="SHA-256 of a reference photo of the Captain in AttachmentStore. Empty disables identity recognition.",
+    )
+
+    # AD-733b: proactive observer budget.
+    proactive_observer_enabled: bool = Field(default=True,
+        description="Allow the agent to proactively surface novel visual scenes in a DM.",
+    )
+    proactive_max_emissions: int = Field(default=3, ge=0, le=20,
+        description="Maximum proactive vision DMs per session.",
+    )
+    proactive_dwell_seconds: float = Field(default=30.0, ge=5.0, le=600.0,
+        description="Minimum seconds between consecutive proactive vision DMs.",
+    )
+    proactive_novelty_threshold: float = Field(default=0.50, ge=0.0, le=1.0,
+        description="Minimum novelty score for a high-novelty proactive trigger (separate from supervisor admission threshold).",
+    )
+
 
 class LipSyncConfig(BaseModel):
     """AD-721b-1 — Server-side lip-sync backend selection.

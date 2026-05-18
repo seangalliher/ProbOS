@@ -3979,8 +3979,28 @@ async def finalize_startup(
                 "AD-733a: VisionConsumer wired with %d observers",
                 len(consumer.observer_agent_ids),
             )
+
+            if getattr(_perception_cfg, "proactive_observer_enabled", False):
+                from probos.perception.observer import (
+                    ProactiveBudget,
+                    ProactiveVisionObserver,
+                )
+                observer = ProactiveVisionObserver(
+                    runtime,
+                    budget=ProactiveBudget(
+                        max_emissions_per_session=_perception_cfg.proactive_max_emissions,
+                        min_dwell_seconds=_perception_cfg.proactive_dwell_seconds,
+                        novelty_threshold=_perception_cfg.proactive_novelty_threshold,
+                    ),
+                )
+                consumer.wire_proactive_observer(observer)
+                runtime.vision_observer = observer
+                logger.info("AD-733b: ProactiveVisionObserver wired")
+            else:
+                runtime.vision_observer = None
         else:
             runtime.vision_consumer = None
+            runtime.vision_observer = None
     except Exception:
         logger.warning(
             "AD-733a: VisionConsumer wiring failed; "

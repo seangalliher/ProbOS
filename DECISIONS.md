@@ -4277,3 +4277,35 @@ Also ships:
 **Tests.** +19 pytest in `test_ad733a_vision_consumer.py`, +1 pytest in `test_wave171_acceptance.py`. Full gate baseline 14012 -> 14032.
 
 **Closes:** #665.
+
+### AD-733b — ProactiveVisionObserver + identity hook (Wave 171)
+
+**Date:** 2026-05-17
+**Decision:** Add the proactive emission layer on top of AD-733a so an agent can surface visual events to the Captain without being prompted first, and populate VisionObservation.subject_identity via a one-shot vision LLM identity check on the first frame of a session.
+
+New module `src/probos/perception/observer.py` ships `ProactiveVisionObserver` + `ProactiveBudget`. Two triggers in v1:
+- **scene_introduction** — fires once per camera session on the first non-empty working-memory observation. Bypasses the novelty threshold (the camera-just-turned-on event itself is the trigger).
+- **high_novelty** — fires when `observation.novelty_score >= proactive_novelty_threshold` (default 0.50), gated by `max_emissions_per_session` (default 3) AND `min_dwell_seconds` (default 30s).
+
+The observer does NOT compose user-facing reply text. It sends a `[SYSTEM-INITIATED: ...]` synthesized user-turn to the agent via `runtime.intent_bus.send` — the **agents own LLM** composes the visible message using its voice profile + the working memory block. Preserves agent voice instead of generating uniform copy.
+
+**Identity hook** lives inside `VisionConsumer._process`: on the first frame of every session, `_resolve_subject_identity` calls the vision LLM with the Captain reference avatar SHA + the live frame and parses the one-word response (`captain` | `other` | `unknown`). One extra vision LLM call per session — Captain authorized the cost. AD-742b (#670) forward marker replaces this with face-embedding enrollment.
+
+New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identity recognition), `proactive_observer_enabled`, `proactive_max_emissions`, `proactive_dwell_seconds`, `proactive_novelty_threshold`. `startup/finalize.py` wires the observer onto the AD-733a consumer when both `perception.enabled` and `proactive_observer_enabled` are True.
+
+**Tier-2 honest-degrade** at every step: failed identity resolution returns `unknown`; failed observer emission returns `False` without blocking the WM write or the episode anchor; the consumers first-observation-in-session tracker is set-based and survives partial failures.
+
+**AD-731 invariant preserved.** Identity hook reads BOTH images through `AttachmentStore.read(sha)`; the bus message stays ref-only. Source-scan test (under AD-733a) keeps observer.py + the updated consumer.py honest.
+
+**Forward markers referenced.** AD-742a (#669), AD-742b (#670), AD-742c (#671), AD-742d (#672), AD-742e (#673), AD-742f (#674) — all six TECHNICAL triggers cited per AD-722c-3.
+
+**Files.**
+- `src/probos/perception/observer.py` (new, ~180 lines)
+- `src/probos/perception/consumer.py` (+90 lines: `_resolve_subject_identity` + `_lookup_captain_avatar_ref` + observer wiring in `_process`)
+- `src/probos/config.py` (+22 lines: five PerceptionConfig fields)
+- `src/probos/startup/finalize.py` (+20 lines: observer wiring)
+- `tests/test_ad733b_proactive_observer.py` (new, 10 tests)
+
+**Tests.** +10 pytest. Baseline 14032 -> 14042.
+
+**Closes:** #666.
