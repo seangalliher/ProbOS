@@ -274,3 +274,45 @@ async def post_perception_mode(
         )
     changed = controller.transition_to(target, trigger="manual")
     return {"ok": True, "mode": controller.current_mode.value, "changed": changed}
+
+
+# AD-733c-3 (Wave 172) - Wake-word engage.
+
+class _PerceptionEngageRequest(BaseModel):
+    agent: str | None = None        # callsign of the targeted agent (informational)
+    phrase: str | None = None       # the matched phrase (informational, for logs)
+    source: str = "wake_word"       # "wake_word" | "manual"
+
+
+@router.post("/engage", dependencies=[Depends(require_crew_scope)])
+async def post_perception_engage(
+    body: _PerceptionEngageRequest,
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """AD-733c-3: flip the mode controller to ENGAGED on a wake-word event.
+
+    Body fields are informational (logged); the controller only needs the
+    side effect. 5s cooldown enforced at the controller level.
+    """
+    controller = getattr(runtime, "perception_mode_controller", None)
+    if controller is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "perception_mode_controller_unavailable"},
+        )
+    if body.source not in ("wake_word", "manual"):
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_source", "value": body.source},
+        )
+    transitioned, reason = controller.note_wake_word()
+    logger.info(
+        "AD-733c-3: engage agent=%s phrase=%s source=%s transitioned=%s reason=%s",
+        (body.agent or "*")[:32], (body.phrase or "*")[:64], body.source,
+        transitioned, reason,
+    )
+    return {
+        "ok": True,
+        "mode": controller.current_mode.value,
+        "transitioned": transitioned,
+        "reason": reason,
+    }

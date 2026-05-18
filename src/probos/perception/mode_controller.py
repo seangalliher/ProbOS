@@ -92,6 +92,9 @@ class PerceptionModeController:
 
     # Cooldown between programmatic transitions (manual override exempt).
     PROGRAMMATIC_COOLDOWN_S = 1.0
+    # AD-733c-3: separate floor for wake-word events to prevent UI flap when
+    # the detector fires multiple times during the same utterance.
+    WAKE_WORD_COOLDOWN_S = 5.0
     HISTORY_CAP = 16
 
     def __init__(self, runtime: Any, *, initial_mode: Mode = Mode.AMBIENT) -> None:
@@ -107,6 +110,10 @@ class PerceptionModeController:
         # is not falsely blocked by the cooldown floor (the cooldown is for
         # back-to-back transitions, not for the boot->first-engagement path).
         self._last_transition_at: float = 0.0
+        # AD-733c-3: wake-word cooldown tracker. Separate from
+        # _last_transition_at so a stream of wake-word events is throttled
+        # independently of DM-activity / novelty transitions.
+        self._last_wake_word_at: float = 0.0
         self._history: deque[Transition] = deque(maxlen=self.HISTORY_CAP)
         self._history.append(
             Transition(at=self._mode_since, from_mode=initial_mode, to_mode=initial_mode, trigger="init")
@@ -204,18 +211,28 @@ class PerceptionModeController:
         if self._mode is Mode.AMBIENT:
             self.transition_to(Mode.ENGAGED, trigger="novelty")
 
-    def note_wake_word(self) -> None:
+    def note_wake_word(self) -> tuple[bool, str]:
         """Hook called by the AD-733c-3 engage endpoint. Forces ENGAGED.
 
-        AD-733c-3 rewrites this method to return ``(bool, str)`` and add a
-        5s wake-word cooldown. The v1 stub here keeps the controller
-        callable from the engage endpoint as a smoke-test seam.
+        Returns ``(transitioned, reason)`` where ``reason`` is one of
+        ``"transitioned"`` / ``"refreshed"`` / ``"cooldown"`` / ``"blocked"``.
+        The endpoint uses this to populate its response body so the UI
+        can surface cooldown rejections to the operator (Captain may want
+        to know why a repeated "Hello Ezri" did nothing).
         """
-        if self._mode is not Mode.ENGAGED:
-            self.transition_to(Mode.ENGAGED, trigger="wake_word")
-        else:
-            # Already engaged -- refresh activity so idle timer resets.
-            self._last_dm_activity_at = time.time()
+        now = time.time()
+        if now - self._last_wake_word_at < self.WAKE_WORD_COOLDOWN_S:
+            logger.debug(
+                "AD-733c-3: wake-word ignored (cooldown %.2fs remaining)",
+                self.WAKE_WORD_COOLDOWN_S - (now - self._last_wake_word_at),
+            )
+            return (False, "cooldown")
+        self._last_wake_word_at = now
+        self._last_dm_activity_at = now
+        if self._mode is Mode.ENGAGED:
+            return (False, "refreshed")
+        ok = self.transition_to(Mode.ENGAGED, trigger="wake_word")
+        return (ok, "transitioned" if ok else "blocked")
 
     # -- Background task lifecycle -------------------------------------
 

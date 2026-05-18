@@ -186,6 +186,24 @@ export function IntentSurface() {
       if (cancelled) return;
       const text = (routed.cleanedText || '').trim();
       if (!text) return;
+      // AD-733c-3: fire-and-forget engage. ONLY for agent-surface wakes --
+      // a system-surface wake ("computer ...") does not imply engagement
+      // with any particular agent's perception. Failure is non-blocking;
+      // the chat submit proceeds regardless.
+      if (routed.surface === 'agent' && routed.agentCallsign) {
+        void fetch('/api/perception/engage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agent: routed.agentCallsign,
+            phrase: routed.cleanedText.slice(0, 64),
+            source: 'wake_word',
+          }),
+        }).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn('[AD-733c-3] /api/perception/engage failed', err);
+        });
+      }
       // For agent-routed wakes prepend @callsign so the existing chat path
       // dispatches to that agent (mirrors the manual `@`-mention pattern).
       const finalText =

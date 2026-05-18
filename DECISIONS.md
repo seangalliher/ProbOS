@@ -4360,3 +4360,22 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - vitest: `CameraLiveIndicator.modeBadge.test.tsx` (3) + `PerceptionLivePanel.modeSection.test.tsx` (3)
 
 **Tests.** +13 pytest, +6 vitest. UI bundle `index-CUG-925p.js`.
+
+### AD-733c-3 - Wake-word engage endpoint + UI fire-and-forget (Wave 172)
+
+**Part of #675.** Wake-word events (browser-side ONNX detector from AD-705) flip the PerceptionModeController to ENGAGED synchronously BEFORE the chat submit. The 5s wake-word cooldown prevents UI flap when the detector fires multiple times during the same utterance.
+
+**Endpoint.** `POST /api/perception/engage` accepts `{agent?, phrase?, source: "wake_word" | "manual"}`. Body fields are informational (logged); the controller only needs the side effect. Returns `{ok, mode, transitioned, reason}` where `reason` is one of `"transitioned" | "refreshed" | "cooldown" | "blocked"`.
+
+**Controller change.** `note_wake_word()` rewritten from `None` to `tuple[bool, str]`. New class constant `WAKE_WORD_COOLDOWN_S = 5.0` separate from the 1s `PROGRAMMATIC_COOLDOWN_S` so wake events are throttled independently. `_last_wake_word_at` tracker initialized to 0 so the first wake event always succeeds.
+
+**UI hook.** `IntentSurface.tsx:onWake` callback fires a fire-and-forget `void fetch('/api/perception/engage', ...)` BEFORE the chat submit, ONLY for agent-surface wakes (system-surface "computer ..." does not imply engagement with any agent's perception). Failure surfaces as `console.warn` only -- the chat path proceeds regardless.
+
+**Files.**
+- `src/probos/perception/mode_controller.py` (+30 lines: WAKE_WORD_COOLDOWN_S, _last_wake_word_at, rewritten note_wake_word)
+- `src/probos/routers/perception.py` (+42 lines: _PerceptionEngageRequest model + /engage endpoint)
+- `ui/src/components/IntentSurface.tsx` (+18 lines: fire-and-forget engage POST in onWake)
+- `tests/test_ad733c3_engage_endpoint.py` (new, 4 tests)
+- `ui/src/__tests__/IntentSurface.engage.test.tsx` (new, 3 tests)
+
+**Tests.** +4 pytest, +3 vitest. UI bundle `index-C8-ybnnU.js`.
