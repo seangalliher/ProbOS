@@ -3227,6 +3227,44 @@ class CognitiveAgent(BaseAgent):
             },
         )
 
+        # AD-740: fold affect-vs-intent drift summary alongside the
+        # snapshot. Read-only over the AD-722a-5 ring buffer; honest-
+        # degrades when the buffer has <2 entries.
+        try:
+            from probos.avatars.affect_drift import get_affect_drift
+
+            drift = get_affect_drift(self._runtime, self.id)
+            if not drift.get("insufficient_data") and wm is not None:
+                drift_summary = (
+                    f"Affect-vs-intent drift (last {drift['samples']} turns): "
+                    f"mean match={drift['mean_match_score']:.2f}, "
+                    f"below-threshold={drift['below_threshold_count']}, "
+                    f"longest divergent streak={drift['longest_divergent_streak']}."
+                )
+                try:
+                    wm.record_observation(
+                        drift_summary,
+                        source="ad740_affect_drift",
+                        metadata={
+                            "trigger": "agent_initiated_stub",
+                            "window": drift["window"],
+                            "threshold": drift["threshold"],
+                        },
+                        knowledge_source="self_perception",
+                    )
+                except Exception:
+                    logger.warning(
+                        "AD-740: working-memory drift observation failed for "
+                        "agent=%s; snapshot already recorded",
+                        self.id, exc_info=True,
+                    )
+        except Exception:
+            logger.warning(
+                "AD-740: drift summary fold failed for agent=%s; "
+                "skipping (snapshot already injected)",
+                self.id, exc_info=True,
+            )
+
     def mark_chain_output_emitted(
         self,
         output_text: str,

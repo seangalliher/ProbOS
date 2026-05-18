@@ -4069,3 +4069,26 @@ When enabled, each frame the closest `maxConcurrent` agents within `lodDistance`
 - **AD-720c-2** — Dropbox provider implementation. Same trigger as AD-720c-1.
 
 **What this does NOT change.** `_validate_and_store_attachment` (AD-720a) reused verbatim. AD-706f `CredentialVault` Protocol surface untouched. `httpx` + `cryptography` versions unchanged. Browser chat compose `attachment_ids: string[]` shape extended, not redesigned. Existing paste / multipart upload paths untouched. No new pip / npm deps.
+
+### AD-740 - Affect-vs-intent drift trend (Wave 169)
+
+**Closes #664.** Ezri requested trend depth on top of the AD-728c `check_own_render` snapshot: "a short trend would add depth." AD-740 ships a pure read-only summariser over the existing AD-722a-5 `runtime.divergence_history` ring buffer. No new data capture, no LLM call, no event emission.
+
+**API.** `get_affect_drift(runtime, agent_id, *, window=None, threshold=None) -> dict`. Returns either `{"insufficient_data": True, "samples": int}` OR `{"window", "samples", "mean_match_score", "below_threshold_count", "longest_divergent_streak", "threshold"}`. Honest-degrades when the ring buffer is absent or has fewer than 2 entries.
+
+**Files.**
+- `src/probos/avatars/affect_drift.py` (new, ~95 lines).
+- `src/probos/config.py` (`AvatarsConfig.affect_drift_default_window=8` + `affect_drift_threshold=0.7`).
+- `src/probos/cognitive/cognitive_agent.py` (`check_own_render` folds drift summary into `_working_memory.record_observation` after the snapshot record).
+- `tests/test_ad740_affect_drift.py` (+8 pytest using real `SystemConfig()` + hand-rolled `_FakeRuntime`/`_FakeEntry` per BF-287).
+
+**Invariants preserved.** AD-731 (no inline blobs - drift summary is a pure dict of scalars); AD-727 rule #8 (observation phrasing describes the OUTPUT, never the agent); AD-722a-5 buffer lifecycle unchanged; AD-728c cost discipline preserved (no new LLM call, no new event emission); BF-287 (real config, no MagicMock at substrate boundary).
+
+**Tests.** +8 pytest. Full gate: 13952 -> 13960.
+
+**Zero new deps.** stdlib `collections.deque` + `logging` only.
+
+**Forward markers.**
+- **AD-740-1** - Auto-correction of drift. Trigger: when >=3 ProbOS deployments accumulate >=7-day drift telemetry showing a stable causal relationship between sustained drift (longest_streak >= 4) and Captain corrections.
+- **AD-740-2** - Cross-agent drift comparison surface (counselor-mediated). Trigger: Counselor agent surfaces >=1 production complaint that single-agent drift alone is insufficient for clinical pattern detection.
+- **AD-740-3** - Persistence beyond in-memory ring (dedicated SQLite sidecar). Trigger: operator request to survive process restart for longitudinal drift study.

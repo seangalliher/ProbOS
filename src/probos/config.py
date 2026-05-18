@@ -1338,6 +1338,29 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-740: affect-vs-intent drift trend over recent divergence history.
+    # Summarises the existing AD-722a-5 ring buffer; pure read-only.
+    affect_drift_default_window: int = Field(
+        default=8,
+        ge=2,
+        le=128,
+        description=(
+            "AD-740: default window size (most recent N divergence entries) "
+            "for affect-vs-intent drift trend summary. Operators may pass "
+            "an explicit ``window`` to ``get_affect_drift`` to override."
+        ),
+    )
+    affect_drift_threshold: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "AD-740: match-score threshold below which an entry counts as "
+            "a 'divergent' turn in the drift summary. Default 0.7 mirrors "
+            "the conservative end of the AD-722a divergence band."
+        ),
+    )
+
     # AD-729: peer avatar perception governance contract (default-OFF
     # transitional). Capability stays OFF until AD-729a Standing Orders ship
     # and AD-729b certification grades at least one officer.
