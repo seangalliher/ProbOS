@@ -49,8 +49,18 @@ _PERCEPTION_SECTION = SectionDescriptor(
         "explicit kill switch in the persistent CAMERA LIVE indicator."
     ),
     fields=(
-        FieldDescriptor("perception.enabled", "Perception subsystem", "bool"),
-        FieldDescriptor("perception.camera.enabled", "Camera streaming", "bool"),
+        FieldDescriptor(
+            "perception.enabled",
+            "Perception subsystem",
+            "bool",
+            hot_reload=True,
+        ),
+        FieldDescriptor(
+            "perception.camera.enabled",
+            "Camera streaming",
+            "bool",
+            hot_reload=True,
+        ),
         FieldDescriptor(
             "perception.camera.default_fps",
             "Frames per second",

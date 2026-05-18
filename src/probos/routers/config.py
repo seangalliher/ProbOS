@@ -278,9 +278,34 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
         )
 
     changed_fields = _diff_paths(current, merged)
+
+    # BF-299: apply hot-reload-eligible fields in-place so trivial boolean
+    # toggles (perception.enabled, perception.camera.enabled) don't trigger
+    # the restart banner. The runtime mutation happens AFTER the YAML write
+    # succeeds so a write failure can't leave runtime and disk diverged.
+    hot_reload_paths = {
+        f.field_id
+        for s in section_registry.SECTIONS
+        for f in s.fields
+        if f.hot_reload
+    }
+    restart_required = not (
+        changed_fields and all(p in hot_reload_paths for p in changed_fields)
+    )
+    if not restart_required:
+        for dotted in changed_fields:
+            parts = dotted.split(".")
+            rt_parent: Any = runtime.config
+            new_parent: Any = new_cfg
+            for p in parts[:-1]:
+                rt_parent = getattr(rt_parent, p)
+                new_parent = getattr(new_parent, p)
+            setattr(rt_parent, parts[-1], getattr(new_parent, parts[-1]))
+
     logger.info(
-        "AD-741 config write: path=%s changed=%s; restart required to take effect.",
+        "AD-741 config write: path=%s changed=%s; restart_required=%s.",
         cfg_path,
         changed_fields,
+        restart_required,
     )
-    return {"ok": True, "restart_required": True, "changed_fields": changed_fields}
+    return {"ok": True, "restart_required": restart_required, "changed_fields": changed_fields}

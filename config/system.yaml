@@ -1,108 +1,175 @@
-# ProbOS System Configuration
+# Edited via HXI 2026-05-18 09:30:19 UTC
 system:
-  name: "ProbOS"
-  version: "0.4.0"
-  log_level: "INFO"
-
+  name: ProbOS
+  version: 0.4.0
+  log_level: INFO
 pools:
   default_pool_size: 3
   max_pool_size: 7
   min_pool_size: 2
   spawn_cooldown_ms: 500
-  health_check_interval_seconds: 5
-
+  health_check_interval_seconds: 5.0
 mesh:
   gossip_interval_ms: 1000
   hebbian_decay_rate: 0.995
+  hebbian_social_decay_rate: 0.995
+  intent_skill_map: {}
   hebbian_reward: 0.05
-  signal_ttl_seconds: 30
-  capability_broadcast_interval_seconds: 5
-  semantic_matching: true  # Phase 14b: embedding-based matching in CapabilityRegistry (AD-174)
-
+  signal_ttl_seconds: 30.0
+  capability_broadcast_interval_seconds: 5.0
+  semantic_matching: true
 consensus:
   min_votes: 3
   approval_threshold: 0.6
   use_confidence_weights: true
-  verification_timeout_seconds: 5
+  verification_timeout_seconds: 5.0
   red_team_pool_size: 2
   trust_prior_alpha: 2.0
   trust_prior_beta: 2.0
   trust_decay_rate: 0.999
-
 cognitive:
-  # Default tier for all LLM requests ("fast", "standard", or "deep")
-  default_llm_tier: "fast"
-
-  # Shared defaults (used when per-tier not specified)
-  llm_base_url: "http://127.0.0.1:8080/v1"
-  llm_api_key: ""
-  llm_timeout_seconds: 300  # Match proxy REQUEST_TIMEOUT_MS (300s)
-
-  # Fast tier — Sonnet via Copilot proxy
-  llm_base_url_fast: "http://127.0.0.1:8080/v1"
-  llm_api_key_fast: ""
-  llm_model_fast: "claude-sonnet-4.6"
-  llm_timeout_fast: 300  # Match proxy REQUEST_TIMEOUT_MS (300s)
-  llm_api_format_fast: "openai"
-
-  # To switch back to Ollama, uncomment below and comment out the lines above:
-  # llm_base_url_fast: "http://127.0.0.1:11434"
-  # llm_model_fast: "qwen3.5:35b"
-  # llm_api_format_fast: "ollama"
-
-  # Standard tier — Sonnet 4.6 via Copilot proxy
-  llm_model_standard: "claude-sonnet-4.6"
-
-  # Deep tier — Opus 4.6 via Copilot proxy
-  llm_model_deep: "claude-opus-4.6"
-  llm_timeout_deep: 300
-
-  # AD-732 — Vision tier. Default-unconfigured. Enable for image-aware DMs.
-  #
-  # Recommended OSS setup: local Ollama + Qwen3.6 (free, no API key, Apache 2.0).
-  #   1. Install Ollama: https://ollama.com/download
-  #   2. Run: ollama pull qwen3.6:27b
-  #
-  # Cloud alternative: point at OpenAI / Anthropic direct (set llm_api_key_vision).
-  #
-  llm_base_url_vision: "http://127.0.0.1:11434/v1"
-  llm_model_vision: "qwen3.6:27b"
-  llm_api_format_vision: "openai"  # Ollama's OpenAI-compat endpoint
-  llm_timeout_vision: 120  # local inference can be slow on first load
-  # qwen3.6:27b is a thinking model — reasoning trace can be long.
-  # 8192 leaves ample room for both the reasoning AND a complete reply
-  # within the model's 32K context. Bump higher if descriptions get cut off.
+  llm_base_url: http://127.0.0.1:8080/v1
+  llm_api_key: ''
+  llm_timeout_seconds: 300.0
+  llm_model_fast: claude-sonnet-4.6
+  llm_model_standard: claude-sonnet-4.6
+  llm_model_deep: claude-opus-4.6
+  llm_health_min_consecutive_healthy: 3
+  llm_base_url_fast: http://127.0.0.1:8080/v1
+  llm_api_key_fast: ''
+  llm_timeout_fast: 300.0
+  llm_api_format_fast: openai
+  llm_base_url_standard: null
+  llm_api_key_standard: null
+  llm_timeout_standard: null
+  llm_api_format_standard: null
+  llm_base_url_deep: null
+  llm_api_key_deep: null
+  llm_timeout_deep: 300.0
+  llm_api_format_deep: null
+  llm_base_url_vision: http://127.0.0.1:11434/v1
+  llm_api_key_vision: null
+  llm_model_vision: qwen3.6:27b
+  llm_timeout_vision: 120.0
+  llm_api_format_vision: openai
+  llm_base_url_compute_use: null
+  llm_api_key_compute_use: null
+  llm_model_compute_use: null
+  llm_timeout_compute_use: null
+  llm_api_format_compute_use: null
+  llm_temperature_compute_use: null
+  llm_top_p_compute_use: null
+  llm_max_tokens_compute_use: null
+  llm_base_url_image_gen: null
+  llm_api_key_image_gen: null
+  llm_model_image_gen: null
+  llm_timeout_image_gen: null
+  llm_api_format_image_gen: null
+  llm_temperature_fast: null
+  llm_temperature_standard: null
+  llm_temperature_deep: null
+  llm_temperature_vision: null
+  llm_top_p_fast: null
+  llm_top_p_standard: null
+  llm_top_p_deep: null
+  llm_top_p_vision: null
+  llm_max_tokens_fast: null
+  llm_max_tokens_standard: null
+  llm_max_tokens_deep: null
   llm_max_tokens_vision: 8192
-
-  # Per-tier sampling parameters (uncomment to override request defaults)
-  # Deep tier: higher temperature for reasoning diversity
-  # llm_temperature_deep: 0.7
-  # llm_top_p_deep: 0.95
-  #
-  # Standard tier: moderate temperature
-  # llm_temperature_standard: 0.3
-  #
-  # Fast tier: low temperature for deterministic classification
-  # llm_temperature_fast: 0.0
-
+  default_llm_tier: fast
+  ollama_keep_alive: 30m
   working_memory_token_budget: 4000
-  decomposition_timeout_seconds: 300
-  dag_execution_timeout_seconds: 300
+  decomposition_timeout_seconds: 300.0
+  dag_execution_timeout_seconds: 300.0
   use_consensus_for_writes: true
   max_concurrent_tasks: 8
   attention_decay_rate: 0.95
   focus_history_size: 10
   background_demotion_factor: 0.25
-
+  captain_card_enabled: true
+  captain_card_path: captain_card.json
+  captain_card_max_tokens: 500
+  captain_card_refresh_min_interval_seconds: 3600
+health_probe_interval_seconds: 30.0
 memory:
-  collection_name: "probos_episodes"
+  collection_name: probos_episodes
   max_episodes: 100000
+  access_policy: permissive
   relevance_threshold: 0.7
-  similarity_threshold: 0.6  # Phase 14b: semantic similarity threshold for recall/fuzzy lookup (AD-173)
-
+  agent_recall_threshold: 0.25
+  fts_keyword_semantic_floor: 0.2
+  embedding_model: multi-qa-MiniLM-L6-cos-v1
+  query_reformulation_enabled: true
+  similarity_threshold: 0.6
+  verify_content_hash: true
+  eviction_audit_enabled: true
+  recall_weights:
+    semantic: 0.35
+    keyword: 0.2
+    trust: 0.1
+    hebbian: 0.05
+    recency: 0.15
+    anchor: 0.15
+  recall_convergence_bonus: 0.1
+  recall_temporal_match_weight: 0.25
+  recall_temporal_mismatch_penalty: 0.15
+  tcm_enabled: true
+  tcm_dimension: 16
+  tcm_drift_rate: 0.95
+  tcm_weight: 0.15
+  tcm_fallback_watch_weight: 0.05
+  recall_context_budget_chars: 4000
+  anchor_dimension_weights:
+    temporal: 0.25
+    spatial: 0.25
+    social: 0.25
+    causal: 0.15
+    evidential: 0.1
+  anchor_confidence_gate: 0.3
+  composite_score_floor: 0.35
+  max_recall_episodes: 0
+  recall_quality_floor: 0.4
+  recall_tiers:
+    basic:
+      k: 3
+      context_budget: 1500
+      anchor_confidence_gate: 0.0
+      composite_score_floor: 0.0
+      max_recall_episodes: 0
+      recall_quality_floor: 0.0
+      use_salience_weights: false
+      cross_department_anchors: false
+    enhanced:
+      k: 5
+      context_budget: 4000
+      anchor_confidence_gate: 0.3
+      composite_score_floor: 0.35
+      max_recall_episodes: 0
+      recall_quality_floor: 0.4
+      use_salience_weights: true
+      cross_department_anchors: false
+    full:
+      k: 8
+      context_budget: 6000
+      anchor_confidence_gate: 0.3
+      composite_score_floor: 0.35
+      max_recall_episodes: 0
+      recall_quality_floor: 0.4
+      use_salience_weights: true
+      cross_department_anchors: true
+    oracle:
+      k: 10
+      context_budget: 8000
+      anchor_confidence_gate: 0.2
+      composite_score_floor: 0.0
+      max_recall_episodes: 0
+      recall_quality_floor: 0.0
+      use_salience_weights: true
+      cross_department_anchors: true
 dreaming:
-  idle_threshold_seconds: 300
-  dream_interval_seconds: 600
+  idle_threshold_seconds: 300.0
+  dream_interval_seconds: 600.0
   replay_episode_count: 50
   pathway_strengthening_factor: 0.03
   pathway_weakening_factor: 0.02
@@ -110,170 +177,463 @@ dreaming:
   trust_boost: 0.1
   trust_penalty: 0.1
   pre_warm_top_k: 5
-
+  notebook_consolidation_enabled: true
+  notebook_consolidation_threshold: 0.6
+  notebook_consolidation_min_entries: 2
+  notebook_convergence_threshold: 0.5
+  notebook_convergence_min_agents: 3
+  notebook_convergence_min_departments: 2
+  active_retrieval_enabled: false
+  retrieval_episodes_per_cycle: 3
+  retrieval_success_threshold: 0.6
+  retrieval_partial_threshold: 0.3
+  retrieval_initial_interval_hours: 24.0
+  retrieval_max_interval_hours: 168.0
+  retrieval_counselor_failure_streak: 3
+  reminiscence_enabled: true
+  reminiscence_episodes_per_session: 3
+  reminiscence_concern_threshold: 3
+  reminiscence_confabulation_alert: 0.3
+  reminiscence_cooldown_hours: 2.0
+  activation_enabled: true
+  activation_decay_d: 0.5
+  activation_prune_threshold: -2.0
+  activation_access_max_age_days: 180
+  prune_min_age_hours: 24
+  prune_max_fraction: 0.1
+  reflection_enabled: true
+  reflection_max_per_cycle: 3
+  reflection_min_importance: 8
+  aggressive_prune_enabled: true
+  aggressive_prune_min_age_hours: 168
+  aggressive_prune_threshold: 0.0
+  aggressive_prune_max_fraction: 0.25
+  episode_pressure_threshold: 5000
+  episode_pressure_multiplier: 1.5
+  trace_exemplars_per_procedure: 3
+  relationship_inference_enabled: true
+  relationship_inference_max_pairs_per_run: 50
+  relationship_inference_max_per_entity: 5
+  relationship_inference_min_confidence: 0.6
+dream_wm:
+  enabled: true
+  max_priming_entries: 3
+  flush_min_entries: 5
+  priming_category: observation
 scaling:
   enabled: true
   scale_up_threshold: 0.8
   scale_down_threshold: 0.2
   scale_up_step: 1
   scale_down_step: 1
-  cooldown_seconds: 30
-  observation_window_seconds: 60
-  idle_scale_down_seconds: 120
-
+  cooldown_seconds: 30.0
+  observation_window_seconds: 60.0
+  idle_scale_down_seconds: 120.0
 federation:
   enabled: false
-  node_id: "node-1"
-  bind_address: "tcp://127.0.0.1:5555"
+  node_id: node-1
+  bind_address: tcp://127.0.0.1:5555
   peers: []
   forward_timeout_ms: 5000
-  gossip_interval_seconds: 10
+  gossip_interval_seconds: 10.0
   validate_remote_results: true
-
+  memory_policy: clean_room
+  memory_policy_selective_tags: []
+  mcp_server:
+    enabled: false
+    bind_host: 127.0.0.1
+    bind_port: 8765
+    path_prefix: /mcp
+  a2a:
+    enabled: false
+    bind_host: 127.0.0.1
+    bind_port: 8766
+    agent_card_path: /.well-known/agent.json
+    outbound_peers: []
+  peer_trust:
+    probationary_alpha: 1.0
+    probationary_beta: 3.0
+  tls:
+    enabled: false
+    cert_file: null
+    key_file: null
+    ca_file: null
+    verify_peer: true
+  discovery:
+    multicast_enabled: false
+    multicast_group: 239.255.42.99
+    multicast_port: 5556
+    announce_interval_seconds: 5.0
+  cluster_monitor:
+    enabled: true
+    peer_unreachable_seconds: 60.0
+  min_peer_trust_score: 0.0
+  memory_access_policy: shared_trust
+  shared_trust_min_score: 0.5
+  dp_min_cohort_size: 3
 self_mod:
   enabled: true
   require_user_approval: true
+  probationary_alpha: 1.0
+  probationary_beta: 3.0
   max_designed_agents: 5
+  sandbox_timeout_seconds: 60.0
   allowed_imports:
-    # === Standard library — always available, no install needed ===
-    # Core
-    - asyncio
-    - pathlib
-    - json
-    - os
-    - sys
-    - re
-    - copy
-    - enum
-    - abc
-    - typing
-    - dataclasses
-    - contextlib
-    - functools
-    - itertools
-    - collections
-    - logging
-    - pprint
-    # Strings & text
-    - string
-    - textwrap
-    - difflib
-    # Numbers & math
-    - math
-    - statistics
-    - struct
-    - decimal
-    - fractions
-    - random
-    # Date & time
-    - datetime
-    - time
-    - calendar
-    # File & path
-    - io
-    - csv
-    - tempfile
-    - shutil
-    - glob
-    - fnmatch
-    # Encoding & hashing
-    - hashlib
-    - base64
-    - secrets
-    - uuid
-    # Web & parsing
-    - urllib
-    - urllib.parse
-    - urllib.request
-    - html
-    - html.parser
-    - xml
-    - xml.etree
-    - xml.etree.ElementTree
-    # Data formats
-    - tomllib
-    - configparser
-    # === Third-party — may need install via uv add ===
-    # Web & HTTP
-    - httpx
-    - feedparser
-    - bs4               # package: beautifulsoup4
-    - lxml
-    - chardet
-    # Data formats
-    - yaml              # package: pyyaml
-    - toml
-    # Data processing
-    - pandas
-    - numpy
-    - openpyxl
-    # Text & templates
-    - markdown
-    - jinja2
-    # Date parsing
-    - dateutil          # package: python-dateutil
-    # Table formatting
-    - tabulate
-    # System monitoring
-    - psutil
-    # Validation & models
-    - pydantic
-
+  - asyncio
+  - pathlib
+  - json
+  - os
+  - sys
+  - re
+  - copy
+  - enum
+  - abc
+  - typing
+  - dataclasses
+  - contextlib
+  - functools
+  - itertools
+  - collections
+  - logging
+  - pprint
+  - string
+  - textwrap
+  - difflib
+  - math
+  - statistics
+  - struct
+  - decimal
+  - fractions
+  - random
+  - datetime
+  - time
+  - calendar
+  - io
+  - csv
+  - tempfile
+  - shutil
+  - glob
+  - fnmatch
+  - hashlib
+  - base64
+  - secrets
+  - uuid
+  - urllib
+  - urllib.parse
+  - urllib.request
+  - html
+  - html.parser
+  - xml
+  - xml.etree
+  - xml.etree.ElementTree
+  - tomllib
+  - configparser
+  - httpx
+  - feedparser
+  - bs4
+  - lxml
+  - chardet
+  - yaml
+  - toml
+  - pandas
+  - numpy
+  - openpyxl
+  - markdown
+  - jinja2
+  - dateutil
+  - tabulate
+  - psutil
+  - pydantic
+  forbidden_patterns:
+  - subprocess
+  - shutil\.rmtree
+  - os\.remove
+  - os\.unlink
+  - eval\s*\(
+  - exec\s*\(
+  - __import__
+  - open\s*\(.*['\"][waxWAX]
+  - socket\b
+  - ctypes\b
+  - os\.system
+  - os\.popen
+  - os\.exec
+  - os\.kill
+  - \.write_text\s*\(
+  - \.write_bytes\s*\(
+  - \.unlink\s*\(
+  - __builtins__
+  - compile\s*\(
+  research_enabled: false
+  research_domain_whitelist:
+  - docs.python.org
+  - pypi.org
+  - developer.mozilla.org
+  - learn.microsoft.com
+  research_max_pages: 3
+  research_max_content_per_page: 2000
 qa:
-  enabled: true                    # Phase 13: SystemQA smoke-tests designed agents (AD-153)
+  enabled: true
   smoke_test_count: 5
   timeout_per_test_seconds: 10.0
   total_timeout_seconds: 30.0
   pass_threshold: 0.6
   trust_reward_weight: 1.0
-  trust_penalty_weight: 2.0        # Asymmetric: failures penalize 2x (AD-155)
+  trust_penalty_weight: 2.0
   flag_on_fail: true
-  auto_remove_on_total_fail: false  # Conservative: flag but don't auto-remove
-
+  auto_remove_on_total_fail: false
 knowledge:
-  enabled: true                    # Phase 14: Git-backed persistence (AD-159)
-  repo_path: ""                    # Empty = default to data_dir/knowledge
-  auto_commit: true                # Debounced commits on write (AD-161)
+  enabled: true
+  repo_path: ''
+  auto_commit: true
   commit_debounce_seconds: 5.0
-  max_episodes: 1000               # Oldest-first eviction in KnowledgeStore
+  max_episodes: 1000
   max_workflows: 200
-  restore_on_boot: true            # Warm boot: restore trust, routing, agents, skills, episodes (AD-162/AD-181)
-
+  restore_on_boot: true
+records:
+  enabled: true
+  repo_path: ''
+  auto_commit: true
+  commit_debounce_seconds: 5.0
+  max_episodes_per_hour: 20
+  notebook_dedup_enabled: true
+  notebook_similarity_threshold: 0.8
+  notebook_staleness_hours: 72.0
+  notebook_max_scan_entries: 20
+  notebook_repetition_enabled: true
+  notebook_repetition_window_hours: 48.0
+  notebook_repetition_threshold_count: 3
+  notebook_repetition_novelty_threshold: 0.2
+  notebook_repetition_suppression_count: 5
+  notebook_metrics_enabled: true
+  realtime_convergence_enabled: true
+  realtime_convergence_threshold: 0.5
+  realtime_divergence_threshold: 0.3
+  realtime_convergence_staleness_hours: 72.0
+  realtime_max_scan_per_agent: 5
+  realtime_min_convergence_agents: 2
+  realtime_min_convergence_departments: 2
+  convergence_independence_threshold: 0.3
+  notebook_quality_enabled: true
+  notebook_quality_low_threshold: 0.3
+  notebook_quality_warn_threshold: 0.5
+  notebook_staleness_alert_rate: 0.7
+archive:
+  enabled: true
+  db_path: ''
+telemetry:
+  enabled: true
+  report_interval_seconds: 60.0
+  max_samples_per_bucket: 1000
+post_budget_telemetry:
+  enabled: true
+  exhaustion_alert_threshold: 0.5
+  min_samples_for_alert: 10
+  recent_suppressions_max: 100
+confidence:
+  enabled: true
+  default_confidence: 0.5
+  confirm_delta: 0.15
+  contradict_delta: 0.25
+  auto_supersede_threshold: 0.1
+  auto_apply_threshold: 0.8
+  suppress_threshold: 0.5
+lint:
+  enabled: true
+  min_coverage_per_department: 5
+  inconsistency_keywords:
+    increased: decreased
+    improved: degraded
+    rising: falling
+    positive: negative
+    success: failure
+quality_trigger:
+  enabled: true
+  min_quality_threshold: 0.4
+  max_stale_rate: 0.3
+  max_repetition_rate: 0.2
+  cooldown_seconds: 1800.0
+  max_forced_per_day: 5
+quality_router:
+  enabled: true
+  min_weight: 0.5
+  max_weight: 1.5
+  concern_threshold: 0.3
+onboarding:
+  enabled: true
+  activation_trust_threshold: 0.65
+  naming_ceremony: true
+holodeck_birth_chamber:
+  enabled: false
+  bypass_for_existing_agents: true
+  department_order:
+  - security
+  - operations
+  - engineering
+  - science
+  - medical
+  calibration_min_episodes: 5
+  affective_baseline_check_enabled: true
+  auto_advance_enabled: true
+  auto_advance_poll_interval_seconds: 2.0
+  max_self_discovery_probe_attempts: 3
+holodeck_scenarios:
+  enabled: false
+  auto_register_with_harness: true
+  default_threshold: 0.6
+  default_tier: 2
+  category_fallback: construction
+  persist_to_sqlite: false
+  data_subdir: holodeck_scenarios
+team_simulations:
+  enabled: false
+  auto_register_with_harness: true
+  default_threshold: 0.6
+  default_tier: 2
+  enforce_required_departments: true
+  persist_to_sqlite: false
+  data_subdir: team_simulations
+naming:
+  enabled: true
+  captain_ship_override: ''
+  extra_banned_words: []
+runtime_overrides:
+  enabled: true
+  store_filename: runtime_overrides.json
 utility_agents:
-  enabled: true                    # Phase 22: utility CognitiveAgent suite (AD-252)
-
-# --- Ward Room (AD-407) ---
+  enabled: true
+swe_specialists:
+  enabled: false
+  pool_size_per_specialty: 1
+  model_tier_overrides:
+    backend: deep
+    frontend: standard
+    test: fast
+    infrastructure: standard
+    data: deep
+native_swe_harness:
+  enabled: false
+  eligibility_modify_only: true
+  max_iterations: 25
+  max_fix_iterations: 5
+  token_budget: null
+  compaction_threshold_pct: 0.8
+  blocked_paths:
+  - src/probos/security/
+  - .env
+  - config/sealed_modules.yaml
 ward_room:
-  enabled: true                    # Ward Room communication fabric
-  max_agent_rounds: 3              # AD-407d: max consecutive agent rounds before silence
-  agent_cooldown_seconds: 45       # AD-407d: cooldown for agent-triggered responses
-
-# --- Bridge Alerts (AD-410) ---
+  enabled: true
+  max_agent_rounds: 3
+  agent_cooldown_seconds: 45.0
+  max_thread_posts: 50
+  default_discuss_responder_cap: 3
+  retention_days: 7
+  retention_days_endorsed: 30
+  retention_days_captain: 0
+  archive_enabled: true
+  prune_interval_seconds: 86400.0
+  dm_exchange_limit: 15
+  dm_similarity_threshold: 0.6
+  router_concurrency_limit: 10
+  event_coalesce_ms: 200
+  dm_response_budget: 6
+  dm_response_window_seconds: 600.0
+  dm_pair_exchange_budget: 8
+visiting_officers:
+  enabled: false
+  session_ttl_seconds: 3600.0
+  sweep_interval_seconds: 60.0
+  default_capabilities:
+  - ward_room.post
+  - ward_room.read
+workflow_cron:
+  enabled: false
+  db_path: ''
+  tick_interval_seconds: 1.0
+  initial_triggers: []
+query_planner:
+  enabled: false
+  fall_through_on_empty: true
+assignments:
+  enabled: false
 bridge_alerts:
   enabled: true
-  cooldown_seconds: 300
+  cooldown_seconds: 300.0
   trust_drop_threshold: 0.15
   trust_drop_alert_threshold: 0.25
-
-# --- Content Contagion Firewall (AD-529) ---
+  resolve_clean_period: 3600.0
+  default_dismiss_duration: 14400.0
 firewall:
   enabled: true
   scan_trust_threshold: 0.65
+  low_trust_threshold: 0.45
+  hex_id_min_length: 6
+  hex_id_threshold: 2
+  fabricated_metrics_threshold: 3
+  flag_window_seconds: 3600.0
   quarantine_threshold: 3
-
-# --- Earned Agency (AD-357) ---
+security:
+  enabled: true
+  max_payload_bytes: 65536
+  rate_window_seconds: 60.0
+  rate_max_requests: 60
+  max_threat_severity: 0.8
+  burst_window_seconds: 60.0
+  burst_threshold: 20
+  campaign_interval_seconds: 3600.0
+  memory:
+    enforce_recall: false
+    enforce_provenance: false
+    enforce_leak_guard: false
+    enforce_store: false
+    anchor_mismatch_threshold: 0.7
+    dp_min_cohort_size: 3
+  profile: strict
+  permissions:
+    allow: []
+    deny: []
+auth:
+  crew_scope_token: ''
+emergent_detector:
+  cluster_edge_threshold: 0.3
+  cluster_min_size: 3
+  cluster_min_avg_weight: 0.25
+  cluster_cooldown_seconds: 1800.0
+  cluster_activity_window: 900.0
+  dream_min_history: 5
+  dream_anomaly_min_strengthened: 10
+  dream_anomaly_min_pruned: 5
+  dream_anomaly_min_trust_adj: 10
+  adaptive_window_size: 30
+  adaptive_z_threshold: 2.5
+  adaptive_debounce_count: 2
+  adaptive_min_history: 8
+emergence_collector:
+  enabled: false
+  confidence_threshold: 0.7
+  dedup_window_seconds: 600.0
+  output_dir: data/research/emergence-evidence
+  llm_tier: fast
+  trial_id: default
+  thread_context_limit: 5
+  max_reasoning_chars: 2000
+novelty_gate:
+  enabled: true
+  similarity_threshold: 0.82
+  max_fingerprints_per_agent: 50
+  decay_hours: 24.0
+  min_text_length: 80
 earned_agency:
-  enabled: true  # Re-enabled after cold-start stabilization (2026-04-20). AD-638 will automate this gate.
-
-# --- Proactive Cognitive Loop (Phase 28b) ---
+  enabled: true
+  initiative_trust_thresholds:
+    responsive: 0.3
+    contributory: 0.5
+    proactive: 0.7
 proactive_cognitive:
   enabled: true
-  interval_seconds: 120
-  cooldown_seconds: 300
-  # AD-636: Stagger agent dispatch to distribute LLM load
-  stagger_enabled: true
-  min_stagger_seconds: 5.0
-  # AD-414: Trust signal weights
+  interval_seconds: 120.0
+  cooldown_seconds: 300.0
   trust_reward_weight: 0.1
   trust_no_response_weight: 0.0
   trust_duty_bonus: 0.1
@@ -281,144 +641,89 @@ proactive_cognitive:
     enabled: true
     schedules:
       scout:
-        - duty_id: scout_report
-          description: "Perform a comprehensive review of recent codebase and system changes"
-          interval_seconds: 86400   # Once daily
-          priority: 3
+      - duty_id: scout_report
+        description: Perform a comprehensive review of recent codebase and system
+          changes
+        cron: ''
+        interval_seconds: 86400.0
+        priority: 3
+        required_skills: []
       security_officer:
-        - duty_id: security_audit
-          description: "Review system security posture, access patterns, and potential vulnerabilities"
-          interval_seconds: 14400   # Every 4 hours
-          priority: 3
+      - duty_id: security_audit
+        description: Review system security posture, access patterns, and potential
+          vulnerabilities
+        cron: ''
+        interval_seconds: 14400.0
+        priority: 3
+        required_skills: []
       engineering_officer:
-        - duty_id: systems_check
-          description: "Review engineering systems health, performance metrics, and technical debt"
-          interval_seconds: 7200    # Every 2 hours
-          priority: 2
+      - duty_id: systems_check
+        description: Review engineering systems health, performance metrics, and technical
+          debt
+        cron: ''
+        interval_seconds: 7200.0
+        priority: 2
+        required_skills: []
       operations_officer:
-        - duty_id: ops_status
-          description: "Review operational status, resource utilization, pool health, and queue depths"
-          interval_seconds: 10800   # Every 3 hours
-          priority: 2
+      - duty_id: ops_status
+        description: Review operational status, resource utilization, pool health,
+          and queue depths
+        cron: ''
+        interval_seconds: 10800.0
+        priority: 2
+        required_skills: []
       diagnostician:
-        - duty_id: crew_health_check
-          description: "Assess crew cognitive health, trust dynamics, and behavioral patterns"
-          interval_seconds: 21600   # Every 6 hours
-          priority: 2
+      - duty_id: crew_health_check
+        description: Assess crew cognitive health, trust dynamics, and behavioral
+          patterns
+        cron: ''
+        interval_seconds: 21600.0
+        priority: 2
+        required_skills: []
       counselor:
-        - duty_id: wellness_review
-          description: "Review crew morale, interpersonal dynamics, and communication patterns"
-          interval_seconds: 43200   # Every 12 hours
-          priority: 2
+      - duty_id: wellness_review
+        description: Review crew morale, interpersonal dynamics, and communication
+          patterns
+        cron: ''
+        interval_seconds: 43200.0
+        priority: 2
+        required_skills: []
       architect:
-        - duty_id: architecture_review
-          description: "Review system architecture, design patterns, and improvement opportunities"
-          interval_seconds: 86400   # Once daily
-          priority: 3
-
-# --- Persistent Task Engine (Phase 25a) ---
+      - duty_id: architecture_review
+        description: Review system architecture, design patterns, and improvement
+          opportunities
+        cron: ''
+        interval_seconds: 86400.0
+        priority: 3
+        required_skills: []
+    use_work_items: false
+  stagger_enabled: true
+  min_stagger_seconds: 5.0
 persistent_tasks:
   enabled: true
-  tick_interval_seconds: 5
+  tick_interval_seconds: 5.0
   max_concurrent_executions: 1
   dag_auto_resume: false
-
-# --- Channel Adapters (Phase 24) ---
 channels:
   discord:
     enabled: true
-    token: ""                       # Set via PROBOS_DISCORD_TOKEN env var
-    allowed_channel_ids: []         # Empty = all channels
-    allowed_user_ids: []                   # Empty = all users
-    command_prefix: "!"             # "!status" -> "/status"
-    mention_required: false         # Only respond when @mentioned
-    scout_channel_id: 1485357000098582728  # #research channel for scout reports
-
-# --- Workforce Scheduling Engine (AD-496) ---
-workforce:
-  enabled: true
-  tick_interval_seconds: 10.0
-  default_capacity: 1
-
-# --- Avatar Telemetry (AD-722) ---
-# Closes the self-image feedback loop: agents perceive their own avatar
-# state (DSL summary, signals, applied voice modulation, mouth_active) as
-# an INTEROCEPTION sensorium block during prompt assembly. Captain ruling
-# 2026-05-10: flip default-OFF → ON so crew (Ezri et al.) stop "speaking
-# into a void." The DM chat handler refreshes the snapshot before each
-# reply (see routers/agents.py).
-avatar_telemetry:
-  enabled: true
-  inject_into_agent_context: true
-  # AD-722a (Wave 143): intent-vs-presentation divergence detector.
-  # When true, the agent's LLM appends <intent emotion=...> to each DM
-  # reply; server parses + strips, compares declared emotion against
-  # applied voice modulation, and surfaces the signed divergence as a
-  # new INTEROCEPTION block ("Your last reply diverged from intent: ...").
-  # This is the signal Ezri described as missing in the 2026-05-10 check-in
-  # ("reading a readout versus feeling it"). Flip ON to close the loop.
-  divergence_detection: true
-
-# --- Avatars (AD-721 family) ---
-# AD-728c (Wave 164): agent-initiated render self-check ("look in the mirror").
-# When enabled, crew agents can call CognitiveAgent.check_own_render(reason=...)
-# from their instructions. Two-budget rate limit:
-#   - hourly cap when NOT in an active conversation
-#   - per-conversation cap INSTEAD OF hourly when in an active DM
-# Throttle observations and divergence findings are injected back into the
-# agent's working memory as PROPRIOCEPTION entries so the agent literally
-# sees "vision-LLM reports my avatar shows X, I intended Y". Costs one
-# vision-tier LLM call per check.
-avatars:
-  render_self_check_enabled: true
-  render_self_check_max_per_hour_per_agent: 3
-  render_self_check_max_per_active_conversation: 2
-  render_self_check_active_window_seconds: 600
-
-# --- Lip-Sync (AD-721b-1, Wave 155) ---
-# Captain provides the rhubarb-lip-sync binary at tools/rhubarb/rhubarb.exe
-# (Windows) or tools/rhubarb/rhubarb (Linux/macOS). /tools/ is gitignored.
-# Missing binary / subprocess failure / timeout all log WARNING and degrade
-# to the heuristic path (speech must never stop animating).
-lipsync:
-  enabled: true
-  backend: rhubarb
-  binary_path: tools/rhubarb/rhubarb
-  timeout_seconds: 30.0
-
-# --- Server-streamed TTS (AD-738, Wave 157) ---
-# Captain provides the piper binary at tools/piper/piper.exe (Windows) or
-# tools/piper/piper (Linux/macOS) plus the ONNX voice model under
-# tools/piper/voices/<name>.onnx + <name>.onnx.json. /tools/ is gitignored.
-# Default backend="browser" preserves SpeechSynthesisUtterance (Edge TTS on
-# Windows). Flipping to "piper" enables server-side synthesis -> rhubarb
-# visemes -> real lip-sync. Missing binary or model logs WARNING and
-# degrades back to the browser path automatically.
-tts:
-  enabled: true
-  backend: piper
-  binary_path: tools/piper/piper
-  voice_model: en_US-amy-medium
-  timeout_seconds: 10.0
-  # Prosody (AD-738e / BF-285). Higher noise_scale and noise_w trade a touch
-  # of clarity for noticeable expressiveness + natural rhythm variation.
-  # Captain noted "monotone" + "strange consistent rhythm" on upstream defaults
-  # (0.667 / 1.0 / 0.8 / 0.2); the values below soften both.
-  noise_scale: 0.85         # generator noise (pitch/expression variation)
-  length_scale: 0.92        # phoneme duration (>1 = slower, <1 = faster); 0.92 ≈ +8% rate
-  noise_w: 1.0              # phoneme-width noise (rhythm variation)
-  sentence_silence: 0.35    # seconds of silence between sentences
-
-# --- Temporal Context (AD-502) ---
-temporal:
-  enabled: true
-  include_birth_time: true
-  include_system_uptime: true
-  include_last_action: true
-  include_post_count: true
-  include_episode_timestamps: true
-
-# --- Medical Team (AD-290) ---
+    token: ''
+    allowed_channel_ids: []
+    allowed_user_ids: []
+    command_prefix: '!'
+    mention_required: false
+    scout_channel_id: 1485357000098582728
+  slack:
+    enabled: false
+    bot_token: ''
+    signing_secret: ''
+    allowed_channel_ids: []
+    allowed_user_ids: []
+    default_thread_ts: true
+  webhook:
+    enabled: false
+    shared_secret: ''
+    allowed_channels: []
 medical:
   enabled: true
   vitals_interval_seconds: 5.0
@@ -428,8 +733,6 @@ medical:
   health_floor: 0.6
   max_trust_outliers: 3
   scheduled_diagnosis_interval: 300.0
-
-# --- Counselor (AD-503) ---
 counselor:
   enabled: true
   profile_retention_days: 90
@@ -437,47 +740,953 @@ counselor:
   sweep_max_agents: 50
   alert_on_red: true
   alert_on_yellow: false
-
 circuit_breaker:
-  # velocity_threshold: 8
-  # velocity_window_seconds: 300.0
-  # similarity_threshold: 0.6
-  # base_cooldown_seconds: 900.0
-  # max_cooldown_seconds: 3600.0
-  # amber_similarity_ratio: 0.25
-  # amber_velocity_ratio: 0.6
-  # amber_decay_seconds: 900.0
-  # red_decay_seconds: 1800.0
-  # critical_decay_seconds: 3600.0
-  # critical_trip_window_seconds: 3600.0
-  # critical_trip_count: 3
-
+  velocity_threshold: 8
+  velocity_window_seconds: 300.0
+  similarity_threshold: 0.6
+  similarity_min_events: 4
+  base_cooldown_seconds: 900.0
+  max_cooldown_seconds: 3600.0
+  amber_similarity_ratio: 0.25
+  amber_velocity_ratio: 0.6
+  amber_decay_seconds: 900.0
+  red_decay_seconds: 1800.0
+  critical_decay_seconds: 3600.0
+  critical_trip_window_seconds: 3600.0
+  critical_trip_count: 3
+trait_adaptive:
+  enabled: true
+concurrency:
+  enabled: true
+  default_max_concurrent: 4
+  queue_max_size: 10
+  capacity_warning_ratio: 0.75
+  role_overrides:
+    bridge: 3
+    operations: 6
+    engineering: 5
+    science: 4
+    medical: 3
+    security: 3
+trust_dampening:
+  dampening_window_seconds: 300.0
+  dampening_geometric_factors:
+  - 1.0
+  - 0.75
+  - 0.5
+  - 0.25
+  dampening_floor: 0.25
+  hard_trust_floor: 0.05
+  cascade_agent_threshold: 3
+  cascade_department_threshold: 2
+  cascade_delta_threshold: 0.15
+  cascade_window_seconds: 300.0
+  cascade_global_dampening: 0.5
+  cascade_cooldown_seconds: 600.0
+  cold_start_observation_threshold: 20.0
+  cold_start_dampening_floor: 0.5
+emergence_metrics:
+  pid_bins: 2
+  pid_permutation_shuffles: 50
+  pid_significance_threshold: 0.05
+  min_thread_contributors: 2
+  min_thread_posts: 3
+  thread_lookback_hours: 24.0
+  groupthink_redundancy_threshold: 0.8
+  fragmentation_synergy_threshold: 0.1
+  tom_baseline_window: 20
+  tom_trend_min_samples: 10
+  hebbian_synergy_min_interactions: 5
+emergent_leadership:
+  enabled: true
+  min_weight: 0.1
+  min_ratio: 1.5
+orders:
+  enabled: true
+  max_active_per_post: 8
+  default_ttl_seconds: 3600.0
+validation_framework:
+  enabled: true
+  metadata_threshold: 0.85
+  min_confidence_delta: 0.2
+pre_flight:
+  enabled: true
+  llm_tier_check_enabled: true
+  required_llm_tier: deep
+  token_budget_check_enabled: true
+  token_budget_blocking: false
+engineering:
+  enabled: true
+  performance_interval_seconds: 10.0
+  maintenance_interval_seconds: 300.0
+  damage_control_cooldown_seconds: 60.0
+degradation:
+  auto_pause_enabled: false
+infodynamic:
+  enabled: true
+  event_window_seconds: 3600.0
+  trust_buckets: 10
+infrastructure:
+  enabled: true
+  backup_enabled: true
+  backup_subdir: backups
+security_infra:
+  secrets_persistence_enabled: true
+  secrets_store_filename: secrets.json
+  egress_enabled: true
+  egress_deny_by_default: true
+  audit_enabled: true
+  sandbox_enabled: true
+  sandbox_default_wall_timeout_seconds: 30.0
+  sandbox_default_memory_peak_mb: 256.0
+  egress_active_enforcement: false
+  credential_tier_enforcement: false
+  audit_persistence_enabled: false
+  audit_persistence_filename: audit_log.db
+ground_truth:
+  enabled: true
+  threshold: 0.75
+  event_window_seconds: 600.0
+  write_episode: true
+  active_rejection_enabled: false
+  quarantine_metadata_key: ground_truth_quarantine
+  trust_feedback_enabled: false
+  trust_feedback_success_weight: 1.0
+  trust_feedback_failure_weight: 0.5
+operations:
+  enabled: true
+  resource_interval_seconds: 30.0
+  resource_emit_interval_seconds: 60.0
+  scheduler_interval_seconds: 60.0
+  coordinator_interval_seconds: 60.0
+model_routing:
+  enabled: true
+  cost_ceiling_per_million_output_tokens: null
+ready_room:
+  enabled: true
+  idea_store_filename: ready_room/ideas.json
+  wardroom_channel_id: ready_room
+dept_profiles:
+  profiles: {}
+eps:
+  enabled: true
+  window_seconds: 60.0
+  over_budget_threshold: 1.25
+  departments:
+  - name: engineering
+    percent: 0.3
+    priority: 3
+  - name: science
+    percent: 0.2
+    priority: 4
+  - name: medical
+    percent: 0.15
+    priority: 2
+  - name: security
+    percent: 0.15
+    priority: 2
+  - name: operations
+    percent: 0.1
+    priority: 4
+  - name: other
+    percent: 0.1
+    priority: 6
+mcp:
+  enabled: true
+  request_timeout_seconds: 30.0
+  servers: []
+mcp_app_host:
+  enabled: false
+  serve_internal_games: true
+  discover_external_apps: false
+  internal_default_csp: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src
+    'self' 'unsafe-inline'
+  external_default_csp: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'
+  bundles_dir: ''
+browser_tool:
+  enabled: false
+  headless: true
+  default_timeout_ms: 30000
+  session_max_duration_seconds: 1800
+  session_reaper_interval_seconds: 60
+  domain_allowlist: null
+  domain_denylist: []
+  screenshot_max_width: 1024
+  screenshot_max_height: 768
+  require_confirmation_for_tier_3: true
+  confirmation_timeout_seconds: 300
+  default_min_interval_seconds: 1.0
+  per_action_timeout_ms: {}
+  tier_3_domain_patterns:
+  - '*bank*'
+  - '*paypal*'
+  - '*stripe*'
+  - '*chase*'
+  - '*coinbase*'
+  - '*checkout*'
+  llm_classifier_enabled: false
+  llm_classifier_tier: fast
+  llm_classifier_max_per_hour: 60
+  llm_classifier_cache_ttl_seconds: 300
+  compute_use_max_consecutive_autonomous_actions: 5
+  compute_use_max_per_session: 50
+  streaming_enabled: false
+  streaming_fps: 4
+  streaming_jpeg_quality: 60
+  streaming_max_concurrent_viewers: 4
+  recording_enabled: false
+  recording_dir: data/browser-sessions
+  recording_retention_days: 7
+  recording_reaper_interval_seconds: 3600
+  recording_max_size_mb_per_session: 500
+  credential_vault:
+    enabled: false
+    backend: file
+    file_path: data/credential_vault.json
+    max_credentials: 100
+    require_https_for_fill: true
+avatars:
+  enabled: true
+  avatars_dir: data/avatars
+  max_vrm_size_bytes: 26214400
+  fallback_to_parametric_on_error: true
+  blender_path: ''
+  blender_render_timeout_s: 180
+  dsl_drafts_dir: data/avatars/.drafts
+  renderer_enabled: false
+  procedural_base_mesh_fallback: true
+  max_proposal_iterations: 3
+  baseline_vrms:
+    ensign: ''
+    lieutenant: ''
+    commander: ''
+    senior: ''
+  proposal_history_path: null
+  vision_proposal_history_path: null
+  vision_intent_divergence_enabled: false
+  vision_intent_divergence_max_per_hour_per_agent: 3
+  self_render_verify_enabled: false
+  self_render_verify_max_per_hour_per_agent: 3
+  render_verification_enabled: false
+  render_verification_max_per_hour_per_agent: 3
+  render_verification_followup_enabled: false
+  render_self_check_enabled: true
+  render_self_check_max_per_hour_per_agent: 3
+  render_self_check_max_per_active_conversation: 2
+  render_self_check_active_window_seconds: 600
+  affect_drift_default_window: 8
+  affect_drift_threshold: 0.7
+  image_gen_enabled: false
+  image_gen_max_prompt_chars: 512
+  image_gen_wellness_review_required: true
+  image_gen_max_image_bytes: 4194304
+  image_gen_mime: image/png
+  peer_perception_enabled: false
+  peer_observation_decay_seconds: 604800
+  peer_observation_max_per_pair_per_thread: 1
+  cross_agent_divergence_observation_enabled: false
+  canvas_render_vrm_avatars: false
+  canvas_max_concurrent_vrms: 12
+  canvas_vrm_lod_distance: 15.0
+  animations_dir: data/avatars/animations
+  animations_enabled: false
+avatar_telemetry:
+  enabled: true
+  inject_into_agent_context: true
+  mouth_active_window_seconds: 3.0
+  polling_interval_ms: 2000
+  sampling_rates:
+    high_ms: 250
+    normal_ms: 2000
+    low_ms: 10000
+  max_connections_per_agent: 4
+  divergence_detection: true
+  divergence_negative_threshold: 0.3
+  divergence_positive_threshold: 0.5
+  divergence_negative_weight: 0.4
+  divergence_positive_weight: 0.1
+  divergence_history_size: 100
+  divergence_aggregate_window: 50
+  auto_correct_enabled: false
+  auto_correct_threshold: 0.6
+  max_corrections_per_utterance: 1
+  correction_noise_factor: 1.15
+  correction_length_factor: 0.92
+  history_enabled: true
+  history_retention_days: 30
+  history_dir: data/avatar_telemetry
+  records_auto_write_enabled: false
+  records_throttle_seconds: 3600
+  records_significant_events:
+  - emotion_divergence_high
+  - working_state_transition_to_blocked
+  - sustained_silence
+  sustained_silence_seconds: 1800
+  ws_diff_enabled: true
+  ws_diff_threshold: 0.05
+  ws_full_snapshot_every_n: 10
+  fleet_stream_enabled: true
+dm_sanity_gate:
+  enabled: true
+  length_floor: 5
+  repetition_prefix_chars: 100
+  repetition_similarity_threshold: 0.85
+  retry_on_rejection: true
+  retry_warnings:
+  - length_floor
+  - orphaned_tag
+dm_targeted_lookup:
+  enabled: false
+  classifier_tier: regex
+  timeout_ms: 500
+  enable_oracle: true
+  enable_episodic: true
+  enable_codebase: false
+  enable_knowledge: true
+  max_lookup_chars: 1500
+attachments:
+  enabled: true
+  attachments_dir: data/attachments
+  max_attachment_bytes: 10485760
+  allowed_mime_types:
+  - image/png
+  - image/jpeg
+  - image/webp
+  - image/gif
+  - application/pdf
+  - text/plain
+  - text/markdown
+  - application/json
+  - text/csv
+  - audio/webm
+  - audio/wav
+  - audio/mpeg
+  - audio/mp4
+  - audio/ogg
+  vision_tier: vision
+  text_extraction_max_bytes: 1048576
+  pdf_extraction_enabled: false
+  multi_image_warn_threshold: 5
+  images_per_dm_hard_cap: 8
+  image_max_dimension: 1024
+  daily_image_budget_per_captain: 50
+  image_budget_path: null
+  vision_tier_overrides: {}
+cloud_pickers:
+  enabled: false
+  max_file_size_bytes: 50000000
+  state_ttl_seconds: 300
+  google_drive:
+    enabled: false
+    client_id: ''
+    client_secret: ''
+    redirect_uri: http://127.0.0.1:8081/api/cloud-pickers/{provider}/callback
+  onedrive:
+    enabled: false
+    client_id: ''
+    client_secret: ''
+    redirect_uri: http://127.0.0.1:8081/api/cloud-pickers/{provider}/callback
+  dropbox:
+    enabled: false
+    client_id: ''
+    client_secret: ''
+    redirect_uri: http://127.0.0.1:8081/api/cloud-pickers/{provider}/callback
+lipsync:
+  enabled: true
+  backend: rhubarb
+  binary_path: tools/rhubarb/rhubarb
+  timeout_seconds: 30.0
+  ffmpeg_binary_path: tools/ffmpeg/ffmpeg
+tts:
+  enabled: true
+  backend: piper
+  binary_path: tools/piper/piper
+  voice_model: en_US-amy-medium
+  timeout_seconds: 10.0
+  noise_scale: 0.85
+  length_scale: 0.92
+  noise_w: 1.0
+  sentence_silence: 0.35
+knowledge_browser:
+  enabled: false
+  max_graph_nodes: 500
+  max_graph_edges: 1000
+  jaccard_threshold: 0.3
+  max_suggestions_per_entry: 5
+  index_refresh_seconds: 300
+extensions:
+  enabled: false
+  enforce_sealed_core: false
+  default_profile: minimal
+  extensions_dir: src/probos/extensions
+observability_bridge:
+  enabled: true
+  publish_interval_seconds: 60.0
+  system_channel: system_observability
+threshold_alerts:
+  enabled: false
+  pool_saturation_floor: 0.9
+  degradation_min_severity: degraded
+  attention_queue_depth: 20
+  dedup_window_seconds: 300.0
+ward_room_hebbian:
+  enabled: true
+  learning_rate: 0.1
+  decay_factor: 0.99
+perception:
+  enabled: true
+  camera:
+    enabled: true
+    default_fps: 1
+    frame_jpeg_quality: 0.6
+    frame_max_dimension: 512
+  camera_max_fps_server: 4
+  frame_max_size_bytes: 524288
+  vision_consumer_enabled: true
+  vision_min_interval_seconds: 5.0
+  vision_novelty_threshold: 0.15
+  working_memory_capacity: 8
+  vision_tier: vision
+  captain_avatar_ref: ''
+  proactive_observer_enabled: true
+  proactive_max_emissions: 3
+  proactive_dwell_seconds: 30.0
+  proactive_novelty_threshold: 0.5
+engineering_sensors:
+  enabled: true
+  report_interval_seconds: 60.0
+  auto_start_periodic_report: false
+learned_shortcuts:
+  enabled: true
+  register_workflow_cache: true
+thread_priority:
+  enabled: true
+  weight_captain: 0.3
+  weight_unresolved: 0.2
+  weight_cross_department: 0.15
+  weight_recency: 0.2
+  weight_endorsement: 0.15
+  captain_callsign: Captain
+deliberation:
+  enabled: true
+  captain_callsign: Captain
+behavioral_metrics:
+  thread_lookback_hours: 72.0
+  min_thread_contributors: 2
+  min_thread_posts: 3
+  frame_diversity_min_departments: 2
+  synthesis_novelty_threshold: 0.35
+  synthesis_min_thread_posts: 4
+  trigger_correlation_window_hours: 24.0
+  trigger_topic_similarity_threshold: 0.6
+  convergence_similarity_threshold: 0.75
+  convergence_min_agreeing: 2
+  anchor_independence_min_episodes: 3
+  max_snapshots: 100
+event_log:
+  retention_days: 7
+  max_rows: 100000
+  prune_interval_seconds: 3600.0
+cognitive_journal:
+  enabled: true
+  retention_days: 14
+  max_rows: 500000
+  prune_interval_seconds: 3600.0
+knowledge_edges:
+  enabled: true
+  db_path: data/knowledge_edges.sqlite
+  max_traverse_hops: 3
+knowledge_edge_classification:
+  enabled: true
+  default_classification: private
+edge_backfill:
+  enabled: true
+  run_on_warm_boot: true
+  hebbian_threshold: 0.5
+  force: false
+  decisions_paths:
+  - DECISIONS.md
+  - decisions-era-1-genesis.md
+  - decisions-era-2-emergence.md
+  - decisions-era-3-product.md
+  - decisions-era-4-evolution.md
+communications:
+  dm_min_rank: ensign
+  recreation_min_rank: ensign
+workforce:
+  enabled: true
+  tick_interval_seconds: 10.0
+  default_capacity: 1
+  custom_work_types: []
+  custom_templates: []
+  template_config_path: config/work_templates.yaml
+temporal:
+  enabled: true
+  include_birth_time: true
+  include_system_uptime: true
+  include_last_action: true
+  include_post_count: true
+  include_episode_timestamps: true
+qualification:
+  enabled: true
+  baseline_auto_capture: true
+  significance_threshold: 0.15
+  test_timeout_seconds: 60.0
+  enforcement_enabled: false
+  enforcement_log_only: true
+  communication_benchmarks:
+    enabled: true
+    frequency_hours: 12.0
+    probes:
+    - thread_relevance
+    - memory_grounding
+    - memory_absence
+    - expertise
+    - silence_appropriateness
+    - dm_action
+  drift_check_enabled: true
+  drift_check_interval_seconds: 604800.0
+  drift_warning_sigma: 2.0
+  drift_critical_sigma: 3.0
+  drift_min_samples: 3
+  drift_history_window: 20
+  drift_cooldown_seconds: 3600.0
+  drift_check_tiers:
+  - 1
+  - 2
+  - 3
+  peer_observation_module_path: config/manuals/peer_observation_conduct.yaml
+  peer_observation_certification_required: false
+orientation:
+  enabled: true
+  orientation_window_seconds: 600.0
+  cold_start_full_orientation: true
+  warm_boot_orientation: true
+  proactive_supplement: true
+  populate_watch_section: true
+  populate_ward_room_department: true
+  populate_event_log_window: true
+social_verification:
+  enabled: true
+  corroboration_threshold: 0.4
+  corroboration_max_agents: 5
+  corroboration_min_confidence: 0.3
+  cascade_enabled: true
+  cascade_independence_threshold: 0.3
+  cascade_cooldown_seconds: 300.0
+  anomaly_window_discount: 0.5
+  provenance_version_independence_weight: 0.7
+  provenance_validation_enabled: true
+  expose_episode_content: false
+anomaly_window:
+  enabled: true
+  max_window_duration_seconds: 1800.0
+  lookback_seconds: 60.0
+working_memory:
+  token_budget: 3000
+  max_recent_actions: 10
+  max_recent_observations: 5
+  max_recent_conversations: 5
+  max_events: 10
+  proactive_budget: 1500
+  stale_threshold_hours: 24.0
+  conclusion_ttl_seconds: 1800.0
+  max_conclusions: 20
+  duty_budget: 600
+  social_budget: 800
+  ship_budget: 800
+  engagement_budget: 800
+predictive_branching:
+  enabled: false
+  cache_ttl_seconds: 60.0
+  cache_max_entries: 128
+  speculation_tokens_per_window: 2000
+  speculation_window_seconds: 300.0
+  flush_rate_feedback_threshold: 0.3
+  flush_rate_window_seconds: 3600.0
+  accuracy_ring_size: 100
+  cheap_tier_min_confidence: 0.3
+  standard_tier_min_confidence: 0.7
+  anticipatory_tier_min_confidence: 0.85
+self_improvement:
+  enabled: false
+  qa_pool_size: 3
+  iteration_cap: 5
+  evolution_half_life_seconds: 2592000.0
+  evolution_collection_name: self_improvement_lessons
+  persistence_root_dir: src/probos/agents/designed
+memory_budget:
+  enabled: true
+  total_budget_tokens: 4650
+  l0_budget: 150
+  l1_budget: 3000
+  l2_budget: 1000
+  l3_budget: 500
+metabolism:
+  enabled: true
+  decay_half_life_seconds: 3600.0
+  forget_threshold: 0.05
+  min_entries_per_buffer: 2
+  audit_enabled: true
+  cycle_interval_seconds: 300.0
+  triage_fullness_threshold: 0.8
+  triage_base_score: 0.3
+pinned_knowledge:
+  enabled: true
+  max_tokens: 150
+  max_pins: 10
+  default_ttl_seconds: 86400.0
+temporal_validity:
+  enabled: true
+  default_validity_hours: 0.0
+task_context:
+  enabled: true
+  orders_dir: config/task_orders
+  max_tokens: 500
+question_adaptive:
+  enabled: true
+  strategy_overrides: {}
+storage_gate:
+  enabled: true
+  duplicate_threshold: 0.95
+  utility_floor: 0.2
+  recent_window: 50
+  contradiction_check_enabled: true
+salience:
+  enabled: true
+  weights:
+    relevance: 0.3
+    recency: 0.25
+    novelty: 0.15
+    urgency: 0.2
+    social: 0.1
+  threshold: 0.3
+  background_max_entries: 50
+sensorium:
+  enabled: true
+  token_budget_warning: 10000
+source_tracing:
+  echo_min_chain_length: 3
+  echo_similarity_threshold: 0.4
+  echo_analysis_enabled: true
+observable_state:
+  verification_enabled: true
+  max_claims_per_thread: 10
+llm_rate:
+  rpm_fast: 120
+  rpm_standard: 120
+  rpm_deep: 30
+  max_wait_seconds: 30.0
+  cache_max_entries: 500
+  per_agent_hourly_token_cap: 0
+  max_concurrent_calls: 6
+  interactive_reserved_slots: 2
 sub_task:
   enabled: true
-  chain_timeout_ms: 240000        # 80% of llm_timeout_deep (300s)
-  step_timeout_ms: 240000          # Match llm_timeout_seconds (300s) with 80% margin
-  max_concurrent_chains: 4       # AD-636: cap simultaneous chain executions
-
-# --- NATS Event Bus (AD-637) ---
+  chain_timeout_ms: 240000
+  step_timeout_ms: 240000
+  max_chain_steps: 6
+  fallback_on_timeout: single_call
+  max_concurrent_chains: 4
+  nats_publish_enabled: false
+  nats_payload_max_bytes: 16384
+boot_camp:
+  enabled: true
+  min_episodes: 5
+  min_ward_room_posts: 3
+  min_dm_conversations: 1
+  min_trust_score: 0.55
+  min_time_minutes: 60
+  timeout_minutes: 120
+  nudge_cooldown_seconds: 600
+ship_state_snapshot:
+  enabled: true
+tiered_trust:
+  enabled: true
+  bridge_alpha: 4.5
+  bridge_beta: 1.0
+  chief_alpha: 3.0
+  chief_beta: 1.0
+  bridge_pools:
+  - counselor
+  bridge_callsigns:
+  - Meridian
+  chief_callsigns:
+  - Bones
+  - LaForge
+  - Number One
+  - Worf
+  - O'Brien
+chain_tuning:
+  enabled: true
+  low_trust_ceiling: 0.6
+  high_trust_floor: 0.75
+chain_optimizer:
+  enabled: false
+  analysis_window: 100
+  latency_p95_ms_floor: 10000.0
+  success_rate_floor: 0.7
+  error_rate_ceiling: 0.3
+  min_samples_per_group: 20
+  apply_enabled: false
+  analysis_interval_seconds: 0
+chain_optimizer_counselor:
+  enabled: false
+  baseline_window_seconds: 1800.0
+  observation_window_seconds: 1800.0
+  success_rate_drop_floor: 0.1
+  min_samples_per_window: 20
+  auto_revert_enabled: false
+causal_reasoning:
+  enabled: true
+  max_tokens: 700
+  tier: standard
+  max_invocations_per_hour: 5
+diagnostic_context:
+  enabled: true
+  default_budget_tokens: 8000
+  chain_trace_ratio: 0.3
+  procedure_ratio: 0.25
+  episode_ratio: 0.25
+  records_ratio: 0.2
+  chars_per_token: 4
+  redistribute_remainder: true
+nl_graph_query:
+  enabled: true
+  default_max_hops: 2
+  default_limit: 10
+  llm_tier: standard
+  extraction_max_tokens: 600
+  synthesis_max_tokens: 800
+clinical_telemetry:
+  enabled: false
+  audit_max_entries: 1000
+  audit_persistence_enabled: false
+  audit_db_path: data/clinical_audit.db
+  circuit_breaker_history_persistence_enabled: false
+  circuit_breaker_history_db_path: data/circuit_breaker_history.db
+consultation_workspaces:
+  enabled: true
+  root_path: consultations
+  input_processor: passthrough
+consultation_delivery:
+  enabled: true
+  local_file_enabled: true
+  github_enabled: true
+  local_file_allowed_roots: []
+  github_token_env: GITHUB_TOKEN
+  default_requires_approval: false
+consultation_dispatch:
+  enabled: true
+  default_work_type: duty
+  default_tags:
+  - consultation
+  blocker_threshold_seconds: 600.0
+  progress_subscription_enabled: true
+hybrid_dispatch:
+  enabled: true
+  confidence_threshold: 0.4
+  confidence_margin: 0.05
+  min_hebbian_weight: 0.05
+  success_rate_window: 50
+  min_samples_for_routing: 3
+  dispatchable_tags:
+  - consultation
+process_chain_registry:
+  enabled: true
+knowledge_loading:
+  enabled: true
+  ambient_token_budget: 200
+  contextual_token_budget: 400
+  on_demand_token_budget: 600
+  ambient_max_age_seconds: 300.0
+  contextual_max_age_seconds: 60.0
+  on_demand_max_age_seconds: 0.0
+  intent_knowledge_map:
+    security_alert:
+    - trust
+    - agents
+    proactive_think:
+    - episodes
+    - proactive
+    ward_room_notification:
+    - episodes
+    - agents
+    direct_message:
+    - episodes
+    - agents
+step_instruction:
+  enabled: false
+  step_categories:
+    query: []
+    analyze:
+    - observation_guidelines
+    - situation_assessment
+    - when_to_act_vs_observe
+    - memory_anchoring
+    - source_attribution
+    - self_monitoring
+    compose:
+    - communication_style
+    - personality_expression
+    - audience_awareness
+    - ward_room_actions
+    - knowledge_capture
+    - duty_reporting
+    evaluate:
+    - self_monitoring
+    - scope_discipline
+    - communication_style
+    reflect:
+    - self_monitoring
+    - scope_discipline
+    - knowledge_capture
+  universal_categories:
+  - identity
+  - chain_of_command
+  - core_directives
+  - encoding_safety
+  log_token_savings: true
+agent_tiers:
+  crew_types:
+  - architect
+  - builder
+  - code_reviewer
+  - counselor
+  - diagnostician
+  - surgeon
+  - pharmacist
+  - pathologist
+  - red_team
+  - system_qa
+  - scout
+  - data_analyst
+  - systems_analyst
+  - research_specialist
+  core_types:
+  - event_log
+  - vitals_monitor
+  - introspect
+operational_status:
+  sample_window_size: 50
+  available_success_rate: 0.85
+  degraded_p95_latency_ms: 5000.0
+  offline_consecutive_errors: 5
+risk_tiers:
+  enabled: true
+  elevated_min_trust: 0.0
+  critical_min_trust: 0.7
+procedural_bridge:
+  enabled: true
+  min_cross_cycle_episodes: 5
+  novelty_threshold: 0.3
 nats:
   enabled: true
-  url: "nats://localhost:4222"
+  url: nats://localhost:4222
   connect_timeout_seconds: 5.0
   max_reconnect_attempts: 60
   reconnect_time_wait_seconds: 2.0
   drain_timeout_seconds: 5.0
   jetstream_enabled: true
-  subject_prefix: "probos.local"
-
-# --- Communication Quality Benchmarks (AD-642) ---
-qualification:
-  communication_benchmarks:
+  jetstream_domain: null
+  subject_prefix: probos.local
+  js_publish_timeout: 5.0
+bill:
+  max_concurrent_instances: 10
+  default_step_timeout_seconds: 300.0
+  allow_partial_assignment: false
+consultation:
+  enabled: true
+  timeout_seconds: 30.0
+  max_consultations_per_agent_per_hour: 20
+  max_pending_requests: 10
+  expert_selection_max_candidates: 5
+  weight_capability_match: 0.5
+  weight_trust: 0.3
+  weight_billet_relevance: 0.2
+expertise:
+  enabled: true
+  max_topics_per_agent: 50
+  min_confidence: 0.1
+  decay_rate: 0.95
+  top_k_experts: 3
+creative_expression:
+  enabled: true
+  default_classification: ship
+classification_gate:
+  enabled: true
+autonomy_boundaries:
+  enabled: true
+crew_development:
+  enabled: true
+boot_camp_phase:
+  enabled: true
+discovery_learning:
+  enabled: true
+  confidence_prior_alpha: 1.0
+  confidence_prior_beta: 1.0
+  zpd_lower_bound: 0.4
+  zpd_upper_bound: 0.75
+scoped_cognition:
+  enabled: true
+workspace_ontology:
+  enabled: true
+  max_terms: 1000
+gap_pipeline_extensions:
+  remediation_tracker_enabled: true
+  fleet_aggregator_enabled: true
+  remediation_max_history: 100
+  active_remediation_enabled: false
+spreading_activation:
+  enabled: true
+  max_hops: 2
+  k_per_hop: 5
+  hop_decay_factor: 0.6
+  min_anchor_fields: 2
+thought_store:
+  enabled: true
+  min_importance: 5
+  max_thoughts_per_cycle: 3
+retroactive:
+  enabled: true
+  neighbor_k: 5
+  similarity_threshold: 0.7
+  max_relations_per_episode: 10
+  propagate_watch_section: true
+  propagate_department: true
+distillation:
+  enabled: true
+  min_failure_cluster_size: 3
+  comparative_enabled: true
+reconsolidation:
+  enabled: true
+  base_intervals_hours:
+  - 1.0
+  - 6.0
+  - 24.0
+  - 72.0
+  - 168.0
+  - 720.0
+  importance_scale_factor: 0.1
+  max_scheduled: 500
+naval_organization:
+  captains_log:
     enabled: true
-    frequency_hours: 12  # Every 12h (more expensive than qualification tests)
-    probes:
-      - thread_relevance
-      - memory_grounding
-      - memory_absence
-      - expertise
-      - silence_appropriateness
-      - dm_action
+    output_dir: data\captains_log
+    end_of_day_hour: 23
+    top_episodes_count: 5
+    importance_threshold: 5
+  plan_of_day:
+    enabled: true
+    output_dir: data\plan_of_day
+    start_of_day_hour: 8
+    include_alert_conditions: true
+self_distillation:
+  enabled: true
+  rate_limit_hours: 24
+  llm_timeout_seconds: 30.0
+  max_sub_topics: 5
+  db_path: data\agent_probes.db
+spc:
+  enabled: true
+  sample_window: 100

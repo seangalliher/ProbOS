@@ -72,3 +72,57 @@ def test_perception_section_appears_in_sections_list(tmp_path: Path) -> None:
         f"got {section_ids}. Likely stale from-import capture of SECTIONS."
     )
     assert payload["section_count"] == len(section_ids)
+
+
+def test_perception_enable_toggle_is_hot_reload_no_restart(tmp_path: Path) -> None:
+    """BF-299: flipping perception.enabled or perception.camera.enabled must
+    NOT require restart — the gates are read live on every frame upload, and
+    forcing Captain to restart between each toggle is hostile UX.
+    """
+    runtime = _runtime(tmp_path)
+    assert runtime.config.perception.enabled is False
+    assert runtime.config.perception.camera.enabled is False
+
+    client = TestClient(create_app(runtime))
+    csrf = client.get("/api/config").json()["csrf_token"]
+
+    resp = client.post(
+        "/api/config",
+        json={"patch": {"perception": {"enabled": True, "camera": {"enabled": True}}}},
+        headers={"X-Probos-CSRF": csrf},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["restart_required"] is False, body
+    assert set(body["changed_fields"]) == {
+        "perception.enabled",
+        "perception.camera.enabled",
+    }
+
+    # Runtime config mutated live.
+    assert runtime.config.perception.enabled is True
+    assert runtime.config.perception.camera.enabled is True
+
+
+def test_mixed_hot_reload_and_restart_field_still_requires_restart(tmp_path: Path) -> None:
+    """If ANY changed field is not hot-reload-eligible, the whole APPLY
+    requires restart (no partial-apply confusion)."""
+    runtime = _runtime(tmp_path)
+    client = TestClient(create_app(runtime))
+    csrf = client.get("/api/config").json()["csrf_token"]
+
+    resp = client.post(
+        "/api/config",
+        json={
+            "patch": {
+                "perception": {"enabled": True},
+                "system": {"log_level": "DEBUG"},
+            }
+        },
+        headers={"X-Probos-CSRF": csrf},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["restart_required"] is True, body
+    # Runtime NOT mutated because mixed-mode requires restart.
+    assert runtime.config.perception.enabled is False
