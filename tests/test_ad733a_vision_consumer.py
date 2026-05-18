@@ -468,8 +468,9 @@ async def test_bf304_single_flight_drops_concurrent_describe(tmp_path: Path) -> 
             params={"attachment_ref": sha_b, "session_id": "s1", "force": True},
         )))
         # Second should complete quickly (dropped) — if it queued behind the
-        # gated first describe, wait_for would time out.
-        await asyncio.wait_for(second, timeout=1.0)
+        # gated first describe, wait_for would time out. 2s tolerates xdist
+        # scheduling pressure under parallel workers.
+        await asyncio.wait_for(second, timeout=2.0)
         assert describe_calls == 1, (
             f"BF-304: expected single describe in flight, got {describe_calls}"
         )

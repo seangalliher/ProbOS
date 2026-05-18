@@ -40,8 +40,8 @@ class PerceptualHashStrategy:
     def __init__(
         self,
         *,
-        min_interval_seconds: float = 5.0,
-        novelty_threshold: float = 0.15,
+        min_interval_seconds: float = 3.0,
+        novelty_threshold: float = 0.08,
     ) -> None:
         self._min_interval = float(min_interval_seconds)
         self._threshold = float(novelty_threshold)

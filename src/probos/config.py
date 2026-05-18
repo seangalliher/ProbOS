@@ -1937,11 +1937,11 @@ class PerceptionConfig(BaseModel):
     vision_consumer_enabled: bool = Field(default=True,
         description="Run the VisionConsumer that calls the vision LLM on supervisor-flagged frames.",
     )
-    vision_min_interval_seconds: float = Field(default=5.0, ge=1.0, le=120.0,
+    vision_min_interval_seconds: float = Field(default=3.0, ge=1.0, le=120.0,
         description="Minimum seconds between vision LLM calls per session. Cost-discipline floor.",
     )
-    vision_novelty_threshold: float = Field(default=0.15, ge=0.0, le=1.0,
-        description="Perceptual aHash diff threshold above which a frame is flagged as novel.",
+    vision_novelty_threshold: float = Field(default=0.08, ge=0.0, le=1.0,
+        description="Perceptual aHash diff threshold above which a frame is flagged as novel. Lower = more sensitive to small scene changes. BF-307: 0.08 default after empirical evidence that 0.15 was too high for static-camera setups.",
     )
     working_memory_capacity: int = Field(default=8, ge=1, le=64,
         description="Per-agent vision working memory ring buffer size.",
