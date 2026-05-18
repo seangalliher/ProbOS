@@ -94,7 +94,12 @@ class VisionConsumer:
         # dropped with an INFO log. The next supervisor-allowed (or forced)
         # frame picks up where the dropped one left off.
         import asyncio as _asyncio
+        from collections import deque as _deque
         self._describe_lock = _asyncio.Lock()
+        # BF-306: ring buffer of recent supervisor / consumer decisions so the
+        # operator preview can show WHY frames are being dropped. Each entry:
+        # (timestamp, reason, sha_prefix, novelty_score). Capped at 32.
+        self._recent_decisions: _deque[tuple[float, str, str, float]] = _deque(maxlen=32)
         # Set of agent_ids that should receive observations. For v1 this
         # is "every crew agent with vision_capable=True". The consumer
         # writes to each such agent's WorkingMemory on every flagged frame.
@@ -113,6 +118,20 @@ class VisionConsumer:
 
     def register_observer(self, agent_id: str) -> None:
         self._observer_agent_ids.add(agent_id)
+
+    def recent_decisions(self, limit: int = 16) -> list[dict[str, Any]]:
+        """BF-306: return the most recent supervisor / consumer decisions for
+        the operator preview panel. Newest first. Each entry: timestamp +
+        reason ('first_frame'|'novel'|'low_novelty'|'throttled'|'forced'|'busy')
+        + sha prefix + novelty score in [0, 1].
+        """
+        items = list(self._recent_decisions)
+        items.reverse()
+        capped = items[: max(1, min(limit, 32))]
+        return [
+            {"timestamp": ts, "reason": reason, "sha": sha, "novelty_score": novelty}
+            for (ts, reason, sha, novelty) in capped
+        ]
 
     def wire_proactive_observer(self, observer: Any) -> None:
         """AD-733b: attach the ProactiveVisionObserver. Idempotent."""
@@ -174,12 +193,18 @@ class VisionConsumer:
         if is_forced:
             logger.info("AD-733a: forced describe sha=%s (supervisor bypassed)", sha[:8])
             novelty_score = 1.0  # forced frames are "maximally novel" by operator decree
+            self._recent_decisions.append((time.time(), "forced", sha[:8], 1.0))
         else:
             decision = self._supervisor.admit(frame_bytes)
+            self._recent_decisions.append(
+                (time.time(), decision.reason, sha[:8], decision.novelty_score)
+            )
             if not decision.allow:
-                logger.debug(
-                    "AD-733a: supervisor dropped frame sha=%s reason=%s",
-                    sha[:8], decision.reason,
+                # BF-306: bumped debug -> info so operator can see drop reasons
+                # without enabling debug logging across the whole runtime.
+                logger.info(
+                    "AD-733a: supervisor dropped frame sha=%s reason=%s novelty=%.2f",
+                    sha[:8], decision.reason, decision.novelty_score,
                 )
                 return
             novelty_score = decision.novelty_score
@@ -195,6 +220,7 @@ class VisionConsumer:
                 "single-flight per BF-304)",
                 sha[:8],
             )
+            self._recent_decisions.append((time.time(), "busy", sha[:8], novelty_score))
             return
         async with self._describe_lock:
             description = await self._describe(sha)

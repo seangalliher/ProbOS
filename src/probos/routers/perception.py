@@ -166,11 +166,11 @@ async def upload_camera_frame(
 
 
 @router.get("/recent", dependencies=[Depends(require_crew_scope)])
-async def get_recent_observations(limit: int = 8) -> Any:
-    """BF-303: return the most recent vision observations across all per-agent
-    working memories, newest first. Operator-facing debug surface for the
-    preview panel — lets the Captain see what the perception gateway last
-    described.
+async def get_recent_observations(limit: int = 8, runtime: Any = Depends(get_runtime)) -> Any:
+    """BF-303 / BF-306: return the most recent vision observations across all
+    per-agent working memories, newest first, AND the most recent supervisor
+    decisions (kept frames + dropped frames with reason + novelty score).
+    Operator-facing debug surface for the preview panel.
     """
     from probos.perception.consumer import _WORKING_MEMORIES
 
@@ -189,4 +189,19 @@ async def get_recent_observations(limit: int = 8) -> Any:
                 }
             )
     items.sort(key=lambda it: it["timestamp"], reverse=True)
-    return {"observations": items[: max(1, min(limit, 32))]}
+
+    # BF-306: surface supervisor decisions so the operator can SEE why
+    # frames are or aren't being described. Pulled from the runtime's
+    # consumer instance — honest-degrade to empty list when absent.
+    decisions: list[dict[str, Any]] = []
+    consumer = getattr(runtime, "vision_consumer", None)
+    if consumer is not None and hasattr(consumer, "recent_decisions"):
+        try:
+            decisions = consumer.recent_decisions(limit=max(1, min(limit, 32)))
+        except Exception:
+            decisions = []
+
+    return {
+        "observations": items[: max(1, min(limit, 32))],
+        "recent_decisions": decisions,
+    }

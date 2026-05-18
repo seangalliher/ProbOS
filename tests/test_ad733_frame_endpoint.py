@@ -276,11 +276,16 @@ def test_recent_endpoint_returns_observations(tmp_path: Path) -> None:
 
 
 def test_recent_endpoint_empty_when_no_observations(tmp_path: Path) -> None:
-    """BF-303: /recent honest-degrades to empty list rather than 404 / 500."""
+    """BF-303: /recent honest-degrades to empty list rather than 404 / 500.
+    BF-306: response also includes recent_decisions (empty when no consumer
+    is wired on the test runtime).
+    """
     from probos.perception.consumer import reset_working_memories_for_tests
     reset_working_memories_for_tests()
     runtime = _build_runtime(tmp_path)
     client = TestClient(create_app(runtime))
     r = client.get("/api/perception/recent")
     assert r.status_code == 200
-    assert r.json() == {"observations": []}
+    body = r.json()
+    assert body["observations"] == []
+    assert body["recent_decisions"] == []

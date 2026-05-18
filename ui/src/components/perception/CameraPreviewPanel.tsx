@@ -30,6 +30,21 @@ interface Observation {
   session_id: string | null;
 }
 
+interface Decision {
+  timestamp: number;
+  reason: string; // 'first_frame' | 'novel' | 'low_novelty' | 'throttled' | 'forced' | 'busy'
+  sha: string;
+  novelty_score: number;
+}
+
+interface DecisionSummary {
+  total: number;
+  described: number;
+  dropped: number;
+  lastDropReason: string | null;
+  lastDropNovelty: number | null;
+}
+
 function _formatAge(seconds: number): string {
   if (seconds < 1) return 'just now';
   if (seconds < 60) return `${Math.round(seconds)}s ago`;
@@ -60,6 +75,7 @@ export default function CameraPreviewPanel() {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ startX: number; startY: number; panelX: number; panelY: number } | null>(null);
   const [latest, setLatest] = useState<Observation | null>(null);
+  const [decisions, setDecisions] = useState<Decision[]>([]);
   const [now, setNow] = useState(() => Date.now() / 1000);
 
   // Mirror the live stream (BF-302).
@@ -93,16 +109,19 @@ export default function CameraPreviewPanel() {
   }, [previewEnabled, active]);
 
   // BF-303: poll /api/perception/recent for the latest description.
+  // BF-306: same endpoint now returns recent supervisor decisions too.
   useEffect(() => {
     if (!previewEnabled || !active) return;
     let cancelled = false;
     const tick = async () => {
       try {
-        const resp = await fetch('/api/perception/recent?limit=1');
+        const resp = await fetch('/api/perception/recent?limit=16');
         if (!resp.ok || cancelled) return;
         const body = await resp.json();
         const obs: Observation | undefined = body?.observations?.[0];
         if (obs && !cancelled) setLatest(obs);
+        const dec: Decision[] | undefined = body?.recent_decisions;
+        if (Array.isArray(dec) && !cancelled) setDecisions(dec);
       } catch {
         // ignore — preview is best-effort
       }
@@ -123,6 +142,31 @@ export default function CameraPreviewPanel() {
 
   const ageSec = latest ? Math.max(0, now - latest.timestamp) : null;
   const pos = previewPosition ?? _defaultPosition();
+
+  // BF-306: derive an at-a-glance summary of supervisor activity.
+  const _DESCRIBED = new Set(['first_frame', 'novel', 'forced']);
+  let described = 0;
+  let dropped = 0;
+  let lastDropReason: string | null = null;
+  let lastDropNovelty: number | null = null;
+  for (const d of decisions) {
+    if (_DESCRIBED.has(d.reason)) {
+      described++;
+    } else {
+      dropped++;
+      if (lastDropReason === null) {
+        lastDropReason = d.reason;
+        lastDropNovelty = d.novelty_score;
+      }
+    }
+  }
+  const summary: DecisionSummary = {
+    total: decisions.length,
+    described,
+    dropped,
+    lastDropReason,
+    lastDropNovelty,
+  };
 
   const onHeaderPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     // Ignore drag-start when the click landed on a button inside the header.
@@ -257,6 +301,26 @@ export default function CameraPreviewPanel() {
             Waiting for first description… force a frame or wait for novelty.
           </div>
         )}
+      </div>
+      <div
+        data-testid="camera-preview-supervisor"
+        style={{
+          marginTop: 4,
+          fontSize: 9,
+          color: STROKE_DIM,
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 6,
+        }}
+      >
+        <span>
+          supervisor: {summary.described} described · {summary.dropped} dropped
+        </span>
+        <span style={{ color: summary.lastDropReason ? '#e08040' : STROKE_DIM }}>
+          {summary.lastDropReason
+            ? `last drop: ${summary.lastDropReason}${summary.lastDropNovelty !== null ? ` ${summary.lastDropNovelty.toFixed(2)}` : ''}`
+            : 'no drops yet'}
+        </span>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
         <button
