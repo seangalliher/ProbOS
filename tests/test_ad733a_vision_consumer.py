@@ -426,3 +426,56 @@ def test_ad731_invariant_no_inline_base64_in_perception_modules() -> None:
                 f"AD-731 violation: {mod.__name__} contains forbidden token "
                 f"{token!r}; frames must remain SHA refs."
             )
+
+
+@pytest.mark.asyncio
+async def test_bf304_single_flight_drops_concurrent_describe(tmp_path: Path) -> None:
+    """BF-304: when a describe is already in flight, additional frames must
+    be dropped (not queued) to prevent VRAM/RAM pile-up that crashed the
+    process under FORCE-DESCRIBE spam (Rust alloc failure 4194304 bytes).
+    """
+    import asyncio
+    import unittest.mock as mock
+
+    runtime = _build_runtime(tmp_path)
+    consumer = VisionConsumer(runtime, min_interval_seconds=0.0)
+    consumer.register_observer("ezri")
+    reset_working_memories_for_tests()
+
+    describe_calls = 0
+    release = asyncio.Event()
+
+    async def _slow_describe(_sha: str) -> str:
+        nonlocal describe_calls
+        describe_calls += 1
+        await release.wait()
+        return "described content"
+
+    with mock.patch.object(consumer, "_describe", side_effect=_slow_describe):
+        sha_a = await _store_frame(runtime, _make_jpeg())
+        sha_b = await _store_frame(runtime, _make_jpeg(color=(30, 30, 200)))
+        # Fire both concurrently; first acquires the lock, second hits the
+        # locked() guard and returns immediately.
+        first = asyncio.create_task(consumer._handle(IntentMessage(
+            intent="vision_observation",
+            params={"attachment_ref": sha_a, "session_id": "s1", "force": True},
+        )))
+        # Yield once so the first task is inside _slow_describe.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        second = asyncio.create_task(consumer._handle(IntentMessage(
+            intent="vision_observation",
+            params={"attachment_ref": sha_b, "session_id": "s1", "force": True},
+        )))
+        # Second should complete quickly (dropped) — if it queued behind the
+        # gated first describe, wait_for would time out.
+        await asyncio.wait_for(second, timeout=1.0)
+        assert describe_calls == 1, (
+            f"BF-304: expected single describe in flight, got {describe_calls}"
+        )
+
+        # Release the first call so the test can finish.
+        release.set()
+        await first
+        # First completed → describe count still 1 (second was dropped).
+        assert describe_calls == 1

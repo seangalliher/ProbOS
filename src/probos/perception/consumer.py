@@ -85,6 +85,16 @@ class VisionConsumer:
         self._tier = vision_tier
         self._max_tokens = max_describe_tokens
         self._timeout = describe_timeout_s
+        # BF-304: single-flight guard around the vision LLM call. Vision
+        # tier inference is heavy (qwen3.6:27b on local Ollama / OpenAI
+        # vision endpoint); allowing multiple concurrent describe() calls
+        # blew RAM/VRAM and crashed the process with a Rust alloc failure.
+        # The right semantic for a frame stream is "best snapshot, not a
+        # queue" — frames arriving while a describe is in flight are
+        # dropped with an INFO log. The next supervisor-allowed (or forced)
+        # frame picks up where the dropped one left off.
+        import asyncio as _asyncio
+        self._describe_lock = _asyncio.Lock()
         # Set of agent_ids that should receive observations. For v1 this
         # is "every crew agent with vision_capable=True". The consumer
         # writes to each such agent's WorkingMemory on every flagged frame.
@@ -174,8 +184,20 @@ class VisionConsumer:
                 return
             novelty_score = decision.novelty_score
 
-        # 3) Vision LLM describe.
-        description = await self._describe(sha)
+        # 3) Vision LLM describe. BF-304: single-flight — if a describe is
+        # already running, drop this frame rather than pile up concurrent
+        # heavy vision-tier calls. The 5s supervisor throttle normally
+        # prevents this; the lock catches force-spam + first-window bursts
+        # that bypass the throttle.
+        if self._describe_lock.locked():
+            logger.info(
+                "AD-733a: dropping frame sha=%s (describe already in flight; "
+                "single-flight per BF-304)",
+                sha[:8],
+            )
+            return
+        async with self._describe_lock:
+            description = await self._describe(sha)
         if not description:
             logger.info("AD-733a: vision LLM returned empty for sha=%s", sha[:8])
             return
