@@ -1953,6 +1953,15 @@ class PerceptionConfig(BaseModel):
         description="LLM tier name for vision describe calls. AD-742a forward marker for vision_fast split.",
     )
 
+    # AD-733c-1 (Wave 172): DM-receive force-describe of the latest cached frame
+    # before the agent's reply is composed. 4s wall-clock timeout enforced by
+    # VisionConsumer.force_describe_current_frame. Default True so the
+    # subsystem benefits from fresh-frame grounding out of the box; operator
+    # can disable for cost-discipline experiments.
+    dm_force_describe_enabled: bool = Field(default=True,
+        description="On every DM, synchronously describe the latest captured frame before composing the reply (4s timeout floor).",
+    )
+
     # AD-733b (Wave 171): Captain reference avatar SHA in AttachmentStore.
     # v1 manual config — AD-742b replaces with face-embedding enrollment.
     captain_avatar_ref: str = Field(default="",

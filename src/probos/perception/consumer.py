@@ -52,6 +52,12 @@ def reset_working_memories_for_tests() -> None:
     _WORKING_MEMORIES.clear()
 
 
+def _reset_latest_frame_cache_for_tests(consumer: Any) -> None:
+    """AD-733c-1 test helper — clears per-consumer latest-frame caches."""
+    consumer._latest_frame_by_session.clear()
+    consumer._latest_frame_global = None
+
+
 class VisionConsumer:
     """Runtime-owned consumer that bridges vision_observation -> working memory."""
 
@@ -112,6 +118,14 @@ class VisionConsumer:
         self._identity_resolved_sessions: set[str] = set()
         self._sessions_with_observations: set[str] = set()
         self._observer: Any = None
+        # AD-733c-1: per-session latest-frame SHA cache. Updated in
+        # ``_handle`` BEFORE supervisor admission so dropped/throttled frames
+        # still register. Used by ``force_describe_current_frame`` to fetch
+        # the most recent visible frame on a DM-receive hook. Each value is
+        # ``(sha, captured_at)``. Module-scoped per-runtime; cleared in
+        # ``reset_working_memories_for_tests``.
+        self._latest_frame_by_session: dict[str, tuple[str, float]] = {}
+        self._latest_frame_global: tuple[str, float] | None = None
 
     @property
     def observer_agent_ids(self) -> set[str]:
@@ -152,6 +166,19 @@ class VisionConsumer:
         """Bus handler — supervisor-gate, LLM-describe, WM-write, episode-anchor."""
         if msg.intent != self.INTENT_NAME:
             return None
+        # AD-733c-1: record the SHA BEFORE supervisor gating so force-describe
+        # can fetch it even when the supervisor dropped this frame for
+        # low-novelty / throttled reasons.
+        try:
+            _sha = msg.params.get("attachment_ref")
+            _captured_at = float(msg.params.get("captured_at", time.time()))
+            _session_id = str(msg.params.get("session_id", ""))
+            if isinstance(_sha, str) and _sha:
+                if _session_id:
+                    self._latest_frame_by_session[_session_id] = (_sha, _captured_at)
+                self._latest_frame_global = (_sha, _captured_at)
+        except Exception:
+            logger.debug("AD-733c-1: latest-frame cache update failed", exc_info=True)
         try:
             await self._process(msg)
         except Exception:
@@ -278,6 +305,73 @@ class VisionConsumer:
                         "AD-733b: observer.maybe_emit raised for agent=%s",
                         agent_id, exc_info=True,
                     )
+
+    async def force_describe_current_frame(
+        self,
+        session_id: str | None = None,
+        *,
+        timeout_s: float = 4.0,
+    ) -> str | None:
+        """AD-733c-1: synchronously describe the latest cached frame.
+
+        Looks up the most recent frame SHA for ``session_id`` (or globally
+        if no session given), runs the standard ``_process`` path with
+        ``force=True`` (bypasses the supervisor), and returns the
+        description as written to working memory. Tier-2 honest-degrade:
+        on timeout / no cached frame / LLM error, returns ``None`` and
+        logs at WARNING (not ERROR — the DM still proceeds without the
+        fresh frame).
+
+        ``timeout_s`` is a hard wall-clock cap: the caller (DM hook) must
+        not block on a slow vision tier. BF-304 single-flight lock means
+        spamming this call collapses to one describe per supervisor
+        window.
+        """
+        if session_id and session_id in self._latest_frame_by_session:
+            sha, captured_at = self._latest_frame_by_session[session_id]
+        elif self._latest_frame_global is not None:
+            sha, captured_at = self._latest_frame_global
+        else:
+            logger.debug(
+                "AD-733c-1: force_describe — no cached frame for session=%s",
+                str(session_id or "*")[:8],
+            )
+            return None
+        synthetic = IntentMessage(
+            intent=self.INTENT_NAME,
+            params={
+                "attachment_ref": sha,
+                "mime": "image/jpeg",
+                "captured_at": captured_at,
+                "source": "force_describe",
+                "session_id": session_id or "",
+                "force": True,
+            },
+        )
+        try:
+            await asyncio.wait_for(self._process(synthetic), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AD-733c-1: force_describe timed out after %.1fs sha=%s",
+                timeout_s, sha[:8],
+            )
+            return None
+        except Exception:
+            logger.warning(
+                "AD-733c-1: force_describe raised for sha=%s; DM proceeds without fresh frame",
+                sha[:8], exc_info=True,
+            )
+            return None
+        # Pull the just-written description out of any observer's WM.
+        # The describe path wrote the same VisionObservation to every
+        # observer's WM, so the first observer's most-recent entry is the
+        # description we just produced.
+        for agent_id in list(self._observer_agent_ids):
+            wm = get_or_create_working_memory(agent_id, capacity=self._wm_capacity)
+            entries = list(wm.entries())
+            if entries and entries[-1].attachment_ref == sha:
+                return entries[-1].description
+        return None
 
     async def _describe(self, sha: str) -> str:
         """Call the vision LLM on a single frame. Returns description or empty string."""

@@ -1934,6 +1934,22 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     try:
         _perception_cfg = getattr(getattr(runtime, "config", None), "perception", None)
         if _perception_cfg is not None and getattr(_perception_cfg, "enabled", False):
+            # AD-733c-1: force-describe the latest captured frame before
+            # rendering the scene block. Best-effort + bounded (4s timeout
+            # via VisionConsumer.force_describe_current_frame). When the
+            # cache is empty or the LLM is slow, we silently fall back to
+            # whatever the WM already contains.
+            _consumer = getattr(runtime, "vision_consumer", None)
+            if _consumer is not None and getattr(
+                _perception_cfg, "dm_force_describe_enabled", True,
+            ):
+                try:
+                    await _consumer.force_describe_current_frame(timeout_s=4.0)
+                except Exception:
+                    logger.debug(
+                        "AD-733c-1: force_describe raised for %s",
+                        agent_id, exc_info=True,
+                    )
             from probos.perception.consumer import get_or_create_working_memory
             _wm = get_or_create_working_memory(agent_id)
             _scene_block = _wm.render_for_prompt()

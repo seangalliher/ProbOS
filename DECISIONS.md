@@ -4309,3 +4309,23 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 **Tests.** +10 pytest. Baseline 14032 -> 14042.
 
 **Closes:** #666.
+
+### AD-733c-1 - DM-receive force describe of latest captured frame (Wave 172)
+
+**Part of #675.** The agent's DM reply was previously grounded in whatever happened to be in `VisionWorkingMemory` at `render_for_prompt()` time. With a 3s supervisor `min_interval` and a static-pose scene, the WM could contain a 20s-old observation when the Captain typed `what am I holding?`. AD-733c-1 forces a fresh describe of the latest captured frame BEFORE the WM is rendered into the DM, bounded by a 4s wall-clock timeout via BF-302 force + BF-304 single-flight.
+
+**API.** `VisionConsumer.force_describe_current_frame(session_id=None, *, timeout_s=4.0) -> str | None`. Tier-2 honest-degrade: timeout / no cached frame / LLM error returns None and logs WARNING; DM proceeds without the fresh frame. Per-session and global `(sha, captured_at)` cache populated inside `_handle` BEFORE the supervisor gate so dropped/throttled frames still register.
+
+**DM hook.** `routers/agents.py:agent_chat` calls force-describe immediately BEFORE the AD-733a `render_for_prompt()` scene-block injection, gated on new `PerceptionConfig.dm_force_describe_enabled` (default True). The call is awaited so the WM contains the fresh observation when `render_for_prompt()` reads it.
+
+**AD-731 invariant.** Frames stay as SHA refs end-to-end; the synthetic `IntentMessage` carries only the attachment_ref. AD-541b anchored episode (importance=6, channel=`perception`) still written by the existing `_process()` path - force=True does NOT bypass `_anchor_episode`.
+
+**Files.**
+- `src/probos/perception/consumer.py` (+85 lines: per-session SHA cache in `_handle`, `force_describe_current_frame` API, `_reset_latest_frame_cache_for_tests` helper)
+- `src/probos/routers/agents.py` (+18 lines in the AD-733a scene-injection block)
+- `src/probos/config.py` (+8 lines: `dm_force_describe_enabled` PerceptionConfig field)
+- `tests/test_ad733c1_force_describe.py` (new, 6 tests)
+
+**Tests.** +6 pytest.
+
+**Forward markers (Wave 172).** AD-733c-5 (#676 per-agent engagement), AD-733c-6 (#677 budget guard), AD-733c-7 (#678 Silero VAD + dormant-pauses-capture). All filed at GATE 1.
