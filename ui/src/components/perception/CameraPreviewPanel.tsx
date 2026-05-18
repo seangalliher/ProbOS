@@ -144,7 +144,9 @@ export default function CameraPreviewPanel() {
   const pos = previewPosition ?? _defaultPosition();
 
   // BF-306: derive an at-a-glance summary of supervisor activity.
-  const _DESCRIBED = new Set(['first_frame', 'novel', 'forced']);
+  // BF-309: baseline_refresh is a fresh describe path (LLM call + WM
+  // write), counts toward "described".
+  const _DESCRIBED = new Set(['first_frame', 'novel', 'forced', 'baseline_refresh']);
   let described = 0;
   let dropped = 0;
   let lastDropReason: string | null = null;

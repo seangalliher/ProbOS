@@ -42,9 +42,16 @@ class PerceptualHashStrategy:
         *,
         min_interval_seconds: float = 3.0,
         novelty_threshold: float = 0.08,
+        baseline_max_age_seconds: float = 30.0,
     ) -> None:
         self._min_interval = float(min_interval_seconds)
         self._threshold = float(novelty_threshold)
+        # BF-309: after this many seconds with no admit, the supervisor
+        # re-baselines on the next frame. Prevents the "static scene
+        # anchors forever" lock-up where holding a steady pose makes
+        # every subsequent frame look low-novelty against the stale
+        # baseline. 0 = disable (legacy behavior).
+        self._baseline_max_age = float(baseline_max_age_seconds)
         self._last_allow_at: float = 0.0
         self._last_hash: int | None = None
 
@@ -55,6 +62,10 @@ class PerceptualHashStrategy:
     def set_novelty_threshold(self, value: float) -> None:
         """BF-308: live update without reconstructing the strategy."""
         self._threshold = float(value)
+
+    def set_baseline_max_age_seconds(self, value: float) -> None:
+        """BF-309: live update of the baseline-refresh window."""
+        self._baseline_max_age = float(value)
 
     def evaluate(self, frame_bytes: bytes, *, now: float) -> SupervisorDecision:
         # Tier-2: if hash computation fails (corrupt JPEG, PIL not available),
@@ -72,6 +83,20 @@ class PerceptualHashStrategy:
             self._last_hash = current_hash
             self._last_allow_at = now
             return SupervisorDecision(allow=True, novelty_score=1.0, reason="first_frame")
+
+        # BF-309: baseline-refresh. If we've gone too long without an admit
+        # (static scene below threshold for the whole window), drop the
+        # stale baseline and treat this frame as a fresh first_frame.
+        # 0 disables the refresh entirely.
+        if (
+            self._baseline_max_age > 0
+            and (now - self._last_allow_at) >= self._baseline_max_age
+        ):
+            self._last_hash = current_hash
+            self._last_allow_at = now
+            return SupervisorDecision(
+                allow=True, novelty_score=1.0, reason="baseline_refresh"
+            )
 
         elapsed = now - self._last_allow_at
         if elapsed < self._min_interval:

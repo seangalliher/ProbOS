@@ -310,6 +310,7 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
         _PERCEPTION_LIVE_PUSH = {
             "perception.vision_novelty_threshold",
             "perception.vision_min_interval_seconds",
+            "perception.vision_baseline_max_age_seconds",
         }
         if any(p in _PERCEPTION_LIVE_PUSH for p in changed_fields):
             consumer = getattr(runtime, "vision_consumer", None)
@@ -321,6 +322,8 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
                         strategy.set_novelty_threshold(runtime.config.perception.vision_novelty_threshold)
                     if "perception.vision_min_interval_seconds" in changed_fields and hasattr(strategy, "set_min_interval_seconds"):
                         strategy.set_min_interval_seconds(runtime.config.perception.vision_min_interval_seconds)
+                    if "perception.vision_baseline_max_age_seconds" in changed_fields and hasattr(strategy, "set_baseline_max_age_seconds"):
+                        strategy.set_baseline_max_age_seconds(runtime.config.perception.vision_baseline_max_age_seconds)
                 except Exception:
                     logger.warning(
                         "AD-741/BF-308: perception live-push to VisionConsumer "

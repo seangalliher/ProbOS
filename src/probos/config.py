@@ -1943,6 +1943,9 @@ class PerceptionConfig(BaseModel):
     vision_novelty_threshold: float = Field(default=0.08, ge=0.0, le=1.0,
         description="Perceptual aHash diff threshold above which a frame is flagged as novel. Lower = more sensitive to small scene changes. BF-307: 0.08 default after empirical evidence that 0.15 was too high for static-camera setups.",
     )
+    vision_baseline_max_age_seconds: float = Field(default=30.0, ge=0.0, le=600.0,
+        description="BF-309: after this many seconds with no admit, the supervisor re-baselines on the next frame. Prevents static-scene anchoring where a steady pose makes every later frame look low-novelty against a stale baseline. 0 = disable.",
+    )
     working_memory_capacity: int = Field(default=8, ge=1, le=64,
         description="Per-agent vision working memory ring buffer size.",
     )

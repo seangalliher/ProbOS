@@ -480,3 +480,60 @@ async def test_bf304_single_flight_drops_concurrent_describe(tmp_path: Path) -> 
         await first
         # First completed → describe count still 1 (second was dropped).
         assert describe_calls == 1
+
+
+def test_bf309_baseline_refresh_after_max_age() -> None:
+    """BF-309: when no admit has happened for baseline_max_age_seconds, the
+    next frame becomes a fresh first_frame (re-baseline). Prevents static
+    scenes from anchoring the supervisor forever."""
+    from probos.perception.supervisor import PerceptualHashStrategy
+
+    strat = PerceptualHashStrategy(
+        min_interval_seconds=0.0,
+        novelty_threshold=0.5,  # high; nearly nothing crosses
+        baseline_max_age_seconds=10.0,
+    )
+
+    # Frame at t=0 → first_frame
+    d0 = strat.evaluate(_make_jpeg(), now=0.0)
+    assert d0.allow and d0.reason == "first_frame"
+
+    # Frame at t=5 (within 10s window) and below 0.5 threshold → low_novelty
+    d1 = strat.evaluate(_make_jpeg(), now=5.0)
+    assert not d1.allow and d1.reason == "low_novelty"
+
+    # Frame at t=15 (past 10s window) → baseline_refresh admit
+    d2 = strat.evaluate(_make_jpeg(), now=15.0)
+    assert d2.allow and d2.reason == "baseline_refresh"
+    assert d2.novelty_score == 1.0
+
+
+def test_bf309_zero_max_age_disables_refresh() -> None:
+    """BF-309: setting baseline_max_age_seconds=0 disables the refresh
+    entirely — supervisor reverts to legacy static-anchor behavior."""
+    from probos.perception.supervisor import PerceptualHashStrategy
+
+    strat = PerceptualHashStrategy(
+        min_interval_seconds=0.0,
+        novelty_threshold=0.5,
+        baseline_max_age_seconds=0.0,
+    )
+
+    strat.evaluate(_make_jpeg(), now=0.0)  # first_frame
+    # Even after 9999s, refresh disabled — still low_novelty
+    d = strat.evaluate(_make_jpeg(), now=9999.0)
+    assert not d.allow and d.reason == "low_novelty"
+
+
+def test_bf309_set_baseline_max_age_seconds_live_update() -> None:
+    """BF-309: setter mutates without reconstructing the strategy."""
+    from probos.perception.supervisor import PerceptualHashStrategy
+
+    strat = PerceptualHashStrategy(
+        min_interval_seconds=0.0,
+        novelty_threshold=0.5,
+        baseline_max_age_seconds=60.0,
+    )
+    assert strat._baseline_max_age == 60.0
+    strat.set_baseline_max_age_seconds(15.0)
+    assert strat._baseline_max_age == 15.0

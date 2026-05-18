@@ -3963,6 +3963,7 @@ async def finalize_startup(
                 runtime,
                 min_interval_seconds=_perception_cfg.vision_min_interval_seconds,
                 novelty_threshold=_perception_cfg.vision_novelty_threshold,
+                baseline_max_age_seconds=_perception_cfg.vision_baseline_max_age_seconds,
                 working_memory_capacity=_perception_cfg.working_memory_capacity,
                 vision_tier=_perception_cfg.vision_tier,
             )

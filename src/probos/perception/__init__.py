@@ -92,6 +92,13 @@ _PERCEPTION_SECTION = SectionDescriptor(
             description="Cost-discipline floor. 3s default. Lower = more responsive, higher LLM cost.",
             hot_reload=True,
         ),
+        FieldDescriptor(
+            "perception.vision_baseline_max_age_seconds",
+            "Baseline refresh window (s)",
+            "float",
+            description="BF-309: after this many seconds with no admit, re-baseline on the next frame. Prevents static-scene lock-up. 30s default. 0 = disable.",
+            hot_reload=True,
+        ),
     ),
 )
 

@@ -64,6 +64,7 @@ class VisionConsumer:
         *,
         min_interval_seconds: float = 5.0,
         novelty_threshold: float = 0.15,
+        baseline_max_age_seconds: float = 30.0,
         working_memory_capacity: int = 8,
         vision_tier: str = "vision",
         max_describe_tokens: int = 220,
@@ -79,6 +80,7 @@ class VisionConsumer:
             strategy=PerceptualHashStrategy(
                 min_interval_seconds=min_interval_seconds,
                 novelty_threshold=novelty_threshold,
+                baseline_max_age_seconds=baseline_max_age_seconds,
             )
         )
         self._wm_capacity = working_memory_capacity
