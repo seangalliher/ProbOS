@@ -365,7 +365,22 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-738g | GPU-accelerated TTS backend eval (Kokoro Apache 2.0 / StyleTTS2 MIT slot into TTSBackend Protocol) — renumbered from AD-738b (Wave 158) | none | 4 |
 | AD-738h | Server-side voice modulation (apply AD-735 pitch/rate at Piper synthesis, not `<audio>` post-processing) — renumbered from AD-738c (Wave 158) | none | 4 |
 | AD-738i | TTS text caching layer (LRU keyed `(agent_id, voice, sha256(text))` → `attachment_id`) — renumbered from AD-738d (Wave 158) | none | 4 |
-| AD-721b-3 | whisper.cpp WASM tiny.en for offline phoneme alignment (~75 MB model) | [#561](https://github.com/seangalliher/ProbOS/issues/561) | 4 |
+| AD-721b-3 | whisper.cpp WASM tiny.en model bundle for offline phoneme alignment (~75 MB model) — **Wave 179 drafted** (foundation prompt; operator-pull script `scripts/whisper-tiny-en-fetch.ps1`; browser `whisperLoader.ts` UMD-glue lazy-loader; Python `voice/whisper_model.py` resolver; `CognitiveConfig.whisper_model_path` field; one FieldDescriptor in LLM Tiers section; NO STT exposed in this AD; +6 pytest +3 vitest) | [#561](https://github.com/seangalliher/ProbOS/issues/561) | 4 |
+| AD-705a | Offline STT via whisper.cpp WASM — **Wave 179 drafted** (consumes AD-721b-3 loader; extends `voiceActivity.ts` with `subscribePcm` tap; new `whisperStt.ts` arms on VAD-bounded utterance; transcript dispatches through existing `agent_chat` path; STT badge in `CameraLiveIndicator`; `CognitiveConfig.offline_stt_enabled` default False; `SpeechRecognition` Tier-2 fallback preserved; privacy invariant — audio bytes NEVER leave browser; +5 pytest +8 vitest; +2 THIRD_PARTY_LICENSES entries — whisper.cpp MIT + Whisper weights MIT) | [#555](https://github.com/seangalliher/ProbOS/issues/555) | 3 |
+| AD-705a-1 | transformers.js Whisper alternative backend | (forward marker, planned Wave 179) | 4 |
+| AD-705a-2 | IndexedDB persistent model cache | (forward marker, planned Wave 179) | 4 |
+| AD-705a-3 | Lazy CDN model fetch | (forward marker, planned Wave 179) | 4 |
+| AD-705a-4 | Streaming / incremental decode | (forward marker, planned Wave 179) | 4 |
+| AD-705a-5 | Moonshine alternative model backend | (forward marker, planned Wave 179) | 4 |
+| AD-705a-6 | Multilingual / larger Whisper models | (forward marker, planned Wave 179) | 4 |
+| AD-705a-7 | Fully-offline mode (disable `SpeechRecognition` when `offline_stt_enabled=true`) | (forward marker, planned Wave 179) | 4 |
+| AD-705a-8 | Opt-in transcript audit log | (forward marker, planned Wave 179) | 4 |
+| AD-705c | Custom wake-word training pipeline (openWakeWord) — **Wave 179 drafted** (new `probos wake-word collect/train/test/status` CLI; `WakeWordTrainer` service module via `loop.run_in_executor` BF-280; three `require_crew_scope` API endpoints; `WakeWordTrainerPanel` HXI surface; `wakeWord.ts` loader prefers `captain.onnx` with stock fallback; `WakeWordConfig` Pydantic block default-off; NO `openwakeword` in pyproject — operator-installed; privacy invariant — training audio never leaves local runtime; +12 pytest +4 vitest; +1 THIRD_PARTY_LICENSES entry — openWakeWord Apache 2.0) | [#557](https://github.com/seangalliher/ProbOS/issues/557) | 3 |
+| AD-705c-1 | Negatives-fetch script (Mozilla Common Voice CC0) | (forward marker, planned Wave 179) | 4 |
+| AD-705c-2 | Howl transfer-learning trainer | (forward marker, planned Wave 179) | 4 |
+| AD-705c-3 | EfficientWord-Net few-shot trainer | (forward marker, planned Wave 179) | 4 |
+| AD-705c-4 | Multi-Captain wake words | (forward marker, planned Wave 179) | 4 |
+| AD-705c-5 | Counselor-suggested retrain on FAR spike (agentic-first) | (forward marker, planned Wave 179) | 4 |
 | AD-721c | VR / spatial-scene avatar mode | [#530](https://github.com/seangalliher/ProbOS/issues/530) | 4 |
 | AD-721d | Agent-authored appearance pipeline | [#531](https://github.com/seangalliher/ProbOS/issues/531) | 3 |
 | AD-721e | Skeletal animation library (Mixamo) | [#532](https://github.com/seangalliher/ProbOS/issues/532) | 4 |

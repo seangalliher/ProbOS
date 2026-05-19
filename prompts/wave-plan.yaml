@@ -3837,3 +3837,58 @@ waves:
         4. Per-action vs per-plan ACK in v1.
       Architect-only draft this commit. Builder dispatch deferred pending
       Captain GATE 1 review + decisions.
+
+  - id: "179"
+    title: "voice stack completion (AD-721b-3 + AD-705a + AD-705c)"
+    kind: main
+    depends_on: ["178"]
+    dispatch_prompt: "prompts/WAVE-179-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-721b-3-whisper-wasm-model.md"
+      - "prompts/ad-705a-offline-stt-whisper-wasm.md"
+      - "prompts/ad-705c-custom-wake-word-training.md"
+    builder_required: true
+    issues_to_close: [555, 557, 561]
+    estimated_hours: 16
+    status: drafting
+    notes: |
+      Voice stack completion - offline STT + custom wake-word training.
+      Strict serial build order: 1 -> 2 -> 3 (each AD's contract anchors next).
+      AD-721b-3 (#561) - whisper.cpp WASM tiny.en model bundle. Foundation.
+        Operator-pull script scripts/whisper-tiny-en-fetch.ps1 (mirrors
+        silero-vad-fetch.ps1); browser whisperLoader.ts factory;
+        Python whisper_model.py resolver; CognitiveConfig.whisper_model_path
+        field; one FieldDescriptor in LLM Tiers section. NO STT functionality
+        in this AD - artifact + plumbing only. +6 pytest +3 vitest.
+      AD-705a (#555) - offline STT via whisper.cpp WASM. Extends voiceActivity.ts
+        with subscribePcm tap; new whisperStt.ts subscribes between VAD
+        speech_start/speech_end; transcript dispatches via existing
+        agent_chat path. CognitiveConfig.offline_stt_enabled default False.
+        STT badge in CameraLiveIndicator. SpeechRecognition fallback preserved.
+        +2 THIRD_PARTY_LICENSES entries (whisper.cpp MIT + Whisper weights MIT).
+        +5 pytest +8 vitest.
+      AD-705c (#557) - custom wake-word training via openWakeWord. New
+        probos wake-word CLI subcommand (collect/train/test/status);
+        WakeWordTrainer service module; three API endpoints under
+        require_crew_scope; WakeWordTrainerPanel HXI surface; wakeWord.ts
+        loader prefers captain.onnx with stock fallback. NO openwakeword
+        dep in pyproject.toml - operator-installed. WakeWordConfig default-off.
+        +1 THIRD_PARTY_LICENSES entry (openWakeWord Apache 2.0). +12 pytest
+        +4 vitest.
+      Zero new pip / npm deps. 0-line diff on pyproject.toml + package.json +
+      package-lock.json + LICENSE. +3 entries on THIRD_PARTY_LICENSES.md
+      across the wave (at ship time).
+      Total: +23 pytest, +15 vitest.
+      Prior-art research: prompts/RESEARCH-wave-179.md (16 projects surveyed
+      across Whisper, wake-word, phoneme alignment families; whisper.cpp +
+      openWakeWord pattern-absorbed; transformers.js / Howl / EfficientWord-Net
+      filed as forward markers).
+      Captain GATE 1 decisions surfaced (NOT auto-resolved):
+        1. Confirm tiny.en WER acceptance for v1.
+        2. Trainer UX docs emphasis (CLI vs browser).
+        3. retain_training_samples default (False recommended).
+        4. Custom model filename default (captain.onnx; multi-Captain deferred).
+        5. SpeechRecognition fallback co-existence policy.
+      Architect-only draft this commit. Builder dispatch deferred pending
+      Captain GATE 1 review + decisions.
