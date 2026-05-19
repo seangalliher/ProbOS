@@ -118,4 +118,13 @@ async def stream_browser_session(
     return StreamingResponse(
         _generate(),
         media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            # BF: long-lived MJPEG streams without no-store cause Chromium to
+            # buffer the response body into its on-disk HTTP cache, which can
+            # grow to tens of GB during multi-hour Captain-watch sessions and
+            # exhaust the system drive. no-store keeps the stream memory-only.
+            "Cache-Control": "no-store, no-transform",
+            "Pragma": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
