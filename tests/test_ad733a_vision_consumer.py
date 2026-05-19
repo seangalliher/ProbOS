@@ -36,7 +36,7 @@ from probos.perception.supervisor import (
 )
 from probos.perception.working_memory import VisionObservation, VisionWorkingMemory
 from probos.routers.chat import _ATTACHMENT_STORE_CACHE
-from probos.types import AnchorFrame, Episode, IntentMessage, LLMResponse
+from probos.types import AnchorFrame, Episode, IntentMessage, LLMRequest, LLMResponse
 
 
 # ---------- Helpers ----------
@@ -567,3 +567,90 @@ def test_bf309_set_baseline_max_age_seconds_live_update() -> None:
     assert strat._baseline_max_age == 60.0
     strat.set_baseline_max_age_seconds(15.0)
     assert strat._baseline_max_age == 15.0
+
+
+@pytest.mark.asyncio
+async def test_bf314_moondream_gets_short_single_clause_prompt(tmp_path: Path) -> None:
+    """BF-314: per-tier describe prompt. moondream (vision_fast, 1.8B) loops
+    on multi-clause prompts and hallucinates numbered lists. The fast-tier
+    branch must send a single-clause prompt with temperature=0 and a
+    tight token cap. qwen3.6:27b (vision) keeps the multi-clause prompt.
+    """
+    import unittest.mock as mock
+
+    runtime = _build_runtime(tmp_path)
+    # Configure vision_fast so the route selects it.
+    runtime.config.cognitive.llm_base_url_vision_fast = "http://localhost:11434"
+    runtime.config.cognitive.llm_model_vision_fast = "moondream"
+    runtime.config.cognitive.llm_api_format_vision_fast = "ollama"
+    runtime.config.cognitive.llm_timeout_vision_fast = 15.0
+
+    consumer = VisionConsumer(runtime, min_interval_seconds=0.0)
+    sha = await _store_frame(runtime, _make_jpeg())
+
+    captured: dict[str, Any] = {}
+
+    async def _capture(req: LLMRequest) -> Any:
+        captured["tier"] = req.tier
+        captured["messages"] = req.messages
+        captured["temperature"] = req.temperature
+        captured["max_tokens"] = req.max_tokens
+        return mock.MagicMock(content="a person in a dark sweatshirt", error=None)
+
+    runtime.llm_client.complete = _capture  # type: ignore[assignment]
+    description = await consumer._describe(sha)
+
+    assert description == "a person in a dark sweatshirt"
+    assert captured["tier"] == "vision_fast"
+    assert captured["temperature"] == 0.0
+    assert captured["max_tokens"] == 80
+    # Prompt is in the user message; pull it out.
+    user_msg = next(m for m in captured["messages"] if m.get("role") == "user")
+    content = user_msg["content"]
+    prompt_text = content if isinstance(content, str) else next(
+        part["text"] for part in content if part.get("type") == "text"
+    )
+    # Single-clause shape: 1-2 sentences + "do not invent", no bullet
+    # request, no "describe what they're doing AND what they're holding"
+    # multi-clause structure that triggers moondream looping.
+    assert "one or two sentences" in prompt_text.lower()
+    assert "do not invent" in prompt_text.lower()
+    assert "describe their clothing and what they're doing" not in prompt_text
+
+
+@pytest.mark.asyncio
+async def test_bf314_vision_keeps_multiclause_prompt(tmp_path: Path) -> None:
+    """BF-314: when vision_fast is unconfigured, fall back to the deep
+    vision tier with the original multi-clause prompt (qwen3.6:27b handles
+    it fine; only moondream loops)."""
+    import unittest.mock as mock
+
+    runtime = _build_runtime(tmp_path)
+    # vision_fast intentionally unset; should route to vision.
+    runtime.config.cognitive.llm_model_vision_fast = None
+
+    consumer = VisionConsumer(runtime, min_interval_seconds=0.0)
+    sha = await _store_frame(runtime, _make_jpeg())
+
+    captured: dict[str, Any] = {}
+
+    async def _capture(req: LLMRequest) -> Any:
+        captured["tier"] = req.tier
+        captured["temperature"] = req.temperature
+        captured["max_tokens"] = req.max_tokens
+        captured["messages"] = req.messages
+        return mock.MagicMock(content="captain holds a glass of water", error=None)
+
+    runtime.llm_client.complete = _capture  # type: ignore[assignment]
+    await consumer._describe(sha)
+
+    assert captured["tier"] == "vision"
+    assert captured["temperature"] == 0.2
+    user_msg = next(m for m in captured["messages"] if m.get("role") == "user")
+    content = user_msg["content"]
+    prompt_text = content if isinstance(content, str) else next(
+        part["text"] for part in content if part.get("type") == "text"
+    )
+    # Original multi-clause prompt preserved on the deep tier.
+    assert "describe their clothing and what they're doing" in prompt_text
+    assert "If they are holding an object" in prompt_text

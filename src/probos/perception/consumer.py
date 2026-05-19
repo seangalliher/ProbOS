@@ -467,22 +467,6 @@ class VisionConsumer:
             async def _mime_lookup(content_hash: str) -> str | None:
                 return await store.mime_for(content_hash)
 
-            messages, image_ids, _per = await build_multimodal_messages(
-                prompt=(
-                    "Briefly describe what you see in this frame. "
-                    "If a person is visible, describe their clothing and what they're doing. "
-                    "If they are holding an object, name and describe the object. "
-                    "Keep the description under 80 words. Do not speculate beyond what is visible."
-                ),
-                attachment_ids=[sha],
-                store=store,
-                mime_lookup=_mime_lookup,
-                text_extraction_max_bytes=0,
-                pdf_extraction_enabled=False,
-            )
-            if not image_ids:
-                return ""
-
             # AD-742a: route per-frame describes to vision_fast when
             # configured. The LLMClient's fallback chain (llm_client.py:557)
             # automatically routes vision_fast -> vision when fast is
@@ -494,12 +478,47 @@ class VisionConsumer:
                 and is_vision_tier_configured(cog_cfg, self._fast_tier)
             ) else self._tier
 
+            # BF-314: per-tier prompt + sampling. moondream (1.8B) loops on
+            # multi-clause prompts and emits hallucinated numbered lists
+            # ("1. The cat is black and white. 2. The cat is black and
+            # white." with no cat in frame). It needs a single direct
+            # question + temperature 0 + tight token cap. qwen3.6:27b
+            # handles complex structured prompts fine, keep the original.
+            if describe_tier == self._fast_tier:
+                prompt = (
+                    "Describe what is in this image in one or two sentences. "
+                    "Include any person and what they are wearing. "
+                    "Do not invent details."
+                )
+                temperature = 0.0
+                max_tokens = 80
+            else:
+                prompt = (
+                    "Briefly describe what you see in this frame. "
+                    "If a person is visible, describe their clothing and what they're doing. "
+                    "If they are holding an object, name and describe the object. "
+                    "Keep the description under 80 words. Do not speculate beyond what is visible."
+                )
+                temperature = 0.2
+                max_tokens = self._max_tokens
+
+            messages, image_ids, _per = await build_multimodal_messages(
+                prompt=prompt,
+                attachment_ids=[sha],
+                store=store,
+                mime_lookup=_mime_lookup,
+                text_extraction_max_bytes=0,
+                pdf_extraction_enabled=False,
+            )
+            if not image_ids:
+                return ""
+
             request = LLMRequest(
                 prompt="",
                 messages=messages,
                 tier=describe_tier,
-                max_tokens=self._max_tokens,
-                temperature=0.2,
+                max_tokens=max_tokens,
+                temperature=temperature,
             )
             response = await asyncio.wait_for(
                 self._runtime.llm_client.complete(request),
