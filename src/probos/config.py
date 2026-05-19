@@ -252,6 +252,19 @@ class CognitiveConfig(BaseModel):
     # caches the path at boot).
     whisper_model_path: str = "whisper/ggml-tiny.en.bin"
 
+    # AD-705a (Wave 179): offline STT toggle. Default OFF (convention
+    # #14 — opt-in until operators pull the whisper.cpp WASM artifacts
+    # via ``scripts/whisper-tiny-en-fetch.ps1``). When True AND the
+    # browser whisperLoader successfully loads the operator-pulled
+    # artifacts, the AD-733c-7-5 VAD-bounded utterance is transcribed
+    # locally and dispatched through the existing IntentSurface keyboard
+    # path. When False (default) OR artifacts absent, the browser-native
+    # ``SpeechRecognition`` path remains primary (AD-705 v1 fallback —
+    # cloud-routed on Chrome; privacy-conscious operators set this to
+    # True AND disable the wake-word loop to go fully offline).
+    # Hot-reload via the BF-308 settings watcher.
+    offline_stt_enabled: bool = False
+
     # AD-730-3: image_gen tier — sixth peer of fast/standard/deep/vision/
     # compute_use. Image generation via OpenAI-compatible
     # POST /v1/images/generations (DALL-E 3 / gpt-image-1 / local SD via

@@ -16,6 +16,8 @@ import { usePerceptionModeStore, type PerceptionMode } from '../../store/usePerc
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { stopCameraStream } from '../../hooks/useCameraStream';
 import { stopScreenStream } from '../../hooks/useScreenStream';
+import { loadWhisperModel } from '../../audio/whisperLoader';
+import { onTranscribing } from '../../audio/whisperStt';
 
 const STROKE_AMBER = '#f0b060';
 const STROKE_DIM = '#666680';
@@ -69,6 +71,28 @@ export default function CameraLiveIndicator() {
   const vadEnabled = useSettingsStore(
     (s) => Boolean((s.snapshot?.config as any)?.perception?.vad_engagement_enabled),
   );
+  // AD-705a (Wave 179): offline STT badge — hidden when disabled,
+  // dim/amber/pulse states gate render below. Independent of vadEnabled
+  // since STT can ride the existing browser-native fallback.
+  const sttEnabled = useSettingsStore(
+    (s) => Boolean((s.snapshot?.config as any)?.cognitive?.offline_stt_enabled),
+  );
+  const [sttModelLoaded, setSttModelLoaded] = useState(false);
+  const [sttTranscribing, setSttTranscribing] = useState(false);
+  useEffect(() => {
+    if (!sttEnabled) return;
+    let cancelled = false;
+    void loadWhisperModel().then((handle) => {
+      if (!cancelled) setSttModelLoaded(handle !== null);
+    });
+    const unsub = onTranscribing((active) => {
+      if (!cancelled) setSttTranscribing(active);
+    });
+    return () => {
+      cancelled = true;
+      try { unsub(); } catch { /* Tier-2 */ }
+    };
+  }, [sttEnabled]);
   // Flash window: amber for SPEECH_FLASH_MS after each event, dim otherwise.
   const [speechFresh, setSpeechFresh] = useState(false);
   useEffect(() => {
@@ -222,6 +246,56 @@ export default function CameraLiveIndicator() {
             <path d="M14 8 L14 8.5" />
           </svg>
           SPK
+        </span>
+      )}
+      {sttEnabled && (
+        <span
+          data-testid="perception-stt-badge"
+          data-model-loaded={sttModelLoaded ? 'true' : 'false'}
+          data-transcribing={sttTranscribing ? 'true' : 'false'}
+          aria-label={
+            !sttModelLoaded
+              ? 'offline STT armed; model not loaded'
+              : sttTranscribing
+                ? 'offline STT transcribing'
+                : 'offline STT ready'
+          }
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 3,
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: 1.2,
+            color: sttModelLoaded ? STROKE_AMBER : STROKE_DIM,
+            fontFamily: "'JetBrains Mono', monospace",
+            padding: '1px 5px',
+            border: `1px solid ${sttModelLoaded ? STROKE_AMBER : STROKE_DIM}`,
+            borderRadius: 2,
+            transition: 'color 400ms ease-out, border-color 400ms ease-out',
+            animation: sttTranscribing
+              ? 'sttBadgePulse 1.4s ease-in-out infinite'
+              : undefined,
+          }}
+        >
+          {/* HXI #3: inline stroke SVG mic glyph (no emoji). */}
+          <svg
+            width={9}
+            height={9}
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="6" y="2" width="4" height="8" rx="2" />
+            <path d="M3 9 C3 12 5 14 8 14" />
+            <path d="M13 9 C13 12 11 14 8 14" />
+            <path d="M8 14 L8 15.5" />
+          </svg>
+          STT
         </span>
       )}
       {boundDeviceCount >= 2 && (

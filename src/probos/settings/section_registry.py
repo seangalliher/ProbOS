@@ -120,6 +120,19 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
                     "Restart-required."
                 ),
             ),
+            FieldDescriptor(
+                "cognitive.offline_stt_enabled",
+                "Offline STT (whisper.cpp WASM)",
+                "bool",
+                description=(
+                    "AD-705a: when enabled, the VAD-bounded utterance "
+                    "is transcribed locally via the operator-pulled "
+                    "whisper.cpp WASM artifacts. When disabled (default) "
+                    "or artifacts absent, the browser-native "
+                    "SpeechRecognition path remains primary."
+                ),
+                hot_reload=True,
+            ),
         ),
     ),
     SectionDescriptor(

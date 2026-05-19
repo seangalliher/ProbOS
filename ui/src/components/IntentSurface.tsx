@@ -8,6 +8,12 @@ import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectPropo
 import { speakResponse, stripMarkdownForSpeech } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import {
+  armWhisperStt,
+  onTranscript,
+  onTranscribing,
+} from '../audio/whisperStt';
+import { useSettingsStore } from '../store/useSettingsStore';
+import {
   startWakeWordLoop,
   stopWakeWordLoop,
   getWakeWordState,
@@ -80,6 +86,12 @@ export function IntentSurface() {
   const voiceEnabled = useStore((s) => s.voiceEnabled);
   // AD-705: opt-in wake-word loop. Single-owner lifecycle below.
   const wakeWordEnabled = useStore((s) => s.wakeWordEnabled);
+  // AD-705a (Wave 179): opt-in offline STT. Subscription wired in the
+  // useEffect block below the wake-word lifecycle.
+  const sttEnabled = useSettingsStore((s) =>
+    Boolean(s.snapshot?.config?.cognitive?.offline_stt_enabled),
+  );
+  const [sttTranscribing, setSttTranscribing] = useState(false);
   const transporterProgress = useStore((s) => s.transporterProgress);
   const buildQueue = useStore((s) => s.buildQueue);
   const bridgeOpen = useStore((s) => s.bridgeOpen);
@@ -225,6 +237,33 @@ export function IntentSurface() {
       stopWakeWordLoop();
     };
   }, [wakeWordEnabled, agentsMap]);
+
+  /* ── AD-705a: offline STT subscription.
+     Arms only when ``cognitive.offline_stt_enabled = true``. Transcripts
+     dispatch through the same handleSubmit path keyboard input takes —
+     audio bytes never leave the browser (privacy invariant). */
+  useEffect(() => {
+    if (!sttEnabled) return;
+    const unarm = armWhisperStt();
+    const unsubTranscript = onTranscript((text: string) => {
+      const trimmed = (text || '').trim();
+      if (!trimmed) return;
+      setActive(true);
+      setInput(trimmed);
+      setTimeout(() => {
+        const form = inputRef.current?.closest('form');
+        if (form) form.requestSubmit();
+      }, 50);
+    });
+    const unsubTranscribing = onTranscribing((active: boolean) => {
+      setSttTranscribing(active);
+    });
+    return () => {
+      try { unsubTranscript(); } catch { /* Tier-2 */ }
+      try { unsubTranscribing(); } catch { /* Tier-2 */ }
+      try { unarm(); } catch { /* Tier-2 */ }
+    };
+  }, [sttEnabled]);
 
   /* ── DAG progress text ── */
   const dagProgress = activeDag && activeDag.length > 0
@@ -774,6 +813,31 @@ export function IntentSurface() {
       {/* AD-705: wake-word listening indicator. Renders only when the loop
           is active or in a fallback state with a reason. */}
       <WakeWordIndicator />
+      {/* AD-705a (HXI #5): transcript-preview pill — visible only while
+          whisperStt is transcribing. Hidden entirely when STT off. */}
+      {sttEnabled && sttTranscribing && (
+        <div
+          data-testid="stt-transcript-preview"
+          style={{
+            position: 'fixed',
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 200,
+            padding: '4px 12px',
+            borderRadius: 12,
+            background: 'rgba(20, 22, 30, 0.85)',
+            border: '1px solid #f0b060',
+            color: '#f0b060',
+            fontSize: 12,
+            letterSpacing: '0.05em',
+            pointerEvents: 'none',
+            animation: 'sttPulse 1.4s ease-in-out infinite',
+          }}
+        >
+          transcribing…
+        </div>
+      )}
       {/* ── Bridge toggle (AD-325) ── */}
       <button
         onClick={() => useStore.setState((s) => ({ bridgeOpen: !s.bridgeOpen }))}

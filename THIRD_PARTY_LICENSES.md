@@ -110,3 +110,22 @@ When adding a new third-party component:
 - Used by: `ui/src/audio/voiceActivity.ts` (lazy-loaded via existing `onnxruntime-web` resident dependency)
 - Installation: operator-pullable via `./scripts/silero-vad-fetch.ps1`. Model bytes are NOT bundled in the repo (gitignored under `data/silero-vad/` via the existing `data/*` rule).
 - Privacy posture: audio bytes never leave the browser. Only a boolean speech-detected event POSTs to `/api/perception/voice-activity`.
+
+
+## whisper.cpp (AD-721b-3 / AD-705a)
+
+- Project: <https://github.com/ggerganov/whisper.cpp>
+- Author: Georgi Gerganov and contributors
+- License: MIT (https://github.com/ggerganov/whisper.cpp/blob/master/LICENSE)
+- Used by: `ui/src/audio/whisperLoader.ts` (AD-721b-3 lazy `<script>` injection of UMD glue) and `ui/src/audio/whisperStt.ts` (AD-705a offline STT).
+- Installation: operator-pullable via `./scripts/whisper-tiny-en-fetch.ps1` (downloads `whisper.js` + `whisper.wasm`). Bytes are NOT bundled in the repo (gitignored under `data/whisper/` via the existing `data/*` rule).
+- Privacy posture: audio bytes never leave the browser. Whisper inference runs in WASM; only the transcript string crosses the wire (via the existing `agent_chat` keyboard path).
+
+## OpenAI Whisper (model weights — AD-705a)
+
+- Project: <https://github.com/openai/whisper>
+- Author: OpenAI
+- License: MIT (https://github.com/openai/whisper/blob/main/LICENSE)
+- Used by: `ui/src/audio/whisperLoader.ts` (AD-721b-3 loads `ggml-tiny.en.bin` — GGML conversion of the OpenAI Whisper tiny.en checkpoint).
+- Installation: operator-pullable via `./scripts/whisper-tiny-en-fetch.ps1` (SHA-256 pinned). ~75 MB. Bytes are NOT bundled in the repo (gitignored under `data/whisper/`).
+- Privacy posture: model weights live on the operator's disk; the browser fetches them from the same `/data/...` static route the Silero VAD model uses.

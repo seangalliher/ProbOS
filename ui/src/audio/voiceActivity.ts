@@ -36,8 +36,30 @@ interface VadOptions {
   scoreThreshold?: number;
 }
 
+/**
+ * AD-705a — PCM tap handler. Subscribers receive raw 16 kHz PCM frames
+ * from the existing VAD loop (zero overhead when no subscribers exist).
+ * ``onSpeechStart`` / ``onSpeechEnd`` fire on VAD score crossings so a
+ * downstream STT consumer can window utterances without opening a
+ * second mic stream (DRY per the AD-705a Architect decision).
+ *
+ * Privacy invariant (AD-733c-7, extended by AD-705a): PCM tap consumers
+ * MUST process frames in-browser only. Audio bytes NEVER leave the
+ * browser — the tap is internal-only.
+ */
+export interface PcmTapHandler {
+  onFrame(frame: Float32Array, sampleRate: number): void;
+  onSpeechStart?(now: number): void;
+  onSpeechEnd?(now: number): void;
+}
+
 const SAMPLE_RATE = 16000;
 const FRAME_SAMPLES = 480; // 30 ms @ 16 kHz
+
+// Module-scoped subscribers — populated only when the AD-705a STT path
+// (or any other consumer) is armed. Empty set = zero overhead.
+const _pcmSubscribers: Set<PcmTapHandler> = new Set();
+let _speechActiveForTap = false;
 
 interface LoopState {
   stream: MediaStream | null;
@@ -68,7 +90,45 @@ let _state: LoopState | null = null;
 export async function _processFrame(buffer: Float32Array, now: number = Date.now()): Promise<void> {
   if (!_state || !_state.active || !_state.session) return;
   if (_state.endpointOff) return;
+  // AD-705a PCM tap — fan out the raw frame to any subscribers BEFORE
+  // scoring. Subscribers cannot influence the VAD scoring path.
+  if (_pcmSubscribers.size > 0) {
+    for (const handler of _pcmSubscribers) {
+      try {
+        handler.onFrame(buffer, SAMPLE_RATE);
+      } catch {
+        // Tier-2: subscriber errors are non-actionable; the VAD path
+        // continues regardless.
+      }
+    }
+  }
   const score = await _state.session.score(buffer);
+  // AD-705a speech-boundary fan-out: track threshold crossings
+  // independently of the main loop's sustained-speech window so STT
+  // consumers can window utterances at the same cadence Silero hears
+  // them.
+  if (_pcmSubscribers.size > 0) {
+    const aboveThreshold = score >= _state.options.scoreThreshold;
+    if (aboveThreshold && !_speechActiveForTap) {
+      _speechActiveForTap = true;
+      for (const handler of _pcmSubscribers) {
+        try {
+          handler.onSpeechStart?.(now);
+        } catch {
+          // Tier-2.
+        }
+      }
+    } else if (!aboveThreshold && _speechActiveForTap) {
+      _speechActiveForTap = false;
+      for (const handler of _pcmSubscribers) {
+        try {
+          handler.onSpeechEnd?.(now);
+        } catch {
+          // Tier-2.
+        }
+      }
+    }
+  }
   if (score >= _state.options.scoreThreshold) {
     if (_state.speechStartedAt === null) {
       _state.speechStartedAt = now;
@@ -215,3 +275,30 @@ export function _peekState(): LoopState | null {
 
 /** Test seam — exposed so ``vad_min_speech_duration_ms`` defaults align. */
 export const _FRAME_SAMPLES = FRAME_SAMPLES;
+
+/**
+ * AD-705a — subscribe to the PCM tap. Returns an unsubscribe handle.
+ * Frames flow at 16 kHz / 30 ms cadence (the existing VAD loop's
+ * native rate). Speech-boundary callbacks fire on Silero threshold
+ * crossings. The tap is zero-overhead when no subscribers exist.
+ */
+export function subscribePcm(handler: PcmTapHandler): () => void {
+  _pcmSubscribers.add(handler);
+  return () => {
+    _pcmSubscribers.delete(handler);
+    if (_pcmSubscribers.size === 0) {
+      _speechActiveForTap = false;
+    }
+  };
+}
+
+/** Test seam — expose subscriber count for vitest. */
+export function _peekPcmSubscriberCount(): number {
+  return _pcmSubscribers.size;
+}
+
+/** Test seam — clear PCM subscribers between tests. */
+export function _resetPcmSubscribers(): void {
+  _pcmSubscribers.clear();
+  _speechActiveForTap = false;
+}
