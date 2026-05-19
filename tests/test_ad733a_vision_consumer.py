@@ -603,7 +603,7 @@ async def test_bf314_moondream_gets_short_single_clause_prompt(tmp_path: Path) -
     assert description == "a person in a dark sweatshirt"
     assert captured["tier"] == "vision_fast"
     assert captured["temperature"] == 0.0
-    assert captured["max_tokens"] == 80
+    assert captured["max_tokens"] == 100
     # Prompt is in the user message; pull it out.
     user_msg = next(m for m in captured["messages"] if m.get("role") == "user")
     content = user_msg["content"]
@@ -616,6 +616,13 @@ async def test_bf314_moondream_gets_short_single_clause_prompt(tmp_path: Path) -
     assert "one or two sentences" in prompt_text.lower()
     assert "do not invent" in prompt_text.lower()
     assert "describe their clothing and what they're doing" not in prompt_text
+    # BF-316: anti-confabulation anchors. Small VLMs confabulate scenes
+    # from contextual priors (framed photo on shelf -> "video call with
+    # multiple participants"). Prompt must explicitly disambiguate.
+    lowered = prompt_text.lower()
+    assert "literally visible" in lowered
+    assert "framed pictures" in lowered or "photos" in lowered
+    assert "video call" in lowered  # appears as a negative example
 
 
 @pytest.mark.asyncio

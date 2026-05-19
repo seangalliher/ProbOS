@@ -556,14 +556,23 @@ class VisionConsumer:
             # white." with no cat in frame). It needs a single direct
             # question + temperature 0 + tight token cap. qwen3.6:27b
             # handles complex structured prompts fine, keep the original.
+            # BF-316: small VLMs (qwen2.5vl:3b) confabulate scenes from
+            # contextual priors — a webcam frame + a framed photo on the
+            # shelf gets described as "split-screen video call with multiple
+            # participants." Explicit anti-confabulation anchors (photos as
+            # objects, no scene inference) protect Ezri's episodic memory
+            # from being seeded with invented context.
             if describe_tier == self._fast_tier:
                 prompt = (
-                    "Describe what is in this image in one or two sentences. "
+                    "Describe what is literally visible in this image in one or two sentences. "
                     "Include any person and what they are wearing. "
+                    "Treat framed pictures, photos, posters, and screens as objects on furniture "
+                    "or walls — not as additional people or video call participants. "
+                    "Do not infer activities (such as 'video call' or 'meeting') unless directly shown. "
                     "Do not invent details."
                 )
                 temperature = 0.0
-                max_tokens = 80
+                max_tokens = 100
             else:
                 prompt = (
                     "Briefly describe what you see in this frame. "
