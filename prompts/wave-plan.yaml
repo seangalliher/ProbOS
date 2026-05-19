@@ -3674,7 +3674,7 @@ waves:
     title: "AD-733c adaptive perception cadence (dormant/ambient/engaged)"
     issues_to_close: [675]
     estimated_hours: 12
-    status: shipped
+    status: done
     notes: |
       4 sub-ADs:
       - AD-733c-1 DM-receive force describe (highest immediate value)
@@ -3684,3 +3684,25 @@ waves:
       Research absorption pass required (OpenWakeWord, LiveKit Agents,
       HumeEVI conversational state machines, Picovoice Porcupine,
       VAD libs). Captain authorized full build.
+
+  - id: "173"
+    title: "AD-733-1 AttachmentStore retention + perception-frame reaper"
+    kind: single
+    depends_on: ["172"]
+    dispatch_prompt: "prompts/ad-733-1-attachment-retention.md"
+    prompts_already_drafted: true
+    expected_outputs:
+      - "prompts/ad-733-1-attachment-retention.md"
+    builder_required: true
+    issues_to_close: [667]
+    estimated_hours: 4
+    status: shipped
+    notes: |
+      Single-AD wave. Addresses the 2026-05-18 disk-fill incident:
+      - Origin-tagged attachments (perception_frame vs chat_attachment)
+        via sidecar .index.json — preserves AD-720 content-addressed substrate.
+      - AttachmentReaper with age-TTL (perception default 5 min)
+        + LRU size cap (5 GiB default).
+      - Codifies the BF-310 Cache-Control: no-store hotfix on browser_stream.py.
+      - New EventTypes ATTACHMENT_REAPED, ATTACHMENT_STORE_DISK_FULL.
+      Prompt drafted in commit 46ac734b (BF-310 + AD-733-1 prompt draft).
