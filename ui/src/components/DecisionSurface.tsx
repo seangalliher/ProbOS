@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { soundEngine } from '../audio/soundEngine';
 import { Sparkle, StatusPending, StatusDone } from './icons/Glyphs';
+import { VisionBudgetBadge } from './perception/VisionBudgetBadge';
 import { getAvailableVoices, setPreferredVoiceName, getCurrentVoiceName, speakResponse } from '../audio/voice';
 
 export function DecisionSurface() {
@@ -119,6 +120,9 @@ export function DecisionSurface() {
           <span style={{ color: '#666680' }}>Entropy</span>
           <span style={{ color: '#88a4c8' }}>{routingEntropy.toFixed(3)}</span>
         </span>
+
+        {/* AD-742e: Vision budget badge (hidden when total_session == 0) */}
+        <VisionBudgetBadge />
 
         {/* Spacer */}
         <span style={{ flex: 1 }} />

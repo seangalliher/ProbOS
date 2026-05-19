@@ -4460,3 +4460,34 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - `THIRD_PARTY_LICENSES.md` (attribution)
 - `.gitignore` (explicit `data/captain_identity.json` line)
 - `tests/test_ad742b_face_embedding_identity.py` (new, 19 tests)
+
+
+### AD-742e — Vision LLM call budget telemetry (Wave 174)
+
+**Context.** AD-733a enforces `vision_min_interval_seconds=3.0s` (cost-discipline floor) and a session-wide proactive ceiling (`proactive_max_emissions=3`). The Captain has no real-time view of how close to the budget the session is — they review journal traces after the fact. AD-742a's `vision_fast` tier is cheaper than `vision`; separate counters give cost-discipline visibility.
+
+**Decision.** `VisionConsumer` maintains in-memory per-tier counters; per-session reset on session change; per-day reset on UTC date rollover. New `GET /api/perception/budget` returns the structured snapshot. New `<VisionBudgetBadge />` HXI component polls every 5s and renders `Vis N/M` when `total_session > 0` (HXI Principle #5 progressive disclosure). Hidden entirely when zero. Hover-title shows per-tier breakdown.
+
+**Color scale.** Amber (`#f0b060`) at 0-80%, dim-red (`#c84030`) at 80-100%, bright-red (`#e04030`) above ceiling. No emoji (HXI Principle #3).
+
+**Session ceiling heuristic.** `proactive_max_emissions * 40` — a session-duration-free heuristic that produces 120 by default. Forward marker AD-742e-1 for SQLite-backed per-session vision_call_log + a tuned ceiling.
+
+**v1 in-memory only.** Forward marker AD-742e-1 for SQLite persistence (small `vision_call_log` table, daily roll-up via SQL query).
+
+**Tests.** +8 pytest in `tests/test_ad742e_vision_budget.py` (initial-state, increment, per-tier tracking, session reset, UTC date rollover, snapshot shape, API endpoint wired/unwired). +6 vitest in `ui/src/components/perception/__tests__/VisionBudgetBadge.test.tsx` (threshold-trigger visibility, color scale boundaries, hover-title content).
+
+**Forward markers.**
+- AD-742e-1 — SQLite persistence for vision_call_log + daily roll-up across restart (file post-build).
+- AD-742e-2 — Operator-configurable session ceiling (instead of heuristic) once SQLite layer ships.
+
+**Files.**
+- `src/probos/perception/consumer.py` (added counter state, `_record_vision_call`, `get_budget_snapshot`; `_describe` records call after successful LLM complete; `_process` updates `_budget_current_session_id`)
+- `src/probos/routers/perception.py` (new `GET /api/perception/budget` endpoint)
+- `ui/src/components/perception/VisionBudgetBadge.tsx` (new, ~80 lines)
+- `ui/src/components/DecisionSurface.tsx` (mount badge after Entropy span + import)
+- `tests/test_ad742e_vision_budget.py` (new, 8 tests)
+- `ui/src/components/perception/__tests__/VisionBudgetBadge.test.tsx` (new, 6 tests)
+
+**UI gate.** `npx vitest run` 757 passing + 1 skipped (none of the `Errors` are AD-742e — pre-existing onnxruntime-web load issue in unrelated wakeWord tests). `npm run build` exit 0. New bundle: `index-CfjDvOSd.js`.
+
+**License posture.** Zero new pip deps. Zero new npm deps.

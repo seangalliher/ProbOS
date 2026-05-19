@@ -122,6 +122,16 @@ class VisionConsumer:
         # through __init__ rather than constructed here so tests can
         # inject a stub.
         self._identity_resolver: Any = None
+
+        # AD-742e (Wave 174): per-tier vision LLM call counters. Reset
+        # per-session on session change; per-day on UTC date rollover.
+        # v1 in-memory only — AD-742e-1 forward marker for SQLite
+        # persistence across restart.
+        self._budget_calls_session: dict[str, int] = {"vision": 0, "vision_fast": 0}
+        self._budget_calls_today: dict[str, int] = {"vision": 0, "vision_fast": 0}
+        self._budget_current_session_id: str = ""
+        self._budget_current_date: str = ""  # YYYY-MM-DD UTC
+        self._budget_last_call_at: float | None = None
         self._sessions_with_observations: set[str] = set()
         self._observer: Any = None
         # AD-733c-1: per-session latest-frame SHA cache. Updated in
@@ -171,6 +181,56 @@ class VisionConsumer:
     def set_identity_resolver(self, resolver: Any) -> None:
         """AD-742b: hot-swap the IdentityResolver. None disables resolution."""
         self._identity_resolver = resolver
+
+    def _record_vision_call(self, tier: str, session_id: str) -> None:
+        """AD-742e: record one vision LLM call against the budget counters."""
+        import time as _time
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if session_id != self._budget_current_session_id:
+            self._budget_current_session_id = session_id
+            self._budget_calls_session = {"vision": 0, "vision_fast": 0}
+        if today != self._budget_current_date:
+            self._budget_current_date = today
+            self._budget_calls_today = {"vision": 0, "vision_fast": 0}
+        if tier not in self._budget_calls_session:
+            self._budget_calls_session[tier] = 0
+            self._budget_calls_today[tier] = 0
+        self._budget_calls_session[tier] += 1
+        self._budget_calls_today[tier] += 1
+        self._budget_last_call_at = _time.monotonic()
+
+    def get_budget_snapshot(self) -> dict[str, Any]:
+        """AD-742e: structured snapshot for /api/perception/budget."""
+        import time as _time
+        next_allowed_in: float = 0.0
+        if self._budget_last_call_at is not None:
+            # Heuristic: use the configured vision_min_interval_seconds floor
+            # as a proxy for "when's the next describe likely allowed?" — the
+            # supervisor enforces the actual cadence; this is informational.
+            cfg_perception = getattr(self._runtime.config, "perception", None)
+            min_interval = (
+                float(getattr(cfg_perception, "vision_min_interval_seconds", 3.0))
+                if cfg_perception is not None
+                else 3.0
+            )
+            elapsed = _time.monotonic() - self._budget_last_call_at
+            next_allowed_in = max(0.0, min_interval - elapsed)
+        ceiling = 0
+        # session ceiling = proactive_max_emissions * 40 (heuristic — actual
+        # ceiling is a function of session duration which isn't known here).
+        cfg = getattr(self._runtime.config, "perception", None)
+        if cfg is not None:
+            ceiling = int(getattr(cfg, "proactive_max_emissions", 3)) * 40
+        return {
+            "session_id": self._budget_current_session_id,
+            "calls_this_session": dict(self._budget_calls_session),
+            "calls_today": dict(self._budget_calls_today),
+            "total_session": sum(self._budget_calls_session.values()),
+            "total_today": sum(self._budget_calls_today.values()),
+            "session_ceiling_estimate": ceiling,
+            "next_allowed_in_seconds": round(next_allowed_in, 2),
+        }
 
     async def _handle(self, msg: IntentMessage) -> IntentResult | None:
         """Bus handler — supervisor-gate, LLM-describe, WM-write, episode-anchor."""
@@ -262,6 +322,11 @@ class VisionConsumer:
             self._recent_decisions.append((time.time(), "busy", sha[:8], novelty_score))
             return
         async with self._describe_lock:
+            # AD-742e: thread the current session_id into the consumer so the
+            # budget counter's reset-on-session-change logic sees the right
+            # bucket. Effective default when callers don't set session_id.
+            if session_id:
+                self._budget_current_session_id = session_id
             description = await self._describe(sha)
         if not description:
             logger.info("AD-733a: vision LLM returned empty for sha=%s", sha[:8])
@@ -440,6 +505,10 @@ class VisionConsumer:
                 self._runtime.llm_client.complete(request),
                 timeout=self._timeout,
             )
+            # AD-742e: record successful call against the budget counter.
+            # `describe_tier` is the resolved tier (vision_fast when configured,
+            # else vision) from the AD-742a routing block above.
+            self._record_vision_call(describe_tier, self._budget_current_session_id or "default")
             return (response.content or "").strip()
         except Exception:
             logger.warning(

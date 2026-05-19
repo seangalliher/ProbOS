@@ -378,3 +378,30 @@ async def get_identity_status(
         "resolver_wired": True,
         "model_id": "facenet-pytorch-vggface2-1.0",
     }
+
+
+@router.get("/budget", dependencies=[Depends(require_crew_scope)])
+async def get_vision_budget(
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-742e (Wave 174): vision LLM call budget telemetry.
+
+    Returns per-tier (vision / vision_fast) call counts for the current
+    session AND for today (UTC). Plus a next-allowed-in estimate based
+    on the supervisor's min-interval floor.
+    """
+    consumer = getattr(runtime, "vision_consumer", None)
+    if consumer is None:
+        return {
+            "session_id": "",
+            "calls_this_session": {"vision": 0, "vision_fast": 0},
+            "calls_today": {"vision": 0, "vision_fast": 0},
+            "total_session": 0,
+            "total_today": 0,
+            "session_ceiling_estimate": 0,
+            "next_allowed_in_seconds": 0.0,
+            "consumer_wired": False,
+        }
+    snapshot = consumer.get_budget_snapshot()
+    snapshot["consumer_wired"] = True
+    return snapshot
