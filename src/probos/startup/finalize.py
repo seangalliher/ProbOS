@@ -3990,7 +3990,11 @@ async def finalize_startup(
                 PerceptionModeController,
             )
             _controller = PerceptionModeController(
-                runtime, initial_mode=_PerceptionMode.AMBIENT
+                runtime,
+                initial_mode=_PerceptionMode.AMBIENT,
+                engaged_idle_seconds=_perception_cfg.engaged_idle_seconds,
+                ambient_idle_seconds=_perception_cfg.ambient_idle_seconds,
+                idle_tick_seconds=_perception_cfg.idle_watchdog_tick_seconds,
             )
             # Apply the AMBIENT preset to the live supervisor so the
             # default boot state matches the mode.

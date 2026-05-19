@@ -97,7 +97,15 @@ class PerceptionModeController:
     WAKE_WORD_COOLDOWN_S = 5.0
     HISTORY_CAP = 16
 
-    def __init__(self, runtime: Any, *, initial_mode: Mode = Mode.AMBIENT) -> None:
+    def __init__(
+        self,
+        runtime: Any,
+        *,
+        initial_mode: Mode = Mode.AMBIENT,
+        engaged_idle_seconds: float = 300.0,
+        ambient_idle_seconds: float = 1800.0,
+        idle_tick_seconds: float = 30.0,
+    ) -> None:
         self._runtime = runtime
         self._mode: Mode = initial_mode
         # Wall-clock timestamps for operator-facing API + idle math.
@@ -114,6 +122,14 @@ class PerceptionModeController:
         # _last_transition_at so a stream of wake-word events is throttled
         # independently of DM-activity / novelty transitions.
         self._last_wake_word_at: float = 0.0
+        # AD-733c-4: idle drop-back thresholds.
+        self._engaged_idle_s: float = float(engaged_idle_seconds)
+        self._ambient_idle_s: float = float(ambient_idle_seconds)
+        # Floor at 1ms only as a divide-by-zero / negative-timeout guard;
+        # the config-level Pydantic validator clamps production values to
+        # >= 5.0s. The lower floor here lets unit tests drive sub-second
+        # ticks without paying the production cadence.
+        self._idle_tick_s: float = max(0.001, float(idle_tick_seconds))
         self._history: deque[Transition] = deque(maxlen=self.HISTORY_CAP)
         self._history.append(
             Transition(at=self._mode_since, from_mode=initial_mode, to_mode=initial_mode, trigger="init")
@@ -265,21 +281,52 @@ class PerceptionModeController:
             self._task = None
 
     async def _run(self) -> None:
-        """Idle-watchdog body. AD-733c-2 ships a 30s tick that does nothing
-        (the AD-733c-4 prompt extends this method with the drop-back logic).
+        """AD-733c-4: idle-watchdog body. Every ``_idle_tick_s`` seconds,
+        check whether the current mode has been idle long enough to drop
+        one level (ENGAGED -> AMBIENT, AMBIENT -> DORMANT). DORMANT stays
+        put -- only manual override / wake-word / DM activity moves it out.
 
         Async-discipline: catch CancelledError, perform cleanup, re-raise.
         """
         try:
             while not self._stop_event.is_set():
                 try:
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=30.0)
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=self._idle_tick_s,
+                    )
                 except asyncio.TimeoutError:
-                    # AD-733c-4 inserts the drop-back logic here.
-                    pass
+                    try:
+                        self._check_idle_drop_back()
+                    except Exception:
+                        logger.warning(
+                            "AD-733c-4: idle drop-back check raised",
+                            exc_info=True,
+                        )
         except asyncio.CancelledError:
             logger.debug("AD-733c-2: idle watchdog cancelled")
             raise
         except Exception:
             logger.warning("AD-733c-2: idle watchdog crashed", exc_info=True)
             raise
+
+    def _check_idle_drop_back(self) -> None:
+        """AD-733c-4: synchronous helper -- called by ``_run`` once per tick.
+
+        Exposed (single-leading-underscore is convention, not capability) so
+        unit tests can drive the drop-back logic without spinning the
+        watchdog event loop.
+        """
+        now = time.time()
+        if self._mode is Mode.ENGAGED:
+            # DM-activity tracks engagement; if no DM in engaged_idle_s,
+            # drop to AMBIENT.
+            idle = now - (self._last_dm_activity_at or self._mode_since)
+            if idle >= self._engaged_idle_s:
+                self.transition_to(Mode.AMBIENT, trigger="idle_timer")
+        elif self._mode is Mode.AMBIENT:
+            # Time in AMBIENT counted from mode_since; no DM activity will
+            # have moved us out (DM in AMBIENT -> ENGAGED per AD-733c-2).
+            idle = now - self._mode_since
+            if idle >= self._ambient_idle_s:
+                self.transition_to(Mode.DORMANT, trigger="idle_timer")
+        # DORMANT: do nothing -- operator action required to leave.

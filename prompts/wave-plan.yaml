@@ -3669,3 +3669,18 @@ waves:
       BF-298 Settings parent/child toggle UX + status badge
       Research absorption: Neural Companion 3-tier Source/Supervisor/Reply pattern
       Captain authorized over-budget; loop until end-to-end testable.
+
+  - id: "172"
+    title: "AD-733c adaptive perception cadence (dormant/ambient/engaged)"
+    issues_to_close: [675]
+    estimated_hours: 12
+    status: drafting
+    notes: |
+      4 sub-ADs:
+      - AD-733c-1 DM-receive force describe (highest immediate value)
+      - AD-733c-2 PerceptionModeController + three preset bundles
+      - AD-733c-3 Wake-word "Hello Ezri" -> /api/perception/engage hook
+      - AD-733c-4 Idle drop-back timers (engaged->ambient->dormant)
+      Research absorption pass required (OpenWakeWord, LiveKit Agents,
+      HumeEVI conversational state machines, Picovoice Porcupine,
+      VAD libs). Captain authorized full build.

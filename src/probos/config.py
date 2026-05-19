@@ -1962,6 +1962,20 @@ class PerceptionConfig(BaseModel):
         description="On every DM, synchronously describe the latest captured frame before composing the reply (4s timeout floor).",
     )
 
+    # AD-733c-4 (Wave 172): idle drop-back thresholds. ENGAGED -> AMBIENT
+    # after engaged_idle_seconds of no DM activity. AMBIENT -> DORMANT
+    # after ambient_idle_seconds since entering AMBIENT (AMBIENT-entry is
+    # tracked via the controller's mode_since timestamp).
+    engaged_idle_seconds: float = Field(default=300.0, ge=30.0, le=3600.0,
+        description="ENGAGED -> AMBIENT after this many seconds of no DM activity. Default 5 min.",
+    )
+    ambient_idle_seconds: float = Field(default=1800.0, ge=60.0, le=86400.0,
+        description="AMBIENT -> DORMANT after this many seconds in AMBIENT with no engagement signal. Default 30 min.",
+    )
+    idle_watchdog_tick_seconds: float = Field(default=30.0, ge=5.0, le=300.0,
+        description="How often the controller's idle watchdog polls. Default 30s.",
+    )
+
     # AD-733b (Wave 171): Captain reference avatar SHA in AttachmentStore.
     # v1 manual config — AD-742b replaces with face-embedding enrollment.
     captain_avatar_ref: str = Field(default="",

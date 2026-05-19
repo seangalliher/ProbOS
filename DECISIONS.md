@@ -4379,3 +4379,26 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - `ui/src/__tests__/IntentSurface.engage.test.tsx` (new, 3 tests)
 
 **Tests.** +4 pytest, +3 vitest. UI bundle `index-C8-ybnnU.js`.
+
+### AD-733c-4 - Idle drop-back timers (Wave 172)
+
+**Closes #675** (final sub-AD of the AD-733c umbrella). The `PerceptionModeController._run()` watchdog stub (left by AD-733c-2) is replaced with a per-tick drop-back check so the system doesn't pay engaged-cadence vision LLM costs after the operator walks away.
+
+**Drop-back rules.**
+- `ENGAGED -> AMBIENT` when `now - last_dm_activity_at >= engaged_idle_seconds` (default 300s = 5 min). Uses `last_dm_activity_at` rather than `mode_since` because ENGAGED can be re-entered by `note_dm_activity()` without a mode transition.
+- `AMBIENT -> DORMANT` when `now - mode_since >= ambient_idle_seconds` (default 1800s = 30 min). DM activity in AMBIENT would have driven the controller to ENGAGED (per AD-733c-2's step-wise ramp), so `mode_since` IS the AMBIENT-entry timestamp for any session that reached AMBIENT.
+- `DORMANT` stays put. Only manual override (`POST /api/perception/mode`), wake-word (`note_wake_word`), or DM activity (`note_dm_activity`) moves the controller out of DORMANT.
+
+**Transitions are logged as `trigger="idle_timer"`** so the operator can correlate the CameraLiveIndicator mode-badge change with the journal entry.
+
+**Config.** Three new `PerceptionConfig` fields: `engaged_idle_seconds` (default 300, range 30-3600), `ambient_idle_seconds` (default 1800, range 60-86400), `idle_watchdog_tick_seconds` (default 30, range 5-300). `startup/finalize.py` threads all three into `PerceptionModeController.__init__` so operator config flows to the controller via the same construction site as `initial_mode`.
+
+**Watchdog floor.** The controller's internal `_idle_tick_s` is floored at `0.001s` (vs the production-side Pydantic floor of `5.0s`) so unit tests can drive sub-second ticks without paying production cadence. Defensive: prevents divide-by-zero / negative-timeout from a misconfigured runtime construction.
+
+**Files.**
+- `src/probos/config.py` (+14 lines: three new PerceptionConfig fields)
+- `src/probos/perception/mode_controller.py` (+52 / -7: constructor args, `_check_idle_drop_back` helper, `_run` body)
+- `src/probos/startup/finalize.py` (+5 / -1: constructor wires new fields)
+- `tests/test_ad733c4_idle_drop_back.py` (new, 5 tests)
+
+**Tests.** +5 pytest (engaged->ambient drop, ambient->dormant drop, engaged stays under threshold, dormant stays put, watchdog tick drives drop-back through the real asyncio loop). Uses real `PerceptionModeController` with a tiny `_FakeRuntime` dataclass (`vision_consumer = None`) per BF-287 (no MagicMock at substrate boundary).
