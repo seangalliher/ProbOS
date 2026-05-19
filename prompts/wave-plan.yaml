@@ -3768,7 +3768,7 @@ waves:
     builder_required: true
     issues_to_close: []   # forward-marker ADs; no GH issues per AD-722c-3
     estimated_hours: 6
-    status: drafting
+    status: shipped
     notes: |
       UI-completion slate for the three Wave 176 forward markers that
       deferred their HXI surfaces.
