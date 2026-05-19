@@ -229,6 +229,20 @@ class CognitiveConfig(BaseModel):
     llm_top_p_compute_use: float | None = None
     llm_max_tokens_compute_use: int | None = None
 
+    # AD-742a (Wave 174): vision_fast tier — small-VLM peer of AD-732 vision.
+    # Per-frame supervisor-flagged describe calls (~400-800ms target) instead
+    # of the 27B narrative-tier model. Default unconfigured; opt-in via
+    # system.yaml. When unconfigured OR unhealthy, VisionConsumer._describe
+    # falls back to the AD-732 vision tier (NOT to text tiers).
+    # ModelRouter bypassed (BF-273 lesson). Does NOT participate in the
+    # fast→standard→deep fallback chain (BF-269 lesson).
+    # Suggested default: moondream (Apache 2.0, 1.8B, Ollama-pullable).
+    llm_base_url_vision_fast: str | None = None
+    llm_api_key_vision_fast: str | None = None
+    llm_model_vision_fast: str | None = None
+    llm_timeout_vision_fast: float | None = None
+    llm_api_format_vision_fast: str | None = None  # "openai" or "ollama"
+
     # AD-730-3: image_gen tier — sixth peer of fast/standard/deep/vision/
     # compute_use. Image generation via OpenAI-compatible
     # POST /v1/images/generations (DALL-E 3 / gpt-image-1 / local SD via
@@ -294,6 +308,7 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_model_standard,
             "deep": self.llm_model_deep,
             "vision": self.llm_model_vision,
+            "vision_fast": self.llm_model_vision_fast,
             "compute_use": self.llm_model_compute_use,
             "image_gen": self.llm_model_image_gen,
         }
@@ -302,6 +317,7 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_base_url_standard,
             "deep": self.llm_base_url_deep,
             "vision": self.llm_base_url_vision,
+            "vision_fast": self.llm_base_url_vision_fast,
             "compute_use": self.llm_base_url_compute_use,
             "image_gen": self.llm_base_url_image_gen,
         }
@@ -310,6 +326,7 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_api_key_standard,
             "deep": self.llm_api_key_deep,
             "vision": self.llm_api_key_vision,
+            "vision_fast": self.llm_api_key_vision_fast,
             "compute_use": self.llm_api_key_compute_use,
             "image_gen": self.llm_api_key_image_gen,
         }
@@ -318,6 +335,7 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_timeout_standard,
             "deep": self.llm_timeout_deep,
             "vision": self.llm_timeout_vision,
+            "vision_fast": self.llm_timeout_vision_fast,
             "compute_use": self.llm_timeout_compute_use,
             "image_gen": self.llm_timeout_image_gen,
         }
@@ -326,6 +344,7 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_api_format_standard,
             "deep": self.llm_api_format_deep,
             "vision": self.llm_api_format_vision,
+            "vision_fast": self.llm_api_format_vision_fast,
             "compute_use": self.llm_api_format_compute_use,
             "image_gen": self.llm_api_format_image_gen,
         }
@@ -334,6 +353,7 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_temperature_standard,
             "deep": self.llm_temperature_deep,
             "vision": self.llm_temperature_vision,
+            "vision_fast": None,
             "compute_use": self.llm_temperature_compute_use,
             "image_gen": None,
         }
@@ -342,6 +362,7 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_top_p_standard,
             "deep": self.llm_top_p_deep,
             "vision": self.llm_top_p_vision,
+            "vision_fast": None,
             "compute_use": self.llm_top_p_compute_use,
             "image_gen": None,
         }
@@ -350,6 +371,7 @@ class CognitiveConfig(BaseModel):
             "standard": self.llm_max_tokens_standard,
             "deep": self.llm_max_tokens_deep,
             "vision": self.llm_max_tokens_vision,
+            "vision_fast": None,
             "compute_use": self.llm_max_tokens_compute_use,
             "image_gen": None,
         }
@@ -1984,7 +2006,10 @@ class PerceptionConfig(BaseModel):
         description="Per-agent vision working memory ring buffer size.",
     )
     vision_tier: str = Field(default="vision",
-        description="LLM tier name for vision describe calls. AD-742a forward marker for vision_fast split.",
+        description="LLM tier name for narrative / proactive-observer vision calls (AD-733b scene-introduction + high-novelty triggers). Falls back to standard/deep behavior if vision_fast is unset.",
+    )
+    vision_fast_tier: str = Field(default="vision_fast",
+        description="AD-742a (Wave 174): LLM tier for per-frame supervisor-flagged describe calls. Falls back to vision_tier when unconfigured (which itself honest-degrades).",
     )
 
     # AD-733c-1 (Wave 172): DM-receive force-describe of the latest cached frame

@@ -49,7 +49,7 @@ from rich.table import Table
 from rich.text import Text
 
 from probos.cognitive.episodic import EpisodicMemory
-from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient
+from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient, _LLM_TIERS
 from probos.config import load_config
 from probos.runtime import ProbOSRuntime
 from probos.experience.shell import ProbOSShell
@@ -136,7 +136,7 @@ async def _ensure_ollama(config, console: Console) -> None:
 
     # Collect Ollama tier configs
     ollama_tiers: list[dict] = []
-    for tier in ("fast", "standard", "deep", "vision"):
+    for tier in _LLM_TIERS:
         tc = config.cognitive.tier_config(tier)
         if tc.get("api_format") == "ollama":
             ollama_tiers.append(tc)
@@ -236,9 +236,12 @@ async def _create_llm_client(config, console: Console):
     console.print("  Checking LLM endpoints...")
     connectivity = await client.check_connectivity()
 
-    for tier in ("fast", "standard", "deep", "vision"):
+    for tier in _LLM_TIERS:
         tc = cog.tier_config(tier)
-        reachable = connectivity[tier]
+        # AD-742a: skip unconfigured optional tiers in the boot banner.
+        if not tc.get("model"):
+            continue
+        reachable = connectivity.get(tier, False)
         if reachable:
             console.print(
                 f"  [green]\u2713[/green] LLM {tier}: {tc['model']} at {tc['base_url']}"
@@ -941,8 +944,13 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             client = OpenAICompatibleClient(config=cfg.cognitive)
             connectivity = asyncio.run(client.check_connectivity())
             asyncio.run(client.close())
-            for tier in ("fast", "standard", "deep", "vision"):
+            for tier in _LLM_TIERS:
                 tc = cfg.cognitive.tier_config(tier)
+                # AD-742a: skip unconfigured tiers (no model). Honest-degrade
+                # tiers (vision_fast / compute_use / image_gen unset) are
+                # not failures — they simply aren't enabled.
+                if not tc.get("model"):
+                    continue
                 if connectivity.get(tier):
                     console.print(
                         f"  [green]\u2713[/green] LLM {tier}: {tc['model']} reachable"

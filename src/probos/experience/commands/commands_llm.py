@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 async def cmd_models(runtime: ProbOSRuntime, console: Console, args: str) -> None:
     """Handle /models command."""
-    from probos.cognitive.llm_client import OpenAICompatibleClient
+    from probos.cognitive.llm_client import OpenAICompatibleClient, _LLM_TIERS
     from rich.panel import Panel
 
     client = runtime.llm_client
@@ -30,7 +30,7 @@ async def cmd_models(runtime: ProbOSRuntime, console: Console, args: str) -> Non
         info = client.tier_info()
         # Track which URLs we've seen to note shared endpoints
         seen_urls: dict[str, str] = {}
-        for tier in ("fast", "standard", "deep", "vision"):
+        for tier in _LLM_TIERS:
             ti = info[tier]
             marker = " [dim](active)[/dim]" if tier == client.default_tier else ""
             reachable = ti.get("reachable")
@@ -62,7 +62,7 @@ async def cmd_registry(runtime: ProbOSRuntime, console: Console, args: str) -> N
     """Show all available models across all sources."""
     from rich.panel import Panel
     from rich.table import Table
-    from probos.cognitive.llm_client import OpenAICompatibleClient
+    from probos.cognitive.llm_client import OpenAICompatibleClient, _LLM_TIERS
     from probos.cognitive.copilot_adapter import CopilotBuilderAdapter, _classify_provider
 
     # Section 1: Active tier models
@@ -76,7 +76,7 @@ async def cmd_registry(runtime: ProbOSRuntime, console: Console, args: str) -> N
 
     if isinstance(client, OpenAICompatibleClient):
         info = client.tier_info()
-        for tier in ("fast", "standard", "deep", "vision"):
+        for tier in _LLM_TIERS:
             ti = info[tier]
             reachable = ti.get("reachable")
             if reachable is True:

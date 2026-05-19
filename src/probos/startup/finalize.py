@@ -4021,6 +4021,7 @@ async def finalize_startup(
                 baseline_max_age_seconds=_perception_cfg.vision_baseline_max_age_seconds,
                 working_memory_capacity=_perception_cfg.working_memory_capacity,
                 vision_tier=_perception_cfg.vision_tier,
+                vision_fast_tier=_perception_cfg.vision_fast_tier,
             )
             # BF-287: never reach into registry.agents — use public all().
             for agent in runtime.registry.all():

@@ -71,6 +71,13 @@ def is_vision_tier_configured(cfg: Any, tier_name: str) -> bool:
         model = getattr(cfg, "llm_model_vision", None) or ""
         base_url = getattr(cfg, "llm_base_url_vision", None)
         return bool(model and base_url)
+    if tier_name == "vision_fast":
+        # AD-742a: vision_fast peer of vision. Same shape — both model AND
+        # base_url must be set. Unconfigured = fall back to vision tier
+        # (which itself may honest-degrade if also unconfigured).
+        model = getattr(cfg, "llm_model_vision_fast", None) or ""
+        base_url = getattr(cfg, "llm_base_url_vision_fast", None)
+        return bool(model and base_url)
     if tier_name == "compute_use":
         # AD-706c-2: opt-in coordinate-prediction tier. Same shape as vision.
         model = getattr(cfg, "llm_model_compute_use", None) or ""

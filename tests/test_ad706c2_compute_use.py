@@ -198,7 +198,7 @@ def test_compute_use_in_llm_tiers() -> None:
     from probos.cognitive.llm_client import _LLM_TIERS
 
     assert "compute_use" in _LLM_TIERS
-    assert _LLM_TIERS == ("fast", "standard", "deep", "vision", "compute_use", "image_gen")
+    assert _LLM_TIERS == ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen")
 
 
 @pytest.mark.asyncio

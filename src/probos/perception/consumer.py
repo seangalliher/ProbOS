@@ -73,6 +73,7 @@ class VisionConsumer:
         baseline_max_age_seconds: float = 30.0,
         working_memory_capacity: int = 8,
         vision_tier: str = "vision",
+        vision_fast_tier: str = "vision_fast",
         max_describe_tokens: int = 220,
         describe_timeout_s: float = 30.0,
     ) -> None:
@@ -91,6 +92,7 @@ class VisionConsumer:
         )
         self._wm_capacity = working_memory_capacity
         self._tier = vision_tier
+        self._fast_tier = vision_fast_tier
         self._max_tokens = max_describe_tokens
         self._timeout = describe_timeout_s
         # BF-304: single-flight guard around the vision LLM call. Vision
@@ -408,10 +410,21 @@ class VisionConsumer:
             if not image_ids:
                 return ""
 
+            # AD-742a: route per-frame describes to vision_fast when
+            # configured. The LLMClient's fallback chain (llm_client.py:557)
+            # automatically routes vision_fast -> vision when fast is
+            # unconfigured / unhealthy. NO text-tier fallback (BF-269).
+            from probos.cognitive.vision_dispatch import is_vision_tier_configured
+            cog_cfg = getattr(self._runtime.config, "cognitive", None)
+            describe_tier = self._fast_tier if (
+                cog_cfg is not None
+                and is_vision_tier_configured(cog_cfg, self._fast_tier)
+            ) else self._tier
+
             request = LLMRequest(
                 prompt="",
                 messages=messages,
-                tier=self._tier,
+                tier=describe_tier,
                 max_tokens=self._max_tokens,
                 temperature=0.2,
             )

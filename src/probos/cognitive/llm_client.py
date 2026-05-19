@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # tiers cannot see images or generate images. Vision/compute_use/image_gen
 # failures route to honest-degrade messages defined in
 # cognitive/vision_dispatch.py and cognitive/image_gen_dispatch.py.
-_LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision", "compute_use", "image_gen")
+_LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen")
 
 # AD-706c-2: fallback chain is text-only. ``vision``, ``compute_use``, and
 # ``image_gen`` are excluded — text tiers silently drop image content (BF-269)
@@ -258,11 +258,12 @@ class OpenAICompatibleClient(BaseLLMClient):
         as a 16ms (no response) at the agent surface. Skip the router for
         vision; the explicit tier config is authoritative.
         """
-        if tier in ("vision", "compute_use"):
-            # AD-706c-2: compute_use joins vision in router bypass — the
-            # AD-463 ModelRouter registry has no entries for either tier and
-            # would otherwise fall through to "pick first available text
-            # model", routing requests to an endpoint that cannot fulfill them.
+        if tier in ("vision", "vision_fast", "compute_use"):
+            # AD-706c-2 + AD-742a: vision_fast joins vision/compute_use in
+            # router bypass — the AD-463 ModelRouter registry has no entries
+            # for these tiers and would otherwise fall through to "pick first
+            # available text model", routing requests to an endpoint that
+            # cannot fulfill them.
             return None
         # Defensive: tests that construct via __new__ (bypassing __init__) won't
         # have the model_router attribute. Treat that the same as not wired.
@@ -340,10 +341,12 @@ class OpenAICompatibleClient(BaseLLMClient):
 
         for tier in _LLM_TIERS:
             tc = self._tier_configs[tier]
-            # AD-732: vision tier unconfigured short-circuit. We never probe
-            # a default base URL with no model name — the operator either
-            # configures the tier or accepts the honest-degrade message.
-            if tier == "vision" and not tc.get("model"):
+            # AD-732 + AD-742a: vision/vision_fast tier unconfigured
+            # short-circuit. We never probe a default base URL with no
+            # model name — the operator either configures the tier or
+            # accepts the honest-degrade fallback (vision_fast falls back
+            # to vision; vision honest-degrades to the system message).
+            if tier in ("vision", "vision_fast") and not tc.get("model"):
                 results[tier] = False
                 self._tier_status[tier] = False
                 continue
@@ -556,6 +559,12 @@ class OpenAICompatibleClient(BaseLLMClient):
         # never confident wrong clicks).
         if tier in ("vision", "compute_use"):
             fallback_tiers = [tier]
+        elif tier == "vision_fast":
+            # AD-742a: vision_fast falls back to vision (NOT to text tiers
+            # — BF-269 invariant). If the operator's fast vision model is
+            # unreachable, the deeper 27B narrative tier is still vision-
+            # capable and produces a correct (slower) describe.
+            fallback_tiers = ["vision_fast", "vision"]
         else:
             fallback_tiers = [tier] + [t for t in _TIER_ORDER if t != tier]
 

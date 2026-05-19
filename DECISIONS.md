@@ -4402,3 +4402,31 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - `tests/test_ad733c4_idle_drop_back.py` (new, 5 tests)
 
 **Tests.** +5 pytest (engaged->ambient drop, ambient->dormant drop, engaged stays under threshold, dormant stays put, watchdog tick drives drop-back through the real asyncio loop). Uses real `PerceptionModeController` with a tiny `_FakeRuntime` dataclass (`vision_consumer = None`) per BF-287 (no MagicMock at substrate boundary).
+
+
+### AD-742a — vision_fast LLM tier (Wave 174)
+
+**Context.** AD-733a v1 routes both per-frame supervisor describes AND scene-introduction/high-novelty narrative summaries through the single AD-732 `vision` tier (qwen3.6:27b on local Ollama). Per-frame describes are sub-1s jobs; spending 4-6s of 27B inference on every flagged frame burns the `vision_min_interval_seconds=3.0s` budget and produces a 2-second-stale WM ring buffer.
+
+**Decision.** Split `vision` into `vision` (deep narrative, unchanged) and `vision_fast` (per-frame describes). `vision_fast` is the seventh peer in `_LLM_TIERS`. Default model: `moondream` (Apache 2.0, 1.8B, `ollama pull moondream`). All `vision_fast` fields default None — honest-degrade fallback to `vision` when unconfigured.
+
+**Eight-guard audit completed (15 sites).** Every tier-enumerating site updated: `_LLM_TIERS` (added), `_TIER_ORDER` (unchanged — BF-269 invariant: vision tiers MUST NOT fall back to text), 8 `tier_config()` dict-maps (added), `is_vision_tier_configured` (branch added), ModelRouter bypass (BF-273 — extended), fallback chain `vision_fast -> vision` ONLY (BF-269 — added), health probe short-circuit when unconfigured (extended), LLMResponseCache (shape-based, tier-agnostic, no change). 5 hardcoded `("fast","standard","deep","vision")` tuples in `__main__.py` + `commands_llm.py` refactored to `from probos.cognitive.llm_client import _LLM_TIERS` per AD-732 lesson #1.
+
+**License posture.** Zero new pip deps. Zero new npm deps. `moondream` is an Ollama-pullable model, not a Python dependency. `THIRD_PARTY_LICENSES.md` adds a single attribution row.
+
+**Forward markers.** AD-742a-1 — A/B comparison study moondream vs qwen2-vl:2b on Captain's actual feed (post-build).
+
+**Tests.** +13 pytest in `tests/test_ad742a_vision_fast_tier.py` covering all eight-guard surfaces + a source-scan regression (`test_no_hardcoded_tier_tuples_outside_llm_client`) that fails if any future PR re-introduces a hardcoded tier tuple.
+
+**Files.**
+- `src/probos/config.py` (+ 5 CognitiveConfig fields, `vision_fast` row in all 8 tier_config maps, new `PerceptionConfig.vision_fast_tier` field)
+- `src/probos/cognitive/llm_client.py` (_LLM_TIERS extended, ModelRouter bypass + health probe + fallback chain updated)
+- `src/probos/cognitive/vision_dispatch.py` (is_vision_tier_configured `vision_fast` branch)
+- `src/probos/perception/consumer.py` (`vision_fast_tier` ctor arg, `_describe` routing block)
+- `src/probos/startup/finalize.py` (threads new field)
+- `src/probos/__main__.py` + `src/probos/experience/commands/commands_llm.py` (5 tier-tuple refactors)
+- `src/probos/settings/section_registry.py` (3 new FieldDescriptors)
+- `config/system.yaml` (commented-out opt-in block)
+- `THIRD_PARTY_LICENSES.md` (moondream attribution)
+- `tests/test_ad742a_vision_fast_tier.py` (new, 13 tests)
+- `tests/test_bf069_llm_health.py` + `test_per_tier_llm.py` + `test_ad732_vision_tier.py` + `test_ad706c2_compute_use.py` (regression-fixture updates to include `vision_fast` in expected tier sets)

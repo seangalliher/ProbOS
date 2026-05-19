@@ -78,3 +78,14 @@ When adding a new third-party component:
 - Version pinned: `cryptography>=42` (installed: 48.0.0)
 - Used by: `src/probos/tools/browser/credentials.py` (`cryptography.fernet.Fernet` for symmetric authenticated encryption of stored credentials)
 - Installed via `pyproject.toml` `[project.dependencies]`: `cryptography>=42`.
+
+
+## moondream (AD-742a)
+
+- Project: <https://github.com/vikhyat/moondream>
+- Author: vikhyat (Vikhyat Korrapati)
+- License: Apache License, Version 2.0
+- Model card: <https://huggingface.co/vikhyatk/moondream2>
+- Used by: `src/probos/perception/consumer.py` `_describe` path as the
+  default per-frame vision_fast model (`llm_model_vision_fast: moondream`)
+- Installation: operator-pullable via `ollama pull moondream`. NOT bundled.

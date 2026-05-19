@@ -552,7 +552,7 @@ def test_vision_tier_not_in_fallback_chain():
     # AD-706c-2 compute_use).
     assert "vision" in _LLM_TIERS
     assert "compute_use" in _LLM_TIERS
-    assert set(_LLM_TIERS) == {"fast", "standard", "deep", "vision", "compute_use", "image_gen"}
+    assert set(_LLM_TIERS) == {"fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen"}
 
     # AD-706c-2 promoted _TIER_ORDER to a module-level constant; it must
     # remain text-only.
