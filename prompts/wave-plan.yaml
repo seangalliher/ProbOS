@@ -3716,3 +3716,14 @@ waves:
       AD-742a vision_fast tier - replaces single-shared-tier bottleneck
       AD-742b face-embedding identity - replaces LLM prompt with cheap embedding
       AD-742e vision LLM call budget telemetry in HXI status badge
+
+  - id: "175"
+    title: "Vision WM persistence + pluggable supervisor strategies + engaged-mode budget enforcement"
+    issues_to_close: [674, 672, 677]
+    estimated_hours: 12
+    status: shipped
+    notes: |
+      AD-742f WM persistence across restart (backend-only, opt-in)
+      AD-742d pluggable VisionSupervisor strategies (reuses AD-733a Protocol seam)
+      AD-733c-6 engaged-mode call budget + auto-drop to AMBIENT (extends AD-742e)
+      Overnight-safe: all additive, all behind opt-in flags, no live perception touched.
