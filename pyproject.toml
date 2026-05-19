@@ -30,6 +30,15 @@ dependencies = [
     "pyzmq>=27.1.0",
     "chromadb>=1.0",
     "sentence-transformers>=3.0",
+    # BF-313: torch >=2.4 required by transformers >=4.46 (the version
+    # pulled in transitively by sentence-transformers + facenet-pytorch).
+    # Wave 174 Builder installed facenet-pytorch with --no-deps to dodge
+    # a runtime file-lock on _C.pyd, which left torch 2.2.2 from a wheel
+    # restore -- breaking transformers ABI and ALL episodic recall
+    # (transformers/integrations/accelerate.py uses nn.Module before
+    # importing nn in <2.4 path). Explicit pin so `uv sync` always
+    # lands a compatible torch.
+    "torch>=2.4",
     "importlib-metadata<8; python_version>='3.12'",
     "fastapi>=0.115",
     "uvicorn>=0.34",
