@@ -3674,7 +3674,7 @@ waves:
     title: "AD-733c adaptive perception cadence (dormant/ambient/engaged)"
     issues_to_close: [675]
     estimated_hours: 12
-    status: drafting
+    status: shipped
     notes: |
       4 sub-ADs:
       - AD-733c-1 DM-receive force describe (highest immediate value)
