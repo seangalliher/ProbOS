@@ -3727,3 +3727,30 @@ waves:
       AD-742d pluggable VisionSupervisor strategies (reuses AD-733a Protocol seam)
       AD-733c-6 engaged-mode call budget + auto-drop to AMBIENT (extends AD-742e)
       Overnight-safe: all additive, all behind opt-in flags, no live perception touched.
+
+  - id: "176"
+    title: "Perception-completion + UX-polish: adaptive DM pacing, per-agent engagement + VAD + camera"
+    kind: main
+    depends_on: ["175"]
+    dispatch_prompt: "prompts/WAVE-176-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-743-adaptive-dm-pacing.md"
+      - "prompts/ad-733c-5-per-agent-engagement.md"
+      - "prompts/ad-733c-7-silero-vad-engagement.md"
+      - "prompts/ad-742c-per-agent-camera.md"
+    builder_required: true
+    issues_to_close: [662, 676, 678, 671]
+    estimated_hours: 14
+    status: drafting
+    notes: |
+      AD-743 adaptive conversational pacing in 1:1 DMs (closes #662; new top-level AD)
+      AD-733c-5 per-agent perception engagement (closes #676; pre-assigned)
+      AD-733c-7 Silero VAD secondary engagement trigger (closes #678; pre-assigned)
+      AD-742c per-agent camera selection (closes #671; pre-assigned)
+      Strict build order 1->2->3->4. AD-733c-5 ships CrewProfile.perception
+      block; AD-742c depends on it. AD-733c-7 plugs into the AD-733c-5
+      per-agent registry. Zero new pip/npm deps; +1 line each on
+      THIRD_PARTY_LICENSES.md and .gitignore (Silero VAD attribution).
+      Default-off transitional flags throughout; current behavior bit-for-bit
+      preserved.
