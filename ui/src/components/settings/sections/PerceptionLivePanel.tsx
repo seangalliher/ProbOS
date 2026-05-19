@@ -6,7 +6,9 @@
  * ``perception.camera.enabled`` calls ``startCameraStream`` / ``stopCameraStream``
  * directly — camera is a live thing, not just config.
  */
+import { useEffect, useState } from 'react';
 import { useCameraStore } from '../../../store/useCameraStore';
+import { useCameraMultiplexerStore } from '../../../store/useCameraMultiplexerStore';
 import { useSettingsStore } from '../../../store/useSettingsStore';
 import {
   usePerceptionModeStore,
@@ -35,6 +37,21 @@ export default function PerceptionLivePanel() {
   const modeTransitions = usePerceptionModeStore((s) => s.transitions);
   const setPerceptionMode = usePerceptionModeStore((s) => s.setMode);
   const perAgent = usePerceptionModeStore((s) => s.perAgent);
+
+  // AD-742c-6: camera multiplexer bindings + browser-enumerated devices.
+  // Section is collapsible (HXI Principle #5: progressive disclosure) so
+  // single-camera deployments never see the table unless they expand it.
+  const bindings = useCameraMultiplexerStore((s) => s.bindings);
+  const devices = useCameraMultiplexerStore((s) => s.devices);
+  const refreshBindings = useCameraMultiplexerStore((s) => s.refresh);
+  const bindAgent = useCameraMultiplexerStore((s) => s.bindAgent);
+  const clearAgent = useCameraMultiplexerStore((s) => s.clearAgent);
+  const [bindingsExpanded, setBindingsExpanded] = useState(false);
+  useEffect(() => {
+    if (bindingsExpanded) {
+      void refreshBindings();
+    }
+  }, [bindingsExpanded, refreshBindings]);
 
   if (!snapshot) return null;
 
@@ -279,6 +296,166 @@ export default function PerceptionLivePanel() {
           the observer agent.
         </div>
       )}
+
+      {/* AD-742c-6: CAMERA BINDINGS section (collapsible). */}
+      <div
+        data-testid="perception-camera-bindings-section"
+        style={{
+          marginTop: 12,
+          paddingTop: 10,
+          borderTop: `1px solid ${STROKE_DIM}`,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}
+      >
+        <button
+          data-testid="perception-camera-bindings-toggle"
+          onClick={() => setBindingsExpanded((v) => !v)}
+          aria-expanded={bindingsExpanded}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            width: '100%',
+            background: 'transparent',
+            border: 'none',
+            color: '#c8c8d8',
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 1.5,
+            cursor: 'pointer',
+            padding: 0,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          {/* Inline chevron — HXI Principle #3 (no emoji). */}
+          <svg
+            width={10}
+            height={10}
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            style={{
+              transform: bindingsExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+              transition: 'transform 200ms ease-out',
+            }}
+          >
+            <path d="M5 3 L11 8 L5 13" />
+          </svg>
+          CAMERA BINDINGS
+        </button>
+        {bindingsExpanded && (
+          <div
+            data-testid="perception-camera-bindings-table"
+            style={{ marginTop: 8 }}
+          >
+            <button
+              data-testid="perception-camera-bindings-refresh"
+              onClick={() => { void refreshBindings(); }}
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: 1.2,
+                color: STROKE_DIM,
+                background: 'transparent',
+                border: `1px solid ${STROKE_DIM}`,
+                padding: '2px 6px',
+                cursor: 'pointer',
+                fontFamily: "'JetBrains Mono', monospace",
+                borderRadius: 2,
+                marginBottom: 6,
+              }}
+            >
+              REFRESH DEVICES
+            </button>
+            {Object.keys(bindings).length === 0 && (
+              <div
+                data-testid="perception-camera-bindings-empty"
+                style={{ fontSize: 9, color: STROKE_DIM, lineHeight: 1.4 }}
+              >
+                No crew agents configured for camera binding.
+              </div>
+            )}
+            {Object.entries(bindings).map(([agentId, deviceId]) => {
+              const bound = Boolean(deviceId);
+              return (
+                <div
+                  key={agentId}
+                  data-testid={`perception-camera-binding-row-${agentId}`}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 9,
+                    padding: '3px 0',
+                    color: bound ? STROKE_AMBER : STROKE_DIM,
+                  }}
+                >
+                  <span style={{ flex: '0 0 auto', minWidth: 50, letterSpacing: 1 }}>
+                    {agentId.toUpperCase()}
+                  </span>
+                  <select
+                    data-testid={`perception-camera-binding-select-${agentId}`}
+                    value={deviceId ?? ''}
+                    onChange={(e) => { void bindAgent(agentId, e.target.value); }}
+                    style={{
+                      flex: 1,
+                      fontSize: 9,
+                      background: 'transparent',
+                      color: bound ? STROKE_AMBER : STROKE_DIM,
+                      border: `1px solid ${bound ? STROKE_AMBER : STROKE_DIM}`,
+                      padding: '2px 4px',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    <option value="">(unbound)</option>
+                    {devices.map((d) => (
+                      <option key={d.deviceId} value={d.deviceId}>
+                        {d.label || d.deviceId.slice(0, 8)}
+                      </option>
+                    ))}
+                  </select>
+                  {bound && (
+                    <button
+                      data-testid={`perception-camera-binding-clear-${agentId}`}
+                      onClick={() => { void clearAgent(agentId); }}
+                      aria-label={`clear binding for ${agentId}`}
+                      title="clear binding"
+                      style={{
+                        background: 'transparent',
+                        border: `1px solid ${STROKE_DIM}`,
+                        color: STROKE_DIM,
+                        padding: '2px 4px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <svg
+                        width={9}
+                        height={9}
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M3 3 L13 13" />
+                        <path d="M13 3 L3 13" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {httpsWarn && (
         <div

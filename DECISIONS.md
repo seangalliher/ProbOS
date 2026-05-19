@@ -4771,3 +4771,28 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 **Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
 
 - AD-733c-7-5-1 — Shared mic-tap hook unifying VAD raw audio + wake-word transcription.
+
+### AD-742c-6 — HXI camera multiplexer integration (Wave 177)
+
+**Context.** AD-742c (Wave 176) shipped the backend half of per-agent camera selection: `GET /api/perception/cameras` returning `{bindings}`, `POST /api/perception/cameras/binding {agent_id, device_id}`, and the optional `agent_ids` form field on `/camera/frame`. But the HXI didn't enumerate cameras, render bindings, or open multiple streams — operators had to hand-edit profile JSON or curl the endpoint.
+
+**Decision.** Ship three browser-side pieces:
+
+- `ui/src/store/useCameraMultiplexerStore.ts` — NEW Zustand slice SIBLING of `useCameraStore` (NOT a merger; different endpoints, different lifecycles — SRP wins). Owns `bindings: Record<string, string>` mirrored from backend + `devices: MediaDeviceInfo[]` enumerated browser-side. `refresh()` parallelizes the two halves via `Promise.allSettled` so a browser without `mediaDevices` does not block the backend fetch and vice versa. `bindAgent` / `clearAgent` POST to the binding endpoint and mirror local state on 200.
+- `ui/src/hooks/useCameraStream.ts` — EXTENDED (not rewritten — BF-301/302/305 invariants preserved). New optional `deviceId` kwarg on `startCameraStream` adds an `exact` device constraint to `getUserMedia`. New module-level `_activeDeviceId` + `_streams: Map<string, MediaStream>` track multi-device state alongside the existing `_stream`. New `_computeAgentIds()` derives the form-field value from the multiplexer bindings at capture time. Zero-arg call (legacy single-stream path) preserves bit-for-bit behavior — no agent_ids field when bindings are empty.
+- `ui/src/components/settings/sections/PerceptionLivePanel.tsx` — CAMERA BINDINGS section. Collapsed by default (HXI Principle #5 progressive disclosure). Per-agent row with device dropdown + clear-binding stroke-X button + REFRESH DEVICES action. `CameraLiveIndicator.tsx` gains a CAMS:N compact label when ≥ 2 distinct devices are bound (single-stream deployments unchanged).
+
+**AD-731 invariant preserved.** `agent_ids` is a STRING list (comma-separated form field), never image bytes. The multipart JPEG continues to be the only byte channel; no inline base64 is introduced.
+
+**HXI principles.** #3 (no emoji; inline SVG glyphs for chevron / clear-X; mono fonts; amber/dim color scheme). #4 (no new motion in v1 — bindings are configuration, not real-time signal; AD-742c-6-1 forward marker for fade-on-unbind). #5 (CAMERA BINDINGS section collapses by default; CAMS:N label surfaces only when ≥ 2 devices bound — solo deployments unchanged). #9 (bound rows render amber; unbound rows render dim — eye drawn to configured bindings). #11 (v1 ships the dropdown as a workstation pattern; the agentic "bind your camera to me" path requires a new intent + tool-permission grant — AD-742c-6-2 forward marker).
+
+**Scope.** UI-only. Backend frozen — zero diff on `src/probos/` or `tests/`.
+
+**Test coverage.** +6 vitest in `ui/src/store/__tests__/useCameraMultiplexerStore.test.ts` (refresh populates both halves in parallel; bindAgent POSTs and mirrors state) + `ui/src/components/settings/sections/__tests__/PerceptionLivePanel.cameraBindings.test.tsx` (section collapsed by default; toggle expands and collapses; dropdown POSTs to /cameras/binding; single-camera deployments render bit-for-bit identical UI). Spec called for +4; the 2 extra tests (toggle round-trip + solo-Captain regression) are boundary coverage on the BF-301/302/305 invariant family.
+
+**License posture.** 0-line diff on all 5 license files. Zero new pip / npm deps.
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
+
+- AD-742c-6-1 — Fade-on-unbind animation in CAMERA BINDINGS table.
+- AD-742c-6-2 — Agentic bind path ("agent: bind your camera to me") — requires new intent + tool permission grant.

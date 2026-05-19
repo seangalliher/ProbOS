@@ -10,6 +10,7 @@
 import type { CSSProperties } from 'react';
 import { useEffect, useState } from 'react';
 import { useCameraStore, type IndicatorCorner } from '../../store/useCameraStore';
+import { useCameraMultiplexerStore } from '../../store/useCameraMultiplexerStore';
 import { usePerceptionModeStore, type PerceptionMode } from '../../store/usePerceptionModeStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { stopCameraStream } from '../../hooks/useCameraStream';
@@ -48,6 +49,16 @@ export default function CameraLiveIndicator() {
   const mode = usePerceptionModeStore((s) => s.mode);
   const perAgent = usePerceptionModeStore((s) => s.perAgent);
   const lastSpeechAt = usePerceptionModeStore((s) => s.lastSpeechAt);
+  // AD-742c-6: count distinct devices that have at least one agent bound.
+  // Surfaces as a compact ``CAMS:N`` label only when N >= 2 — solo
+  // deployments render bit-for-bit identical UI to HEAD.
+  const boundDeviceCount = useCameraMultiplexerStore((s) => {
+    const distinct = new Set<string>();
+    for (const dev of Object.values(s.bindings)) {
+      if (dev) distinct.add(dev);
+    }
+    return distinct.size;
+  });
   // AD-733c-7-5: SPEECH badge is conditional on the snapshot toggle.
   // When ``vad_engagement_enabled=false`` (default), the badge does not
   // render — preserves bit-for-bit single-Captain layout.
@@ -194,6 +205,25 @@ export default function CameraLiveIndicator() {
             <path d="M14 8 L14 8.5" />
           </svg>
           SPK
+        </span>
+      )}
+      {boundDeviceCount >= 2 && (
+        <span
+          data-testid="perception-cams-label"
+          data-count={boundDeviceCount}
+          title={`${boundDeviceCount} cameras bound to agents`}
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: 1.2,
+            color: STROKE_AMBER,
+            fontFamily: "'JetBrains Mono', monospace",
+            padding: '1px 5px',
+            border: `1px solid ${STROKE_AMBER}`,
+            borderRadius: 2,
+          }}
+        >
+          CAMS:{boundDeviceCount}
         </span>
       )}
       <button
