@@ -53,12 +53,14 @@ cognitive:
   llm_timeout_vision: 120.0
   llm_api_format_vision: openai
   # AD-742a (Wave 174): vision_fast tier — per-frame supervisor describes.
-  # Enabled by default with moondream on local Ollama; comment out to fall
-  # back to the AD-732 vision tier for per-frame work.
-  llm_base_url_vision_fast: "http://localhost:11434"
-  llm_api_format_vision_fast: "ollama"
-  llm_model_vision_fast: "moondream"
-  llm_timeout_vision_fast: 15.0
+  # Temporarily disabled per BF-315 — moondream's per-frame output quality
+  # was unusable (looping numbered lists, ignoring the actual image).
+  # BF-269 fallback chain routes describes to the AD-732 vision tier
+  # (qwen3.6:27b) while we diagnose / try qwen2-vl:2b.
+  # llm_base_url_vision_fast: "http://localhost:11434"
+  # llm_api_format_vision_fast: "ollama"
+  # llm_model_vision_fast: "moondream"
+  # llm_timeout_vision_fast: 15.0
   llm_base_url_compute_use: null
   llm_api_key_compute_use: null
   llm_model_compute_use: null
