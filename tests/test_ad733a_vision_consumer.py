@@ -363,6 +363,36 @@ async def test_episode_anchor_uses_importance_6(tmp_path: Path) -> None:
     assert episode.anchors.channel == "perception"
 
 
+@pytest.mark.asyncio
+async def test_bf311_anchored_episode_tagged_with_observer_agent_ids(tmp_path: Path) -> None:
+    """BF-311: perception-anchored episodes MUST carry agent_ids so per-agent
+    episodic recall surfaces them. Without this, episodes get
+    ``agent_ids_json = []`` in chroma and are invisible to recall queries
+    that filter by participant — silently breaking the AD-541b promise that
+    perception observations form long-term memory."""
+    runtime = _build_runtime(tmp_path)
+    consumer = VisionConsumer(runtime, min_interval_seconds=0.0)
+    consumer.register_observer("ezri")
+    consumer.register_observer("data")
+    reset_working_memories_for_tests()
+
+    sha = await _store_frame(runtime, _make_jpeg())
+    msg = IntentMessage(
+        intent="vision_observation",
+        params={"attachment_ref": sha, "session_id": "s1"},
+    )
+    await consumer._handle(msg)
+
+    runtime.episodic_memory.store.assert_called()
+    episode: Episode = runtime.episodic_memory.store.call_args.args[0]
+    # Both registered observers should be tagged so each agent's recall finds it.
+    assert set(episode.agent_ids) == {"ezri", "data"}, (
+        f"BF-311: perception anchor episode missing observer agent_ids; "
+        f"got {episode.agent_ids!r}. This is the bug that hid Ezri's "
+        f"white-shirt memories from her own recall."
+    )
+
+
 # ---------- Integration (3) ----------
 
 

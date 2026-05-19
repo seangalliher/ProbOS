@@ -281,7 +281,16 @@ class VisionConsumer:
             wm.append(obs)
 
         # 5) Anchor an episode (AD-541b — importance=6, lower than camera_began=8).
-        await self._anchor_episode(sha, description, novelty_score, session_id)
+        # BF-311: tag with the observer agent_ids so per-agent episodic recall
+        # can surface these episodes. Without this, ``agent_ids_json = []``
+        # and the episodes are invisible to every agent's recall query —
+        # they exist in chroma but aren't retrievable, which silently breaks
+        # the AD-541b promise that perception observations form long-term memory.
+        anchor_agent_ids = list(self._observer_agent_ids)
+        await self._anchor_episode(
+            sha, description, novelty_score, session_id,
+            agent_ids=anchor_agent_ids,
+        )
 
         # 6) AD-733b: proactive observer — may emit one DM per observer if
         # the scene-introduction or high-novelty trigger fires. Tier-2:
@@ -489,6 +498,7 @@ class VisionConsumer:
 
     async def _anchor_episode(
         self, sha: str, description: str, novelty: float, session_id: str,
+        *, agent_ids: list[str] | None = None,
     ) -> None:
         episodic = getattr(self._runtime, "episodic_memory", None)
         if episodic is None:
@@ -506,6 +516,10 @@ class VisionConsumer:
                 }],
                 reflection=f"Vision observation: {description}",
                 source="direct",
+                # BF-311: tag with observer agent_ids so per-agent recall can
+                # surface these episodes. Falls back to empty list (legacy
+                # behavior) if caller doesn't supply one.
+                agent_ids=list(agent_ids) if agent_ids else [],
                 importance=6,
                 anchors=AnchorFrame(
                     channel="perception",
