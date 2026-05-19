@@ -180,6 +180,17 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             await queue.shutdown()
         logger.info("Shutdown: cognitive queues stopped")
 
+    # AD-743: Stop ConversationPacingScheduler (cancels any pending follow-ups)
+    _pacing = getattr(runtime, "conversation_pacing_scheduler", None)
+    if _pacing is not None:
+        try:
+            await _pacing.stop()
+        except Exception:
+            logger.warning(
+                "AD-743: ConversationPacingScheduler stop failed", exc_info=True
+            )
+        runtime.conversation_pacing_scheduler = None
+
     # Stop Proactive Cognitive Loop (Phase 28b)
     if runtime.proactive_loop:
         # AD-415: Persist proactive cooldown overrides before stopping

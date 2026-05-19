@@ -4162,6 +4162,31 @@ async def finalize_startup(
             exc_info=True,
         )
 
+    # AD-743: ConversationPacingScheduler wiring (default-OFF transitional).
+    try:
+        _avatars_cfg = getattr(runtime.config, "avatars", None)
+        if _avatars_cfg is not None and getattr(
+            _avatars_cfg, "pacing_enabled", False
+        ):
+            from probos.cognitive.dm.pacing_scheduler import (
+                ConversationPacingScheduler,
+            )
+            _scheduler = ConversationPacingScheduler(runtime)
+            await _scheduler.start()
+            runtime.conversation_pacing_scheduler = _scheduler
+            logger.info(
+                "AD-743: ConversationPacingScheduler wired (pacing_enabled=True)"
+            )
+        else:
+            runtime.conversation_pacing_scheduler = None
+    except Exception:
+        logger.warning(
+            "AD-743: ConversationPacingScheduler wiring failed; "
+            "[FOLLOW_UP] markers will be silently stripped",
+            exc_info=True,
+        )
+        runtime.conversation_pacing_scheduler = None
+
     # AD-637d: System Events subscription wiring (stream ensured in startup/nats.py)
     # Placed after ALL add_event_listener() calls (game completion, Counselor, etc.)
     # so _setup_nats_event_subscriptions() catches every registered listener.

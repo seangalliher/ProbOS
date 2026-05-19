@@ -1546,6 +1546,62 @@ class AvatarsConfig(BaseModel):
         ),
     )
 
+    # AD-743: adaptive conversational pacing for active 1:1 DMs.
+    pacing_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-743: enable [FOLLOW_UP delay reason] marker parsing and "
+            "the ConversationPacingScheduler runtime service. Default "
+            "OFF transitional flag (convention #14) — existing turn-"
+            "taking DM behavior is bit-for-bit preserved when disabled."
+        ),
+    )
+    pacing_max_followups_per_active_conversation: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description=(
+            "AD-743: per-conversation cap on synthesized follow-ups "
+            "before the active window resets."
+        ),
+    )
+    pacing_max_followups_per_hour_per_agent: int = Field(
+        default=6,
+        ge=0,
+        le=60,
+        description=(
+            "AD-743: rolling 1h ceiling on follow-ups per agent across "
+            "all conversations (safety cap)."
+        ),
+    )
+    pacing_active_window_seconds: int = Field(
+        default=600,
+        ge=60,
+        le=3600,
+        description=(
+            "AD-743: silence threshold beyond which a conversation is "
+            "considered inactive and the per-conversation budget resets."
+        ),
+    )
+    pacing_min_delay_seconds: int = Field(
+        default=1,
+        ge=1,
+        le=60,
+        description=(
+            "AD-743: minimum allowed delay for a [FOLLOW_UP] marker. "
+            "Markers below this floor are stripped and discarded."
+        ),
+    )
+    pacing_max_delay_seconds: int = Field(
+        default=300,
+        ge=1,
+        le=900,
+        description=(
+            "AD-743: maximum allowed delay for a [FOLLOW_UP] marker. "
+            "Markers above this ceiling are stripped and discarded."
+        ),
+    )
+
     @field_validator("max_proposal_iterations")
     @classmethod
     def _bound_max_proposal_iterations(cls, v: int) -> int:

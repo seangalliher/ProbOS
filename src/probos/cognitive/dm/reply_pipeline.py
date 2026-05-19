@@ -84,6 +84,7 @@ class DmReplyPipeline:
             self.step_3_move_parse,
             self.step_4_self_check_parse,
             self.step_4c_image_gen_parse,  # AD-730-3
+            self.step_4d_follow_up_parse,  # AD-743
             self.step_4b_dm_outbound_parse,
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
@@ -386,6 +387,70 @@ class DmReplyPipeline:
                 self.ctx.response_text = (
                     f"{self.ctx.response_text}\n\n{message}".strip()
                 )
+
+    # --- step 4d: AD-743 [FOLLOW_UP delay reason] parse + schedule ---
+    async def step_4d_follow_up_parse(self) -> None:
+        """AD-743: parse ``[FOLLOW_UP delay reason]`` markers, schedule
+        a synthesized user-turn after ``delay`` seconds via the runtime's
+        ``conversation_pacing_scheduler``, and strip the marker before
+        downstream steps see ``response_text``.
+
+        First well-formed marker schedules; additional markers stripped
+        with a single WARNING. Honest-degrade when the scheduler is
+        absent (``pacing_enabled=False``): marker silently stripped, no
+        follow-up scheduled, no Captain-visible bleed.
+
+        Tier-2: every failure path logs + degrades. Never raises.
+        """
+        gate = self.ctx.sanity_gate
+        if gate is None or not self.ctx.response_text:
+            return
+
+        try:
+            followup = gate.extract_followup(self.ctx.response_text)
+        except Exception:
+            logger.warning(
+                "AD-743: extract_followup raised for agent=%s",
+                self.ctx.agent_id, exc_info=True,
+            )
+            followup = None
+
+        # Strip BEFORE returning so markers don't leak even when the
+        # scheduler is disabled.
+        try:
+            self.ctx.response_text = gate.strip_followup(self.ctx.response_text)
+        except Exception:
+            logger.warning(
+                "AD-743: strip_followup raised for agent=%s",
+                self.ctx.agent_id, exc_info=True,
+            )
+
+        if followup is None:
+            return
+
+        delay, reason = followup
+        scheduler = getattr(
+            self.ctx.runtime, "conversation_pacing_scheduler", None
+        )
+        if scheduler is None:
+            logger.debug(
+                "AD-743: pacing scheduler not wired; marker stripped for "
+                "agent=%s reason=%r (pacing disabled)",
+                self.ctx.agent_id, reason,
+            )
+            return
+
+        try:
+            scheduler.schedule_followup(
+                agent_id=self.ctx.agent_id,
+                delay_seconds=delay,
+                reason=reason,
+            )
+        except Exception:
+            logger.warning(
+                "AD-743: schedule_followup raised for agent=%s reason=%r",
+                self.ctx.agent_id, reason, exc_info=True,
+            )
 
     # --- step 4b: BF-296 / AD-453 [DM @callsign]...[/DM] outbound parse ---
     async def step_4b_dm_outbound_parse(self) -> None:

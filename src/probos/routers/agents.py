@@ -1666,6 +1666,18 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if not is_crew_agent(agent, runtime.ontology):
         raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent — direct chat is crew-only")
 
+    # AD-743: Captain interruption cancels any pending pacing follow-up so the
+    # synthesized user-turn doesn't double-fire after a fresh Captain message.
+    _pacing = getattr(runtime, "conversation_pacing_scheduler", None)
+    if _pacing is not None:
+        try:
+            _pacing.cancel_for_conversation(agent_id)
+        except Exception:
+            logger.debug(
+                "AD-743: pacing cancel_for_conversation raised for agent=%s",
+                agent_id, exc_info=True,
+            )
+
     # AD-725 (Wave 159): targeted sub-intent dispatch (DM one-shot pre-LLM
     # lookup). Tier-2 — never blocks the DM. When the classifier matches and
     # the lookup returns content, the recall block prepends message_text so

@@ -60,6 +60,14 @@ _GEN_IMAGE_RE = re.compile(r"\[GEN_IMAGE\s+([^\]\n]{1,4000})\]")
 # leaks into Captain-visible text.
 _GEN_IMAGE_STRIP_RE = re.compile(r"\[GEN_IMAGE\b[^\]\n]*\]?")
 
+# AD-743: adaptive conversational pacing marker. ``delay`` is 1..300
+# seconds; ``reason`` is 1..64 chars of [a-z_-]+. Invalid markers fall
+# through to silent strip with no follow-up scheduled.
+_FOLLOW_UP_RE = re.compile(r"\[FOLLOW_UP\s+(\d{1,3})\s+([a-z_-]{1,64})\]")
+# Lax strip removes well-formed AND malformed variants so no marker
+# leaks into Captain-visible text (mirrors AD-728d / AD-730-3 contract).
+_FOLLOW_UP_STRIP_RE = re.compile(r"\[FOLLOW_UP\b[^\]\n]*\]?")
+
 # AD-724: malformed tags (open bracket + keyword, but missing close bracket
 # OR missing value). These do NOT match the well-formed regexes above.
 _ORPHANED_CHALLENGE_RE = re.compile(r"\[CHALLENGE\b(?![^\[\]]*\])")
@@ -266,6 +274,37 @@ class DmSanityGate:
         if not text:
             return text
         return _GEN_IMAGE_STRIP_RE.sub("", text).strip()
+
+    def extract_followup(self, text: str) -> tuple[int, str] | None:
+        """AD-743: extract the first valid ``[FOLLOW_UP delay reason]``.
+
+        Returns ``(delay_seconds, reason)`` for the first well-formed
+        marker with ``1 <= delay <= 300``, or ``None`` if no valid
+        marker is present. Malformed markers are not returned but are
+        stripped by :meth:`strip_followup`.
+        """
+        if not text:
+            return None
+        for m in _FOLLOW_UP_RE.finditer(text):
+            try:
+                delay = int(m.group(1))
+            except ValueError:
+                continue
+            reason = m.group(2)
+            if 1 <= delay <= 300 and 1 <= len(reason) <= 64:
+                return delay, reason
+        return None
+
+    def strip_followup(self, text: str) -> str:
+        """AD-743: remove ALL ``[FOLLOW_UP ...]`` markers from reply text.
+
+        Strips both well-formed and malformed variants so no bracket
+        marker leaks into Captain-visible output. Mirrors the
+        :meth:`strip_gen_image` contract.
+        """
+        if not text:
+            return text
+        return _FOLLOW_UP_STRIP_RE.sub("", text).strip()
 
     # --- New checks (Tier-2 log-and-degrade) ---
 

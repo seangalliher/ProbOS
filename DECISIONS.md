@@ -4589,3 +4589,32 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 **UI gate.** `cd ui && npx vitest run src/components/perception/__tests__/VisionBudgetBadge.test.tsx` → 9/9. `cd ui && npm run build` → exit 0. New bundle: `index-DPxUl-OZ.js`.
 
 **License posture.** 0-line diff on all 5 license files.
+
+
+### AD-743 — Adaptive conversational pacing in 1:1 DMs (Wave 176)
+
+**Date:** 2026-05-19
+**Closes:** #662
+**Status:** Shipped
+
+**Decision.** Add a new `[FOLLOW_UP delay_seconds reason]` bracket marker (extends AD-728d / AD-730-3 family) and a sibling `ConversationPacingScheduler` runtime service so an agent can schedule a single multi-beat follow-up within an active 1:1 DM. The synthesized user-turn `IntentMessage` carries `params["from"] = "pacing_scheduler"` so AD-541b episodic anchors can distinguish system-synthesized turns from Captain-authored ones. Two-budget rate limit mirrors AD-728c: per-active-conversation cap (default 2) + rolling 1h per-agent cap (default 6); budgets are NOT additive. Captain interruption (new DM) cancels any pending follow-up via a hook at the top of `agent_chat`.
+
+**Implementation notes.**
+
+- `cognitive/dm/pacing_scheduler.py` owns `ConversationPacingScheduler` with `start` / `stop` / `schedule_followup` / `cancel_for_conversation` / `pending_followups`. Single-flight per `(agent_id, conversation_id)`; later FOLLOW_UP overrides prior pending task. Every `asyncio.create_task` reference held in `self._pending_tasks` and removed via `add_done_callback`. `CancelledError` caught + re-raised in `_emit_followup` per async-discipline rule.
+- `DmSanityGate` gains `extract_followup(text) -> tuple[int, str] | None` and `strip_followup(text)` with the same lax-strip discipline as AD-728d / AD-730-3 (well-formed AND malformed variants stripped before Captain-visible text).
+- `DmReplyPipeline` gains `step_4d_follow_up_parse` inserted between `step_4c_image_gen_parse` and `step_4b_dm_outbound_parse`. **Name deviates from prompt's `step_5_follow_up_parse`** because `step_5_episodic_store` already occupied that slot at HEAD; the `step_4*` family is the correct namespace for bracket-marker parsers anyway (AD-728d step_4 / AD-730-3 step_4c / BF-296 step_4b).
+- `AvatarsConfig` gains `pacing_enabled` (default `False` — convention #14 transitional gate) plus five cap fields with Pydantic `ge/le` bounds. All cap values read fresh on every `schedule_followup` call (BF-308 hot-reload). `pacing_enabled` master toggle requires restart (changes `runtime` attribute presence).
+- `startup/finalize.py` constructs the scheduler when `pacing_enabled=True`; `startup/shutdown.py` mirrors the perception-controller shutdown pattern with `await pacing.stop()` to cancel pending tasks.
+- `routers/agents.py:agent_chat` adds a `cancel_for_conversation` hook BEFORE the existing AD-725 lookup path so a Captain-initiated DM interrupts any in-flight follow-up.
+- AD-731 invariant preserved: source-scan test asserts no `b64encode` / `base64.b64` / `attachment_ref` literals in `pacing_scheduler.py`. The synthesized user-turn carries only a string marker; no image bytes pass through pacing.
+
+**Test coverage.** +12 pytest in `tests/test_ad743_adaptive_dm_pacing.py`: regex extract well-formed + reject invalid + strip both forms; scheduler delivers after delay + cancels on interruption; per-conversation budget + hourly ceiling + non-additive behavior; default-off config gate; pipeline step ordering source-scan; synthesized follow-up carries `from`-marker; AD-731 invariant source-scan.
+
+**License posture.** 0-line diff on all 5 license files. Zero new pip deps.
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3 standing rule):
+
+- AD-743-1 — Captain-silence "Still there?" trigger (idle-watcher loop).
+- AD-743-2 — Same-tick multi-message split (delay=0 chunked rendering UX).
+- AD-743-3 — Correction-driven per-conversation budget reset.
