@@ -4724,3 +4724,26 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - AD-742c-4 — Audio device per-agent binding.
 - AD-742c-5 — Per-agent camera permissions.
 - AD-742c-6 — HXI camera multiplexer integration (deferred UI from this wave).
+
+### AD-733c-5-4 — HXI per-agent perception badges (Wave 177)
+
+**Context.** AD-733c-5 (Wave 176) shipped the per-agent `PerceptionEngagementRegistry` and extended `GET /api/perception/mode` with a `per_agent: {agent_id: mode}` field — but the HXI never read that field. The runtime knew which agent was in which mode; the Captain couldn't see any of it. Operating "Hello Counselor" → only Ezri transitions was invisible to the operator. Per-agent perception was a hollow feature end-to-end.
+
+**Decision.** Extend `usePerceptionModeStore` with `perAgent: Record<string, PerceptionMode>` populated from the `per_agent` field on every refresh tick. Defensively reject non-object payloads (back-compat: older runtimes without the field land as `{}`, which preserves the legacy single-mode rendering bit-for-bit). Render the per-agent surface in two places:
+
+- `CameraLiveIndicator.tsx` swaps the single MODE badge for a row of compact `AGENT:MOD` badges (e.g. `E1:ENG` / `E2:AMB`) when `perAgent` has ≥ 2 entries. < 2 entries keeps the legacy single badge — solo-Captain deployments render bit-for-bit identical UI to HEAD.
+- `PerceptionLivePanel.tsx` appends a per-agent MODE table beneath the existing preset buttons. Surfaces only when `perAgent` is non-empty (HXI Principle #5 progressive disclosure).
+
+**HXI principles.** #3 (no emoji; inline SVG + mono text; reused `MODE_COLOR` amber/mid-amber/dim palette). #4 (the existing pulse on the camera-live dot communicates the active state; per-agent badges are static text — mode change is color shift, not new motion, to avoid the indicator clobbering the existing 4-corner layout). #5 (per-agent surface appears only when ≥ 2 agents are registered; single-agent deployments unchanged). #9 (engaged amber, ambient mid-amber, dormant dim — eye naturally drawn to engaged agents). #11 (read-only visualization; the agentic engagement path was already wired by AD-733c-5).
+
+**Scope.** UI-only. Backend frozen — zero diff on `src/probos/` or `tests/`. `GET /api/perception/mode` shipped its `per_agent` field in Wave 176; this AD only consumes it.
+
+**Test coverage.** +3 vitest in `ui/src/components/perception/__tests__/CameraLiveIndicator.perAgent.test.tsx`: renders per-agent badges when 2+ entries (asserts amber for engaged, mid-amber for ambient, single MODE badge suppressed); falls back to single MODE badge when `perAgent` < 2 entries (back-compat regression); `PerceptionLivePanel` per-agent table renders one row per entry with mode swatch.
+
+**License posture.** 0-line diff on all 5 license files. Zero new pip / npm deps.
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
+
+- AD-733c-5-4-1 — Per-agent manual override buttons in the per-agent table.
+- AD-733c-5-4-2 — WebSocket push for per-agent mode changes (currently 2s polling).
+- AD-733c-5-4-3 — Callsign rendering in per-agent badges (requires `CallsignRegistry` snapshot in HXI).

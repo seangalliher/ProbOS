@@ -34,6 +34,7 @@ export default function PerceptionLivePanel() {
   const mode = usePerceptionModeStore((s) => s.mode);
   const modeTransitions = usePerceptionModeStore((s) => s.transitions);
   const setPerceptionMode = usePerceptionModeStore((s) => s.setMode);
+  const perAgent = usePerceptionModeStore((s) => s.perAgent);
 
   if (!snapshot) return null;
 
@@ -208,6 +209,60 @@ export default function PerceptionLivePanel() {
               <div key={`${t.at}-${idx}`}>
                 {t.from_mode} {'->'} {t.to_mode}{' '}
                 <span style={{ color: '#888' }}>({t.trigger})</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* AD-733c-5-4: per-agent MODE table (read-only). Surfaces only
+            when the PerceptionEngagementRegistry has at least one entry. */}
+        {Object.keys(perAgent).length > 0 && (
+          <div
+            data-testid="perception-per-agent-table"
+            style={{
+              marginTop: 8,
+              paddingTop: 8,
+              borderTop: `1px dashed ${STROKE_DIM}`,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 9,
+                color: STROKE_DIM,
+                letterSpacing: 1.5,
+                marginBottom: 4,
+              }}
+            >
+              PER-AGENT
+            </div>
+            {Object.entries(perAgent).map(([agentId, agentMode]) => (
+              <div
+                key={agentId}
+                data-testid={`perception-per-agent-row-${agentId}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  fontSize: 9,
+                  padding: '2px 0',
+                }}
+              >
+                <span style={{ color: '#c8c8d8', letterSpacing: 1 }}>
+                  {agentId.toUpperCase()}
+                </span>
+                <span
+                  data-mode={agentMode}
+                  style={{
+                    color: MODE_COLOR[agentMode],
+                    border: `1px solid ${MODE_COLOR[agentMode]}`,
+                    borderRadius: 2,
+                    padding: '1px 5px',
+                    letterSpacing: 1.2,
+                    fontWeight: 700,
+                  }}
+                >
+                  {agentMode.toUpperCase()}
+                </span>
               </div>
             ))}
           </div>

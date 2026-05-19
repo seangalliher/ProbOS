@@ -33,6 +33,11 @@ interface PerceptionModeState {
   presets: Record<PerceptionMode, PerceptionPreset> | null;
   transitions: PerceptionTransition[];
   available: boolean;
+  // AD-733c-5-4: per-agent perception modes from the backend
+  // ``PerceptionEngagementRegistry`` (shipped AD-733c-5 Wave 176). Empty
+  // map = legacy single-controller deployment OR registry unwired; UI
+  // falls back to the single-mode badge in that case.
+  perAgent: Record<string, PerceptionMode>;
   refresh: () => Promise<void>;
   setMode: (mode: PerceptionMode) => Promise<void>;
 }
@@ -44,6 +49,7 @@ export const usePerceptionModeStore = create<PerceptionModeState>((set) => ({
   presets: null,
   transitions: [],
   available: false,
+  perAgent: {},
   refresh: async () => {
     try {
       const resp = await fetch('/api/perception/mode');
@@ -53,6 +59,17 @@ export const usePerceptionModeStore = create<PerceptionModeState>((set) => ({
       }
       if (!resp.ok) return;
       const json = await resp.json();
+      // AD-733c-5-4: parse per_agent map; defensively reject non-object
+      // payloads so a backend regression cannot poison the UI.
+      const rawPerAgent = json.per_agent;
+      const perAgent: Record<string, PerceptionMode> = {};
+      if (rawPerAgent && typeof rawPerAgent === 'object' && !Array.isArray(rawPerAgent)) {
+        for (const [aid, mode] of Object.entries(rawPerAgent)) {
+          if (mode === 'engaged' || mode === 'ambient' || mode === 'dormant') {
+            perAgent[aid] = mode;
+          }
+        }
+      }
       set({
         mode: json.mode as PerceptionMode,
         since: typeof json.since === 'number' ? json.since : null,
@@ -61,6 +78,7 @@ export const usePerceptionModeStore = create<PerceptionModeState>((set) => ({
         presets: json.presets ?? null,
         transitions: Array.isArray(json.transitions) ? json.transitions : [],
         available: true,
+        perAgent,
       });
     } catch {
       // Tier-2: silent honest-degrade; the UI just shows the last known

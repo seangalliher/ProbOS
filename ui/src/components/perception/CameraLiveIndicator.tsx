@@ -42,7 +42,14 @@ export default function CameraLiveIndicator() {
   const previewEnabled = useCameraStore((s) => s.previewEnabled);
   const togglePreview = useCameraStore((s) => s.togglePreview);
   const mode = usePerceptionModeStore((s) => s.mode);
+  const perAgent = usePerceptionModeStore((s) => s.perAgent);
   if (!active) return null;
+  // AD-733c-5-4: when 2+ agents are registered with the
+  // PerceptionEngagementRegistry, render compact per-agent badges in place
+  // of the single MODE badge. Single-agent / unconfigured deployments keep
+  // the legacy single badge bit-for-bit identical (HXI Principle #5).
+  const perAgentEntries = Object.entries(perAgent);
+  const showPerAgent = perAgentEntries.length >= 2;
   return (
     <div
       data-testid="camera-live-indicator"
@@ -79,7 +86,7 @@ export default function CameraLiveIndicator() {
       >
         CAMERA LIVE
       </span>
-      {mode && (
+      {mode && !showPerAgent && (
         <span
           data-testid="perception-mode-badge"
           data-mode={mode}
@@ -95,6 +102,38 @@ export default function CameraLiveIndicator() {
           }}
         >
           {mode.toUpperCase()}
+        </span>
+      )}
+      {showPerAgent && (
+        <span
+          data-testid="perception-per-agent-badges"
+          style={{
+            display: 'inline-flex',
+            gap: 4,
+            alignItems: 'center',
+          }}
+        >
+          {perAgentEntries.map(([agentId, agentMode]) => (
+            <span
+              key={agentId}
+              data-testid={`perception-per-agent-badge-${agentId}`}
+              data-mode={agentMode}
+              data-agent={agentId}
+              title={`${agentId} — ${agentMode}`}
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: 1.2,
+                color: MODE_COLOR[agentMode],
+                fontFamily: "'JetBrains Mono', monospace",
+                padding: '1px 5px',
+                border: `1px solid ${MODE_COLOR[agentMode]}`,
+                borderRadius: 2,
+              }}
+            >
+              {agentId.toUpperCase()}:{agentMode.slice(0, 3).toUpperCase()}
+            </span>
+          ))}
         </span>
       )}
       <button
