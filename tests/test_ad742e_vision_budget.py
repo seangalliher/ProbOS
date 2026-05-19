@@ -125,8 +125,9 @@ def test_get_budget_snapshot_shape() -> None:
     assert required_keys.issubset(snap.keys())
     assert isinstance(snap["calls_this_session"], dict)
     assert isinstance(snap["next_allowed_in_seconds"], float)
-    # session ceiling = proactive_max_emissions (default 3) * 40
-    assert snap["session_ceiling_estimate"] == 120
+    # AD-733c-6 (Wave 175): session_ceiling_estimate now maps to
+    # cap_per_session (default 200). AD-742e backcompat key retained.
+    assert snap["session_ceiling_estimate"] == 200
 
 
 # -- 6. API endpoint ----------------------------------------------------------

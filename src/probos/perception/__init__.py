@@ -112,6 +112,27 @@ _PERCEPTION_SECTION = SectionDescriptor(
             "str",
             description="AD-742d: 'ahash' (default), 'motion', 'scene_change', 'never', 'always'. Restart required to swap.",
         ),
+        FieldDescriptor(
+            "perception.engaged_budget_enforcement",
+            "Engaged budget enforcement",
+            "bool",
+            description="AD-733c-6: auto-drop ENGAGED→AMBIENT when cap reached. Hot-reload.",
+            hot_reload=True,
+        ),
+        FieldDescriptor(
+            "perception.engaged_call_cap_per_session",
+            "Engaged calls/session cap",
+            "int",
+            description="AD-733c-6: vision LLM calls per session in ENGAGED before auto-drop. Default 200.",
+            hot_reload=True,
+        ),
+        FieldDescriptor(
+            "perception.engaged_call_cap_per_day",
+            "Engaged calls/day cap",
+            "int",
+            description="AD-733c-6: vision LLM calls per UTC day before auto-drop. Default 2000.",
+            hot_reload=True,
+        ),
     ),
 )
 

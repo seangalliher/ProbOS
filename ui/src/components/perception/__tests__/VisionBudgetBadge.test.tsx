@@ -54,7 +54,7 @@ describe('VisionBudgetBadge (AD-742e)', () => {
     });
   });
 
-  it('renders amber when below 80% ceiling', async () => {
+  it('renders green when below 80% ceiling', async () => {
     mockFetch({
       session_id: 's',
       calls_this_session: { vision: 10, vision_fast: 0 },
@@ -68,11 +68,11 @@ describe('VisionBudgetBadge (AD-742e)', () => {
     render(<VisionBudgetBadge />);
     await waitFor(() => {
       const text = screen.getByText('10/120') as HTMLElement;
-      expect(text.style.color).toBe('rgb(240, 176, 96)'); // #f0b060
+      expect(text.style.color).toBe('rgb(80, 180, 120)'); // AD-733c-6 green
     });
   });
 
-  it('renders dim-red when 80-100%', async () => {
+  it('renders orange when 80-99%', async () => {
     mockFetch({
       session_id: 's',
       calls_this_session: { vision: 100, vision_fast: 0 },
@@ -86,11 +86,11 @@ describe('VisionBudgetBadge (AD-742e)', () => {
     render(<VisionBudgetBadge />);
     await waitFor(() => {
       const text = screen.getByText('100/120') as HTMLElement;
-      expect(text.style.color).toBe('rgb(200, 64, 48)'); // #c84030
+      expect(text.style.color).toBe('rgb(220, 160, 60)'); // AD-733c-6 orange
     });
   });
 
-  it('renders bright-red when at/above ceiling', async () => {
+  it('renders red when at/above ceiling', async () => {
     mockFetch({
       session_id: 's',
       calls_this_session: { vision: 120, vision_fast: 0 },
@@ -104,7 +104,7 @@ describe('VisionBudgetBadge (AD-742e)', () => {
     render(<VisionBudgetBadge />);
     await waitFor(() => {
       const text = screen.getByText('120/120') as HTMLElement;
-      expect(text.style.color).toBe('rgb(224, 64, 48)'); // #e04030
+      expect(text.style.color).toBe('rgb(220, 80, 80)'); // AD-733c-6 red
     });
   });
 
@@ -127,6 +127,77 @@ describe('VisionBudgetBadge (AD-742e)', () => {
       expect(title).toContain('vision_fast: 4 calls');
       expect(title).toContain('today: 15');
       expect(title).toContain('next in 1.5s');
+    });
+  });
+});
+
+describe('VisionBudgetBadge (AD-733c-6 cap fields)', () => {
+  it('renders orange when total_session/cap >= 0.8 via cap_per_session', async () => {
+    mockFetch({
+      session_id: 's',
+      calls_this_session: { vision: 160, vision_fast: 0 },
+      calls_today: { vision: 160, vision_fast: 0 },
+      total_session: 160,
+      total_today: 160,
+      session_ceiling_estimate: 200,
+      cap_per_session: 200,
+      cap_per_day: 2000,
+      enforcement_enabled: true,
+      cap_reached_session: false,
+      cap_reached_day: false,
+      next_allowed_in_seconds: 0,
+      consumer_wired: true,
+    });
+    render(<VisionBudgetBadge />);
+    await waitFor(() => {
+      const text = screen.getByText('160/200') as HTMLElement;
+      expect(text.style.color).toBe('rgb(220, 160, 60)');
+    });
+  });
+
+  it('renders red when cap_reached_session is true', async () => {
+    mockFetch({
+      session_id: 's',
+      calls_this_session: { vision: 200, vision_fast: 0 },
+      calls_today: { vision: 200, vision_fast: 0 },
+      total_session: 200,
+      total_today: 200,
+      session_ceiling_estimate: 200,
+      cap_per_session: 200,
+      cap_per_day: 2000,
+      enforcement_enabled: true,
+      cap_reached_session: true,
+      cap_reached_day: false,
+      next_allowed_in_seconds: 0,
+      consumer_wired: true,
+    });
+    render(<VisionBudgetBadge />);
+    await waitFor(() => {
+      const text = screen.getByText('200/200') as HTMLElement;
+      expect(text.style.color).toBe('rgb(220, 80, 80)');
+    });
+  });
+
+  it('renders dim when enforcement_enabled is false', async () => {
+    mockFetch({
+      session_id: 's',
+      calls_this_session: { vision: 250, vision_fast: 0 },
+      calls_today: { vision: 250, vision_fast: 0 },
+      total_session: 250,
+      total_today: 250,
+      session_ceiling_estimate: 200,
+      cap_per_session: 200,
+      cap_per_day: 2000,
+      enforcement_enabled: false,
+      cap_reached_session: true,
+      cap_reached_day: false,
+      next_allowed_in_seconds: 0,
+      consumer_wired: true,
+    });
+    render(<VisionBudgetBadge />);
+    await waitFor(() => {
+      const text = screen.getByText('250/200') as HTMLElement;
+      expect(text.style.color).toBe('rgb(100, 100, 120)');
     });
   });
 });

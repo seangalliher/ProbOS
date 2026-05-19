@@ -148,6 +148,9 @@ class VisionConsumer:
         self._budget_current_session_id: str = ""
         self._budget_current_date: str = ""  # YYYY-MM-DD UTC
         self._budget_last_call_at: float | None = None
+        # AD-733c-6: per-session set so the cap-hit WARNING + WardRoom-class
+        # log fires once per session, not once per ENGAGED call past the cap.
+        self._budget_cap_notified_sessions: set[str] = set()
         self._sessions_with_observations: set[str] = set()
         self._observer: Any = None
         # AD-733c-1: per-session latest-frame SHA cache. Updated in
@@ -199,13 +202,16 @@ class VisionConsumer:
         self._identity_resolver = resolver
 
     def _record_vision_call(self, tier: str, session_id: str) -> None:
-        """AD-742e: record one vision LLM call against the budget counters."""
+        """AD-742e: record one vision LLM call. AD-733c-6: enforce cap."""
         import time as _time
         from datetime import datetime, timezone
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if session_id != self._budget_current_session_id:
             self._budget_current_session_id = session_id
             self._budget_calls_session = {"vision": 0, "vision_fast": 0}
+            # AD-733c-6: clear the "we've already notified" flag so the
+            # cap-hit log fires once per session, not once per process.
+            self._budget_cap_notified_sessions.discard(session_id)
         if today != self._budget_current_date:
             self._budget_current_date = today
             self._budget_calls_today = {"vision": 0, "vision_fast": 0}
@@ -215,36 +221,86 @@ class VisionConsumer:
         self._budget_calls_session[tier] += 1
         self._budget_calls_today[tier] += 1
         self._budget_last_call_at = _time.monotonic()
+        # AD-733c-6: cap-check + auto-drop. Defense-in-depth: if any piece
+        # of the path is missing (config, controller), silently skip — the
+        # counters still work (AD-742e behavior preserved).
+        self._maybe_enforce_budget(session_id)
+
+    def _maybe_enforce_budget(self, session_id: str) -> None:
+        """AD-733c-6: drop to AMBIENT when cap exceeded in ENGAGED mode."""
+        cfg = getattr(getattr(self._runtime, "config", None), "perception", None)
+        if cfg is None or not getattr(cfg, "engaged_budget_enforcement", True):
+            return
+        controller = getattr(self._runtime, "perception_mode_controller", None)
+        if controller is None:
+            return
+        # Late-import the enum so module-load order doesn't trip us.
+        from probos.perception.mode_controller import Mode as _Mode
+        if controller.current_mode is not _Mode.ENGAGED:
+            return
+        cap_session = int(getattr(cfg, "engaged_call_cap_per_session", 200))
+        cap_day = int(getattr(cfg, "engaged_call_cap_per_day", 2000))
+        total_session = sum(self._budget_calls_session.values())
+        total_today = sum(self._budget_calls_today.values())
+        if total_session < cap_session and total_today < cap_day:
+            return
+        # Cap hit. Transition synchronously (mode_controller.transition_to
+        # is sync; safe to call while holding describe_lock — no async
+        # acquisition, no re-entry).
+        reason = "session" if total_session >= cap_session else "day"
+        try:
+            controller.transition_to(_Mode.AMBIENT, trigger="budget_exhausted")
+        except Exception:
+            logger.warning(
+                "AD-733c-6: budget-exhausted transition failed (cap=%s)",
+                reason, exc_info=True,
+            )
+            return
+        # Rate-limited operator-visible notification — once per session.
+        if session_id and session_id not in self._budget_cap_notified_sessions:
+            self._budget_cap_notified_sessions.add(session_id)
+            logger.warning(
+                "AD-733c-6: vision LLM %s cap reached (session=%d/%d, "
+                "day=%d/%d); ENGAGED -> AMBIENT auto-drop",
+                reason,
+                total_session, cap_session,
+                total_today, cap_day,
+            )
 
     def get_budget_snapshot(self) -> dict[str, Any]:
-        """AD-742e: structured snapshot for /api/perception/budget."""
+        """AD-742e + AD-733c-6: snapshot for /api/perception/budget."""
         import time as _time
         next_allowed_in: float = 0.0
+        cfg = getattr(getattr(self._runtime, "config", None), "perception", None)
         if self._budget_last_call_at is not None:
-            # Heuristic: use the configured vision_min_interval_seconds floor
-            # as a proxy for "when's the next describe likely allowed?" — the
-            # supervisor enforces the actual cadence; this is informational.
-            cfg_perception = getattr(self._runtime.config, "perception", None)
             min_interval = (
-                float(getattr(cfg_perception, "vision_min_interval_seconds", 3.0))
-                if cfg_perception is not None
+                float(getattr(cfg, "vision_min_interval_seconds", 3.0))
+                if cfg is not None
                 else 3.0
             )
             elapsed = _time.monotonic() - self._budget_last_call_at
             next_allowed_in = max(0.0, min_interval - elapsed)
-        ceiling = 0
-        # session ceiling = proactive_max_emissions * 40 (heuristic — actual
-        # ceiling is a function of session duration which isn't known here).
-        cfg = getattr(self._runtime.config, "perception", None)
-        if cfg is not None:
-            ceiling = int(getattr(cfg, "proactive_max_emissions", 3)) * 40
+        # AD-733c-6: configured caps (replace AD-742e heuristic ceiling).
+        cap_session = int(getattr(cfg, "engaged_call_cap_per_session", 200)) if cfg else 200
+        cap_day = int(getattr(cfg, "engaged_call_cap_per_day", 2000)) if cfg else 2000
+        enforcement = bool(getattr(cfg, "engaged_budget_enforcement", True)) if cfg else True
+        # Backwards-compat: keep session_ceiling_estimate for any caller
+        # that hasn't migrated to the new cap field. Map to cap_session.
+        ceiling = cap_session
+        total_session = sum(self._budget_calls_session.values())
+        total_today = sum(self._budget_calls_today.values())
         return {
             "session_id": self._budget_current_session_id,
             "calls_this_session": dict(self._budget_calls_session),
             "calls_today": dict(self._budget_calls_today),
-            "total_session": sum(self._budget_calls_session.values()),
-            "total_today": sum(self._budget_calls_today.values()),
-            "session_ceiling_estimate": ceiling,
+            "total_session": total_session,
+            "total_today": total_today,
+            "session_ceiling_estimate": ceiling,  # AD-742e backcompat
+            "cap_per_session": cap_session,
+            "cap_per_day": cap_day,
+            "enforcement_enabled": enforcement,
+            "cap_reached_session": total_session >= cap_session,
+            "cap_reached_day": total_today >= cap_day,
             "next_allowed_in_seconds": round(next_allowed_in, 2),
         }
 

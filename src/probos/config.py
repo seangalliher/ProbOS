@@ -2070,6 +2070,18 @@ class PerceptionConfig(BaseModel):
         description="Minimum novelty score for a high-novelty proactive trigger (separate from supervisor admission threshold).",
     )
 
+    # AD-733c-6 (Wave 175): engaged-mode vision LLM call budget.
+    # AD-742e ships the counters; this section ships the enforcement.
+    engaged_budget_enforcement: bool = Field(default=True,
+        description="AD-733c-6: when True, exceeding the per-session or per-day vision call cap in ENGAGED mode auto-drops to AMBIENT. False = counters-only behavior (AD-742e baseline).",
+    )
+    engaged_call_cap_per_session: int = Field(default=200, ge=10, le=10000,
+        description="AD-733c-6: vision LLM calls per session in ENGAGED mode before auto-drop to AMBIENT. Captain default 200; tune via Settings or BF-308 hot-reload.",
+    )
+    engaged_call_cap_per_day: int = Field(default=2000, ge=50, le=100000,
+        description="AD-733c-6: vision LLM calls per UTC day before auto-drop to AMBIENT. Captain default 2000.",
+    )
+
     @field_validator("vision_supervisor_strategy")
     @classmethod
     def _validate_supervisor_strategy(cls, v: str) -> str:

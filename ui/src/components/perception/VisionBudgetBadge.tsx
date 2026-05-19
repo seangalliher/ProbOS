@@ -7,6 +7,12 @@ interface BudgetSnapshot {
   total_session: number;
   total_today: number;
   session_ceiling_estimate: number;
+  // AD-733c-6 additive fields (snapshot backcompat: older callers ignore).
+  cap_per_session?: number;
+  cap_per_day?: number;
+  enforcement_enabled?: boolean;
+  cap_reached_session?: boolean;
+  cap_reached_day?: boolean;
   next_allowed_in_seconds: number;
   consumer_wired: boolean;
 }
@@ -44,14 +50,33 @@ export function VisionBudgetBadge() {
   const {
     total_session,
     session_ceiling_estimate,
+    cap_per_session,
+    cap_reached_session,
+    enforcement_enabled,
     calls_this_session,
     calls_today,
     next_allowed_in_seconds,
   } = snapshot;
-  const ceiling = session_ceiling_estimate > 0 ? session_ceiling_estimate : 120;
+  // AD-733c-6: prefer cap_per_session; fall back to AD-742e heuristic.
+  const ceiling =
+    cap_per_session && cap_per_session > 0
+      ? cap_per_session
+      : session_ceiling_estimate > 0
+        ? session_ceiling_estimate
+        : 120;
   const pct = total_session / ceiling;
-  // Amber 0-80%; dim-red 80-100%; bright-red above ceiling.
-  const color = pct >= 1.0 ? '#e04030' : pct >= 0.8 ? '#c84030' : '#f0b060';
+  // AD-733c-6 color states: green <80%, orange 80-99%, red >=100%.
+  // When enforcement_enabled=false, override to dim (no alarm state).
+  let color: string;
+  if (enforcement_enabled === false) {
+    color = 'rgb(100,100,120)';
+  } else if (cap_reached_session === true || pct >= 1.0) {
+    color = 'rgb(220,80,80)';
+  } else if (pct >= 0.8) {
+    color = 'rgb(220,160,60)';
+  } else {
+    color = 'rgb(80,180,120)';
+  }
 
   const todayTotal =
     (calls_today.vision || 0) + (calls_today.vision_fast || 0);

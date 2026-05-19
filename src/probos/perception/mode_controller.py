@@ -84,7 +84,8 @@ class Transition:
     at: float
     from_mode: Mode
     to_mode: Mode
-    trigger: str  # "init" | "dm_activity" | "wake_word" | "novelty" | "idle_timer" | "manual"
+    trigger: str  # "init" | "dm_activity" | "wake_word" | "novelty" |
+                  # "idle_timer" | "manual" | "budget_exhausted" (AD-733c-6)
 
 
 class PerceptionModeController:

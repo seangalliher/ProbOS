@@ -4550,3 +4550,42 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - `tests/test_ad742d_pluggable_supervisor.py` (new, 12 tests)
 
 **License posture.** 0-line diff on all 5 license files. PIL already resident.
+
+
+### AD-733c-6 — Engaged-mode vision LLM call budget enforcement (Wave 175)
+
+**Context.** AD-742e (Wave 174) shipped telemetry only — per-tier vision LLM call counters, session/UTC reset, `/api/perception/budget` endpoint, HXI badge with a heuristic ceiling (`proactive_max_emissions × 40`). There was no enforcement: a runaway ENGAGED-mode session could call the vision LLM hundreds of times in an hour with no automatic brake. Captain's idle drop-back (AD-733c-4) catches lack-of-activity but not over-activity.
+
+**Decision.** Add per-session and per-day soft caps with auto-drop ENGAGED → AMBIENT on cap hit. Three new `PerceptionConfig` fields: `engaged_budget_enforcement=True`, `engaged_call_cap_per_session=200`, `engaged_call_cap_per_day=2000`. The new private method `_maybe_enforce_budget(session_id)` is called from `_record_vision_call` after the increment: when current mode is ENGAGED and totals >= cap, it synchronously calls `controller.transition_to(Mode.AMBIENT, trigger="budget_exhausted")` and logs a once-per-session WARNING. Defaults chosen so Captain's typical ~50-100 vision-call sessions (per AD-742e baseline) stay well under the 200 cap.
+
+**Anti-deadlock.** `_record_vision_call` is invoked from `_describe` at `consumer.py:530`, INSIDE `async with self._describe_lock`. The new enforcement call is fully synchronous (`controller.transition_to` is sync; no await, no re-entry). Safe to call while holding the lock. Confirmed at GATE 1 §3.
+
+**Hot-reload posture.** Cap values + `engaged_budget_enforcement` are hot-reload — operator dials mid-session, no restart. Strategy selection (AD-742d) is restart-required. Persistence path (AD-742f) is restart-required.
+
+**Snapshot backcompat.** `get_budget_snapshot()` keeps `session_ceiling_estimate` for AD-742e callers that haven't migrated, but the value is now driven by `cap_per_session` (default 200 vs AD-742e's heuristic 120). New keys: `cap_per_session`, `cap_per_day`, `enforcement_enabled`, `cap_reached_session`, `cap_reached_day`.
+
+**HXI badge.** `VisionBudgetBadge.tsx` color scale shifted: green `rgb(80,180,120)` <80%, orange `rgb(220,160,60)` 80-99%, red `rgb(220,80,80)` >=100%. Dim grey `rgb(100,100,120)` override when `enforcement_enabled=false` (no alarm state when not enforcing). HXI Principle #3 honored — no emoji, color + text only. AD-742e badge vitests updated to the new palette (6 existing); 3 new vitests cover the AD-733c-6-specific cap fields and dim override.
+
+**Once-per-session WARNING.** New `_budget_cap_notified_sessions: set[str]` is cleared on session change, so the next session gets its own one-shot WARNING (rather than spamming on every post-cap call OR going silent forever). Test `test_session_change_resets_notification_flag` proves this end-to-end.
+
+**Trigger docstring extension.** `mode_controller.Transition.trigger` docstring now lists `"budget_exhausted"` alongside `init/dm_activity/wake_word/novelty/idle_timer/manual`. No code change to mode_controller behavior — `transition_to` already accepts arbitrary trigger strings.
+
+**Tests.** +9 pytest in `tests/test_ad733c6_engaged_budget_enforcement.py` using real `PerceptionModeController` + real `SystemConfig` (BF-287 — no MagicMock at substrate boundary): under-cap no-transition, session-cap hit drops, day-cap hit drops, enforcement-disabled no-transition, AMBIENT-mode no-transition (defense-in-depth: cap-past has no effect when not engaged), WARNING rate-limited per session, session-change resets notification, snapshot exposes new keys, hot-reload cap change effective on the next call. +3 vitest in `VisionBudgetBadge.test.tsx` for the new cap fields + 6 existing AD-742e vitests updated to the new color palette.
+
+**Forward markers.**
+- AD-733c-6-1 — Persist daily aggregate across restarts (`data/perception_budget.db`).
+- AD-733c-6-2 — WardRoom "Budget reached" message post on cap-hit.
+
+**Files.**
+- `src/probos/perception/consumer.py` (new `_maybe_enforce_budget`, extended `_record_vision_call` + `get_budget_snapshot`, new `_budget_cap_notified_sessions` state)
+- `src/probos/perception/mode_controller.py` (Transition.trigger docstring extension only — no behavior change)
+- `src/probos/config.py` (3 new `PerceptionConfig` fields)
+- `src/probos/perception/__init__.py` (3 new FieldDescriptors, all hot-reload)
+- `ui/src/components/perception/VisionBudgetBadge.tsx` (color scheme + cap-field consumption)
+- `ui/src/components/perception/__tests__/VisionBudgetBadge.test.tsx` (3 new + 6 updated)
+- `tests/test_ad733c6_engaged_budget_enforcement.py` (new, 9 tests)
+- `tests/test_ad742e_vision_budget.py` (`session_ceiling_estimate` expectation updated 120 -> 200)
+
+**UI gate.** `cd ui && npx vitest run src/components/perception/__tests__/VisionBudgetBadge.test.tsx` → 9/9. `cd ui && npm run build` → exit 0. New bundle: `index-DPxUl-OZ.js`.
+
+**License posture.** 0-line diff on all 5 license files.
