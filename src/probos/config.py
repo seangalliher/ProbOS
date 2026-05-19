@@ -2010,6 +2010,26 @@ class CameraStreamConfig(BaseModel):
     )
 
 
+class ScreenStreamConfig(BaseModel):
+    """AD-733-2: client-side screen-share streaming controls.
+
+    Mirrors :class:`CameraStreamConfig`. Default-OFF — Captain must opt-in
+    explicitly. ``getDisplayMedia`` browser-prompt consent is the floor;
+    this toggle is the additional ProbOS-side switch the operator can flip
+    to hide the surface entirely (e.g. kiosk mode).
+    """
+
+    enabled: bool = False
+    """Default-OFF — Captain flips explicitly."""
+
+    default_fps: int = Field(default=1, ge=1, le=4,
+        description=(
+            "Client-side screen-capture cadence. Vision tier inference budget "
+            "caps this; 1 fps is the safe default."
+        ),
+    )
+
+
 class PerceptionConfig(BaseModel):
     """AD-733: visual sensor input from operator-side capture devices."""
 
@@ -2018,8 +2038,21 @@ class PerceptionConfig(BaseModel):
 
     camera: CameraStreamConfig = Field(default_factory=CameraStreamConfig)
 
+    # AD-733-2: screen-source sub-block. Mirrors camera.* shape; default-OFF.
+    screen: ScreenStreamConfig = Field(default_factory=ScreenStreamConfig)
+
     camera_max_fps_server: int = Field(default=4, ge=1, le=10,
         description="Server-side hard cap on frame ingestion rate per session.",
+    )
+
+    # AD-733-2: server-side fps cap on screen frames. Independent bucket
+    # from camera_max_fps_server — operator can throttle screen-share
+    # without affecting the camera stream.
+    screen_max_fps_server: int = Field(default=2, ge=1, le=4,
+        description=(
+            "AD-733-2: server-side hard cap on screen-frame ingestion rate "
+            "per session. Independent of camera cap."
+        ),
     )
 
     frame_max_size_bytes: int = Field(default=512 * 1024, ge=4096, le=5 * 1024 * 1024,

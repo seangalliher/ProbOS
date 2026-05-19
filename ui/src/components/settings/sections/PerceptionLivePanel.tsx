@@ -15,6 +15,8 @@ import {
   type PerceptionMode,
 } from '../../../store/usePerceptionModeStore';
 import { startCameraStream, stopCameraStream } from '../../../hooks/useCameraStream';
+import { startScreenStream, stopScreenStream } from '../../../hooks/useScreenStream';
+import { useScreenStore } from '../../../store/useScreenStore';
 
 const STROKE_AMBER = '#f0b060';
 const STROKE_DIM = '#666680';
@@ -47,6 +49,11 @@ export default function PerceptionLivePanel() {
   const bindAgent = useCameraMultiplexerStore((s) => s.bindAgent);
   const clearAgent = useCameraMultiplexerStore((s) => s.clearAgent);
   const [bindingsExpanded, setBindingsExpanded] = useState(false);
+  // AD-733-2: screen subsystem state (separate slice from camera).
+  const screenActive = useScreenStore((s) => s.active);
+  const screenError = useScreenStore((s) => s.error);
+  const screenFramesSent = useScreenStore((s) => s.framesSent);
+  const [screenSectionExpanded, setScreenSectionExpanded] = useState(false);
   useEffect(() => {
     if (bindingsExpanded) {
       void refreshBindings();
@@ -453,6 +460,199 @@ export default function PerceptionLivePanel() {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      {/* AD-733-2: SCREEN SOURCES section (collapsible). Mirrors the
+          AD-742c-6 CAMERA BINDINGS layout — same chevron, same border,
+          same letter-spacing. Renders independently from camera state. */}
+      <div
+        data-testid="perception-screen-sources-section"
+        style={{
+          marginTop: 12,
+          paddingTop: 10,
+          borderTop: `1px solid ${STROKE_DIM}`,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}
+      >
+        <button
+          data-testid="perception-screen-sources-toggle"
+          onClick={() => setScreenSectionExpanded((v) => !v)}
+          aria-expanded={screenSectionExpanded}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            width: '100%',
+            background: 'transparent',
+            border: 'none',
+            color: '#c8c8d8',
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 1.5,
+            cursor: 'pointer',
+            padding: 0,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          <svg
+            width={10}
+            height={10}
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            style={{
+              transform: screenSectionExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+              transition: 'transform 200ms ease-out',
+            }}
+          >
+            <path d="M5 3 L11 8 L5 13" />
+          </svg>
+          SCREEN SOURCES
+        </button>
+        {screenSectionExpanded && (
+          <div
+            data-testid="perception-screen-sources-body"
+            style={{ marginTop: 8 }}
+          >
+            {!Boolean((snapshot.config as any).perception?.screen?.enabled) && (
+              <div
+                data-testid="perception-screen-disabled-banner"
+                style={{
+                  fontSize: 9,
+                  color: STROKE_ENGINEERING,
+                  marginBottom: 8,
+                  lineHeight: 1.4,
+                }}
+              >
+                Screen streaming disabled. Toggle{' '}
+                <code style={{ color: STROKE_AMBER }}>
+                  perception.screen.enabled
+                </code>{' '}
+                below + APPLY to enable. Captain must opt in.
+              </div>
+            )}
+            {httpsWarn && (
+              <div
+                data-testid="perception-screen-https-warn"
+                style={{
+                  fontSize: 9,
+                  color: STROKE_ENGINEERING,
+                  marginBottom: 8,
+                  lineHeight: 1.4,
+                }}
+              >
+                Non-localhost host without HTTPS — getDisplayMedia will be
+                rejected by the browser.
+              </div>
+            )}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                marginBottom: 6,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div
+                  style={{
+                    color: '#c8c8d8',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                  }}
+                >
+                  Live screen share
+                </div>
+                <div style={{ color: STROKE_DIM, fontSize: 9, marginTop: 2 }}>
+                  Browser picker opens on START. "Stop sharing" pill auto-revokes.
+                </div>
+              </div>
+              <button
+                data-testid="perception-screen-toggle"
+                onClick={() => {
+                  if (screenActive) {
+                    void stopScreenStream();
+                  } else {
+                    void startScreenStream({ fps: 1 });
+                  }
+                }}
+                disabled={
+                  !screenActive &&
+                  !Boolean((snapshot.config as any).perception?.screen?.enabled)
+                }
+                style={{
+                  background: screenActive
+                    ? 'rgba(180,40,40,0.15)'
+                    : 'rgba(240,176,96,0.12)',
+                  border: `1px solid ${
+                    screenActive ? '#c84030' : STROKE_AMBER
+                  }`,
+                  color: screenActive ? '#e0a0a0' : STROKE_AMBER,
+                  padding: '6px 14px',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 1.5,
+                  cursor:
+                    !screenActive &&
+                    !Boolean(
+                      (snapshot.config as any).perception?.screen?.enabled,
+                    )
+                      ? 'not-allowed'
+                      : 'pointer',
+                  borderRadius: 3,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  opacity:
+                    !screenActive &&
+                    !Boolean(
+                      (snapshot.config as any).perception?.screen?.enabled,
+                    )
+                      ? 0.5
+                      : 1,
+                }}
+              >
+                {screenActive ? 'STOP' : 'START'}
+              </button>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                gap: 16,
+                fontSize: 9,
+                color: STROKE_DIM,
+              }}
+            >
+              <span>
+                status:{' '}
+                <span
+                  style={{
+                    color: screenActive ? STROKE_AMBER : STROKE_DIM,
+                  }}
+                >
+                  {screenActive ? 'LIVE' : 'idle'}
+                </span>
+              </span>
+              <span>frames sent: {screenFramesSent}</span>
+            </div>
+            {screenError && (
+              <div
+                data-testid="perception-screen-error"
+                style={{
+                  fontSize: 9,
+                  color: '#e0a0a0',
+                  marginTop: 6,
+                  lineHeight: 1.4,
+                }}
+              >
+                {screenError}
+              </div>
+            )}
           </div>
         )}
       </div>

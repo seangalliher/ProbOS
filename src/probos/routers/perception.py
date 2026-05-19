@@ -43,30 +43,52 @@ def _reset_state_for_tests() -> None:
     _ANCHOR_WRITTEN.clear()
 
 
-def _check_rate(session_id: str, max_fps: int) -> bool:
-    """Token-bucket admission: True when a frame slot is available."""
+def _check_rate(session_id: str, max_fps: int, source: str = "camera") -> bool:
+    """Token-bucket admission: True when a frame slot is available.
+
+    AD-733-2: the bucket key is ``(session_id, source)``. Camera and screen
+    streams have independent budgets — saturating one source does not
+    starve the other. Legacy callers pass ``source="camera"`` (the default)
+    so existing camera flows are byte-compatible.
+    """
+    key = f"{session_id}::{source}"
     now = time.monotonic()
-    last, tokens = _buckets.get(session_id, (now, float(max_fps)))
+    last, tokens = _buckets.get(key, (now, float(max_fps)))
     elapsed = now - last
     tokens = min(float(max_fps), tokens + elapsed * max_fps)
     if tokens < 1.0:
-        _buckets[session_id] = (now, tokens)
+        _buckets[key] = (now, tokens)
         return False
-    _buckets[session_id] = (now, tokens - 1.0)
+    _buckets[key] = (now, tokens - 1.0)
     return True
 
 
 async def _write_anchor_episode(
-    runtime: Any, session_id: str, sha: str, captured_at: float
+    runtime: Any,
+    session_id: str,
+    sha: str,
+    captured_at: float,
+    *,
+    source: str = "camera",
+    trigger_type: str | None = None,
 ) -> None:
-    """AD-541b: anchored episode marking camera-stream-began.
+    """AD-541b: anchored episode marking <source>-stream-began.
 
-    Tier-2 honest-degrade: logs WARNING on any failure, never raises. The
-    frame upload result is independent of episode storage.
+    AD-733-2: ``source`` distinguishes camera from screen anchors; the
+    anchor-key includes source so each (session, source) pair writes its
+    own opening episode. Default ``trigger_type`` derived from source.
+
+    AD-744: explicit Captain shares pass ``trigger_type="captain_explicit_share"``
+    so they don't collide with the ambient stream-began anchor.
+
+    Tier-2 honest-degrade: logs WARNING on any failure, never raises.
     """
-    if session_id in _ANCHOR_WRITTEN:
+    if trigger_type is None:
+        trigger_type = f"{source}_stream_began"
+    anchor_key = f"{session_id}::{trigger_type}"
+    if anchor_key in _ANCHOR_WRITTEN:
         return
-    _ANCHOR_WRITTEN.add(session_id)
+    _ANCHOR_WRITTEN.add(anchor_key)
     episodic = getattr(runtime, "episodic_memory", None)
     if episodic is None:
         return
@@ -79,26 +101,31 @@ async def _write_anchor_episode(
                 "success": True,
                 "session_id": session_id,
                 "attachment_ref": sha,
+                "source": source,
             }],
             reflection=(
-                f"Camera stream began (session={session_id[:8]}, sha={sha[:8]}). "
-                "AD-733 v1 wire shape proven; no LLM consumer in v1."
+                f"{source.capitalize()} stream began "
+                f"(session={session_id[:8]}, sha={sha[:8]}). "
+                "AD-733 v1 wire shape proven; consumer is the AD-733a VisionConsumer."
             ),
             source="direct",
             importance=8,
             anchors=AnchorFrame(
                 channel="perception",
-                trigger_type="camera_stream_began",
+                trigger_type=trigger_type,
                 trigger_agent="captain",
             ),
         )
         await episodic.store(episode)
     except Exception as ex:
         logger.warning(
-            "AD-733 anchor episode store failed (session=%s, sha=%s): %s; "
-            "frame is still stored, no agent observation in v1.",
-            session_id, sha[:8], ex,
+            "AD-733 anchor episode store failed (session=%s, source=%s, sha=%s): %s; "
+            "frame is still stored, observation pipeline unaffected.",
+            session_id, source, sha[:8], ex,
         )
+
+
+_VALID_SOURCES: frozenset[str] = frozenset({"camera", "screen"})
 
 
 @router.post("/camera/frame", dependencies=[Depends(require_crew_scope)])
@@ -107,15 +134,36 @@ async def upload_camera_frame(
     session_id: str = Form(...),
     force: str = Form(""),
     agent_ids: str = Form(""),
+    # AD-733-2: optional source discriminator. Defaults to "camera" so all
+    # existing AD-733 callers are byte-compatible. ``screen`` activates the
+    # AD-733-2 passive screen-share flow; values outside the allow-list
+    # return HTTP 400.
+    source: str = Form("camera"),
     runtime: Any = Depends(get_runtime),
 ) -> Any:
     cfg = getattr(runtime.config, "perception", None)
     if cfg is None or not cfg.enabled:
         return JSONResponse(status_code=503, content={"error": "perception_disabled"})
-    if not cfg.camera.enabled:
-        return JSONResponse(status_code=503, content={"error": "camera_disabled"})
 
-    if not _check_rate(session_id, cfg.camera_max_fps_server):
+    # AD-733-2: source validation BEFORE any downstream branching so that
+    # invalid values cannot poison the rate-bucket key or the descriptor
+    # params. Allow-list only — defense in depth.
+    if source not in _VALID_SOURCES:
+        return JSONResponse(status_code=400, content={"error": "invalid_source"})
+
+    # AD-733-2: per-source enable gate. Camera and screen are independent
+    # subsystems — disabling one MUST NOT block the other.
+    if source == "camera":
+        if not cfg.camera.enabled:
+            return JSONResponse(status_code=503, content={"error": "camera_disabled"})
+        rate_cap = cfg.camera_max_fps_server
+    else:  # source == "screen"
+        screen_cfg = getattr(cfg, "screen", None)
+        if screen_cfg is None or not screen_cfg.enabled:
+            return JSONResponse(status_code=503, content={"error": "screen_disabled"})
+        rate_cap = cfg.screen_max_fps_server
+
+    if not _check_rate(session_id, rate_cap, source=source):
         return JSONResponse(
             status_code=429,
             content={"error": "rate_limited"},
@@ -158,11 +206,14 @@ async def upload_camera_frame(
     # BF-302: ``force`` carries Captain's explicit "describe this frame even
     # if the supervisor would normally drop it" intent. Used by the operator
     # preview panel for testing the pipeline without waiting on novelty.
+    # AD-733-2: ``source`` discriminates camera vs screen so downstream
+    # consumers can filter (forward marker AD-733-2-1 covers per-source
+    # novelty thresholds; v1 fan-out is source-agnostic).
     _params: dict[str, Any] = {
         "attachment_ref": sha,
         "mime": "image/jpeg",
         "captured_at": captured_at,
-        "source": "camera",
+        "source": source,
         "session_id": session_id,
         "force": is_forced,
     }
@@ -176,12 +227,17 @@ async def upload_camera_frame(
         await runtime.intent_bus.broadcast(msg)
     except Exception as ex:
         logger.warning(
-            "AD-733 intent_bus.broadcast failed (session=%s, sha=%s): %s; "
-            "frame is still stored, no agent observation in v1.",
-            session_id, sha[:8], ex,
+            "AD-733 intent_bus.broadcast failed (session=%s, source=%s, sha=%s): %s; "
+            "frame is still stored, observation pipeline unaffected.",
+            session_id, source, sha[:8], ex,
         )
 
-    await _write_anchor_episode(runtime, session_id, sha, captured_at)
+    # AD-744: Captain-initiated explicit shares will pass a distinct anchor
+    # trigger_type (filed in AD-744 wave 178 commit 2). v1 of AD-733-2 just
+    # writes the {source}_stream_began anchor.
+    await _write_anchor_episode(
+        runtime, session_id, sha, captured_at, source=source,
+    )
 
     return {"ok": True, "attachment_ref": sha, "captured_at": captured_at}
 

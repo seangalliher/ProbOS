@@ -23,6 +23,9 @@ VISION_OBSERVATION_DESCRIPTOR = IntentDescriptor(
         "attachment_ref": "<sha256>",
         "mime": "image/jpeg",
         "captured_at": "<unix_timestamp>",
+        # AD-733-2: source is "camera" (default) or "screen". Sensor-input
+        # only — VisionConsumer fan-out is source-agnostic in v1; forward
+        # marker AD-733-2-1 covers per-source novelty thresholds.
         "source": "camera",
         "session_id": "<opaque>",
     },
@@ -61,6 +64,18 @@ _PERCEPTION_SECTION = SectionDescriptor(
             "bool",
             hot_reload=True,
         ),
+        # AD-733-2: per-source screen toggle. Hot-reload so Captain can
+        # flip without restart; default-OFF preserves privacy posture.
+        FieldDescriptor(
+            "perception.screen.enabled",
+            "Screen streaming",
+            "bool",
+            description=(
+                "AD-733-2: when ON, ambient screen-share frames are accepted "
+                "via getDisplayMedia. Default-OFF — Captain opt-in."
+            ),
+            hot_reload=True,
+        ),
         FieldDescriptor(
             "perception.camera.default_fps",
             "Frames per second",
@@ -72,6 +87,16 @@ _PERCEPTION_SECTION = SectionDescriptor(
             "Server fps cap",
             "int",
             description="Server-side hard cap regardless of client-side fps choice.",
+        ),
+        # AD-733-2: independent server-side cap for screen frames.
+        FieldDescriptor(
+            "perception.screen_max_fps_server",
+            "Screen server fps cap",
+            "int",
+            description=(
+                "AD-733-2: server-side hard cap on screen-frame ingest, "
+                "independent of camera cap. Default 2."
+            ),
         ),
         FieldDescriptor(
             "perception.frame_max_size_bytes",

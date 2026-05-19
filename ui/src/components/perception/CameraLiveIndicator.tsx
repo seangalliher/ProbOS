@@ -11,9 +11,11 @@ import type { CSSProperties } from 'react';
 import { useEffect, useState } from 'react';
 import { useCameraStore, type IndicatorCorner } from '../../store/useCameraStore';
 import { useCameraMultiplexerStore } from '../../store/useCameraMultiplexerStore';
+import { useScreenStore } from '../../store/useScreenStore';
 import { usePerceptionModeStore, type PerceptionMode } from '../../store/usePerceptionModeStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { stopCameraStream } from '../../hooks/useCameraStream';
+import { stopScreenStream } from '../../hooks/useScreenStream';
 
 const STROKE_AMBER = '#f0b060';
 const STROKE_DIM = '#666680';
@@ -42,6 +44,8 @@ const CORNER_LABEL: Record<IndicatorCorner, string> = {
 
 export default function CameraLiveIndicator() {
   const active = useCameraStore((s) => s.active);
+  // AD-733-2: screen subsystem state — independent lifecycle from camera.
+  const screenActive = useScreenStore((s) => s.active);
   const corner = useCameraStore((s) => s.indicatorCorner);
   const cycleCorner = useCameraStore((s) => s.cycleIndicatorCorner);
   const previewEnabled = useCameraStore((s) => s.previewEnabled);
@@ -73,14 +77,27 @@ export default function CameraLiveIndicator() {
     const timer = setTimeout(() => setSpeechFresh(false), SPEECH_FLASH_MS);
     return () => clearTimeout(timer);
   }, [lastSpeechAt]);
-  if (!active) return null;
+  if (!active && !screenActive) return null;
   // AD-733c-5-4: when 2+ agents are registered with the
   // PerceptionEngagementRegistry, render compact per-agent badges in place
   // of the single MODE badge. Single-agent / unconfigured deployments keep
   // the legacy single badge bit-for-bit identical (HXI Principle #5).
   const perAgentEntries = Object.entries(perAgent);
   const showPerAgent = perAgentEntries.length >= 2;
+  // AD-733-2: SCREEN LIVE indicator stacks vertically below CAMERA LIVE in
+  // the same corner. Offset by +36px on the vertical axis (each indicator
+  // is ~28px tall + 8px gap). HXI Principle #4: pulsing dot on the icon;
+  // identical motion language to the camera indicator.
+  const cornerStyle = CORNER_STYLES[corner];
+  const screenCornerStyle: CSSProperties = { ...cornerStyle };
+  if ('top' in cornerStyle && typeof cornerStyle.top === 'number') {
+    screenCornerStyle.top = (cornerStyle.top as number) + 36;
+  } else if ('bottom' in cornerStyle && typeof cornerStyle.bottom === 'number') {
+    screenCornerStyle.bottom = (cornerStyle.bottom as number) + 36;
+  }
   return (
+    <>
+    {active && (
     <div
       data-testid="camera-live-indicator"
       data-corner={corner}
@@ -291,5 +308,69 @@ export default function CameraLiveIndicator() {
         REVOKE
       </button>
     </div>
+    )}
+    {/* AD-733-2: SCREEN LIVE indicator. Renders independently of the camera
+        panel — distinct lifecycle, identical HXI motion language. */}
+    {screenActive && (
+      <div
+        data-testid="screen-live-indicator"
+        style={{
+          position: 'fixed',
+          ...screenCornerStyle,
+          zIndex: 999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '4px 10px',
+          background: 'rgba(180,120,40,0.15)',
+          border: '1px solid #c87830',
+          borderRadius: 6,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}
+        role="status"
+        aria-label="screen live"
+      >
+        {/* Stroke-SVG monitor glyph — HXI #3, no emoji. */}
+        <svg width={12} height={12} viewBox="0 0 16 16" fill="none"
+          stroke={STROKE_AMBER} strokeWidth={1.5} strokeLinecap="round"
+          strokeLinejoin="round" aria-hidden="true">
+          <rect x="1.5" y="2.5" width="13" height="9" rx="0.5" />
+          <path d="M5 14 L11 14" />
+          <path d="M8 11.5 L8 14" />
+          {/* HXI #4: pulsing inner rect signals 'active capture'. */}
+          <rect x="3.5" y="4.5" width="9" height="5" fill={STROKE_AMBER} opacity="0.25">
+            <animate attributeName="opacity" values="0.25;0.55;0.25"
+              dur="2s" repeatCount="indefinite" />
+          </rect>
+        </svg>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: 1.5,
+            color: '#e0c0a0',
+          }}
+        >
+          SCREEN LIVE
+        </span>
+        <button
+          data-testid="screen-live-revoke"
+          onClick={() => { void stopScreenStream(); }}
+          style={{
+            fontSize: 9,
+            padding: '2px 6px',
+            background: 'transparent',
+            border: '1px solid #c87830',
+            color: '#e0c0a0',
+            cursor: 'pointer',
+            letterSpacing: 1,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          REVOKE
+        </button>
+      </div>
+    )}
+    </>
   );
 }
