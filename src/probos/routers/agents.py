@@ -1966,6 +1966,13 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
             # AMBIENT -> ENGAGED transition (and ENGAGED freshness) tracks
             # the real conversational tempo.
             _mode_ctrl = getattr(runtime, "perception_mode_controller", None)
+            # AD-733c-5: prefer per-agent controller via the registry so
+            # DMs to one agent don't transition the whole mesh.
+            _engagement = getattr(runtime, "perception_engagement_registry", None)
+            if _engagement is not None:
+                _per_agent_ctrl = _engagement.get(agent_id)
+                if _per_agent_ctrl is not None:
+                    _mode_ctrl = _per_agent_ctrl
             if _mode_ctrl is not None:
                 try:
                     _mode_ctrl.note_dm_activity()

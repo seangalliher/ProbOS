@@ -221,6 +221,19 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             logger.warning("AD-733c-2: mode_controller.stop() failed", exc_info=True)
         runtime.perception_mode_controller = None
 
+    # AD-733c-5: stop per-agent engagement controllers.
+    _engagement = getattr(runtime, 'perception_engagement_registry', None)
+    if _engagement is not None:
+        for _aid, _ctrl in _engagement.all_controllers().items():
+            try:
+                await _ctrl.stop()
+            except Exception:
+                logger.warning(
+                    "AD-733c-5: per-agent controller stop failed agent=%s",
+                    _aid, exc_info=True,
+                )
+        runtime.perception_engagement_registry = None
+
     # AD-706b: Stop browser recording reaper (background retention sweeper)
     if hasattr(runtime, 'recording_reaper') and runtime.recording_reaper is not None:
         try:

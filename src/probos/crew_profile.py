@@ -327,6 +327,39 @@ class PeerPerceptionProfile:
 
 
 @dataclass
+class PerceptionProfile:
+    """AD-733c-5 + AD-742c: per-agent perception bindings.
+
+    Shared between two ADs:
+
+    - ``engagement_enabled`` and ``initial_mode`` belong to AD-733c-5
+      (per-agent ``PerceptionModeController`` registry).
+    - ``camera_device_id`` belongs to AD-742c (per-agent camera). Empty
+      string means "share the default camera" — current pre-AD-742c
+      behavior.
+
+    Defaults preserve current singleton behavior: when a legacy profile
+    JSON omits this block, ``from_dict`` synthesizes the default values
+    and the agent participates in engagement with the runtime-wide
+    default camera.
+    """
+    engagement_enabled: bool = True
+    initial_mode: str = "ambient"
+    camera_device_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PerceptionProfile":
+        return cls(
+            engagement_enabled=bool(data.get("engagement_enabled", True)),
+            initial_mode=str(data.get("initial_mode", "ambient")),
+            camera_device_id=str(data.get("camera_device_id", "")),
+        )
+
+
+@dataclass
 class CrewProfile:
     """Formal identity record for a ProbOS agent.
 
@@ -370,6 +403,9 @@ class CrewProfile:
     # ``enabled=False``. ``certified=True`` is the AD-729b qualification
     # flag that unlocks the capability for THIS observer.
     peer_perception: PeerPerceptionProfile = field(default_factory=PeerPerceptionProfile)
+
+    # AD-733c-5 + AD-742c: per-agent perception engagement + camera binding.
+    perception: PerceptionProfile = field(default_factory=PerceptionProfile)
 
     # AD-737: per-agent custom emotion taxonomy. Empty dict = use v1 fixed
     # eight only (no behaviour change). Keys must match
@@ -452,6 +488,7 @@ class CrewProfile:
             "voice": self.voice.to_dict(),
             "appearance": self.appearance.to_dict(),
             "peer_perception": self.peer_perception.to_dict(),
+            "perception": self.perception.to_dict(),
             "custom_emotions": {
                 k: v.to_dict() for k, v in self.custom_emotions.items()
             },
@@ -488,6 +525,8 @@ class CrewProfile:
             profile.appearance = AppearanceProfile.from_dict(data["appearance"])
         if "peer_perception" in data:
             profile.peer_perception = PeerPerceptionProfile.from_dict(data["peer_perception"])
+        if "perception" in data:
+            profile.perception = PerceptionProfile.from_dict(data["perception"])
         if "custom_emotions" in data:
             profile.custom_emotions = {
                 k: EmotionProfile.from_dict(v)

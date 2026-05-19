@@ -4133,6 +4133,81 @@ async def finalize_startup(
             runtime.perception_mode_controller = _controller
             logger.info("AD-733c-2: PerceptionModeController wired (initial=ambient)")
 
+            # AD-733c-5: Per-agent engagement registry. The singleton
+            # ``runtime.perception_mode_controller`` above stays alive as
+            # the back-compat pointer (consumed by AD-733c-6 budget
+            # enforcement + ProactiveVisionObserver). For each crew agent
+            # whose CrewProfile.perception.engagement_enabled is True, we
+            # spawn an additional per-agent controller and register it so
+            # DM-targeted activity, engage endpoint hits, and HXI badges
+            # can resolve per agent.
+            try:
+                from probos.perception.engagement_registry import (
+                    PerceptionEngagementRegistry,
+                    select_primary_controller,
+                )
+                _registry = PerceptionEngagementRegistry(runtime)
+                _profile_store = getattr(runtime, "profile_store", None)
+                for _agent in runtime.registry.all():
+                    if not is_crew_agent(_agent, runtime.ontology):
+                        continue
+                    _profile = (
+                        _profile_store.get(_agent.id)
+                        if _profile_store is not None
+                        else None
+                    )
+                    _enabled = True
+                    _initial_mode_name = "ambient"
+                    if _profile is not None and _profile.perception is not None:
+                        _enabled = bool(_profile.perception.engagement_enabled)
+                        _initial_mode_name = _profile.perception.initial_mode or "ambient"
+                    if not _enabled:
+                        logger.info(
+                            "AD-733c-5: agent=%s engagement_enabled=False; "
+                            "skipping per-agent controller",
+                            _agent.id,
+                        )
+                        continue
+                    try:
+                        _initial = _PerceptionMode(_initial_mode_name)
+                    except Exception:
+                        _initial = _PerceptionMode.AMBIENT
+                    _per_ctrl = PerceptionModeController(
+                        runtime,
+                        initial_mode=_initial,
+                        engaged_idle_seconds=_perception_cfg.engaged_idle_seconds,
+                        ambient_idle_seconds=_perception_cfg.ambient_idle_seconds,
+                        idle_tick_seconds=_perception_cfg.idle_watchdog_tick_seconds,
+                        agent_id=_agent.id,
+                    )
+                    _per_ctrl.transition_to(_initial, trigger="init")
+                    await _per_ctrl.start()
+                    _registry.register(_agent.id, _per_ctrl)
+                    logger.info(
+                        "AD-733c-5: per-agent controller wired agent=%s "
+                        "initial=%s",
+                        _agent.id, _initial.value,
+                    )
+                runtime.perception_engagement_registry = _registry
+                # Back-compat: if there's at least one per-agent
+                # controller, repoint the singleton to the primary so
+                # legacy code keeps working with the same instance the
+                # registry returns.
+                _primary = select_primary_controller(_registry)
+                if _primary is not None:
+                    runtime.perception_mode_controller = _primary
+                logger.info(
+                    "AD-733c-5: engagement registry wired (%d per-agent controllers)",
+                    len(_registry),
+                )
+            except Exception:
+                logger.warning(
+                    "AD-733c-5: engagement registry wiring failed; "
+                    "falling back to legacy singleton",
+                    exc_info=True,
+                )
+                runtime.perception_engagement_registry = None
+
             if getattr(_perception_cfg, "proactive_observer_enabled", False):
                 from probos.perception.observer import (
                     ProactiveBudget,
@@ -4155,6 +4230,7 @@ async def finalize_startup(
             runtime.vision_consumer = None
             runtime.vision_observer = None
             runtime.perception_mode_controller = None
+            runtime.perception_engagement_registry = None
     except Exception:
         logger.warning(
             "AD-733a: VisionConsumer wiring failed; "

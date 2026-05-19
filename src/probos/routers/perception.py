@@ -246,12 +246,26 @@ async def get_perception_mode(runtime: Any = Depends(get_runtime)) -> Any:
         }
         for t in controller.recent_transitions(limit=3)
     ]
+    # AD-733c-5: per-agent modes for HXI rendering. Defaults to an empty
+    # dict when the registry is unwired (back-compat for legacy single-
+    # controller deployments).
+    per_agent: dict[str, str] = {}
+    _engagement = getattr(runtime, "perception_engagement_registry", None)
+    if _engagement is not None:
+        try:
+            per_agent = _engagement.current_modes()
+        except Exception:
+            logger.debug(
+                "AD-733c-5: engagement registry current_modes raised",
+                exc_info=True,
+            )
     return {
         "mode": controller.current_mode.value,
         "since": controller.mode_since,
         "last_dm_activity": controller.last_dm_activity_at,
         "presets": presets,
         "transitions": transitions,
+        "per_agent": per_agent,
     }
 
 
@@ -299,6 +313,11 @@ async def post_perception_engage(
 
     Body fields are informational (logged); the controller only needs the
     side effect. 5s cooldown enforced at the controller level.
+
+    AD-733c-5: when ``body.agent`` resolves to a registered per-agent
+    controller (either by agent_id or by callsign), the engagement is
+    scoped to that agent only. Otherwise falls back to the legacy
+    singleton (runtime-wide engagement).
     """
     controller = getattr(runtime, "perception_mode_controller", None)
     if controller is None:
@@ -310,17 +329,53 @@ async def post_perception_engage(
         return JSONResponse(
             status_code=400, content={"error": "invalid_source", "value": body.source},
         )
+
+    # AD-733c-5: prefer per-agent routing.
+    routed_agent: str | None = None
+    _engagement = getattr(runtime, "perception_engagement_registry", None)
+    if _engagement is not None and body.agent:
+        # Try agent_id first.
+        _per = _engagement.get(body.agent)
+        if _per is None:
+            # Try callsign → agent_id resolution.
+            cs_reg = getattr(runtime, "callsign_registry", None)
+            if cs_reg is not None:
+                try:
+                    resolved = cs_reg.resolve(body.agent)
+                except Exception:
+                    resolved = None
+                if resolved is not None:
+                    _aid = getattr(resolved, "id", None) or getattr(
+                        resolved, "agent_id", None
+                    )
+                    if _aid is not None:
+                        _per = _engagement.get(_aid)
+                        if _per is not None:
+                            routed_agent = _aid
+        else:
+            routed_agent = body.agent
+        # When agent was specified but no per-agent controller resolved,
+        # return 404 honest-degrade per AD-733c-5 contract.
+        if _per is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "unknown_agent", "value": body.agent},
+            )
+        controller = _per
+
     transitioned, reason = controller.note_wake_word()
     logger.info(
-        "AD-733c-3: engage agent=%s phrase=%s source=%s transitioned=%s reason=%s",
+        "AD-733c-3: engage agent=%s phrase=%s source=%s transitioned=%s reason=%s "
+        "routed_agent=%s",
         (body.agent or "*")[:32], (body.phrase or "*")[:64], body.source,
-        transitioned, reason,
+        transitioned, reason, routed_agent or "*",
     )
     return {
         "ok": True,
         "mode": controller.current_mode.value,
         "transitioned": transitioned,
         "reason": reason,
+        "agent_id": routed_agent,
     }
 
 

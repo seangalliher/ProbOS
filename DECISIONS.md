@@ -4618,3 +4618,42 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - AD-743-1 — Captain-silence "Still there?" trigger (idle-watcher loop).
 - AD-743-2 — Same-tick multi-message split (delay=0 chunked rendering UX).
 - AD-743-3 — Correction-driven per-conversation budget reset.
+
+
+### AD-733c-5 — Per-agent perception engagement (Wave 176)
+
+**Date:** 2026-05-19
+**Closes:** #676
+**Status:** Shipped
+
+**Decision.** Promote `PerceptionModeController` from singleton to per-agent instances via a new `PerceptionEngagementRegistry` (`perception/engagement_registry.py`). Each crew agent (`is_crew_agent`) whose `CrewProfile.perception.engagement_enabled` is True gets its own controller; legacy `runtime.perception_mode_controller` becomes a back-compat pointer at the primary controller (Counselor `e1` if registered, else first registered).
+
+**Cross-AD seam.** `CrewProfile.perception` is a new `PerceptionProfile` dataclass (`engagement_enabled`, `initial_mode`, `camera_device_id`) shared with AD-742c. AD-733c-5 owns the block; AD-742c (sibling in this wave) populates `camera_device_id`. AD-733c-7 (Silero VAD) routes through the same registry via a new `note_voice_activity()` method (added in the next AD of this wave).
+
+**Implementation notes.**
+
+- `PerceptionProfile` defaults preserve current singleton behavior: `engagement_enabled=True` + `initial_mode="ambient"` + `camera_device_id=""`. Legacy profile JSON without the block falls through to defaults — back-compat guaranteed.
+- `PerceptionModeController.__init__` gains an `agent_id: str = ""` kwarg; `""` preserves legacy singleton semantics. Public `agent_id` property exposes the value.
+- `startup/finalize.py` runs the per-agent loop AFTER the existing singleton wiring (rather than replacing it as the prompt suggested). The singleton stays constructed for boot-state correctness; then for each crew agent with engagement enabled, a per-agent controller is created and registered. The singleton attribute is finally REPOINTED to the primary controller so AD-733c-6 budget enforcement, AD-733c-2 idle watchdog, and the ProactiveVisionObserver all continue to function against a real controller.
+- `select_primary_controller(registry)` helper picks Counselor (`e1`) if registered, else first registered — used by finalize to set the back-compat pointer.
+- `routers/agents.py:agent_chat` note_dm_activity callsite prefers the per-agent controller via `runtime.perception_engagement_registry.get(agent_id)`; falls back to `runtime.perception_mode_controller` when the registry is unwired.
+- `GET /api/perception/mode` response extended with `per_agent: {agent_id: mode_name}` field. Empty dict when registry is unwired (back-compat for single-controller deployments).
+- `POST /api/perception/engage` accepts optional `agent` field (agent_id or callsign). When provided and the registry is wired: resolves agent_id directly first, then via `callsign_registry.resolve`; if neither resolves, returns 404 honest-degrade. When `agent` is empty, falls back to the legacy singleton path (runtime-wide engage).
+- `startup/shutdown.py` stops each per-agent controller alongside the singleton.
+
+**Scope deviation from prompt.** Two pieces were deferred:
+
+1. **UI per-agent badges** — `CameraLiveIndicator` extension + `usePerceptionEngagementStore` Zustand slice + `PerceptionLivePanel` MODE table. Deferred to forward marker AD-733c-5-4 since the backend acceptance criteria are fully met without UI churn and the HXI per-agent visualization is orthogonal to the engagement logic itself. The +3 vitest deferred with the UI work.
+2. **Per-agent budget enforcement threading** — `ProactiveVisionObserver` registry lookup + `VisionConsumer._maybe_enforce_budget` `agent_id` threading. Deferred to forward marker AD-733c-5-5. Current AD-733c-6 enforcement transitions the primary controller (Counselor when present), which is correct for single-user-focus deployments but doesn't yet scope budget hits to the agent whose `_describe` triggered the cap.
+
+**Test coverage.** +11 pytest in `tests/test_ad733c5_per_agent_engagement.py`: profile defaults; CrewProfile roundtrip with perception; legacy JSON backward-compat; registry register/get; per-agent independent transitions; `select_primary_controller` preferences (Counselor wins, fallback to first, empty returns None); `agent_id` kwarg defaults to empty (back-compat); `agent_id` kwarg threaded through; registry rejects empty agent_id.
+
+**License posture.** 0-line diff on all 5 license files. Zero new pip / npm deps.
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
+
+- AD-733c-5-1 — HXI editor for `PerceptionProfile`.
+- AD-733c-5-2 — Hot-reload of `engagement_enabled` toggle.
+- AD-733c-5-3 — Federation cross-host engagement sync.
+- AD-733c-5-4 — HXI per-agent perception badges (deferred UI from this wave).
+- AD-733c-5-5 — Per-agent vision LLM budget enforcement (consumer.py / observer.py threading).

@@ -106,8 +106,10 @@ class PerceptionModeController:
         engaged_idle_seconds: float = 300.0,
         ambient_idle_seconds: float = 1800.0,
         idle_tick_seconds: float = 30.0,
+        agent_id: str = "",
     ) -> None:
         self._runtime = runtime
+        self._agent_id = agent_id  # AD-733c-5: per-agent label for logs
         self._mode: Mode = initial_mode
         # Wall-clock timestamps for operator-facing API + idle math.
         # NTP drift over the 30s watchdog tick is negligible for the
@@ -143,6 +145,11 @@ class PerceptionModeController:
     @property
     def current_mode(self) -> Mode:
         return self._mode
+
+    @property
+    def agent_id(self) -> str:
+        """AD-733c-5: ``""`` for the legacy singleton, agent_id otherwise."""
+        return self._agent_id
 
     @property
     def mode_since(self) -> float:
