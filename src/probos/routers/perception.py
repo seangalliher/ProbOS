@@ -129,9 +129,14 @@ async def upload_camera_frame(
     ok, result = await _validate_and_store_attachment(
         runtime, blob, "image/jpeg",
         declared_filename=None, declared_hash_or_None=None,
+        origin="perception_frame",
     )
     if not ok:
-        return JSONResponse(status_code=result["status_code"], content=result["body"])
+        return JSONResponse(
+            status_code=result["status_code"],
+            content=result["body"],
+            headers=result.get("headers"),
+        )
 
     sha = result["attachment_id"]
     captured_at = time.time()

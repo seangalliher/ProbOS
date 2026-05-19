@@ -213,6 +213,8 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     # AD-706b: RecordingReaper attribute is declared here; the actual async
     # start happens via ``_start_recording_reaper`` from the async caller.
     runtime.recording_reaper = None
+    # AD-733-1: AttachmentReaper attribute -- async-started below.
+    runtime.attachment_reaper = None
     return True
 
 
@@ -238,6 +240,51 @@ async def _start_recording_reaper(*, runtime: Any, config: "SystemConfig") -> No
     except Exception:
         logger.warning(
             "AD-706b: RecordingReaper start failed; recordings will not be reaped this run",
+            exc_info=True,
+        )
+
+
+async def _start_attachment_reaper(*, runtime: Any, config: "SystemConfig") -> None:
+    """AD-733-1: start the AttachmentStore retention reaper.
+
+    Active when ``perception.enabled`` (ephemeral frames present) or when
+    ``attachments.max_store_bytes > 0`` (LRU safety net active for any
+    producer). Tier-2 honest-degrade on construction failure -- the
+    runtime keeps booting; attachments simply will not be reaped.
+    """
+    perception_cfg = getattr(config, "perception", None)
+    attachments_cfg = getattr(config, "attachments", None)
+    if attachments_cfg is None:
+        return
+    perception_enabled = bool(getattr(perception_cfg, "enabled", False))
+    lru_enabled = int(getattr(attachments_cfg, "max_store_bytes", 0)) > 0
+    if not (perception_enabled or lru_enabled):
+        return
+    try:
+        from probos.attachments.reaper import AttachmentReaper
+        from probos.routers.chat import _get_attachment_store
+
+        store = _get_attachment_store(runtime)
+        emit_fn = getattr(runtime, "emit_event", None)
+        reaper = AttachmentReaper(
+            store,
+            perception_cfg=perception_cfg,
+            attachments_cfg=attachments_cfg,
+            event_emitter=emit_fn,
+        )
+        await reaper.start()
+        runtime.attachment_reaper = reaper
+        logger.info(
+            "AD-733-1: AttachmentReaper started "
+            "(interval=%ds, frame_retention=%ds, max_store_bytes=%d)",
+            int(getattr(perception_cfg, "reaper_interval_seconds", 60)),
+            int(getattr(perception_cfg, "frame_retention_seconds", 300)),
+            int(getattr(attachments_cfg, "max_store_bytes", 0)),
+        )
+    except Exception:
+        logger.warning(
+            "AD-733-1: AttachmentReaper start failed; "
+            "attachments will not be reaped this run",
             exc_info=True,
         )
 
@@ -3349,6 +3396,14 @@ async def finalize_startup(
         await _start_recording_reaper(runtime=runtime, config=config)
     except Exception:
         logger.warning("AD-706b: _start_recording_reaper failed", exc_info=True)
+
+    # AD-733-1: AttachmentStore retention reaper. Active when perception is
+    # enabled (ephemeral frames need TTL) or when max_store_bytes > 0
+    # (LRU safety net). Failure honest-degrades -- never blocks boot.
+    try:
+        await _start_attachment_reaper(runtime=runtime, config=config)
+    except Exception:
+        logger.warning("AD-733-1: _start_attachment_reaper failed", exc_info=True)
 
     # AD-520: Wire Spatial Knowledge Explorer (default-False; constructs runtime.spatial_layout)
     try:

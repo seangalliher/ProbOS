@@ -218,6 +218,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             logger.warning("AD-706b: recording_reaper.stop() failed", exc_info=True)
         runtime.recording_reaper = None
 
+    # AD-733-1: Stop attachment retention reaper.
+    if hasattr(runtime, 'attachment_reaper') and runtime.attachment_reaper is not None:
+        try:
+            await runtime.attachment_reaper.stop()
+        except Exception:
+            logger.warning("AD-733-1: attachment_reaper.stop() failed", exc_info=True)
+        runtime.attachment_reaper = None
+
     # Stop Persistent Task Store (Phase 25a)
     if runtime.persistent_task_store:
         await runtime.persistent_task_store.stop()

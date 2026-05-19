@@ -218,6 +218,9 @@ class EventType(str, Enum):
     BROWSER_RECORDING_STOPPED = "browser_recording_stopped"          # AD-706b: webm file finalized
     BROWSER_RECORDING_EXPIRED = "browser_recording_expired"          # AD-706b: reaper deleted past retention
     BROWSER_RECORDING_FAILED = "browser_recording_failed"            # AD-706b: Playwright recording errored at close
+    # AD-733-1: AttachmentStore retention telemetry.
+    ATTACHMENT_REAPED = "attachment_reaped"                          # AD-733-1: per-sweep summary
+    ATTACHMENT_STORE_DISK_FULL = "attachment_store_disk_full"        # AD-733-1: ENOSPC on write
     VISION_CAPABILITY_PROPOSED = "vision_capability_proposed"  # AD-720d-2.1: agent requests vision capability
     VISION_CAPABILITY_RESOLVED = "vision_capability_resolved"  # AD-720d-2.1: Captain approves or denies
     VISION_INTENT_DIVERGENCE_OBSERVED = "vision_intent_divergence_observed"  # AD-722a-1: vision-LLM intent-vs-render

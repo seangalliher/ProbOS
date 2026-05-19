@@ -624,6 +624,8 @@ async def _validate_and_store_attachment(
     declared_mime: str,
     declared_filename: str | None,
     declared_hash_or_None: str | None,
+    *,
+    origin: str = "chat_attachment",
 ) -> tuple[bool, dict[str, Any]]:
     """AD-720a: shared defense-in-depth chain for both POST endpoints.
 
@@ -633,10 +635,15 @@ async def _validate_and_store_attachment(
     Both the JSON+base64 path (``upload_chat_attachment``) and the multipart
     path (``upload_chat_attachment_multipart``) call this helper. The chain
     is the single source of truth for the attachment defense-in-depth gate.
+
+    AD-733-1: ``origin`` tags the attachment for the reaper's retention
+    policy. ``perception_frame`` is sweep-eligible by TTL; everything
+    else defaults to ``chat_attachment`` (operator intent, retain).
     """
     import hashlib
 
     from probos.attachments.mime import validate_attachment_bytes
+    from probos.attachments.store import AttachmentStoreFullError
 
     cfg = runtime.config.attachments
 
@@ -696,13 +703,41 @@ async def _validate_and_store_attachment(
     # 6. Idempotent write — propagate path-traversal / malformed-hash as 400.
     store = _get_attachment_store(runtime)
     try:
-        await store.write(actual_hash, blob, declared_mime)
+        await store.write(actual_hash, blob, declared_mime, origin=origin)
     except ValueError as e:
         logger.error(
             "AD-720a attachment write rejected (security tier): %s: %s",
             type(e).__name__, e,
         )
         return (False, {"status_code": 400, "body": {"error": "invalid_attachment"}})
+    except AttachmentStoreFullError as e:
+        # AD-733-1: ENOSPC -- honest-degrade with 503 + Retry-After.
+        # The frame is dropped, not retried; client should back off.
+        logger.warning(
+            "AD-733-1: AttachmentStore full on write (%s); returning 503",
+            e,
+        )
+        emit = getattr(runtime, "emit_event", None)
+        if callable(emit):
+            try:
+                from probos.events import EventType as _ET
+                emit(
+                    _ET.ATTACHMENT_STORE_DISK_FULL,
+                    {"origin": origin, "size_bytes": len(blob)},
+                )
+            except Exception:  # pragma: no cover -- emit is best-effort
+                logger.debug(
+                    "AD-733-1: ATTACHMENT_STORE_DISK_FULL emit failed",
+                    exc_info=True,
+                )
+        return (
+            False,
+            {
+                "status_code": 503,
+                "body": {"error": "attachment_store_full"},
+                "headers": {"Retry-After": "30"},
+            },
+        )
 
     return (
         True,
@@ -756,7 +791,11 @@ async def upload_chat_attachment(
         declared_hash_or_None=body.content_hash,
     )
     if not ok:
-        return JSONResponse(status_code=result["status_code"], content=result["body"])
+        return JSONResponse(
+            status_code=result["status_code"],
+            content=result["body"],
+            headers=result.get("headers"),
+        )
     return result
 
 
@@ -784,7 +823,11 @@ async def upload_chat_attachment_multipart(
         declared_hash_or_None=None,
     )
     if not ok:
-        return JSONResponse(status_code=result["status_code"], content=result["body"])
+        return JSONResponse(
+            status_code=result["status_code"],
+            content=result["body"],
+            headers=result.get("headers"),
+        )
     return result
 
 

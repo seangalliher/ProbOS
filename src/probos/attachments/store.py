@@ -11,6 +11,22 @@ from pathlib import Path
 from typing import Protocol
 
 
+# AD-733-1: known origin tags. Anything else is coerced to ``chat_attachment``
+# on write (safe default — chat_attachment never sweeps by age).
+ATTACHMENT_ORIGINS: tuple[str, ...] = (
+    "chat_attachment",
+    "perception_frame",
+    "browser_screenshot",
+    "avatar_render",
+)
+
+
+class AttachmentStoreFullError(OSError):
+    """AD-733-1: raised by ``write`` when the underlying filesystem is out of
+    space (ENOSPC). Callers translate this to HTTP 503 + Retry-After.
+    """
+
+
 class AttachmentStore(Protocol):
     """Content-addressed (sha256) attachment blob store.
 
@@ -19,8 +35,22 @@ class AttachmentStore(Protocol):
     ships a single ``FilesystemAttachmentStore``.
     """
 
-    async def write(self, content_hash: str, blob: bytes, mime: str) -> Path:
-        """Persist ``blob`` keyed by ``content_hash``. Idempotent."""
+    async def write(
+        self,
+        content_hash: str,
+        blob: bytes,
+        mime: str,
+        *,
+        origin: str = "chat_attachment",
+    ) -> Path:
+        """Persist ``blob`` keyed by ``content_hash``. Idempotent.
+
+        AD-733-1: ``origin`` tags the attachment so the reaper can apply
+        different retention policies (e.g. ``perception_frame`` has an
+        age-TTL; ``chat_attachment`` is operator intent and never expires
+        by age). Unknown origins coerce to ``chat_attachment``. Raises
+        :class:`AttachmentStoreFullError` on ENOSPC.
+        """
         ...
 
     async def read(self, content_hash: str) -> bytes:
@@ -37,6 +67,22 @@ class AttachmentStore(Protocol):
 
     async def size(self, content_hash: str) -> int:
         """Return size in bytes of the stored blob."""
+        ...
+
+    async def unlink(self, content_hash: str) -> bool:
+        """AD-733-1: remove the blob and its index entry. Returns ``False``
+        when not found. Concurrent ``FileNotFoundError`` never raises.
+        """
+        ...
+
+    async def list_by_origin(self, origin: str) -> list[tuple[str, float]]:
+        """AD-733-1: return ``[(content_hash, written_at)]`` for entries with
+        the given origin, sorted ascending by ``written_at``.
+        """
+        ...
+
+    async def total_size_bytes(self) -> int:
+        """AD-733-1: return the total bytes occupied by the store."""
         ...
 
 

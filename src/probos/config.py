@@ -1848,6 +1848,21 @@ class AttachmentsConfig(BaseModel):
     # warning and falls back to ``vision_tier`` (tier-2 log-and-degrade).
     vision_tier_overrides: dict[str, str] = Field(default_factory=dict)
 
+    # AD-733-1: store-level LRU cap. Tier-2 safety net regardless of
+    # which producer (chat paste, perception, browser tool, future
+    # sensors) leaks. 0 disables the LRU pass; the age-TTL still runs.
+    # Default 5 GiB matches typical operator dev-laptop free-space
+    # budget; honest-degrade well before disk-full.
+    max_store_bytes: int = Field(
+        default=5 * 1024 * 1024 * 1024,
+        ge=0,
+        description=(
+            "AD-733-1: total bytes ceiling for attachments_dir. Reaper "
+            "evicts oldest perception_frame entries first, then oldest "
+            "chat_attachment entries, until under cap. 0 = disabled."
+        ),
+    )
+
     @field_validator("vision_tier")
     @classmethod
     def _vision_tier_must_be_known(cls, v: str) -> str:
@@ -1931,6 +1946,25 @@ class PerceptionConfig(BaseModel):
 
     frame_max_size_bytes: int = Field(default=512 * 1024, ge=4096, le=5 * 1024 * 1024,
         description="Reject frame uploads larger than this. Default 512 KB.",
+    )
+
+    # AD-733-1: ephemeral-frame retention. Perception frames are
+    # content-addressed and written to the AttachmentStore for the
+    # VisionConsumer's working-memory + force-describe cache, but they
+    # are NOT operator intent -- they expire shortly after capture. The
+    # reaper sweeps origin=perception_frame entries older than this.
+    frame_retention_seconds: int = Field(default=300, ge=30, le=86400,
+        description=(
+            "AD-733-1: TTL for perception-origin attachments. Default 5 min -- "
+            "covers VisionConsumer WM window + AD-733c-1 force-describe cache."
+        ),
+    )
+
+    reaper_interval_seconds: int = Field(default=60, ge=10, le=3600,
+        description=(
+            "AD-733-1: how often the AttachmentReaper sweeps. Default 60s -- "
+            "produces at most one full directory scan per minute."
+        ),
     )
 
     # AD-733a (Wave 171): VisionConsumer cost-discipline + buffer sizing.

@@ -297,5 +297,9 @@ async def attach_file(
         declared_hash_or_None=None,
     )
     if not ok:
-        return JSONResponse(status_code=result["status_code"], content=result["body"])
+        return JSONResponse(
+            status_code=result["status_code"],
+            content=result["body"],
+            headers=result.get("headers"),
+        )
     return result
