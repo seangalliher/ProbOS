@@ -3754,3 +3754,39 @@ waves:
       THIRD_PARTY_LICENSES.md and .gitignore (Silero VAD attribution).
       Default-off transitional flags throughout; current behavior bit-for-bit
       preserved.
+
+  - id: "177"
+    title: "UI-completion: per-agent badges + browser VAD + camera multiplexer"
+    kind: main
+    depends_on: ["176"]
+    dispatch_prompt: "prompts/WAVE-177-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-733c-5-4-perception-badges.md"
+      - "prompts/ad-733c-7-5-vad-browser.md"
+      - "prompts/ad-742c-6-camera-multiplexer.md"
+    builder_required: true
+    issues_to_close: []   # forward-marker ADs; no GH issues per AD-722c-3
+    estimated_hours: 6
+    status: drafting
+    notes: |
+      UI-completion slate for the three Wave 176 forward markers that
+      deferred their HXI surfaces.
+      AD-733c-5-4 (parent AD-733c-5) - HXI per-agent perception badges
+        (CameraLiveIndicator + PerceptionLivePanel MODE table + extend
+        usePerceptionModeStore with perAgent dict from /api/perception/mode).
+      AD-733c-7-5 (parent AD-733c-7) - Browser-side Silero VAD
+        (silero-vad.ts lazy-loader + voiceActivity.ts mic-tap loop +
+        CameraLiveIndicator SPEECH badge; consumes shipped
+        /api/perception/voice-activity endpoint).
+      AD-742c-6 (parent AD-742c) - HXI camera multiplexer
+        (useCameraMultiplexerStore Zustand sibling slice + useCameraStream
+        multi-deviceId extension + PerceptionLivePanel CAMERA BINDINGS table;
+        consumes shipped /api/perception/cameras + /api/perception/cameras/binding
+        + /camera/frame agent_ids form field).
+      Strict build order 1->2->3 (badges first ground per-agent concept in UI;
+      VAD plugs into the same indicator; camera multiplexer extends the same
+      panel). Backend frozen - zero touch to src/probos/ or tests/.
+      Zero new pip / npm deps; 0-line diff on ALL 5 license files
+      (onnxruntime-web stays in optionalDependencies).
+      Total: +12 vitest. No pytest delta.
