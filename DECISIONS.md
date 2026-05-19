@@ -4430,3 +4430,33 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - `THIRD_PARTY_LICENSES.md` (moondream attribution)
 - `tests/test_ad742a_vision_fast_tier.py` (new, 13 tests)
 - `tests/test_bf069_llm_health.py` + `test_per_tier_llm.py` + `test_ad732_vision_tier.py` + `test_ad706c2_compute_use.py` (regression-fixture updates to include `vision_fast` in expected tier sets)
+
+
+### AD-742b — Face-embedding identity recognition (Wave 174)
+
+**Context.** AD-733b v1 resolved subject identity by sending the live frame + the stored Captain avatar to the vision LLM with a one-shot `captain | other | unknown` prompt. That's expensive (one vision LLM call per session — gated by `_identity_resolved_sessions`) and brittle (avatars are stylized; the live person may not look like their avatar).
+
+**Decision.** Replace the LLM-prompt path with a local face-embedding model. `facenet-pytorch` (MIT, single pip dep, torch already resident, MTCNN face detection + InceptionResnetV1 512-d embedding). Enrollment is one-shot: operator uploads a reference photo via `POST /api/perception/identity/enroll`; the 2048-byte embedding is persisted at `data/captain_identity.json`; the reference photo is discarded.
+
+**Privacy threat model.** The embedding is plaintext on the operator's box. Threat: local read access — already a worse-than-this scenario. The reference photo is held only in Python memory during `enroll()`. `data/captain_identity.json` is gitignored. Operator opt-out: `DELETE /api/perception/identity` removes the file; `identity_resolver_enabled=False` disables resolution without deleting. Embedding is NOT synced via federation. AttachmentStore is NOT used (AD-731 invariant is about RPC bus payloads, not lifecycle-managed local artifacts).
+
+**Fallback path.** AD-733b LLM-prompt path retained behind `identity_resolver_enabled=False` for CI/test envs that can't install facenet-pytorch. `startup/finalize.py` honest-degrades on import failure (logs WARNING, falls back to legacy path).
+
+**License posture.** `facenet-pytorch>=2.5` (MIT verified via the PEP 639 classifier in METADATA — the legacy `pip show License:` field is blank because the package uses modern license-expression metadata). VGGFace2 + CASIA-WebFace pretrained weights distributed under Apache-2.0. `THIRD_PARTY_LICENSES.md` stamped. `InsightFace` rejected per GATE 1 §5 — default `buffalo_l` weights have non-commercial clauses.
+
+**Tests.** +19 pytest in `tests/test_ad742b_face_embedding_identity.py` covering enrollment, persistence, revoke, no-face raises, threshold logic, cosine distance helper, privacy invariant (reference bytes never written to disk), VisionConsumer integration. `_compute_embedding` is mocked in unit tests — the MTCNN + ResNet load is slow and not deterministic enough for fast unit cycles.
+
+**Forward markers.**
+- AD-742b-1 — Hot-reload `identity_match_threshold` via BF-308 setter (file post-build).
+- AD-742b-2 — Multi-operator enrollment / UI surface for enrollment.
+
+**Files.**
+- `src/probos/perception/identity.py` (new, ~200 lines)
+- `src/probos/perception/consumer.py` (added `set_identity_resolver`, rewrote `_resolve_subject_identity` with face-embedding path first + AD-733b fallback)
+- `src/probos/startup/finalize.py` (wires resolver next to VisionConsumer)
+- `src/probos/routers/perception.py` (3 new endpoints: enroll / revoke / status)
+- `src/probos/config.py` (2 new PerceptionConfig fields)
+- `pyproject.toml` (facenet-pytorch dep)
+- `THIRD_PARTY_LICENSES.md` (attribution)
+- `.gitignore` (explicit `data/captain_identity.json` line)
+- `tests/test_ad742b_face_embedding_identity.py` (new, 19 tests)

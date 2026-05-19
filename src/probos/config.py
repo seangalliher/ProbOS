@@ -2036,9 +2036,18 @@ class PerceptionConfig(BaseModel):
     )
 
     # AD-733b (Wave 171): Captain reference avatar SHA in AttachmentStore.
-    # v1 manual config — AD-742b replaces with face-embedding enrollment.
+    # DEPRECATED by AD-742b; retained for backwards-compat. If
+    # ``data/captain_identity.json`` exists, that takes precedence.
     captain_avatar_ref: str = Field(default="",
-        description="SHA-256 of a reference photo of the Captain in AttachmentStore. Empty disables identity recognition.",
+        description="DEPRECATED (AD-742b): SHA-256 of a reference photo of the Captain in AttachmentStore. Use face-embedding enrollment instead.",
+    )
+
+    # AD-742b (Wave 174): face-embedding identity recognition.
+    identity_match_threshold: float = Field(default=0.6, ge=0.0, le=2.0,
+        description="Cosine distance threshold for face-embedding identity match. Smaller = stricter. facenet-pytorch VGGFace2-pretrained default: 0.6. Operator-tunable.",
+    )
+    identity_resolver_enabled: bool = Field(default=True,
+        description="AD-742b: use face-embedding identity resolution. False = fall back to AD-733b LLM-prompt path (deprecated, expensive).",
     )
 
     # AD-733b: proactive observer budget.

@@ -118,6 +118,10 @@ class VisionConsumer:
         # are no-ops when the observer is not wired or the captain reference
         # avatar is empty — the AD-733a code path stays intact.
         self._identity_resolved_sessions: set[str] = set()
+        # AD-742b: lazy-constructed face-embedding resolver. Threaded
+        # through __init__ rather than constructed here so tests can
+        # inject a stub.
+        self._identity_resolver: Any = None
         self._sessions_with_observations: set[str] = set()
         self._observer: Any = None
         # AD-733c-1: per-session latest-frame SHA cache. Updated in
@@ -163,6 +167,10 @@ class VisionConsumer:
             intent_names=[self.INTENT_NAME],
         )
         logger.info("AD-733a: VisionConsumer subscribed to %s", self.INTENT_NAME)
+
+    def set_identity_resolver(self, resolver: Any) -> None:
+        """AD-742b: hot-swap the IdentityResolver. None disables resolution."""
+        self._identity_resolver = resolver
 
     async def _handle(self, msg: IntentMessage) -> IntentResult | None:
         """Bus handler — supervisor-gate, LLM-describe, WM-write, episode-anchor."""
@@ -441,11 +449,32 @@ class VisionConsumer:
             return ""
 
     async def _resolve_subject_identity(self, sha: str) -> str:
-        """AD-733b: single-shot LLM identity check.
+        """AD-742b: face-embedding identity check (replaces AD-733b LLM prompt).
 
-        Returns 'captain' | 'unknown' | 'other'. Skipped when no Captain
-        reference avatar is configured.
+        Returns 'captain' | 'unknown' | 'other'. Falls back to the AD-733b
+        LLM-prompt path only when ``identity_resolver_enabled=False`` AND a
+        ``captain_avatar_ref`` is set. Default path: cheap, local, no LLM call.
         """
+        # AD-742b: face-embedding path (default).
+        resolver = self._identity_resolver
+        if resolver is not None and resolver.is_enrolled():
+            try:
+                from probos.routers.chat import _get_attachment_store
+                store = _get_attachment_store(self._runtime)
+                live_bytes = await store.read(sha)
+                if not live_bytes:
+                    return "unknown"
+                # MTCNN/Resnet are sync + CPU-bound; offload from the loop.
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, resolver.resolve, live_bytes)
+            except Exception:
+                logger.debug(
+                    "AD-742b: face-embedding resolve failed for sha=%s",
+                    sha[:8], exc_info=True,
+                )
+                return "unknown"
+
+        # AD-733b legacy path: only when resolver disabled AND legacy ref set.
         try:
             captain_avatar_sha = self._lookup_captain_avatar_ref()
             if not captain_avatar_sha:

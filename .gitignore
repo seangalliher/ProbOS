@@ -27,6 +27,10 @@ data/*
 *.sqlite3
 MagicMock/
 
+# AD-742b: face-embedding enrollment (privacy — never commit). Already
+# covered by data/* but listed explicitly for grep-discoverability.
+data/captain_identity.json
+
 # AD-721: avatars dir is shipped (with .gitkeep), but VRM binaries are not.
 !data/avatars/
 data/avatars/*.vrm

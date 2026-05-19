@@ -12,11 +12,12 @@ silently dropped; the audit trail still lands in the journal.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -320,4 +321,60 @@ async def post_perception_engage(
         "mode": controller.current_mode.value,
         "transitioned": transitioned,
         "reason": reason,
+    }
+
+
+@router.post("/identity/enroll", dependencies=[Depends(require_crew_scope)])
+async def enroll_identity(
+    file: UploadFile = File(...),
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-742b: enroll the Captain's reference face.
+
+    Accepts a multipart image upload (JPEG/PNG). Computes the 512-d
+    embedding via facenet-pytorch, persists to ``data/captain_identity.json``,
+    and discards the image bytes. The reference photo is NOT stored.
+    """
+    resolver = getattr(runtime, "identity_resolver", None)
+    if resolver is None:
+        raise HTTPException(
+            status_code=503,
+            detail="AD-742b: IdentityResolver not wired. Check that perception.identity_resolver_enabled is True and facenet-pytorch is installed.",
+        )
+    content = await file.read()
+    if not content or len(content) > 10 * 1024 * 1024:  # 10 MB cap
+        raise HTTPException(status_code=400, detail="empty or oversized image")
+    try:
+        # Offload sync inference from the event loop.
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, resolver.enroll, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"enrolled": True, "model_id": "facenet-pytorch-vggface2-1.0"}
+
+
+@router.delete("/identity", dependencies=[Depends(require_crew_scope)])
+async def revoke_identity(
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-742b: delete the enrolled face embedding."""
+    resolver = getattr(runtime, "identity_resolver", None)
+    if resolver is None:
+        return {"removed": False, "reason": "resolver not wired"}
+    removed = resolver.revoke()
+    return {"removed": removed}
+
+
+@router.get("/identity", dependencies=[Depends(require_crew_scope)])
+async def get_identity_status(
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-742b: report enrollment status (no embedding returned)."""
+    resolver = getattr(runtime, "identity_resolver", None)
+    if resolver is None:
+        return {"enrolled": False, "resolver_wired": False}
+    return {
+        "enrolled": resolver.is_enrolled(),
+        "resolver_wired": True,
+        "model_id": "facenet-pytorch-vggface2-1.0",
     }

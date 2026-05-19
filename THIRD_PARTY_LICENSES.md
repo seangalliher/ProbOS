@@ -89,3 +89,14 @@ When adding a new third-party component:
 - Used by: `src/probos/perception/consumer.py` `_describe` path as the
   default per-frame vision_fast model (`llm_model_vision_fast: moondream`)
 - Installation: operator-pullable via `ollama pull moondream`. NOT bundled.
+
+
+## facenet-pytorch (AD-742b)
+
+- Project: <https://github.com/timesler/facenet-pytorch>
+- Author: Tim Esler
+- License: MIT (verified via `License :: OSI Approved :: MIT License` classifier and `LICENSE.md` shipped with the wheel)
+- Pretrained weights: VGGFace2 / CASIA-WebFace, distributed by timesler/facenet-pytorch under Apache License 2.0
+- Used by: `src/probos/perception/identity.py` (`IdentityResolver` — MTCNN face detection + InceptionResnetV1 face embedding)
+- Installed via `pyproject.toml` `[project.dependencies]`: `facenet-pytorch>=2.5`.
+- Privacy posture: only a 512-float embedding is persisted at `data/captain_identity.json`. Reference photo bytes are discarded after enrollment. File is gitignored.

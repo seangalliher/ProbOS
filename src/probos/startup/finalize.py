@@ -4037,6 +4037,31 @@ async def finalize_startup(
                 len(consumer.observer_agent_ids),
             )
 
+            # AD-742b: face-embedding identity resolver. Lazy-construct;
+            # MTCNN + ResNet models load on first .resolve() call.
+            if getattr(_perception_cfg, "identity_resolver_enabled", True):
+                try:
+                    from probos.perception.identity import IdentityResolver
+                    from pathlib import Path
+                    _data_dir = Path(getattr(runtime, "data_dir", None) or "data")
+                    _resolver = IdentityResolver(
+                        data_dir=_data_dir,
+                        threshold=getattr(_perception_cfg, "identity_match_threshold", 0.6),
+                    )
+                    consumer.set_identity_resolver(_resolver)
+                    runtime.identity_resolver = _resolver
+                    logger.info(
+                        "AD-742b: IdentityResolver wired (enrolled=%s, threshold=%.2f)",
+                        _resolver.is_enrolled(),
+                        getattr(_perception_cfg, "identity_match_threshold", 0.6),
+                    )
+                except Exception:
+                    logger.warning(
+                        "AD-742b: IdentityResolver wiring failed; falling back to "
+                        "AD-733b LLM-prompt path. Likely facenet-pytorch import error.",
+                        exc_info=True,
+                    )
+
             # BF-312: one-shot backfill for pre-BF-311 orphaned perception
             # episodes that were stored with agent_ids=[] and are therefore
             # invisible to per-agent recall. Idempotent on subsequent boots.
