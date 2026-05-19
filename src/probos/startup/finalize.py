@@ -4036,6 +4036,29 @@ async def finalize_startup(
                 len(consumer.observer_agent_ids),
             )
 
+            # BF-312: one-shot backfill for pre-BF-311 orphaned perception
+            # episodes that were stored with agent_ids=[] and are therefore
+            # invisible to per-agent recall. Idempotent on subsequent boots.
+            try:
+                from probos.perception.backfill import (
+                    backfill_perception_episode_agent_ids,
+                )
+                _bf_count = await backfill_perception_episode_agent_ids(
+                    runtime.episodic_memory,
+                    list(consumer.observer_agent_ids),
+                )
+                if _bf_count:
+                    logger.info(
+                        "BF-312: backfilled agent_ids on %d orphaned "
+                        "perception episode(s)", _bf_count,
+                    )
+            except Exception:
+                logger.warning(
+                    "BF-312: perception backfill failed; orphaned episodes "
+                    "remain unrecallable. Non-fatal.",
+                    exc_info=True,
+                )
+
             # AD-733c-2 (Wave 172): PerceptionModeController -- drives the
             # BF-308 setters based on engagement state. Default: AMBIENT
             # when perception enabled; the idle watchdog (AD-733c-4) will
