@@ -5,6 +5,7 @@ import type { ChatAttachment, WardRoomPost } from '../../store/types';
 import { EndorsementButtons } from './WardRoomEndorsement';
 import { WardRoomPostItem } from './WardRoomPostItem';
 import { timeAgo } from './timeAgo';
+import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 
 // AD-730-1: file-picker attachments for WardRoom DM replies. Mirrors the
 // ProfileChatTab pattern (same /api/agent/{id}/chat endpoint).
@@ -55,6 +56,11 @@ export function WardRoomThreadDetail() {
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // AD-744: explicit "Share screen to {agent}" state. ``shareInFlight``
+  // blocks double-clicks during the getDisplayMedia + capture round-trip;
+  // ``shareError`` surfaces a transient stroke-banner on failure (HXI #4).
+  const [shareInFlight, setShareInFlight] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
 
   if (!detail || !activeThread) return null;
 
@@ -175,6 +181,36 @@ export function WardRoomThreadDetail() {
     setPendingAttachments(prev => prev.filter(a => a.attachment_id !== id));
   }
 
+  // AD-744: Captain-initiated one-shot "Share screen to {agent}". One frame
+  // captured + posted with source=screen + force=true + agent_ids=<target>.
+  // Returned attachment_id appended to pendingAttachments — the existing
+  // submitReply path forwards it under attachment_ids verbatim.
+  async function onShareScreen() {
+    if (!isDm || !targetAgentId || shareInFlight) return;
+    setShareInFlight(true);
+    setShareError(null);
+    try {
+      const result = await captureScreenShareFrame({ agentId: targetAgentId });
+      if (!result) {
+        setShareError('Screen share cancelled or failed.');
+        // Honest-degrade fade after 5s per HXI #4.
+        setTimeout(() => setShareError(null), 5000);
+        return;
+      }
+      const enriched: ChatAttachment = {
+        attachment_id: result.attachment_id,
+        url: `/api/attachments/${result.attachment_id}`,
+        sha256: result.attachment_id,
+        mime: result.mime,
+        size_bytes: result.size_bytes,
+        filename: 'screen-share.jpg',
+      };
+      setPendingAttachments(prev => [...prev, enriched]);
+    } finally {
+      setShareInFlight(false);
+    }
+  }
+
   // AD-730-1-1: paste image from clipboard. Mirrors IntentSurface.handlePaste.
   // AD-720e (Wave 159): also accept audio MIMEs (chip-only render — see AD).
   async function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -265,7 +301,7 @@ export function WardRoomThreadDetail() {
       {/* AD-730-1: attachment chip strip (DM-only). Renders above the
           textarea when the picker has staged at least one file or after a
           failed upload so the operator sees the error. */}
-      {isDm && targetAgentId && (pendingAttachments.length > 0 || attachError) && (
+      {isDm && targetAgentId && (pendingAttachments.length > 0 || attachError || shareError) && (
         <div
           data-testid="wardroom-dm-attachment-chips"
           style={{
@@ -300,6 +336,9 @@ export function WardRoomThreadDetail() {
           ))}
           {attachError && (
             <span style={{ color: '#ff8080' }}>{attachError}</span>
+          )}
+          {shareError && (
+            <span data-testid="wardroom-dm-share-error" style={{ color: '#ff8080' }}>{shareError}</span>
           )}
         </div>
       )}
@@ -350,6 +389,34 @@ export function WardRoomThreadDetail() {
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
                    stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                 <path d="M11 4l-5 5a2 2 0 002.8 2.8l5-5a3 3 0 00-4.2-4.2l-5 5a4 4 0 005.7 5.7" />
+              </svg>
+            </button>
+            {/* AD-744: stroke-SVG "Share screen to agent" button (HXI #3). */}
+            <button
+              type="button"
+              data-testid="wardroom-dm-share-screen-button"
+              onClick={onShareScreen}
+              disabled={shareInFlight}
+              aria-label="share screen to agent"
+              title="Share screen to agent (one-shot)"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: shareInFlight ? '#666680' : '#f0b060',
+                cursor: shareInFlight ? 'not-allowed' : 'pointer',
+                padding: '4px',
+                borderRadius: 4,
+                flexShrink: 0,
+                alignSelf: 'flex-end',
+                opacity: shareInFlight ? 0.5 : 1,
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                   stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1.5" y="2.5" width="13" height="9" rx="1" />
+                <path d="M5 14h6" />
+                <path d="M8 11.5v2.5" />
+                <path d="M8 8.5V4.5M6 6.5L8 4.5l2 2" />
               </svg>
             </button>
           </>

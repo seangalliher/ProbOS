@@ -163,6 +163,20 @@ async def upload_camera_frame(
             return JSONResponse(status_code=503, content={"error": "screen_disabled"})
         rate_cap = cfg.screen_max_fps_server
 
+    # AD-744: explicit-share gate. When the master switch is False, any
+    # POST that combines ``force=true`` AND non-empty ``agent_ids`` is
+    # treated as an explicit-share invocation and rejected. Ambient
+    # streams (no force/no agent_ids) and operator-preview force shots
+    # (force only, no agent_ids) remain unaffected.
+    is_forced_preflight = force.lower() in {"1", "true", "yes"}
+    has_agent_ids_preflight = bool(agent_ids.strip())
+    explicit_share_attempt = is_forced_preflight and has_agent_ids_preflight
+    if explicit_share_attempt and not getattr(cfg, "explicit_share_enabled", True):
+        return JSONResponse(
+            status_code=503,
+            content={"error": "explicit_share_disabled"},
+        )
+
     if not _check_rate(session_id, rate_cap, source=source):
         return JSONResponse(
             status_code=429,
@@ -232,11 +246,16 @@ async def upload_camera_frame(
             session_id, source, sha[:8], ex,
         )
 
-    # AD-744: Captain-initiated explicit shares will pass a distinct anchor
-    # trigger_type (filed in AD-744 wave 178 commit 2). v1 of AD-733-2 just
-    # writes the {source}_stream_began anchor.
+    # AD-744: Captain-initiated explicit shares emit a distinct anchor
+    # trigger_type so they don't collide with the ambient stream-began
+    # anchor (which fires once per session). Detection: force=true +
+    # non-empty agent_ids — works for camera AND screen sources.
+    anchor_trigger: str | None = None
+    if explicit_share_attempt:
+        anchor_trigger = "captain_explicit_share"
     await _write_anchor_episode(
-        runtime, session_id, sha, captured_at, source=source,
+        runtime, session_id, sha, captured_at,
+        source=source, trigger_type=anchor_trigger,
     )
 
     return {"ok": True, "attachment_ref": sha, "captured_at": captured_at}

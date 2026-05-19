@@ -2041,6 +2041,20 @@ class PerceptionConfig(BaseModel):
     # AD-733-2: screen-source sub-block. Mirrors camera.* shape; default-OFF.
     screen: ScreenStreamConfig = Field(default_factory=ScreenStreamConfig)
 
+    # AD-744: master switch for the Captain-initiated "Share to agent"
+    # surface. Default-ON is safe: the underlying getDisplayMedia API
+    # requires a fresh browser-prompt consent on every click; this toggle
+    # exists for operators who want to disable the surface entirely
+    # (e.g. kiosk mode).
+    explicit_share_enabled: bool = Field(default=True,
+        description=(
+            "AD-744: master switch for Captain-initiated 'Share to agent' "
+            "shortcuts. Default-ON because getDisplayMedia requires a fresh "
+            "browser-prompt consent on every invocation; toggle off for "
+            "kiosk mode."
+        ),
+    )
+
     camera_max_fps_server: int = Field(default=4, ge=1, le=10,
         description="Server-side hard cap on frame ingestion rate per session.",
     )

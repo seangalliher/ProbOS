@@ -76,6 +76,19 @@ _PERCEPTION_SECTION = SectionDescriptor(
             ),
             hot_reload=True,
         ),
+        # AD-744: master switch for the explicit one-shot share-to-agent
+        # surface. Default-ON because getDisplayMedia requires browser
+        # consent on each click; the toggle is for kiosk operators.
+        FieldDescriptor(
+            "perception.explicit_share_enabled",
+            "Explicit share to agent",
+            "bool",
+            description=(
+                "AD-744: master switch for the Captain-initiated 'Share to "
+                "agent' button in the DM composer."
+            ),
+            hot_reload=True,
+        ),
         FieldDescriptor(
             "perception.camera.default_fps",
             "Frames per second",
