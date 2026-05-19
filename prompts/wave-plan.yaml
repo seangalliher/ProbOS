@@ -3706,3 +3706,13 @@ waves:
       - Codifies the BF-310 Cache-Control: no-store hotfix on browser_stream.py.
       - New EventTypes ATTACHMENT_REAPED, ATTACHMENT_STORE_DISK_FULL.
       Prompt drafted in commit 46ac734b (BF-310 + AD-733-1 prompt draft).
+
+  - id: "174"
+    title: "Vision performance + identity: fast tier, face-embedding, cost telemetry"
+    issues_to_close: [669, 670, 673]
+    estimated_hours: 14
+    status: drafting
+    notes: |
+      AD-742a vision_fast tier - replaces single-shared-tier bottleneck
+      AD-742b face-embedding identity - replaces LLM prompt with cheap embedding
+      AD-742e vision LLM call budget telemetry in HXI status badge
