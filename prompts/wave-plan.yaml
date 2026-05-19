@@ -3711,7 +3711,7 @@ waves:
     title: "Vision performance + identity: fast tier, face-embedding, cost telemetry"
     issues_to_close: [669, 670, 673]
     estimated_hours: 14
-    status: drafting
+    status: shipped
     notes: |
       AD-742a vision_fast tier - replaces single-shared-tier bottleneck
       AD-742b face-embedding identity - replaces LLM prompt with cheap embedding
