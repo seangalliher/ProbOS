@@ -1208,6 +1208,50 @@ class BrowserToolConfig(BaseModel):
         description="AD-706f: nested credential vault config; default-OFF.",
     )
 
+    # AD-745: action dispatch from DM replies. Default-OFF (Wave 10 convention #14).
+    action_dispatch_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-745: master switch for parsing [ACTION: ...] markers in DM "
+            "replies and dispatching them to BrowserTool. Default OFF."
+        ),
+    )
+    action_dispatch_max_consecutive_autonomous: int = Field(
+        default=5, ge=0, le=20,
+        description=(
+            "AD-745: consecutive tier-1/2 dispatched actions before forcing "
+            "tier-3 Captain confirm. Reuses AD-706c-2 Guard #10 trust-budget "
+            "pattern across all action verbs (not just compute_use_click)."
+        ),
+    )
+    action_dispatch_max_per_dm_turn: int = Field(
+        default=1, ge=1, le=10,
+        description=(
+            "AD-745 v1: single action per DM reply. >1 reserved for "
+            "AD-745-6 multi-step plans (forward marker)."
+        ),
+    )
+    action_dispatch_ack_timeout_seconds: int = Field(
+        default=60, ge=5, le=600,
+        description=(
+            "AD-745: tier-2 ACK timeout. Honest-degrade to TIMED_OUT after "
+            "this many seconds without Captain ack. Tier-3 confirms NEVER "
+            "time out (Captain decision required)."
+        ),
+    )
+    destructive_url_patterns: list[str] = Field(
+        default_factory=lambda: [
+            "*/checkout*", "*/payment*", "*/billing*",
+            "*/auth/*", "*/login*", "*/oauth*",
+            "*/admin/*", "*/settings/account*",
+            "*/delete*", "*/destroy*",
+        ],
+        description=(
+            "AD-745: fnmatch patterns. URLs matching any pattern force ALL "
+            "action verbs to tier-3 (Captain ACK every call)."
+        ),
+    )
+
 
 class BaselineVRMManifest(BaseModel):
     """AD-721g: per-rank baseline VRM filenames.

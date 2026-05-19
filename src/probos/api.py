@@ -202,6 +202,7 @@ def create_app(runtime: Any) -> FastAPI:
         cloud_pickers,  # AD-720c (Wave 168): OAuth cloud file picker
         config as config_router,  # AD-741 (Wave 170): /api/config for HXI Settings
         perception,  # AD-733 (Wave 170): camera frame ingestion
+        agent_actions,  # AD-745 (Wave 178): conversation -> action dispatch
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -216,6 +217,7 @@ def create_app(runtime: Any) -> FastAPI:
         cloud_pickers,
         config_router,
         perception,
+        agent_actions,
     ):
         app.include_router(r.router)
 

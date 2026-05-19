@@ -16,8 +16,11 @@ run after divergence (reads ``divergence_results``).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -85,6 +88,7 @@ class DmReplyPipeline:
             self.step_4_self_check_parse,
             self.step_4c_image_gen_parse,  # AD-730-3
             self.step_4d_follow_up_parse,  # AD-743
+            self.step_4e_action_dispatch,  # AD-745
             self.step_4b_dm_outbound_parse,
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
@@ -451,6 +455,222 @@ class DmReplyPipeline:
                 "AD-743: schedule_followup raised for agent=%s reason=%r",
                 self.ctx.agent_id, reason, exc_info=True,
             )
+
+    # --- step 4e: AD-745 [ACTION:] dispatch to BrowserTool ---
+    async def step_4e_action_dispatch(self) -> None:
+        """AD-745: parse ``[ACTION: <json>]`` markers, classify via
+        existing AD-706e ``classify_action``, queue with the runtime's
+        action_dispatcher, and dispatch tier-1 inline. Tier-2/3 wait
+        for Captain ACK / confirm. Markers are stripped from the
+        Captain-visible reply regardless of dispatch outcome.
+
+        Tier-2 honest-degrade: every failure mode (missing dispatcher,
+        missing BrowserTool, classifier raise, malformed envelope)
+        degrades to "drop the action, keep the reply." NEVER raises.
+
+        Wave 178 GATE 1 ruling: per-action Captain ACK is canonical;
+        AD-745-2 forward marker tracks autopilot mode (opt-in quorum
+        substitution per https://docs.github.com/en/copilot/concepts/agents/copilot-cli/autopilot).
+        """
+        if not self.ctx.response_text:
+            return
+
+        cfg = getattr(self.ctx.runtime, "config", None)
+        browser_cfg = getattr(cfg, "browser_tool", None) if cfg else None
+        if browser_cfg is None or not getattr(
+            browser_cfg, "action_dispatch_enabled", False,
+        ):
+            return  # master switch off; reply unchanged.
+
+        from probos.cognitive.dm.action_parser import (
+            parse_action_envelopes,
+            strip_action_markers,
+        )
+        from probos.cognitive.dm.action_dispatcher import (
+            ActionStatus,
+            DispatchedAction,
+            make_action_id,
+            url_matches_destructive_pattern,
+        )
+
+        envelopes = parse_action_envelopes(self.ctx.response_text)
+        if not envelopes:
+            return
+
+        # Enforce per-DM-turn cap; extra envelopes dropped + logged.
+        max_per_turn = int(getattr(
+            browser_cfg, "action_dispatch_max_per_dm_turn", 1,
+        ))
+        if len(envelopes) > max_per_turn:
+            logger.warning(
+                "AD-745: %d action envelopes parsed for agent=%s; cap=%d "
+                "(extras dropped — AD-745-6 forward marker covers multi-step)",
+                len(envelopes), self.ctx.agent_id, max_per_turn,
+            )
+            envelopes = envelopes[:max_per_turn]
+
+        dispatcher = getattr(self.ctx.runtime, "action_dispatcher", None)
+        if dispatcher is None:
+            logger.warning(
+                "AD-745: runtime.action_dispatcher missing; stripping markers "
+                "and degrading for agent=%s",
+                self.ctx.agent_id,
+            )
+            self.ctx.response_text = strip_action_markers(self.ctx.response_text)
+            return
+
+        browser_tool = getattr(self.ctx.runtime, "browser_tool", None)
+        captain_id = "captain"
+        dm_turn_id = str(self.ctx.params.get("dm_turn_id") or int(time.time() * 1000))
+
+        page_url: str | None = None
+        session = None
+        if browser_tool is not None:
+            try:
+                # Best-effort: pick the agent's most-recent session by id.
+                session = browser_tool.get_session(self.ctx.agent_id)
+                if session is not None:
+                    page_url = getattr(session, "last_url", None)
+            except Exception:
+                logger.warning(
+                    "AD-745: get_session raised for agent=%s; tier-3 fall-back "
+                    "until classifier-known URL is available",
+                    self.ctx.agent_id, exc_info=True,
+                )
+
+        # Classifier (AD-706e) + destructive-pattern override + budget cap.
+        try:
+            from probos.tools.browser.actions import classify_action
+        except Exception:
+            classify_action = None  # type: ignore[assignment]
+
+        destructive_patterns: list[str] = list(getattr(
+            browser_cfg, "destructive_url_patterns", [],
+        ))
+        consec_cap = int(getattr(
+            browser_cfg, "action_dispatch_max_consecutive_autonomous", 5,
+        ))
+
+        for seq, envelope in enumerate(envelopes):
+            base_tier = 2
+            if classify_action is not None and session is not None:
+                try:
+                    base_tier = classify_action(session, envelope.verb, envelope.args)
+                except Exception:
+                    logger.warning(
+                        "AD-745: classify_action raised for verb=%r agent=%s; "
+                        "defaulting to tier-2",
+                        envelope.verb, self.ctx.agent_id, exc_info=True,
+                    )
+                    base_tier = 2
+
+            destructive_match = url_matches_destructive_pattern(
+                page_url, destructive_patterns,
+            )
+            tier = base_tier
+            if destructive_match:
+                tier = 3
+            elif dispatcher.consecutive_autonomous(
+                captain_id, self.ctx.agent_id,
+            ) >= consec_cap:
+                tier = 3
+                logger.info(
+                    "AD-745: trust-budget cap reached (%d) for agent=%s; "
+                    "forcing tier-3 Captain confirm",
+                    consec_cap, self.ctx.agent_id,
+                )
+
+            action_id = make_action_id(
+                captain_id, self.ctx.agent_id, dm_turn_id, seq,
+            )
+            initial_status = ActionStatus.PROPOSED
+            if tier == 1:
+                initial_status = ActionStatus.EXECUTED
+            elif tier == 2:
+                initial_status = ActionStatus.ACK_PENDING
+            else:
+                initial_status = ActionStatus.CONFIRM_PENDING
+
+            action = DispatchedAction(
+                action_id=action_id,
+                agent_id=self.ctx.agent_id,
+                captain_id=captain_id,
+                thread_id=str(self.ctx.params.get("thread_id") or ""),
+                verb=envelope.verb,
+                args=dict(envelope.args),
+                raw_intent=envelope.raw_intent,
+                tier=tier,
+                status=initial_status,
+                proposed_at=time.time(),
+                page_url=page_url,
+                destructive_pattern_match=destructive_match,
+            )
+            dispatcher.register(action)
+
+            if tier == 1 and browser_tool is not None:
+                # Inline tier-1 dispatch. Tier-1 verbs are observation-only.
+                try:
+                    params = {"action": envelope.verb, **envelope.args}
+                    if session is not None:
+                        params["session_id"] = session.session_id
+                    result = await browser_tool.invoke(
+                        params, context={"agent_id": self.ctx.agent_id},
+                    )
+                    dispatcher.mark_executed(
+                        action_id, result=getattr(result, "output", None),
+                    )
+                except Exception as ex:
+                    dispatcher.mark_failed(action_id, error=str(ex))
+                    logger.warning(
+                        "AD-745: tier-1 dispatch failed verb=%r agent=%s: %s",
+                        envelope.verb, self.ctx.agent_id, ex, exc_info=True,
+                    )
+            # Tier-2 / tier-3 stay queued — endpoint /ack or /abort
+            # closes them. Episode anchor written by mark_executed path
+            # consumer (forward marker AD-745-7 SQLite covers durability).
+
+            # AD-541b: episode anchor for every PROPOSED/EXECUTED action.
+            try:
+                from probos.types import AnchorFrame, Episode
+                episodic = getattr(self.ctx.runtime, "episodic_memory", None)
+                if episodic is not None:
+                    args_hash = hashlib.sha256(
+                        json.dumps(envelope.args, sort_keys=True).encode(),
+                    ).hexdigest()
+                    ep = Episode(
+                        timestamp=time.time(),
+                        user_input=self.ctx.message_text or "",
+                        outcomes=[{
+                            "intent": "agent_action_executed",
+                            "verb": envelope.verb,
+                            "args_hash": args_hash,
+                            "before_frame_ref": action.before_frame_ref,
+                            "after_frame_ref": action.after_frame_ref,
+                            "result": action.result,
+                            "tier_classified": tier,
+                        }],
+                        reflection=(
+                            f"{self.ctx.agent_id} proposed {envelope.verb} "
+                            f"({envelope.raw_intent or 'no intent given'})"
+                        ),
+                        source="action_dispatch",
+                        importance=7,
+                        anchors=AnchorFrame(
+                            channel="action",
+                            trigger_type="agent_action_executed",
+                            trigger_agent=self.ctx.agent_id,
+                        ),
+                    )
+                    await episodic.store(ep)
+            except Exception:
+                logger.warning(
+                    "AD-745: episode-anchor write failed agent=%s verb=%r",
+                    self.ctx.agent_id, envelope.verb, exc_info=True,
+                )
+
+        # Strip ALL markers (even malformed ones) so the Captain-visible
+        # reply never leaks JSON envelopes.
+        self.ctx.response_text = strip_action_markers(self.ctx.response_text)
 
     # --- step 4b: BF-296 / AD-453 [DM @callsign]...[/DM] outbound parse ---
     async def step_4b_dm_outbound_parse(self) -> None:
