@@ -99,6 +99,13 @@ _PERCEPTION_SECTION = SectionDescriptor(
             description="BF-309: after this many seconds with no admit, re-baseline on the next frame. Prevents static-scene lock-up. 30s default. 0 = disable.",
             hot_reload=True,
         ),
+        FieldDescriptor(
+            "perception.wm_persistence_enabled",
+            "Persist vision working memory",
+            "bool",
+            description="AD-742f: load + write the per-agent vision working-memory ring to data/perception_wm.db so Captain's recent-frame recall survives restart. Disable for in-memory-only operation.",
+            hot_reload=True,
+        ),
     ),
 )
 

@@ -4491,3 +4491,33 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 **UI gate.** `npx vitest run` 757 passing + 1 skipped (none of the `Errors` are AD-742e — pre-existing onnxruntime-web load issue in unrelated wakeWord tests). `npm run build` exit 0. New bundle: `index-CfjDvOSd.js`.
 
 **License posture.** Zero new pip deps. Zero new npm deps.
+
+
+### AD-742f — Vision working memory persistence across restart (Wave 175)
+
+**Context.** AD-733a `VisionWorkingMemory` is the per-agent 8-entry ring buffer used for prompt-context injection (`render_for_prompt`). It is in-memory only. Process restart blanks every observer's recent-frame recall. AD-541b anchored episodes ARE persisted in chroma, but those are summarized long-term memory; the per-agent ring buffer is the hot prompt-context substrate. Captain's most common cross-restart use case ("describe what was on the desk earlier") was broken.
+
+**Decision.** Add SQLite persistence at `data/perception_wm.db`. `VisionWorkingMemory` accepts optional `store` + `agent_id` kwargs; when both are present, the ring auto-hydrates on construction and every `append` writes through to disk. The factory `get_or_create_working_memory` threads the runtime-wired store through to every new WM. `startup/finalize.py` constructs `WorkingMemoryStore(data_dir / "perception_wm.db")` BEFORE `VisionConsumer` construction so observer registration sees a wired store. Default ON via `PerceptionConfig.wm_persistence_enabled=True` (hot-reload — toggles write path only).
+
+**Honest-degrade.** `WorkingMemoryStore.__init__` swallows any sqlite/disk exception, logs WARNING, and sets `available=False`. Every load/append/clear method checks `available` first. A WM constructed against an unavailable store still functions as an in-memory ring (legacy behavior bit-for-bit preserved).
+
+**AD-731 invariant.** Schema has `attachment_ref TEXT` columns, NO `BLOB` columns. Image bytes stay in `AttachmentStore` (content-addressable by SHA-256); the WM DB carries refs + descriptions only. `test_ad731_invariant_no_image_bytes` source-asserts via `PRAGMA table_info` that no column is of type `BLOB`.
+
+**Sync over async.** Used stdlib `sqlite3` rather than `aiosqlite` because `VisionWorkingMemory.append` is synchronous — we don't have an event loop handle there. Write path is short (<1 ms) and protected by a module-level Lock so multiple agents writing concurrently don't fight the connection. Adding aiosqlite would force every observer write into a `run_in_executor` round-trip for no measurable benefit.
+
+**Tests.** +10 pytest in `tests/test_ad742f_wm_persistence.py` (real `WorkingMemoryStore` over `tmp_path`, BF-287 — no MagicMock at substrate boundary): schema init, append+load roundtrip, capacity cap on load, eviction-beyond-capacity through WM, per-agent isolation on clear, honest-degrade on unwritable path, in-memory-only when store=None, AD-731 invariant source-check, factory threads store, factory reset clears handle.
+
+**Forward markers.**
+- AD-742f-1 — Cross-host federation of WM rows.
+- AD-742f-2 — TTL-based pruning of old WM rows (cap is currently count-based only).
+
+**Files.**
+- `src/probos/perception/wm_store.py` (new)
+- `src/probos/perception/working_memory.py` (store kwargs threaded through `__init__` + `append`)
+- `src/probos/perception/consumer.py` (`set_working_memory_store` setter + `_WM_STORE` module global threaded through factory)
+- `src/probos/startup/finalize.py` (constructs store before `VisionConsumer`)
+- `src/probos/perception/__init__.py` (new `FieldDescriptor`)
+- `src/probos/config.py` (new `wm_persistence_enabled` field on `PerceptionConfig`)
+- `tests/test_ad742f_wm_persistence.py` (new, 10 tests)
+
+**License posture.** 0-line diff on all 5 license files. Uses stdlib `sqlite3` (PSF license, already absorbed via Python).

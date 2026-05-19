@@ -2005,6 +2005,9 @@ class PerceptionConfig(BaseModel):
     working_memory_capacity: int = Field(default=8, ge=1, le=64,
         description="Per-agent vision working memory ring buffer size.",
     )
+    wm_persistence_enabled: bool = Field(default=True,
+        description="AD-742f: persist VisionWorkingMemory rings to data/perception_wm.db so Captain's per-agent visual history survives restart. Set False to operate in-memory only (legacy behavior).",
+    )
     vision_tier: str = Field(default="vision",
         description="LLM tier name for narrative / proactive-observer vision calls (AD-733b scene-introduction + high-novelty triggers). Falls back to standard/deep behavior if vision_fast is unset.",
     )

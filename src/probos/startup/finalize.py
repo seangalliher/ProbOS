@@ -4014,6 +4014,29 @@ async def finalize_startup(
         ):
             from probos.perception.consumer import VisionConsumer
 
+            # AD-742f: wire the shared SQLite WM store before observers register.
+            if getattr(_perception_cfg, "wm_persistence_enabled", True):
+                try:
+                    from pathlib import Path
+                    from probos.perception.consumer import set_working_memory_store
+                    from probos.perception.wm_store import WorkingMemoryStore
+                    _data_dir = Path(getattr(runtime, "data_dir", None) or "data")
+                    _wm_store = WorkingMemoryStore(_data_dir / "perception_wm.db")
+                    if _wm_store.available:
+                        set_working_memory_store(_wm_store)
+                        runtime.vision_wm_store = _wm_store
+                        logger.info("AD-742f: vision WM persistence active")
+                    else:
+                        runtime.vision_wm_store = None
+                except Exception:
+                    logger.warning(
+                        "AD-742f: WM store wiring failed; in-memory-only ring",
+                        exc_info=True,
+                    )
+                    runtime.vision_wm_store = None
+            else:
+                runtime.vision_wm_store = None
+
             consumer = VisionConsumer(
                 runtime,
                 min_interval_seconds=_perception_cfg.vision_min_interval_seconds,

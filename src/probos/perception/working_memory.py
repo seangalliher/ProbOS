@@ -30,15 +30,45 @@ class VisionObservation:
 
 
 class VisionWorkingMemory:
-    """Thread-safe per-agent ring buffer. One instance per agent_id per runtime."""
+    """Thread-safe per-agent ring buffer. One instance per agent_id per runtime.
 
-    def __init__(self, *, capacity: int = 8) -> None:
+    AD-742f: when a ``store`` + ``agent_id`` are provided, the ring is
+    auto-loaded from SQLite on construction and every ``append`` is
+    mirrored to disk (best-effort, honest-degrade on failure).
+    """
+
+    def __init__(
+        self,
+        *,
+        capacity: int = 8,
+        store: object | None = None,
+        agent_id: str = "",
+    ) -> None:
         self._buf: deque[VisionObservation] = deque(maxlen=capacity)
         self._lock = Lock()
+        self._store = store
+        self._agent_id = str(agent_id)
+        # AD-742f: hydrate ring from disk if a store is wired.
+        if self._store is not None and self._agent_id:
+            try:
+                rows = self._store.load_for_agent(self._agent_id, capacity=capacity)
+                for obs in rows:
+                    self._buf.append(obs)
+            except Exception:
+                # Honest-degrade: store reported unavailable or row decode failed.
+                # Tier-2 — never raise from __init__.
+                pass
 
     def append(self, obs: VisionObservation) -> None:
         with self._lock:
             self._buf.append(obs)
+        # AD-742f: best-effort persist. Outside the lock so a slow DB write
+        # doesn't block in-memory reads.
+        if self._store is not None and self._agent_id:
+            try:
+                self._store.append(self._agent_id, obs, capacity=self._buf.maxlen or 8)
+            except Exception:
+                pass
 
     def entries(self) -> list[VisionObservation]:
         with self._lock:

@@ -38,18 +38,34 @@ logger = logging.getLogger(__name__)
 # owns one camera and dispatches to N agents.
 _WORKING_MEMORIES: dict[str, Any] = {}  # agent_id -> VisionWorkingMemory
 
+# AD-742f: optional shared store wired at runtime startup. None = legacy
+# in-memory-only behavior (BF-274 fallback path).
+_WM_STORE: Any = None
+
+
+def set_working_memory_store(store: Any) -> None:
+    """AD-742f: install the shared SQLite store. None disables persistence."""
+    global _WM_STORE
+    _WM_STORE = store
+
 
 def get_or_create_working_memory(agent_id: str, *, capacity: int = 8) -> Any:
     """Return the VisionWorkingMemory for an agent, creating on first access."""
     from probos.perception.working_memory import VisionWorkingMemory
     if agent_id not in _WORKING_MEMORIES:
-        _WORKING_MEMORIES[agent_id] = VisionWorkingMemory(capacity=capacity)
+        _WORKING_MEMORIES[agent_id] = VisionWorkingMemory(
+            capacity=capacity,
+            store=_WM_STORE,
+            agent_id=agent_id,
+        )
     return _WORKING_MEMORIES[agent_id]
 
 
 def reset_working_memories_for_tests() -> None:
-    """Test-only — clears the module-level WM registry."""
+    """Test-only — clears the module-level WM registry AND the store handle."""
+    global _WM_STORE
     _WORKING_MEMORIES.clear()
+    _WM_STORE = None
 
 
 def _reset_latest_frame_cache_for_tests(consumer: Any) -> None:
