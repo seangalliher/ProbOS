@@ -4796,3 +4796,205 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 
 - AD-742c-6-1 — Fade-on-unbind animation in CAMERA BINDINGS table.
 - AD-742c-6-2 — Agentic bind path ("agent: bind your camera to me") — requires new intent + tool permission grant.
+
+
+### Wave 178 — see → discuss → act ladder (2026-05-19)
+
+Three ADs lifting ProbOS up the visibility ladder: passive screen sensing
+(AD-733-2) feeds ambient situational awareness; explicit share-to-agent
+(AD-744) gives the Captain a one-shot "look at THIS" surface; conversation
+→ action handoff (AD-745) lets the Captain say "...and click that button
+for me" without leaving the DM. Each layer is additive and default-OFF
+except where consent is already present in the underlying API
+(`getDisplayMedia` browser prompt).
+
+**GATE 1 Captain ruling — consent posture (CRITICAL).** Per-action Captain
+ACK on tier-2 (typed input) and tier-3 (destructive) browser actions is
+**the canonical posture**, NOT a v1 stopgap. The mesh is forever
+human-in-the-loop by default. AD-745-2 forward marker (below) tracks
+opt-in "autopilot mode" modeled on GitHub Copilot CLI autopilot
+(https://docs.github.com/en/copilot/concepts/agents/copilot-cli/autopilot)
+where the operator trades human ACK for multi-agent consensus quorum.
+**Quote: "Autopilot mode is an explicit opt-in where the operator trades
+human ACK for multi-agent consensus quorum. The quorum REPLACES Captain
+ACK; it does not stack."** v1 ships with NO autopilot codepath; the
+ACK-skip branch is forward-marker only.
+
+### AD-721j amendment (filed at Wave 178 close)
+
+**Amendment.** AD-721j (Blender Connector computer-use control, #538) is
+re-scoped: "Blender as a target application of AD-745-1 DesktopActionTool."
+The generic OS-pointer dispatch substrate ships in AD-745-1; AD-721j
+becomes a thin domain configuration on top (Blender selector vocabulary,
+viewport-aware action grammar). Captain GATE 1 ruling: APPROVED. The
+existing AD-721j GH issue remains OPEN as the Blender-domain tracker;
+AD-745-1's forward marker now covers the generic substrate.
+
+### AD-733-2 — Passive screen sensing (Wave 178)
+
+**Context.** AD-733 + AD-733a ship per-Captain camera streaming with
+VisionConsumer + AD-541b anchor episodes. AD-742c (Wave 176) adds per-agent
+camera bindings. But the "screen" was missing — operators could share a
+camera frame but not what was on their monitor. Closes #668.
+
+**Decision.** Treat `source` as a first-class form-field discriminator
+on the existing `/api/perception/camera/frame` endpoint. Allow-list
+`{camera, screen}`; default `camera` for byte-compatible behavior of
+every AD-733 caller. Independent enable gate per source
+(`perception.camera.enabled` / `perception.screen.enabled`); independent
+rate buckets keyed on `(session_id, source)`. Per-source anchor
+trigger_type so AD-541b recall can distinguish camera_stream_began from
+screen_stream_began.
+
+Browser side: new `useScreenStore` (sibling of `useCameraStore` —
+different lifecycle, SRP), new `useScreenStream` hook with
+`getDisplayMedia` + `track.onended` auto-stop; CameraLiveIndicator
+renders SCREEN LIVE row below CAMERA LIVE when active.
+
+**Scope.** Default-OFF (`screen_sensing_enabled=False`) per Wave 10
+convention #14. AD-731 preserved — bytes flow through AttachmentStore,
+not inline on the bus.
+
+**Test coverage.** +8 pytest (per-source success/disable/invalid/bucket-
+isolation/anchor + AD-731 source-scan + bound_agent_ids regression +
+camera byte-compatibility regression); +5 vitest hook tests; +3 vitest
+CameraLiveIndicator render tests.
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
+
+- AD-733-2-1 — VisionConsumer per-source novelty threshold (camera-novelty
+  vs screen-novelty differ — screens are visually static for long
+  stretches).
+- AD-733-2-2 — Real-time WebRTC screen track (replace multipart upload
+  with a long-lived WHIP/WHEP transport) — trigger: Captain demand for
+  sub-second screen-update latency.
+
+### AD-744 — Interactive share-to-agent (Wave 178)
+
+**Context.** AD-733-2 ships ambient screen sensing; the most common
+operator request is the one-shot "look at THIS" — Captain wants to share
+a single frame with a named agent without standing up an ambient stream.
+Existing infrastructure (AD-720 AttachmentStore, AD-742c `bound_agent_ids`,
+AD-733a BF-302 `force=True` bypass) covers the plumbing; AD-744 composes
+them into a single Captain-facing surface.
+
+**Decision.** Reuse the existing `/api/perception/camera/frame` endpoint
+(no new server endpoint). The combination `(force=true AND non-empty
+agent_ids)` is the explicit-share signal. New
+`PerceptionConfig.explicit_share_enabled` (default True — the underlying
+`getDisplayMedia` browser prompt provides the per-click consent so
+default-on is safe; the toggle is for kiosk operators) gates the
+explicit-share path independently of ambient streams. The shared frame
+flows through AttachmentStore (AD-731 invariant) and rides on the next
+DM turn's `attachment_ids` via existing AD-720/730 plumbing — no new
+multimodal wire format.
+
+Browser side: new `useScreenShare` hook (one-shot; `track.stop()` on
+EVERY track in `finally` — distinct from AD-733-2's long-lived stream);
+stroke-SVG monitor + up-arrow glyph next to the existing paperclip on
+the WardRoomThreadDetail DM composer (HXI #3); Tier-2 honest-degrade
+returns `null` from the hook on any failure (user cancel, network blip,
+server 5xx) — the DM composer text is never clobbered.
+
+**Test coverage.** +8 pytest (happy path, master-off 503, ambient-still-
+admits, operator-preview-still-admits, force-flag propagation, distinct
+anchor trigger_type, AD-731 source-scan rerun, camera-source share
+parity); +6 vitest (getDisplayMedia called once, track stopped after
+grab, multipart contents, success payload, getDisplayMedia reject
+degrade, 5xx degrade with track release); +3 vitest component tests
+(button hidden in non-DM view, visible in DM view, click appends to
+pendingAttachments).
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
+
+- AD-744-1 — Cross-agent share fan-out (share-to-many). Trigger: Captain
+  demand after share-to-one is exercised ≥3 times.
+- AD-744-2 — Region masking / redaction before share (important privacy
+  primitive). Trigger: Captain shares an inadvertently-sensitive frame
+  OR Counselor flags a privacy-bearing observation.
+- AD-744-3 — In-HXI preview modal with redact-region affordance.
+  Trigger: graduates from AD-744-2 when the redaction primitive is
+  approved.
+
+### AD-745 — Conversation → action handoff; browser scope v1 (Wave 178)
+
+**Context.** After AD-744 ships, the Captain can share a screen frame
+with an agent. The natural next sentence is "click that button for me."
+Today the agent honest-degrades — it can describe what it sees, but has
+no path to act. AD-706 already ships the BrowserTool substrate (Playwright
+sessions per Captain, AD-706e action vocabulary, AD-706e classifier,
+AD-541b anchor episodes per action); AD-745 ships the dispatch layer
+that connects a CognitiveAgent's DM reply to BrowserTool.
+
+**Decision (GATE 1 — Captain ruling).** Per-action Captain ACK is the
+canonical consent posture. Tier-1 (observation-only: screenshot, state,
+scroll, mouse_move) dispatches inline; tier-2 (click, type, drag,
+non-destructive key_combo, mouse_button) waits for in-thread Captain
+ACK; tier-3 (compute_use_click, eval_js, upload_file, download,
+destructive key_combo, ANY verb on URL matching `destructive_url_patterns`)
+waits for explicit destructive-confirmation modal. NO autopilot in v1.
+
+Surface: `[ACTION: {"verb":"click","args":{"selector":"#submit"},"intent":"..."}]`
+bracket marker on agent DM replies; new `DmReplyPipeline.step_4e_action_dispatch`
+between AD-743 4d and BF-296 4b; new `ActionDispatcher` in-memory registry;
+new `routers/agent_actions.py` mounted at `/api/browser`:
+
+- `POST /actions/{id}/ack` — tier-2 Captain ACK; calls BrowserTool.invoke
+- `POST /actions/{id}/abort` — Captain abort; sets `BrowserSession.aborted=True`
+- `GET  /actions/by-thread/{thread_id}` — per-thread action list
+
+Browser side: `ui/src/components/chat/AgentActionLog.tsx` — collapsed by
+default per HXI #5; per-entry tier glyph (stroke-density encoded,
+a11y-safe — no color reliance); pulse animation on `ack_pending` (1.2s)
+and `confirm_pending` (0.6s) per HXI #4; per-action ABORT button.
+
+**AD-731 invariant.** Frame refs (SHA-256 from AttachmentStore) only on
+outcomes; before/after_frame_ref slots reserved for the
+screenshot-before / screenshot-after audit trail. Source-scan asserts
+`b64encode` absent from `action_parser.py`, `action_dispatcher.py`,
+`routers/agent_actions.py`.
+
+**AD-541b integration.** Every dispatched action writes an Episode with
+`anchors=AnchorFrame(channel="action", trigger_type="agent_action_executed",
+trigger_agent=<agent_id>)`. Outcomes carry `verb`, `args_hash` (sha256),
+`tier_classified`, `before_frame_ref`, `after_frame_ref`, `result`.
+
+**Scope.** Default-OFF (`action_dispatch_enabled=False`). Per-DM-turn
+cap = 1 (AD-745-6 forward marker for multi-step plans). Consecutive-
+autonomous cap = 5 (AD-706c-2 Guard #10 generalized across all verbs).
+Destructive URL allow-list = 10 fnmatch patterns by default. NO browser
+binaries committed — `playwright install chromium` is operator-run.
+BrowserSession ALWAYS uses an isolated `user_data_dir`, NEVER Captain's
+default profile (AD-745-5 forward marker tracks the consensual
+profile-clone exception).
+
+**Test coverage.** +23 pytest (7 parser + 8 pipeline + 3 episode-anchor
++ 5 endpoints); +6 vitest (AgentActionLog component).
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
+
+- AD-745-1 — `DesktopActionTool` OS-pointer scope. Absorbs AD-721j
+  Blender Connector per Wave 178 Captain ruling. Trigger: Captain shares
+  a non-browser surface AND requests action ≥3 times OR Blender demand
+  resurfaces post-AD-745 generic substrate.
+- AD-745-2 — **Autopilot mode** (opt-in quorum substitution for Captain
+  ACK). Modeled on GitHub Copilot CLI autopilot
+  (https://docs.github.com/en/copilot/concepts/agents/copilot-cli/autopilot).
+  **The quorum REPLACES Captain ACK; it does not stack.** v1 ships with
+  NO autopilot codepath; this marker tracks the future opt-in. Trigger:
+  Captain demand after exercising tier-2 ACK ≥1 wave.
+- AD-745-3 — OmniParser SOM grounding for `compute_use_click` accuracy.
+  Trigger: `compute_use_click` failure rate observed ≥20% OR Captain
+  demand for canvas/embed grounding.
+- AD-745-4 — Pluggable grounding strategy (mirrors AD-742d). Trigger:
+  AD-745-3 lands AND operator demand for choice.
+- AD-745-5 — Consensual profile-clone (agent acts in a clone of the
+  Captain's logged-in profile for the duration of an explicit task).
+  Trigger: Captain explicit "use my login" request.
+- AD-745-6 — Multi-step action plans per DM turn (plan-level ACK). v1
+  caps at 1 action per turn; this marker tracks the batched-ACK
+  surface. Trigger: AD-745 v1 exercised ≥1 wave AND Captain demand.
+- AD-745-7 — Cross-thread action audit + SQLite persistence of pending
+  actions across runtime restart. v1 is in-memory only. Trigger: action
+  volume sustained ≥50/wave OR Captain demand for action history
+  beyond live thread.

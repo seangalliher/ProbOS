@@ -3795,16 +3795,16 @@ waves:
     title: "see -> discuss -> act ladder (AD-733-2 + AD-744 + AD-745)"
     kind: main
     depends_on: ["177"]
-    dispatch_prompt: "prompts/WAVE-178-DISPATCH.md"
+    dispatch_prompt: "prompts/archive/WAVE-178-DISPATCH.md"
     prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-733-2-passive-screen-sensing.md"
-      - "prompts/ad-744-interactive-share-to-agent.md"
-      - "prompts/ad-745-conversation-action-handoff.md"
+      - "prompts/archive/ad-733-2-passive-screen-sensing.md"
+      - "prompts/archive/ad-744-interactive-share-to-agent.md"
+      - "prompts/archive/ad-745-conversation-action-handoff.md"
     builder_required: true
     issues_to_close: [668]   # AD-733-2 closes #668; AD-744/AD-745 file new issues at wave close per AD-722c-3
     estimated_hours: 18
-    status: drafting
+    status: shipped
     notes: |
       High-value architectural fork - workstation -> agentic transition.
       AD-733-2 (#668 narrowed) - passive screen sensing via getDisplayMedia;
