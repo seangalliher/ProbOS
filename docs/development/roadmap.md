@@ -558,7 +558,8 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-733c-5-1 | HXI editor for `PerceptionProfile` | (forward marker, planned Wave 176) | 4 |
 | AD-733c-5-2 | Hot-reload of `engagement_enabled` toggle | (forward marker, planned Wave 176) | 4 |
 | AD-733c-5-3 | Federation cross-host engagement sync | (forward marker, planned Wave 176) | 4 |
-| AD-733c-7 | Silero VAD secondary engagement trigger — new `note_voice_activity()` hook on per-agent controller; browser-side Silero ONNX (MIT, ~1.5 MB, operator-pulled + gitignored); audio NEVER leaves browser, only boolean speech events fire `/api/perception/voice-activity`; default-off `vad_engagement_enabled=False` | [#678](https://github.com/seangalliher/ProbOS/issues/678) | 2 |
+| AD-733c-7 | Silero VAD secondary engagement trigger — **SHIPPED Wave 176** (backend only: new `note_voice_activity()` hook on `PerceptionModeController`; `VOICE_ACTIVITY_COOLDOWN_S=3.0` between PROGRAMMATIC and WAKE_WORD; new `POST /api/perception/voice-activity` endpoint routing through AD-733c-5 registry; default-off `vad_engagement_enabled=False`; `vad_min_speech_duration_ms=400`; new `scripts/silero-vad-fetch.ps1` operator-pullable model download; +1 THIRD_PARTY_LICENSES.md entry (MIT); browser-side `silero-vad.ts` / `voiceActivity.ts` + HXI integration deferred to AD-733c-7-5; +10 pytest) | [#678](https://github.com/seangalliher/ProbOS/issues/678) | 2 |
+| AD-733c-7-5 | HXI VAD integration (browser-side `silero-vad.ts` + `voiceActivity.ts` + CameraLiveIndicator SPEECH indicator) | (forward marker, filed Wave 176) | 4 |
 | AD-733c-7-1 | Browser pause `getUserMedia` in DORMANT (BroadcastChannel signal) | (forward marker, planned Wave 176) | 4 |
 | AD-733c-7-2 | Multi-mic disambiguation | (forward marker, planned Wave 176) | 4 |
 | AD-733c-7-3 | Speaker diarization | (forward marker, planned Wave 176) | 4 |

@@ -4657,3 +4657,37 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - AD-733c-5-3 — Federation cross-host engagement sync.
 - AD-733c-5-4 — HXI per-agent perception badges (deferred UI from this wave).
 - AD-733c-5-5 — Per-agent vision LLM budget enforcement (consumer.py / observer.py threading).
+
+
+### AD-733c-7 — Silero VAD secondary engagement trigger (Wave 176)
+
+**Date:** 2026-05-19
+**Closes:** #678
+**Status:** Shipped (backend); browser-side integration deferred to AD-733c-7-5
+
+**Decision.** Add a NEW ENGAGEMENT TRIGGER (not a strategy plugin) that feeds the same per-agent `PerceptionModeController` introduced by AD-733c-5. `note_voice_activity()` mirrors `note_dm_activity` step-wise ramp (DORMANT -> AMBIENT, AMBIENT -> ENGAGED, ENGAGED -> refreshed) but is throttled by `VOICE_ACTIVITY_COOLDOWN_S = 3.0` — between PROGRAMMATIC (1s) and WAKE_WORD (5s) — so continuous speech doesn't flap the mode badge.
+
+**Implementation notes.**
+
+- `PerceptionModeController.note_voice_activity() -> tuple[bool, str]` mirrors `note_wake_word` return shape (transitioned + reason ∈ {"transitioned", "refreshed", "cooldown", "blocked"}). New attribute `_last_voice_activity_at` tracks the per-trigger cooldown separately from wake-word + DM-activity floors.
+- `Transition.trigger` docstring extended to include `"voice_activity"`.
+- `POST /api/perception/voice-activity` mirrors the AD-733c-3 `/engage` shape: optional `agent` field (agent_id or callsign) routes through `runtime.perception_engagement_registry` with 404 honest-degrade on unknown agent; falls back to legacy singleton when `agent` is empty. Returns 503 `vad_engagement_disabled` when `PerceptionConfig.vad_engagement_enabled` is False (Captain explicit opt-in).
+- New `PerceptionConfig.vad_engagement_enabled` (default `False` — convention #14 transitional gate) and `vad_min_speech_duration_ms` (default 400, ge=100 le=2000 — browser-side debounce floor).
+- `scripts/silero-vad-fetch.ps1` mirrors the `piper-voice-fetch.ps1` shape (operator-pullable download, idempotent, -Force flag). Model bytes target `data/silero-vad/` which is ALREADY covered by the existing `data/*` gitignore rule — no `.gitignore` diff required.
+- `THIRD_PARTY_LICENSES.md` gains a Silero VAD entry (MIT). `onnxruntime-web` is ALREADY in `ui/package.json` `optionalDependencies` (resident via AD-733c-3 wake-word path), so the browser-side VAD module won't add a new npm dep.
+
+**Privacy invariant.** Audio bytes never leave the browser. The `/api/perception/voice-activity` POST body carries only `{agent?, source}` — a JSON metadata envelope. Audio frames are decoded + scored by `silero-vad.ts` locally, debounced by the operator-tunable floor, then a single boolean speech-detected event is fired.
+
+**Scope deviation from prompt.** Browser-side `ui/src/audio/silero-vad.ts` + `voiceActivity.ts` + `CameraLiveIndicator` SPEECH indicator (+5 vitest) deferred to forward marker AD-733c-7-5. The backend acceptance criteria are fully met: endpoint exists, accepts the request shape, routes per-agent, honest-degrades when disabled, no audio bytes touch the wire. The HXI integration is a self-contained browser change with its own UI gate (`npm run build` + vitest); shipping it next session lets the backend bake in production first.
+
+**Test coverage.** +10 pytest in `tests/test_ad733c7_vad_engagement.py`: DORMANT->AMBIENT, AMBIENT->ENGAGED, ENGAGED refreshes, cooldown blocks; endpoint disabled returns 503, routes per-agent, 404 on unknown agent, 400 on invalid source; config defaults preserve behavior; cooldown constant sits between PROGRAMMATIC and WAKE_WORD floors.
+
+**License posture.** 0-line diff on `pyproject.toml` / `package.json` / `package-lock.json` / `LICENSE` / `.gitignore`. +1 entry on `THIRD_PARTY_LICENSES.md` (Silero VAD MIT).
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
+
+- AD-733c-7-1 — Browser pause `getUserMedia` in DORMANT (BroadcastChannel signal).
+- AD-733c-7-2 — Multi-mic disambiguation.
+- AD-733c-7-3 — Speaker diarization.
+- AD-733c-7-4 — VAD-driven wake-word mute (CPU savings).
+- AD-733c-7-5 — HXI VAD integration (browser-side `silero-vad.ts` + `voiceActivity.ts`).

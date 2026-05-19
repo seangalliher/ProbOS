@@ -85,7 +85,8 @@ class Transition:
     from_mode: Mode
     to_mode: Mode
     trigger: str  # "init" | "dm_activity" | "wake_word" | "novelty" |
-                  # "idle_timer" | "manual" | "budget_exhausted" (AD-733c-6)
+                  # "idle_timer" | "manual" | "budget_exhausted" (AD-733c-6) |
+                  # "voice_activity" (AD-733c-7)
 
 
 class PerceptionModeController:
@@ -96,6 +97,11 @@ class PerceptionModeController:
     # AD-733c-3: separate floor for wake-word events to prevent UI flap when
     # the detector fires multiple times during the same utterance.
     WAKE_WORD_COOLDOWN_S = 5.0
+    # AD-733c-7: Silero VAD secondary trigger. Cooldown sits between
+    # PROGRAMMATIC (1s) and WAKE_WORD (5s): speech is more frequent than
+    # explicit wake-words but still needs throttling to prevent flap on
+    # continuous talk.
+    VOICE_ACTIVITY_COOLDOWN_S = 3.0
     HISTORY_CAP = 16
 
     def __init__(
@@ -125,6 +131,8 @@ class PerceptionModeController:
         # _last_transition_at so a stream of wake-word events is throttled
         # independently of DM-activity / novelty transitions.
         self._last_wake_word_at: float = 0.0
+        # AD-733c-7: Silero VAD speech-activity cooldown tracker.
+        self._last_voice_activity_at: float = 0.0
         # AD-733c-4: idle drop-back thresholds.
         self._engaged_idle_s: float = float(engaged_idle_seconds)
         self._ambient_idle_s: float = float(ambient_idle_seconds)
@@ -234,6 +242,34 @@ class PerceptionModeController:
         """
         if self._mode is Mode.AMBIENT:
             self.transition_to(Mode.ENGAGED, trigger="novelty")
+
+    def note_voice_activity(self) -> tuple[bool, str]:
+        """AD-733c-7: Silero VAD secondary engagement trigger.
+
+        Step-wise ramp like ``note_dm_activity`` (one mode per call —
+        DORMANT -> AMBIENT, AMBIENT -> ENGAGED), but throttled by the
+        per-trigger ``VOICE_ACTIVITY_COOLDOWN_S`` (3s) to prevent flap
+        on continuous speech. ENGAGED refreshes ``_last_voice_activity_at``
+        without re-triggering.
+
+        Returns ``(transitioned, reason)`` mirroring ``note_wake_word``
+        so the endpoint can echo the result to the UI:
+        ``"transitioned"`` / ``"refreshed"`` / ``"cooldown"`` /
+        ``"blocked"``.
+        """
+        now = time.time()
+        if now - self._last_voice_activity_at < self.VOICE_ACTIVITY_COOLDOWN_S:
+            logger.debug(
+                "AD-733c-7: voice activity ignored (cooldown %.2fs remaining)",
+                self.VOICE_ACTIVITY_COOLDOWN_S - (now - self._last_voice_activity_at),
+            )
+            return (False, "cooldown")
+        self._last_voice_activity_at = now
+        if self._mode is Mode.ENGAGED:
+            return (False, "refreshed")
+        target = Mode.AMBIENT if self._mode is Mode.DORMANT else Mode.ENGAGED
+        ok = self.transition_to(target, trigger="voice_activity")
+        return (ok, "transitioned" if ok else "blocked")
 
     def note_wake_word(self) -> tuple[bool, str]:
         """Hook called by the AD-733c-3 engage endpoint. Forces ENGAGED.

@@ -2138,6 +2138,18 @@ class PerceptionConfig(BaseModel):
         description="AD-733c-6: vision LLM calls per UTC day before auto-drop to AMBIENT. Captain default 2000.",
     )
 
+    # AD-733c-7: Silero VAD secondary engagement trigger. Off by default
+    # (convention #14 transitional gate). Browser-side VAD pulls from the
+    # existing wake-word getUserMedia stream and POSTs only a boolean
+    # speech-detected event to /api/perception/voice-activity. Audio
+    # bytes NEVER leave the browser.
+    vad_engagement_enabled: bool = Field(default=False,
+        description="AD-733c-7: enable Silero VAD as a secondary engagement trigger. Default OFF — endpoint exists but the browser never calls it. When enabled, browser POSTs speech-detected events to /api/perception/voice-activity which routes through the per-agent PerceptionEngagementRegistry (AD-733c-5).",
+    )
+    vad_min_speech_duration_ms: int = Field(default=400, ge=100, le=2000,
+        description="AD-733c-7: browser-side debounce floor before firing the voice-activity endpoint. Prevents single-syllable false positives.",
+    )
+
     @field_validator("vision_supervisor_strategy")
     @classmethod
     def _validate_supervisor_strategy(cls, v: str) -> str:

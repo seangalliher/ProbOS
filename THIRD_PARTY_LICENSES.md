@@ -100,3 +100,13 @@ When adding a new third-party component:
 - Used by: `src/probos/perception/identity.py` (`IdentityResolver` — MTCNN face detection + InceptionResnetV1 face embedding)
 - Installed via `pyproject.toml` `[project.dependencies]`: `facenet-pytorch>=2.5`.
 - Privacy posture: only a 512-float embedding is persisted at `data/captain_identity.json`. Reference photo bytes are discarded after enrollment. File is gitignored.
+
+
+## Silero VAD (AD-733c-7)
+
+- Project: <https://github.com/snakers4/silero-vad>
+- Authors: Silero Team (snakers4)
+- License: MIT (https://github.com/snakers4/silero-vad/blob/master/LICENSE)
+- Used by: `ui/src/audio/voiceActivity.ts` (lazy-loaded via existing `onnxruntime-web` resident dependency)
+- Installation: operator-pullable via `./scripts/silero-vad-fetch.ps1`. Model bytes are NOT bundled in the repo (gitignored under `data/silero-vad/` via the existing `data/*` rule).
+- Privacy posture: audio bytes never leave the browser. Only a boolean speech-detected event POSTs to `/api/perception/voice-activity`.

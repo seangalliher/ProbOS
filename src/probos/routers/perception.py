@@ -379,6 +379,92 @@ async def post_perception_engage(
     }
 
 
+# AD-733c-7 (Wave 176) — Silero VAD secondary engagement trigger.
+
+class _PerceptionVoiceActivityRequest(BaseModel):
+    agent: str | None = None        # agent_id or callsign of the targeted agent
+    source: str = "vad"             # "vad" | "manual"
+
+
+@router.post(
+    "/voice-activity", dependencies=[Depends(require_crew_scope)]
+)
+async def post_perception_voice_activity(
+    body: _PerceptionVoiceActivityRequest,
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """AD-733c-7: register a Silero-VAD speech-detected event.
+
+    Body carries only metadata — audio bytes never leave the browser.
+    Honest-degrades to 503 when ``vad_engagement_enabled=False``;
+    routes through the AD-733c-5 per-agent registry when ``agent`` is
+    specified (mirrors AD-733c-3 /engage shape).
+    """
+    cfg = getattr(runtime, "config", None)
+    pcfg = getattr(cfg, "perception", None) if cfg is not None else None
+    if pcfg is None or not getattr(pcfg, "vad_engagement_enabled", False):
+        return JSONResponse(
+            status_code=503,
+            content={"error": "vad_engagement_disabled"},
+        )
+
+    controller = getattr(runtime, "perception_mode_controller", None)
+    if controller is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "perception_mode_controller_unavailable"},
+        )
+    if body.source not in ("vad", "manual"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_source", "value": body.source},
+        )
+
+    # AD-733c-5: prefer per-agent routing.
+    routed_agent: str | None = None
+    _engagement = getattr(runtime, "perception_engagement_registry", None)
+    if _engagement is not None and body.agent:
+        _per = _engagement.get(body.agent)
+        if _per is None:
+            cs_reg = getattr(runtime, "callsign_registry", None)
+            if cs_reg is not None:
+                try:
+                    resolved = cs_reg.resolve(body.agent)
+                except Exception:
+                    resolved = None
+                if resolved is not None:
+                    _aid = getattr(resolved, "id", None) or getattr(
+                        resolved, "agent_id", None
+                    )
+                    if _aid is not None:
+                        _per = _engagement.get(_aid)
+                        if _per is not None:
+                            routed_agent = _aid
+        else:
+            routed_agent = body.agent
+        if _per is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "unknown_agent", "value": body.agent},
+            )
+        controller = _per
+
+    transitioned, reason = controller.note_voice_activity()
+    logger.info(
+        "AD-733c-7: voice-activity agent=%s source=%s transitioned=%s reason=%s "
+        "routed_agent=%s",
+        (body.agent or "*")[:32], body.source,
+        transitioned, reason, routed_agent or "*",
+    )
+    return {
+        "ok": True,
+        "mode": controller.current_mode.value,
+        "transitioned": transitioned,
+        "reason": reason,
+        "agent_id": routed_agent,
+    }
+
+
 @router.post("/identity/enroll", dependencies=[Depends(require_crew_scope)])
 async def enroll_identity(
     file: UploadFile = File(...),
