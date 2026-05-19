@@ -92,15 +92,15 @@ class VisionConsumer:
         vision_fast_tier: str = "vision_fast",
         max_describe_tokens: int = 220,
         describe_timeout_s: float = 30.0,
+        supervisor_strategy_name: str = "ahash",
     ) -> None:
-        from probos.perception.supervisor import (
-            PerceptualHashStrategy,
-            VisionSupervisor,
-        )
+        from probos.perception.supervisor import VisionSupervisor, build_strategy
 
         self._runtime = runtime
+        self._strategy_name = str(supervisor_strategy_name)
         self._supervisor = VisionSupervisor(
-            strategy=PerceptualHashStrategy(
+            strategy=build_strategy(
+                self._strategy_name,
                 min_interval_seconds=min_interval_seconds,
                 novelty_threshold=novelty_threshold,
                 baseline_max_age_seconds=baseline_max_age_seconds,

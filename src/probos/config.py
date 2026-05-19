@@ -2002,6 +2002,9 @@ class PerceptionConfig(BaseModel):
     vision_baseline_max_age_seconds: float = Field(default=30.0, ge=0.0, le=600.0,
         description="BF-309: after this many seconds with no admit, the supervisor re-baselines on the next frame. Prevents static-scene anchoring where a steady pose makes every later frame look low-novelty against a stale baseline. 0 = disable.",
     )
+    vision_supervisor_strategy: str = Field(default="ahash",
+        description="AD-742d: frame-admission strategy. 'ahash' (default, perceptual-hash diff), 'motion' (per-pixel diff), 'scene_change' (HSV histogram delta), 'never' (drop all frames; describe only on force / DM), 'always' (admit all; debug/test only). Restart required to swap.",
+    )
     working_memory_capacity: int = Field(default=8, ge=1, le=64,
         description="Per-agent vision working memory ring buffer size.",
     )
@@ -2066,6 +2069,17 @@ class PerceptionConfig(BaseModel):
     proactive_novelty_threshold: float = Field(default=0.50, ge=0.0, le=1.0,
         description="Minimum novelty score for a high-novelty proactive trigger (separate from supervisor admission threshold).",
     )
+
+    @field_validator("vision_supervisor_strategy")
+    @classmethod
+    def _validate_supervisor_strategy(cls, v: str) -> str:
+        allowed = {"ahash", "motion", "scene_change", "never", "always"}
+        v = v.strip().lower()
+        if v not in allowed:
+            raise ValueError(
+                f"vision_supervisor_strategy must be one of {sorted(allowed)}, got {v!r}"
+            )
+        return v
 
 
 class LipSyncConfig(BaseModel):

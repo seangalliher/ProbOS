@@ -4521,3 +4521,32 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - `tests/test_ad742f_wm_persistence.py` (new, 10 tests)
 
 **License posture.** 0-line diff on all 5 license files. Uses stdlib `sqlite3` (PSF license, already absorbed via Python).
+
+
+### AD-742d — Pluggable VisionSupervisor strategies (Wave 175)
+
+**Context.** `SupervisorStrategy(Protocol)` was shipped Wave 171 as the AD-742d forward-marker seam, but `PerceptualHashStrategy` was the only implementation. Different camera setups want different admission policies: aHash is good general-purpose but weaker on motion within a static frame; pixel-diff catches typing/head-turn that aHash blurs; HSV-histogram catches lighting shifts; null strategies enable cost-tight + debug deployments.
+
+**Decision.** Ship four new strategy classes (`MotionStrategy`, `SceneChangeStrategy`, `NeverDescribeStrategy`, `AlwaysAdmitStrategy`) alongside the existing `PerceptualHashStrategy`. Add operator-selectable choice via `PerceptionConfig.vision_supervisor_strategy` (Pydantic-validated to one of five names). Default stays `"ahash"` so current behavior is preserved bit-for-bit. `VisionConsumer.__init__` accepts `supervisor_strategy_name`; `startup/finalize.py` threads the config value through; new `build_strategy()` resolver honest-degrades to aHash + WARNING on unknown name.
+
+**Restart-required (NOT hot-reload).** Strategy selection is restart-required because swapping mid-flight orphans the previous strategy's baseline state (`last_hash` / `last_pixels` / `last_hist`). The FieldDescriptor accordingly omits `hot_reload=True`. Cap values within a strategy (`min_interval`, `novelty_threshold`, `baseline_max_age`) remain hot-reload via existing BF-308 setters — every new strategy implements those setters uniformly (null strategies accept and ignore).
+
+**Tier-2 honest-degrade.** Every strategy's `evaluate()` ALLOWS the first frame and then throttles on decode failure — never raises. The shared `_load_pil_image` helper returns `None` on any PIL exception. Strategies fall back to allow-on-decode-failure so the consumer can still produce an episode.
+
+**AD-731 invariant.** Strategies operate on bytes passed by reference. No strategy writes to disk. No inline base64 anywhere.
+
+**Tests.** +12 pytest in `tests/test_ad742d_pluggable_supervisor.py`: registry contents, Protocol conformance for all 5, `build_strategy` resolves each name, unknown-name fallback with WARNING (caplog), motion admits-first/throttles/diff-detects, scene_change lighting-shift, never/always determinism, Pydantic validator rejects unknown, consumer init uses configured strategy. Real PIL `Image.new("RGB", ...).save(buf, "JPEG")` fixtures — no MagicMock at strategy boundary (BF-287).
+
+**Forward markers.**
+- AD-742d-1 — CLIP-embedding semantic strategy (out of scope: pip dep + embedding cache).
+- AD-742d-2 — Per-session strategy override (out of scope: config-level switch sufficient for Captain's current setup).
+
+**Files.**
+- `src/probos/perception/supervisor.py` (4 new strategy classes + `STRATEGY_REGISTRY` + `build_strategy` + `_load_pil_image` helper + `__all__` extension)
+- `src/probos/perception/consumer.py` (`supervisor_strategy_name` kwarg; `build_strategy` resolver call)
+- `src/probos/startup/finalize.py` (thread `vision_supervisor_strategy` config through)
+- `src/probos/perception/__init__.py` (new `FieldDescriptor`, non-hot-reload)
+- `src/probos/config.py` (new `vision_supervisor_strategy` field + validator)
+- `tests/test_ad742d_pluggable_supervisor.py` (new, 12 tests)
+
+**License posture.** 0-line diff on all 5 license files. PIL already resident.

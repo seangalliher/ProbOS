@@ -106,6 +106,12 @@ _PERCEPTION_SECTION = SectionDescriptor(
             description="AD-742f: load + write the per-agent vision working-memory ring to data/perception_wm.db so Captain's recent-frame recall survives restart. Disable for in-memory-only operation.",
             hot_reload=True,
         ),
+        FieldDescriptor(
+            "perception.vision_supervisor_strategy",
+            "Supervisor strategy",
+            "str",
+            description="AD-742d: 'ahash' (default), 'motion', 'scene_change', 'never', 'always'. Restart required to swap.",
+        ),
     ),
 )
 
