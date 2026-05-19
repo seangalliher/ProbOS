@@ -4998,3 +4998,7 @@ profile-clone exception).
   actions across runtime restart. v1 is in-memory only. Trigger: action
   volume sustained ≥50/wave OR Captain demand for action history
   beyond live thread.
+
+## AD-721b-3 (Wave 179, 2026-05-19) — whisper.cpp WASM tiny.en model bundle
+
+Foundation prompt for the offline-voice stack. Operator-pull script `scripts/whisper-tiny-en-fetch.ps1` writes `ggml-tiny.en.bin` (~75 MB, SHA-256 pinned) + `whisper.js` UMD glue + `whisper.wasm` into `data/whisper/`. Bytes never committed (gitignored under `data/*`). New `ui/src/audio/whisperLoader.ts` lazy-injects the UMD glue via `<script>` tag (NOT ESM `await import()` — whisper.cpp ships UMD per upstream `examples/whisper.wasm/main.js`). Honest-degrades to `null` on any 404. New `src/probos/voice/whisper_model.py` resolves the model path under `runtime.data_dir`. New `CognitiveConfig.whisper_model_path` field (default `whisper/ggml-tiny.en.bin`; restart-required per BF-308). FieldDescriptor registered in the AD-741 LLM Tiers section. NO STT functionality exposed — AD-705a is the consumer. 0-line diff on `THIRD_PARTY_LICENSES.md` (entries land at AD-705a ship). +6 pytest, +5 vitest (3 required + 2 helper-seam checks). Closes #561.

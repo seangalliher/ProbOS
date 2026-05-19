@@ -109,6 +109,17 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
             FieldDescriptor("cognitive.llm_base_url_image_gen", "Image-gen tier — base URL", "text"),
             FieldDescriptor("cognitive.llm_model_image_gen", "Image-gen tier — model", "text"),
             FieldDescriptor("cognitive.llm_timeout_image_gen", "Image-gen tier — timeout (s)", "float"),
+            FieldDescriptor(
+                "cognitive.whisper_model_path",
+                "Whisper model path",
+                "text",
+                description=(
+                    "Path to ggml-tiny.en.bin under runtime.data_dir "
+                    "(or absolute). Operator-pull via "
+                    "scripts/whisper-tiny-en-fetch.ps1 (AD-721b-3). "
+                    "Restart-required."
+                ),
+            ),
         ),
     ),
     SectionDescriptor(

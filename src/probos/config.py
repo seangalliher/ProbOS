@@ -243,6 +243,15 @@ class CognitiveConfig(BaseModel):
     llm_timeout_vision_fast: float | None = None
     llm_api_format_vision_fast: str | None = None  # "openai" or "ollama"
 
+    # AD-721b-3 (Wave 179): operator-pulled Whisper tiny.en GGML model
+    # path. Relative paths resolve against ``runtime.data_dir``; absolute
+    # paths are used as-is. The default points at the location
+    # ``scripts/whisper-tiny-en-fetch.ps1`` writes to. AD-705a consumes
+    # this via the browser-side whisperLoader; AD-705c reserves a future
+    # negative-sample augmentation hook. Restart-required (the loader
+    # caches the path at boot).
+    whisper_model_path: str = "whisper/ggml-tiny.en.bin"
+
     # AD-730-3: image_gen tier — sixth peer of fast/standard/deep/vision/
     # compute_use. Image generation via OpenAI-compatible
     # POST /v1/images/generations (DALL-E 3 / gpt-image-1 / local SD via
