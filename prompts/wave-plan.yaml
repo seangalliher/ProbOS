@@ -3790,3 +3790,50 @@ waves:
       Zero new pip / npm deps; 0-line diff on ALL 5 license files
       (onnxruntime-web stays in optionalDependencies).
       Total: +12 vitest. No pytest delta.
+
+  - id: "178"
+    title: "see -> discuss -> act ladder (AD-733-2 + AD-744 + AD-745)"
+    kind: main
+    depends_on: ["177"]
+    dispatch_prompt: "prompts/WAVE-178-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-733-2-passive-screen-sensing.md"
+      - "prompts/ad-744-interactive-share-to-agent.md"
+      - "prompts/ad-745-conversation-action-handoff.md"
+    builder_required: true
+    issues_to_close: [668]   # AD-733-2 closes #668; AD-744/AD-745 file new issues at wave close per AD-722c-3
+    estimated_hours: 18
+    status: drafting
+    notes: |
+      High-value architectural fork - workstation -> agentic transition.
+      AD-733-2 (#668 narrowed) - passive screen sensing via getDisplayMedia;
+        source='screen' on vision_observation; per-source HXI toggle + rate
+        limit; SCREEN LIVE indicator alongside CAMERA LIVE; +8 pytest +5
+        vitest. Reuses existing AD-733 endpoint + AD-733-1 reaper.
+      AD-744 (new top-level) - interactive 'Share screen to {agent}' button
+        on DM composer; one-shot frame via force=true + agent_ids; bypasses
+        supervisor novelty gate (BF-302); attaches inline to next DM turn;
+        +8 pytest +6 vitest. Reuses existing /camera/frame endpoint with
+        source=screen + force=true + agent_ids form fields.
+      AD-745 (new top-level) - [ACTION: <json>] bracket marker in DM
+        replies; step_5_action_dispatch pipeline stage; tier 1/2/3 ladder
+        via existing classify_action; destructive-URL pattern allow-list;
+        new POST /api/browser/actions/{id}/ack + /abort + GET /actions;
+        AgentActionLog HXI component; per-action stop affordance; reuses
+        BrowserTool + Playwright + compute_use_click + classify_action +
+        BrowserSession trust budget; +18 pytest +6 vitest. Browser scope
+        v1; OS-pointer scope deferred to AD-745-1.
+      Build order 1->2->3 strict serial (each AD's contract consumed by
+      next). Zero new pip / npm deps. 0-line diff on ALL 5 license files.
+      Total: +34 pytest, +17 vitest.
+      Prior-art research: prompts/RESEARCH-wave-178.md (13 projects
+      surveyed; top absorbers Anthropic computer-use + browser-use +
+      OmniParser/SeeAct; all MIT/Apache; pattern-absorption only).
+      Captain decisions surfaced (NOT auto-resolved):
+        1. AD-721j re-scope to AD-745 consumer (Blender as target app).
+        2. AD-745 OS-scope honest-degrade v1 (yes/no).
+        3. Destructive-action consensus v1 vs Captain-ACK only.
+        4. Per-action vs per-plan ACK in v1.
+      Architect-only draft this commit. Builder dispatch deferred pending
+      Captain GATE 1 review + decisions.
