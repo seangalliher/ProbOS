@@ -38,8 +38,17 @@ interface PerceptionModeState {
   // map = legacy single-controller deployment OR registry unwired; UI
   // falls back to the single-mode badge in that case.
   perAgent: Record<string, PerceptionMode>;
+  // AD-733c-7-5: monotonic millisecond timestamp of the most recent
+  // browser-side VAD speech event. The CameraLiveIndicator SPEECH badge
+  // subscribes to this field — flashes amber for 1.5s after each event,
+  // dim otherwise. ``null`` = no speech detected in this session.
+  lastSpeechAt: number | null;
   refresh: () => Promise<void>;
   setMode: (mode: PerceptionMode) => Promise<void>;
+  // AD-733c-7-5: setter invoked by ``voiceActivity.ts`` on every confirmed
+  // speech event. Decoupled from the network round-trip so the badge
+  // reflects what the browser actually heard.
+  noteSpeechEvent: () => void;
 }
 
 export const usePerceptionModeStore = create<PerceptionModeState>((set) => ({
@@ -50,6 +59,7 @@ export const usePerceptionModeStore = create<PerceptionModeState>((set) => ({
   transitions: [],
   available: false,
   perAgent: {},
+  lastSpeechAt: null,
   refresh: async () => {
     try {
       const resp = await fetch('/api/perception/mode');
@@ -101,5 +111,8 @@ export const usePerceptionModeStore = create<PerceptionModeState>((set) => ({
     } catch {
       // Tier-2: silent fail; operator can retry.
     }
+  },
+  noteSpeechEvent: () => {
+    set({ lastSpeechAt: Date.now() });
   },
 }));

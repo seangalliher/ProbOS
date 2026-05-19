@@ -28,6 +28,7 @@ import { useSettingsStore } from './store/useSettingsStore';
 import CameraLiveIndicator from './components/perception/CameraLiveIndicator';
 import CameraPreviewPanel from './components/perception/CameraPreviewPanel';
 import { stopCameraStream } from './hooks/useCameraStream';
+import { startVoiceActivity, stopVoiceActivity } from './audio/voiceActivity';
 
 // ── Top navigation ───────────────────────────────────────────────
 // One flex container instead of 6 abs-positioned toggles. Items
@@ -178,6 +179,22 @@ export default function App() {
     window.addEventListener('beforeunload', onUnload);
     return () => window.removeEventListener('beforeunload', onUnload);
   }, []);
+
+  /* AD-733c-7-5: arm/disarm the browser-side Silero VAD loop in sync
+   * with the snapshot toggle. Solo-Captain deployments (default
+   * vad_engagement_enabled=false) render no audio context, no mic
+   * prompt, no first-paint regression. */
+  const vadEnabled = useSettingsStore(
+    (s) => Boolean((s.snapshot?.config as any)?.perception?.vad_engagement_enabled),
+  );
+  useEffect(() => {
+    if (!vadEnabled) {
+      stopVoiceActivity();
+      return;
+    }
+    void startVoiceActivity();
+    return () => { stopVoiceActivity(); };
+  }, [vadEnabled]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>

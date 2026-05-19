@@ -4747,3 +4747,27 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - AD-733c-5-4-1 — Per-agent manual override buttons in the per-agent table.
 - AD-733c-5-4-2 — WebSocket push for per-agent mode changes (currently 2s polling).
 - AD-733c-5-4-3 — Callsign rendering in per-agent badges (requires `CallsignRegistry` snapshot in HXI).
+
+### AD-733c-7-5 — HXI Silero VAD browser integration (Wave 177)
+
+**Context.** AD-733c-7 (Wave 176) shipped the backend half of Silero VAD secondary engagement: `POST /api/perception/voice-activity` endpoint, `PerceptionConfig.vad_engagement_enabled` (default False), `scripts/silero-vad-fetch.ps1` operator-pullable model download, MIT attribution in `THIRD_PARTY_LICENSES.md`. But no browser code tapped the mic, ran the model, or POSTed to the endpoint. The feature was a hollow tube end-to-end.
+
+**Decision.** Ship three browser modules + one indicator badge + one App.tsx lifecycle hook:
+
+- `ui/src/audio/silero-vad.ts` — ONNX wrapper. Lazy-loads `onnxruntime-web` via the indirect-string-variable pattern from `wakeWord.ts:268-289` (static import FORBIDDEN — would break first paint for Captains who never enable VAD). Loads the ONNX model from `/data/silero-vad/silero_vad.onnx` (operator-pulled). Honest-degrades to `null` when runtime OR model is absent — the wake-word path remains the primary engagement trigger.
+- `ui/src/audio/voiceActivity.ts` — mic-tap + chunked detection loop. Opens a NEW dedicated `getUserMedia({audio: true})` stream (no shared mic-tap exists: `wakeWord.ts` uses SpeechRecognition transcript API; `useCameraStream` requests audio:false). 16 kHz / 30 ms frames; debounce by `vad_min_speech_duration_ms` (default 400); `startVoiceActivity()` / `stopVoiceActivity()` lifecycle; `_processFrame()` exported as a deterministic test seam.
+- `CameraLiveIndicator.tsx` SPEECH badge — inline-SVG soundwave glyph + `SPK` label. Conditional render on `snapshot.config.perception.vad_engagement_enabled`. Amber on speech event (1.5s flash), dim otherwise.
+- `App.tsx` arms/disarms the loop in sync with the snapshot toggle. Solo-Captain deployments (default vad_engagement_enabled=false) render no audio context, no mic prompt, no first-paint regression.
+- `usePerceptionModeStore` extended with `lastSpeechAt: number | null` + `noteSpeechEvent()` — the badge subscribes to the timestamp; `voiceActivity.ts` calls the setter on every confirmed event so the badge flashes regardless of the network round-trip outcome.
+
+**Privacy invariant (AD-733c-7).** Audio bytes NEVER leave the browser. The POST body contains ONLY `{agent?, source}` metadata. Regression test asserts by string-matching: the captured fetch body must NOT contain `audio`, `buffer`, `pcm`, or `base64`.
+
+**HXI principles.** #3 (no emoji; inline stroke SVG soundwave). #4 (flash communicates "event happened"; static-dim communicates "no recent speech"; static-bright would be misleading since it implies real-time mic monitoring). #5 (badge hidden entirely when `vad_engagement_enabled=false`; opt-in surfaces only after Captain restart). #9 (amber flash draws the eye to engagement-precondition events). #11 (passive trigger feeding the agentic engagement path — flow remains agentic: Captain speaks → VAD detects → backend transitions per-agent controller → MODE badges update).
+
+**License posture.** `onnxruntime-web` stays in `optionalDependencies` — 0-line diff. Silero VAD ONNX bytes are operator-pulled. 0-line license diff on all 5 license files.
+
+**Test coverage.** +5 vitest: POSTs on sustained speech (asserts privacy invariant on body); debounces sub-threshold events (window resets on dip below threshold); honest-degrades on 503 (endpointOff latch); releases mic on stopVoiceActivity (track.stop spy); CameraLiveIndicator SPEECH badge (hidden when disabled + flashes amber on event + decays to dim after 1.5s).
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
+
+- AD-733c-7-5-1 — Shared mic-tap hook unifying VAD raw audio + wake-word transcription.

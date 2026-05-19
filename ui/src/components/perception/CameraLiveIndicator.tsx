@@ -8,12 +8,16 @@
  * is currently active. Position persists in localStorage.
  */
 import type { CSSProperties } from 'react';
+import { useEffect, useState } from 'react';
 import { useCameraStore, type IndicatorCorner } from '../../store/useCameraStore';
 import { usePerceptionModeStore, type PerceptionMode } from '../../store/usePerceptionModeStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
 import { stopCameraStream } from '../../hooks/useCameraStream';
 
 const STROKE_AMBER = '#f0b060';
 const STROKE_DIM = '#666680';
+// AD-733c-7-5: SPEECH badge flash decay in ms.
+const SPEECH_FLASH_MS = 1500;
 
 const MODE_COLOR: Record<PerceptionMode, string> = {
   engaged: STROKE_AMBER,
@@ -43,6 +47,21 @@ export default function CameraLiveIndicator() {
   const togglePreview = useCameraStore((s) => s.togglePreview);
   const mode = usePerceptionModeStore((s) => s.mode);
   const perAgent = usePerceptionModeStore((s) => s.perAgent);
+  const lastSpeechAt = usePerceptionModeStore((s) => s.lastSpeechAt);
+  // AD-733c-7-5: SPEECH badge is conditional on the snapshot toggle.
+  // When ``vad_engagement_enabled=false`` (default), the badge does not
+  // render — preserves bit-for-bit single-Captain layout.
+  const vadEnabled = useSettingsStore(
+    (s) => Boolean((s.snapshot?.config as any)?.perception?.vad_engagement_enabled),
+  );
+  // Flash window: amber for SPEECH_FLASH_MS after each event, dim otherwise.
+  const [speechFresh, setSpeechFresh] = useState(false);
+  useEffect(() => {
+    if (lastSpeechAt === null) return;
+    setSpeechFresh(true);
+    const timer = setTimeout(() => setSpeechFresh(false), SPEECH_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [lastSpeechAt]);
   if (!active) return null;
   // AD-733c-5-4: when 2+ agents are registered with the
   // PerceptionEngagementRegistry, render compact per-agent badges in place
@@ -134,6 +153,47 @@ export default function CameraLiveIndicator() {
               {agentId.toUpperCase()}:{agentMode.slice(0, 3).toUpperCase()}
             </span>
           ))}
+        </span>
+      )}
+      {vadEnabled && (
+        <span
+          data-testid="perception-speech-badge"
+          data-fresh={speechFresh ? 'true' : 'false'}
+          aria-label={speechFresh ? 'speech detected' : 'no recent speech'}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 3,
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: 1.2,
+            color: speechFresh ? STROKE_AMBER : STROKE_DIM,
+            fontFamily: "'JetBrains Mono', monospace",
+            padding: '1px 5px',
+            border: `1px solid ${speechFresh ? STROKE_AMBER : STROKE_DIM}`,
+            borderRadius: 2,
+            transition: 'color 400ms ease-out, border-color 400ms ease-out',
+          }}
+        >
+          {/* Inline stroke SVG soundwave — HXI Principle #3 (no emoji). */}
+          <svg
+            width={9}
+            height={9}
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M2 8 L2 8.5" />
+            <path d="M5 6 L5 10" />
+            <path d="M8 4 L8 12" />
+            <path d="M11 6 L11 10" />
+            <path d="M14 8 L14 8.5" />
+          </svg>
+          SPK
         </span>
       )}
       <button
