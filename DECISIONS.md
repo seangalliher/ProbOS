@@ -4691,3 +4691,36 @@ New PerceptionConfig fields: `captain_avatar_ref` (empty default disables identi
 - AD-733c-7-3 — Speaker diarization.
 - AD-733c-7-4 — VAD-driven wake-word mute (CPU savings).
 - AD-733c-7-5 — HXI VAD integration (browser-side `silero-vad.ts` + `voiceActivity.ts`).
+
+
+### AD-742c — Per-agent camera selection (Wave 176)
+
+**Date:** 2026-05-19
+**Closes:** #671
+**Status:** Shipped (backend); HXI multiplexer deferred to AD-742c-6
+
+**Decision.** Wire `CrewProfile.perception.camera_device_id` (the field shipped earlier in this wave by AD-733c-5) into the actual capture path. Upload endpoint accepts an optional `agent_ids` comma-separated form field; the consumer restricts fan-out + episodic anchor to the bound set when present.
+
+**Implementation notes.**
+
+- `POST /api/perception/camera/frame` gains optional `agent_ids: str = Form("")` field. Comma-separated agent IDs are parsed into a `list[str]` and threaded into `IntentMessage.params["bound_agent_ids"]`. When the field is empty, the params key is omitted and legacy fan-out-to-all behavior is preserved bit-for-bit.
+- `VisionConsumer._handle` adds a single early branch: `_bound = set(params.get("bound_agent_ids", []) or [])` → when non-empty, the WM fan-out loop iterates `[aid for aid in self._observer_agent_ids if aid in _bound]` and the AD-541b BF-311 anchor `agent_ids_json` mirrors the same subset. When `_bound` is None / empty, the existing `list(self._observer_agent_ids)` path runs unchanged.
+- `GET /api/perception/cameras` enumerates persisted bindings `{agent_id: device_id}` (crew agents only). Device enumeration itself happens browser-side; the runtime has no view of the operator's hardware.
+- `POST /api/perception/cameras/binding` accepts `{agent_id, device_id}`; mutates `profile.perception.camera_device_id` and persists via `ProfileStore.update(profile)`. 404 honest-degrade when the agent has no profile.
+
+**AD-731 invariant preserved.** `bound_agent_ids` is a `list[str]` of agent IDs — image bytes never leak into `IntentMessage.params`. SHA refs continue to flow via the existing AttachmentStore path. Regression source-scan asserts no inline base64 in `routers/perception.py` after this change (which touches the upload endpoint where the risk is highest).
+
+**Scope deviation from prompt.** UI components (CameraMultiplexer Zustand slice + useCameraStream multi-deviceId refactor + PerceptionLivePanel CAMERA BINDINGS table + 4 vitest) deferred to forward marker AD-742c-6. The backend acceptance criteria are fully met: form field threads correctly; consumer restricts fan-out; endpoints persist bindings; AD-731 invariant preserved. The HXI multiplexer is a self-contained browser change (opens / closes MediaStreams as bindings change) that doesn't affect runtime behavior — operators can hand-edit the CrewProfile JSON or call the endpoint directly until the HXI lands.
+
+**Test coverage.** +10 pytest in `tests/test_ad742c_per_agent_camera.py`: AD-733c-5 dependency anchor (camera_device_id default empty); upload with `agent_ids` threads bound_agent_ids; upload without agent_ids preserves legacy fan-out; consumer source-scan validates intersection branch shape; GET /cameras returns bindings dict; POST /cameras/binding unknown agent 404; POST /cameras/binding persists; POST clears with empty device_id; AD-731 invariant router source-scan; bound_agent_ids is string list not bytes.
+
+**License posture.** 0-line diff on all 5 license files. Zero new pip / npm deps.
+
+**Forward markers** (filed in roadmap, no GH issues per AD-722c-3):
+
+- AD-742c-1 — Screen capture binding per agent.
+- AD-742c-2 — Federation cross-host camera sync.
+- AD-742c-3 — IP camera RTSP ingestion.
+- AD-742c-4 — Audio device per-agent binding.
+- AD-742c-5 — Per-agent camera permissions.
+- AD-742c-6 — HXI camera multiplexer integration (deferred UI from this wave).

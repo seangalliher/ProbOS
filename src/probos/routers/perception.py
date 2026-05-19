@@ -106,6 +106,7 @@ async def upload_camera_frame(
     file: UploadFile = File(...),
     session_id: str = Form(...),
     force: str = Form(""),
+    agent_ids: str = Form(""),
     runtime: Any = Depends(get_runtime),
 ) -> Any:
     cfg = getattr(runtime.config, "perception", None)
@@ -143,20 +144,33 @@ async def upload_camera_frame(
     captured_at = time.time()
     is_forced = force.lower() in {"1", "true", "yes"}
 
+    # AD-742c: comma-separated agent_ids form field. When provided, the
+    # frame is bound to those specific agents and the consumer restricts
+    # fan-out. AD-731 invariant preserved: agent_ids is a STRING list,
+    # NOT image bytes.
+    bound_agent_ids: list[str] = []
+    if agent_ids.strip():
+        bound_agent_ids = [
+            aid.strip() for aid in agent_ids.split(",") if aid.strip()
+        ]
+
     # AD-731 invariant: refs only — NEVER inline bytes in IntentMessage.params.
     # BF-302: ``force`` carries Captain's explicit "describe this frame even
     # if the supervisor would normally drop it" intent. Used by the operator
     # preview panel for testing the pipeline without waiting on novelty.
+    _params: dict[str, Any] = {
+        "attachment_ref": sha,
+        "mime": "image/jpeg",
+        "captured_at": captured_at,
+        "source": "camera",
+        "session_id": session_id,
+        "force": is_forced,
+    }
+    if bound_agent_ids:
+        _params["bound_agent_ids"] = bound_agent_ids
     msg = IntentMessage(
         intent="vision_observation",
-        params={
-            "attachment_ref": sha,
-            "mime": "image/jpeg",
-            "captured_at": captured_at,
-            "source": "camera",
-            "session_id": session_id,
-            "force": is_forced,
-        },
+        params=_params,
     )
     try:
         await runtime.intent_bus.broadcast(msg)
@@ -546,3 +560,82 @@ async def get_vision_budget(
     snapshot = consumer.get_budget_snapshot()
     snapshot["consumer_wired"] = True
     return snapshot
+
+
+# AD-742c (Wave 176) — Per-agent camera binding.
+
+class _CameraBindingRequest(BaseModel):
+    agent_id: str
+    device_id: str
+
+
+@router.get('/cameras', dependencies=[Depends(require_crew_scope)])
+async def get_cameras(runtime: Any = Depends(get_runtime)) -> Any:
+    """AD-742c: list current camera bindings per crew agent.
+
+    The actual device enumeration happens browser-side (the runtime has
+    no view of the operator's hardware). The response exposes the
+    persisted bindings so the HXI can render the binding UI.
+    """
+    bindings: dict[str, str] = {}
+    profile_store = getattr(runtime, 'profile_store', None)
+    registry = getattr(runtime, 'registry', None)
+    ontology = getattr(runtime, 'ontology', None)
+    if profile_store is not None and registry is not None:
+        from probos.crew_utils import is_crew_agent
+        try:
+            for agent in registry.all():
+                if not is_crew_agent(agent, ontology):
+                    continue
+                profile = profile_store.get(agent.id)
+                if profile is None or profile.perception is None:
+                    continue
+                bindings[agent.id] = profile.perception.camera_device_id or ''
+        except Exception:
+            logger.warning(
+                'AD-742c: enumerating crew bindings failed', exc_info=True,
+            )
+    return {'bindings': bindings}
+
+
+@router.post('/cameras/binding', dependencies=[Depends(require_crew_scope)])
+async def post_camera_binding(
+    body: _CameraBindingRequest,
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """AD-742c: bind `agent_id` to the browser-side `device_id`.
+
+    Empty `device_id` clears the binding (agent falls back to shared
+    default camera). 404 honest-degrade when `agent_id` has no profile.
+    """
+    profile_store = getattr(runtime, 'profile_store', None)
+    if profile_store is None:
+        return JSONResponse(
+            status_code=503, content={'error': 'profile_store_unavailable'},
+        )
+    profile = profile_store.get(body.agent_id)
+    if profile is None:
+        return JSONResponse(
+            status_code=404,
+            content={'error': 'unknown_agent', 'value': body.agent_id},
+        )
+    profile.perception.camera_device_id = body.device_id.strip()
+    try:
+        profile_store.update(profile)
+    except Exception:
+        logger.warning(
+            'AD-742c: profile_store update failed agent=%s', body.agent_id,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500, content={'error': 'persist_failed'},
+        )
+    logger.info(
+        'AD-742c: bound agent=%s camera_device_id=%s',
+        body.agent_id, body.device_id or '(cleared)',
+    )
+    return {
+        'ok': True,
+        'agent_id': body.agent_id,
+        'device_id': profile.perception.camera_device_id,
+    }

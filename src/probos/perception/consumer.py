@@ -423,7 +423,21 @@ class VisionConsumer:
             subject_identity=subject_identity,
             session_id=session_id,
         )
-        for agent_id in list(self._observer_agent_ids):
+        # AD-742c: when the uploader bound the frame to specific agents,
+        # restrict fan-out to that set (intersected with registered
+        # observers). When the params key is absent, fall back to legacy
+        # fan-out-to-all behavior (AD-733a default).
+        _bound_raw = msg.params.get("bound_agent_ids")
+        _bound: set[str] | None = None
+        if isinstance(_bound_raw, (list, tuple)) and _bound_raw:
+            _bound = {str(aid) for aid in _bound_raw if isinstance(aid, str) and aid}
+        if _bound is not None:
+            fan_out_targets = [
+                aid for aid in self._observer_agent_ids if aid in _bound
+            ]
+        else:
+            fan_out_targets = list(self._observer_agent_ids)
+        for agent_id in fan_out_targets:
             wm = get_or_create_working_memory(agent_id, capacity=self._wm_capacity)
             wm.append(obs)
 
@@ -433,7 +447,9 @@ class VisionConsumer:
         # and the episodes are invisible to every agent's recall query —
         # they exist in chroma but aren't retrievable, which silently breaks
         # the AD-541b promise that perception observations form long-term memory.
-        anchor_agent_ids = list(self._observer_agent_ids)
+        # AD-742c: when bound to specific agents, the anchor only sees that
+        # subset so per-agent recall scopes correctly.
+        anchor_agent_ids = list(fan_out_targets)
         await self._anchor_episode(
             sha, description, novelty_score, session_id,
             agent_ids=anchor_agent_ids,

@@ -564,7 +564,8 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-733c-7-2 | Multi-mic disambiguation | (forward marker, planned Wave 176) | 4 |
 | AD-733c-7-3 | Speaker diarization | (forward marker, planned Wave 176) | 4 |
 | AD-733c-7-4 | VAD-driven wake-word mute (CPU savings) | (forward marker, planned Wave 176) | 4 |
-| AD-742c | Per-agent camera selection — wires `CrewProfile.perception.camera_device_id` (introduced by AD-733c-5) into capture multiplexer; new `CameraMultiplexer` opens N MediaStreams; upload endpoint extended with `agent_ids` form field; new `IntentMessage.params["bound_agent_ids"]` selective fan-out preserves AD-731 invariant; AD-541b BF-311 anchor `agent_ids_json` restricted to bound set | [#671](https://github.com/seangalliher/ProbOS/issues/671) | 2 |
+| AD-742c | Per-agent camera selection — **SHIPPED Wave 176** (backend: wires `CrewProfile.perception.camera_device_id` (from AD-733c-5) into capture path; new `agent_ids` form field on `/camera/frame` threads `IntentMessage.params["bound_agent_ids"]`; `VisionConsumer._handle` early branch restricts WM fan-out + AD-541b BF-311 anchor `agent_ids_json` to bound set; new `GET /api/perception/cameras` + `POST /api/perception/cameras/binding`; AD-731 invariant preserved with regression source-scan; HXI multiplexer deferred to AD-742c-6; +10 pytest) | [#671](https://github.com/seangalliher/ProbOS/issues/671) | 2 |
+| AD-742c-6 | HXI camera multiplexer integration (CameraMultiplexer Zustand + useCameraStream multi-deviceId + PerceptionLivePanel CAMERA BINDINGS table) | (forward marker, filed Wave 176) | 4 |
 | AD-742c-1 | Screen capture binding per agent | (forward marker, planned Wave 176) | 4 |
 | AD-742c-2 | Federation cross-host camera sync | (forward marker, planned Wave 176) | 4 |
 | AD-742c-3 | IP camera RTSP ingestion | (forward marker, planned Wave 176) | 4 |
