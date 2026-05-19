@@ -3742,7 +3742,7 @@ waves:
     builder_required: true
     issues_to_close: [662, 676, 678, 671]
     estimated_hours: 14
-    status: drafting
+    status: shipped
     notes: |
       AD-743 adaptive conversational pacing in 1:1 DMs (closes #662; new top-level AD)
       AD-733c-5 per-agent perception engagement (closes #676; pre-assigned)
