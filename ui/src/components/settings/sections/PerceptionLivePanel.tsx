@@ -362,7 +362,7 @@ export default function PerceptionLivePanel() {
           >
             <path d="M5 3 L11 8 L5 13" />
           </svg>
-          CAMERA BINDINGS
+          SOURCE BINDINGS
         </button>
         {bindingsExpanded && (
           <div

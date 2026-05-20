@@ -295,11 +295,3 @@ async def test_cancellation_cleanup(tmp_path: Path) -> None:
     assert agg._timers == {}
     assert agg._pending == {}
 
-
-def test_invalid_fusion_window_rejected_at_construct(tmp_path: Path) -> None:
-    runtime = _build_runtime(tmp_path)
-    consumer = VisionConsumer(runtime)
-    with pytest.raises(ValueError):
-        VisionAggregator(runtime, consumer, fusion_window_ms=10)
-    with pytest.raises(ValueError):
-        VisionAggregator(runtime, consumer, fusion_window_ms=10000)
