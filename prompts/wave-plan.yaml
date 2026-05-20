@@ -3892,3 +3892,45 @@ waves:
         5. SpeechRecognition fallback co-existence policy.
       Architect-only draft this commit. Builder dispatch deferred pending
       Captain GATE 1 review + decisions.
+
+  - id: "180"
+    title: "live-use triage build (BF-317 + BF-318 + AD-746 + AD-747)"
+    kind: combo
+    depends_on: ["179"]
+    dispatch_prompt: "prompts/WAVE-180-DISPATCH.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/bf-317-share-screen-discoverability.md"
+      - "prompts/bf-318-mic-arbiter.md"
+      - "prompts/ad-746-camera-screen-source-policy.md"
+      - "prompts/ad-747-conversation-controller.md"
+    builder_required: true
+    issues_to_close: [681, 682, 683, 684]
+    estimated_hours: 24
+    status: drafting
+    notes: |
+      Live-use triage build from Captain 2026-05-19 production feedback after
+      Waves 175-179 shipped. Strict serial build order:
+        1. BF-317 (#681) - share-screen button label + size + position
+           differentiation in WardRoomThreadDetail.tsx. UI-only. +3 vitest.
+        2. BF-318 (#683) - speechRecognitionArbiter priority-queue leases.
+           Hard prerequisite for AD-747. +6 vitest.
+        3. AD-746 (#682) - camera+screen source policy. Layer 1
+           VisionAggregator (Pipecat-style 800ms fusion). Layer 2 per-agent
+           bound_sources extending AD-742c. +14 pytest, +4 vitest.
+        4. AD-747 (#684) - ConversationController (LiveKit VoicePipelineAgent
+           pattern). VAD-gated STT auto-submit + barge-in + 30s silence
+           timeout. Press-to-talk preserved but visually demoted. +6 pytest,
+           +14 vitest.
+      Captain decisions locked at triage (not re-litigated):
+        - AD-746 v1 = fusion + binding; raw priority knob -> AD-746-1 marker.
+        - AD-747 silence timeout = 30s (matches ChatGPT advanced voice mode).
+        - AD-747 ships AFTER BF-318.
+        - Press-to-talk preserved.
+      No new top-level ADs in this wave - AD-747 filed at triage commit.
+      Highest AD before/after Wave 180 = AD-747 (unchanged).
+      Zero new pip/npm deps. 0-line diff on all 5 license files.
+      Prior-art reference: prompts/RESEARCH-issues-2026-05-19.md.
+      Total: +20 pytest, +27 vitest across the wave.
+      Continuous build - Architect drafts (this commit), Builder dispatches
+      immediately after.
