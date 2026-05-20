@@ -9,7 +9,7 @@ export interface SuggestedAction {
   metadata: { intent: string; context: string };
 }
 
-function ReviewIcon(): JSX.Element {
+function ReviewIcon(): React.JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
       <path d="M2 7h10M7 2v10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -17,7 +17,7 @@ function ReviewIcon(): JSX.Element {
   );
 }
 
-function ApproveIcon(): JSX.Element {
+function ApproveIcon(): React.JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
       <path d="M2 7l3 3 7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />

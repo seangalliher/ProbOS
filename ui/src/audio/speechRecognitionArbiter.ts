@@ -37,7 +37,7 @@ export interface AcquireOptions {
   priority: number;
   /** Fires when the lease becomes active (immediately for an
    *  uncontested grant; later for a queued grant). */
-  onAcquired?: () => void;
+  onAcquired?: (lease: Lease) => void;
   /** Fires when a higher-priority acquire preempts this lease. The
    *  preempted holder's lease is invalidated; ``release()`` on the
    *  stale lease becomes a no-op. */
@@ -149,7 +149,7 @@ function _grantSync(opts: AcquireOptions): Lease {
   _activeOpts = opts;
   // Fire onAcquired AFTER state is committed so handlers see
   // currentHolder() returning the new holder.
-  opts.onAcquired?.();
+  opts.onAcquired?.(lease);
   return lease;
 }
 
@@ -182,5 +182,5 @@ function _promoteNext(): void {
     onPreempted: next.onPreempted,
     onReleased: next.onReleased,
   };
-  next.onAcquired?.();
+  next.onAcquired?.(next.pendingLease);
 }

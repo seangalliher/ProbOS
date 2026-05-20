@@ -101,7 +101,8 @@ export function startListening(
   const lease = _arbiterAcquire({
     holder,
     priority,
-    onAcquired: () => {
+    onAcquired: (grantedLease) => {
+      activeLease = grantedLease;
       _spawnRecognition(onResult, onEnd, onError, continuous, interimResults, opts);
     },
     onPreempted: (by) => {

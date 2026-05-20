@@ -3993,3 +3993,26 @@ waves:
     notes: |
       Wave 182 activated from AD-758 gate closure.
       Build dispatch should preserve OSS scope and delegation invariants validated in Wave 181.
+
+  - id: "183-perception-conversation-hardening"
+    title: "Post-Yeo UX hardening (BF-317, BF-318, AD-746, AD-747)"
+    kind: main
+    depends_on: ["182-yeo-post-gate"]
+    dispatch_prompt: "prompts/archive/ad-747-conversation-controller.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/archive/bf-317-share-screen-discoverability.md"
+      - "prompts/archive/bf-318-mic-arbiter.md"
+      - "prompts/archive/ad-746-camera-screen-source-policy.md"
+      - "prompts/archive/ad-747-conversation-controller.md"
+    builder_required: true
+    issues_to_close: [681, 683, 682, 684]
+    estimated_hours: 10
+    status: in-progress
+    notes: |
+      Selected as the next execution wave after Yeo integration gate closure.
+      Required order:
+        1) BF-317 (share-screen discoverability)
+        2) BF-318 (mic arbiter)
+        3) AD-746 (camera/screen source policy)
+        4) AD-747 (conversation controller; depends on BF-318)
