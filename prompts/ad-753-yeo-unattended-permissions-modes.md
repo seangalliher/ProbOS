@@ -269,6 +269,7 @@ class DestructiveOpsGuard:
 - Destructive operations always require approval
 - Permission cards appear in Ward Room with clear scope/expiry
 - Policy hook is abstract (no commercial impl in OSS)
+- For free leverage documented: unattended decisions reuse existing quorum/escalation flow and intent metadata.
 
 ## Acceptance Criteria
 - Read-only auto-approve behavior is policy-constrained and observable.

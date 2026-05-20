@@ -236,6 +236,7 @@ Display:
 - Daily briefing triggers exactly once per 24h
 - Heartbeat jobs persist across restart
 - Audit trail (reason-codes) available for every suppressed scan
+- For free leverage documented: proactive scanning uses existing APScheduler/runtime scheduler infrastructure.
 
 ## Acceptance Criteria
 - Work-hours/quiet-hours policies are explicit, testable, and overridable.

@@ -8,6 +8,7 @@ DRY extraction of post-processing logic shared by:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -18,6 +19,33 @@ if TYPE_CHECKING:
     from probos.ward_room.service import WardRoomService
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentResponse:
+    """Minimal structured response used by AD-756 merge helper."""
+
+    content: str
+    agent: str
+    intent: str
+
+
+async def merge_agent_responses(responses: list[AgentResponse]) -> str:
+    """Merge multi-agent responses into one coherent response.
+
+    Current OSS implementation deduplicates repeated content and cites the
+    originating agent for each retained line.
+    """
+    seen: set[str] = set()
+    merged_lines: list[str] = []
+
+    for response in responses:
+        if response.content in seen:
+            continue
+        merged_lines.append(f"[{response.agent}] {response.content}")
+        seen.add(response.content)
+
+    return "\n".join(merged_lines)
 
 
 @dataclass

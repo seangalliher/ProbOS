@@ -3342,6 +3342,7 @@ class SecurityInfraConfig(BaseModel):
     # once AD-456d-1 (shutdown-flush hook) lands.).
     audit_persistence_enabled: bool = False
     audit_persistence_filename: str = "audit_log.db"
+    audit_retention_days: int = 90
 
 
 class PermissionsConfig(BaseModel):
@@ -4691,6 +4692,18 @@ class M365Config(BaseModel):
         return os.path.expanduser(v)
 
 
+class OfficeSkillsConfig(BaseModel):
+    """AD-755: Local office-document skills and template registry config."""
+
+    enabled: bool = False
+    template_dir: str = "~/.probos/templates"
+
+    @field_validator("template_dir")
+    @classmethod
+    def _expand_template_dir(cls, v: str) -> str:
+        return os.path.expanduser(v)
+
+
 class DesktopConfig(BaseModel):
     """AD-751: Desktop UX Surface — tray, hotkey, notifications, autostart."""
 
@@ -4801,6 +4814,7 @@ class SystemConfig(BaseModel):
     persistent_tasks: PersistentTasksConfig = PersistentTasksConfig()
     channels: ChannelsConfig = ChannelsConfig()
     m365: M365Config = Field(default_factory=M365Config)  # AD-749
+    office_skills: OfficeSkillsConfig = Field(default_factory=OfficeSkillsConfig)  # AD-755
     medical: MedicalConfig = MedicalConfig()
     counselor: CounselorConfig = CounselorConfig()
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()

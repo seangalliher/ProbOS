@@ -205,6 +205,7 @@ if config.desktop.enabled:
 - Tray icon visible on any platform (platform-specific)
 - Hotkey listener doesn't crash on platforms without global hotkey support
 - Single-instance lock prevents duplicate Yeo processes
+- For free leverage documented: desktop notices/status updates flow through existing runtime notification/event surfaces.
 
 ## Acceptance Criteria
 - Desktop surfaces remain optional and degrade gracefully by platform.

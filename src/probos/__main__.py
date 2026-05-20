@@ -124,6 +124,15 @@ def _setup_logging(log_level: str) -> None:
     logging.getLogger("probos.substrate.spawner").setLevel(logging.WARNING)
     logging.getLogger("probos.substrate.pool").setLevel(logging.WARNING)
 
+    # AD-754: redact PII/secrets in all root handlers.
+    try:
+        from probos.security.pii_redaction import apply_redaction_to_handlers
+
+        apply_redaction_to_handlers(logging.getLogger().handlers)
+    except Exception:
+        # Redaction wiring must never block startup.
+        pass
+
 
 async def _ensure_ollama(config, console: Console) -> None:
     """Start Ollama if needed and warm up the model.

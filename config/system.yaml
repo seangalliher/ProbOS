@@ -762,6 +762,9 @@ m365:
   scopes:
     - "https://graph.microsoft.com/.default"
   cache_dir: "~/.probos/m365_cache"
+office_skills:
+  enabled: true
+  template_dir: "~/.probos/templates"
 medical:
   enabled: true
   vitals_interval_seconds: 5.0

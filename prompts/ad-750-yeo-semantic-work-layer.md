@@ -245,5 +245,6 @@ async def link_entities(source_id: str, target_ids: list[str], link_type: str) -
 - `/work/tasks` + `/work/search` endpoints functional
 - Session continuity contract honored (restore after simulated crash)
 - Includes migration and fallback behavior for pre-existing data.
+- For free leverage documented: semantic retrieval builds on existing ChromaDB/episodic plumbing.
 - Captain invariant appears in acceptance checks.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

@@ -10,10 +10,10 @@ back to OSS).
 - `DECISIONS.md` — append-only architectural decisions (current highest AD: AD-740 — affect-vs-intent drift trend; AD-730-3 also shipped Wave 169 as agent image generation in DM replies).
 - `tests/` — 13449 pytest at HEAD (4 pre-existing flakes in test_callsign_routing/test_ad719_chat_fanout + occasional dreaming/ward_room flakes outside this wave) + 633 vitest; gate runs `-n 4 --dist=loadfile`.
 
-**Yeo feature-complete slate queued (2026-05-20; planning only, not shipped).**
-- New child-AD decomposition under AD-710 filed: AD-749..AD-758 (#695..#704).
-- Research synthesis added: `prompts/RESEARCH-yeo-aionui-2026-05-20.md`.
-- Captain invariant encoded across all issues/prompts: Yeo is the front door, capabilities are usable by all crew agents, delegation to specialists is explicit.
+**Yeo feature-complete gate shipped (2026-05-20; Wave 181 integration gate).**
+- AD-758 gate checks added and passing for AD-749..AD-757 program rubric, captain-invariant exposure, delegation-policy conformance, OSS-scope boundaries, and dedupe references (#695..#704).
+- Child prompts AD-749..AD-757 now carry explicit "for free leverage" acceptance bullets.
+- Wave 181 closed in `prompts/wave-plan.yaml`; Wave 182 activated for post-gate execution planning.
 
 **Wave 180 in flight (2026-05-19) — live-use triage build (BF-317 + BF-318 + AD-746 + AD-747). Architect-only draft. Continuous-build dispatch authorized (Builder runs immediately after this commit).**
 - **BF-317** — Share-screen button discoverability in DM thread. Closes [#681](https://github.com/seangalliher/ProbOS/issues/681). UI-only fix to `ui/src/components/wardroom/WardRoomThreadDetail.tsx`: AD-744 share-screen button (verified `data-testid="wardroom-dm-share-screen-button"` at line 397) gains a persistent `Share screen` text label, larger glyph (18×18 vs 14×14 attach), filled monitor base differentiating it from the line-only paperclip attach button, and a 1px divider separator between attach and share-screen affordances. HXI Design Principle #1 ("the system understands the human"). Zero backend changes. +3 vitest. Forward marker BF-317-1 (composer tool palette) when share-class affordances ≥ 3. **Status: drafted (`prompts/bf-317-share-screen-discoverability.md`).**

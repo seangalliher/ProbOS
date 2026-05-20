@@ -249,3 +249,4 @@ In `_build_runtime_summary()`, add M365 connector count to "Intent Count" breakd
 - No type errors or circular imports
 - M365 agents appear in `/introspect agent_info` output when enabled
 - Config load + pool wiring confirmed in runtime.py diffs
+- For free leverage documented: token refresh uses existing async supervision/retry patterns (no second scheduler).

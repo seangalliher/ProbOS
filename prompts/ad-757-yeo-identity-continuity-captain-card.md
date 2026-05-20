@@ -221,6 +221,7 @@ self._system_context = self.captain_card.to_system_context()
 - Delegated tasks recoverable after shutdown
 - Voice/avatar preferences persist across restarts
 - Anomaly detection hook available for commercial extension
+- For free leverage documented: continuity bootstrap reuses existing Captain Card and session persistence services.
 
 ## Acceptance Criteria
 - Yeo continuity survives restart without identity drift.

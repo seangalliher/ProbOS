@@ -28,10 +28,49 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from probos.protocols import ConnectionFactory, DatabaseConnection
-from probos.mobility import TransferCertificate
+
+import hashlib
+from probos.captain_card.card import CaptainCard
+
 
 logger = logging.getLogger(__name__)
+
+
+# --- AD-757 Voice & Avatar Continuity Hooks ---
+class VoiceProfileManager:
+    async def set_voice_profile(self, captain_id: str, voice: str) -> None:
+        """Store voice preference (e.g. 'Ezri', 'Ship\'s Computer')."""
+        # Placeholder: In real implementation, persist to CaptainCard or DB
+        logger.info(f"Set voice profile for {captain_id}: {voice}")
+
+    async def get_voice_profile(self, captain_id: str) -> str | None:
+        """Retrieve voice for TTS rendering."""
+        # Placeholder: In real implementation, fetch from CaptainCard or DB
+        logger.info(f"Get voice profile for {captain_id}")
+        return None
+
+
+class AvatarProfileManager:
+    async def set_avatar_theme(self, captain_id: str, theme: str) -> None:
+        """Store avatar visual theme (color, style, etc.)."""
+        # Placeholder: In real implementation, persist to CaptainCard or DB
+        logger.info(f"Set avatar theme for {captain_id}: {theme}")
+
+    async def get_avatar_theme(self, captain_id: str) -> dict[str, object]:
+        """Retrieve avatar config for UI rendering."""
+        # Placeholder: In real implementation, fetch from CaptainCard or DB
+        logger.info(f"Get avatar theme for {captain_id}")
+        return {"theme": "default"}
+
+
+# --- AD-757 Continuity Checksum & Anomaly Detection Hook ---
+class ContinuityValidator:
+    def compute_checksum(self, card_dict: dict[str, Any]) -> str:
+        card_json = str(sorted(card_dict.items())).encode("utf-8")
+        return hashlib.sha256(card_json).hexdigest()
+
+    def validate(self, card_dict: dict[str, Any], checksum: str) -> bool:
+        return self.compute_checksum(card_dict) == checksum
 
 # W3C VC context — included for forward compatibility with VC ecosystem
 VC_CONTEXT = "https://www.w3.org/ns/credentials/v2"

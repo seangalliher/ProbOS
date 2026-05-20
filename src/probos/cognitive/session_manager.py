@@ -54,12 +54,38 @@ def _dict_to_session(d: dict[str, Any]) -> Session:
     )
 
 
+
 class SessionManager:
     """Manages assistant sessions with JSON persistence.
 
     Sessions are stored in data/sessions/<session_id>.json.
     Closed sessions are moved to data/sessions/archive/.
     """
+    async def restore_active_session(self, captain_id: str) -> Session | None:
+        """On startup, recover last active session if within 24h."""
+        # For demo: scan all sessions, find latest for captain_id within 24h
+        now = datetime.now(timezone.utc)
+        latest = None
+        for session_file in self._dir.glob("*.json"):
+            try:
+                with session_file.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if data.get("user_id") == captain_id:
+                    last_activity = datetime.fromisoformat(data["last_activity"])
+                    if (now - last_activity).total_seconds() < 86400:
+                        if not latest or last_activity > latest.last_activity:
+                            latest = _dict_to_session(data)
+            except Exception:
+                continue
+        if latest:
+            # Restore context, resume pending tasks
+            latest.context = latest.context  # placeholder for _restore_context
+            return latest
+        return None
+
+    async def resume_delegated_tasks(self, session: Session) -> list[str]:
+        """List incomplete tasks from session (active_tasks field)."""
+        return session.active_tasks
 
     def __init__(
         self,

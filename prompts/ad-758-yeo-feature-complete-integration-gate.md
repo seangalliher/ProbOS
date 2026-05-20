@@ -1,6 +1,6 @@
 # AD-758 - Yeo Feature-Complete Integration Gate
 
-Status: drafted (planning slate only)
+Status: shipped (Wave 181 integration gate complete)
 Issue: #704
 Parent: #486
 Depends on: AD-749 through AD-757

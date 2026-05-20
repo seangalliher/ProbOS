@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,9 +17,258 @@ from typing import Any, Callable
 import aiosqlite
 
 from probos.protocols import ConnectionFactory, DatabaseConnection
+from probos.substrate.skill_agent import SkillBasedAgent
 from probos.tools.protocol import ToolPreference
+from probos.types import IntentDescriptor
 
 logger = logging.getLogger(__name__)
+
+
+class DocxAgent(SkillBasedAgent):
+    """DOCX summarization, creation, revision via python-docx."""
+
+    agent_type = "office_docx"
+    callsign = "DOCX"
+    tier = "domain"
+    intent_descriptors = [
+        IntentDescriptor(
+            name="docx_summarize",
+            description="Summarize a DOCX document",
+            params={"file_path": "Path to the DOCX file"},
+            requires_consensus=False,
+        ),
+        IntentDescriptor(
+            name="docx_create",
+            description="Create a DOCX document",
+            params={"title": "Document title", "content": "Paragraph list"},
+            requires_consensus=False,
+        ),
+        IntentDescriptor(
+            name="docx_revise",
+            description="Revise an existing DOCX document",
+            params={"file_path": "Path to the DOCX file", "instructions": "Revision instructions"},
+            requires_consensus=False,
+        ),
+    ]
+
+    async def summarize_docx(self, file_path: str) -> str:
+        """Extract full text from .docx and return a concise summary."""
+        from docx import Document
+
+        source = Path(file_path)
+        if source.suffix.lower() != ".docx":
+            raise ValueError("summarize_docx requires a .docx file")
+        if not source.exists():
+            raise FileNotFoundError(file_path)
+
+        document = Document(str(source))
+        chunks: list[str] = [p.text.strip() for p in document.paragraphs if p.text.strip()]
+        for table in document.tables:
+            for row in table.rows:
+                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text:
+                    chunks.append(row_text)
+
+        full_text = "\n".join(chunks).strip()
+        if not full_text:
+            return "Document is empty."
+
+        llm_client = getattr(self, "_llm_client", None)
+        if llm_client is not None and hasattr(llm_client, "complete"):
+            try:
+                prompt = (
+                    "Summarize this office document in 3 concise bullet points:\n\n"
+                    + full_text[:6000]
+                )
+                maybe_result = llm_client.complete(prompt)
+                if hasattr(maybe_result, "__await__"):
+                    maybe_result = await maybe_result
+                if isinstance(maybe_result, str) and maybe_result.strip():
+                    return maybe_result.strip()
+            except Exception:
+                logger.debug("DocxAgent LLM summarize failed; falling back", exc_info=True)
+
+        return self._summarize_text(full_text)
+
+    async def create_docx(self, title: str, content: list[str], template: str | None = None) -> str:
+        """Create new .docx from template or blank document."""
+        from docx import Document
+
+        doc = Document(template) if template else Document()
+        doc.add_heading(title, level=1)
+        for paragraph in content:
+            doc.add_paragraph(paragraph)
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+            output_path = tmp.name
+        doc.save(output_path)
+        return output_path
+
+    async def revise_docx(self, file_path: str, instructions: str) -> str:
+        """Apply revision instructions to an existing .docx file."""
+        from docx import Document
+
+        source = Path(file_path)
+        if source.suffix.lower() != ".docx":
+            raise ValueError("revise_docx requires a .docx file")
+        if not source.exists():
+            raise FileNotFoundError(file_path)
+
+        doc = Document(str(source))
+        doc.add_paragraph(f"Revision instructions: {instructions}")
+        doc.save(str(source))
+        return str(source)
+
+    def _summarize_text(self, text: str) -> str:
+        """Return deterministic summary text for extracted document content."""
+        snippet = text[:240].replace("\n", " ").strip()
+        if len(text) > 240:
+            snippet += "..."
+        return f"Summary: {snippet}"
+
+
+class PptxAgent(SkillBasedAgent):
+    """PPTX creation and summarization via python-pptx."""
+
+    agent_type = "office_pptx"
+    callsign = "PPTX"
+    tier = "domain"
+    intent_descriptors = [
+        IntentDescriptor(
+            name="pptx_summarize",
+            description="Summarize a PPTX deck",
+            params={"file_path": "Path to the PPTX file"},
+            requires_consensus=False,
+        ),
+        IntentDescriptor(
+            name="pptx_create",
+            description="Create a PPTX deck",
+            params={"title": "Deck title", "slides": "Slide definitions"},
+            requires_consensus=False,
+        ),
+    ]
+
+    async def summarize_pptx(self, file_path: str) -> str:
+        """Extract slide titles and notes from .pptx and return summary text."""
+        from pptx import Presentation
+
+        source = Path(file_path)
+        if source.suffix.lower() != ".pptx":
+            raise ValueError("summarize_pptx requires a .pptx file")
+        if not source.exists():
+            raise FileNotFoundError(file_path)
+
+        deck = Presentation(str(source))
+        lines: list[str] = []
+        for idx, slide in enumerate(deck.slides, start=1):
+            title_text = ""
+            if slide.shapes.title is not None and slide.shapes.title.text:
+                title_text = slide.shapes.title.text.strip()
+            note_text = ""
+            notes_slide = slide.notes_slide
+            if notes_slide is not None and notes_slide.notes_text_frame is not None:
+                note_text = (notes_slide.notes_text_frame.text or "").strip()
+            lines.append(f"Slide {idx}: {title_text}".strip())
+            if note_text:
+                lines.append(f"Notes: {note_text}")
+
+        body = "\n".join(line for line in lines if line.strip())
+        if not body:
+            return "Presentation is empty."
+        snippet = body[:260]
+        if len(body) > 260:
+            snippet += "..."
+        return f"PPTX Summary: {snippet}"
+
+    async def create_pptx(self, title: str, slides: list[dict[str, Any]], template: str | None = None) -> str:
+        """Create a .pptx deck with title and slide content."""
+        from pptx import Presentation
+
+        deck = Presentation(template) if template else Presentation()
+
+        title_layout = deck.slide_layouts[0]
+        title_slide = deck.slides.add_slide(title_layout)
+        if title_slide.shapes.title is not None:
+            title_slide.shapes.title.text = title
+
+        for slide_data in slides:
+            layout = deck.slide_layouts[1] if len(deck.slide_layouts) > 1 else deck.slide_layouts[0]
+            slide = deck.slides.add_slide(layout)
+            heading = str(slide_data.get("title", ""))
+            body_lines = slide_data.get("bullets") or slide_data.get("content") or []
+            if slide.shapes.title is not None:
+                slide.shapes.title.text = heading
+
+            placeholder = slide.placeholders[1] if len(slide.placeholders) > 1 else None
+            if placeholder is not None and hasattr(placeholder, "text_frame"):
+                text_frame = placeholder.text_frame
+                text_frame.clear()
+                for line in body_lines:
+                    paragraph = text_frame.add_paragraph()
+                    paragraph.text = str(line)
+
+        with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as tmp:
+            output_path = tmp.name
+        deck.save(output_path)
+        return output_path
+
+
+class XlsxAgent(SkillBasedAgent):
+    """XLSX operations: read ranges and update values via openpyxl."""
+
+    agent_type = "office_xlsx"
+    callsign = "XLSX"
+    tier = "domain"
+    intent_descriptors = [
+        IntentDescriptor(
+            name="xlsx_read_range",
+            description="Read a range from an XLSX sheet",
+            params={"file_path": "Workbook path", "sheet": "Sheet name", "range": "Cell range"},
+            requires_consensus=False,
+        ),
+        IntentDescriptor(
+            name="xlsx_update",
+            description="Update XLSX cells or formulas",
+            params={"file_path": "Workbook path", "sheet": "Sheet name", "updates": "Cell updates"},
+            requires_consensus=False,
+        ),
+    ]
+
+    async def read_xlsx_range(self, file_path: str, sheet: str, range: str) -> list[list[Any]]:
+        """Read a rectangular range from a workbook sheet."""
+        from openpyxl import load_workbook
+
+        source = Path(file_path)
+        if source.suffix.lower() != ".xlsx":
+            raise ValueError("read_xlsx_range requires a .xlsx file")
+        if not source.exists():
+            raise FileNotFoundError(file_path)
+
+        workbook = load_workbook(str(source))
+        if sheet not in workbook.sheetnames:
+            raise ValueError(f"Sheet not found: {sheet}")
+        worksheet = workbook[sheet]
+        rows = worksheet[range]
+        return [[cell.value for cell in row] for row in rows]
+
+    async def update_xlsx(self, file_path: str, sheet: str, updates: dict[str, Any]) -> str:
+        """Update cell values or formulas in a workbook sheet."""
+        from openpyxl import load_workbook
+
+        source = Path(file_path)
+        if source.suffix.lower() != ".xlsx":
+            raise ValueError("update_xlsx requires a .xlsx file")
+        if not source.exists():
+            raise FileNotFoundError(file_path)
+
+        workbook = load_workbook(str(source))
+        if sheet not in workbook.sheetnames:
+            raise ValueError(f"Sheet not found: {sheet}")
+        worksheet = workbook[sheet]
+        for cell_ref, value in updates.items():
+            worksheet[cell_ref] = value
+        workbook.save(str(source))
+        return str(source)
 
 
 # ---------------------------------------------------------------------------

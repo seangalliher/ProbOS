@@ -206,6 +206,7 @@ def create_app(runtime: Any) -> FastAPI:
         voice,  # AD-705c (Wave 179): wake-word training endpoints
         auth_m365,  # AD-749: M365 OAuth auth endpoints
         work,  # AD-750: Semantic work layer endpoints
+        security,  # AD-754: data hardening + forget-this endpoint
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -224,6 +225,7 @@ def create_app(runtime: Any) -> FastAPI:
         voice,
         auth_m365,
         work,
+        security,
     ):
         app.include_router(r.router)
 

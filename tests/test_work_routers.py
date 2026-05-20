@@ -32,6 +32,37 @@ def _make_app(store: SemanticStore | None) -> FastAPI:
     return app
 
 
+def test_get_suggested_actions_returns_ranked_items(tmp_path) -> None:
+    """AD-756: suggested actions endpoint returns bounded action list."""
+    store = _make_store(tmp_path)
+    client = TestClient(_make_app(store))
+
+    response = client.get("/api/work/suggested-actions")
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    assert len(payload) >= 1
+    assert payload[0]["label"]
+    assert payload[0]["agent"]
+
+    store.close()
+
+
+def test_get_daily_briefing_returns_expected_shape(tmp_path) -> None:
+    """AD-756: daily briefing endpoint returns required keys."""
+    store = _make_store(tmp_path)
+    client = TestClient(_make_app(store))
+
+    response = client.get("/api/work/daily-briefing")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "inboxSummary" in payload
+    assert "calendarSummary" in payload
+    assert isinstance(payload.get("suggestedActions"), list)
+
+    store.close()
+
+
 @pytest.mark.asyncio
 async def test_get_work_tasks_returns_incomplete_tasks_only(tmp_path) -> None:
     """Happy path + boundary: completed filter excludes done tasks."""

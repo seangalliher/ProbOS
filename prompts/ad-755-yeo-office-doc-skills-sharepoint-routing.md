@@ -194,6 +194,7 @@ office_skills:
 - Office agents appear in intent registry
 - Document skills handle DOCX/PPTX/XLSX without errors
 - Template instantiation produces valid documents
+- For free leverage documented: office document/template persistence rides existing local attachment/template primitives.
 
 ## Acceptance Criteria
 - Document skills are typed, bounded, and source-aware.

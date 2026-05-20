@@ -3955,12 +3955,41 @@ waves:
     builder_required: false
     issues_to_close: []
     estimated_hours: 0
+    status: shipped
+    notes: |
+      Wave 181 closed by AD-758 integration gate execution.
+      Gate checks added and passing:
+        - Program-level rubric across AD-749..AD-757.
+        - Cross-crew capability exposure verification.
+        - Delegation-policy conformance verification.
+        - OSS/commercial boundary verification.
+        - Dedupe references verified: #480, #484, #538, #486.
+      Metrics:
+        - Child AD expected tests total: 104.
+        - AD-758 gate tests added: 5.
+      Child prompt acceptance criteria now include explicit for-free leverage bullets.
+
+  - id: "182-yeo-post-gate"
+    title: "Yeo post-gate execution wave activation"
+    kind: meta
+    depends_on: ["181-yeo-kickoff"]
+    dispatch_prompt: "prompts/ad-758-yeo-feature-complete-integration-gate.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-749-yeo-m365-auth-core-connectors.md"
+      - "prompts/ad-750-yeo-semantic-work-layer.md"
+      - "prompts/ad-751-yeo-desktop-ux-surface.md"
+      - "prompts/ad-752-yeo-proactive-scheduling-work-hours-quiet-hours.md"
+      - "prompts/ad-753-yeo-unattended-permissions-modes.md"
+      - "prompts/ad-754-yeo-data-hardening-baseline.md"
+      - "prompts/ad-755-yeo-office-doc-skills-sharepoint-routing.md"
+      - "prompts/ad-756-yeo-conversational-front-door-ux.md"
+      - "prompts/ad-757-yeo-identity-continuity-captain-card.md"
+      - "prompts/ad-758-yeo-feature-complete-integration-gate.md"
+    builder_required: true
+    issues_to_close: [695, 696, 697, 698, 699, 700, 701, 702, 703, 704]
+    estimated_hours: 12
     status: drafting
     notes: |
-      Planning-only program kickoff for AD-710 decomposition.
-      No production code changes in this wave-plan block.
-      New issues filed: #695..#704.
-      Captain invariant for all child ADs:
-        - Yeo is primary assistant front door.
-        - Capability is usable by all crew agents.
-        - Yeo delegates specialist work to crew agents.
+      Wave 182 activated from AD-758 gate closure.
+      Build dispatch should preserve OSS scope and delegation invariants validated in Wave 181.

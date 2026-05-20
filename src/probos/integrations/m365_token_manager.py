@@ -11,6 +11,8 @@ from typing import Any
 
 import keyring
 
+from probos.security.credential_encryption import CredentialEncryptor
+
 logger = logging.getLogger(__name__)
 
 # Keyring service and username for token storage
@@ -35,6 +37,7 @@ class M365TokenManager:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
+        self._encryptor = CredentialEncryptor(app_name=KEYRING_SERVICE)
         self._cached_token: dict[str, Any] | None = None
         self._token_expiry: datetime | None = None
         logger.info("M365TokenManager initialized with cache_dir=%s", self.cache_dir)
@@ -76,9 +79,7 @@ class M365TokenManager:
                 # Store refresh token in keyring if available
                 if "refresh_token" in result:
                     try:
-                        keyring.set_password(
-                            KEYRING_SERVICE, KEYRING_USERNAME, result["refresh_token"]
-                        )
+                        self._encryptor.store(KEYRING_USERNAME, result["refresh_token"])
                         logger.info("M365 refresh token securely stored in system keyring")
                     except Exception:
                         logger.warning(
@@ -129,7 +130,7 @@ class M365TokenManager:
             return None
 
         try:
-            refresh_token = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+            refresh_token = self._encryptor.retrieve(KEYRING_USERNAME)
             if not refresh_token:
                 logger.warning(
                     "No M365 refresh token available in keyring; "
@@ -165,7 +166,7 @@ class M365TokenManager:
     def revoke(self) -> None:
         """User-initiated token erasure ('forget this' flow)."""
         try:
-            keyring.delete_password(KEYRING_SERVICE, KEYRING_USERNAME)
+            self._encryptor.delete(KEYRING_USERNAME)
             logger.info("M365 refresh token revoked from keyring")
         except keyring.errors.PasswordDeleteError:
             logger.debug("M365 refresh token not found in keyring (already revoked or not set)")

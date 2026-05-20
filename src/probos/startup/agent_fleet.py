@@ -235,6 +235,24 @@ async def create_agent_fleet(
                 agent_ids=ids, runtime=runtime, interval=interval,
             )
 
+    # AD-755: Office document skills (OSS desktop scope)
+    office_cfg = getattr(config, "office_skills", None)
+    if office_cfg and office_cfg.enabled:
+        for pool_name, agent_type_name in (
+            ("office_docx", "office_docx"),
+            ("office_pptx", "office_pptx"),
+            ("office_xlsx", "office_xlsx"),
+        ):
+            ids = generate_pool_ids(agent_type_name, pool_name, 1)
+            await create_pool_fn(
+                pool_name,
+                agent_type_name,
+                target_size=1,
+                agent_ids=ids,
+                llm_client=llm_client,
+                runtime=runtime,
+            )
+
     # Build CodebaseIndex — ship's library, available to all agents (AD-297)
     from probos.cognitive.codebase_index import CodebaseIndex
 

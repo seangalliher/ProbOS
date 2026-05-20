@@ -73,6 +73,8 @@ from probos.integrations.m365_token_manager import M365TokenManager  # AD-749
 from probos.integrations.m365_connector import (  # AD-749
     OutlookAgent, TeamsAgent, CalendarAgent, SharePointAgent, OneDriveAgent
 )
+from probos.integrations.template_registry import TemplateRegistry  # AD-755
+from probos.skill_framework import DocxAgent, PptxAgent, XlsxAgent  # AD-755
 from probos.integrations.semantic_mapper import SemanticMapper  # AD-750
 from probos.knowledge.semantic_store import SemanticStore  # AD-750
 from probos.cognitive.session_manager import SessionManager  # AD-750
@@ -820,6 +822,7 @@ class ProbOSRuntime:
         # --- Semantic work layer (AD-750) ---
         self._semantic_store: Any | None = None
         self._session_manager: Any | None = None
+        self._template_registry: TemplateRegistry | None = None
 
         # --- Ship's Archive (AD-524) ---
         self._archive_store: Any | None = None
@@ -1006,6 +1009,15 @@ class ProbOSRuntime:
             self.spawner.register_template("sharepoint", SharePointAgent)
             self.spawner.register_template("onedrive", OneDriveAgent)
             logger.info("M365 connector agent templates registered")
+
+        # AD-755: Office document skills (OSS desktop scope)
+        office_cfg = getattr(self.config, "office_skills", None)
+        if office_cfg and office_cfg.enabled:
+            self.spawner.register_template("office_docx", DocxAgent)
+            self.spawner.register_template("office_pptx", PptxAgent)
+            self.spawner.register_template("office_xlsx", XlsxAgent)
+            self._template_registry = TemplateRegistry(office_cfg.template_dir)
+            logger.info("Office document skill templates registered")
 
         # --- CodebaseIndex (AD-290) ---
         self.codebase_index: CodebaseIndex | None = None
@@ -1579,9 +1591,46 @@ class ProbOSRuntime:
         if self._started:
             return
 
+
         logger.info("=" * 60)
         logger.info("ProbOS %s starting...", self.config.system.version)
         logger.info("=" * 60)
+
+        # --- AD-757: Identity and Continuity wiring ---
+        from probos.captain_card.card import load_card, save_card, CaptainCard
+        from probos.identity import VoiceProfileManager, AvatarProfileManager, ContinuityValidator
+        from probos.cognitive.session_manager import SessionManager
+        from probos.cognitive.task_recovery import TaskRecoveryManager
+        import hashlib
+        # Captain Card path
+        captain_card_path = self._data_dir / "captain_card.json"
+        # Load or create Captain Card
+        if captain_card_path.exists():
+            self.captain_card = load_card(captain_card_path)
+        else:
+            self.captain_card = CaptainCard()
+            # Compute continuity checksum
+            card_dict = self.captain_card.model_dump()
+            card_json = str(sorted(card_dict.items())).encode("utf-8")
+            self.captain_card.continuity_checksum = hashlib.sha256(card_json).hexdigest()
+            save_card(self.captain_card, captain_card_path)
+
+        # Voice/Avatar managers (placeholders)
+        self.identity_manager = VoiceProfileManager()
+        self.avatar_manager = AvatarProfileManager()
+        self.continuity_validator = ContinuityValidator()
+
+        # Session continuity
+        self.session_manager = SessionManager(sessions_dir=self._data_dir / "sessions", user_id=self.captain_card.id)
+        self.task_recovery = TaskRecoveryManager()
+        self.active_session = await self.session_manager.restore_active_session(self.captain_card.id)
+        if self.active_session:
+            logger.info(f"Resumed session {self.active_session.id}")
+            pending = await self.task_recovery.list_pending_delegations(self.active_session.id)
+            logger.info(f"Pending delegations: {len(pending)}")
+
+        # Bootstrap LLM context with Captain Card
+        self._system_context = self.captain_card.to_system_context()
 
         # Phase 1: Infrastructure (AD-517)
         from probos.startup.infrastructure import boot_infrastructure

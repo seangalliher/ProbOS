@@ -292,6 +292,7 @@ class ClassificationPolicy:
 - Audit log traces every assistant action (user-facing `/explain` ready)
 - "Forget this" deletion endpoint functional with cascading cleanup
 - Classification policy correctly infers sensitivity from source
+- For free leverage documented: redaction/audit hooks integrate with existing logging and records pipelines.
 
 ## Acceptance Criteria
 - Data-classification and redaction policies are explicit and test-covered.

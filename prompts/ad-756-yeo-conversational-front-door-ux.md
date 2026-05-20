@@ -174,6 +174,7 @@ Add @-mention autocomplete:
 - Suggested actions visible on home screen
 - Delegation reasoning appears when Yeo delegates
 - Stream merge prevents duplicate responses in multi-agent flows
+- For free leverage documented: delegation visibility reuses existing TaskDAG and ward-room stream metadata.
 
 ## Acceptance Criteria
 - Delegation source/target and rationale are visible to the Captain.

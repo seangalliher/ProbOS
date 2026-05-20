@@ -323,16 +323,16 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 
 | AD | Title | Issue | Priority |
 |----|-------|-------|----------|
-| AD-749 | Yeo M365 auth + core connector agents (Outlook/Teams/Calendar/SharePoint/OneDrive) | [#695](https://github.com/seangalliher/ProbOS/issues/695) | 2 |
-| AD-750 | WorkIQ-style semantic work layer (unified task/context graph for Yeo) | [#696](https://github.com/seangalliher/ProbOS/issues/696) | 2 |
-| AD-751 | Desktop UX surface for Yeo (tray, notifications, hotkey, mini-mode, autostart) | [#697](https://github.com/seangalliher/ProbOS/issues/697) | 3 |
-| AD-752 | Proactive schedule heartbeat with work-hours and quiet-hours policy | [#698](https://github.com/seangalliher/ProbOS/issues/698) | 3 |
-| AD-753 | Unattended permissions modes (`autoApproveReadOnly` + approval cards + tenant policy hook) | [#699](https://github.com/seangalliher/ProbOS/issues/699) | 3 *(tenant policy hook is extension-point only)* |
-| AD-754 | Yeo data hardening baseline (encryption at rest, PII redaction, audit log, forget-this) | [#700](https://github.com/seangalliher/ProbOS/issues/700) | 2 *(enterprise governance integrations are extension-point only)* |
-| AD-755 | Office document skills + SharePoint routing + reusable templates | [#701](https://github.com/seangalliher/ProbOS/issues/701) | 3 |
-| AD-756 | Yeo conversational front door UX (welcome, suggested actions, daily briefing, delegation UI) | [#702](https://github.com/seangalliher/ProbOS/issues/702) | 2 |
-| AD-757 | Identity and continuity for Yeo (Captain Card + voice/avatar profile continuity) | [#703](https://github.com/seangalliher/ProbOS/issues/703) | 3 |
-| AD-758 | Yeo feature-complete integration gate (cross-crew capability exposure + learning upgrades) | [#704](https://github.com/seangalliher/ProbOS/issues/704) | 2 |
+| AD-749 | Yeo M365 auth + core connector agents (Outlook/Teams/Calendar/SharePoint/OneDrive) — SHIPPED Wave 181 gate-verified | [#695](https://github.com/seangalliher/ProbOS/issues/695) | 2 |
+| AD-750 | WorkIQ-style semantic work layer (unified task/context graph for Yeo) — SHIPPED Wave 181 gate-verified | [#696](https://github.com/seangalliher/ProbOS/issues/696) | 2 |
+| AD-751 | Desktop UX surface for Yeo (tray, notifications, hotkey, mini-mode, autostart) — SHIPPED Wave 181 gate-verified | [#697](https://github.com/seangalliher/ProbOS/issues/697) | 3 |
+| AD-752 | Proactive schedule heartbeat with work-hours and quiet-hours policy — SHIPPED Wave 181 gate-verified | [#698](https://github.com/seangalliher/ProbOS/issues/698) | 3 |
+| AD-753 | Unattended permissions modes (`autoApproveReadOnly` + approval cards + tenant policy hook) — SHIPPED Wave 181 gate-verified | [#699](https://github.com/seangalliher/ProbOS/issues/699) | 3 *(tenant policy hook is extension-point only)* |
+| AD-754 | Yeo data hardening baseline (encryption at rest, PII redaction, audit log, forget-this) — SHIPPED Wave 181 gate-verified | [#700](https://github.com/seangalliher/ProbOS/issues/700) | 2 *(enterprise governance integrations are extension-point only)* |
+| AD-755 | Office document skills + SharePoint routing + reusable templates — SHIPPED Wave 181 gate-verified | [#701](https://github.com/seangalliher/ProbOS/issues/701) | 3 |
+| AD-756 | Yeo conversational front door UX (welcome, suggested actions, daily briefing, delegation UI) — SHIPPED Wave 181 gate-verified | [#702](https://github.com/seangalliher/ProbOS/issues/702) | 2 |
+| AD-757 | Identity and continuity for Yeo (Captain Card + voice/avatar profile continuity) — SHIPPED Wave 181 gate-verified | [#703](https://github.com/seangalliher/ProbOS/issues/703) | 3 |
+| AD-758 | Yeo feature-complete integration gate (cross-crew capability exposure + learning upgrades) — SHIPPED Wave 181 | [#704](https://github.com/seangalliher/ProbOS/issues/704) | 2 |
 
 **From the 2026-05-08 chat-experience enhancements (Captain's request):**
 

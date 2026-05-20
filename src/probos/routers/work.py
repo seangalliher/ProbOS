@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Any
+from typing import Any, TypedDict
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -120,3 +120,60 @@ async def link_entities_route(
         link_type=body.link_type or "related",
     )
     return {"linked": len(body.target_ids), "source_id": body.source_id}
+
+
+# ------------------------------------------------------------------
+# AD-756 endpoints
+# ------------------------------------------------------------------
+
+
+class SuggestedAction(TypedDict):
+    id: str
+    label: str
+    emoji: str
+    agent: str
+    score: float
+    metadata: dict[str, str]
+
+
+@router.get("/suggested-actions")
+async def get_suggested_actions(runtime: Any = Depends(get_runtime)) -> list[SuggestedAction]:
+    """Return bounded suggested actions for the Captain's next steps."""
+    # Placeholder: in future this is ranked via Hebbian/attention context.
+    # OSS scope: return actions within local policy/capability boundaries.
+    _ = runtime
+    return [
+        {
+            "id": "1",
+            "label": "Review meeting notes",
+            "emoji": "review",
+            "agent": "ArchitectAgent",
+            "score": 0.92,
+            "metadata": {"intent": "review_notes", "context": "meeting"},
+        },
+        {
+            "id": "2",
+            "label": "Approve PR",
+            "emoji": "approve",
+            "agent": "SkillAgent",
+            "score": 0.85,
+            "metadata": {"intent": "approve_pr", "context": "repo"},
+        },
+    ]
+
+
+class DailyBriefing(TypedDict):
+    inboxSummary: str
+    calendarSummary: str
+    suggestedActions: list[str]
+
+
+@router.get("/daily-briefing")
+async def get_daily_briefing(runtime: Any = Depends(get_runtime)) -> DailyBriefing:
+    """Return start-of-day briefing summary for the Captain."""
+    _ = runtime
+    return {
+        "inboxSummary": "Overnight inbox: 12 new emails (3 flagged)",
+        "calendarSummary": "Calendar: 5 meetings today, 2 free slots",
+        "suggestedActions": ["Review meeting notes", "Approve PR"],
+    }
