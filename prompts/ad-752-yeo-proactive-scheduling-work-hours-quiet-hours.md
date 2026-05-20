@@ -22,6 +22,18 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - Commercial enterprise policy orchestration products.
 - Replacing existing task scheduler primitives.
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop):**
+- Work-hours and quiet-hours configured locally by Captain.
+- Cron-driven proactive scans during work hours.
+- Daily briefing trigger windows and reminder throttles.
+
+**Commercial Extension Point:**
+- Org-wide work-hours policy distribution and enforcement.
+- Incident routing during org quiet-hours (ROTA-based escalation).
+- Cross-device proactive policy and time-zone handling for remote teams.
+
 ## File Targets
 - `src/probos/proactive.py`
 - `src/probos/duty_schedule.py`

@@ -20,6 +20,20 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - New 3D avatar rendering architectures.
 - Non-OSS identity provider productization.
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop):**
+- Captain Card as primary identity anchor for Yeo personalization.
+- Session continuity contract for active delegated tasks (local storage).
+- Voice profile and avatar identity linkage (AV choices persist).
+- Local identity recovery on restart.
+
+**Commercial Extension Point:**
+- Multi-device identity sync via cloud state (commercial overlay).
+- Org SSO binding for team member profiles.
+- Identity federation and cross-org guest access.
+- Behavioral continuity metrics and anomaly detection.
+
 ## File Targets
 - `src/probos/captain_card/`
 - `src/probos/identity.py`

@@ -22,6 +22,20 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - Commercial DLP/compliance SKU features.
 - New external paid encryption services.
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop):**
+- Encryption at rest for local tokens and session material (system keyring or DPAPI/Keychain).
+- PII redaction in diagnostic logs (email/phone/doc-URL masking).
+- Assistant audit log for personal traceability.
+- "Forget this" deletion path for explicit erasure.
+
+**Commercial Extension Point:**
+- DLP policy engine (sensitivity-label aware, pattern-based).
+- Key management services (BYOK, HSM, Azure Key Vault).
+- Retention policies and legal hold for org compliance.
+- Encrypted transport and TLS pinning for regulated environments.
+
 ## File Targets
 - `src/probos/security/`
 - `src/probos/attachments/`

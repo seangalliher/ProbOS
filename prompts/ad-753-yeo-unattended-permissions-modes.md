@@ -21,6 +21,19 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - Unbounded YOLO bypass modes.
 - Enterprise policy engine implementation details.
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop):**
+- `autoApproveReadOnly` mode for personal assistant on personal data.
+- Manual approval cards in Ward Room for unattended decisions.
+- Tenant policy hook as abstract interface (no impl).
+
+**Commercial Extension Point:**
+- Tenant policy engine with org rule sets and audit reporting.
+- Advanced permission scopes (team data, sensitive projects, regulatory).
+- Policy audit log for SOC/compliance teams.
+- Escalation routing to org approvers for edge cases.
+
 ## File Targets
 - `src/probos/security/`
 - `src/probos/governance/`

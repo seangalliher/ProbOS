@@ -21,6 +21,21 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - Rebuilding voice/perception stacks shipped in Waves 175-180.
 - New avatar renderer tracks.
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop):**
+- Welcome panel and onboarding for personal assistant first launch.
+- Suggested actions derived from personal calendar/inbox/threads.
+- Daily briefing with yesterday's context + today's top 5 items.
+- Delegation UI showing Yeo-to-specialist handoff reasoning.
+- Message streaming/merge for coherent personal responses.
+
+**Commercial Extension Point:**
+- Org-wide suggested-action policy (team priorities, project milestones).
+- Executive briefing variant with org context.
+- Team delegation metrics and handoff audit log.
+- Whitelabel branding and multi-language org support.
+
 ## File Targets
 - `ui/src/components/wardroom/`
 - `ui/src/store/`

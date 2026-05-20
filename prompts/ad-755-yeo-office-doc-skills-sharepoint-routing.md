@@ -21,6 +21,19 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - Vendor-specific premium document processing services.
 - Re-implementing generic channel adapter backlog in #480.
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop):**
+- Office document skills (docx/pptx/xlsx summarize/create/revise) via `python-docx`, `python-pptx`, `openpyxl`.
+- SharePoint routing for personal OneDrive/personal-site documents.
+- Local template registry for recurring personal tasks.
+
+**Commercial Extension Point:**
+- Org template library and library versioning/governance.
+- SharePoint site collection and team-drive routing policies.
+- Sensitivity-label and permission-level enforcement.
+- Document life cycle and retention policy integration.
+
 ## File Targets
 - `src/probos/skill_framework.py`
 - `src/probos/agents/`

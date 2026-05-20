@@ -23,6 +23,20 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - Production implementation work.
 - DECISIONS.md architectural logging updates.
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop) Completeness Gate:**
+- All AD-749..AD-757 child prompts include OSS scopes fully realized.
+- No production code depends on commercial-only extension points.
+- Every personal-workflow scenario has a "works today" implementation.
+
+**Commercial Extension Points Documented (Not Implemented):**
+- Multi-tenant auth/provisioning.
+- Org policy engine and compliance reporting.
+- Fleet management and cross-device sync.
+- DLP and advanced security controls.
+- Team-level features and analytics.
+
 ## File Targets
 - `prompts/ad-749-*.md` through `prompts/ad-757-*.md`
 - `docs/development/roadmap.md`

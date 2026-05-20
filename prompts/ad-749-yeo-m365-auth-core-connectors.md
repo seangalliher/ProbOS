@@ -21,6 +21,19 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - Re-implementing Telegram/WhatsApp/Matrix/Teams adapters from #480.
 - Enterprise-only tenant provisioning workflows (extension-point only).
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop):**
+- Single-user OAuth device-flow auth with local token caching.
+- Connector agents for personal M365 account (Outlook, Teams, Calendar, SharePoint, OneDrive read).
+- Local BYOL credential storage (operator brings own API keys).
+
+**Commercial Extension Point:**
+- Multi-tenant enterprise provisioning (SSO, SCIM, token broker).
+- Tenant policy connectors and conditional-access compatibility.
+- Compliance-scoped credential management (key vault integration).
+- Audit logging for enterprise SOC teams.
+
 ## File Targets
 - `src/probos/channels/`
 - `src/probos/integrations/`

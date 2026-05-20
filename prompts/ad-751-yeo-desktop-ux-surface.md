@@ -21,6 +21,19 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - Replacing mobile/PADD delivery scope in #484.
 - Enterprise endpoint-management packaging.
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop):**
+- Tray icon with local state indicators.
+- Global hotkey and mini-mode for personal use.
+- Desktop notifications driven by personal assistant context.
+- Autostart and idle-wake policies.
+
+**Commercial Extension Point:**
+- Fleet-wide notification delivery and device-targeting.
+- Org policy enforcement on tray/notification behavior.
+- MDM integration for endpoint provisioning and compliance.
+
 ## File Targets
 - `ui/src/components/`
 - `ui/src/store/`

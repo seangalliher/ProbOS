@@ -21,6 +21,18 @@ Capability is usable by all crew agents; Yeo is the front-door orchestrator and 
 - Commercial analytics/scoring/reporting overlays.
 - Replacing episodic memory primitives wholesale.
 
+## OSS vs Commercial Split
+
+**OSS (Personal Desktop):**
+- Semantic entity model for personal tasks, meetings, docs, commitments.
+- Query/retrieval for personal daily planning and delegation.
+- Session continuity for active assistant sessions.
+
+**Commercial Extension Point:**
+- Org-wide entity indexing and cross-user query surfaces.
+- Team/org-level commitment tracking and project analytics.
+- Compliance-grade retention and audit for work semantics.
+
 ## File Targets
 - `src/probos/knowledge/`
 - `src/probos/ontology/`
