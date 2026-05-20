@@ -346,7 +346,12 @@ class TestShellQuit:
 # Shell NL input
 # ---------------------------------------------------------------------------
 
-@pytest.mark.timeout(60)
+# BF-323: bumped class-level timeout 60s -> 180s. The pre-existing per-class
+# override was tighter than the BF-320 global default (180s) and tripped
+# test_nl_unrecognized on GHA runners where full shell boot + NL decomposition
+# path takes 70-90s under loaded CI vs ~5s locally. 180s aligns with the
+# global and gives consistent treatment.
+@pytest.mark.timeout(180)
 class TestShellNLInput:
 
     @pytest.mark.asyncio
