@@ -391,7 +391,24 @@ export function WardRoomThreadDetail() {
                 <path d="M11 4l-5 5a2 2 0 002.8 2.8l5-5a3 3 0 00-4.2-4.2l-5 5a4 4 0 005.7 5.7" />
               </svg>
             </button>
-            {/* AD-744: stroke-SVG "Share screen to agent" button (HXI #3). */}
+            {/* BF-317: separator between attach + share-screen — two distinct affordances. */}
+            <span
+              role="separator"
+              aria-orientation="vertical"
+              data-testid="wardroom-dm-composer-separator"
+              style={{
+                display: 'inline-block',
+                width: 1,
+                height: 18,
+                background: 'rgba(255,255,255,0.06)',
+                flexShrink: 0,
+                alignSelf: 'flex-end',
+                marginBottom: 6,
+              }}
+            />
+            {/* AD-744 + BF-317: stroke-SVG "Share screen" button (HXI #3) with
+                persistent text label + larger glyph + filled monitor base
+                so it reads as distinct from the icon-only attach paperclip. */}
             <button
               type="button"
               data-testid="wardroom-dm-share-screen-button"
@@ -404,20 +421,28 @@ export function WardRoomThreadDetail() {
                 border: 'none',
                 color: shareInFlight ? '#666680' : '#f0b060',
                 cursor: shareInFlight ? 'not-allowed' : 'pointer',
-                padding: '4px',
+                padding: '4px 8px',
                 borderRadius: 4,
                 flexShrink: 0,
                 alignSelf: 'flex-end',
                 opacity: shareInFlight ? 0.5 : 1,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                filter: shareInFlight ? 'none' : 'drop-shadow(0 0 4px rgba(240,176,96,0.35))',
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+              <svg width="18" height="18" viewBox="0 0 16 16"
                    stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="1.5" y="2.5" width="13" height="9" rx="1" />
-                <path d="M5 14h6" />
-                <path d="M8 11.5v2.5" />
-                <path d="M8 8.5V4.5M6 6.5L8 4.5l2 2" />
+                <rect x="1.5" y="2.5" width="13" height="9" rx="1" fill="currentColor" fillOpacity="0.15" />
+                <rect x="1.5" y="2.5" width="13" height="9" rx="1" fill="none" />
+                <path d="M5 14h6" fill="none" />
+                <path d="M8 11.5v2.5" fill="none" />
+                <path d="M8 8.5V4.5M6 6.5L8 4.5l2 2" fill="none" />
               </svg>
+              <span style={{ fontSize: 12, lineHeight: 1, whiteSpace: 'nowrap' }}>
+                Share screen
+              </span>
             </button>
           </>
         )}

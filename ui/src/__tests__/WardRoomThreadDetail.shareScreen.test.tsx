@@ -85,4 +85,47 @@ describe('AD-744 WardRoomThreadDetail share-screen button', () => {
       expect(screen.getByTestId('wardroom-dm-attachment-chips')).toBeTruthy();
     });
   });
+
+  // BF-317 — discoverability polish (text label + size diff + separator).
+  it('BF-317: renders persistent "Share screen" text label beside the icon', () => {
+    render(<WardRoomThreadDetail />);
+    const btn = screen.getByTestId('wardroom-dm-share-screen-button');
+    // Label text must be reachable AND inside the share-screen button element.
+    const label = screen.getByText('Share screen');
+    expect(label).toBeTruthy();
+    expect(btn.contains(label)).toBe(true);
+  });
+
+  it('BF-317: share-screen button is visually distinct from attach button', () => {
+    render(<WardRoomThreadDetail />);
+    const shareBtn = screen.getByTestId('wardroom-dm-share-screen-button');
+    const attachBtn = screen.getByTestId('wardroom-dm-attach-button');
+    const shareSvg = shareBtn.querySelector('svg');
+    const attachSvg = attachBtn.querySelector('svg');
+    expect(shareSvg).toBeTruthy();
+    expect(attachSvg).toBeTruthy();
+    // Size differentiation: share-screen glyph is 18 vs attach 14.
+    expect(shareSvg!.getAttribute('width')).toBe('18');
+    expect(attachSvg!.getAttribute('width')).toBe('14');
+    // Filled vs stroke-only: share-screen has at least one fill attr that is NOT "none".
+    const shareFills = Array.from(shareSvg!.querySelectorAll('[fill]'))
+      .map(el => el.getAttribute('fill'));
+    expect(shareFills.some(f => f !== null && f !== 'none')).toBe(true);
+    // Attach paperclip is stroke-only — its svg root has fill="none".
+    expect(attachSvg!.getAttribute('fill')).toBe('none');
+  });
+
+  it('BF-317: divider element separates attach button from share-screen button', () => {
+    render(<WardRoomThreadDetail />);
+    const attachBtn = screen.getByTestId('wardroom-dm-attach-button');
+    const shareBtn = screen.getByTestId('wardroom-dm-share-screen-button');
+    const sep = screen.getByTestId('wardroom-dm-composer-separator');
+    expect(sep).toBeTruthy();
+    expect(sep.getAttribute('role')).toBe('separator');
+    // Document-order: attach precedes separator, separator precedes share.
+    const order = attachBtn.compareDocumentPosition(sep) & Node.DOCUMENT_POSITION_FOLLOWING;
+    const order2 = sep.compareDocumentPosition(shareBtn) & Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(order).toBeGreaterThan(0);
+    expect(order2).toBeGreaterThan(0);
+  });
 });
