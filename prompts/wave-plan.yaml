@@ -3842,16 +3842,16 @@ waves:
     title: "voice stack completion (AD-721b-3 + AD-705a + AD-705c)"
     kind: main
     depends_on: ["178"]
-    dispatch_prompt: "prompts/WAVE-179-DISPATCH.md"
+    dispatch_prompt: "prompts/archive/WAVE-179-DISPATCH.md"
     prompts_already_drafted: true
     prompt_paths:
-      - "prompts/ad-721b-3-whisper-wasm-model.md"
-      - "prompts/ad-705a-offline-stt-whisper-wasm.md"
-      - "prompts/ad-705c-custom-wake-word-training.md"
+      - "prompts/archive/ad-721b-3-whisper-wasm-model.md"
+      - "prompts/archive/ad-705a-offline-stt-whisper-wasm.md"
+      - "prompts/archive/ad-705c-custom-wake-word-training.md"
     builder_required: true
     issues_to_close: [555, 557, 561]
     estimated_hours: 16
-    status: drafting
+    status: shipped
     notes: |
       Voice stack completion - offline STT + custom wake-word training.
       Strict serial build order: 1 -> 2 -> 3 (each AD's contract anchors next).
