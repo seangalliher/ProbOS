@@ -4560,6 +4560,21 @@ class DmTargetedLookupConfig(BaseModel):  # AD-725 (Wave 159)
         return v
 
 
+class WakeWordConfig(BaseModel):
+    """AD-705c (Wave 179) — custom wake-word training pipeline config.
+
+    All fields default-OFF / privacy-preserving per convention #14.
+    Operator opts in via system.yaml. The training audio NEVER leaves
+    the local runtime; the trainer runs entirely in-process.
+    """
+
+    wake_word_trainer_enabled: bool = False
+    custom_model_filename: str = "captain.onnx"
+    retain_training_samples: bool = False
+    training_samples_max_count: int = 200
+    training_audio_max_bytes: int = 1_048_576
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -4656,6 +4671,7 @@ class SystemConfig(BaseModel):
     threshold_alerts: ThresholdAlertConfig = Field(default_factory=ThresholdAlertConfig)  # AD-695
     ward_room_hebbian: WardRoomHebbianConfig = Field(default_factory=WardRoomHebbianConfig)  # AD-641b
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)  # AD-733 (Wave 170)
+    wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)  # AD-705c (Wave 179)
     engineering_sensors: EngineeringSensorsConfig = Field(default_factory=EngineeringSensorsConfig)  # AD-641f
     learned_shortcuts: LearnedShortcutsConfig = Field(default_factory=LearnedShortcutsConfig)  # AD-641e
     thread_priority: ThreadPriorityConfig = Field(default_factory=ThreadPriorityConfig)  # AD-641c

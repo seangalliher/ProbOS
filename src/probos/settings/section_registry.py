@@ -181,6 +181,39 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
                 enum_values=("heuristic", "rhubarb"),
             ),
             FieldDescriptor("lipsync.binary_path", "Rhubarb binary path", "text"),
+            FieldDescriptor(
+                "wake_word.wake_word_trainer_enabled",
+                "Custom wake-word trainer (AD-705c)",
+                "bool",
+                description=(
+                    "Show the WakeWordTrainerPanel in HXI and enable the "
+                    "API endpoints. CLI (`probos wake-word collect/train/"
+                    "test/status`) is always usable; this toggle gates "
+                    "the in-browser guided recorder."
+                ),
+                hot_reload=True,
+            ),
+            FieldDescriptor(
+                "wake_word.custom_model_filename",
+                "Wake-word custom model filename",
+                "text",
+                description=(
+                    "Preferred ONNX file under ui/public/models/wake-word/. "
+                    "Defaults to captain.onnx. Falls back to the stock "
+                    "community model when absent."
+                ),
+            ),
+            FieldDescriptor(
+                "wake_word.retain_training_samples",
+                "Retain training samples after train",
+                "bool",
+                description=(
+                    "Default off — privacy posture. When enabled, "
+                    "training WAVs persist under data/wake-word/training-"
+                    "samples/positive/ so the operator can iterate."
+                ),
+                hot_reload=True,
+            ),
         ),
     ),
     SectionDescriptor(

@@ -203,6 +203,7 @@ def create_app(runtime: Any) -> FastAPI:
         config as config_router,  # AD-741 (Wave 170): /api/config for HXI Settings
         perception,  # AD-733 (Wave 170): camera frame ingestion
         agent_actions,  # AD-745 (Wave 178): conversation -> action dispatch
+        voice,  # AD-705c (Wave 179): wake-word training endpoints
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -218,6 +219,7 @@ def create_app(runtime: Any) -> FastAPI:
         config_router,
         perception,
         agent_actions,
+        voice,
     ):
         app.include_router(r.router)
 

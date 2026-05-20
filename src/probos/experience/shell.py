@@ -30,6 +30,7 @@ from probos.experience.commands import (
     commands_extensions,
     commands_manifest,
 )
+from probos.experience.commands import commands_wake_word
 from probos.experience.commands.approval_callbacks import (
     user_escalation_callback,
     user_self_mod_approval,
@@ -83,6 +84,7 @@ class ProbOSShell:
         "/explain":   "Explain what happened in the last NL request",
         "/models":    "Show active LLM tier configuration (endpoints, models, status)",
         "/registry":  "Show all available models across all sources (tiers, Copilot SDK, local)",
+        "/wake-word": "Custom wake-word trainer (AD-705c): status | collect | train | test",
         "/orders":    "Show Standing Orders hierarchy and summaries",
         "/procedure": "Procedure governance (list-pending, approve, reject, list-promoted)",
         "/gap":       "Gap reports (list, detail, check, summary)",
@@ -286,6 +288,7 @@ class ProbOSShell:
             "/registry":   lambda: commands_llm.cmd_registry(rt, con, arg),
             "/tier":       lambda: commands_llm.cmd_tier(rt, con, arg),
 
+            "/wake-word":  lambda: commands_wake_word.cmd_wake_word(rt, con, arg),
             "/weights":    lambda: commands_introspection.cmd_weights(rt, con, arg),
             "/gossip":     lambda: commands_introspection.cmd_gossip(rt, con, arg),
             "/designed":   lambda: commands_introspection.cmd_designed(rt, con, arg),

@@ -273,17 +273,47 @@ export async function _loadOnnxRuntime(): Promise<boolean> {
   const moduleName = 'onnxruntime-web';
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _mod = await import(/* @vite-ignore */ moduleName);
-  // We do not actually run the model in v1 — even with the runtime present,
-  // the openWakeWord ONNX file is operator-installed (see
-  // ui/public/models/wake-word/README.md). When the runtime loads but the
-  // model file is missing, we still degrade to fallback substring match
-  // because a model load attempt would 404. Returning `false` here when the
-  // runtime is present-but-model-absent keeps the loop in fallback armed
-  // state (degraded but functional). Operators install the model file and
-  // we can graduate to the ONNX-armed path in a follow-up.
-  // For the runtime-present case, we still report `false` until the model
-  // exists at the documented path. Detection is operator-facing and out of
-  // scope for v1; tests cover the failure path explicitly.
+  // AD-705c (Wave 179): prefer the Captain-trained ``captain.onnx``
+  // (or the operator-configured ``cognitive.custom_model_filename``)
+  // over the stock community model. The fetch order ensures the
+  // custom model takes priority; if neither responds 200, we honest-
+  // degrade to substring-match (return false; existing AD-705 v1
+  // behavior). Reading the snapshot via a dynamic import keeps the
+  // first-paint posture intact (this function is only called when the
+  // wake-word loop arms).
+  let customFilename = 'captain.onnx';
+  try {
+    const { useSettingsStore } = await import('../store/useSettingsStore');
+    const snapshot = useSettingsStore.getState().snapshot;
+    const cognitiveCfg = (snapshot?.config as Record<string, unknown> | undefined)
+      ?.['cognitive'] as Record<string, unknown> | undefined;
+    const cfgValue = cognitiveCfg?.['custom_model_filename'];
+    if (typeof cfgValue === 'string' && cfgValue.length > 0) {
+      customFilename = cfgValue;
+    }
+  } catch {
+    // Tier-2: snapshot may not be hydrated yet; default filename is
+    // safe.
+  }
+  const candidates = [
+    `/models/wake-word/${customFilename}`,
+    '/models/wake-word/hey_jarvis_v0.1.onnx',
+  ];
+  for (const url of candidates) {
+    try {
+      const resp = await fetch(url, { method: 'HEAD' });
+      if (resp.ok) {
+        // Model file is present; the runtime is loaded. v1 still
+        // returns false because we do not actually run inference here
+        // — graduating to true requires the inference path, tracked
+        // separately. Returning false keeps the loop in the
+        // fallback-armed state (BF-308 behavior preserved).
+        return false;
+      }
+    } catch {
+      // Tier-2: HEAD probe may fail in jsdom; ignore and try next.
+    }
+  }
   return false;
 }
 

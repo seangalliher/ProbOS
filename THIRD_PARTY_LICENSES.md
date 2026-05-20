@@ -129,3 +129,12 @@ When adding a new third-party component:
 - Used by: `ui/src/audio/whisperLoader.ts` (AD-721b-3 loads `ggml-tiny.en.bin` — GGML conversion of the OpenAI Whisper tiny.en checkpoint).
 - Installation: operator-pullable via `./scripts/whisper-tiny-en-fetch.ps1` (SHA-256 pinned). ~75 MB. Bytes are NOT bundled in the repo (gitignored under `data/whisper/`).
 - Privacy posture: model weights live on the operator's disk; the browser fetches them from the same `/data/...` static route the Silero VAD model uses.
+
+## openWakeWord (AD-705c)
+
+- Project: <https://github.com/dscripka/openWakeWord>
+- Author: David Scripka
+- License: Apache 2.0 (https://github.com/dscripka/openWakeWord/blob/main/LICENSE)
+- Used by: `src/probos/voice/wake_word_trainer.py` (Captain custom wake-word training pipeline) and the existing `ui/src/audio/wakeWord.ts` ONNX loader path (preferred `captain.onnx` over the stock community model).
+- Installation: **NOT** in `pyproject.toml`. Operator runs `pip install openwakeword[training]` separately. The trainer honest-degrades (returns `WakeWordTrainingReport(status='error', error_message=...)`) when the import fails.
+- Privacy posture: training audio NEVER leaves the local runtime. Samples land under `data/wake-word/training-samples/` (gitignored under `data/*`); deleted after train when `wake_word.retain_training_samples = False` (default).
