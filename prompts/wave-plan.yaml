@@ -3934,3 +3934,33 @@ waves:
       Total: +20 pytest, +27 vitest across the wave.
       Continuous build - Architect drafts (this commit), Builder dispatches
       immediately after.
+
+  - id: "181-yeo-kickoff"
+    title: "Yeo feature-complete program kickoff (AD-749..AD-758 planning slate)"
+    kind: meta
+    depends_on: ["180"]
+    dispatch_prompt: "prompts/RESEARCH-yeo-aionui-2026-05-20.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-749-yeo-m365-auth-core-connectors.md"
+      - "prompts/ad-750-yeo-semantic-work-layer.md"
+      - "prompts/ad-751-yeo-desktop-ux-surface.md"
+      - "prompts/ad-752-yeo-proactive-scheduling-work-hours-quiet-hours.md"
+      - "prompts/ad-753-yeo-unattended-permissions-modes.md"
+      - "prompts/ad-754-yeo-data-hardening-baseline.md"
+      - "prompts/ad-755-yeo-office-doc-skills-sharepoint-routing.md"
+      - "prompts/ad-756-yeo-conversational-front-door-ux.md"
+      - "prompts/ad-757-yeo-identity-continuity-captain-card.md"
+      - "prompts/ad-758-yeo-feature-complete-integration-gate.md"
+    builder_required: false
+    issues_to_close: []
+    estimated_hours: 0
+    status: drafting
+    notes: |
+      Planning-only program kickoff for AD-710 decomposition.
+      No production code changes in this wave-plan block.
+      New issues filed: #695..#704.
+      Captain invariant for all child ADs:
+        - Yeo is primary assistant front door.
+        - Capability is usable by all crew agents.
+        - Yeo delegates specialist work to crew agents.
