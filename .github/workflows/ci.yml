@@ -9,7 +9,12 @@ on:
 jobs:
   python-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # BF-322: bumped 15 -> 30. Waves 175-180 added ~150 tests + heavier
+    # fixture surface (perception pipeline, AD-742f WM persistence, AD-746
+    # aggregator, AD-747 conversation controller). With BF-320's per-test
+    # 180s allowance, the cumulative suite needs 18-22 min on GHA runners.
+    # 30 min gives a 10-min safety margin without masking real regressions.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -28,11 +33,20 @@ jobs:
         run: rm -rf ~/.cache/chroma/onnx_models || true
 
       - name: Run tests
-        run: uv run pytest tests/ -x -q --tb=short
+        # BF-322: dropped -x (fail-fast). Per user-memory rule, -x with xdist
+        # kills the whole gate on any single artifact/flake. Use --maxfail=10
+        # to still bail on real regressions while tolerating documented
+        # flakes (test_dreaming::test_nl_to_dream_cycle_changes_weights,
+        # test_ward_room sort isolation flake).
+        run: uv run pytest tests/ --maxfail=10 -q --tb=short
 
   ui-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # BF-322: bumped 10 -> 15. AD-733c-7 / AD-705a / AD-747 / AD-746
+    # added 79 vitest tests + heavier setup (onnxruntime-web mocks, larger
+    # 3D / canvas fixtures). 15 min gives margin without masking real
+    # regressions.
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
