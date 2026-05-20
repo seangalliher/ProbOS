@@ -171,6 +171,29 @@ _PERCEPTION_SECTION = SectionDescriptor(
             description="AD-733c-6: vision LLM calls per UTC day before auto-drop. Default 2000.",
             hot_reload=True,
         ),
+        # AD-746 Layer 1: cross-source debounce fusion + window.
+        FieldDescriptor(
+            "perception.source_fusion_enabled",
+            "Source fusion",
+            "bool",
+            description=(
+                "AD-746 Layer 1: when ON, ambient camera + screen frames "
+                "are buffered within fusion_window_ms and forwarded to "
+                "the vision consumer as a single fused observation. "
+                "Halves AD-733c-6 budget burn when both sources stream."
+            ),
+            hot_reload=True,
+        ),
+        FieldDescriptor(
+            "perception.fusion_window_ms",
+            "Fusion window (ms)",
+            "int",
+            description=(
+                "AD-746 Layer 1: cross-source debounce window. Pipecat "
+                "default 800ms; range 100-5000."
+            ),
+            hot_reload=True,
+        ),
     ),
 )
 

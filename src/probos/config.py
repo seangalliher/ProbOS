@@ -2263,6 +2263,28 @@ class PerceptionConfig(BaseModel):
         description="AD-733c-7: browser-side debounce floor before firing the voice-activity endpoint. Prevents single-syllable false positives.",
     )
 
+    # AD-746 Layer 1: VisionAggregator debounce-fusion of camera +
+    # screen sources. Default-ON because the symptom (budget burn 2x
+    # when both sources stream concurrently) is material in production.
+    # Honest-degrade: when False, the aggregator is bypassed and the
+    # consumer subscribes directly to the bus (zero behavior delta vs
+    # pre-AD-746).
+    source_fusion_enabled: bool = Field(default=True,
+        description=(
+            "AD-746 Layer 1: when ON, ambient camera + screen frames "
+            "are buffered within ``fusion_window_ms`` and forwarded as "
+            "a single fused vision_observation. Reduces AD-733c-6 "
+            "budget burn + AD-541b anchor noise when both sources "
+            "stream. Hot-reload."
+        ),
+    )
+    fusion_window_ms: int = Field(default=800, ge=100, le=5000,
+        description=(
+            "AD-746 Layer 1: debounce window for cross-source fusion. "
+            "Pipecat default. Hot-reload."
+        ),
+    )
+
     @field_validator("vision_supervisor_strategy")
     @classmethod
     def _validate_supervisor_strategy(cls, v: str) -> str:

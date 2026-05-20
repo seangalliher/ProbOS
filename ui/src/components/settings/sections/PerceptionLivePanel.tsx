@@ -9,6 +9,11 @@
 import { useEffect, useState } from 'react';
 import { useCameraStore } from '../../../store/useCameraStore';
 import { useCameraMultiplexerStore } from '../../../store/useCameraMultiplexerStore';
+import {
+  useSourceBindingsStore,
+  ALL_SOURCES,
+  type SourceName,
+} from '../../../store/useSourceBindingsStore';
 import { useSettingsStore } from '../../../store/useSettingsStore';
 import {
   usePerceptionModeStore,
@@ -49,6 +54,10 @@ export default function PerceptionLivePanel() {
   const bindAgent = useCameraMultiplexerStore((s) => s.bindAgent);
   const clearAgent = useCameraMultiplexerStore((s) => s.clearAgent);
   const [bindingsExpanded, setBindingsExpanded] = useState(false);
+  // AD-746 Layer 2: per-agent source bindings (camera/screen pills).
+  const sourceBindings = useSourceBindingsStore((s) => s.bindings);
+  const refreshSourceBindings = useSourceBindingsStore((s) => s.refresh);
+  const toggleSourceForAgent = useSourceBindingsStore((s) => s.toggleSource);
   // AD-733-2: screen subsystem state (separate slice from camera).
   const screenActive = useScreenStore((s) => s.active);
   const screenError = useScreenStore((s) => s.error);
@@ -57,8 +66,9 @@ export default function PerceptionLivePanel() {
   useEffect(() => {
     if (bindingsExpanded) {
       void refreshBindings();
+      void refreshSourceBindings();
     }
-  }, [bindingsExpanded, refreshBindings]);
+  }, [bindingsExpanded, refreshBindings, refreshSourceBindings]);
 
   if (!snapshot) return null;
 
@@ -388,22 +398,32 @@ export default function PerceptionLivePanel() {
             )}
             {Object.entries(bindings).map(([agentId, deviceId]) => {
               const bound = Boolean(deviceId);
+              // AD-746 Layer 2: per-agent source bindings. Default
+              // (absent key) = both sources; matches backend default.
+              const agentSources = sourceBindings[agentId] ?? [...ALL_SOURCES];
               return (
                 <div
                   key={agentId}
                   data-testid={`perception-camera-binding-row-${agentId}`}
                   style={{
                     display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
+                    flexDirection: 'column',
+                    gap: 4,
                     fontSize: 9,
                     padding: '3px 0',
                     color: bound ? STROKE_AMBER : STROKE_DIM,
                   }}
                 >
-                  <span style={{ flex: '0 0 auto', minWidth: 50, letterSpacing: 1 }}>
-                    {agentId.toUpperCase()}
-                  </span>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ flex: '0 0 auto', minWidth: 50, letterSpacing: 1 }}>
+                      {agentId.toUpperCase()}
+                    </span>
                   <select
                     data-testid={`perception-camera-binding-select-${agentId}`}
                     value={deviceId ?? ''}
@@ -457,6 +477,50 @@ export default function PerceptionLivePanel() {
                       </svg>
                     </button>
                   )}
+                  </div>
+                  {/* AD-746 Layer 2: SOURCE BINDINGS pills (camera/screen). */}
+                  <div
+                    data-testid={`perception-source-bindings-row-${agentId}`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      marginLeft: 50,
+                      fontSize: 8,
+                      letterSpacing: 1,
+                    }}
+                  >
+                    <span style={{ color: STROKE_DIM, marginRight: 4 }}>
+                      SOURCES:
+                    </span>
+                    {ALL_SOURCES.map((src) => {
+                      const isBound = agentSources.includes(src);
+                      return (
+                        <button
+                          key={src}
+                          type="button"
+                          data-testid={`perception-source-pill-${agentId}-${src}`}
+                          aria-pressed={isBound}
+                          onClick={() => {
+                            void toggleSourceForAgent(agentId, src as SourceName);
+                          }}
+                          style={{
+                            background: 'transparent',
+                            color: isBound ? STROKE_AMBER : STROKE_DIM,
+                            border: `1px solid ${isBound ? STROKE_AMBER : STROKE_DIM}`,
+                            padding: '1px 5px',
+                            cursor: 'pointer',
+                            fontSize: 8,
+                            letterSpacing: 1,
+                            fontFamily: "'JetBrains Mono', monospace",
+                            borderRadius: 2,
+                          }}
+                        >
+                          {src.toUpperCase()}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}

@@ -328,34 +328,64 @@ class PeerPerceptionProfile:
 
 @dataclass
 class PerceptionProfile:
-    """AD-733c-5 + AD-742c: per-agent perception bindings.
+    """AD-733c-5 + AD-742c + AD-746: per-agent perception bindings.
 
-    Shared between two ADs:
+    Shared between three ADs:
 
     - ``engagement_enabled`` and ``initial_mode`` belong to AD-733c-5
       (per-agent ``PerceptionModeController`` registry).
     - ``camera_device_id`` belongs to AD-742c (per-agent camera). Empty
       string means "share the default camera" — current pre-AD-742c
       behavior.
+    - ``bound_sources`` belongs to AD-746 Layer 2. Restricts which
+      visual sources the agent observes. Defaults to both sources
+      (``["camera", "screen"]``) so agents that haven't been bound
+      explicitly see everything — pre-AD-746 fan-out behavior.
 
     Defaults preserve current singleton behavior: when a legacy profile
     JSON omits this block, ``from_dict`` synthesizes the default values
     and the agent participates in engagement with the runtime-wide
-    default camera.
+    default camera and observes both sources.
     """
     engagement_enabled: bool = True
     initial_mode: str = "ambient"
     camera_device_id: str = ""
+    # AD-746 Layer 2 — defaults to both sources for back-compat.
+    bound_sources: list[str] = field(
+        default_factory=lambda: ["camera", "screen"],
+    )
+
+    def __post_init__(self) -> None:
+        # AD-746: validate bound_sources is a subset of the known set.
+        # Tier-2: invalid entries are dropped silently with a logger
+        # warning — operator profile JSON might be hand-edited and
+        # tolerant parsing matches the rest of the dataclass.
+        _valid = {"camera", "screen"}
+        cleaned = [s for s in self.bound_sources if s in _valid]
+        # De-duplicate while preserving order.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for s in cleaned:
+            if s not in seen:
+                seen.add(s)
+                deduped.append(s)
+        self.bound_sources = deduped
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PerceptionProfile":
+        raw_sources = data.get("bound_sources", ["camera", "screen"])
+        if isinstance(raw_sources, (list, tuple)):
+            sources_list = [str(s) for s in raw_sources if isinstance(s, str)]
+        else:
+            sources_list = ["camera", "screen"]
         return cls(
             engagement_enabled=bool(data.get("engagement_enabled", True)),
             initial_mode=str(data.get("initial_mode", "ambient")),
             camera_device_id=str(data.get("camera_device_id", "")),
+            bound_sources=sources_list,
         )
 
 

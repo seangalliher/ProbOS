@@ -4056,7 +4056,40 @@ async def finalize_startup(
                 )
                 if (_prof or {}).get("vision_capable", False):
                     consumer.register_observer(agent.id)
-            consumer.subscribe()
+            # AD-746 Layer 1: when fusion is enabled, the VisionAggregator
+            # subscribes to vision_observation and forwards (passthrough
+            # OR fused) into the consumer. The consumer's own subscribe
+            # is skipped — the aggregator IS the consumer's bus front.
+            _fusion_enabled = bool(getattr(
+                _perception_cfg, "source_fusion_enabled", False,
+            ))
+            if _fusion_enabled:
+                try:
+                    from probos.perception.aggregator import VisionAggregator
+                    _window_ms = int(getattr(
+                        _perception_cfg, "fusion_window_ms", 800,
+                    ))
+                    _aggregator = VisionAggregator(
+                        runtime, consumer, fusion_window_ms=_window_ms,
+                    )
+                    _aggregator.subscribe()
+                    runtime.vision_aggregator = _aggregator
+                    logger.info(
+                        "AD-746 Layer 1: VisionAggregator wired (window=%dms); "
+                        "VisionConsumer.subscribe() skipped",
+                        _window_ms,
+                    )
+                except Exception:
+                    logger.warning(
+                        "AD-746: aggregator wiring failed; falling back to "
+                        "direct VisionConsumer.subscribe()",
+                        exc_info=True,
+                    )
+                    runtime.vision_aggregator = None
+                    consumer.subscribe()
+            else:
+                runtime.vision_aggregator = None
+                consumer.subscribe()
             runtime.vision_consumer = consumer
             logger.info(
                 "AD-733a: VisionConsumer wired with %d observers",

@@ -714,3 +714,95 @@ async def post_camera_binding(
         'agent_id': body.agent_id,
         'device_id': profile.perception.camera_device_id,
     }
+
+
+# AD-746 Layer 2 — Per-agent source-binding endpoints.
+
+class _SourceBindingRequest(BaseModel):
+    agent_id: str
+    sources: list[str]
+
+
+@router.get('/sources', dependencies=[Depends(require_crew_scope)])
+async def get_source_bindings(runtime: Any = Depends(get_runtime)) -> Any:
+    """AD-746 Layer 2: list current per-agent source bindings.
+
+    Returns ``{bindings: {agent_id: list[str]}}`` where each value is
+    the agent's ``bound_sources`` profile field. Agents with no
+    explicit binding return the default ``["camera", "screen"]``.
+    """
+    bindings: dict[str, list[str]] = {}
+    profile_store = getattr(runtime, 'profile_store', None)
+    registry = getattr(runtime, 'registry', None)
+    ontology = getattr(runtime, 'ontology', None)
+    if profile_store is not None and registry is not None:
+        from probos.crew_utils import is_crew_agent
+        try:
+            for agent in registry.all():
+                if not is_crew_agent(agent, ontology):
+                    continue
+                profile = profile_store.get(agent.id)
+                if profile is None or profile.perception is None:
+                    continue
+                bindings[agent.id] = list(profile.perception.bound_sources)
+        except Exception:
+            logger.warning(
+                'AD-746: enumerating source bindings failed', exc_info=True,
+            )
+    return {'bindings': bindings}
+
+
+@router.post('/sources/binding', dependencies=[Depends(require_crew_scope)])
+async def post_source_binding(
+    body: _SourceBindingRequest,
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """AD-746 Layer 2: bind ``agent_id`` to a list of visual sources.
+
+    Each source must be in ``_VALID_SOURCES`` (camera/screen).
+    Unknown sources rejected with HTTP 400. 404 on unknown agent.
+    """
+    # Validate against the same frozenset that gates frame upload.
+    cleaned: list[str] = []
+    for s in body.sources:
+        s = (s or '').strip()
+        if not s:
+            continue
+        if s not in _VALID_SOURCES:
+            return JSONResponse(
+                status_code=400,
+                content={'error': 'invalid_source', 'value': s},
+            )
+        if s not in cleaned:
+            cleaned.append(s)
+    profile_store = getattr(runtime, 'profile_store', None)
+    if profile_store is None:
+        return JSONResponse(
+            status_code=503, content={'error': 'profile_store_unavailable'},
+        )
+    profile = profile_store.get(body.agent_id)
+    if profile is None:
+        return JSONResponse(
+            status_code=404,
+            content={'error': 'unknown_agent', 'value': body.agent_id},
+        )
+    profile.perception.bound_sources = cleaned
+    try:
+        profile_store.update(profile)
+    except Exception:
+        logger.warning(
+            'AD-746: profile_store update failed agent=%s', body.agent_id,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500, content={'error': 'persist_failed'},
+        )
+    logger.info(
+        'AD-746 Layer 2: bound agent=%s sources=%s',
+        body.agent_id, cleaned,
+    )
+    return {
+        'ok': True,
+        'agent_id': body.agent_id,
+        'sources': cleaned,
+    }

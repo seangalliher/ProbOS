@@ -335,7 +335,28 @@ class VisionConsumer:
         return None
 
     async def _process(self, msg: IntentMessage) -> None:
-        sha = msg.params.get("attachment_ref")
+        # AD-746 Layer 1: a fused message carries multiple refs +
+        # parallel sources lists. Use the primary (first) ref for the
+        # supervisor + describe path; the full sources list flows into
+        # WM metadata + anchor outcomes so per-agent ``bound_sources``
+        # filtering and AD-541b semantics see both halves.
+        refs_raw = msg.params.get("attachment_refs")
+        if isinstance(refs_raw, (list, tuple)) and refs_raw:
+            attachment_refs: list[str] = [
+                str(r) for r in refs_raw if isinstance(r, str) and r
+            ]
+        else:
+            single = msg.params.get("attachment_ref")
+            attachment_refs = [single] if isinstance(single, str) and single else []
+        sources_raw = msg.params.get("sources")
+        if isinstance(sources_raw, (list, tuple)) and sources_raw:
+            sources_list: list[str] = [
+                str(s) for s in sources_raw if isinstance(s, str) and s
+            ]
+        else:
+            single_src = str(msg.params.get("source", "camera") or "camera")
+            sources_list = [single_src]
+        sha = attachment_refs[0] if attachment_refs else None
         session_id = str(msg.params.get("session_id", ""))
         if not sha or not isinstance(sha, str):
             logger.debug("AD-733a: vision_observation missing attachment_ref; skipping")
@@ -437,6 +458,15 @@ class VisionConsumer:
             ]
         else:
             fan_out_targets = list(self._observer_agent_ids)
+        # AD-746 Layer 2: filter fan-out by each agent's per-profile
+        # ``bound_sources``. Default value is ``["camera", "screen"]``
+        # so agents that haven't been bound explicitly see all sources
+        # (back-compat). When an agent's binding doesn't intersect the
+        # frame's sources, it's dropped for THAT agent — both WM and
+        # the anchor (which scopes per-agent recall).
+        fan_out_targets = self._filter_by_bound_sources(
+            fan_out_targets, sources_list,
+        )
         for agent_id in fan_out_targets:
             wm = get_or_create_working_memory(agent_id, capacity=self._wm_capacity)
             wm.append(obs)
@@ -453,6 +483,7 @@ class VisionConsumer:
         await self._anchor_episode(
             sha, description, novelty_score, session_id,
             agent_ids=anchor_agent_ids,
+            sources=sources_list,
         )
 
         # 6) AD-733b: proactive observer — may emit one DM per observer if
@@ -726,21 +757,30 @@ class VisionConsumer:
     async def _anchor_episode(
         self, sha: str, description: str, novelty: float, session_id: str,
         *, agent_ids: list[str] | None = None,
+        sources: list[str] | None = None,
     ) -> None:
         episodic = getattr(self._runtime, "episodic_memory", None)
         if episodic is None:
             return
         try:
+            # AD-746 Layer 1 + AD-541b: ``sources`` list carries the full
+            # source provenance (camera, screen, or both for fused
+            # frames). The legacy ``source`` field stays as a one-wave
+            # forward-compat alias (writes the first element).
+            sources_value = list(sources) if sources else ["camera"]
+            outcome: dict[str, Any] = {
+                "intent": "vision_observation",
+                "success": True,
+                "session_id": session_id,
+                "attachment_ref": sha,
+                "novelty_score": novelty,
+                "sources": sources_value,
+                "source": sources_value[0],  # AD-746-5 retires this alias.
+            }
             episode = Episode(
                 timestamp=time.time(),
                 user_input="",
-                outcomes=[{
-                    "intent": "vision_observation",
-                    "success": True,
-                    "session_id": session_id,
-                    "attachment_ref": sha,
-                    "novelty_score": novelty,
-                }],
+                outcomes=[outcome],
                 reflection=f"Vision observation: {description}",
                 source="direct",
                 # BF-311: tag with observer agent_ids so per-agent recall can
@@ -761,6 +801,51 @@ class VisionConsumer:
                 "working memory but not in long-term store",
                 sha[:8], exc_info=True,
             )
+
+    def _filter_by_bound_sources(
+        self, agent_ids: list[str], sources_list: list[str],
+    ) -> list[str]:
+        """AD-746 Layer 2: drop agents whose ``bound_sources`` does not
+        intersect the frame's sources.
+
+        Default per-agent ``bound_sources`` is ``["camera", "screen"]``
+        (back-compat — agents see both). For fused frames (multiple
+        sources), an agent passes if AT LEAST ONE of the fused sources
+        is in their binding (so a camera-bound Counselor still sees a
+        fused camera+screen tick because the camera half is relevant).
+
+        Honest-degrade: when no profile_store is available, the filter
+        is bypassed (pre-AD-746 behavior preserved).
+        """
+        profile_store = getattr(self._runtime, "profile_store", None)
+        if profile_store is None:
+            return list(agent_ids)
+        frame_sources = set(sources_list)
+        kept: list[str] = []
+        for aid in agent_ids:
+            try:
+                profile = profile_store.get(aid)
+            except Exception:
+                profile = None
+            if profile is None or getattr(profile, "perception", None) is None:
+                # No profile binding → default = see all sources.
+                kept.append(aid)
+                continue
+            bound = getattr(profile.perception, "bound_sources", None)
+            # Only treat ``bound`` as a real binding when it's a
+            # concrete list/tuple of strings. MagicMock-shaped values
+            # in tests fall through to the legacy "see all" path so
+            # pre-AD-746 fixtures stay green.
+            if not isinstance(bound, (list, tuple)) or not bound:
+                kept.append(aid)
+                continue
+            bound_set = {s for s in bound if isinstance(s, str)}
+            if not bound_set:
+                kept.append(aid)
+                continue
+            if frame_sources & bound_set:
+                kept.append(aid)
+        return kept
 
 
 __all__ = [
