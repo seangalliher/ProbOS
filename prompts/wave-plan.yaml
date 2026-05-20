@@ -3897,17 +3897,17 @@ waves:
     title: "live-use triage build (BF-317 + BF-318 + AD-746 + AD-747)"
     kind: combo
     depends_on: ["179"]
-    dispatch_prompt: "prompts/WAVE-180-DISPATCH.md"
+    dispatch_prompt: "prompts/archive/WAVE-180-DISPATCH.md"
     prompts_already_drafted: true
     prompt_paths:
-      - "prompts/bf-317-share-screen-discoverability.md"
-      - "prompts/bf-318-mic-arbiter.md"
-      - "prompts/ad-746-camera-screen-source-policy.md"
-      - "prompts/ad-747-conversation-controller.md"
+      - "prompts/archive/bf-317-share-screen-discoverability.md"
+      - "prompts/archive/bf-318-mic-arbiter.md"
+      - "prompts/archive/ad-746-camera-screen-source-policy.md"
+      - "prompts/archive/ad-747-conversation-controller.md"
     builder_required: true
     issues_to_close: [681, 682, 683, 684]
     estimated_hours: 24
-    status: drafting
+    status: shipped
     notes: |
       Live-use triage build from Captain 2026-05-19 production feedback after
       Waves 175-179 shipped. Strict serial build order:
