@@ -69,6 +69,13 @@ from probos.boot_camp import BootCampCoordinator
 from probos.cognitive.security_officer import SecurityAgent
 from probos.cognitive.operations_officer import OperationsAgent
 from probos.cognitive.engineering_officer import EngineeringAgent
+from probos.integrations.m365_token_manager import M365TokenManager  # AD-749
+from probos.integrations.m365_connector import (  # AD-749
+    OutlookAgent, TeamsAgent, CalendarAgent, SharePointAgent, OneDriveAgent
+)
+from probos.integrations.semantic_mapper import SemanticMapper  # AD-750
+from probos.knowledge.semantic_store import SemanticStore  # AD-750
+from probos.cognitive.session_manager import SessionManager  # AD-750
 from probos.credential_store import CredentialStore
 from probos.crew_profile import CallsignRegistry
 from probos.cognitive.self_model import PoolSnapshot, SystemSelfModel
@@ -157,6 +164,7 @@ if TYPE_CHECKING:
     from probos.ontology import VesselOntologyService
     from probos.persistent_tasks import PersistentTaskStore
     from probos.proactive import ProactiveCognitiveLoop
+    from probos.duty_schedule import DutySchedule
     from probos.cognitive.skill_catalog import CognitiveSkillCatalog
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.mesh.nats_bus import NATSBus
@@ -278,6 +286,7 @@ class ProbOSRuntime:
     dream_adapter: DreamAdapter | None
     feedback_engine: FeedbackEngine | None
     proactive_loop: ProactiveCognitiveLoop | None
+    duty_schedule: "DutySchedule | None"
     sif: StructuralIntegrityField | None
     initiative: InitiativeEngine | None
     build_queue: BuildQueue | None
@@ -303,6 +312,8 @@ class ProbOSRuntime:
     _qa_reports: dict[str, Any]
     _knowledge_store: KnowledgeStore | None
     _records_store: RecordsStore | None
+    _semantic_store: Any | None  # AD-750: SemanticStore
+    _session_manager: Any | None  # AD-750: SessionManager
     _archive_store: Any | None
     _bill_runtime: "BillRuntime | None"  # AD-618d
     _last_execution: dict[str, Any] | None
@@ -373,6 +384,15 @@ class ProbOSRuntime:
         self.credential_store = CredentialStore(
             config=self.config, event_log=self.event_log,
         )
+
+        # --- M365 Token Manager (AD-749) ---
+        self._m365_token_manager: M365TokenManager | None = None
+        if self.config.m365.enabled and self.config.m365.client_id:
+            self._m365_token_manager = M365TokenManager(
+                cache_dir=self.config.m365.cache_dir,
+                config=self.config.m365,
+            )
+            logger.info("M365 integration enabled; token manager initialized")
 
         # --- Callsign Registry (AD-397) ---
         self.callsign_registry = CallsignRegistry()
@@ -797,6 +817,10 @@ class ProbOSRuntime:
         # --- Records store (AD-434) ---
         self._records_store: RecordsStore | None = None
 
+        # --- Semantic work layer (AD-750) ---
+        self._semantic_store: Any | None = None
+        self._session_manager: Any | None = None
+
         # --- Ship's Archive (AD-524) ---
         self._archive_store: Any | None = None
 
@@ -842,6 +866,12 @@ class ProbOSRuntime:
 
         # --- Proactive Cognitive Loop (Phase 28b) ---
         self.proactive_loop: ProactiveCognitiveLoop | None = None
+        self.duty_schedule: "DutySchedule | None" = None
+        self.proactive_last_scan_count: dict[str, int] = {
+            "inbox": 0,
+            "calendar": 0,
+            "teams": 0,
+        }
 
         # --- Strategy Advisor (AD-384) ---
         self._strategy_advisor: StrategyAdvisor | None = None
@@ -967,6 +997,15 @@ class ProbOSRuntime:
         self.spawner.register_template(
             "operations_coordinator", OpsCoordinatorAgent,
         )
+
+        # AD-749: M365 connector agents (when enabled)
+        if self.config.m365.enabled and self._m365_token_manager:
+            self.spawner.register_template("outlook", OutlookAgent)
+            self.spawner.register_template("teams", TeamsAgent)
+            self.spawner.register_template("calendar", CalendarAgent)
+            self.spawner.register_template("sharepoint", SharePointAgent)
+            self.spawner.register_template("onedrive", OneDriveAgent)
+            logger.info("M365 connector agent templates registered")
 
         # --- CodebaseIndex (AD-290) ---
         self.codebase_index: CodebaseIndex | None = None
@@ -2134,6 +2173,10 @@ class ProbOSRuntime:
         if self.ontology and self.ward_room:
             self.ward_room.set_ontology(self.ontology)
 
+        # AD-750: Semantic work layer bootstrap (after AD-749 M365 wiring,
+        # before finalize/start of higher-level crew loops).
+        await self._initialize_semantic_work_layer()
+
         # Phase 8: Finalization (AD-517)
         from probos.startup.finalize import finalize_startup
 
@@ -2176,6 +2219,71 @@ class ProbOSRuntime:
                 novelty_gate=getattr(self, '_novelty_gate', None),
                 post_budget_telemetry=self.post_budget_telemetry,
             )
+
+    async def _initialize_semantic_work_layer(self) -> None:
+        """AD-750: Initialize semantic storage, session continuity, and data mapping.
+
+        Personal-desktop scope only:
+        - local SQLite semantic store
+        - local JSON session continuity files
+        - bootstrap from episodic memory + available local M365 connectors
+        """
+        semantic_db_path = str(self._data_dir / "semantic_work.db")
+        self._semantic_store = SemanticStore(
+            db_path=semantic_db_path,
+            owner_id="captain",
+        )
+        self._session_manager = SessionManager(
+            sessions_dir=self._data_dir / "sessions",
+            user_id="captain",
+        )
+
+        mapper = SemanticMapper(
+            store=self._semantic_store,
+            owner_id="captain",
+            episodic_memory=self.episodic_memory,
+        )
+
+        try:
+            migrated = await mapper.bootstrap_from_episodic(self._semantic_store)
+            logger.info("AD-750: semantic episodic bootstrap migrated=%d", migrated)
+        except Exception:
+            logger.warning(
+                "AD-750: semantic episodic bootstrap failed; continuing with empty store",
+                exc_info=True,
+            )
+
+        connectors = self._collect_m365_connectors_for_semantic_sync()
+        if connectors:
+            try:
+                synced = await mapper.sync_m365_to_semantic(connectors)
+                logger.info(
+                    "AD-750: semantic M365 sync inserted_or_updated=%d connectors=%d",
+                    synced,
+                    len(connectors),
+                )
+            except Exception:
+                logger.warning(
+                    "AD-750: semantic M365 sync failed; continuing without M365 hydration",
+                    exc_info=True,
+                )
+
+    def _collect_m365_connectors_for_semantic_sync(self) -> list[Any]:
+        """AD-750: collect runtime connector agents that expose list_changes()."""
+        connectors: list[Any] = []
+        for agent in self.registry.all():
+            if not hasattr(agent, "list_changes"):
+                continue
+            if getattr(agent, "agent_type", "") not in {
+                "OutlookAgent",
+                "CalendarAgent",
+                "TeamsAgent",
+                "SharePointAgent",
+                "OneDriveAgent",
+            }:
+                continue
+            connectors.append(agent)
+        return connectors
 
     # --- BF-071: Retention prune loops ---
 

@@ -3389,6 +3389,9 @@ class SecurityConfig(BaseModel):
     # AD-711: claude-bootstrap-derived security profile + permissions deny-list.
     profile: Literal["strict", "relaxed"] = "strict"
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
+    # AD-753: unattended permission posture for personal-desktop scope.
+    permission_mode: Literal["manual", "autopilot"] = "manual"
+    policy_engine_class: str = "NullPolicyEngine"
 
 
 class MemorySecurityConfig(BaseModel):
@@ -3759,6 +3762,44 @@ class DutyScheduleConfig(BaseModel):
     enabled: bool = True
     schedules: dict[str, list[DutyDefinition]] = {}
     use_work_items: bool = False  # AD-500: opt-in for duty WorkItem producer; flips to True in AD-500a-1
+
+
+class PolicyWindowConfig(BaseModel):
+    """Time window policy definition used for proactive scheduling."""
+
+    start_time: str = Field(default="08:00")
+    end_time: str = Field(default="18:00")
+    days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
+
+
+class DutyPolicyConfig(BaseModel):
+    """Captain-configured work-hours/quiet-hours policy for proactive scans."""
+
+    work_hours: PolicyWindowConfig = Field(default_factory=PolicyWindowConfig)
+    quiet_hours: PolicyWindowConfig = Field(
+        default_factory=lambda: PolicyWindowConfig(start_time="19:00", end_time="08:00", days=[])
+    )
+    scan_throttle_sec: dict[str, int] = Field(
+        default_factory=lambda: {
+            "inbox": 300,
+            "calendar": 600,
+            "teams": 900,
+        }
+    )
+    daily_briefing_time: str = Field(default="08:00")
+    briefing_reminder_throttle_sec: int = Field(default=3600)
+
+    @field_validator("daily_briefing_time")
+    @classmethod
+    def _validate_daily_briefing_time(cls, value: str) -> str:
+        parts = value.split(":")
+        if len(parts) != 2:
+            raise ValueError("daily_briefing_time must be HH:MM")
+        hour = int(parts[0])
+        minute = int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("daily_briefing_time must be HH:MM")
+        return f"{hour:02d}:{minute:02d}"
 
 
 class ProactiveCognitiveConfig(BaseModel):
@@ -4629,6 +4670,78 @@ class WakeWordConfig(BaseModel):
     training_audio_max_bytes: int = 1_048_576
 
 
+class M365Config(BaseModel):
+    """AD-749: Microsoft 365 integration configuration.
+    
+    OSS (personal): single-user OAuth device-code flow with local token caching.
+    Commercial: multi-tenant SSO + enterprise policy extensions (not in OSS).
+    """
+
+    enabled: bool = False
+    client_id: str | None = None
+    authority: str = "https://login.microsoftonline.com/common"
+    scopes: list[str] = Field(
+        default_factory=lambda: ["https://graph.microsoft.com/.default"]
+    )
+    cache_dir: str = "~/.probos/m365_cache"
+
+    @field_validator("cache_dir")
+    @classmethod
+    def _expand_cache_dir(cls, v: str) -> str:
+        return os.path.expanduser(v)
+
+
+class DesktopConfig(BaseModel):
+    """AD-751: Desktop UX Surface — tray, hotkey, notifications, autostart."""
+
+    enabled: bool = Field(
+        default=False,
+        description="AD-751: master switch for desktop surface. Default OFF (Wave 10 convention #14).",
+    )
+    tray_autostart: bool = Field(
+        default=True,
+        description="Auto-start tray icon on boot when desktop enabled.",
+    )
+    hotkey: str = Field(
+        default="ctrl+shift+space",
+        description="Global hotkey to activate mini-mode (pynput syntax).",
+    )
+    notification_timeout_sec: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        description="Toast notification display duration (seconds).",
+    )
+    quiet_hours_start: str = Field(
+        default="19:00",
+        description="Start of quiet hours (HH:MM format, local time).",
+    )
+    quiet_hours_end: str = Field(
+        default="08:00",
+        description="End of quiet hours (HH:MM format, local time).",
+    )
+    lock_file: str = Field(
+        default="~/.probos/yeo.lock",
+        description="Single-instance lock file path.",
+    )
+    autostart_enabled: bool = Field(
+        default=False,
+        description="Register for OS autostart on boot.",
+    )
+
+    @property
+    def quiet_hours_start_tuple(self) -> tuple[int, int]:
+        """Parse quiet_hours_start into (hour, minute) tuple."""
+        parts = self.quiet_hours_start.split(":")
+        return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+
+    @property
+    def quiet_hours_end_tuple(self) -> tuple[int, int]:
+        """Parse quiet_hours_end into (hour, minute) tuple."""
+        parts = self.quiet_hours_end.split(":")
+        return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -4683,9 +4796,11 @@ class SystemConfig(BaseModel):
     )  # AD-454
     novelty_gate: NoveltyGateConfig = NoveltyGateConfig()
     earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()
+    duty_schedule: DutyPolicyConfig = Field(default_factory=DutyPolicyConfig)
     proactive_cognitive: ProactiveCognitiveConfig = ProactiveCognitiveConfig()
     persistent_tasks: PersistentTasksConfig = PersistentTasksConfig()
     channels: ChannelsConfig = ChannelsConfig()
+    m365: M365Config = Field(default_factory=M365Config)  # AD-749
     medical: MedicalConfig = MedicalConfig()
     counselor: CounselorConfig = CounselorConfig()
     circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
@@ -4821,6 +4936,7 @@ class SystemConfig(BaseModel):
     naval_organization: NavalOrganizationConfig = Field(default_factory=NavalOrganizationConfig)  # AD-477
     self_distillation: SelfDistillationConfig = SelfDistillationConfig()  # AD-487
     spc: SPCConfig = Field(default_factory=SPCConfig)  # AD-522 v1
+    desktop: DesktopConfig = Field(default_factory=DesktopConfig)  # AD-751
 
     @field_validator("health_probe_interval_seconds")
     @classmethod

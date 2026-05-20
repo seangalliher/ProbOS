@@ -248,6 +248,21 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             await runtime.attachment_reaper.stop()
         except Exception:
             logger.warning("AD-733-1: attachment_reaper.stop() failed", exc_info=True)
+
+    # AD-751: Stop desktop UX surface (tray, hotkey, autostart, notifications)
+    if hasattr(runtime, 'hotkey_listener') and runtime.hotkey_listener is not None:
+        try:
+            await runtime.hotkey_listener.stop_listening()
+        except Exception:
+            logger.warning("AD-751: hotkey_listener.stop_listening() failed", exc_info=True)
+        runtime.hotkey_listener = None
+    
+    if hasattr(runtime, 'desktop_lifecycle') and runtime.desktop_lifecycle is not None:
+        try:
+            await runtime.desktop_lifecycle.release_lock()
+        except Exception:
+            logger.warning("AD-751: desktop_lifecycle.release_lock() failed", exc_info=True)
+        runtime.desktop_lifecycle = None
         runtime.attachment_reaper = None
 
     # Stop Persistent Task Store (Phase 25a)

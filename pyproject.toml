@@ -51,6 +51,8 @@ dependencies = [
     "python-docx>=1.1",
     "cryptography>=42",
     "facenet-pytorch>=2.5",  # AD-742b: face-embedding identity (MIT)
+    "keyring>=25.0",  # AD-749: M365 token storage (MIT)
+    "msal>=1.0",  # AD-749: Microsoft OAuth device-code flow (MIT)
 ]
 
 [project.urls]

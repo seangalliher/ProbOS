@@ -5,7 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from probos.duty_schedule import DutyScheduleTracker, DutyStatus
+from datetime import datetime
+
+from probos.config import DutyPolicyConfig
+from probos.duty_schedule import DutySchedule, DutyScheduleTracker, DutyStatus, PolicyWindow
 from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
 
@@ -269,3 +272,56 @@ class TestProactiveLoopDutyIntegration:
         # Duty should be recorded as executed
         status = loop._duty_tracker.get_status("scout")
         assert status[0]["execution_count"] == 1
+
+
+class TestDutyPolicySchedule:
+    """AD-752 work-hours/quiet-hours and suppression audit behavior."""
+
+    def _config(self) -> DutyPolicyConfig:
+        return DutyPolicyConfig(
+            work_hours={"start_time": "08:00", "end_time": "18:00", "days": [0, 1, 2, 3, 4]},
+            quiet_hours={"start_time": "19:00", "end_time": "08:00", "days": []},
+            scan_throttle_sec={"inbox": 300, "calendar": 600, "teams": 900},
+            daily_briefing_time="08:00",
+            briefing_reminder_throttle_sec=3600,
+        )
+
+    def test_should_scan_honors_work_hours_and_quiet_hours(self):
+        schedule = DutySchedule(self._config())
+
+        monday_0900 = datetime(2026, 5, 18, 9, 0)
+        monday_0200 = datetime(2026, 5, 18, 2, 0)
+        saturday_1000 = datetime(2026, 5, 23, 10, 0)
+
+        assert schedule.should_scan("inbox", monday_0900) is True
+        assert schedule.should_scan("inbox", monday_0200) is False
+        assert schedule.reason_code("inbox", monday_0200) == "outside_work_hours"
+        assert schedule.should_scan("inbox", saturday_1000) is False
+
+    def test_throttle_prevents_duplicate_scans_within_window(self):
+        schedule = DutySchedule(self._config())
+
+        first = datetime(2026, 5, 18, 9, 0)
+        second = datetime(2026, 5, 18, 9, 2)
+
+        assert schedule.should_scan("inbox", first) is True
+        schedule.record_scan("inbox", first)
+        assert schedule.should_scan("inbox", second) is False
+        assert schedule.reason_code("inbox", second) == "recent_scan_throttle"
+
+    def test_reason_code_audit_trail_for_blocked_scans(self):
+        schedule = DutySchedule(self._config())
+
+        early = datetime(2026, 5, 19, 7, 30)
+        assert schedule.reason_code("calendar", early) == "outside_work_hours"
+
+    def test_exception_override_allows_weekend_urgent_window(self):
+        schedule = DutySchedule(self._config())
+        schedule.set_exception(
+            "2026-05-23",
+            PolicyWindow(start_time="09:00", end_time="12:00", days=[5]),
+        )
+
+        saturday_1000 = datetime(2026, 5, 23, 10, 0)
+        assert schedule.should_scan("teams", saturday_1000) is True
+        assert schedule.reason_code("teams", saturday_1000) == "allowed"

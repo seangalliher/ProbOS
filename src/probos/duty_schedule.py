@@ -9,13 +9,130 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
+
+from probos.config import DutyPolicyConfig, PolicyWindowConfig
 
 if TYPE_CHECKING:
     from probos.workforce import WorkItemStore
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    """Parse HH:MM format into hour/minute tuple."""
+    parts = value.split(":", 1)
+    hour = int(parts[0])
+    minute = int(parts[1]) if len(parts) > 1 else 0
+    return hour, minute
+
+
+@dataclass
+class PolicyWindow:
+    """A daily policy window with optional weekday filtering."""
+
+    start_time: str
+    end_time: str
+    days: list[int]
+
+    @classmethod
+    def from_config(cls, config: PolicyWindowConfig) -> "PolicyWindow":
+        """Construct from PolicyWindowConfig."""
+        return cls(
+            start_time=config.start_time,
+            end_time=config.end_time,
+            days=list(config.days),
+        )
+
+    def is_active(self, dt: datetime) -> bool:
+        """Check whether dt is inside this policy window."""
+        if self.days and dt.weekday() not in self.days:
+            return False
+
+        start_hour, start_minute = _parse_hhmm(self.start_time)
+        end_hour, end_minute = _parse_hhmm(self.end_time)
+        start_minutes = start_hour * 60 + start_minute
+        end_minutes = end_hour * 60 + end_minute
+        now_minutes = dt.hour * 60 + dt.minute
+
+        # Equal boundaries mean "all day" for policy simplicity.
+        if start_minutes == end_minutes:
+            return True
+        if start_minutes < end_minutes:
+            return start_minutes <= now_minutes < end_minutes
+        # Overnight window, e.g. 19:00 -> 08:00
+        return now_minutes >= start_minutes or now_minutes < end_minutes
+
+
+class DutySchedule:
+    """Policy gate for proactive scans (work-hours, quiet-hours, throttles)."""
+
+    def __init__(
+        self,
+        config: DutyPolicyConfig,
+        *,
+        now_fn: Callable[[], datetime] | None = None,
+    ) -> None:
+        self.work_hours = PolicyWindow.from_config(config.work_hours)
+        self.quiet_hours = PolicyWindow.from_config(config.quiet_hours)
+        self.scan_throttle_sec: dict[str, int] = dict(config.scan_throttle_sec)
+        self.daily_briefing_time = config.daily_briefing_time
+        self.briefing_reminder_throttle_sec = config.briefing_reminder_throttle_sec
+        self.exceptions: dict[str, PolicyWindow] = {}
+        self._last_scan_at: dict[str, datetime] = {}
+        self._now_fn = now_fn or datetime.now
+
+    def set_exception(self, date_key: str, window: PolicyWindow) -> None:
+        """Set date-specific override window (YYYY-MM-DD -> window)."""
+        self.exceptions[date_key] = window
+
+    def record_scan(self, scan_type: str, dt: datetime | None = None) -> None:
+        """Record scan execution for throttle enforcement."""
+        stamp = dt or self._now_fn()
+        self._last_scan_at[scan_type] = stamp
+
+    def should_scan(self, scan_type: str, dt: datetime | None = None) -> bool:
+        """Return True when scan is permitted by policy right now."""
+        check_dt = dt or self._now_fn()
+        return self.reason_code(scan_type, check_dt) == "allowed"
+
+    def next_scan_window(self, scan_type: str, dt: datetime | None = None) -> datetime:
+        """Return next datetime where scan_type is allowed by policy."""
+        base = dt or self._now_fn()
+        # Search up to 7 days ahead at 1-minute granularity.
+        for minute in range(0, 7 * 24 * 60 + 1):
+            candidate = base + timedelta(minutes=minute)
+            if self.should_scan(scan_type, candidate):
+                return candidate
+        return base
+
+    def reason_code(self, scan_type: str, dt: datetime) -> str:
+        """Return reason code for blocked scans, or "allowed"."""
+        date_key = dt.date().isoformat()
+        exception_window = self.exceptions.get(date_key)
+        if exception_window and exception_window.is_active(dt):
+            if self._is_throttled(scan_type, dt):
+                return "recent_scan_throttle"
+            return "allowed"
+
+        if not self.work_hours.is_active(dt):
+            return "outside_work_hours"
+        if self.quiet_hours.is_active(dt):
+            return "quiet_hours_active"
+        if self._is_throttled(scan_type, dt):
+            return "recent_scan_throttle"
+        return "allowed"
+
+    def _is_throttled(self, scan_type: str, dt: datetime) -> bool:
+        throttle_seconds = int(self.scan_throttle_sec.get(scan_type, 0))
+        if throttle_seconds <= 0:
+            return False
+        last = self._last_scan_at.get(scan_type)
+        if last is None:
+            return False
+        return (dt - last).total_seconds() < throttle_seconds
 
 
 @dataclass

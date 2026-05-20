@@ -77,6 +77,55 @@ def _wire_anomaly_window(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _wire_desktop_ux(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-751: Wire Desktop UX Surface (tray, hotkey, autostart, notifications)."""
+    cfg = getattr(config, "desktop", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    from probos.experience.desktop.tray import TrayManager
+    from probos.experience.desktop.hotkey import HotkeyListener
+    from probos.experience.desktop.lifecycle import DesktopLifecycle
+    from probos.experience.desktop.notifications import NotificationCenter
+
+    # Single-instance lock (must acquire before anything else)
+    lifecycle = DesktopLifecycle(cfg)
+    acquired = await lifecycle.acquire_lock()
+    if not acquired:
+        logger.warning("AD-751: Another instance of ProbOS is already running (lock file exists)")
+        return False
+
+    # Register autostart if configured
+    if cfg.autostart_enabled:
+        await lifecycle.register_autostart()
+        logger.info("AD-751: Autostart registration completed")
+
+    # Initialize tray manager
+    tray_manager = TrayManager(cfg)
+    tray_manager.set_status("idle")
+    
+    # Start hotkey listener
+    hotkey_listener = HotkeyListener(cfg)
+    await hotkey_listener.start_listening(cfg.hotkey)
+    
+    # Initialize notification center
+    notification_center = NotificationCenter(cfg)
+    
+    # Store in runtime for later access
+    runtime.desktop_lifecycle = lifecycle
+    runtime.tray_manager = tray_manager
+    runtime.hotkey_listener = hotkey_listener
+    runtime.notification_center = notification_center
+    
+    logger.info(
+        "AD-751: Desktop UX Surface initialized (tray=%s, hotkey=%s, autostart=%s)",
+        cfg.tray_autostart,
+        cfg.hotkey,
+        cfg.autostart_enabled,
+    )
+    return True
+
+
 def _wire_creative_expression(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-525 v1: Wire CreativeSkillsRegistry + CreativeOutputWriter."""
     cfg = getattr(config, "creative_expression", None)
@@ -1944,6 +1993,9 @@ async def finalize_startup(
     if _wire_anomaly_window(runtime=runtime, config=config):
         logger.info("AD-673: AnomalyWindowManager wired during finalization")
 
+    if await _wire_desktop_ux(runtime=runtime, config=config):
+        logger.info("AD-751: Desktop UX Surface wired during finalization")
+
     if await _wire_self_distillation(runtime=runtime, config=config):
         logger.info("AD-487: Self-distillation v1 wired during finalization")
 
@@ -2070,7 +2122,10 @@ async def finalize_startup(
             runtime._populate_watch_roster()
         await watch_manager.start()
 
+        from probos.duty_schedule import DutySchedule
         from probos.proactive import ProactiveCognitiveLoop
+
+        runtime.duty_schedule = DutySchedule(config.duty_schedule)
 
         proactive_loop = ProactiveCognitiveLoop(
             interval=config.proactive_cognitive.interval_seconds,

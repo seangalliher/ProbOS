@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import hashlib
 import logging
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 # BF-174: Pattern to strip self-monitoring bracket markers that LLMs parrot back.
@@ -28,6 +31,8 @@ def _strip_bracket_markers(text: str) -> str:
 from probos.config import format_trust
 from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
+from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.duty_schedule import DutySchedule
 from probos.events import EventType
 from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
@@ -52,6 +57,14 @@ logger = logging.getLogger(__name__)
 _DREAM_RECENT_LIMIT = 5
 _CHAIN_TRACE_RECENT_LIMIT = 5
 _BREAKER_RECENT_LIMIT = 5
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    """Parse HH:MM into (hour, minute) for schedule threshold checks."""
+    parts = value.split(":", 1)
+    hour = int(parts[0])
+    minute = int(parts[1]) if len(parts) > 1 else 0
+    return hour, minute
 
 
 def collect_notebook_metrics(runtime: Any, agent_id: str = "") -> dict[str, Any]:
@@ -149,6 +162,188 @@ def compute_metrics_delta(
                 delta[key] = f"{old_val} \u2192 {new_val}"
 
     return delta
+
+
+@dataclass
+class ProactiveStatusSnapshot:
+    """Runtime-facing proactive status projection for API/UI surfaces."""
+
+    next_inbox_scan: str
+    next_calendar_scan: str
+    work_hours_active: bool
+    quiet_hours_active: bool
+    last_scan_count: dict[str, int]
+
+
+_PROACTIVE_SCAN_INSTRUCTIONS = (
+    "You are a policy-governed proactive scan coordinator. "
+    "Your role is to evaluate scan eligibility and emit heartbeat-tagged scan intents."
+)
+
+
+class ProactiveScanAgent(CognitiveAgent):
+    """Periodic policy-gated scan selector for inbox/calendar/teams."""
+
+    agent_type = "proactive_scan"
+    tier = "utility"
+    instructions = _PROACTIVE_SCAN_INSTRUCTIONS
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("pool", "operations_scheduler")
+        super().__init__(**kwargs)
+
+    async def perceive(self, intent: dict[str, Any] | None = None) -> IntentMessage:
+        """Build a heartbeat-tagged proactive_scan intent with allowed scan types."""
+        schedule: DutySchedule | None = getattr(self._runtime, "duty_schedule", None)
+        scan_types = ["inbox", "calendar", "teams"]
+        if schedule is None:
+            return IntentMessage(
+                intent="proactive_scan",
+                params={
+                    "scan_types": [],
+                    "tagged_as": "heartbeat",
+                    "suppressed_reasons": {kind: "policy_unavailable" for kind in scan_types},
+                },
+            )
+
+        now = datetime.now()
+        allowed: list[str] = []
+        suppressed: dict[str, str] = {}
+        for scan_type in scan_types:
+            if schedule.should_scan(scan_type, now):
+                allowed.append(scan_type)
+            else:
+                suppressed[scan_type] = schedule.reason_code(scan_type, now)
+
+        return IntentMessage(
+            intent="proactive_scan",
+            params={
+                "scan_types": allowed,
+                "tagged_as": "heartbeat",
+                "suppressed_reasons": suppressed,
+            },
+        )
+
+
+class DailyBriefingScheduler:
+    """Daily briefing trigger with once-per-day persistence and dismiss support."""
+
+    def __init__(
+        self,
+        *,
+        duty_schedule: DutySchedule,
+        runtime: Any | None = None,
+        state_path: Path | None = None,
+        now_fn: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._duty_schedule = duty_schedule
+        self._runtime = runtime
+        self._state_path = state_path or Path("data/briefing_state.json")
+        self._now_fn = now_fn or datetime.now
+
+    async def trigger_briefing_if_time(self) -> bool:
+        """Trigger a briefing once per day after briefing-time threshold."""
+        now = self._now_fn()
+        if not self._duty_schedule.work_hours.is_active(now):
+            return False
+
+        state = self._load_state()
+        day_key = now.date().isoformat()
+        if day_key in state.get("dismissed_days", []):
+            return False
+        if state.get("last_triggered_day") == day_key:
+            return False
+        if not self._is_briefing_time_reached(now):
+            return False
+
+        last_reminder_ts = float(state.get("last_reminder_ts", 0.0))
+        reminder_gap = now.timestamp() - last_reminder_ts
+        if reminder_gap < float(self._duty_schedule.briefing_reminder_throttle_sec):
+            return False
+
+        state["last_triggered_day"] = day_key
+        state["last_reminder_ts"] = now.timestamp()
+        self._save_state(state)
+
+        rt = self._runtime
+        if rt is not None and hasattr(rt, "emit_event"):
+            try:
+                rt.emit_event(
+                    EventType.TASK_SCHEDULED,
+                    {
+                        "task_kind": "daily_briefing",
+                        "scheduled_at": now.timestamp(),
+                        "source": "ad-752",
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "AD-752: daily briefing emit failed; briefing state persisted and will retry naturally",
+                    exc_info=True,
+                )
+        return True
+
+    def dismiss_for_today(self) -> None:
+        """Persist explicit captain dismissal for the current local day."""
+        now = self._now_fn()
+        state = self._load_state()
+        day_key = now.date().isoformat()
+        dismissed_days = list(state.get("dismissed_days", []))
+        if day_key not in dismissed_days:
+            dismissed_days.append(day_key)
+        state["dismissed_days"] = dismissed_days[-30:]
+        self._save_state(state)
+
+    def _is_briefing_time_reached(self, dt: datetime) -> bool:
+        hour, minute = _parse_hhmm(self._duty_schedule.daily_briefing_time)
+        return (dt.hour, dt.minute) >= (hour, minute)
+
+    def _load_state(self) -> dict[str, Any]:
+        if not self._state_path.exists():
+            return {}
+        try:
+            return json.loads(self._state_path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.warning(
+                "AD-752: briefing state unreadable at %s; resetting state to empty",
+                self._state_path,
+                exc_info=True,
+            )
+            return {}
+
+    def _save_state(self, state: dict[str, Any]) -> None:
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._state_path.write_text(
+            json.dumps(state, ensure_ascii=True, sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+
+
+def build_proactive_status_snapshot(runtime: Any) -> ProactiveStatusSnapshot:
+    """Build status payload for Ward Room proactive visibility endpoint."""
+    duty_schedule: DutySchedule | None = getattr(runtime, "duty_schedule", None)
+    now = datetime.now()
+    default_counts = {"inbox": 0, "calendar": 0, "teams": 0}
+    counts = dict(getattr(runtime, "proactive_last_scan_count", default_counts) or default_counts)
+
+    if duty_schedule is None:
+        return ProactiveStatusSnapshot(
+            next_inbox_scan=now.isoformat(),
+            next_calendar_scan=now.isoformat(),
+            work_hours_active=False,
+            quiet_hours_active=False,
+            last_scan_count=counts,
+        )
+
+    next_inbox = duty_schedule.next_scan_window("inbox", now)
+    next_calendar = duty_schedule.next_scan_window("calendar", now)
+    return ProactiveStatusSnapshot(
+        next_inbox_scan=next_inbox.isoformat(),
+        next_calendar_scan=next_calendar.isoformat(),
+        work_hours_active=duty_schedule.work_hours.is_active(now),
+        quiet_hours_active=duty_schedule.quiet_hours.is_active(now),
+        last_scan_count=counts,
+    )
 
 
 class ProactiveCognitiveLoop:

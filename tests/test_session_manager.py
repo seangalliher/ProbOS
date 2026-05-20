@@ -8,6 +8,7 @@ from rich.console import Console
 from io import StringIO
 
 from probos.experience.commands.session import SessionManager
+from probos.cognitive.session_manager import SessionManager as ContinuitySessionManager
 from probos.runtime import ProbOSRuntime
 
 
@@ -114,3 +115,35 @@ class TestSessionManager:
         sm.exit_session(console)
         output = get_output(console)
         assert "already" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_ad750_create_and_restore_session(tmp_path) -> None:
+    """AD-750 happy path: continuity SessionManager persists and restores sessions."""
+    manager = ContinuitySessionManager(sessions_dir=tmp_path, user_id="captain")
+    created = await manager.create_session(agent_type="Yeo", platform="desktop")
+
+    restored = await manager.restore_session(created.id)
+    assert restored is not None
+    assert restored.id == created.id
+    assert restored.agent_type == "Yeo"
+
+
+@pytest.mark.asyncio
+async def test_ad750_context_persistence_and_missing_session_boundary(tmp_path) -> None:
+    """AD-750 boundary/error: context updates persist and missing restore returns None."""
+    manager = ContinuitySessionManager(sessions_dir=tmp_path, user_id="captain")
+    created = await manager.create_session(agent_type="ArchitectAgent")
+
+    await manager.update_session_context(
+        created.id,
+        {"active_ad": "AD-750", "state": "daily_plan"},
+    )
+
+    restored = await manager.restore_session(created.id)
+    assert restored is not None
+    assert restored.context["active_ad"] == "AD-750"
+    assert restored.context["state"] == "daily_plan"
+
+    missing = await manager.restore_session("missing-session")
+    assert missing is None

@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
+from probos.governance.policy_engine import TenantPolicyEngine
+from probos.security.permission_card import card_from_intent
+from probos.security.destructive_ops import DestructiveOpsGuard
+from probos.security.permission_model import PermissionConfig, should_auto_approve
+from probos.types import IntentMessage
 from probos.consensus.shapley import compute_shapley_values
 from probos.types import (
     AgentID,
@@ -16,6 +23,14 @@ from probos.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class QuorumResult:
+    """Permission gate result prior to standard consensus voting."""
+
+    approved: bool
+    reason: str
 
 
 class QuorumEngine:
@@ -149,3 +164,39 @@ class QuorumEngine:
         # Pick the value with highest total weight
         best_key = max(value_weights, key=value_weights.get)  # type: ignore[arg-type]
         return consensus, value_map[best_key]
+
+
+async def vote_on_intent(
+    intent: IntentMessage,
+    config: PermissionConfig,
+    *,
+    policy_engine: TenantPolicyEngine,
+    standard_quorum_voting: Callable[[], Awaitable[QuorumResult]],
+) -> QuorumResult:
+    """Apply AD-753 permission gates before running standard quorum voting."""
+    scope = str(intent.params.get("scope") or "unspecified")
+    reason = str(intent.params.get("reason") or "permission_check")
+    ttl_sec_raw = intent.params.get("ttl_sec")
+    ttl_sec = int(ttl_sec_raw) if isinstance(ttl_sec_raw, int) else config.read_only_expiry_window_sec
+    card = card_from_intent(intent=intent.intent, reason=reason, scope=scope, ttl_sec=ttl_sec)
+
+    destructive_guard = DestructiveOpsGuard()
+    if await destructive_guard.check_and_log(intent.intent):
+        await policy_engine.audit_log(card, "destructive_requires_quorum")
+        return await standard_quorum_voting()
+
+    if await should_auto_approve(intent.intent, config):
+        logger.info(
+            "AD-753: auto-approved read-only intent=%s under mode=%s",
+            intent.intent,
+            config.mode.value,
+        )
+        return QuorumResult(approved=True, reason="auto_approve_read_only")
+
+    if await policy_engine.evaluate_permission(card):
+        await policy_engine.audit_log(card, "policy_approved")
+        logger.info("AD-753: policy engine approved intent=%s", intent.intent)
+        return QuorumResult(approved=True, reason="policy_approved")
+
+    logger.info("AD-753: policy denied intent=%s; falling back to standard quorum", intent.intent)
+    return await standard_quorum_voting()

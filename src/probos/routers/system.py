@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
 from probos.api_models import ShutdownRequest
+from probos.proactive import build_proactive_status_snapshot
 from probos.routers.deps import get_runtime, get_task_tracker
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,19 @@ async def health(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
 @router.get("/status")
 async def status(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     return runtime.status()
+
+
+@router.get("/proactive/status")
+async def proactive_status(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-752: Captain-facing proactive automation status."""
+    snapshot = build_proactive_status_snapshot(runtime)
+    return {
+        "next_inbox_scan": snapshot.next_inbox_scan,
+        "next_calendar_scan": snapshot.next_calendar_scan,
+        "work_hours_active": snapshot.work_hours_active,
+        "quiet_hours_active": snapshot.quiet_hours_active,
+        "last_scan_count": snapshot.last_scan_count,
+    }
 
 
 @router.get("/extensions")

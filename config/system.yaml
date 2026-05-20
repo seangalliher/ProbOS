@@ -599,6 +599,8 @@ security:
     anchor_mismatch_threshold: 0.7
     dp_min_cohort_size: 3
   profile: strict
+  permission_mode: manual
+  policy_engine_class: NullPolicyEngine
   permissions:
     allow: []
     deny: []
@@ -639,6 +641,26 @@ earned_agency:
     responsive: 0.3
     contributory: 0.5
     proactive: 0.7
+duty_schedule:
+  work_hours:
+    start_time: '08:00'
+    end_time: '18:00'
+    days:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+  quiet_hours:
+    start_time: '19:00'
+    end_time: '08:00'
+    days: []
+  scan_throttle_sec:
+    inbox: 300
+    calendar: 600
+    teams: 900
+  daily_briefing_time: '08:00'
+  briefing_reminder_throttle_sec: 3600
 proactive_cognitive:
   enabled: true
   interval_seconds: 120.0
@@ -733,6 +755,13 @@ channels:
     enabled: false
     shared_secret: ''
     allowed_channels: []
+m365:
+  enabled: false
+  client_id: null
+  authority: "https://login.microsoftonline.com/common"
+  scopes:
+    - "https://graph.microsoft.com/.default"
+  cache_dir: "~/.probos/m365_cache"
 medical:
   enabled: true
   vitals_interval_seconds: 5.0
@@ -1699,3 +1728,13 @@ self_distillation:
 spc:
   enabled: true
   sample_window: 100
+desktop:
+  # AD-751: Desktop UX Surface for personal desktop environments
+  enabled: false  # Flip to true to enable desktop surface (tray, hotkey, autostart)
+  tray_autostart: true
+  hotkey: "ctrl+shift+space"
+  notification_timeout_sec: 5
+  quiet_hours_start: "19:00"
+  quiet_hours_end: "08:00"
+  lock_file: "~/.probos/yeo.lock"
+  autostart_enabled: false

@@ -2,6 +2,7 @@ import { useStore } from '../../store/useStore';
 import { WardRoomChannelList } from './WardRoomChannelList';
 import { WardRoomThreadList } from './WardRoomThreadList';
 import { WardRoomThreadDetail } from './WardRoomThreadDetail';
+import { ProactiveStatus } from './ProactiveStatus';
 import { useEffect } from 'react';
 import { ArrowRight, ArrowLeft, Close } from '../icons/Glyphs';
 
@@ -209,6 +210,7 @@ export function WardRoomPanel() {
         <DmActivityLog />
       ) : (
         <>
+          <ProactiveStatus />
           <WardRoomChannelList />
           <WardRoomThreadList />
         </>

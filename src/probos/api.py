@@ -204,6 +204,8 @@ def create_app(runtime: Any) -> FastAPI:
         perception,  # AD-733 (Wave 170): camera frame ingestion
         agent_actions,  # AD-745 (Wave 178): conversation -> action dispatch
         voice,  # AD-705c (Wave 179): wake-word training endpoints
+        auth_m365,  # AD-749: M365 OAuth auth endpoints
+        work,  # AD-750: Semantic work layer endpoints
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -220,6 +222,8 @@ def create_app(runtime: Any) -> FastAPI:
         perception,
         agent_actions,
         voice,
+        auth_m365,
+        work,
     ):
         app.include_router(r.router)
 

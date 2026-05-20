@@ -670,6 +670,68 @@ class NodeSelfModel:
     timestamp: float = 0.0
 
 
+# ------------------------------------------------------------------
+# AD-750: Semantic work layer entity models (personal data model)
+# ------------------------------------------------------------------
+
+
+@dataclass
+class SemanticEntity:
+    """Base for all work semantics (personal data model)."""
+
+    id: str  # UUID
+    entity_type: str  # "task" | "meeting" | "commitment" | "thread" | "document"
+    owner_id: str  # Captain's local identifier
+    created_at: datetime
+    modified_at: datetime
+    content: str  # plaintext/reference (not full doc body)
+
+
+@dataclass
+class Task(SemanticEntity):
+    """A personal task tracked by Yeo and crew agents."""
+
+    title: str = ""
+    due_date: datetime | None = None
+    completed: bool = False
+    delegated_to_agent: str | None = None  # "OutlookAgent", "ArchitectAgent", etc.
+    priority: int = 1  # 1–5 scale
+
+
+@dataclass
+class Meeting(SemanticEntity):
+    """A calendar meeting entry."""
+
+    title: str = ""
+    start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    end_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    attendees: list[str] = field(default_factory=list)
+    location: str | None = None
+
+
+@dataclass
+class Commitment(SemanticEntity):
+    """A crew commitment — what the assistant committed to deliver."""
+
+    description: str = ""
+    deadline: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    stake_agent: str = ""  # who holds the commitment
+    status: str = "open"  # "open" | "in_progress" | "completed" | "blocked"
+
+
+@dataclass
+class WorkThread(SemanticEntity):
+    """A conversation/work thread with related tasks and meetings."""
+
+    topic: str = ""
+    messages: list[dict] = field(default_factory=list)
+    related_tasks: list[str] = field(default_factory=list)
+    related_meetings: list[str] = field(default_factory=list)
+
+
+# ------------------------------------------------------------------
+
+
 @dataclass
 class FederationMessage:
     """Wire protocol message between nodes."""
