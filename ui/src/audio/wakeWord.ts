@@ -18,6 +18,10 @@ import {
   stopListening,
   isSpeechRecognitionSupported,
 } from './speechInput';
+import {
+  PRIORITY_WAKE_WORD,
+  currentHolder as _arbiterCurrentHolder,
+} from './speechRecognitionArbiter';
 import { onSpeechEvent } from './voice';
 import {
   routeWakeTranscript,
@@ -320,6 +324,14 @@ export async function _loadOnnxRuntime(): Promise<boolean> {
 /* ── Internal: continuous recognition + transcript pump ───────────── */
 
 function _startContinuousRecognition(): void {
+  // BF-318: if a higher-priority holder owns the mic (press-to-talk
+  // or ConversationController), park rather than trying to acquire.
+  // ``onReleased`` (registered via the arbiter lease below) will
+  // re-arm us when the higher holder finishes.
+  const holder = _arbiterCurrentHolder();
+  if (holder && holder.priority > PRIORITY_WAKE_WORD) {
+    return;
+  }
   startListening(
     (transcript) => _ingestTranscript(transcript),
     () => {
@@ -352,8 +364,39 @@ function _startContinuousRecognition(): void {
       continuous: true,
       interimResults: false,
       onSpeechEnd: () => _onSpeechEndHeuristic(),
+      // BF-318 — wake-word yields to press-to-talk + conversation.
+      priority: PRIORITY_WAKE_WORD,
+      holder: 'wake_word',
+      onPreempted: () => {
+        // A higher-priority holder grabbed the mic. Park; we'll be
+        // notified to re-arm when they release. The arbiter notifies
+        // queued waiters' ``onReleased`` on release; we don't enqueue
+        // ourselves (which would block press-to-talk's re-acquire) —
+        // instead we poll via _maybeRearmAfterRelease below.
+        _scheduleRearmAfterRelease();
+      },
     },
   );
+}
+
+/** BF-318: while a higher-priority holder owns the mic, wake-word
+ *  polls the arbiter's currentHolder() and re-arms when it goes
+ *  null. Polling (vs. enqueuing) keeps wake-word from blocking
+ *  press-to-talk re-acquires. */
+let _rearmPoll: ReturnType<typeof setTimeout> | null = null;
+
+function _scheduleRearmAfterRelease(): void {
+  if (_rearmPoll !== null) return;
+  _rearmPoll = setTimeout(() => {
+    _rearmPoll = null;
+    if (_state === 'off') return;
+    const holder = _arbiterCurrentHolder();
+    if (holder === null) {
+      _startContinuousRecognition();
+    } else {
+      _scheduleRearmAfterRelease();
+    }
+  }, 250);
 }
 
 function _ingestTranscript(transcript: string): void {
