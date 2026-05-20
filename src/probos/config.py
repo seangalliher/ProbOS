@@ -265,6 +265,38 @@ class CognitiveConfig(BaseModel):
     # Hot-reload via the BF-308 settings watcher.
     offline_stt_enabled: bool = False
 
+    # AD-747 — Always-on conversation mode (LiveKit VoicePipelineAgent
+    # pattern absorbed Apache 2.0). When ON and a DM thread is active,
+    # the ConversationController acquires PRIORITY_CONVERSATION on the
+    # BF-318 arbiter, gates STT by VAD, auto-submits transcripts to the
+    # open DM agent, and supports barge-in (VAD speech_start during TTS
+    # interrupts the agent's playback). Default-OFF (Wave 10 convention
+    # #14 transitional gate); press-to-talk continues to work either
+    # way. Hot-reload.
+    conversation_mode_enabled: bool = Field(default=False,
+        description=(
+            "AD-747: when ON, opening a DM thread arms an always-on "
+            "conversation. Default OFF; press-to-talk preserved. "
+            "Hot-reload."
+        ),
+    )
+    conversation_silence_timeout_ms: int = Field(default=30000, ge=1000, le=300000,
+        description=(
+            "AD-747: silence-timeout in ms after the agent's TTS reply "
+            "finishes; expiry disarms the conversation and returns to "
+            "wake-word. 30000 matches ChatGPT advanced voice mode. "
+            "Hot-reload."
+        ),
+    )
+    conversation_barge_in_enabled: bool = Field(default=True,
+        description=(
+            "AD-747: when ON, VAD speech_start during agent_speaking "
+            "stops the TTS mid-utterance and re-arms STT. Operators in "
+            "noisy environments can disable; AD-747-1 forward marker "
+            "for prosody-gated barge-in. Hot-reload."
+        ),
+    )
+
     # AD-730-3: image_gen tier — sixth peer of fast/standard/deep/vision/
     # compute_use. Image generation via OpenAI-compatible
     # POST /v1/images/generations (DALL-E 3 / gpt-image-1 / local SD via

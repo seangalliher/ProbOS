@@ -133,6 +133,43 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
                 ),
                 hot_reload=True,
             ),
+            # AD-747 — Always-on conversation mode.
+            FieldDescriptor(
+                "cognitive.conversation_mode_enabled",
+                "Always-on conversation mode",
+                "bool",
+                description=(
+                    "AD-747: when ON, opening a DM thread arms an "
+                    "always-on conversation (mic stays hot, VAD-gated "
+                    "STT auto-submits, 30s silence timeout, optional "
+                    "barge-in). Default OFF; press-to-talk preserved. "
+                    "Hot-reload."
+                ),
+                hot_reload=True,
+            ),
+            FieldDescriptor(
+                "cognitive.conversation_silence_timeout_ms",
+                "Conversation silence timeout (ms)",
+                "int",
+                description=(
+                    "AD-747: silence-timeout after agent TTS finishes. "
+                    "30000 matches ChatGPT advanced voice mode. "
+                    "Range 1000-300000. Hot-reload."
+                ),
+                hot_reload=True,
+            ),
+            FieldDescriptor(
+                "cognitive.conversation_barge_in_enabled",
+                "Conversation barge-in",
+                "bool",
+                description=(
+                    "AD-747: VAD speech_start during agent_speaking "
+                    "stops TTS mid-utterance and re-arms STT. Disable "
+                    "in noisy environments (AD-747-1 forward marker "
+                    "for prosody-gated variant). Hot-reload."
+                ),
+                hot_reload=True,
+            ),
         ),
     ),
     SectionDescriptor(
