@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
 
 vi.mock('../audio/voice', () => ({
+  getServerPiperVoices: vi.fn(async () => null),
   speakResponse: vi.fn(),
   getAvailableVoices: () => [],
 }));

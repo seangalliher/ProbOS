@@ -17,6 +17,7 @@ vi.mock('@react-three/fiber', () => ({
 }));
 
 vi.mock('../audio/voice', () => ({
+  getServerPiperVoices: vi.fn(async () => null),
   onSpeechEvent: (fn: any) => {
     fiberMocks.listeners.add(fn);
     return () => { fiberMocks.listeners.delete(fn); };

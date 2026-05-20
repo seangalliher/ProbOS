@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 const { speakResponseMock, startListeningMock, stopListeningMock, supportedRef } = mocks;
 
 vi.mock('../audio/voice', () => ({
+  getServerPiperVoices: vi.fn(async () => null),
   speakResponse: mocks.speakResponseMock,
   stripMarkdownForSpeech: (s: string) => s,
   // AD-718d-1: ModulationIndicator (transitively mounted by ProfileChatTab)
