@@ -106,7 +106,14 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-timeout = 90
+# BF-320: bumped 90s -> 180s. GitHub Actions runners are ~2-3x slower than a
+# typical dev box on heavy-fixture tests (full runtime boot + ChromaDB +
+# SQLite + multi-pool agent registry). The 90s cap was tight enough that 5
+# integration tests timed out in CI while passing in 8-12s locally
+# (TestReflectHardeningExtended, TestRuntimeIntegration, TestTrustIntegration,
+# TestRuntimeSelfMod, TestEpisodicMemorySeed). 180s gives 2x headroom for the
+# slowest fixture without masking real hangs.
+timeout = 180
 # BF #466: cap xdist at 16 workers and use loadfile distribution. Heavy-fixture
 # files (test_runtime.py, test_dreaming.py, test_distribution.py, etc.) crash
 # workers under -n auto when fixtures concurrently boot ChromaDB/SQLite. The
