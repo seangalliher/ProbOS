@@ -21,14 +21,19 @@ The PROACTIVE STATUS panel (next inbox scan, next calendar scan, work-hours, qui
 - Remove the export from `ui/src/components/wardroom/index.ts`.
 - Remove the import + render site from `ui/src/components/wardroom/WardRoomPanel.tsx`.
 
-### 2. Add it to the Settings panel
-- Add a new "Proactive" section in the Settings panel alongside the existing sections (Perception, etc.). Find the canonical section list — likely `ui/src/components/settings/SettingsPanel.tsx` or `sections/index.ts`.
+### 2. Add it to the Settings panel (two-layer wiring)
+The Settings panel is schema-driven — adding a custom panel section requires BOTH backend registry AND frontend branch wiring (mirrors the existing `perception` section):
+
+- **Backend** — `src/probos/settings/section_registry.py`: append a `SectionDescriptor(section_id="proactive", label="Proactive", glyph="◐", domain="Core", description="Next inbox/calendar scan, work-hours, quiet-hours, and the global enable toggle.", fields=())` to the `SECTIONS` tuple. `fields=()` because this is a custom panel, not a field-driven section.
+- **Frontend custom-panel branch** — `ui/src/components/settings/SettingsMain.tsx` already has a per-section branch pattern at line ~283: `{section.section_id === 'perception' && <PerceptionLivePanel />}`. Add a sibling branch `{section.section_id === 'proactive' && <ProactiveStatusSection />}` next to it, with the corresponding `import ProactiveStatusSection from './sections/ProactiveStatusSection';` at the top.
 - The section renders the same payload (`/api/proactive/status`) the WardRoom panel showed: next inbox scan, next calendar scan, work-hours, quiet-hours, last scan findings, and the global enable toggle.
-- Keep the existing styling pattern used by other Settings sections (header glyph, label hierarchy). No emoji.
+- Reuse `SECTION_ICONS` in `ui/src/components/settings/icons.tsx` if a new glyph is needed; do not invent ad-hoc icons. No emoji.
+- Update `tests/test_ad741_section_registry.py` to expect the new section descriptor (this test guards against phantom field references and section drift).
 
 ### 3. Tests
 - Move `ui/src/__tests__/ProactiveStatus.test.tsx` references from `../components/wardroom/ProactiveStatus` to the new path.
-- Add a test that the Settings panel renders the new section.
+- Add a Vitest test that `SettingsMain` renders `ProactiveStatusSection` when `section_id === 'proactive'` is selected.
+- Add/update `tests/test_ad741_section_registry.py` to assert the new `SectionDescriptor` is registered with the expected `section_id`, `label`, `domain`, and empty `fields` tuple.
 - Remove (or update) any WardRoom test that asserted ProactiveStatus was present in the WardRoom DOM.
 - Existing payload-rendering and toggle-behaviour assertions stay identical.
 

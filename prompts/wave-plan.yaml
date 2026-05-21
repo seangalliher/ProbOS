@@ -4016,3 +4016,45 @@ waves:
         2) BF-318 (mic arbiter)
         3) AD-746 (camera/screen source policy)
         4) AD-747 (conversation controller; depends on BF-318)
+
+  - id: "184-post-yeo-live-feedback"
+    title: "Post-Yeo live-feedback batch (AD-762 + AD-766 + AD-763 + AD-761 + AD-765)"
+    kind: combo
+    depends_on: ["183-perception-conversation-hardening"]
+    dispatch_prompt: "prompts/ad-766-yeoman-agent-bridge-crew.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-762-relocate-proactive-status-to-settings.md"
+      - "prompts/ad-766-yeoman-agent-bridge-crew.md"
+      - "prompts/ad-763-connector-scoping-and-scan-configuration.md"
+      - "prompts/ad-761-screen-share-in-1on1-dm.md"
+      - "prompts/ad-765-yeo-gap-doc-reconciliation-audit.md"
+    builder_required: true
+    issues_to_close: [708, 712, 709, 707, 711]
+    estimated_hours: 10
+    status: drafting
+    notes: |
+      Live-use feedback batch from Captain 2026-05-20, after Wave 181 Yeo
+      feature-complete gate closure surfaced gaps not covered by AD-758.
+      Strict serial build order (dependency-justified):
+        1. AD-762 (#708) - mechanical UI relocation of ProactiveStatus from
+           WardRoom to Settings. Unblocks Settings layout for AD-763. ~1h.
+        2. AD-766 (#712) - instantiate YeomanAgent on the Bridge (joins
+           First Officer + Counselor). Foundational - without it the
+           proactive scheduler has no Captain-facing consumer and the
+           Captain Card persona has no agent class adopting it. ~3h.
+        3. AD-763 (#709) - connector scoping + scan configuration backend
+           + Settings UI. Builds on Yeoman as digest consumer and the
+           relocated Settings surface from AD-762. ~3h.
+        4. AD-761 (#707) - screen share button in 1:1 DM (ProfileChatTab
+           parity with WardRoom AD-744). Lifts existing primitives. ~1.5h.
+        5. AD-765 (#711) - Yeo gap-doc reconciliation audit. Doc-only
+           deliverable producing a child-AD backlog for Wave 185. ~1.5h.
+      Hard-blocker exclusions:
+        - AD-760 (#706) voice conversation wiring - deferred to Wave 185;
+          large Schmitt-trigger detector spec deserves its own wave.
+        - AD-764 (#710) Gmail connector - explicitly depends on AD-763;
+          chains naturally after Wave 184.
+        - AD-759 (#705) native desktop tray - multi-day packaging work.
+      Workflow: Architect precheck + review_1 + review_2 + GATE 1 BEFORE
+      Builder dispatch. No phantom-API shortcuts.

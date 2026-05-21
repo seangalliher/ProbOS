@@ -17,10 +17,16 @@ The proactive scheduler currently scans **the signed-in user's primary mailbox I
 - **Operational rhythm.** Inbox scans every 5 minutes may be right; calendar scans every 5 minutes is wasteful. Per-scan-type intervals belong to the operator, not the codebase default.
 - **Discoverability.** The Captain asked the question — that means today's behaviour is undocumented from the UI's perspective. The Settings surface should be the answer.
 
-## Scope (v1)
+## Scope (v1) — architectural reset
+
+**IMPORTANT (architect review, 2026-05-20)**: the Graph integration in `OutlookAgent.list_changes()` / `CalendarAgent.list_changes()` is a **placeholder today** (returns `[]`; verified at `src/probos/integrations/m365_connector.py:103-110` and `:303-310`). The per-scan-type interval primitive does **not exist** — `ProactiveHeartbeatScheduler._SCAN_TYPES` share a single cron expression (`agents/operations/scheduler.py:22-78`). The original prompt framed both as one-line edits; they are not. v1 scope is reset as follows:
+
+- **In v1**: ship config model (§1), Graph discovery endpoints with real Graph calls (§2), real Graph integration in `OutlookAgent.list_changes()` / `CalendarAgent.list_changes()` honouring the scoping config (§3), and HXI Connectors section (§5). The first real Graph calls are part of this AD — not optional.
+- **Deferred to AD-763d**: per-scan-type intervals (§4). The scheduler stays on the existing single shared cron expression for v1. The `intervals` block is still defined in the config model (so the schema is stable) but the scheduler does NOT read it yet; a `# TODO AD-763d: per-scan-type cron derivation` comment is added at the scheduler insertion site.
+- **Forward marker**: file `AD-763d — per-scan-type cron intervals` as a follow-up; it requires a separate persistent-task-store migration and seconds-→-cron mapping logic out of scope for this AD.
 
 ### 1. Config model (backend)
-Add a `ProactiveScanConfig` Pydantic block in `src/probos/config.py`, persisted per-operator in the existing settings store:
+Add a `ProactiveScanConfig` Pydantic block in `src/probos/config.py`, hung off `SystemConfig` (not a separate per-operator JSON store — per-operator settings architecture lands later under AD-741 follow-ups). Defaults must keep existing operator behaviour identical.
 
 - `inbox`:
   - `folders: list[str]` — Graph mail folder IDs to include. Default `["Inbox"]`.
@@ -50,20 +56,28 @@ New `src/probos/api/routers/connectors.py`:
 
 All endpoints require an authenticated M365 session; return 401 if no token / 503 if Graph is unreachable. Defensive validation at the API boundary (Pydantic models, not raw dicts).
 
-### 3. Connector wiring (backend)
+### 3. Connector wiring (backend) — first real Graph calls
+**Pre-condition** — `OutlookAgent.list_changes()` and `CalendarAgent.list_changes()` are currently stubs returning `[]` (`m365_connector.py:103-110`, `:303-310`). This AD ships the first real implementations:
+
 - `OutlookAgent.list_changes()` reads `config.proactive_scan.inbox` and:
-  - Queries each selected folder ID via Graph `/me/mailFolders/{id}/messages` instead of the hardcoded primary Inbox.
-  - Applies `lookback_hours`, `importance_filter`, `unread_only`, and the allow/deny lists at the Graph `$filter` layer where possible, falling back to in-process filtering.
-- `CalendarAgent.list_changes()` reads `config.proactive_scan.calendar` and queries each `calendar_id` via `/me/calendars/{id}/events`, applying `lookahead_hours` and `include_declined`.
+  - For each selected folder ID, calls Graph `GET /me/mailFolders/{id}/messages?$filter=receivedDateTime ge <since>&$top=100` via `httpx.AsyncClient` with the token from `self._token_manager`.
+  - Applies `lookback_hours`, `importance_filter`, `unread_only`, and the allow/deny lists at the Graph `$filter` layer where the Graph query language supports it; falls back to in-process filtering for the rest.
+  - Pagination: follow `@odata.nextLink` for up to 5 pages (operator-tunable defer to AD-763d), then stop with a `logger.info("AD-763: pagination cap reached for folder=%s", folder_id)`.
+  - Error handling: 401 → propagate so the token manager can refresh; 429 → honour `Retry-After`; 5xx → log warning + return whatever was collected.
+- `CalendarAgent.list_changes()` reads `config.proactive_scan.calendar` and queries each `calendar_id` via `GET /me/calendars/{id}/calendarView?startDateTime=<now>&endDateTime=<now+lookahead_hours>`. Same error-handling shape as OutlookAgent.
+- These are the first real Graph calls in the codebase — follow the existing `M365Connector` Protocol (`m365_connector.py:16-32`) and the established AD-731 attachment-store pattern for any binary content.
 
-### 4. Scheduler wiring (backend)
-- `ProactiveHeartbeatScheduler` reads `config.proactive_scan.intervals` and registers each cron job with its per-scan-type interval instead of the single global default.
-- On config update via PUT, the scheduler re-reads intervals and reschedules. (If reschedule-on-the-fly is non-trivial, log a "restart required to apply" warning — but the saved config still takes effect on next boot.)
+### 4. Scheduler wiring (backend) — deferred to AD-763d
+**Out of scope for this AD.** `ProactiveHeartbeatScheduler` keeps the existing single shared cron expression (`agents/operations/scheduler.py:22-78`). The `intervals` block in `ProactiveScanConfig` is defined but NOT read by the scheduler yet — add a `# TODO AD-763d: per-scan-type cron derivation reads config.proactive_scan.intervals` comment at the scheduler insertion site (above `_SCAN_TYPES`). The seconds-→-cron mapping logic, per-task `cron_expr` field migration, and re-registration update path are all AD-763d.
 
-### 5. HXI surface (UI)
-Add a "Connectors" section to the Settings panel (alongside AD-762's "Proactive" section). Inside, a per-account subsection:
+### 5. HXI surface (UI) — schema-driven section wiring
+Add a "Connectors" section to the Settings panel. **The Settings panel is schema-driven** — wiring requires BOTH layers (mirrors AD-762 ProactiveStatusSection wiring):
 
-- **Microsoft 365** (only renders when the M365 OAuth session exists per AD-749):
+- **Backend**: append a `SectionDescriptor(section_id="connectors", label="Connectors", glyph=..., domain="Connectivity", description="M365 mail folders, calendars, scan windows, and filters.", fields=())` to `SECTIONS` in `src/probos/settings/section_registry.py`. `fields=()` because this is a custom panel.
+- **Frontend custom-panel branch**: add `{section.section_id === 'connectors' && <ConnectorsSection />}` to `ui/src/components/settings/SettingsMain.tsx` next to the existing `perception` branch (~line 283).
+- **`ConnectorsSection.tsx`** in `ui/src/components/settings/sections/` — per-account subsection layout:
+
+  - **Microsoft 365** (only renders when the M365 OAuth session exists per AD-749):
   - **Mail folders** — multiselect populated from `/api/connectors/m365/mail-folders`. Default-checked: Inbox.
   - **Calendars** — multiselect populated from `/api/connectors/m365/calendars`. Default-checked: primary.
   - **Scan windows** — number inputs for `lookback_hours` (inbox) and `lookahead_hours` (calendar).

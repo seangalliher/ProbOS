@@ -34,20 +34,21 @@ The defining trait is **proximity to the Captain plus administrative authority**
 
 - **The proactive scheduler currently has no consumer.** `proactive_scan_inbox`, `proactive_scan_calendar`, `proactive_scan_teams` jobs emit findings into the bus with no Yeo subscriber to triage them into Captain DMs. The whole AD-752 pipeline runs and the Captain hears nothing unless they `/proactive status` it.
 - **Captain Card persona has nowhere to attach.** AD-739 defined Yeo's voice and instructions but no agent class adopts them — they're literally orphaned strings.
-- **Bridge exists but Yeoman isn't on it.** [config.py#L513](src/probos/config.py#L513) defines the Bridge tier (Captain + First Officer + Counselor), [runtime.py#L1241](src/probos/runtime.py#L1241) registers `first_officer` and `counselor`, and [ontology/spatial.py#L81](src/probos/ontology/spatial.py#L81) reserved a Yeoman slot at `(0, 0, 1.5)` — the ontology already anticipated Yeoman as Bridge crew. Only the agent class itself is missing.
+- **Bridge exists but Yeoman isn't on it.** [config.py#L524](src/probos/config.py#L524) defines `bridge_pools: list[str] = ["counselor"]` (currently one entry). [runtime.py#L966](src/probos/runtime.py#L966) registers Counselor via `self.spawner.register_template("counselor", CounselorAgent)` under the `# Bridge crew (AD-398)` comment. [ontology/spatial.py#L81](src/probos/ontology/spatial.py#L81) reserved a Yeoman slot at `(0, 0, 1.5)` — the ontology already anticipated Yeoman as Bridge crew. Only the agent class itself is missing. (Note: the string `"first_officer"` appears in `runtime.py:1241` inside `CONN_ELIGIBLE_POSTS` and in `ontology/spatial.py:79`, but no `FirstOfficer` agent class is registered — it's a reserved post id, not an active crew member.)
 - **AD-758 gate measured program rubric, not agent existence.** The integration gate confirmed AD-749..AD-757 wiring; it did not assert "and the agent the Captain talks to actually exists." This is exactly the kind of miss the AD-765 audit will catch — but the Captain shouldn't wait.
 
 ## Scope (v1)
 
 ### 1. Join the existing Bridge
-- The Bridge department already exists (First Officer + Counselor registered via `runtime.py#L1241`; tier defined in `config.py#L513`). **Do NOT re-create it.** Yeoman is the third Bridge crew member.
-- Place `yeoman.py` under whatever folder the existing Bridge agents live in. If First Officer / Counselor are loose under `src/probos/` rather than in a `bridge/` subfolder, follow the existing pattern rather than introducing a new folder for one file. Auditor: locate the First Officer agent class file first, then mirror its placement.
-- Add `"yeoman"` to `bridge_pools` in `config.py` (currently `["counselor"]` at line 524) and to the `"first_officer", "counselor"` registration tuple in `runtime.py#L1241`.
-- Spatial slot `(0, 0, 1.5)` from `ontology/spatial.py#L81` is already reserved — wire it through.
-- Existing Bridge HXI surface (`ui/src/components/bridge/`) gains a Yeoman card; reuse the existing Bridge department color, no new palette entry.
+- The Bridge tier already exists (`bridge_pools = ["counselor"]` at `config.py:524`; CounselorAgent registered at `runtime.py:966` under the `# Bridge crew (AD-398)` comment). **Do NOT re-create it.** Yeoman becomes the second registered Bridge crew member.
+- Place `yeoman.py` at `src/probos/cognitive/yeoman.py` to mirror `CounselorAgent`'s placement at `src/probos/cognitive/counselor.py` (NOT under a new `bridge/` subfolder — keep loose under `cognitive/`).
+- Add `"yeoman"` to `bridge_pools` in `config.py:524` (currently `["counselor"]`) so the tiered-trust + Bridge palette logic picks it up.
+- Add the registration call `self.spawner.register_template("yeoman", YeomanAgent)` immediately after the Counselor registration at `runtime.py:966` (inside the `# Bridge crew (AD-398)` comment block).
+- Spatial slot `(0, 0, 1.5)` from `ontology/spatial.py:81` is already reserved — wire it through via the standard post-lookup pattern Counselor uses (grep Counselor's slot consumption first; if it's automatic via ontology post id, nothing more to do).
+- Existing Bridge HXI surface (verify location — grep for `bridge` under `ui/src/components/`; if no dedicated Bridge folder exists today, the Yeoman card lives in whatever crew-roster panel Counselor renders in). Reuse the existing Bridge department color (verify a `bridge` token exists in the palette; if not, the Builder adds one and notes it explicitly).
 
 ### 2. YeomanAgent class
-- File `src/probos/agents/bridge/yeoman.py`.
+- File `src/probos/cognitive/yeoman.py` (mirrors `cognitive/counselor.py`).
 - `class YeomanAgent(CognitiveAgent)`.
 - `agent_type = "yeoman"`, `callsign = "Yeo"`, `department = "Bridge"`, `tier = "domain"`.
 - **Singleton** — exactly one instance per runtime (not pool-scaled). Spawned at startup whether or not M365 is configured (M365 absence means Yeo works with empty inbox/calendar, not that Yeo is absent).
@@ -72,8 +73,8 @@ The defining trait is **proximity to the Captain plus administrative authority**
 - Respects work-hours and quiet-hours from the existing proactive config — Yeo doesn't ping at 03:00.
 
 ### 5. Captain Card binding
-- `card.py` Yeo identity string is the canonical source; YeomanAgent reads it via the captain_card module rather than duplicating.
-- Persona changes in the Captain Card hot-reload into the running YeomanAgent (no restart).
+- `card.py` Yeo identity string (`captain_card/card.py:91`) is the canonical source; YeomanAgent reads it via the captain_card module rather than duplicating.
+- v1: persona changes require runtime restart — there is no hot-reload mechanism for `CaptainCard` today (`load_card` is called once at startup in `runtime.py:1600`, no file-watcher or on-change hook). Forward marker `AD-766a — live CaptainCard hot-reload into running YeomanAgent` filed for follow-up.
 
 ### 6. HXI surfacing
 - Bridge department gets a section in the crew roster panel (wherever Engineering/Medical/Science are listed).
@@ -132,7 +133,8 @@ Verify all changes comply with the Engineering Principles in `.github/copilot-in
 
 ## Open questions for Architect review
 
-1. **Bridge agent file layout.** First Officer + Counselor exist today — locate their class files and mirror placement (whether that's a `bridge/` folder, `cognitive/`, or loose under `agents/`). Don't introduce a new folder layout solely for Yeoman.
-2. **Singleton enforcement mechanism.** Constructor guard? Runtime registration guard? Both? Recommend runtime-side guard (single source of truth) with constructor warning if instantiated outside the runtime path.
+1. **Bridge agent file layout.** RESOLVED 2026-05-20 by architect review: `CounselorAgent` lives at `src/probos/cognitive/counselor.py`. Yeoman mirrors at `src/probos/cognitive/yeoman.py`. Do not introduce a `bridge/` subfolder.
+2. **Singleton enforcement mechanism.** Constructor guard? Runtime registration guard? Both? Recommend runtime-side guard (single source of truth) with constructor warning if instantiated outside the runtime path. Verify the spawner's `register_template` signature for `pool_size=1, scalable=False` style kwargs before adopting that path; if absent, fall back to manual `__init__` check.
 3. **read-only tagging blocker.** §3 above assumes the AD-765 audit will produce a verdict on `autoApproveReadOnly`. If the audit reveals the policy doesn't exist, this AD ships without the tag and a follow-up AD adds it once the policy lands. Don't block on AD-765.
 4. **Spawning order at startup.** YeomanAgent must be alive before the first `proactive_scan_*` cron fires. If startup ordering doesn't already guarantee this, add a "wait for Yeoman ready" gate in the scheduler boot path.
+5. **Proactive subscription mechanism (architect-added).** §4 assumes per-scan-type intent names `proactive_scan_inbox`, `proactive_scan_calendar`, `proactive_scan_teams`. Verify against `proactive.py` and `agents/operations/scheduler.py:39` (`hook = f"proactive_scan_{scan_type}"`) — the scheduler uses `webhook_name`, but the intent emitted on the bus may be the generic `"proactive_scan"` with a `scan_type` param (see `proactive.py:201, 219`). Builder must trace the actual emission shape before writing subscription code; if it's the generic shape, subscribe to `proactive_scan` and dispatch by `scan_type` inside YeomanAgent.
