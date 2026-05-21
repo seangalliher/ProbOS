@@ -7,12 +7,15 @@
  */
 
 export type ConnectionStatus = "connected" | "connecting" | "disconnected";
+export type ViewMode = "compact" | "full";
 
 export interface TrayMenuOptions {
   status: ConnectionStatus;
   proactivePaused: boolean;
+  viewMode: ViewMode;
   onOpenRoute: (route: string) => void;
   onToggleProactive: () => void;
+  onToggleViewMode: () => void;
   onCheckForUpdates: () => void;
   onQuit: () => void;
 }
@@ -72,6 +75,18 @@ export function buildTrayMenu(opts: TrayMenuOptions): TrayMenuItem[] {
       id: "toggle-proactive",
       label: opts.proactivePaused ? "Resume proactive mode" : "Pause proactive mode",
       click: opts.onToggleProactive,
+    },
+    {
+      id: "view-mode",
+      label:
+        opts.viewMode === "compact"
+          ? "Switch to Full view"
+          : "Switch to Compact view",
+      toolTip:
+        opts.viewMode === "compact"
+          ? "Show the full HXI canvas, panels, and crew."
+          : "Show the chat-only experience (like Copilot / Claude Chat).",
+      click: opts.onToggleViewMode,
     },
     {
       id: "settings",

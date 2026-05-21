@@ -25,6 +25,7 @@ import {
   shell,
   ipcMain,
 } from "electron";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,7 +34,7 @@ import {
   acquireSingleInstanceLock,
   decideSecondInstanceAction,
 } from "./singleInstance.js";
-import { buildTrayMenu, ConnectionStatus } from "./trayMenu.js";
+import { buildTrayMenu, ConnectionStatus, type ViewMode } from "./trayMenu.js";
 import {
   createConnectionStateMachine,
   type ConnectionStateMachine,
@@ -43,9 +44,53 @@ import { logInfo, logWarn } from "./logger.js";
 
 const RUNTIME_URL = process.env.PROBOS_RUNTIME_URL ?? "http://127.0.0.1:8765";
 
+// Window size presets per view mode. Compact ≈ Microsoft Copilot / Claude Chat
+// dimensions (narrow, tall, single-column). Full = the legacy HXI canvas.
+const WINDOW_SIZE: Record<ViewMode, { width: number; height: number }> = {
+  compact: { width: 480, height: 760 },
+  full: { width: 1200, height: 800 },
+};
+
+function prefsPath(): string {
+  return join(app.getPath("userData"), "desktop-prefs.json");
+}
+
+function readViewMode(): ViewMode {
+  // Env var wins (useful for E2E / packaging overrides); otherwise the
+  // persisted user choice; otherwise default to compact (chat-first).
+  const envMode = process.env.PROBOS_DESKTOP_MODE;
+  if (envMode === "compact" || envMode === "full") return envMode;
+  try {
+    const raw = readFileSync(prefsPath(), "utf-8");
+    const parsed = JSON.parse(raw) as { viewMode?: string };
+    if (parsed.viewMode === "full") return "full";
+    if (parsed.viewMode === "compact") return "compact";
+  } catch {
+    /* missing or malformed prefs file — fall through */
+  }
+  return "compact";
+}
+
+function writeViewMode(mode: ViewMode): void {
+  try {
+    writeFileSync(prefsPath(), JSON.stringify({ viewMode: mode }), "utf-8");
+  } catch (err) {
+    logWarn("failed to persist viewMode preference", { err: String(err) });
+  }
+}
+
+function urlForViewMode(mode: ViewMode, route = "/"): string {
+  // Hash routing keeps the FastAPI SPA mount intact — the runtime serves the
+  // same `index.html` on every path; the renderer reads `location.hash` to
+  // switch between full HXI and the chat-only Yeo surface.
+  const hash = mode === "compact" ? "#compact" : "";
+  return `${RUNTIME_URL}${route}${hash}`;
+}
+
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let proactivePaused = false;
+let viewMode: ViewMode = "compact";
 const connection: ConnectionStateMachine = createConnectionStateMachine("connecting");
 
 function disconnectedHtml(): string {
@@ -109,7 +154,7 @@ function showAndRoute(route: string): void {
   mainWindow.focus();
   // Route by appending the path; if the renderer is currently on the
   // disconnected fallback this will trigger a fresh runtime load.
-  const target = `${RUNTIME_URL}${route}`;
+  const target = urlForViewMode(viewMode, route);
   mainWindow.loadURL(target).catch((err: unknown) => {
     logWarn("route load failed; renderer may show disconnected state", {
       target,
@@ -118,11 +163,25 @@ function showAndRoute(route: string): void {
   });
 }
 
+function applyViewMode(mode: ViewMode): void {
+  viewMode = mode;
+  writeViewMode(mode);
+  if (mainWindow) {
+    const { width, height } = WINDOW_SIZE[mode];
+    mainWindow.setSize(width, height);
+    mainWindow.loadURL(urlForViewMode(mode)).catch((err: unknown) => {
+      logWarn("view-mode reload failed", { mode, err: String(err) });
+    });
+  }
+  refreshTrayMenu();
+}
+
 function refreshTrayMenu(): void {
   if (!tray) return;
   const items = buildTrayMenu({
     status: connection.state,
     proactivePaused,
+    viewMode,
     onOpenRoute: (route) => showAndRoute(route),
     onToggleProactive: () => {
       proactivePaused = !proactivePaused;
@@ -130,6 +189,11 @@ function refreshTrayMenu(): void {
         paused: proactivePaused,
       });
       refreshTrayMenu();
+    },
+    onToggleViewMode: () => {
+      const next: ViewMode = viewMode === "compact" ? "full" : "compact";
+      logInfo("view-mode toggled", { from: viewMode, to: next });
+      applyViewMode(next);
     },
     onCheckForUpdates: () => {
       logInfo("check-for-updates clicked; no-op in v1 (AD-759c)");
@@ -152,9 +216,10 @@ function createMainWindow(): void {
     ? join(__dirname, "../preload/index.js")
     : join(fileURLToPath(new URL("../preload/index.js", import.meta.url)));
 
+  const { width, height } = WINDOW_SIZE[viewMode];
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width,
+    height,
     show: true,
     backgroundColor: "#0a0a14",
     webPreferences: {
@@ -197,7 +262,7 @@ function createMainWindow(): void {
     },
   );
 
-  mainWindow.loadURL(RUNTIME_URL);
+  mainWindow.loadURL(urlForViewMode(viewMode));
 }
 
 function handleDeepLinkArg(raw: string): void {
@@ -246,6 +311,7 @@ function bootstrap(): void {
   });
 
   app.whenReady().then(() => {
+    viewMode = readViewMode();
     // Tray icon: empty native image is acceptable on Windows for now;
     // real icon assets are AD-759b deliverable.
     const trayIcon = nativeImage.createEmpty();
@@ -259,7 +325,7 @@ function bootstrap(): void {
     ipcMain.handle("probos:retryConnect", () => {
       connection.send({ type: "manual-retry" });
       refreshTrayMenu();
-      mainWindow?.loadURL(RUNTIME_URL);
+      mainWindow?.loadURL(urlForViewMode(viewMode));
     });
     ipcMain.handle("probos:openExternal", (_e, url: string) => {
       if (typeof url === "string" && url.startsWith(RUNTIME_URL)) {
@@ -269,6 +335,15 @@ function bootstrap(): void {
       }
     });
     ipcMain.handle("probos:quit", () => app.quit());
+    ipcMain.handle("probos:getViewMode", () => viewMode);
+    ipcMain.handle("probos:setViewMode", (_e, mode: unknown) => {
+      if (mode !== "compact" && mode !== "full") {
+        logWarn("setViewMode rejected; invalid value", { mode });
+        return viewMode;
+      }
+      applyViewMode(mode);
+      return viewMode;
+    });
 
     // Subscribe renderer to status changes (handled by preload's event channel).
     connection.subscribe((s: ConnectionStatus) => {

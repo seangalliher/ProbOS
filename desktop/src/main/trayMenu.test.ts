@@ -6,23 +6,26 @@ function noop(): void {
 }
 
 describe("buildTrayMenu", () => {
-  it("returns the documented 8 actionable items in order", () => {
+  it("returns the documented 9 actionable items in order", () => {
     const items = buildTrayMenu({
       status: "connected",
       proactivePaused: false,
+      viewMode: "compact",
       onOpenRoute: noop,
       onToggleProactive: noop,
+      onToggleViewMode: noop,
       onCheckForUpdates: noop,
       onQuit: noop,
     });
 
-    expect(actionableCount(items)).toBe(8);
+    expect(actionableCount(items)).toBe(9);
     expect(items.map((i) => i.id)).toEqual([
       "status",
       "open-chat",
       "daily-briefing",
       "quick-capture",
       "toggle-proactive",
+      "view-mode",
       "settings",
       "check-updates",
       "separator-1",
@@ -34,8 +37,10 @@ describe("buildTrayMenu", () => {
     const items = buildTrayMenu({
       status: "connected",
       proactivePaused: false,
+      viewMode: "compact",
       onOpenRoute: noop,
       onToggleProactive: noop,
+      onToggleViewMode: noop,
       onCheckForUpdates: noop,
       onQuit: noop,
     });
@@ -46,8 +51,10 @@ describe("buildTrayMenu", () => {
     const items = buildTrayMenu({
       status: "connecting",
       proactivePaused: false,
+      viewMode: "compact",
       onOpenRoute: noop,
       onToggleProactive: noop,
+      onToggleViewMode: noop,
       onCheckForUpdates: noop,
       onQuit: noop,
     });
@@ -58,8 +65,10 @@ describe("buildTrayMenu", () => {
     const items = buildTrayMenu({
       status: "disconnected",
       proactivePaused: false,
+      viewMode: "compact",
       onOpenRoute: noop,
       onToggleProactive: noop,
+      onToggleViewMode: noop,
       onCheckForUpdates: noop,
       onQuit: noop,
     });
@@ -70,8 +79,10 @@ describe("buildTrayMenu", () => {
     const itemsActive = buildTrayMenu({
       status: "connected",
       proactivePaused: false,
+      viewMode: "compact",
       onOpenRoute: noop,
       onToggleProactive: noop,
+      onToggleViewMode: noop,
       onCheckForUpdates: noop,
       onQuit: noop,
     });
@@ -80,8 +91,10 @@ describe("buildTrayMenu", () => {
     const itemsPaused = buildTrayMenu({
       status: "connected",
       proactivePaused: true,
+      viewMode: "compact",
       onOpenRoute: noop,
       onToggleProactive: noop,
+      onToggleViewMode: noop,
       onCheckForUpdates: noop,
       onQuit: noop,
     });
@@ -92,8 +105,10 @@ describe("buildTrayMenu", () => {
     const items = buildTrayMenu({
       status: "connected",
       proactivePaused: false,
+      viewMode: "compact",
       onOpenRoute: noop,
       onToggleProactive: noop,
+      onToggleViewMode: noop,
       onCheckForUpdates: noop,
       onQuit: noop,
     });
@@ -108,8 +123,10 @@ describe("buildTrayMenu", () => {
     const items = buildTrayMenu({
       status: "connected",
       proactivePaused: false,
+      viewMode: "compact",
       onOpenRoute: (r) => routes.push(r),
       onToggleProactive: noop,
+      onToggleViewMode: noop,
       onCheckForUpdates: noop,
       onQuit: noop,
     });

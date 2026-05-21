@@ -8,12 +8,15 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 export type RuntimeStatus = "connected" | "connecting" | "disconnected";
+export type ViewMode = "compact" | "full";
 
 interface ProbosApi {
   getRuntimeStatus(): Promise<RuntimeStatus>;
   retryConnect(): Promise<void>;
   openExternal(url: string): Promise<void>;
   quit(): Promise<void>;
+  getViewMode(): Promise<ViewMode>;
+  setViewMode(mode: ViewMode): Promise<ViewMode>;
   onStatusChange(cb: (s: RuntimeStatus) => void): () => void;
 }
 
@@ -22,6 +25,9 @@ const api: ProbosApi = {
   retryConnect: () => ipcRenderer.invoke("probos:retryConnect"),
   openExternal: (url: string) => ipcRenderer.invoke("probos:openExternal", url),
   quit: () => ipcRenderer.invoke("probos:quit"),
+  getViewMode: () => ipcRenderer.invoke("probos:getViewMode"),
+  setViewMode: (mode: ViewMode) =>
+    ipcRenderer.invoke("probos:setViewMode", mode),
   onStatusChange: (cb: (s: RuntimeStatus) => void) => {
     const listener = (_e: unknown, s: RuntimeStatus): void => cb(s);
     ipcRenderer.on("probos:statusChanged", listener);
