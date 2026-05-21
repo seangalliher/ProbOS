@@ -2,6 +2,16 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
+import {
+  armConversationMode,
+  disarmConversationMode,
+  type ArmOptions,
+} from '../../audio/conversationController';
+import {
+  armWhisperStt,
+  disarmWhisperStt,
+  onTranscript as onWhisperTranscript,
+} from '../../audio/whisperStt';
 import type { ChatAttachment } from '../../store/types';
 import { ModulationIndicator } from './ModulationIndicator';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
@@ -13,6 +23,7 @@ interface Props {
 }
 
 type ScreenMode = 'once' | 'live';
+type MicMode = 'ptt' | 'conversation';
 
 const ALLOWED_ATTACHMENT_MIMES = [
   'image/png', 'image/jpeg', 'image/webp', 'image/gif',
@@ -27,6 +38,16 @@ function getScreenModeKey(agentId: string): string {
 
 function loadScreenMode(agentId: string): ScreenMode {
   return localStorage.getItem(getScreenModeKey(agentId)) === 'live' ? 'live' : 'once';
+}
+
+function getMicModeKey(agentId: string): string {
+  return `hxi_chat_mic_mode_${agentId}`;
+}
+
+function loadMicMode(agentId: string): MicMode {
+  return localStorage.getItem(getMicModeKey(agentId)) === 'conversation'
+    ? 'conversation'
+    : 'ptt';
 }
 
 export function ProfileChatTab({ agentId }: Props) {
@@ -44,6 +65,13 @@ export function ProfileChatTab({ agentId }: Props) {
   const screenShareMenuRef = useRef<HTMLDivElement>(null);
   const screenStopOriginRef = useRef<'cleanup' | null>(null);
   const previousScreenActiveRef = useRef(false);
+  // AD-760: mic-mode popover (right-click on the mic button).
+  const [micMode, setMicMode] = useState<MicMode>(() => loadMicMode(agentId));
+  const [micMenuOpen, setMicMenuOpen] = useState(false);
+  const micButtonRef = useRef<HTMLButtonElement>(null);
+  const micMenuRef = useRef<HTMLDivElement>(null);
+  // AD-760: empty-transcript count for the press-to-talk whisper fallback.
+  const emptyTranscriptCountRef = useRef(0);
   const globalVoiceEnabled = useStore((s) => s.voiceEnabled);
   const screenActive = useScreenStore((s) => s.active);
   // Per-agent TTS toggle: defaults to global setting; persisted in localStorage.
@@ -67,6 +95,69 @@ export function ProfileChatTab({ agentId }: Props) {
   useEffect(() => {
     localStorage.setItem(getScreenModeKey(agentId), screenMode);
   }, [agentId, screenMode]);
+
+  // AD-760: hydrate mic mode when the active agent switches.
+  useEffect(() => {
+    setMicMode(loadMicMode(agentId));
+    setMicMenuOpen(false);
+    emptyTranscriptCountRef.current = 0;
+  }, [agentId]);
+
+  // AD-760: arm / disarm the natural-conversation controller for the
+  // active agent. Single-armed-controller invariant: switching agents
+  // disarms the previous controller before arming the next. The arm
+  // decision reads ``loadMicMode(agentId)`` directly to avoid stale
+  // state during agent-switch renders (the React-state ``micMode``
+  // trails ``agentId`` by one commit). ``micMode`` stays in deps so
+  // popover-driven changes still re-trigger arming.
+  useEffect(() => {
+    const mode = loadMicMode(agentId);
+    if (mode !== 'conversation' || !globalVoiceEnabled) {
+      disarmConversationMode();
+      return;
+    }
+    const armOpts: ArmOptions = {
+      agentId,
+      historyProvider: () => {
+        const conv = useStore.getState().agentConversations.get(agentId);
+        const msgs = conv?.messages ?? [];
+        return msgs.slice(-20).map((m) => ({
+          role: m.role === 'user' ? 'user' : 'agent',
+          content: m.text,
+        }));
+      },
+      onTranscript: (text: string) => {
+        setInput(text);
+      },
+    };
+    console.info(`AD-760: mic mode ${mode} armed for agent ${agentId}`);
+    armConversationMode(armOpts);
+    return () => {
+      disarmConversationMode();
+    };
+  }, [agentId, micMode, globalVoiceEnabled]);
+
+  // AD-760: dismiss the mic popover on outside click or Escape.
+  useEffect(() => {
+    if (!micMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (micMenuRef.current?.contains(target) || micButtonRef.current?.contains(target)) {
+        return;
+      }
+      setMicMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMicMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [micMenuOpen]);
 
   useEffect(() => {
     if (!screenMenuOpen) return;
@@ -607,54 +698,189 @@ export function ProfileChatTab({ agentId }: Props) {
             LIVE
           </span>
         )}
-        {/* AD-718: Mic button for STT input (parity with IntentSurface). */}
+        {/* AD-718 / AD-760: Mic button for STT input (parity with IntentSurface).
+            Right-click (or Shift+F10) opens a per-agent mode popover:
+            press-to-talk (default) vs conversation mode. */}
         {isSpeechRecognitionSupported() && (
-          <button
-            type="button"
-            onClick={() => {
-              if (listening) {
-                stopListening();
-                setListening(false);
-                return;
-              }
-              setListening(true);
-              startListening(
-                (text) => {
-                  setInput(text);
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            <button
+              ref={micButtonRef}
+              type="button"
+              onClick={() => {
+                if (micMode === 'conversation') {
+                  // In conversation mode, left-click is press-to-talk
+                  // preemption (PRIORITY_PRESS_TO_TALK wins per BF-318);
+                  // we still drive it through the standard PTT path
+                  // below — the ConversationController will see the
+                  // preempt and re-arm on release. The mode-switching
+                  // logic stays in the popover.
+                }
+                if (listening) {
+                  stopListening();
                   setListening(false);
-                  setTimeout(() => handleSend(), 100);
-                },
-                () => setListening(false),
-                () => setListening(false),
-              );
-            }}
-            title={listening ? 'Stop listening' : 'Voice input'}
-            aria-label={listening ? 'Stop listening' : 'Voice input'}
-            style={{
-              background: listening ? 'rgba(255, 102, 102, 0.15)' : 'transparent',
-              border: 'none',
-              color: listening ? '#ff6666' : '#8888aa',
-              cursor: 'pointer',
-              fontSize: 14,
-              padding: '4px',
-              borderRadius: 4,
-              transition: 'color 0.2s, filter 0.2s',
-              flexShrink: 0,
-              animation: listening ? 'pulse-mic 1s ease-in-out infinite' : undefined,
-              filter: listening
-                ? 'drop-shadow(0 0 4px #ff6666)'
-                : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
-                 stroke={listening ? '#ff6666' : 'currentColor'}
-                 strokeWidth="2" strokeLinecap="round">
-              <line x1="8" y1="2" x2="8" y2="9" />
-              <path d="M5 7c0 1.7 1.3 3 3 3s3-1.3 3-3" />
-              <line x1="8" y1="12" x2="8" y2="14" />
-              <line x1="6" y1="14" x2="10" y2="14" />
-            </svg>
-          </button>
+                  return;
+                }
+                setListening(true);
+                if (emptyTranscriptCountRef.current >= 2) {
+                  // AD-760: route the next capture through whisperStt
+                  // after 2 consecutive empty browser-SpeechRecognition
+                  // results. One-shot — reset counter.
+                  emptyTranscriptCountRef.current = 0;
+                  console.info(`AD-760: whisperStt fallback for agent ${agentId} after 2 empty transcripts`);
+                  const unsub = onWhisperTranscript((text: string) => {
+                    try { unsub(); } catch { /* Tier-2 */ }
+                    try { disarmWhisperStt(); } catch { /* Tier-2 */ }
+                    setInput(text);
+                    setListening(false);
+                    setTimeout(() => handleSend(), 100);
+                  });
+                  armWhisperStt();
+                  return;
+                }
+                let gotResult = false;
+                startListening(
+                  (text) => {
+                    gotResult = true;
+                    emptyTranscriptCountRef.current = 0;
+                    setInput(text);
+                    setListening(false);
+                    setTimeout(() => handleSend(), 100);
+                  },
+                  () => {
+                    if (!gotResult) {
+                      emptyTranscriptCountRef.current += 1;
+                    }
+                    setListening(false);
+                  },
+                  () => setListening(false),
+                  { continuous: true, interimResults: true, endOfSpeechGapMs: 1500 },
+                );
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMicMenuOpen((open) => !open);
+              }}
+              onKeyDown={(event) => {
+                // AD-760 a11y: Shift+F10 opens the same popover.
+                if (event.shiftKey && event.key === 'F10') {
+                  event.preventDefault();
+                  setMicMenuOpen((open) => !open);
+                }
+              }}
+              title={listening ? 'Stop listening' : 'Voice input'}
+              aria-label={listening ? 'Stop listening' : 'Voice input'}
+              aria-haspopup="menu"
+              aria-expanded={micMenuOpen}
+              style={{
+                background: listening ? 'rgba(255, 102, 102, 0.15)' : 'transparent',
+                border: 'none',
+                color: listening ? '#ff6666' : '#8888aa',
+                cursor: 'pointer',
+                fontSize: 14,
+                padding: '4px',
+                borderRadius: 4,
+                transition: 'color 0.2s, filter 0.2s',
+                flexShrink: 0,
+                animation: listening ? 'pulse-mic 1s ease-in-out infinite' : undefined,
+                filter: listening
+                  ? 'drop-shadow(0 0 4px #ff6666)'
+                  : micMode === 'conversation'
+                    ? 'drop-shadow(0 0 4px #f0b060)'
+                    : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                   stroke={listening ? '#ff6666' : micMode === 'conversation' ? '#f0b060' : 'currentColor'}
+                   strokeWidth="2" strokeLinecap="round">
+                <line x1="8" y1="2" x2="8" y2="9" />
+                <path d="M5 7c0 1.7 1.3 3 3 3s3-1.3 3-3" />
+                <line x1="8" y1="12" x2="8" y2="14" />
+                <line x1="6" y1="14" x2="10" y2="14" />
+              </svg>
+            </button>
+            {micMenuOpen && (
+              <div
+                ref={micMenuRef}
+                data-testid="profile-chat-mic-mode-menu"
+                role="menu"
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  bottom: 'calc(100% + 6px)',
+                  minWidth: 160,
+                  background: 'rgba(10, 10, 18, 0.96)',
+                  border: '1px solid rgba(240, 176, 96, 0.25)',
+                  borderRadius: 8,
+                  boxShadow: '0 10px 24px rgba(0, 0, 0, 0.35)',
+                  zIndex: 30,
+                  overflow: 'hidden',
+                }}
+              >
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={micMode === 'ptt'}
+                  data-testid="profile-chat-mic-mode-ptt"
+                  onClick={() => {
+                    localStorage.setItem(getMicModeKey(agentId), 'ptt');
+                    setMicMode('ptt');
+                    setMicMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    textAlign: 'left',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#e0dcd4',
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                  }}
+                >
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none"
+                       stroke={micMode === 'ptt' ? '#f0b060' : '#444459'}
+                       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 8.5L6.5 12 13 4" />
+                  </svg>
+                  Press to talk
+                </button>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={micMode === 'conversation'}
+                  data-testid="profile-chat-mic-mode-conversation"
+                  onClick={() => {
+                    localStorage.setItem(getMicModeKey(agentId), 'conversation');
+                    setMicMode('conversation');
+                    setMicMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    textAlign: 'left',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#e0dcd4',
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                  }}
+                >
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none"
+                       stroke={micMode === 'conversation' ? '#f0b060' : '#444459'}
+                       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 8.5L6.5 12 13 4" />
+                  </svg>
+                  Conversation mode
+                </button>
+              </div>
+            )}
+          </div>
         )}
         <button
           onClick={handleSend}

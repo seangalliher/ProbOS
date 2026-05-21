@@ -33,12 +33,17 @@ vi.mock('../whisperStt', () => ({
 
 const _vadState: {
   handler: { onSpeechStart?: () => void; onSpeechEnd?: () => void } | null;
-} = { handler: null };
+  handlers: Set<{ onSpeechStart?: () => void; onSpeechEnd?: () => void; onFrame?: (...args: unknown[]) => void }>;
+} = { handler: null, handlers: new Set() };
 
 vi.mock('../voiceActivity', () => ({
   subscribePcm: (h: { onSpeechStart?: () => void; onSpeechEnd?: () => void }) => {
     _vadState.handler = h;
-    return () => { _vadState.handler = null; };
+    _vadState.handlers.add(h as never);
+    return () => {
+      _vadState.handlers.delete(h as never);
+      if (_vadState.handler === h) _vadState.handler = null;
+    };
   },
 }));
 
@@ -68,6 +73,7 @@ function _resetAll(): void {
   _whisperState.armed = false;
   _whisperState.listener = null;
   _vadState.handler = null;
+  _vadState.handlers.clear();
   _voiceState.stopSpeakingCalls = 0;
 }
 
@@ -148,8 +154,12 @@ describe('AD-747 ConversationController', () => {
     _whisperState.listener!('hello');
     await vi.runAllTimersAsync();
     expect(getConversationState()).toBe('agent_speaking');
-    // User barges in.
-    _vadState.handler!.onSpeechStart!();
+    // User barges in via the always-on VAD handler (the AD-760 Schmitt
+    // detector also subscribes during agent_speaking; firing either
+    // routes to _onVadSpeechStart()).
+    const speechHandler = [..._vadState.handlers].find((h) => typeof h.onSpeechStart === 'function');
+    expect(speechHandler).toBeTruthy();
+    speechHandler!.onSpeechStart!();
     expect(_voiceState.stopSpeakingCalls).toBe(1);
     expect(getConversationState()).toBe('listening');
   });
@@ -166,7 +176,9 @@ describe('AD-747 ConversationController', () => {
     _whisperState.listener!('hello');
     await vi.runAllTimersAsync();
     expect(getConversationState()).toBe('agent_speaking');
-    _vadState.handler!.onSpeechStart!();
+    const speechHandler = [..._vadState.handlers].find((h) => typeof h.onSpeechStart === 'function');
+    expect(speechHandler).toBeTruthy();
+    speechHandler!.onSpeechStart!();
     expect(_voiceState.stopSpeakingCalls).toBe(0);
     expect(getConversationState()).toBe('agent_speaking');
   });

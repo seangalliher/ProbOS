@@ -48,7 +48,11 @@ interface VadOptions {
  * browser — the tap is internal-only.
  */
 export interface PcmTapHandler {
-  onFrame(frame: Float32Array, sampleRate: number): void;
+  /** AD-760: ``score`` is the Silero VAD probability for this frame
+   *  (0..1), or ``undefined`` when the score isn't available (e.g.
+   *  fan-out happened before scoring). Existing subscribers may ignore
+   *  the new arg — the signature is backward-compatible. */
+  onFrame(frame: Float32Array, sampleRate: number, score?: number): void;
   onSpeechStart?(now: number): void;
   onSpeechEnd?(now: number): void;
 }
@@ -90,19 +94,22 @@ let _state: LoopState | null = null;
 export async function _processFrame(buffer: Float32Array, now: number = Date.now()): Promise<void> {
   if (!_state || !_state.active || !_state.session) return;
   if (_state.endpointOff) return;
-  // AD-705a PCM tap — fan out the raw frame to any subscribers BEFORE
-  // scoring. Subscribers cannot influence the VAD scoring path.
+  const score = await _state.session.score(buffer);
+  // AD-705a PCM tap — fan out the raw frame to any subscribers after
+  // scoring so AD-760's barge-in detector receives the per-frame
+  // Silero score without re-running the model. Subscribers cannot
+  // influence the VAD scoring path; the score arg is optional so
+  // pre-AD-760 subscribers (e.g. whisperStt) continue to ignore it.
   if (_pcmSubscribers.size > 0) {
     for (const handler of _pcmSubscribers) {
       try {
-        handler.onFrame(buffer, SAMPLE_RATE);
+        handler.onFrame(buffer, SAMPLE_RATE, score);
       } catch {
         // Tier-2: subscriber errors are non-actionable; the VAD path
         // continues regardless.
       }
     }
   }
-  const score = await _state.session.score(buffer);
   // AD-705a speech-boundary fan-out: track threshold crossings
   // independently of the main loop's sustained-speech window so STT
   // consumers can window utterances at the same cadence Silero hears
@@ -210,7 +217,16 @@ export async function startVoiceActivity(opts: VadOptions = {}): Promise<boolean
       session.destroy();
       return false;
     }
-    stream = await md.getUserMedia({ audio: true });
+    // AD-760: enable echo cancellation, noise suppression, and AGC on
+    // the conversation pipeline's single getUserMedia call. First-line
+    // defense against TTS bleed driving false barge-ins.
+    stream = await md.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
   } catch {
     session.destroy();
     return false;

@@ -41,6 +41,24 @@ let activeRecognition: SpeechRecognitionInstance | null = null;
 let stopRequested = false;
 let activeContinuous = false;
 let activeLease: Lease | null = null;
+// AD-760: accumulator + silence-gap timer state for ``endOfSpeechGapMs``.
+let gapAccumulator = '';
+let gapTimer: ReturnType<typeof setTimeout> | null = null;
+let gapForwardOnResult: ((text: string) => void) | null = null;
+
+function _flushGapAccumulator(): void {
+  if (gapTimer !== null) {
+    clearTimeout(gapTimer);
+    gapTimer = null;
+  }
+  const text = gapAccumulator.trim();
+  gapAccumulator = '';
+  const forward = gapForwardOnResult;
+  gapForwardOnResult = null;
+  if (text && forward) {
+    try { forward(text); } catch { /* Tier-2 */ }
+  }
+}
 
 /** Options for startListening. AD-474b adds continuous-listen + interim-results;
  *  AD-474c adds onSpeechEnd VAD callback. BF-318 adds priority +
@@ -71,6 +89,13 @@ export interface ListenOptions {
   /** BF-318: optional holder tag for logs / observer (defaults to
    *  ``press_to_talk``). */
   holder?: string;
+  /** AD-760: when set together with ``continuous: true``, the recognizer
+   *  accumulates final transcripts and only fires ``onResult`` after
+   *  the configured silence gap elapses without a new final (or on
+   *  ``stopListening``). Unset/undefined preserves v0 behavior (single
+   *  ``onResult`` per final). Recommended value for press-to-talk:
+   *  ``1500`` ms. Only meaningful when ``continuous=true``. */
+  endOfSpeechGapMs?: number;
 }
 
 export function startListening(
@@ -138,6 +163,17 @@ function _spawnRecognition(
   recognition.interimResults = interimResults;
   recognition.lang = 'en-US';
 
+  // AD-760: end-of-speech gap mode. Accumulate finals across utterances
+  // and only forward after ``endOfSpeechGapMs`` of silence (or on
+  // stopListening). Default off — IntentSurface / wake-word / other
+  // callers are unaffected.
+  const gapMs = opts?.endOfSpeechGapMs;
+  const gapEnabled = continuous && typeof gapMs === 'number' && gapMs > 0;
+  if (gapEnabled) {
+    gapAccumulator = '';
+    gapForwardOnResult = onResult;
+  }
+
   recognition.onresult = (event) => {
     // Pick the most recent final result. In single-shot mode this is always index 0.
     // In continuous mode results accumulate; we report the latest final transcript.
@@ -151,7 +187,24 @@ function _spawnRecognition(
       }
     }
     if (lastFinal !== null) {
-      onResult(lastFinal);
+      if (gapEnabled) {
+        // Append (with a leading space if needed) and (re)start the
+        // silence-gap timer. onResult fires only when the timer elapses
+        // or stopListening is called.
+        const piece = lastFinal.trim();
+        if (piece) {
+          gapAccumulator = gapAccumulator
+            ? `${gapAccumulator} ${piece}`
+            : piece;
+        }
+        if (gapTimer !== null) clearTimeout(gapTimer);
+        gapTimer = setTimeout(() => {
+          gapTimer = null;
+          _flushGapAccumulator();
+        }, gapMs as number);
+      } else {
+        onResult(lastFinal);
+      }
     }
   };
 
@@ -186,6 +239,11 @@ function _spawnRecognition(
 export function stopListening(): void {
   stopRequested = true;
   activeContinuous = false;
+  // AD-760: flush any pending accumulator BEFORE aborting so the
+  // caller sees the partial transcript.
+  if (gapForwardOnResult !== null || gapAccumulator) {
+    _flushGapAccumulator();
+  }
   _abortActiveRecognition();
   // BF-318: release the arbiter lease so queued waiters (wake-word)
   // can resume.

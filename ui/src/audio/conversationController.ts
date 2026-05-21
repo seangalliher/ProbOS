@@ -56,6 +56,7 @@ import {
   type PcmTapHandler,
 } from './voiceActivity';
 import { stopSpeaking as _stopSpeaking } from './voice';
+import { attachBargeInDetector as _attachBargeInDetector } from './bargeInDetector';
 
 export type ConversationState =
   | 'inactive'
@@ -80,6 +81,15 @@ export interface ArmOptions {
   /** Defaults; tests override. */
   silenceTimeoutMs?: number;
   bargeInEnabled?: boolean;
+  /** AD-760: Schmitt-trigger barge-in detector tuning. All optional;
+   *  defaults applied at the controller read site so existing callers
+   *  remain source-compatible. See bargeInDetector.ts for semantics. */
+  bargeInOnsetConfidence?: number;
+  bargeInOffsetConfidence?: number;
+  bargeInDebounceMs?: number;
+  bargeInReleaseMs?: number;
+  bargeInAmplitudeFloorDb?: number;
+  bargeInCooldownMs?: number;
 }
 
 // Module state (single active controller per browser session).
@@ -91,11 +101,61 @@ let _transcriptUnsub: (() => void) | null = null;
 let _vadUnsub: (() => void) | null = null;
 let _silenceTimer: ReturnType<typeof setTimeout> | null = null;
 let _opts: ArmOptions | null = null;
+let _bargeInDisarm: (() => void) | null = null;
 const _stateListeners: Set<(s: ConversationState) => void> = new Set();
+
+// Approximate frame cadence used to translate ms tuning knobs into
+// frame counts for the Schmitt detector. voiceActivity emits one
+// frame per 30 ms (480 samples @ 16 kHz). Keep in sync with
+// ``voiceActivity.FRAME_SAMPLES``.
+const _FRAME_MS = 30;
+
+function _attachBargeInForAgentSpeaking(): void {
+  if (_bargeInDisarm !== null) return;
+  if (_opts?.bargeInEnabled === false) return;
+  const onset = _opts?.bargeInOnsetConfidence ?? 0.80;
+  const offset = _opts?.bargeInOffsetConfidence ?? 0.40;
+  const debounceMs = _opts?.bargeInDebounceMs ?? 250;
+  const releaseMs = _opts?.bargeInReleaseMs ?? 100;
+  const amplitudeFloorDb = _opts?.bargeInAmplitudeFloorDb ?? -45;
+  const cooldownMs = _opts?.bargeInCooldownMs ?? 500;
+  const debounceFrames = Math.max(1, Math.round(debounceMs / _FRAME_MS));
+  const releaseFrames = Math.max(1, Math.round(releaseMs / _FRAME_MS));
+  _bargeInDisarm = _attachBargeInDetector({
+    onsetConfidence: onset,
+    offsetConfidence: offset,
+    debounceFrames,
+    releaseFrames,
+    amplitudeFloorDb,
+    cooldownMs,
+    onBargeIn: () => {
+      // SRP: detector fires the user-spoke event; the controller's
+      // existing _onVadSpeechStart branch handles state transition +
+      // _stopSpeaking + silence-timer cancel.
+      _onVadSpeechStart();
+    },
+  });
+}
+
+function _detachBargeIn(): void {
+  if (_bargeInDisarm !== null) {
+    try { _bargeInDisarm(); } catch { /* Tier-2 */ }
+    _bargeInDisarm = null;
+  }
+}
 
 function _setState(next: ConversationState): void {
   if (_state === next) return;
+  const prev = _state;
   _state = next;
+  // AD-760: attach/detach Schmitt-trigger barge-in detector on
+  // agent_speaking entry/exit. Detector subscribes to the PCM tap and
+  // delivers Silero score + RMS-derived dBFS via per-frame onFrame.
+  if (next === 'agent_speaking') {
+    _attachBargeInForAgentSpeaking();
+  } else if (prev === 'agent_speaking') {
+    _detachBargeIn();
+  }
   _opts?.onStateChange?.(next);
   for (const l of _stateListeners) {
     try {
@@ -273,6 +333,7 @@ export function disarmConversationMode(): void {
 
 function _teardownInternal(): void {
   _cancelSilenceTimer();
+  _detachBargeIn();
   if (_whisperUnsubArmed) {
     try { _whisperUnsubArmed(); } catch { /* Tier-2 */ }
     _whisperUnsubArmed = null;
@@ -298,6 +359,7 @@ function _teardownInternal(): void {
 /** Test seam — full module reset. */
 export function _resetConversationControllerForTests(): void {
   _cancelSilenceTimer();
+  _detachBargeIn();
   if (_lease !== null) {
     try { _arbiterRelease(_lease); } catch { /* Tier-2 */ }
   }
