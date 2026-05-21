@@ -57,8 +57,13 @@ Three related voice defects, observed in production HXI:
 ### 4. Conversation mode: agent-speaking handling + barge-in robustness
 - **Do not mute the mic during `agent_speaking`.** Silero VAD keeps running so barge-in has zero warm-up latency.
 - The existing state machine already gates transcript submission on `state === 'listening'`, so whisperStt output is dropped while the agent is speaking. Keep that invariant; add an explicit assertion in the controller's `_onTranscript` to log-and-drop when called outside `listening`.
-- **Barge-in requires sustained speech, not a single VAD frame.** Update `_onVadSpeechStart` to start a debounce timer that fires the barge-in transition only after ~250 ms of continuous voiced frames (configurable via `ArmOptions.bargeInDebounceMs`, default 250). Cancel the timer if VAD returns to silence before the threshold. This prevents the agent's own TTS bleed-through from triggering false barge-ins on laptops with weak AEC.
-- **AEC constraints on the mic stream.** Ensure `getUserMedia` is called with `{ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }` everywhere the conversation pipeline opens a stream. Browser AEC is the first line of defense; sustained-frames debounce is the second.
+- **Barge-in uses confidence-gated sustained detection, not single-frame triggers.** Three combined gates must all clear before `_onVadSpeechStart` fires the barge-in transition:
+  1. **Elevated confidence threshold.** Normal listening uses the default Silero threshold (~0.5). During `agent_speaking` raise the per-frame probability gate to ~0.7 (configurable). Filters throat clears / mid-volume background that peaks below this.
+  2. **Sustained voiced frames.** Require ~8 consecutive frames (~250 ms) above the elevated threshold. Single-frame spikes from door slams / chair creaks / cough onsets are rejected.
+  3. **Amplitude floor.** Reject frames whose RMS is below ~-45 dBFS even if Silero's probability is high. Guards against the known false-positive on low-level steady noise (HVAC, fan).
+- **Cooldown after a cancelled barge-in.** If the sustained-frames timer cancels because VAD dropped below threshold before firing, suppress new barge-in attempts for ~500 ms. Prevents "stutter" interrupts when the user makes a brief throat noise mid-sentence.
+- **All gates exposed on `ArmOptions`** with defaults: `bargeInConfidence=0.7`, `bargeInDebounceMs=250`, `bargeInAmplitudeFloorDb=-45`, `bargeInCooldownMs=500`. Captain-tunable via the existing settings snapshot without code changes.
+- **AEC constraints on the mic stream.** Ensure `getUserMedia` is called with `{ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }` everywhere the conversation pipeline opens a stream. Browser AEC is the first line of defense; the three-gate barge-in detector is the second.
 - Out of scope for v1: WebAudio-based echo cancellation using the TTS audio element as the reference signal — defer to AD-760b only if real-world false barge-ins persist after the above.
 
 ## Tests
