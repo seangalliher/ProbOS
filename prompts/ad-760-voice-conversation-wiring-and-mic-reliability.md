@@ -39,11 +39,9 @@ Three related voice defects, observed in production HXI:
   - On unmount or agent switch, call the returned disarm function.
   - On `voiceEnabled` flips false → disarm but keep the per-agent mode preference (re-arms when voice is re-enabled).
   - Left-clicking the mic during Conversation mode is press-to-talk preemption (PRIORITY_PRESS_TO_TALK > PRIORITY_CONVERSATION per BF-318) and on release returns to Conversation mode (re-arm).
-- Wire the same context menu in:
-  - `ui/src/components/profile/ProfileChatTab.tsx` (1:1 agent DM panel)
-  - The WardRoom DM mic (verify path in `ui/src/components/wardroom/*`)
+- Wire the context menu in `ui/src/components/profile/ProfileChatTab.tsx` (1:1 agent DM panel) ONLY for v1. **WardRoom DM has no mic affordance today** (verified: zero `startListening|speechInput|mic` matches in `ui/src/components/wardroom/**/*.tsx`). Adding a mic + conversation-mode affordance to `WardRoomThreadDetail.tsx` / `ChatInput.tsx` is filed as forward marker AD-760c.
 - The `onTranscript` callback populates the input box (preview pill) before submission; `onAgentReply` triggers the same TTS path the manual flow uses.
-- Accessibility: the mic button must also be activatable as a menu via keyboard — `Shift+F10` or context-menu key on focused mic opens the same popover. `aria-haspopup="menu"` on the button.
+- Accessibility: the mic button must also be activatable as a menu via keyboard — `Shift+F10` or the context-menu key on the focused mic opens the same popover. `aria-haspopup="menu"` on the button. Ship the activation logic as a small shared hook `ui/src/hooks/useContextMenuKeyboard.ts` (input: `(open: boolean, setOpen: (v: boolean) => void)`; output: `{ onKeyDown }` returning a React `KeyboardEventHandler`). Apply it to the new mic menu in this AD; AD-760d backfills the same hook into the existing screen-share, volume, and voice-picker `onContextMenu` sites for a11y parity.
 
 ### 2. Decouple mic button from global voice toggle (perception side)
 - The mic button must work standalone — independent of `voiceEnabled`.
@@ -51,25 +49,65 @@ Three related voice defects, observed in production HXI:
 - If `perception.vad_engagement_enabled=false`, the mic button still works (uses browser SpeechRecognition directly without Silero endpointing) — surface a one-line hint in the existing `MicPermissionHint` component when transcripts come back empty repeatedly.
 
 ### 3. Press-to-talk reliability fix
-- In `speechInput.ts`, set `continuous=true` and `interimResults=true` on the `SpeechRecognition` instance, and accumulate final transcripts until either: (a) the caller calls `stopListening()`, or (b) a 1.5 s end-of-speech gap is observed (configurable). This eliminates the "auto-ends on first pause, returns empty" failure mode.
+- **Capability already exists**: `ListenOptions` in `speechInput.ts:53,57` already exposes `continuous?: boolean` and `interimResults?: boolean` (AD-474b). The current `ProfileChatTab.tsx:621` call site passes neither, so they default to `false`/`false`.
+- **Fix at the call site + extend `ListenOptions`**: add a new optional `endOfSpeechGapMs?: number` field to `ListenOptions` (default 1500). When set together with `continuous: true`, `speechInput.ts` accumulates final transcripts and only fires `onResult` after either (a) the caller calls `stopListening()`, or (b) the configured silence gap elapses with no new finals. Default behaviour (no `endOfSpeechGapMs`, `continuous=false`) is unchanged — load-bearing for IntentSurface (deferred to AD-760a) and any other caller.
+- Flip `ProfileChatTab.tsx:621` to pass `{ continuous: true, interimResults: true, endOfSpeechGapMs: 1500 }`.
 - Add a fallback: if 2 consecutive `startListening` calls return empty transcripts AND Silero VAD is available, route the next press-to-talk through `whisperStt.armWhisperStt()` with a short bounded window instead of `SpeechRecognition`. This gives the Captain a reliable local-Whisper path on the press-to-talk button without forcing the natural-conversation state machine.
 
 ### 4. Conversation mode: agent-speaking handling + barge-in robustness
 - **Do not mute the mic during `agent_speaking`.** Silero VAD keeps running so barge-in has zero warm-up latency.
 - The existing state machine already gates transcript submission on `state === 'listening'`, so whisperStt output is dropped while the agent is speaking. Keep that invariant; add an explicit assertion in the controller's `_onTranscript` to log-and-drop when called outside `listening`.
-- **Barge-in uses a Schmitt-trigger (hysteresis) detector over the Silero probability stream, not a single threshold.** Separate onset and offset thresholds prevent flapping on borderline audio.
+- **Barge-in uses a Schmitt-trigger (hysteresis) detector over the Silero probability stream, not a single threshold.** Separate onset and offset thresholds prevent flapping on borderline audio. The detector is a **new module** `ui/src/audio/bargeInDetector.ts` (SRP — `voiceActivity.ts` stays content-agnostic, `conversationController.ts` stays state-machine-only).
 
-  | Phase | Onset threshold | Offset threshold | Sustained frames (onset) | Release frames (offset) |
-  |---|---|---|---|---|
-  | `listening` (default VAD speech-start) | 0.50 | 0.35 | 3 (~100 ms) | 3 (~100 ms) |
-  | `agent_speaking` (barge-in) | **0.80** | **0.40** | 8 (~250 ms) | 3 (~100 ms) |
+  **API**:
+  ```ts
+  export interface BargeInOptions {
+    onsetConfidence: number;     // default 0.80
+    offsetConfidence: number;    // default 0.40
+    debounceFrames: number;      // sustained-onset frame count, default 8 (~256 ms)
+    releaseFrames: number;       // release frame count, default 3 (~96 ms)
+    amplitudeFloorDb: number;    // default -45 (frames below this never count)
+    cooldownMs: number;          // default 500 (suppression after cancelled onset)
+    onBargeIn: () => void;       // fires when detector transitions below → above
+  }
+  export function attachBargeInDetector(opts: BargeInOptions): () => void; // returns disarm
+  ```
 
-  Detector state machine: starts `below`. When per-frame probability crosses the **onset** threshold and stays above it for the sustained-frame count, transition to `above` and fire the event (barge-in during playback, speech-start during listening). Once `above`, only release when probability falls below the **offset** threshold for the release-frame count. The 0.4 gap between onset (0.80) and offset (0.40) during playback absorbs the natural oscillation in voiced/unvoiced phoneme transitions and prevents stutter releases.
+  Detector subscribes via `voiceActivity.subscribePcm(handler)`. **`PcmTapHandler.onFrame` must be extended to forward the per-frame Silero score** as an optional third arg (`onFrame(buffer: Float32Array, sampleRate: number, score?: number) => void`) — today it only receives `buffer` and `sampleRate`, so the detector cannot run without re-evaluating Silero (CPU duplication). The extension is backward-compatible (existing subscribers ignore the new arg). Update `voiceActivity._processFrame` to pass `score` to the fan-out.
+
+  **State machine** (per detector instance): starts `below`. Per-frame, compute RMS dBFS; if below `amplitudeFloorDb`, reset onset counter. Else if `score >= onsetConfidence`, increment onset counter; if it reaches `debounceFrames`, transition to `above`, fire `onBargeIn`, reset counters. If onset counter is partially built (>0) and `score` drops below `onsetConfidence`, cancel — enter cooldown for `cooldownMs` (timer local to this detector instance, **never module-global** — prevents cross-agent leakage when controller re-arms for a different agent). While `above`, only release when `score < offsetConfidence` for `releaseFrames`. The 0.4 gap between onset (0.80) and offset (0.40) absorbs natural voiced/unvoiced oscillation.
+
+  **Controller wiring**: in `conversationController.ts`, attach the detector when `_setState('agent_speaking')` is called; the detector's `onBargeIn` invokes the existing `_onVadSpeechStart()` barge-in branch (or directly calls `_stopSpeaking()` + `_setState('listening')` — pick one for SRP). Detach (`disarmFn()`) on state exit from `agent_speaking`.
+
+  | Phase | Detector active | Onset | Offset | Onset frames | Release frames |
+  |---|---|---|---|---|---|
+  | `listening` | no — use voiceActivity's existing speech-start fan-out | 0.50 | 0.35 | 3 (~96 ms) | 3 (~96 ms) |
+  | `agent_speaking` (barge-in) | yes — bargeInDetector | **0.80** | **0.40** | 8 (~256 ms) | 3 (~96 ms) |
 - **Why 0.80 onset during playback.** Silero's known false-positive bands for TTS bleed sit in the 0.55–0.70 range on most laptop AEC stacks. Above 0.75 the model rarely confuses synthesized speech for live human voice. This is empirical, not theoretical — defaults are tunable.
 - **Amplitude floor.** Reject frames whose RMS is below ~-45 dBFS even if Silero's probability is high. Guards against the known false-positive on low-level steady noise (HVAC, fan). Applied as a precondition on every frame before it counts toward the sustained-onset tally.
 - **Cooldown after a cancelled barge-in.** If the sustained-onset timer cancels because probability dropped below the onset threshold before reaching the frame count, suppress new barge-in attempts for ~500 ms. Prevents stutter interrupts on brief throat noises.
-- **All gates exposed on `ArmOptions`** with defaults: `bargeInOnsetConfidence=0.80`, `bargeInOffsetConfidence=0.40`, `bargeInDebounceMs=250`, `bargeInReleaseMs=100`, `bargeInAmplitudeFloorDb=-45`, `bargeInCooldownMs=500`. Captain-tunable via the existing settings snapshot without code changes.
-- **AEC constraints on the mic stream.** Ensure `getUserMedia` is called with `{ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }` everywhere the conversation pipeline opens a stream. Browser AEC is the first line of defense; the Schmitt detector is the second.
+- **All gates exposed on `ArmOptions`** with defaults: `bargeInOnsetConfidence=0.80`, `bargeInOffsetConfidence=0.40`, `bargeInDebounceMs=250`, `bargeInReleaseMs=100`, `bargeInAmplitudeFloorDb=-45`, `bargeInCooldownMs=500`. Captain-tunable via the existing settings snapshot without code changes. **Defaults live at the controller read site** (where the detector is attached) — not on the interface — so existing callers continue to omit them.
+
+  Exact `ArmOptions` extension in `conversationController.ts`:
+  ```ts
+  // SEARCH (immediately after `bargeInEnabled?: boolean;` on line 84):
+    bargeInEnabled?: boolean;
+  }
+
+  // REPLACE:
+    bargeInEnabled?: boolean;
+    /** AD-760: Schmitt-trigger barge-in detector tuning. All optional;
+     *  defaults applied at the controller read site so existing callers
+     *  remain source-compatible. See bargeInDetector.ts for semantics. */
+    bargeInOnsetConfidence?: number;
+    bargeInOffsetConfidence?: number;
+    bargeInDebounceMs?: number;
+    bargeInReleaseMs?: number;
+    bargeInAmplitudeFloorDb?: number;
+    bargeInCooldownMs?: number;
+  }
+  ```
+- **AEC constraints on the mic stream — single site.** Update `ui/src/audio/voiceActivity.ts:213` from `md.getUserMedia({ audio: true })` to `md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })`. This is the only `getUserMedia` site the conversation pipeline owns. The press-to-talk path uses browser `SpeechRecognition`, which performs its own internal audio capture **not** reachable from JS — AEC there is browser-implementation-defined and out of operator control. Browser AEC on the VAD stream is the first line of defense; the Schmitt detector is the second.
 - Out of scope for v1: WebAudio-based echo cancellation using the TTS audio element as the reference signal — defer to AD-760b only if real-world false barge-ins persist after the above.
 
 ## Tests
@@ -80,7 +118,8 @@ Three related voice defects, observed in production HXI:
   - Selecting `Conversation mode` calls `armConversationMode` with the correct `agentId` and persists `hxi_chat_mic_mode_${agentId}=conversation`.
   - Selecting `Press to talk` calls disarm and persists `ptt`.
   - On mount, if persisted mode is `conversation` and `voiceEnabled=true`, arm fires automatically.
-  - On `voiceEnabled` flip false → disarm; flip true (with persisted `conversation`) → arm.
+  - On `voiceEnabled` flip false → disarm; flip true (with persisted `conversation`) → arm. Persisted preference (`hxi_chat_mic_mode_${agentId}`) survives the cycle.
+  - **Agent-switch invariant**: mount panel for agent A with persisted `conversation`, switch to agent B with persisted `conversation` — assert A's disarm fires before B's arm (single-armed-controller invariant from `conversationController.ts:78-82`).
   - On unmount, disarm fires.
   - Left-click mic while in Conversation mode preempts via `PRIORITY_PRESS_TO_TALK` (BF-318 invariant — assert no regression).
   - Keyboard `Shift+F10` on focused mic opens the same menu (a11y).
@@ -88,9 +127,11 @@ Three related voice defects, observed in production HXI:
   - `startListening` configures `continuous=true`, `interimResults=true`.
   - Multiple interim results accumulate; final fires on 1.5 s gap or explicit stop.
   - Empty-result fallback to `whisperStt` triggers after N failures when Silero is available.
-- Existing tests:
+  - Existing tests:
   - `conversationController.test.ts` — must still pass unchanged (engine is correct; only callers change).
   - `speechRecognitionArbiter.test.ts` — must still pass.
+- New tests for the detector module:
+  - `bargeInDetector.test.ts`: onset latency = `debounceFrames` exactly; release latency = `releaseFrames`; amplitude floor rejects high-score low-RMS frames; cancelled-onset cooldown suppresses the next onset for `cooldownMs`; cooldown is per-detector-instance (two detectors don't share state).
 
 ### Pytest (no backend changes expected)
 - Targeted run for any backend touched: `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -k "voice or speech or perception" -p no:xdist`.
@@ -115,6 +156,8 @@ Three related voice defects, observed in production HXI:
 
 - AD-760a — extend natural-conversation wiring to the IntentSurface omnibus (decomposer) chat, not just agent DMs.
 - AD-760b — emit explicit telemetry when natural-conversation arm/disarm fires, so the Captain can audit "was duplex actually live during that conversation?" from journal logs.
+- AD-760c — add mic + conversation-mode affordance to the WardRoom DM (`WardRoomThreadDetail.tsx` / `ChatInput.tsx`); no mic exists in that surface today.
+- AD-760d — a11y parity: keyboard `Shift+F10` activation for the existing screen-share, volume, and voice-picker context menus (`ProfileChatTab.tsx:435`, `DecisionSurface.tsx:133,173`). AD-760 ships the helper hook used for the new mic menu; this AD applies it across the established `onContextMenu` sites.
 
 ## Engineering principles compliance
 
