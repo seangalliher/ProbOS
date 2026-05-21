@@ -521,8 +521,8 @@ class TieredTrustConfig(BaseModel):
     # Crew tier uses existing consensus priors — no separate config needed.
 
     # Callsigns in each tier.
-    bridge_pools: list[str] = ["counselor"]
-    bridge_callsigns: list[str] = ["Meridian"]
+    bridge_pools: list[str] = ["counselor", "yeoman"]
+    bridge_callsigns: list[str] = ["Meridian", "Yeo"]
     chief_callsigns: list[str] = ["Bones", "LaForge", "Number One", "Worf", "O'Brien"]
 
 
@@ -3816,6 +3816,10 @@ class ProactiveCognitiveConfig(BaseModel):
     # AD-636: Stagger proactive agent dispatch across cycle interval
     stagger_enabled: bool = True
     min_stagger_seconds: float = 5.0
+    # AD-766: YeomanAgent proactive-scan digest aggregation window. Multiple
+    # proactive_scan emissions arriving within this window are collapsed into
+    # a single Captain DM digest. Set <= 0 to flush each scan immediately.
+    yeoman_digest_window_seconds: float = 60.0
 
 
 class PersistentTasksConfig(BaseModel):

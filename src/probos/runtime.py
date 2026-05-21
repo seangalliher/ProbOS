@@ -65,6 +65,7 @@ from probos.cognitive.builder_specialists import (
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.scout import ScoutAgent
 from probos.cognitive.counselor import CounselorAgent
+from probos.cognitive.yeoman import YeomanAgent
 from probos.boot_camp import BootCampCoordinator
 from probos.cognitive.security_officer import SecurityAgent
 from probos.cognitive.operations_officer import OperationsAgent
@@ -964,6 +965,8 @@ class ProbOSRuntime:
         self.spawner.register_template("research_specialist", ResearchSpecialistAgent)
         # Bridge crew (AD-398)
         self.spawner.register_template("counselor", CounselorAgent)
+        # Bridge crew (AD-766) — Captain's personal assistant
+        self.spawner.register_template("yeoman", YeomanAgent)
         # Security team (AD-398)
         self.spawner.register_template("security_officer", SecurityAgent)
         # Operations team (AD-398)

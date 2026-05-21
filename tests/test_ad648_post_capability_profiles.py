@@ -538,8 +538,8 @@ class TestFullOrganizationYaml:
         svc = VesselOntologyService(config_dir)
         await svc.initialize()
 
-        # All 18 posts should parse (AD-628c added chief_training)
-        assert len(svc._loader.posts) == 18
+        # All 19 posts should parse (AD-628c added chief_training; AD-766 added yeoman)
+        assert len(svc._loader.posts) == 19
 
         # Scout should have capabilities and negative grounding
         scout = svc._loader.posts.get("scout_officer")

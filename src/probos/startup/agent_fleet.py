@@ -167,6 +167,46 @@ async def create_agent_fleet(
             profile_store=counselor_profile_store,
         )
 
+    # Bridge crew — Yeoman (AD-766: Captain's personal assistant, singleton)
+    if config.utility_agents.enabled:
+        ids = generate_pool_ids("yeoman", "yeoman", 1)
+        await create_pool_fn(
+            "yeoman", "yeoman", target_size=1,
+            agent_ids=ids, llm_client=llm_client, runtime=runtime,
+        )
+        # Wire Captain Card persona + duty schedule into the spawned Yeoman
+        # so the live agent adopts the operator's persona and respects the
+        # work-hours / quiet-hours policy before the first proactive scan.
+        from probos.cognitive.yeoman import YeomanAgent
+        yeo_agents = [
+            agent for agent in runtime.registry.get_by_pool("yeoman")
+            if isinstance(agent, YeomanAgent)
+        ]
+        if len(yeo_agents) > 1:
+            logger.warning(
+                "AD-766: more than one YeomanAgent in registry "
+                "(found %d); singleton invariant violated",
+                len(yeo_agents),
+            )
+        if yeo_agents:
+            yeoman = yeo_agents[0]
+            try:
+                await yeoman.initialize(
+                    captain_card=getattr(runtime, "captain_card", None),
+                    duty_schedule=getattr(runtime, "duty_schedule", None),
+                    digest_window_seconds=getattr(
+                        config.proactive_cognitive,
+                        "yeoman_digest_window_seconds",
+                        60.0,
+                    ),
+                )
+            except Exception:
+                logger.warning(
+                    "AD-766: YeomanAgent.initialize() failed; agent live "
+                    "but proactive-scan aggregation disabled",
+                    exc_info=True,
+                )
+
     # Security team — Security Officer (AD-398)
     if config.utility_agents.enabled:
         ids = generate_pool_ids("security_officer", "security_officer", 1)

@@ -42,6 +42,19 @@ const STORAGE_VISITS = 'hxi_visit_count';
 const COLOR_ACTIVE = '#f0b060';
 const COLOR_INACTIVE = '#666680';
 
+/**
+ * AD-766: Pin the Captain's Yeoman to the top of the 1:1 DM list.
+ * Stable secondary order preserved for the rest of the agents.
+ */
+export function sortYeomanFirst<T extends { callsign: string }>(
+  agents: readonly T[],
+): T[] {
+  const yeoIndex = agents.findIndex((a) => a.callsign === 'Yeo');
+  if (yeoIndex <= 0) return [...agents];
+  const yeo = agents[yeoIndex];
+  return [yeo, ...agents.slice(0, yeoIndex), ...agents.slice(yeoIndex + 1)];
+}
+
 function readBool(key: string): boolean {
   try {
     return typeof window !== 'undefined' && window.localStorage.getItem(key) === 'true';
@@ -136,9 +149,9 @@ export function LeftRail({
   const maxAgents = isVeteran ? 12 : 5;
   const maxThreads = isVeteran ? 8 : 3;
 
-  const visibleAgents = agents
-    .filter((a) => a.status === 'online')
-    .slice(0, maxAgents);
+  const visibleAgents = sortYeomanFirst(
+    agents.filter((a) => a.status === 'online'),
+  ).slice(0, maxAgents);
   const visibleThreads = recentThreads.slice(0, maxThreads);
 
   const width = collapsed ? 56 : 240;

@@ -25,7 +25,7 @@ posts:
     title: "Captain"
     department: bridge
     reports_to: null  # Top of chain
-    authority_over: [first_officer, counselor]
+    authority_over: [first_officer, counselor, yeoman]
     tier: external  # Human, not agent
     clearance: ORACLE
     capabilities:
@@ -72,6 +72,34 @@ posts:
       - "operational system diagnostics (Medical department handles system health)"
       - "direct access to other agents' episodic memories (Minority Report principle)"
       - "authority to modify agent code or configuration"
+
+  - id: yeoman
+    title: "Ship's Yeoman"
+    department: bridge
+    reports_to: captain
+    authority_over: []
+    tier: crew
+    clearance: ORACLE
+    capabilities:
+      - id: daily_briefing
+        summary: "Assemble overnight inbox/calendar/Teams highlights into a Captain DM"
+        outputs: [captain_dm]
+      - id: schedule_lookup
+        summary: "Answer Captain calendar questions (today/this week)"
+        outputs: [captain_dm]
+      - id: triage_inbox
+        summary: "Summarize unread mail and flag items requiring Captain attention"
+        outputs: [captain_dm]
+      - id: delegate_to_crew
+        summary: "Identify the right specialist for a request and @-mention them"
+        outputs: [crew_mention]
+      - id: relay_standing_order
+        summary: "Broadcast a Captain order to the named department head"
+        outputs: [department_dm]
+    does_not_have:
+      - "tactical, financial, or destructive decision-making (Captain owns those)"
+      - "write actions to M365 in v1 (read-only digest only)"
+      - "modification of the Captain Card persona shape"
 
   # Engineering
   - id: chief_engineer
@@ -356,6 +384,10 @@ assignments:
     post_id: counselor
     callsign: "Troi"
     watches: [alpha, beta]
+  - agent_type: yeoman
+    post_id: yeoman
+    callsign: "Yeo"
+    watches: [alpha, beta, gamma]
   - agent_type: engineering_officer
     post_id: chief_engineer
     callsign: "LaForge"
