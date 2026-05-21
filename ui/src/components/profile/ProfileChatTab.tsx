@@ -61,6 +61,7 @@ export function ProfileChatTab({ agentId }: Props) {
   const [screenMenuOpen, setScreenMenuOpen] = useState(false);
   const [screenShareInFlight, setScreenShareInFlight] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textInputRef = useRef<HTMLInputElement>(null);
   const screenShareButtonRef = useRef<HTMLButtonElement>(null);
   const screenShareMenuRef = useRef<HTMLDivElement>(null);
   const screenStopOriginRef = useRef<'cleanup' | null>(null);
@@ -237,6 +238,28 @@ export function ProfileChatTab({ agentId }: Props) {
         .then(data => setSeedMemories(data.memories || []))
         .catch(() => {});  // Non-critical
   }, [agentId]);
+
+  // AD-795: Hydrate the input from a pending chat draft (set by the
+  // Compact-mode starter chips). Subscribes via a selector so the effect
+  // only fires when this agent's draft changes. The store action clears
+  // the draft once we've consumed it so navigating away and back doesn't
+  // re-populate the field.
+  const pendingDraft = useStore((s) => s.chatDrafts[agentId] ?? '');
+  const consumeChatDraft = useStore((s) => s.consumeChatDraft);
+  useEffect(() => {
+    if (!pendingDraft) return;
+    const text = consumeChatDraft(agentId);
+    if (!text) return;
+    setInput(text);
+    // Defer focus to the next tick so React has applied the value.
+    queueMicrotask(() => {
+      const el = textInputRef.current;
+      if (el) {
+        el.focus();
+        try { el.setSelectionRange(text.length, text.length); } catch { /* ignore */ }
+      }
+    });
+  }, [agentId, pendingDraft, consumeChatDraft]);
 
   // AD-718: Fetch per-agent voice profile (Tier-2 log-and-degrade on failure).
   // Refetches when ProfileInfoTab dispatches `voice-profile-updated` for this agent.
@@ -617,6 +640,7 @@ export function ProfileChatTab({ agentId }: Props) {
           )}
         </div>
         <input
+          ref={textInputRef}
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}

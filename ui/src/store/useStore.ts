@@ -329,6 +329,11 @@ export interface HXIState {
   pendingRequests: number;
   pendingChar: string;
 
+  // AD-795: per-agent chat input drafts. The Compact-mode starter chips
+  // (and any future "insert text" affordance) write here; ProfileChatTab
+  // consumes the value, hydrates its local input state, and clears it.
+  chatDrafts: Record<string, string>;
+
   // Audio state
   soundEnabled: boolean;
   voiceEnabled: boolean;
@@ -418,6 +423,9 @@ export interface HXIState {
   decPendingRequests: () => void;
   triggerInput: (char: string) => void;
   consumePendingChar: () => string;
+  // AD-795: chat-draft injection (Compact-mode starter chips).
+  setChatDraft: (agentId: string, text: string) => void;
+  consumeChatDraft: (agentId: string) => string;
   setSoundEnabled: (v: boolean) => void;
   setVoiceEnabled: (v: boolean) => void;
   // AD-705: opt-in toggle for the always-on wake-word voice loop.
@@ -613,6 +621,7 @@ export const useStore = create<HXIState>((set, get) => ({
   processing: false,
   pendingRequests: 0,
   pendingChar: '',
+  chatDrafts: {},
   soundEnabled: false,
   voiceEnabled: false,
   // AD-705: hydrate wake-word toggle from localStorage; default OFF.
@@ -1186,6 +1195,19 @@ export const useStore = create<HXIState>((set, get) => ({
     const char = get().pendingChar;
     set({ pendingChar: '' });
     return char;
+  },
+  setChatDraft: (agentId, text) =>
+    set((s) => ({ chatDrafts: { ...s.chatDrafts, [agentId]: text } })),
+  consumeChatDraft: (agentId) => {
+    const text = get().chatDrafts[agentId] ?? '';
+    if (text) {
+      set((s) => {
+        const next = { ...s.chatDrafts };
+        delete next[agentId];
+        return { chatDrafts: next };
+      });
+    }
+    return text;
   },
   setSoundEnabled: (v) => {
     set({ soundEnabled: v });
