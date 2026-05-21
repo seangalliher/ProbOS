@@ -2,8 +2,9 @@
  * AD-759 connection state machine for the runtime ↔ renderer link.
  *
  * Tracks whether the renderer is currently connected to the ProbOS runtime
- * at `http://127.0.0.1:8765`. Pure — no Electron dependency — so we can
- * unit-test transitions.
+ * at the URL resolved from `PROBOS_RUNTIME_URL` env var (default
+ * `http://127.0.0.1:8765`; BF-324 made the URL fully env-overridable). Pure —
+ * no Electron dependency — so we can unit-test transitions.
  *
  * States:
  *   - "connecting"  — initial; renderer is loading or retrying.

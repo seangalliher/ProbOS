@@ -5,7 +5,9 @@
  *   1. Single-instance lock (forward `probos://` argv on second-launch).
  *   2. Register `probos://` as default protocol client.
  *   3. Create tray icon + menu.
- *   4. Create main window pointed at `http://127.0.0.1:8765`.
+ *   4. Create main window pointed at `PROBOS_RUNTIME_URL` env var
+ *      (default `http://127.0.0.1:8765`; BF-324 widened CSP so any
+ *      127.0.0.1:* port works without rebuilding).
  *   5. On `did-fail-load`, render the disconnected-state HTML.
  *   6. Listen for `second-instance` and route any new deep-link.
  *

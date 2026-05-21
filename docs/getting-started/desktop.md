@@ -65,7 +65,16 @@ npm run dev
 
 This will launch the Electron host pointed at `http://127.0.0.1:8765`.
 Set `PROBOS_RUNTIME_URL` to override the runtime URL for non-default
-deployments.
+deployments. For example, if your runtime binds to port `18900`:
+
+```pwsh
+$env:PROBOS_RUNTIME_URL = "http://127.0.0.1:18900"
+npm run dev
+```
+
+The renderer's Content-Security-Policy allows any `http://127.0.0.1:*`
+origin (BF-324), so no rebuild is required when changing the runtime
+port.
 
 Run the unit tests:
 
