@@ -4090,3 +4090,45 @@ waves:
       Single-AD wave: AD-760 is deep enough on its own.
       Workflow: Architect precheck + review_1 + review_2 + GATE 1 BEFORE
       Builder dispatch.
+
+  - id: "186-desktop-tray-app"
+    title: "Yeo native desktop tray app (AD-759)"
+    kind: main
+    depends_on: ["185-voice-conversation-wiring"]
+    dispatch_prompt: "prompts/ad-759-yeo-native-desktop-tray-app.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-759-yeo-native-desktop-tray-app.md"
+    builder_required: true
+    issues_to_close: [705]
+    estimated_hours: 12
+    status: drafting
+    notes: |
+      AD-759 ships an Electron-based desktop host wrapping the existing
+      HXI route surfaces. v1 scope: tray icon + menu, single-instance
+      lock with deep-link forwarding (probos://...), native
+      notifications with click-through, launch-at-login, auto-update
+      check/install flow, Windows-first installer artifact.
+      Prior art: openclaw/openclaw-windows-node (MIT) + hermes-desktop
+      (MIT) - architecture inspiration only, no code import.
+      Workflow: Architect precheck + review_1 + review_2 + GATE 1 BEFORE
+      Builder dispatch. Architect MUST surface a license disposition for
+      every new Electron dep + signed-installer posture (operators
+      bring-your-own-cert vs OSS-ships-unsigned).
+      Large blast radius (new desktop/ workspace + CI release pipeline).
+      If review surfaces multi-AD shape, recommend split before dispatch.
+    notes: |
+      AD-760 wires the AD-747 ConversationController into ProfileChatTab
+      and WardRoomThreadDetail DMs, fixes press-to-talk mic reliability
+      (continuous=true + interimResults + 1.5s end-of-speech gap +
+      whisperStt fallback), adds right-click mic popover (PTT default vs
+      Conversation mode, per-agent persistence, Shift+F10 a11y), AEC
+      constraints {echoCancellation, noiseSuppression, autoGainControl},
+      and a Schmitt-trigger barge-in detector with amplitude floor +
+      cooldown (listening: onset 0.50/offset 0.35, 3 frames; agent_speaking:
+      onset 0.80/offset 0.40, 8 onset frames / 3 release frames; amplitude
+      floor -45 dBFS; 500 ms cooldown after cancelled onset).
+      All thresholds exposed on ArmOptions for future tuning.
+      Single-AD wave: AD-760 is deep enough on its own.
+      Workflow: Architect precheck + review_1 + review_2 + GATE 1 BEFORE
+      Builder dispatch.
