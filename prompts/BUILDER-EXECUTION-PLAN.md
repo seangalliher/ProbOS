@@ -39,7 +39,7 @@ Read these in full **before** writing any code:
   - A `See DECISIONS.md AD-NNN` reference in the commit body when the parent BF is internal-only.
 
   Builder applies this rule automatically when drafting commit messages for sub-AD work — no architect approval at GATE 2 required when the trailer is present. Lineage: AD-738e-1 (`bb1ca160`) shipped with the DECISIONS reference in the body; this codifies that as the standard.
-- **AD-722c-3 — Architect forward markers use TECHNICAL triggers, not commercial-tier language.** Forward markers that describe when commercial-overlay extensions might trigger MUST use technical / capability-based phrasing. Examples: ❌ "enterprise tier requires queryable backend" → ✅ "queryable-backend deployment requires SQL replacement". ❌ "commercial overlay can swap JSONL for SQL" → ✅ "deployments needing queryable analytics can swap JSONL for SQL via the Protocol." Boundary rule (AD-450 / Wave 154 retrospective): OSS repo describes WHAT extension points exist, not HOW they're priced or monetized. The pre-commit boundary hook will fire on common pricing-adjacent words ("enterprise tier", "commercial overlay", "pricing").
+- **AD-722c-3 — Architect forward markers use TECHNICAL triggers, not business-language triggers.** Forward markers that describe when extension points might activate MUST use technical / capability-based phrasing. Examples: ❌ "premium deployment requires queryable backend" → ✅ "queryable-backend deployment requires SQL replacement". ❌ "paid extension can swap JSONL for SQL" → ✅ "deployments needing queryable analytics can swap JSONL for SQL via the Protocol." Boundary rule (AD-450 / Wave 154 retrospective): OSS repo describes WHAT extension points exist, not HOW they are monetized. The pre-commit boundary hook will fire on common business-oriented terms.
 
 ---
 
@@ -51,6 +51,28 @@ d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 16 --dist=loadfile   # parallel 
 ```
 
 Record the baseline. After each prompt, expect the test count to grow by the prompt's documented test count.
+
+## Wave-close pre-flight gate
+
+Run this gate at every wave close, and on any commit that touches:
+
+- `package.json` or `ui/package-lock.json`
+- `pyproject.toml`
+- any file in the AD-748 heavily-mocked list (`ui/src/audio/voice.ts`, `ui/src/audio/wakeWord.ts`, `ui/src/audio/speechInput.ts`, `ui/src/store/useStore.ts`, `ui/src/api.ts`)
+- commits that add more than 20 tests
+
+Command:
+
+```pwsh
+pwsh scripts/wave-close-precheck.ps1
+```
+
+Failure semantics:
+
+- `FAIL` (script exit `1`): stop, fix the reported issue, and rerun until clean.
+- `WARN` with no `FAIL` (script exit `0`): wave may proceed, but file a forward-marker BF for next-wave cleanup.
+- Do not bypass Check 1 (lock-file sync) or Check 5 (vitest exit-code gate).
+- Check 3 (runtime budget) may be skipped temporarily via `WAVE_CLOSE_FAST=1` during iteration, but must run before push.
 
 ---
 
