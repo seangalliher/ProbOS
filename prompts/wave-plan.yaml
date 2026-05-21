@@ -4102,7 +4102,7 @@ waves:
     builder_required: true
     issues_to_close: [705]
     estimated_hours: 12
-    status: drafting
+    status: shipped
     notes: |
       AD-759 ships an Electron-based desktop host wrapping the existing
       HXI route surfaces. v1 scope: tray icon + menu, single-instance
