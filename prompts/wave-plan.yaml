@@ -4074,7 +4074,7 @@ waves:
     builder_required: true
     issues_to_close: [706]
     estimated_hours: 6
-    status: drafting
+    status: shipped
     notes: |
       AD-760 wires the AD-747 ConversationController into ProfileChatTab
       and WardRoomThreadDetail DMs, fixes press-to-talk mic reliability
