@@ -22,13 +22,32 @@ def test_every_section_domain_is_known() -> None:
 
 
 def test_every_section_has_an_editable_field() -> None:
-    """Every wired section is operator-actionable (no readonly-only sections)."""
+    """Every wired field-driven section is operator-actionable (no readonly-only sections).
+
+    Custom-panel sections (``fields=()``) are exempt — they are rendered by a
+    per-section branch in ``SettingsMain.tsx`` (e.g. AD-762 ``proactive``)
+    and carry their own interactive controls outside the field-row pipeline.
+    """
     for section in SECTIONS:
+        if not section.fields:
+            continue  # custom panel; rendered by SettingsMain branch
         kinds = {f.kind for f in section.fields}
         assert kinds - {"readonly"}, (
             f"Section {section.section_id!r} has only readonly fields — "
             f"belongs in raw YAML editing (AD-741-6)."
         )
+
+
+def test_ad762_proactive_section_registered() -> None:
+    """AD-762: the relocated proactive status surface has a Core/custom-panel slot."""
+    proactive = next((s for s in SECTIONS if s.section_id == "proactive"), None)
+    assert proactive is not None, "AD-762 proactive section missing from SECTIONS"
+    assert proactive.label == "Proactive"
+    assert proactive.domain == "Core"
+    assert proactive.fields == (), (
+        "AD-762 proactive is a custom panel rendered by SettingsMain branch; "
+        "fields tuple must stay empty (see AD-762 spec §2)."
+    )
 
 
 def test_every_field_id_resolves_against_system_config() -> None:

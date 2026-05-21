@@ -1,3 +1,10 @@
+/* AD-762 — Proactive status section for the Settings panel.
+ *
+ * Moved from ui/src/components/wardroom/ProactiveStatus.tsx so the WardRoom
+ * surface stays focused on channels and DMs (HXI Design Principle #5/#9).
+ * The status payload, polling cadence, and global soft-disable toggle are
+ * unchanged from the AD-752 implementation.
+ */
 import { useEffect, useMemo, useState } from 'react';
 
 type ProactiveStatusPayload = {
@@ -16,7 +23,7 @@ function formatIso(value: string): string {
   return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export function ProactiveStatus() {
+export function ProactiveStatusSection() {
   const [status, setStatus] = useState<ProactiveStatusPayload | null>(null);
   const [error, setError] = useState<string>('');
   const [softDisabled, setSoftDisabled] = useState<boolean>(() => {
@@ -71,7 +78,7 @@ export function ProactiveStatus() {
 
   return (
     <div style={{
-      margin: '8px 16px 10px 16px',
+      margin: '8px 0 10px 0',
       border: '1px solid rgba(240,176,96,0.14)',
       borderRadius: 8,
       padding: '8px 10px',
@@ -107,3 +114,5 @@ export function ProactiveStatus() {
     </div>
   );
 }
+
+export default ProactiveStatusSection;

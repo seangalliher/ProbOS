@@ -1,9 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { ProactiveStatus } from '../components/wardroom/ProactiveStatus';
+import { ProactiveStatusSection } from '../components/settings/sections/ProactiveStatusSection';
 
-describe('AD-752 ProactiveStatus', () => {
+describe('AD-752 / AD-762 ProactiveStatusSection', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
@@ -24,7 +24,7 @@ describe('AD-752 ProactiveStatus', () => {
       }))
     );
 
-    render(<ProactiveStatus />);
+    render(<ProactiveStatusSection />);
 
     await waitFor(() => {
       expect(screen.getByText(/Next inbox scan/i)).toBeInTheDocument();
@@ -36,7 +36,7 @@ describe('AD-752 ProactiveStatus', () => {
   it('shows unavailable message when proactive endpoint fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 })));
 
-    render(<ProactiveStatus />);
+    render(<ProactiveStatusSection />);
 
     await waitFor(() => {
       expect(screen.getByText('Unavailable')).toBeInTheDocument();

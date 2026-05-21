@@ -396,6 +396,23 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
             FieldDescriptor("mcp.enabled", "MCP bridge enabled", "bool"),
         ),
     ),
+    # AD-762: Proactive scheduler status + soft-disable toggle. Custom
+    # panel (fields=()) rendered by SettingsMain.tsx via the explicit
+    # `section_id === 'proactive'` branch, mirroring the `perception`
+    # pattern. Relocated from the WardRoom surface so comms and runtime
+    # configuration stop sharing screen real-estate (HXI Design Principle
+    # #5 progressive disclosure / #9 alert-driven layout).
+    SectionDescriptor(
+        section_id="proactive",
+        label="Proactive",
+        glyph="◐",
+        domain="Core",
+        description=(
+            "Next inbox/calendar scan, work-hours, quiet-hours, and the "
+            "global enable toggle."
+        ),
+        fields=(),
+    ),
 )
 
 
