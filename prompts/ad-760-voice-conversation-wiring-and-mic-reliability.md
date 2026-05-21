@@ -57,13 +57,19 @@ Three related voice defects, observed in production HXI:
 ### 4. Conversation mode: agent-speaking handling + barge-in robustness
 - **Do not mute the mic during `agent_speaking`.** Silero VAD keeps running so barge-in has zero warm-up latency.
 - The existing state machine already gates transcript submission on `state === 'listening'`, so whisperStt output is dropped while the agent is speaking. Keep that invariant; add an explicit assertion in the controller's `_onTranscript` to log-and-drop when called outside `listening`.
-- **Barge-in uses confidence-gated sustained detection, not single-frame triggers.** Three combined gates must all clear before `_onVadSpeechStart` fires the barge-in transition:
-  1. **Elevated confidence threshold.** Normal listening uses the default Silero threshold (~0.5). During `agent_speaking` raise the per-frame probability gate to ~0.7 (configurable). Filters throat clears / mid-volume background that peaks below this.
-  2. **Sustained voiced frames.** Require ~8 consecutive frames (~250 ms) above the elevated threshold. Single-frame spikes from door slams / chair creaks / cough onsets are rejected.
-  3. **Amplitude floor.** Reject frames whose RMS is below ~-45 dBFS even if Silero's probability is high. Guards against the known false-positive on low-level steady noise (HVAC, fan).
-- **Cooldown after a cancelled barge-in.** If the sustained-frames timer cancels because VAD dropped below threshold before firing, suppress new barge-in attempts for ~500 ms. Prevents "stutter" interrupts when the user makes a brief throat noise mid-sentence.
-- **All gates exposed on `ArmOptions`** with defaults: `bargeInConfidence=0.7`, `bargeInDebounceMs=250`, `bargeInAmplitudeFloorDb=-45`, `bargeInCooldownMs=500`. Captain-tunable via the existing settings snapshot without code changes.
-- **AEC constraints on the mic stream.** Ensure `getUserMedia` is called with `{ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }` everywhere the conversation pipeline opens a stream. Browser AEC is the first line of defense; the three-gate barge-in detector is the second.
+- **Barge-in uses a Schmitt-trigger (hysteresis) detector over the Silero probability stream, not a single threshold.** Separate onset and offset thresholds prevent flapping on borderline audio.
+
+  | Phase | Onset threshold | Offset threshold | Sustained frames (onset) | Release frames (offset) |
+  |---|---|---|---|---|
+  | `listening` (default VAD speech-start) | 0.50 | 0.35 | 3 (~100 ms) | 3 (~100 ms) |
+  | `agent_speaking` (barge-in) | **0.80** | **0.40** | 8 (~250 ms) | 3 (~100 ms) |
+
+  Detector state machine: starts `below`. When per-frame probability crosses the **onset** threshold and stays above it for the sustained-frame count, transition to `above` and fire the event (barge-in during playback, speech-start during listening). Once `above`, only release when probability falls below the **offset** threshold for the release-frame count. The 0.4 gap between onset (0.80) and offset (0.40) during playback absorbs the natural oscillation in voiced/unvoiced phoneme transitions and prevents stutter releases.
+- **Why 0.80 onset during playback.** Silero's known false-positive bands for TTS bleed sit in the 0.55–0.70 range on most laptop AEC stacks. Above 0.75 the model rarely confuses synthesized speech for live human voice. This is empirical, not theoretical — defaults are tunable.
+- **Amplitude floor.** Reject frames whose RMS is below ~-45 dBFS even if Silero's probability is high. Guards against the known false-positive on low-level steady noise (HVAC, fan). Applied as a precondition on every frame before it counts toward the sustained-onset tally.
+- **Cooldown after a cancelled barge-in.** If the sustained-onset timer cancels because probability dropped below the onset threshold before reaching the frame count, suppress new barge-in attempts for ~500 ms. Prevents stutter interrupts on brief throat noises.
+- **All gates exposed on `ArmOptions`** with defaults: `bargeInOnsetConfidence=0.80`, `bargeInOffsetConfidence=0.40`, `bargeInDebounceMs=250`, `bargeInReleaseMs=100`, `bargeInAmplitudeFloorDb=-45`, `bargeInCooldownMs=500`. Captain-tunable via the existing settings snapshot without code changes.
+- **AEC constraints on the mic stream.** Ensure `getUserMedia` is called with `{ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }` everywhere the conversation pipeline opens a stream. Browser AEC is the first line of defense; the Schmitt detector is the second.
 - Out of scope for v1: WebAudio-based echo cancellation using the TTS audio element as the reference signal — defer to AD-760b only if real-world false barge-ins persist after the above.
 
 ## Tests
