@@ -4032,7 +4032,7 @@ waves:
     builder_required: true
     issues_to_close: [708, 712, 709, 707, 711]
     estimated_hours: 10
-    status: drafting
+    status: shipped
     notes: |
       Live-use feedback batch from Captain 2026-05-20, after Wave 181 Yeo
       feature-complete gate closure surfaced gaps not covered by AD-758.
@@ -4058,3 +4058,7 @@ waves:
         - AD-759 (#705) native desktop tray - multi-day packaging work.
       Workflow: Architect precheck + review_1 + review_2 + GATE 1 BEFORE
       Builder dispatch. No phantom-API shortcuts.
+      Wave 184 executed and closed with local commits 10171742, cfe712c4,
+      712d670b, 43995672, and 72105c78. Issues #708, #712, #709, #707,
+      and #711 were closed; #710 remained open for the deferred Gmail
+      connector wave.
