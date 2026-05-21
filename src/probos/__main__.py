@@ -282,8 +282,11 @@ async def _create_llm_client(config, console: Console):
 async def _check_nats(config, console: Console) -> None:
     """Check NATS server connectivity if enabled (AD-637).
 
-    Uses raw TCP connect to verify NATS is listening. The NATS client
-    library handles full protocol handshake during runtime startup.
+    Uses raw TCP connect to verify NATS is listening. If unreachable on
+    localhost and ``nats-server`` is on PATH, auto-start it (mirrors the
+    ``_ensure_ollama`` pattern) so the operator no longer has to launch
+    NATS manually before ProbOS. The NATS client library handles full
+    protocol handshake during runtime startup.
     """
     if not config.nats.enabled:
         return
@@ -297,18 +300,89 @@ async def _check_nats(config, console: Console) -> None:
     host = parts[0]
     port = int(parts[1]) if len(parts) > 1 else 4222
 
-    try:
-        _, writer = await _aio.wait_for(
-            _aio.open_connection(host, port), timeout=3.0
-        )
-        writer.close()
-        await writer.wait_closed()
+    async def _probe(timeout: float) -> bool:
+        try:
+            _, writer = await _aio.wait_for(
+                _aio.open_connection(host, port), timeout=timeout
+            )
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
+            return True
+        except (OSError, _aio.TimeoutError):
+            return False
+
+    if await _probe(3.0):
         console.print(f"  [green]\u2713[/green] NATS: {nats_url}")
-    except (OSError, _aio.TimeoutError):
+        return
+
+    # Only attempt auto-start for local NATS instances.
+    if host not in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
         console.print(
             f"  [yellow]\u2717[/yellow] NATS: {nats_url} unreachable "
-            "(will retry on startup)"
+            "(remote host — will retry on startup)"
         )
+        return
+
+    nats_bin = shutil.which("nats-server")
+    if not nats_bin:
+        # Fall back to a bundled copy under the repo's tools/ directory so
+        # operators don't have to put nats-server on PATH globally.
+        exe = "nats-server.exe" if sys.platform == "win32" else "nats-server"
+        project_root = Path(__file__).resolve().parent.parent.parent
+        candidates = [
+            project_root / "tools" / exe,
+            _probos_home() / "tools" / exe,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                nats_bin = str(candidate)
+                break
+
+    if not nats_bin:
+        console.print(
+            f"  [yellow]\u2717[/yellow] NATS: {nats_url} unreachable "
+            "(nats-server not on PATH or in tools/ — install from "
+            "https://docs.nats.io/running-a-nats-service/introduction/installation)"
+        )
+        return
+
+    console.print("  [yellow]NATS is not running — starting it...[/yellow]")
+    # JetStream is required by AD-637 (durable streams, attachment refs, etc.).
+    jetstream_store = _default_data_dir() / "nats-jetstream"
+    jetstream_store.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        nats_bin,
+        "-js",
+        "-sd", str(jetstream_store),
+        "-a", host if host != "localhost" else "127.0.0.1",
+        "-p", str(port),
+    ]
+    try:
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as exc:
+        console.print(f"  [red]Failed to start nats-server: {exc}[/red]")
+        return
+
+    with console.status("  Waiting for NATS server..."):
+        for _ in range(30):  # up to ~15 seconds
+            await _aio.sleep(0.5)
+            if await _probe(2.0):
+                console.print(
+                    f"  [green]\u2713[/green] NATS: {nats_url} (auto-started, JetStream at {jetstream_store})"
+                )
+                return
+
+    console.print(
+        f"  [yellow]\u26a0 nats-server launched but {nats_url} not reachable — continuing anyway[/yellow]"
+    )
 
 
 def _load_config_with_fallback(config_path: Path | None) -> tuple:
