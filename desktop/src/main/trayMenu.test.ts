@@ -1,0 +1,122 @@
+import { describe, it, expect } from "vitest";
+import { buildTrayMenu, actionableCount } from "./trayMenu";
+
+function noop(): void {
+  /* test stub */
+}
+
+describe("buildTrayMenu", () => {
+  it("returns the documented 8 actionable items in order", () => {
+    const items = buildTrayMenu({
+      status: "connected",
+      proactivePaused: false,
+      onOpenRoute: noop,
+      onToggleProactive: noop,
+      onCheckForUpdates: noop,
+      onQuit: noop,
+    });
+
+    expect(actionableCount(items)).toBe(8);
+    expect(items.map((i) => i.id)).toEqual([
+      "status",
+      "open-chat",
+      "daily-briefing",
+      "quick-capture",
+      "toggle-proactive",
+      "settings",
+      "check-updates",
+      "separator-1",
+      "quit",
+    ]);
+  });
+
+  it("status label reflects 'connected' state", () => {
+    const items = buildTrayMenu({
+      status: "connected",
+      proactivePaused: false,
+      onOpenRoute: noop,
+      onToggleProactive: noop,
+      onCheckForUpdates: noop,
+      onQuit: noop,
+    });
+    expect(items[0].label).toBe("Status: Connected");
+  });
+
+  it("status label reflects 'connecting' state", () => {
+    const items = buildTrayMenu({
+      status: "connecting",
+      proactivePaused: false,
+      onOpenRoute: noop,
+      onToggleProactive: noop,
+      onCheckForUpdates: noop,
+      onQuit: noop,
+    });
+    expect(items[0].label).toBe("Status: Connecting…");
+  });
+
+  it("status label reflects 'disconnected' state", () => {
+    const items = buildTrayMenu({
+      status: "disconnected",
+      proactivePaused: false,
+      onOpenRoute: noop,
+      onToggleProactive: noop,
+      onCheckForUpdates: noop,
+      onQuit: noop,
+    });
+    expect(items[0].label).toBe("Status: Disconnected");
+  });
+
+  it("proactive toggle label flips with paused state", () => {
+    const itemsActive = buildTrayMenu({
+      status: "connected",
+      proactivePaused: false,
+      onOpenRoute: noop,
+      onToggleProactive: noop,
+      onCheckForUpdates: noop,
+      onQuit: noop,
+    });
+    expect(itemsActive[4].label).toBe("Pause proactive mode");
+
+    const itemsPaused = buildTrayMenu({
+      status: "connected",
+      proactivePaused: true,
+      onOpenRoute: noop,
+      onToggleProactive: noop,
+      onCheckForUpdates: noop,
+      onQuit: noop,
+    });
+    expect(itemsPaused[4].label).toBe("Resume proactive mode");
+  });
+
+  it("check-for-updates is disabled with tooltip pointing to AD-759c", () => {
+    const items = buildTrayMenu({
+      status: "connected",
+      proactivePaused: false,
+      onOpenRoute: noop,
+      onToggleProactive: noop,
+      onCheckForUpdates: noop,
+      onQuit: noop,
+    });
+    const checkUpdates = items.find((i) => i.id === "check-updates");
+    expect(checkUpdates).toBeDefined();
+    expect(checkUpdates?.enabled).toBe(false);
+    expect(checkUpdates?.toolTip).toContain("AD-759c");
+  });
+
+  it("click handlers route to the expected paths", () => {
+    const routes: string[] = [];
+    const items = buildTrayMenu({
+      status: "connected",
+      proactivePaused: false,
+      onOpenRoute: (r) => routes.push(r),
+      onToggleProactive: noop,
+      onCheckForUpdates: noop,
+      onQuit: noop,
+    });
+    items.find((i) => i.id === "open-chat")?.click?.();
+    items.find((i) => i.id === "daily-briefing")?.click?.();
+    items.find((i) => i.id === "quick-capture")?.click?.();
+    items.find((i) => i.id === "settings")?.click?.();
+    expect(routes).toEqual(["/", "/briefing", "/capture", "/settings"]);
+  });
+});

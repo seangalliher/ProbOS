@@ -1,0 +1,26 @@
+{
+  "name": "probos-desktop",
+  "version": "0.1.0",
+  "description": "ProbOS Yeo native desktop tray host (Electron wrapper around the HXI). AD-759 v1.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "package": "electron-vite build && echo 'Installer pipeline deferred to AD-759b (no artifact produced).'",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.2.0",
+    "license-checker": "^25.0.1",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "vitest": "^1.6.0"
+  }
+}

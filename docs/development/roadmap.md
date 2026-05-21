@@ -333,6 +333,14 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-756 | Yeo conversational front door UX (welcome, suggested actions, daily briefing, delegation UI) — SHIPPED Wave 181 gate-verified | [#702](https://github.com/seangalliher/ProbOS/issues/702) | 2 |
 | AD-757 | Identity and continuity for Yeo (Captain Card + voice/avatar profile continuity) — SHIPPED Wave 181 gate-verified | [#703](https://github.com/seangalliher/ProbOS/issues/703) | 3 |
 | AD-758 | Yeo feature-complete integration gate (cross-crew capability exposure + learning upgrades) — SHIPPED Wave 181 | [#704](https://github.com/seangalliher/ProbOS/issues/704) | 2 |
+| AD-759 | Yeo native desktop tray app v1 — Electron host + tray menu + single-instance lock + `probos://` deep-link + native notifications + disconnected-state repair surface (new top-level `desktop/` workspace; MIT deps only; assumes runtime already running per AD-751; +24 vitest) — SHIPPED Wave 186 | [#705](https://github.com/seangalliher/ProbOS/issues/705) | 2 |
+| AD-759a | Launch-at-login (Win registry / macOS LaunchAgent / Linux .desktop autostart) — forward marker | — | 3 |
+| AD-759b | NSIS installer + unsigned Windows release artifact — forward marker | — | 3 |
+| AD-759c | Auto-update — check-only against GitHub Releases (no managed update server) — forward marker | — | 3 |
+| AD-759d | Signed installer + EV code-signing cert workflow *(Commercial)* — forward marker | — | 3 |
+| AD-759e | CI release pipeline (GH Actions matrix build Win/macOS/Linux) — forward marker | — | 3 |
+| AD-759-1 | macOS menubar parity — forward marker | — | 3 |
+| AD-759-2 | Linux tray parity — forward marker | — | 3 |
 
 **From the 2026-05-08 chat-experience enhancements (Captain's request):**
 

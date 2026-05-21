@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' http://127.0.0.1:8765" />
+    <title>ProbOS Desktop</title>
+  </head>
+  <body>
+    <!--
+      AD-759 v1: the production runtime URL is loaded directly from the main
+      process via `mainWindow.loadURL(RUNTIME_URL)`. This file exists only so
+      electron-vite has a renderer entry to bundle for `npm run build`.
+    -->
+    <p>Loading ProbOS runtime…</p>
+  </body>
+</html>

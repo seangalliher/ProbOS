@@ -59,6 +59,10 @@ node_modules/
 ui/dist/
 ui/coverage/
 
+# Desktop (AD-759 Electron host build artifacts)
+desktop/out/
+desktop/dist/
+
 # IDE / Workspace
 .idea/
 .vscode/
