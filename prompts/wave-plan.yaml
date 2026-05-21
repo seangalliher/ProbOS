@@ -4132,3 +4132,32 @@ waves:
       Single-AD wave: AD-760 is deep enough on its own.
       Workflow: Architect precheck + review_1 + review_2 + GATE 1 BEFORE
       Builder dispatch.
+  - id: "187-yeo-empty-state-polish"
+    title: "Yeo Compact empty-state polish (AD-795 quick-action chips + AD-796 greeting + status line)"
+    kind: main
+    depends_on: ["186-yeo-native-desktop-tray-app"]
+    dispatch_prompt: null
+    prompts_already_drafted: false
+    prompt_paths: []
+    builder_required: true
+    issues_to_close: [719, 720]
+    estimated_hours: 2
+    status: shipped
+    notes: |
+      Two right-sized UI-only ADs landing together on the Compact Yeo
+      surface (AD-759 / CompactApp.tsx). No backend changes, no schema
+      migrations, no back-compat risk.
+      AD-795: Empty-thread quick-action chips (Brief me / Help me write /
+      Plan a task / Code something / Remember this). Click inserts
+      starter text into the input, does not auto-send. Hidden after the
+      first message in the thread.
+      AD-796: Time-of-day greeting (morning / afternoon / evening) +
+      one-line status fetched in parallel from existing endpoints
+      (/api/system/health, /api/wardroom/unread-counts) with
+      fetch-failure fallback to just the greeting.
+      Both components render only in Compact mode and only when the
+      Yeo conversation has zero messages.
+      Workflow: ships under a single sub-architect dispatch (this
+      author) — both ADs are scoped tight enough to skip the formal
+      precheck + review_1/review_2 gates per the "small UI polish"
+      exception in BUILDER-EXECUTION-PLAN.md.

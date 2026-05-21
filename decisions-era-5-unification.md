@@ -2324,3 +2324,13 @@ The EvidenceCollector that consumes this taxonomy ships in the `prompts/ad-454-e
 OSS-tier passive observer. Subscribes to `EventType.WARD_ROOM_POST_CREATED`. Classifies each post against the AD-454 taxonomy (22 codes incl. CASCADE-CONFAB anti-pattern) via fast-tier LLM call. Writes `OBS-NNNN.yaml` files under `config.emergence_collector.output_dir`. Default disabled (research opt-in). No trust effects, no Hebbian effects, no consensus participation, no federation sync. `tier="utility"` (matches IntrospectionAgent / SystemQAAgent precedent).
 
 Dedup: per-(`author_id`, `behavior_code`), default 600s window. Confidence threshold default 0.7. Listener-boundary tier-2 (log-and-degrade) policy across all entry points to avoid silent fire-and-forget task death. Closes #510 (joint with AD-454 taxonomy prerequisite).
+
+
+### AD-795 - Yeo Compact starter chips on empty thread (Wave 187)
+
+ui/src/components/YeoStarterChips.tsx + store chatDrafts: Record<string,string> + ProfileChatTab draft-consume effect. Chip click writes a starter prompt into the agent's draft slot; ProfileChatTab hydrates its local input and focuses the textarea. Does not auto-send (Claude Chat parity). Hidden as soon as the conversation has >= 1 message (CompactApp gates render on yeoMessageCount === 0). Default 5-chip set (Brief me / Help me write... / Plan a task... / Code something... / Remember this...); custom sets accepted via the chips prop for future project-overridable AD-793 wiring. +4 vitest. Closes #719.
+
+### AD-796 - Yeo Compact greeting + status line on empty thread (Wave 187)
+
+ui/src/components/YeoEmptyGreeting.tsx. Time-of-day greeting via the pure greetingForHour(hour) helper (morning <12 / afternoon <18 / evening), captain-name prop with 'Captain' default, status line composed from store wardRoomUnread + GET /api/health crew_agents count, fallback 'All quiet.' when both sources are empty or fail. Fetch is wrapped tier-2 (log-and-degrade) - any network failure still renders the greeting. Captain-name wiring to AD-757 Captain Card is a forward marker (no REST endpoint exists yet - adding one is its own AD). +7 vitest. Closes #720.
+

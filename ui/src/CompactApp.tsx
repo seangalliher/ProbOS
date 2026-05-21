@@ -13,6 +13,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useStore } from './store/useStore';
 import { ProfileChatTab } from './components/profile/ProfileChatTab';
+import { YeoStarterChips } from './components/YeoStarterChips';
+import { YeoEmptyGreeting } from './components/YeoEmptyGreeting';
 import { stopCameraStream } from './hooks/useCameraStream';
 import { startVoiceActivity, stopVoiceActivity } from './audio/voiceActivity';
 import { useSettingsStore } from './store/useSettingsStore';
@@ -57,6 +59,14 @@ export default function CompactApp() {
   }, [agents]);
 
   const yeoId = yeo?.id ?? null;
+
+  // AD-795/796: render starter chips + greeting only on the empty-thread
+  // state. Subscribe directly to the message count so we re-render when
+  // the first turn lands (chips/greeting must disappear immediately).
+  const yeoMessageCount = useStore((s) =>
+    yeoId ? s.agentConversations.get(yeoId)?.messages.length ?? 0 : 0,
+  );
+  const isEmptyThread = yeoId !== null && yeoMessageCount === 0;
 
   useEffect(() => {
     if (yeoId) markAgentRead(yeoId);
@@ -150,7 +160,17 @@ export default function CompactApp() {
       {/* Chat surface — fills the rest of the window. */}
       <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {yeoId ? (
-          <ProfileChatTab agentId={yeoId} />
+          <>
+            {isEmptyThread && (
+              <div style={{ flex: '0 0 auto' }}>
+                <YeoEmptyGreeting />
+                <YeoStarterChips agentId={yeoId} />
+              </div>
+            )}
+            <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <ProfileChatTab agentId={yeoId} />
+            </div>
+          </>
         ) : (
           <div
             style={{

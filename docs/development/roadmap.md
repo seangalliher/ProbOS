@@ -341,6 +341,14 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-759e | CI release pipeline (GH Actions matrix build Win/macOS/Linux) — forward marker | — | 3 |
 | AD-759-1 | macOS menubar parity — forward marker | — | 3 |
 | AD-759-2 | Linux tray parity — forward marker | — | 3 |
+| AD-790 | Yeo Desktop first-run setup experience — Claude-Desktop-grade 4-step onboarding (welcome / runtime connect / Captain Card / suggested prompts) inside existing Electron host; `firstRunComplete` flag in `userData/yeo-state.json`; tray `Reset Setup…`; no new deps; +8 vitest | [#714](https://github.com/seangalliher/ProbOS/issues/714) | 2 |
+| AD-791 | Context-scoped chat threads — reframe sessions as Teams-style threads (1:1 / task / project context envelopes); SQLite `chat_threads` table; `/api/threads` REST surface; back-compat shim for existing `/api/agent/{id}/chat`; agent memory stays global, only the displayed context is scoped (umbrella for AD-792/793/794) | [#715](https://github.com/seangalliher/ProbOS/issues/715) | 2 |
+| AD-792 | Thread sidebar in Compact Yeo (Pinned / Projects / Recents / Search / New chat) — left rail mirroring Claude Chat + MS Teams; collapsible; right-click rename/pin/archive | [#716](https://github.com/seangalliher/ProbOS/issues/716) | 2 |
+| AD-793 | Projects — long-lived context groups owning N threads + pinned attachments; project description auto-injected as system context to every thread inside; mirrors Claude Projects / Teams Channels | [#717](https://github.com/seangalliher/ProbOS/issues/717) | 2 |
+| AD-794 | Auto-name new threads from the first turn (fast-tier LLM, 3-6 words, fallback to user opening message); manual rename locks the title | [#718](https://github.com/seangalliher/ProbOS/issues/718) | 3 |
+| AD-795 | Quick-action starter chips on empty thread (Code / Write / Plan / Brief…); chip click inserts text via store `chatDrafts`, never auto-sends; project-overridable — SHIPPED Wave 187 | [#719](https://github.com/seangalliher/ProbOS/issues/719) | 3 |
+| AD-796 | Time-of-day greeting + status line on Compact empty state — v1 renders `Good morning/afternoon/evening, <name>.` + `N unread WardRoom threads • N crew online` (or `All quiet.`); captain-name wiring to AD-757 Captain Card endpoint is a forward marker — SHIPPED Wave 187 | [#720](https://github.com/seangalliher/ProbOS/issues/720) | 3 |
+| AD-797 | Artifacts pane — agent-generated outputs (code blocks >40 lines, explicit `<artifact>` tags) extracted to AttachmentStore (AD-720 content-addressable) and rendered in a side drawer with per-name version history; project-pinned artifacts propagate to every thread in the project | [#721](https://github.com/seangalliher/ProbOS/issues/721) | 3 |
 
 **From the 2026-05-08 chat-experience enhancements (Captain's request):**
 
