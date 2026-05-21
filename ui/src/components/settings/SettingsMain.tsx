@@ -5,6 +5,7 @@ import type { FieldDescriptorDTO, SectionDescriptorDTO } from '../../store/useSe
 import { SectionIcon } from './icons';
 import PerceptionLivePanel from './sections/PerceptionLivePanel';
 import ProactiveStatusSection from './sections/ProactiveStatusSection';
+import ConnectorsSection from './sections/ConnectorsSection';
 
 const STROKE_AMBER = '#f0b060';
 const STROKE_DIM = '#666680';
@@ -283,6 +284,7 @@ export default function SettingsMain() {
 
       {section.section_id === 'perception' && <PerceptionLivePanel />}
       {section.section_id === 'proactive' && <ProactiveStatusSection />}
+      {section.section_id === 'connectors' && <ConnectorsSection />}
 
       {section.fields.map(field => {
         const initial = getNested(snapshot.config, field.field_id);

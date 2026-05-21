@@ -413,6 +413,20 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
         ),
         fields=(),
     ),
+    # AD-763 — Custom panel rendered by SettingsMain.tsx via the explicit
+    # `section_id === 'connectors'` branch. Holds M365 mail-folder /
+    # calendar scoping and sender filters; populated dynamically from
+    # Graph discovery endpoints.
+    SectionDescriptor(
+        section_id="connectors",
+        label="Connectors",
+        glyph="◇",
+        domain="Connectivity",
+        description=(
+            "M365 mail folders, calendars, scan windows, and sender filters."
+        ),
+        fields=(),
+    ),
 )
 
 

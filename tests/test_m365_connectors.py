@@ -2,8 +2,9 @@
 
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
-from datetime import datetime
+from datetime import datetime, timezone
 
+from probos.config import SystemConfig
 from probos.integrations.m365_connector import (
     OutlookAgent, TeamsAgent, CalendarAgent, SharePointAgent, OneDriveAgent
 )
@@ -11,8 +12,10 @@ from probos.integrations.m365_connector import (
 
 @pytest.fixture
 def mock_runtime():
-    """Mock runtime."""
-    return MagicMock()
+    """Mock runtime with real SystemConfig so scoping reads succeed (AD-763)."""
+    rt = MagicMock()
+    rt.config = SystemConfig()
+    return rt
 
 
 @pytest.fixture
@@ -50,10 +53,15 @@ class TestOutlookAgent:
 
     @pytest.mark.asyncio
     async def test_outlook_list_changes(self, mock_runtime, mock_token_manager):
-        """Test OutlookAgent list_changes."""
+        """Test OutlookAgent list_changes returns empty when Graph returns empty."""
         agent = OutlookAgent(runtime=mock_runtime, token_manager=mock_token_manager)
-        changes = await agent.list_changes(datetime.now())
+        with patch(
+            "probos.integrations.m365_connector._graph_get",
+            AsyncMock(return_value=(200, {"value": []})),
+        ):
+            changes = await agent.list_changes(datetime.now(timezone.utc))
         assert isinstance(changes, list)
+        assert changes == []
 
     @pytest.mark.asyncio
     async def test_outlook_get_audit_entry(self, mock_runtime, mock_token_manager):
@@ -107,10 +115,15 @@ class TestCalendarAgent:
 
     @pytest.mark.asyncio
     async def test_calendar_list_changes(self, mock_runtime, mock_token_manager):
-        """Test CalendarAgent list_changes."""
+        """Test CalendarAgent list_changes returns empty when Graph returns empty."""
         agent = CalendarAgent(runtime=mock_runtime, token_manager=mock_token_manager)
-        changes = await agent.list_changes(datetime.now())
+        with patch(
+            "probos.integrations.m365_connector._graph_get",
+            AsyncMock(return_value=(200, {"value": []})),
+        ):
+            changes = await agent.list_changes(datetime.now(timezone.utc))
         assert isinstance(changes, list)
+        assert changes == []
 
 
 class TestSharePointAgent:
@@ -159,3 +172,156 @@ class TestOneDriveAgent:
         agent = OneDriveAgent(runtime=mock_runtime, token_manager=mock_token_manager)
         changes = await agent.list_changes(datetime.now())
         assert isinstance(changes, list)
+
+
+
+
+# ── AD-763 scoping tests ─────────────────────────────────────────────
+
+
+class TestOutlookScoping:
+    """AD-763: OutlookAgent.list_changes honours ProactiveScanConfig.inbox."""
+
+    @pytest.mark.asyncio
+    async def test_folders_iterated(self, mock_runtime, mock_token_manager):
+        mock_runtime.config.proactive_scan.inbox.folders = ["Inbox", "Important"]
+        agent = OutlookAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        called_urls: list[str] = []
+
+        async def fake_graph_get(url, token, timeout=30.0):
+            called_urls.append(url)
+            return (200, {"value": []})
+
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(side_effect=fake_graph_get)):
+            await agent.list_changes(datetime.now(timezone.utc))
+        assert any("/mailFolders/Inbox/messages" in u for u in called_urls)
+        assert any("/mailFolders/Important/messages" in u for u in called_urls)
+
+    @pytest.mark.asyncio
+    async def test_importance_filter_high_in_url(self, mock_runtime, mock_token_manager):
+        mock_runtime.config.proactive_scan.inbox.importance_filter = "high"
+        agent = OutlookAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        captured: list[str] = []
+
+        async def fake_graph_get(url, token, timeout=30.0):
+            captured.append(url)
+            return (200, {"value": []})
+
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(side_effect=fake_graph_get)):
+            await agent.list_changes(datetime.now(timezone.utc))
+        assert any("importance eq " in u for u in captured)
+
+    @pytest.mark.asyncio
+    async def test_unread_only_in_url(self, mock_runtime, mock_token_manager):
+        mock_runtime.config.proactive_scan.inbox.unread_only = True
+        agent = OutlookAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        captured: list[str] = []
+
+        async def fake_graph_get(url, token, timeout=30.0):
+            captured.append(url)
+            return (200, {"value": []})
+
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(side_effect=fake_graph_get)):
+            await agent.list_changes(datetime.now(timezone.utc))
+        assert any("isRead eq false" in u for u in captured)
+
+    @pytest.mark.asyncio
+    async def test_sender_denylist_drops_match(self, mock_runtime, mock_token_manager):
+        mock_runtime.config.proactive_scan.inbox.sender_denylist = ["@spam.com"]
+        agent = OutlookAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        body = {"value": [
+            {"id": "m1", "from": {"emailAddress": {"address": "ok@acme.com"}}},
+            {"id": "m2", "from": {"emailAddress": {"address": "noise@spam.com"}}},
+        ]}
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(return_value=(200, body))):
+            results = await agent.list_changes(datetime.now(timezone.utc))
+        ids = [r["id"] for r in results]
+        assert "m1" in ids
+        assert "m2" not in ids
+
+    @pytest.mark.asyncio
+    async def test_sender_allowlist_keeps_only_match(self, mock_runtime, mock_token_manager):
+        mock_runtime.config.proactive_scan.inbox.sender_allowlist = ["@acme.com"]
+        agent = OutlookAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        body = {"value": [
+            {"id": "m1", "from": {"emailAddress": {"address": "ok@acme.com"}}},
+            {"id": "m2", "from": {"emailAddress": {"address": "stranger@other.com"}}},
+        ]}
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(return_value=(200, body))):
+            results = await agent.list_changes(datetime.now(timezone.utc))
+        ids = [r["id"] for r in results]
+        assert ids == ["m1"]
+
+    @pytest.mark.asyncio
+    async def test_401_raises_permission_error(self, mock_runtime, mock_token_manager):
+        agent = OutlookAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(return_value=(401, None))):
+            with pytest.raises(PermissionError):
+                await agent.list_changes(datetime.now(timezone.utc))
+
+    @pytest.mark.asyncio
+    async def test_5xx_returns_partial(self, mock_runtime, mock_token_manager):
+        agent = OutlookAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(return_value=(503, None))):
+            results = await agent.list_changes(datetime.now(timezone.utc))
+        assert results == []
+
+
+class TestCalendarScoping:
+    """AD-763: CalendarAgent.list_changes honours ProactiveScanConfig.calendar."""
+
+    @pytest.mark.asyncio
+    async def test_calendars_iterated(self, mock_runtime, mock_token_manager):
+        mock_runtime.config.proactive_scan.calendar.calendar_ids = ["primary", "team-cal"]
+        agent = CalendarAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        called_urls: list[str] = []
+
+        async def fake_graph_get(url, token, timeout=30.0):
+            called_urls.append(url)
+            return (200, {"value": []})
+
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(side_effect=fake_graph_get)):
+            await agent.list_changes(datetime.now(timezone.utc))
+        assert any("/me/calendar/calendarView" in u for u in called_urls)
+        assert any("/me/calendars/team-cal/calendarView" in u for u in called_urls)
+
+    @pytest.mark.asyncio
+    async def test_lookahead_window_in_url(self, mock_runtime, mock_token_manager):
+        mock_runtime.config.proactive_scan.calendar.lookahead_hours = 48
+        agent = CalendarAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        captured: list[str] = []
+
+        async def fake_graph_get(url, token, timeout=30.0):
+            captured.append(url)
+            return (200, {"value": []})
+
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(side_effect=fake_graph_get)):
+            await agent.list_changes(datetime.now(timezone.utc))
+        assert captured
+        assert "startDateTime=" in captured[0]
+        assert "endDateTime=" in captured[0]
+
+    @pytest.mark.asyncio
+    async def test_declined_events_dropped_by_default(self, mock_runtime, mock_token_manager):
+        agent = CalendarAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        body = {"value": [
+            {"id": "e1", "subject": "Keep", "responseStatus": {"response": "accepted"}},
+            {"id": "e2", "subject": "Skip", "responseStatus": {"response": "declined"}},
+        ]}
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(return_value=(200, body))):
+            results = await agent.list_changes(datetime.now(timezone.utc))
+        ids = [r["id"] for r in results]
+        assert "e1" in ids
+        assert "e2" not in ids
+
+    @pytest.mark.asyncio
+    async def test_declined_kept_when_include_declined(self, mock_runtime, mock_token_manager):
+        mock_runtime.config.proactive_scan.calendar.include_declined = True
+        agent = CalendarAgent(runtime=mock_runtime, token_manager=mock_token_manager)
+        body = {"value": [
+            {"id": "e1", "responseStatus": {"response": "accepted"}},
+            {"id": "e2", "responseStatus": {"response": "declined"}},
+        ]}
+        with patch("probos.integrations.m365_connector._graph_get", AsyncMock(return_value=(200, body))):
+            results = await agent.list_changes(datetime.now(timezone.utc))
+        assert {r["id"] for r in results} == {"e1", "e2"}

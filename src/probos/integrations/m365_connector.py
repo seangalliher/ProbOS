@@ -4,13 +4,80 @@ from __future__ import annotations
 
 import logging
 from abc import abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.types import IntentDescriptor
 
 logger = logging.getLogger(__name__)
+
+GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+# AD-763: hard pagination cap per scan. Operator-tunable knob deferred to AD-763d.
+_PAGINATION_PAGE_CAP = 5
+
+
+def _sender_matches(sender: str, patterns: list[str]) -> bool:
+    """Return True if a sender address matches any allow/deny pattern.
+
+    Pattern shapes accepted (case-insensitive):
+      - 'user@acme.com'  -> exact full-address match
+      - '@acme.com'      -> domain match (any address on that domain)
+      - 'acme.com'       -> domain match (treated as '@acme.com')
+    """
+    if not sender or not patterns:
+        return False
+    s = sender.strip().lower()
+    for raw in patterns:
+        pat = raw.strip().lower()
+        if not pat:
+            continue
+        if pat.startswith("@"):
+            if s.endswith(pat):
+                return True
+        elif "@" in pat:
+            if s == pat:
+                return True
+        else:
+            # Bare domain
+            if s.endswith("@" + pat):
+                return True
+    return False
+
+
+async def _graph_get(
+    url: str,
+    token: str,
+    *,
+    timeout: float = 30.0,
+) -> tuple[int, dict[str, Any] | None]:
+    """GET a Graph endpoint. Returns (status_code, json_body_or_none).
+
+    Does not raise; logs warnings on transport failure. Caller branches on status.
+    """
+    try:
+        import httpx
+    except ImportError:
+        logger.error("httpx unavailable; cannot reach Microsoft Graph")
+        return (0, None)
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers=headers)
+    except Exception:
+        logger.warning("Graph GET transport error url=%s; returning honest-degrade", url, exc_info=True)
+        return (0, None)
+
+    body: dict[str, Any] | None
+    try:
+        body = response.json() if response.content else None
+    except ValueError:
+        body = None
+    return (response.status_code, body)
 
 
 class M365Connector(Protocol):
@@ -101,13 +168,82 @@ class OutlookAgent(CognitiveAgent):
         return token is not None
 
     async def list_changes(self, since: datetime) -> list[dict[str, Any]]:
-        """Retrieve changes since timestamp for emails."""
+        """Retrieve mail changes since timestamp, scoped to ProactiveScanConfig.inbox.
+
+        AD-763: honors operator scoping (folders, lookback, importance, unread,
+        sender allow/deny). The Graph `$filter` query handles receivedDateTime,
+        importance, and isRead; sender allow/deny is applied in-process.
+        Returns whatever was collected even if some folders 5xx — honest-degrade.
+        """
         token = await self._token_manager.get_token()
         if not token:
             logger.warning("Outlook: token unavailable; cannot list changes")
             return []
-        # Placeholder: actual Microsoft Graph API call would go here
-        return []
+
+        cfg = self._scan_config()
+        # since arg is a hard floor; lookback caps it from going further back than configured.
+        lookback_floor = datetime.now(timezone.utc) - timedelta(hours=cfg.lookback_hours)
+        effective_since = max(since.astimezone(timezone.utc) if since.tzinfo else since.replace(tzinfo=timezone.utc), lookback_floor)
+        since_str = effective_since.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        filters = [f"receivedDateTime ge {since_str}"]
+        if cfg.importance_filter == "high":
+            filters.append("importance eq 'high'")
+        if cfg.unread_only:
+            filters.append("isRead eq false")
+        filter_expr = " and ".join(filters)
+
+        collected: list[dict[str, Any]] = []
+        for folder_id in cfg.folders or ["Inbox"]:
+            url: str | None = (
+                f"{GRAPH_BASE_URL}/me/mailFolders/{folder_id}/messages"
+                f"?$filter={filter_expr}&$top=100"
+                "&$select=id,subject,from,receivedDateTime,importance,isRead,bodyPreview"
+            )
+            pages = 0
+            while url and pages < _PAGINATION_PAGE_CAP:
+                status, body = await _graph_get(url, token)
+                if status == 401:
+                    logger.warning("Outlook: 401 from Graph; token refresh required")
+                    raise PermissionError("M365 token rejected by Graph (401)")
+                if status == 429:
+                    logger.warning("Outlook: 429 from Graph folder=%s; honoring Retry-After by stopping page loop", folder_id)
+                    break
+                if status >= 500 or status == 0:
+                    logger.warning("Outlook: Graph %s for folder=%s; returning partial results", status, folder_id)
+                    break
+                if status != 200 or body is None:
+                    logger.warning("Outlook: Graph status=%s for folder=%s; skipping", status, folder_id)
+                    break
+                value = body.get("value", []) if isinstance(body, dict) else []
+                for item in value:
+                    sender = (
+                        item.get("from", {}).get("emailAddress", {}).get("address", "")
+                        if isinstance(item.get("from"), dict)
+                        else ""
+                    )
+                    if cfg.sender_denylist and _sender_matches(sender, cfg.sender_denylist):
+                        continue
+                    if cfg.sender_allowlist and not _sender_matches(sender, cfg.sender_allowlist):
+                        continue
+                    collected.append({**item, "_folder_id": folder_id})
+                next_link = body.get("@odata.nextLink") if isinstance(body, dict) else None
+                url = next_link
+                pages += 1
+            if pages >= _PAGINATION_PAGE_CAP and url:
+                logger.info(
+                    "AD-763: pagination cap reached for folder=%s (page_cap=%d)",
+                    folder_id, _PAGINATION_PAGE_CAP,
+                )
+        return collected
+
+    def _scan_config(self) -> Any:
+        """Return ProactiveScanConfig.inbox for this runtime; defaults if unconfigured."""
+        cfg = getattr(getattr(self._runtime, "config", None), "proactive_scan", None)
+        if cfg is None:
+            from probos.config import ProactiveScanConfig
+            cfg = ProactiveScanConfig()
+        return cfg.inbox
 
     async def get_audit_entry(self, resource_id: str) -> dict[str, Any]:
         """Return audit entry for an email."""
@@ -301,12 +437,77 @@ class CalendarAgent(CognitiveAgent):
         return token is not None
 
     async def list_changes(self, since: datetime) -> list[dict[str, Any]]:
-        """Retrieve changes since timestamp for calendar events."""
+        """Retrieve calendar events in the lookahead window, scoped to ProactiveScanConfig.calendar.
+
+        AD-763: honors operator scoping (calendar_ids, lookahead_hours, include_declined).
+        Uses Graph `calendarView` (expands recurring events) per selected calendar.
+        Returns whatever was collected even if some calendars 5xx — honest-degrade.
+        """
         token = await self._token_manager.get_token()
         if not token:
             logger.warning("Calendar: token unavailable; cannot list changes")
             return []
-        return []
+
+        cfg = self._scan_config()
+        start_dt = datetime.now(timezone.utc)
+        end_dt = start_dt + timedelta(hours=cfg.lookahead_hours)
+        start_str = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_str = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        collected: list[dict[str, Any]] = []
+        for raw_cal_id in cfg.calendar_ids or ["primary"]:
+            # 'primary' alias -> default Graph calendar path /me/calendar
+            if raw_cal_id == "primary":
+                base = f"{GRAPH_BASE_URL}/me/calendar/calendarView"
+            else:
+                base = f"{GRAPH_BASE_URL}/me/calendars/{raw_cal_id}/calendarView"
+            url: str | None = (
+                f"{base}?startDateTime={start_str}&endDateTime={end_str}&$top=100"
+                "&$select=id,subject,start,end,organizer,attendees,responseStatus,isCancelled"
+            )
+            pages = 0
+            while url and pages < _PAGINATION_PAGE_CAP:
+                status, body = await _graph_get(url, token)
+                if status == 401:
+                    logger.warning("Calendar: 401 from Graph; token refresh required")
+                    raise PermissionError("M365 token rejected by Graph (401)")
+                if status == 429:
+                    logger.warning("Calendar: 429 from Graph calendar=%s; stopping page loop", raw_cal_id)
+                    break
+                if status >= 500 or status == 0:
+                    logger.warning("Calendar: Graph %s for calendar=%s; returning partial results", status, raw_cal_id)
+                    break
+                if status != 200 or body is None:
+                    logger.warning("Calendar: Graph status=%s for calendar=%s; skipping", status, raw_cal_id)
+                    break
+                value = body.get("value", []) if isinstance(body, dict) else []
+                for item in value:
+                    if not cfg.include_declined:
+                        response = (
+                            item.get("responseStatus", {}).get("response", "")
+                            if isinstance(item.get("responseStatus"), dict)
+                            else ""
+                        )
+                        if response == "declined":
+                            continue
+                    collected.append({**item, "_calendar_id": raw_cal_id})
+                next_link = body.get("@odata.nextLink") if isinstance(body, dict) else None
+                url = next_link
+                pages += 1
+            if pages >= _PAGINATION_PAGE_CAP and url:
+                logger.info(
+                    "AD-763: pagination cap reached for calendar=%s (page_cap=%d)",
+                    raw_cal_id, _PAGINATION_PAGE_CAP,
+                )
+        return collected
+
+    def _scan_config(self) -> Any:
+        """Return ProactiveScanConfig.calendar for this runtime; defaults if unconfigured."""
+        cfg = getattr(getattr(self._runtime, "config", None), "proactive_scan", None)
+        if cfg is None:
+            from probos.config import ProactiveScanConfig
+            cfg = ProactiveScanConfig()
+        return cfg.calendar
 
     async def get_audit_entry(self, resource_id: str) -> dict[str, Any]:
         """Return audit entry for a calendar event."""

@@ -3822,6 +3822,67 @@ class ProactiveCognitiveConfig(BaseModel):
     yeoman_digest_window_seconds: float = 60.0
 
 
+class ProactiveScanInboxConfig(BaseModel):
+    """AD-763: per-operator scoping of the inbox proactive scan."""
+
+    folders: list[str] = Field(
+        default_factory=lambda: ["Inbox"],
+        description="Graph mail folder IDs (or 'Inbox' alias) to include in scans.",
+    )
+    lookback_hours: int = Field(
+        default=24,
+        ge=1,
+        le=24 * 14,
+        description="Window (hours) to query backward from now.",
+    )
+    importance_filter: Literal["any", "high"] = Field(
+        default="any",
+        description="'any' includes all importance levels; 'high' restricts to high-importance only.",
+    )
+    unread_only: bool = Field(
+        default=False,
+        description="If True, only unread messages are surfaced.",
+    )
+    sender_allowlist: list[str] = Field(
+        default_factory=list,
+        description="Email addresses or domains (e.g. '@acme.com'). Empty = no allow filter.",
+    )
+    sender_denylist: list[str] = Field(
+        default_factory=list,
+        description="Email addresses or domains. Senders matching are dropped post-fetch.",
+    )
+
+
+class ProactiveScanCalendarConfig(BaseModel):
+    """AD-763: per-operator scoping of the calendar proactive scan."""
+
+    calendar_ids: list[str] = Field(
+        default_factory=lambda: ["primary"],
+        description="Graph calendar IDs ('primary' alias resolves to default calendar).",
+    )
+    lookahead_hours: int = Field(
+        default=24,
+        ge=1,
+        le=24 * 30,
+        description="Window (hours) to query forward from now.",
+    )
+    include_declined: bool = Field(
+        default=False,
+        description="If True, events the operator has declined are still surfaced.",
+    )
+
+
+class ProactiveScanConfig(BaseModel):
+    """AD-763: scoping config for proactive scans (folders, calendars, filters).
+
+    v1 scope: operator-tunable scoping for inbox and calendar connectors.
+    Per-scan-type intervals are deferred to AD-763d (forward marker).
+    """
+
+    inbox: ProactiveScanInboxConfig = Field(default_factory=ProactiveScanInboxConfig)
+    calendar: ProactiveScanCalendarConfig = Field(default_factory=ProactiveScanCalendarConfig)
+
+
 class PersistentTasksConfig(BaseModel):
     """Persistent Task Engine — SQLite-backed scheduled tasks (Phase 25a)."""
     enabled: bool = False
@@ -4815,6 +4876,7 @@ class SystemConfig(BaseModel):
     earned_agency: EarnedAgencyConfig = EarnedAgencyConfig()
     duty_schedule: DutyPolicyConfig = Field(default_factory=DutyPolicyConfig)
     proactive_cognitive: ProactiveCognitiveConfig = ProactiveCognitiveConfig()
+    proactive_scan: ProactiveScanConfig = Field(default_factory=ProactiveScanConfig)  # AD-763
     persistent_tasks: PersistentTasksConfig = PersistentTasksConfig()
     channels: ChannelsConfig = ChannelsConfig()
     m365: M365Config = Field(default_factory=M365Config)  # AD-749
