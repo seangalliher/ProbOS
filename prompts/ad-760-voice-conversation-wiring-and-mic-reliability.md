@@ -29,14 +29,21 @@ Three related voice defects, observed in production HXI:
 
 ## Scope (v1, this AD)
 
-### 1. Wire `armConversationMode` into the DM surfaces
-- In `ProfileChatTab.tsx`:
-  - On mount (when the panel becomes visible for `agentId`), if `voiceEnabled` is true AND `perception.vad_engagement_enabled` is true, call `armConversationMode({ agentId, historyProvider, onTranscript, onAgentReply })`.
+### 1. Wire `armConversationMode` into the DM surfaces (right-click mic = mode picker)
+- Activation gesture is the **mic-button context menu** (right-click on desktop, long-press on touch). Left-click stays press-to-talk; right-click opens a small popover with two options:
+  - **Press to talk** (default, checkmark when active)
+  - **Conversation mode** (checkmark when active)
+  Selecting Conversation mode calls `armConversationMode({ agentId, historyProvider, onTranscript, onAgentReply })` and persists the choice per-agent in `localStorage` under `hxi_chat_mic_mode_${agentId}` (`ptt` | `conversation`, default `ptt`).
+- While Conversation mode is active for an agent:
+  - The mic icon switches to a "listening loop" visual (existing pulse-mic animation, amber instead of red).
   - On unmount or agent switch, call the returned disarm function.
-  - The `onTranscript` callback populates the input box (preview pill) before submission; `onAgentReply` triggers the same TTS path the manual flow uses.
-  - When `voiceEnabled` flips false, disarm. When it flips true, arm.
-- Same wiring in the WardRoom DM panel where 1:1 conversations live (verify path in `ui/src/components/wardroom/*` — the WardRoom DM component is the second surface that needs parity).
-- Preserve the manual mic button as a fallback / explicit override (press-to-talk at `PRIORITY_PRESS_TO_TALK` correctly preempts the conversation lease per BF-318).
+  - On `voiceEnabled` flips false → disarm but keep the per-agent mode preference (re-arms when voice is re-enabled).
+  - Left-clicking the mic during Conversation mode is press-to-talk preemption (PRIORITY_PRESS_TO_TALK > PRIORITY_CONVERSATION per BF-318) and on release returns to Conversation mode (re-arm).
+- Wire the same context menu in:
+  - `ui/src/components/profile/ProfileChatTab.tsx` (1:1 agent DM panel)
+  - The WardRoom DM mic (verify path in `ui/src/components/wardroom/*`)
+- The `onTranscript` callback populates the input box (preview pill) before submission; `onAgentReply` triggers the same TTS path the manual flow uses.
+- Accessibility: the mic button must also be activatable as a menu via keyboard — `Shift+F10` or context-menu key on focused mic opens the same popover. `aria-haspopup="menu"` on the button.
 
 ### 2. Decouple mic button from global voice toggle (perception side)
 - The mic button must work standalone — independent of `voiceEnabled`.
@@ -51,10 +58,14 @@ Three related voice defects, observed in production HXI:
 
 ### Vitest (ui/)
 - `ProfileChatTab.conversationWiring.test.tsx`:
-  - On mount with `voiceEnabled=true` + `vad_engagement_enabled=true`, `armConversationMode` is called with the correct `agentId`.
-  - On `voiceEnabled` flip false → true, arm fires.
+  - Right-click on mic button opens menu with `Press to talk` and `Conversation mode` items.
+  - Selecting `Conversation mode` calls `armConversationMode` with the correct `agentId` and persists `hxi_chat_mic_mode_${agentId}=conversation`.
+  - Selecting `Press to talk` calls disarm and persists `ptt`.
+  - On mount, if persisted mode is `conversation` and `voiceEnabled=true`, arm fires automatically.
+  - On `voiceEnabled` flip false → disarm; flip true (with persisted `conversation`) → arm.
   - On unmount, disarm fires.
-  - When the press-to-talk mic is clicked while the conversation is armed, the arbiter preempts conversation in favor of `PRIORITY_PRESS_TO_TALK` (BF-318 invariant — already covered, just assert no regression here).
+  - Left-click mic while in Conversation mode preempts via `PRIORITY_PRESS_TO_TALK` (BF-318 invariant — assert no regression).
+  - Keyboard `Shift+F10` on focused mic opens the same menu (a11y).
 - `speechInput.continuousMode.test.ts`:
   - `startListening` configures `continuous=true`, `interimResults=true`.
   - Multiple interim results accumulate; final fires on 1.5 s gap or explicit stop.
