@@ -4062,3 +4062,31 @@ waves:
       712d670b, 43995672, and 72105c78. Issues #708, #712, #709, #707,
       and #711 were closed; #710 remained open for the deferred Gmail
       connector wave.
+
+  - id: "185-voice-conversation-wiring"
+    title: "Voice conversation wiring + mic reliability (AD-760)"
+    kind: main
+    depends_on: ["184-post-yeo-live-feedback"]
+    dispatch_prompt: "prompts/ad-760-voice-conversation-wiring-and-mic-reliability.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-760-voice-conversation-wiring-and-mic-reliability.md"
+    builder_required: true
+    issues_to_close: [706]
+    estimated_hours: 6
+    status: drafting
+    notes: |
+      AD-760 wires the AD-747 ConversationController into ProfileChatTab
+      and WardRoomThreadDetail DMs, fixes press-to-talk mic reliability
+      (continuous=true + interimResults + 1.5s end-of-speech gap +
+      whisperStt fallback), adds right-click mic popover (PTT default vs
+      Conversation mode, per-agent persistence, Shift+F10 a11y), AEC
+      constraints {echoCancellation, noiseSuppression, autoGainControl},
+      and a Schmitt-trigger barge-in detector with amplitude floor +
+      cooldown (listening: onset 0.50/offset 0.35, 3 frames; agent_speaking:
+      onset 0.80/offset 0.40, 8 onset frames / 3 release frames; amplitude
+      floor -45 dBFS; 500 ms cooldown after cancelled onset).
+      All thresholds exposed on ArmOptions for future tuning.
+      Single-AD wave: AD-760 is deep enough on its own.
+      Workflow: Architect precheck + review_1 + review_2 + GATE 1 BEFORE
+      Builder dispatch.
