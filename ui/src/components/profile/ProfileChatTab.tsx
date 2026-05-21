@@ -4,10 +4,15 @@ import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
 import type { ChatAttachment } from '../../store/types';
 import { ModulationIndicator } from './ModulationIndicator';
+import { captureScreenShareFrame } from '../../hooks/useScreenShare';
+import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
+import { useScreenStore } from '../../store/useScreenStore';
 
 interface Props {
   agentId: string;
 }
+
+type ScreenMode = 'once' | 'live';
 
 const ALLOWED_ATTACHMENT_MIMES = [
   'image/png', 'image/jpeg', 'image/webp', 'image/gif',
@@ -16,6 +21,14 @@ const ALLOWED_ATTACHMENT_MIMES = [
 ] as const;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
+function getScreenModeKey(agentId: string): string {
+  return `hxi_chat_screen_mode_${agentId}`;
+}
+
+function loadScreenMode(agentId: string): ScreenMode {
+  return localStorage.getItem(getScreenModeKey(agentId)) === 'live' ? 'live' : 'once';
+}
+
 export function ProfileChatTab({ agentId }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
   const [input, setInput] = useState('');
@@ -23,8 +36,16 @@ export function ProfileChatTab({ agentId }: Props) {
   const [listening, setListening] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [screenMode, setScreenMode] = useState<ScreenMode>(() => loadScreenMode(agentId));
+  const [screenMenuOpen, setScreenMenuOpen] = useState(false);
+  const [screenShareInFlight, setScreenShareInFlight] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const screenShareButtonRef = useRef<HTMLButtonElement>(null);
+  const screenShareMenuRef = useRef<HTMLDivElement>(null);
+  const screenStopOriginRef = useRef<'cleanup' | null>(null);
+  const previousScreenActiveRef = useRef(false);
   const globalVoiceEnabled = useStore((s) => s.voiceEnabled);
+  const screenActive = useScreenStore((s) => s.active);
   // Per-agent TTS toggle: defaults to global setting; persisted in localStorage.
   const ttsKey = `hxi_chat_tts_${agentId}`;
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => {
@@ -37,6 +58,79 @@ export function ProfileChatTab({ agentId }: Props) {
   const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [seedMemories, setSeedMemories] = useState<{role: string; text: string}[]>([]);
+
+  useEffect(() => {
+    setScreenMode(loadScreenMode(agentId));
+    setScreenMenuOpen(false);
+  }, [agentId]);
+
+  useEffect(() => {
+    localStorage.setItem(getScreenModeKey(agentId), screenMode);
+  }, [agentId, screenMode]);
+
+  useEffect(() => {
+    if (!screenMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (screenShareMenuRef.current?.contains(target) || screenShareButtonRef.current?.contains(target)) {
+        return;
+      }
+      setScreenMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setScreenMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [screenMenuOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (screenMode !== 'live') return () => undefined;
+    const start = async () => {
+      const wasActive = useScreenStore.getState().active;
+      if (!wasActive) {
+        await startScreenStream({ fps: 1 });
+      }
+      if (cancelled) return;
+      if (useScreenStore.getState().active) {
+        console.info(`screen_share.started agent_id=${agentId} mode=live`);
+        return;
+      }
+      localStorage.setItem(getScreenModeKey(agentId), 'once');
+      setScreenMode('once');
+    };
+    void start();
+    return () => {
+      cancelled = true;
+      if (!useScreenStore.getState().active) return;
+      screenStopOriginRef.current = 'cleanup';
+      void stopScreenStream().finally(() => {
+        console.info(`screen_share.stopped agent_id=${agentId} reason=cleanup`);
+      });
+    };
+  }, [agentId, screenMode]);
+
+  useEffect(() => {
+    const wasActive = previousScreenActiveRef.current;
+    previousScreenActiveRef.current = screenActive;
+    if (!wasActive || screenActive) return;
+    if (screenStopOriginRef.current === 'cleanup') {
+      screenStopOriginRef.current = null;
+      return;
+    }
+    screenStopOriginRef.current = null;
+    if (screenMode === 'live') {
+      console.info(`screen_share.stopped agent_id=${agentId} reason=browser-ended`);
+      localStorage.setItem(getScreenModeKey(agentId), 'once');
+      setScreenMode('once');
+    }
+  }, [agentId, screenActive, screenMode]);
 
   const messages = conversation?.messages ?? [];
 
@@ -179,6 +273,38 @@ export function ProfileChatTab({ agentId }: Props) {
     setPendingAttachments(prev => prev.filter(a => a.attachment_id !== id));
   }
 
+  async function captureScreenOnce(): Promise<void> {
+    if (screenShareInFlight) return;
+    setScreenShareInFlight(true);
+    setAttachError(null);
+    try {
+      const result = await captureScreenShareFrame({ agentId });
+      if (!result) {
+        setAttachError('Screen share cancelled or failed.');
+        return;
+      }
+      setPendingAttachments(prev => [...prev, {
+        attachment_id: result.attachment_id,
+        url: `/api/attachments/${result.attachment_id}`,
+        sha256: result.attachment_id,
+        mime: result.mime,
+        size_bytes: result.size_bytes,
+        filename: 'screen-share.jpg',
+      }]);
+    } finally {
+      setScreenShareInFlight(false);
+    }
+  }
+
+  function selectScreenMode(nextMode: ScreenMode): void {
+    setScreenMenuOpen(false);
+    setScreenMode(nextMode);
+    localStorage.setItem(getScreenModeKey(agentId), nextMode);
+    if (nextMode === 'once') {
+      void stopScreenStream();
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Message list */}
@@ -301,6 +427,104 @@ export function ProfileChatTab({ agentId }: Props) {
             <path d="M11 4l-5 5a2 2 0 002.8 2.8l5-5a3 3 0 00-4.2-4.2l-5 5a4 4 0 005.7 5.7" />
           </svg>
         </button>
+        <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+          <button
+            ref={screenShareButtonRef}
+            type="button"
+            onClick={() => { void captureScreenOnce(); }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setScreenMenuOpen((open) => !open);
+            }}
+            aria-label="share screen"
+            aria-pressed={screenMode === 'live' && screenActive}
+            title={screenMode === 'live' && screenActive ? 'Screen share live for this agent' : 'Share screen'}
+            disabled={screenShareInFlight}
+            style={{
+              background: screenShareInFlight || (screenMode === 'live' && screenActive)
+                ? 'rgba(240, 176, 96, 0.15)'
+                : 'transparent',
+              border: 'none',
+              color: screenShareInFlight || (screenMode === 'live' && screenActive) ? '#f0b060' : '#8888aa',
+              cursor: screenShareInFlight ? 'wait' : 'pointer',
+              padding: '4px',
+              borderRadius: 4,
+              flexShrink: 0,
+              filter: screenShareInFlight || (screenMode === 'live' && screenActive)
+                ? 'drop-shadow(0 0 4px rgba(240,176,96,0.45))'
+                : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
+              animation: screenShareInFlight || (screenMode === 'live' && screenActive)
+                ? 'screen-share-pulse 1.6s ease-in-out infinite'
+                : undefined,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                 stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="1.5" y="2.5" width="13" height="9" rx="1" />
+              <path d="M5 14h6" />
+              <path d="M8 11.5v2.5" />
+              <path d="M8 8.5V4.5M6 6.5L8 4.5l2 2" />
+            </svg>
+          </button>
+          {screenMenuOpen && (
+            <div
+              ref={screenShareMenuRef}
+              data-testid="profile-chat-screen-share-menu"
+              style={{
+                position: 'absolute',
+                right: 0,
+                bottom: 'calc(100% + 6px)',
+                minWidth: 160,
+                background: 'rgba(10, 10, 18, 0.96)',
+                border: '1px solid rgba(240, 176, 96, 0.25)',
+                borderRadius: 8,
+                boxShadow: '0 10px 24px rgba(0, 0, 0, 0.35)',
+                zIndex: 30,
+                overflow: 'hidden',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  selectScreenMode('once');
+                  void captureScreenOnce();
+                }}
+                data-testid="profile-chat-screen-share-capture-once"
+                style={{
+                  width: '100%',
+                  display: 'block',
+                  textAlign: 'left',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#e0dcd4',
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                Capture once
+              </button>
+              <button
+                type="button"
+                onClick={() => selectScreenMode('live')}
+                data-testid="profile-chat-screen-share-live"
+                style={{
+                  width: '100%',
+                  display: 'block',
+                  textAlign: 'left',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#e0dcd4',
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                Live screen share
+              </button>
+            </div>
+          )}
+        </div>
         <input
           type="text"
           value={input}
@@ -356,6 +580,33 @@ export function ProfileChatTab({ agentId }: Props) {
         {/* AD-718d-1: voice modulation activity indicator (pulses while
             applyEmotionalModulation is shaping a speech utterance). */}
         <ModulationIndicator agentId={agentId} />
+        {screenMode === 'live' && screenActive && (
+          <span
+            data-testid="profile-chat-screen-live-indicator"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: 1.2,
+              color: '#f0b060',
+              fontFamily: "'JetBrains Mono', monospace",
+              padding: '1px 5px',
+              border: '1px solid #f0b060',
+              borderRadius: 2,
+              flexShrink: 0,
+            }}
+          >
+            <svg width="9" height="9" viewBox="0 0 16 16" fill="none"
+                 stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="1.5" y="2.5" width="13" height="9" rx="0.5" />
+              <path d="M5 14h6" />
+              <path d="M8 11.5V14" />
+            </svg>
+            LIVE
+          </span>
+        )}
         {/* AD-718: Mic button for STT input (parity with IntentSurface). */}
         {isSpeechRecognitionSupported() && (
           <button
@@ -427,6 +678,10 @@ export function ProfileChatTab({ agentId }: Props) {
       <style>{`
         @keyframes pulse-mic {
           0%, 100% { opacity: 0.6; }
+          50% { opacity: 1; }
+        }
+        @keyframes screen-share-pulse {
+          0%, 100% { opacity: 0.85; }
           50% { opacity: 1; }
         }
       `}</style>
