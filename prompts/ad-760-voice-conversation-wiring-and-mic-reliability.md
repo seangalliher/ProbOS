@@ -54,6 +54,13 @@ Three related voice defects, observed in production HXI:
 - In `speechInput.ts`, set `continuous=true` and `interimResults=true` on the `SpeechRecognition` instance, and accumulate final transcripts until either: (a) the caller calls `stopListening()`, or (b) a 1.5 s end-of-speech gap is observed (configurable). This eliminates the "auto-ends on first pause, returns empty" failure mode.
 - Add a fallback: if 2 consecutive `startListening` calls return empty transcripts AND Silero VAD is available, route the next press-to-talk through `whisperStt.armWhisperStt()` with a short bounded window instead of `SpeechRecognition`. This gives the Captain a reliable local-Whisper path on the press-to-talk button without forcing the natural-conversation state machine.
 
+### 4. Conversation mode: agent-speaking handling + barge-in robustness
+- **Do not mute the mic during `agent_speaking`.** Silero VAD keeps running so barge-in has zero warm-up latency.
+- The existing state machine already gates transcript submission on `state === 'listening'`, so whisperStt output is dropped while the agent is speaking. Keep that invariant; add an explicit assertion in the controller's `_onTranscript` to log-and-drop when called outside `listening`.
+- **Barge-in requires sustained speech, not a single VAD frame.** Update `_onVadSpeechStart` to start a debounce timer that fires the barge-in transition only after ~250 ms of continuous voiced frames (configurable via `ArmOptions.bargeInDebounceMs`, default 250). Cancel the timer if VAD returns to silence before the threshold. This prevents the agent's own TTS bleed-through from triggering false barge-ins on laptops with weak AEC.
+- **AEC constraints on the mic stream.** Ensure `getUserMedia` is called with `{ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }` everywhere the conversation pipeline opens a stream. Browser AEC is the first line of defense; sustained-frames debounce is the second.
+- Out of scope for v1: WebAudio-based echo cancellation using the TTS audio element as the reference signal — defer to AD-760b only if real-world false barge-ins persist after the above.
+
 ## Tests
 
 ### Vitest (ui/)
