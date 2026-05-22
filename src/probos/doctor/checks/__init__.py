@@ -18,4 +18,5 @@ from probos.doctor.checks import (  # noqa: F401
     channel_telegram_check,
     channel_slack_check,
     channel_matrix_check,
+    channel_discord_check,
 )

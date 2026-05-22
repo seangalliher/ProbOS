@@ -57,7 +57,17 @@ class DiscordAdapter(ChannelAdapter):
         allowed_channel_ids: list of channel IDs to listen on (empty = all)
         command_prefix: prefix for ProbOS slash commands (default: "!")
         mention_required: if True, bot only responds when @mentioned
+
+    AD-807 (Wave 192): adds ``channel_name = "discord"`` to activate the
+    AD-802a pairing-gate hook on the base class. The Discord-specific
+    ``mention_required`` filter runs FIRST (in ``on_message``) so
+    bystanders in a server channel don't get spammed with pairing codes
+    every time they post — pairing kicks in only for senders that
+    explicitly addressed the bot (or who DM the bot directly).
     """
+
+    #: AD-807 / AD-802a: routes addressed senders through `runtime.pairing_service`.
+    channel_name = "discord"
 
     def __init__(self, runtime: Any, config: DiscordConfig) -> None:
         super().__init__(runtime, config)
