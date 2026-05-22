@@ -820,6 +820,11 @@ class MemoryConfig(BaseModel):
     similarity_threshold: float = 0.6  # Semantic similarity threshold for recall/fuzzy lookup
     verify_content_hash: bool = True    # AD-541e: Verify episode hashes on recall
     eviction_audit_enabled: bool = True  # AD-541f: Append-only eviction audit trail
+    # AD-820: shutdown consolidation budget. Old default was a hardcoded 2s
+    # which is too tight when the dream cycle has real work to do; a partial
+    # consolidation tears ChromaDB's HNSW index. Default raised to 30s so
+    # normal shutdowns complete; operator can lower for fast-restart workflows.
+    shutdown_consolidation_timeout_s: float = 30.0
     # AD-567b/AD-584c: Salience-weighted recall (rebalanced for QA-trained embeddings)
     recall_weights: dict[str, float] = {
         "semantic": 0.35,

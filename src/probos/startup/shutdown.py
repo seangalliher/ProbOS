@@ -95,20 +95,35 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # ── Phase 1: Critical Persistence ──────────────────────────────────
     # Dream consolidation + episodic memory close MUST complete before the
     # __main__.py timeout expires. Moved ahead of service stops (BF-207).
-    # Budget: 2s dream timeout + ~500ms episodic close = ≤3s typical,
-    # with 7s remaining of the 10s timeout for Phase 2.
+    # AD-820: consolidation timeout is now configurable (default 30s, was a
+    # hardcoded 2s that tore ChromaDB's HNSW index when the dream cycle had
+    # real work — see #750). The status of this phase is written to
+    # shutdown_status.json at the end so the next boot can refuse to start
+    # if consolidation didn't complete.
     import time as _time
     _phase1_start = _time.monotonic()
+    # AD-820: track whether consolidation completed fully so we can stamp
+    # the right integrity marker before exit.
+    _consolidation_result: str = "skipped"
+
+    _shutdown_consolidation_timeout = float(
+        getattr(getattr(runtime, "config", None), "memory", None).shutdown_consolidation_timeout_s
+        if (getattr(runtime, "config", None) and getattr(runtime.config, "memory", None))
+        else 30.0
+    )
 
     # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
     # Must run BEFORE pools stop (dream_cycle may trigger Ward Room notifications)
     # and BEFORE LLM client is closed (dream_cycle makes LLM calls).
     if runtime.dream_scheduler and runtime.episodic_memory:
-        logger.info("Consolidating session memories...")
+        logger.info(
+            "Consolidating session memories (budget=%.0fs)...",
+            _shutdown_consolidation_timeout,
+        )
         try:
             report = await asyncio.wait_for(
                 runtime.dream_scheduler.engine.dream_cycle(),
-                timeout=2.0,
+                timeout=_shutdown_consolidation_timeout,
             )
             logger.info(
                 "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
@@ -116,10 +131,17 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                 report.weights_strengthened,
                 report.weights_pruned,
             )
+            _consolidation_result = "full"
         except asyncio.TimeoutError:
-            logger.warning("Shutdown consolidation timed out (2s limit) — partial consolidation completed")
+            logger.warning(
+                "Shutdown consolidation timed out (%.0fs limit) — "
+                "partial consolidation completed",
+                _shutdown_consolidation_timeout,
+            )
+            _consolidation_result = "partial"
         except (asyncio.CancelledError, Exception) as e:
             logger.warning("Shutdown consolidation failed: %s", e or type(e).__name__)
+            _consolidation_result = "failed"
 
     # BF-207: Close episodic memory (ChromaDB) immediately after dream
     # consolidation — this is the critical operation that caused hash mismatches
@@ -139,6 +161,32 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     _phase1_elapsed = _time.monotonic() - _phase1_start
     logger.info("BF-207: Phase 1 (Critical Persistence) completed in %.1fs", _phase1_elapsed)
+
+    # AD-820: write shutdown integrity marker so the next boot can detect a
+    # clean vs. partial shutdown BEFORE opening ChromaDB. If consolidation
+    # was 'full', the marker is 'clean'; otherwise 'partial' and the next
+    # boot refuses to start unless --force-unclean is passed.
+    try:
+        from probos.shutdown_integrity import mark_clean_shutdown, mark_dirty_shutdown
+        _data_dir = getattr(runtime, "_data_dir", None)
+        if _data_dir is not None:
+            if _consolidation_result == "full":
+                mark_clean_shutdown(
+                    _data_dir,
+                    consolidation_result="full",
+                    note="phase1_ok",
+                )
+            else:
+                mark_dirty_shutdown(
+                    _data_dir,
+                    consolidation_result=_consolidation_result,  # type: ignore[arg-type]
+                    note=f"phase1_elapsed={_phase1_elapsed:.1f}s",
+                )
+    except Exception:
+        logger.warning(
+            "AD-820: failed to record shutdown integrity marker (continuing)",
+            exc_info=True,
+        )
 
     # ── Phase 2: Service Cleanup ───────────────────────────────────────
 

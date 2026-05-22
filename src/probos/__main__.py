@@ -560,6 +560,7 @@ async def _serve(
     port: int = 18900,
     interactive: bool = False,
     discord: bool = False,
+    force_unclean: bool = False,
 ) -> None:
     """Boot runtime and start the FastAPI/uvicorn server."""
     import uvicorn
@@ -580,6 +581,32 @@ async def _serve(
     except AnotherInstanceRunning as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise SystemExit(2) from exc
+
+    # AD-820: refuse to start when the previous shutdown left the data dir
+    # in a known-bad state. Catches the failure mode that segfaulted the
+    # runtime today (#750) and replaces a native segfault on next boot
+    # with a graceful operator-readable refusal pointing at the recovery
+    # command. --force-unclean overrides for legitimate recovery flows.
+    from probos.shutdown_integrity import (
+        UncleanShutdownDetected,
+        check_previous_shutdown,
+    )
+    _is_first_boot = not (resolved_data_dir / "events.db").exists()
+    try:
+        check_previous_shutdown(
+            resolved_data_dir,
+            force_unclean=force_unclean,
+            is_first_boot=_is_first_boot,
+        )
+    except UncleanShutdownDetected as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        # Release the pidfile so a follow-up recovery boot isn't blocked
+        # by our own stale marker.
+        try:
+            _pidfile.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise SystemExit(3) from exc
 
     runtime, config, console = await _boot_runtime(config_path, fresh, data_dir, console)
 
@@ -2068,6 +2095,12 @@ def main() -> None:
     serve_parser.add_argument("--port", type=int, default=18900, help="Bind port")
     serve_parser.add_argument("--interactive", action="store_true", help="Also run interactive shell")
     serve_parser.add_argument("--discord", action="store_true", help="Also start Discord bot adapter")
+    serve_parser.add_argument(
+        "--force-unclean", action="store_true",
+        help="AD-820: bypass the previous-shutdown integrity check (use only "
+             "for recovery after a known-unclean shutdown; risks segfault if "
+             "ChromaDB's HNSW index is torn).",
+    )
 
     # --- probos reset ---
     reset_parser = subparsers.add_parser("reset", help="Clear learned state (tiered: --soft, default, --full)")
@@ -2127,6 +2160,7 @@ def main() -> None:
                 port=args.port,
                 interactive=args.interactive,
                 discord=args.discord,
+                force_unclean=getattr(args, "force_unclean", False),
             ))
         except KeyboardInterrupt:
             pass
