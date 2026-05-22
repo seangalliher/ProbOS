@@ -356,6 +356,24 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-799 | Per-thread workspace mount for ContainerSandbox (pairs AD-791 + AD-798) — thread metadata gains `workspace_root`; bind-mounted at `/workspace` inside the container; HXI "Files" affordance per thread | [#723](https://github.com/seangalliher/ProbOS/issues/723) | 2 |
 | AD-800 | EgressPolicy enforcement at the container network layer — translates AD-456 allowlist to docker iptables / DNS-sidecar; closes the shell-subprocess HTTP-bypass hole that exists in both OpenClaw and Hermes; emits `SANDBOX_EGRESS_BLOCKED` events | [#724](https://github.com/seangalliher/ProbOS/issues/724) | 2 |
 
+**From the 2026-05-21 OpenClaw + Hermes Agent landscape survey (operator-surface gaps):**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-801 | `probos doctor` — single-command operator health diagnostic CLI (parity with `openclaw doctor` / `hermes doctor`) | [#725](https://github.com/seangalliher/ProbOS/issues/725) | 2 |
+| AD-802 | DM pairing + Visiting Officer trust integration — pairing-code gate for unknown senders on inbound channels; mints AD-701 DIDs with operator-chosen capability scope; hard prerequisite for AD-803..807 | [#726](https://github.com/seangalliher/ProbOS/issues/726) | 2 |
+| AD-803 | Telegram channel adapter (python-telegram-bot, polling + webhook; pairing-gated; matches Hermes "$5 VPS + Telegram" deployment shape) | [#727](https://github.com/seangalliher/ProbOS/issues/727) | 2 |
+| AD-804 | Slack channel adapter (Bolt SDK, socket-mode default, pairing-gated DMs, Slack mrkdwn rendering) | [#728](https://github.com/seangalliher/ProbOS/issues/728) | 2 |
+| AD-805 | Microsoft Teams channel adapter (Bot Framework SDK + AD-749 M365 auth reuse + Adaptive Cards for A2UI surfaces) | [#729](https://github.com/seangalliher/ProbOS/issues/729) | 2 |
+| AD-806 | Matrix channel adapter (matrix-nio + libolm E2EE; federation-aligned, self-hostable homeserver) | [#730](https://github.com/seangalliher/ProbOS/issues/730) | 3 |
+| AD-807 | Discord adapter refresh onto AD-472 contract + AD-802 pairing + AD-791 threads + AD-797 artifact embeds | [#731](https://github.com/seangalliher/ProbOS/issues/731) | 3 |
+| AD-808 | Migration tool — `probos migrate openclaw` / `probos migrate hermes` (cross-ecosystem import of memories, skills, API keys, command allowlists with AD-541b provenance tagging) | [#732](https://github.com/seangalliher/ProbOS/issues/732) | 2 |
+| AD-809 | Per-thread personality override — `/personality <name>` slash command; concise/formal/socratic/expert/casual registry; composes with AD-793 project context | [#733](https://github.com/seangalliher/ProbOS/issues/733) | 3 |
+| AD-810 | `/insights [--days N]` — operator-facing summary of recent agent activity (Hermes parity); pulls from dreaming consolidation + AD-794 thread names — forward marker | [#734](https://github.com/seangalliher/ProbOS/issues/734) | 3 |
+| AD-811 | A2UI — agent-rendered interactive UI surfaces (form / list-pick / multi-select; OpenClaw "Canvas with A2UI" parity); pairs with AD-797 artifacts + AD-445 decision queue — forward marker | [#735](https://github.com/seangalliher/ProbOS/issues/735) | 3 |
+| AD-812 | Natural-language scheduled automations with platform delivery — NL parser → AD-707 cron + AD-803+ delivery sinks ("every weekday at 7am send my LinkedIn metrics to Telegram") — forward marker | [#736](https://github.com/seangalliher/ProbOS/issues/736) | 3 |
+| AD-813 | Skills hub — community-curated skill catalog + `probos skill install <url>`; agentskills.io-compatible package format; commercial-overlay seam for curated / verified hub tier — forward marker | [#737](https://github.com/seangalliher/ProbOS/issues/737) | 3 |
+
 **From the 2026-05-08 chat-experience enhancements (Captain's request):**
 
 | AD | Title | Issue | Priority |
