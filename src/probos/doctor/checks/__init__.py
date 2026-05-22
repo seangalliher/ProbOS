@@ -20,4 +20,5 @@ from probos.doctor.checks import (  # noqa: F401
     channel_matrix_check,
     channel_discord_check,
     channel_teams_check,
+    channel_gmail_check,
 )
