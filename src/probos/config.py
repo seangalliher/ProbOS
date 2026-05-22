@@ -836,6 +836,14 @@ class MemoryConfig(BaseModel):
     # is enforced at the use site in EpisodicMemory.start(), not via validator.
     hnsw_sync_threshold: int = Field(default=64, ge=4, le=10000)
     hnsw_batch_size: int = Field(default=32, ge=1, le=10000)
+    # AD-823: daily uncompressed-tar snapshot of chroma's on-disk footprint.
+    # Pairs with AD-822 (boot probe) + AD-819 (rebuild from ward room) as the
+    # third-line recovery primitive when both chroma and ward room are gone.
+    # Default-on because the storage cost is small (current chroma footprint
+    # is ~10-50 MB) and the recovery upside is large. Retain 7 days by default;
+    # operators on tight disks can lower to 1, paranoid operators can raise.
+    backup_enabled: bool = True
+    backup_retain_days: int = Field(default=7, ge=1, le=365)
     # AD-567b/AD-584c: Salience-weighted recall (rebalanced for QA-trained embeddings)
     recall_weights: dict[str, float] = {
         "semantic": 0.35,

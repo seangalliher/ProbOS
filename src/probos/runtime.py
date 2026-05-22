@@ -353,6 +353,10 @@ class ProbOSRuntime:
         self._data_dir = Path(data_dir) if data_dir else _DEFAULT_DATA_DIR
         self._checkpoint_dir = self._data_dir / "checkpoints"
 
+        # AD-823: daily episodic backup task handle. Created in start();
+        # held here so async hygiene rules (no fire-and-forget) are met.
+        self._episodic_backup_task: asyncio.Task[None] | None = None
+
         # --- Substrate ---
         self.registry = AgentRegistry()
         self.spawner = AgentSpawner(self.registry)
@@ -2295,6 +2299,14 @@ class ProbOSRuntime:
                 post_budget_telemetry=self.post_budget_telemetry,
             )
 
+        # AD-823: schedule the daily episodic backup loop. Task reference
+        # stored on self so cancellation in shutdown can reach it; this
+        # avoids the fire-and-forget anti-pattern called out in the
+        # standing engineering principles.
+        self._episodic_backup_task = asyncio.create_task(
+            self._episodic_backup_loop()
+        )
+
     async def _initialize_semantic_work_layer(self) -> None:
         """AD-750: Initialize semantic storage, session continuity, and data mapping.
 
@@ -2387,6 +2399,50 @@ class ProbOSRuntime:
                 )
             except Exception:
                 logger.debug("Journal prune failed", exc_info=True)
+
+    async def _episodic_backup_loop(self) -> None:
+        """AD-823: daily uncompressed-tar snapshot of chroma's on-disk footprint.
+
+        First snapshot fires 60s after boot (warmup window so the runtime
+        is past startup before any disk pressure from tar). Subsequent
+        snapshots fire every 24h. Pairs with AD-822 (boot probe) and
+        AD-819 (rebuild from ward room) as the third-line recovery
+        primitive — not prevention, just the last line of defense if
+        both chroma and the ward room go missing.
+
+        Loop tolerates exceptions so a transient failure (disk full,
+        permission flip) does not kill the task forever.
+        """
+        from probos.maintenance.episodic_backup import snapshot_episodic
+
+        if not self.config.memory.backup_enabled:
+            logger.info("AD-823: episodic backup disabled by config; loop exiting")
+            return
+
+        data_dir = Path(self._data_dir)
+        backups_dir = data_dir / "backups" / "episodic"
+        retain_days = self.config.memory.backup_retain_days
+
+        # Warmup: 60s after start so we don't compete with boot I/O.
+        await asyncio.sleep(60.0)
+        while True:
+            try:
+                result = snapshot_episodic(
+                    data_dir, backups_dir, retain_days=retain_days,
+                )
+                if result.ok:
+                    logger.info(
+                        "AD-823: snapshot tick ok path=%s bytes=%d skipped=%s",
+                        result.path, result.bytes_written, result.skipped_reason,
+                    )
+                else:
+                    logger.warning(
+                        "AD-823: snapshot tick failed reason=%s",
+                        result.skipped_reason,
+                    )
+            except Exception:
+                logger.warning("AD-823: snapshot tick raised", exc_info=True)
+            await asyncio.sleep(86400.0)  # 24h
 
     def _refresh_roster_bridge(self) -> None:
         """Bridge for Phase 5: refresh emergent detector roster before dream_adapter exists."""
