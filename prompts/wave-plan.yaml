@@ -4243,3 +4243,31 @@ waves:
       refresh) all reuse it.
 
       Workflow: small-AD fast path - architect + builder same author.
+
+  - id: "191-channel-adapters-plus-onboarding"
+    title: "AD-804 Slack + AD-806 Matrix + AD-790 Yeo Desktop onboarding (~10h)"
+    kind: main
+    depends_on: ["190-telegram-adapter-substrate"]
+    dispatch_prompt: null
+    prompts_already_drafted: false
+    prompt_paths: []
+    builder_required: true
+    issues_to_close: [728, 730, 714]
+    estimated_hours: 10
+    status: shipped
+    notes: |
+      Three parallel-safe ADs in one wave. Two channel adapters (Slack,
+      Matrix) consume AD-802a + AD-801 doctor registry built in W189/190;
+      this proves the abstraction with 3 backends. One UI-only AD-790 -
+      Electron + React Desktop onboarding wizard - rides alongside.
+
+      License dispositions (captain-approved 2026-05-21):
+        - slack-bolt MIT - take the dep
+        - matrix-nio Apache-2.0 - take the dep (skip libolm E2EE in v1;
+          unencrypted rooms only; AD-806b will add E2EE later)
+        - No new deps for AD-790 (UI on existing AD-759 Electron stack)
+
+      Defers AD-804b (Slack events API webhook), AD-806b (Matrix E2EE
+      via libolm), AD-790a (signed installer flow).
+
+      Workflow: small-AD fast path, three commits per wave.
