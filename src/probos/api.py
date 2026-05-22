@@ -208,6 +208,7 @@ def create_app(runtime: Any) -> FastAPI:
         work,  # AD-750: Semantic work layer endpoints
         security,  # AD-754: data hardening + forget-this endpoint
         connectors,  # AD-763: M365 connector scoping + scan-config
+        threads,  # AD-791 (Wave 193): chat-threads substrate
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -228,6 +229,7 @@ def create_app(runtime: Any) -> FastAPI:
         work,
         security,
         connectors,
+        threads,
     ):
         app.include_router(r.router)
 

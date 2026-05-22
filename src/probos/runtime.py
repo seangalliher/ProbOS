@@ -434,6 +434,13 @@ class ProbOSRuntime:
             db_path=str(self._data_dir / "crew_profiles.db"),
         )
 
+        # AD-791 (Wave 193): chat-threads substrate. Eager init so REST
+        # routes + IntentMessage emitters can reference it from any phase.
+        from probos.threads import ChatThreadStore
+        self.chat_thread_store = ChatThreadStore(
+            db_path=self._data_dir / "chat_threads.db",
+        )
+
         # AD-722f: per-agent avatar-telemetry sampling state machine.
         # Initialized in __init__ (not finalize) so consumers in cognitive
         # services / routers can rely on its presence at any startup phase.
