@@ -1153,6 +1153,12 @@ def _cmd_channel(args: argparse.Namespace) -> int:
             return _cmd_channel_slack_setup(args, console)
         console.print(f"[red]Unknown slack subcommand: {sl_sub!r}[/red]")
         return 2
+    if sub == "matrix":
+        mx_sub = getattr(args, "channel_mx_cmd", None)
+        if mx_sub == "setup":
+            return _cmd_channel_matrix_setup(args, console)
+        console.print(f"[red]Unknown matrix subcommand: {mx_sub!r}[/red]")
+        return 2
     console.print(f"[red]Unknown channel subcommand: {sub!r}[/red]")
     return 2
 
@@ -1282,6 +1288,90 @@ def _cmd_channel_slack_setup(args: argparse.Namespace, console: Console) -> int:
         "poll_interval_s": 8.0,
         "poll_inbound": True,
         "default_thread_ts": True,
+    }
+    cfg_path.write_text(_yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    if os.name != "nt":
+        try:
+            os.chmod(cfg_path, 0o600)
+        except OSError:
+            console.print(f"[yellow]Could not chmod {cfg_path} to 0600 — check perms manually.[/yellow]")
+    console.print(f"[green]Wrote[/green] {cfg_path}")
+    console.print("Run [bold]probos doctor[/bold] to verify, then restart [bold]probos serve[/bold] to activate.")
+    return 0
+
+
+def _cmd_channel_matrix_setup(args: argparse.Namespace, console: Console) -> int:
+    """AD-806: interactive Matrix bot setup.
+
+    Exchanges a password for a long-lived access token via /login,
+    persists token + homeserver to ``~/.probos/channels/matrix.yaml``
+    (mode 0600 on POSIX). Password is NOT persisted.
+    """
+    import getpass
+    import os
+
+    import yaml as _yaml
+
+    from probos.channels.matrix_client import MatrixAPIError, MatrixClient
+
+    homeserver = (getattr(args, "homeserver", None) or "").strip()
+    user_id = (getattr(args, "user_id", None) or "").strip()
+    password = getattr(args, "password", None) or ""
+
+    if not homeserver:
+        console.print(
+            "[bold blue]Matrix setup[/bold blue] — Enter your homeserver URL "
+            "(e.g. https://matrix.org or https://your-homeserver.example.com)."
+        )
+        try:
+            homeserver = input("Homeserver URL: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled.[/yellow]")
+            return 1
+    if not user_id:
+        console.print("Enter your full Matrix ID, e.g. @yeo:matrix.org")
+        try:
+            user_id = input("User ID: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled.[/yellow]")
+            return 1
+    if not password:
+        try:
+            password = getpass.getpass("Password (input hidden): ")
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled.[/yellow]")
+            return 1
+
+    if not (homeserver and user_id and password):
+        console.print("[red]homeserver, user_id, and password are all required.[/red]")
+        return 1
+
+    async def _login(hs: str, uid: str, pw: str) -> str | None:
+        client = MatrixClient(homeserver=hs, timeout=10.0)
+        try:
+            return await client.login_password(uid, pw)
+        except MatrixAPIError as exc:
+            console.print(f"[red]login failed:[/red] {exc}")
+            return None
+        finally:
+            await client.close()
+
+    token = asyncio.run(_login(homeserver, user_id, password))
+    if not token:
+        return 1
+    console.print(f"[green]\u2713[/green] Login succeeded for {user_id}")
+
+    home = _probos_home()
+    channels_dir = home / "channels"
+    channels_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = channels_dir / "matrix.yaml"
+    payload = {
+        "enabled": True,
+        "homeserver": homeserver,
+        "user_id": user_id,
+        "access_token": token,
+        "auto_join_invites": True,
+        "sync_timeout_ms": 25000,
     }
     cfg_path.write_text(_yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     if os.name != "nt":
@@ -1858,6 +1948,30 @@ def main() -> None:
         type=str,
         default=None,
         help="xoxb-… bot user OAuth token (skips the interactive prompt)",
+    )
+    channel_mx = channel_sub.add_parser(
+        "matrix",
+        help="Manage the Matrix channel adapter",
+    )
+    channel_mx_sub = channel_mx.add_subparsers(dest="channel_mx_cmd", required=True)
+    channel_mx_setup = channel_mx_sub.add_parser("setup", help="Login + persist access token")
+    channel_mx_setup.add_argument(
+        "--homeserver",
+        type=str,
+        default=None,
+        help="Homeserver URL (e.g. https://matrix.org)",
+    )
+    channel_mx_setup.add_argument(
+        "--user-id",
+        type=str,
+        default=None,
+        help="Full Matrix ID (e.g. @yeo:matrix.org)",
+    )
+    channel_mx_setup.add_argument(
+        "--password",
+        type=str,
+        default=None,
+        help="Password (skips interactive prompt; prefer the prompt to avoid shell history)",
     )
 
     # --- probos qa run-contracts (AD-713 / better-agents) ---
