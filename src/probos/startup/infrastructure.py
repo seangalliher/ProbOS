@@ -32,6 +32,8 @@ async def boot_infrastructure(
     data_dir: Path,
     config: "SystemConfig",
     event_log_prune_loop_fn: Callable[[], asyncio.Future[None]],
+    *,
+    background_register: Callable[[asyncio.Task], None] | None = None,
 ) -> InfrastructureResult:
     """Start core infrastructure services and create the identity registry.
 
@@ -40,13 +42,21 @@ async def boot_infrastructure(
     event_log_prune_loop_fn:
         Coroutine function to schedule as a background prune task
         (``runtime._event_log_prune_loop``).
+    background_register:
+        AD-824: optional callable that registers a task on the runtime's
+        ``_background_tasks`` registry so the shutdown sweep can cancel
+        it before the AD-820 clean-shutdown marker is written.
     """
     logger.info("Startup [infrastructure]: starting")
 
     # Start infrastructure
     data_dir.mkdir(parents=True, exist_ok=True)
     await event_log.start()
-    event_prune_task = asyncio.create_task(event_log_prune_loop_fn())
+    event_prune_task = asyncio.create_task(
+        event_log_prune_loop_fn(), name="event-log-prune-loop"
+    )
+    if background_register is not None:
+        background_register(event_prune_task)
     await hebbian_router.start()
     await signal_manager.start()
     await gossip.start()

@@ -926,6 +926,15 @@ class ProbOSRuntime:
         # --- HXI event listeners (AD-254) ---
         self._event_listeners: list[tuple[Callable[..., Any], frozenset[str] | None]] = []
         self._nats_publish_tasks: set[asyncio.Task] = set()  # AD-637d: prevents GC of publish tasks
+
+        # AD-824: registry for long-lived runtime-owned background loops.
+        # The shutdown sequence in startup/shutdown.py cancels everything in
+        # this set before AD-820's mark_clean_shutdown so a stuck loop can
+        # never block the integrity marker. Per-event one-shot tasks
+        # (ward room alerts, QA fan-out, NATS publish) are NOT registered
+        # here — those use _nats_publish_tasks or are intentionally fire-
+        # and-forget with their own bounded lifetimes.
+        self._background_tasks: set[asyncio.Task] = set()
         self._nats_events_wired: bool = False  # AD-637z: gate for inline NATS event subscription
 
         self._started = False
@@ -1674,6 +1683,7 @@ class ProbOSRuntime:
             data_dir=self._data_dir,
             config=self.config,
             event_log_prune_loop_fn=self._event_log_prune_loop,
+            background_register=self._background_tasks.add,
         )
         self.identity_registry = infra.identity_registry
 
@@ -2043,6 +2053,7 @@ class ProbOSRuntime:
             process_natural_language_fn=self.process_natural_language,
             register_workforce_resources_fn=self._register_workforce_resources,
             journal_prune_loop_fn=self._journal_prune_loop,
+            background_register=self._background_tasks.add,
             nats_bus=self.nats_bus,  # AD-637c: NATS JetStream for Ward Room events
         )
         self.persistent_task_store = comm.persistent_task_store
@@ -2299,12 +2310,13 @@ class ProbOSRuntime:
                 post_budget_telemetry=self.post_budget_telemetry,
             )
 
-        # AD-823: schedule the daily episodic backup loop. Task reference
-        # stored on self so cancellation in shutdown can reach it; this
-        # avoids the fire-and-forget anti-pattern called out in the
-        # standing engineering principles.
-        self._episodic_backup_task = asyncio.create_task(
-            self._episodic_backup_loop()
+        # AD-823 + AD-824: schedule the daily episodic backup loop via
+        # the runtime's background-task registry so the shutdown sweep
+        # can cancel it deterministically before AD-820's clean-shutdown
+        # marker is written.
+        self._episodic_backup_task = self._spawn_background(
+            self._episodic_backup_loop(),
+            name="episodic-backup-loop",
         )
 
     async def _initialize_semantic_work_layer(self) -> None:
@@ -2374,31 +2386,67 @@ class ProbOSRuntime:
 
     # --- BF-071: Retention prune loops ---
 
+    def _spawn_background(
+        self, coro: "Coroutine[Any, Any, Any]", name: str
+    ) -> asyncio.Task:
+        """AD-824: spawn a long-lived runtime-owned background task.
+
+        Stores the task in ``self._background_tasks`` so the shutdown
+        sweep in ``startup/shutdown.py`` can cancel it before the AD-820
+        clean-shutdown marker is written. Uses ``.discard`` (not
+        ``.remove``) in the done-callback so a duplicate removal never
+        raises.
+
+        Use ONLY for loops that live for the runtime's lifetime. For
+        per-event fan-out tasks (ward room alerts, QA, NATS publish)
+        continue to use ``asyncio.create_task`` directly with whatever
+        per-feature registry already exists.
+        """
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     async def _event_log_prune_loop(self) -> None:
-        """Periodic event log retention cleanup."""
+        """Periodic event log retention cleanup.
+
+        AD-824: explicit ``CancelledError`` arm so the shutdown sweep
+        terminates this loop deterministically.
+        """
         cfg = self.config.event_log
-        while True:
-            await asyncio.sleep(cfg.prune_interval_seconds)
-            try:
-                await self.event_log.prune(
-                    retention_days=cfg.retention_days,
-                    max_rows=cfg.max_rows,
-                )
-            except Exception:
-                logger.debug("Event log prune failed", exc_info=True)
+        try:
+            while True:
+                await asyncio.sleep(cfg.prune_interval_seconds)
+                try:
+                    await self.event_log.prune(
+                        retention_days=cfg.retention_days,
+                        max_rows=cfg.max_rows,
+                    )
+                except Exception:
+                    logger.debug("Event log prune failed", exc_info=True)
+        except asyncio.CancelledError:
+            logger.debug("AD-824: _event_log_prune_loop cancelled")
+            raise
 
     async def _journal_prune_loop(self) -> None:
-        """Periodic cognitive journal retention cleanup."""
+        """Periodic cognitive journal retention cleanup.
+
+        AD-824: explicit ``CancelledError`` arm.
+        """
         cfg = self.config.cognitive_journal
-        while True:
-            await asyncio.sleep(cfg.prune_interval_seconds)
-            try:
-                await self.cognitive_journal.prune(
-                    retention_days=cfg.retention_days,
-                    max_rows=cfg.max_rows,
-                )
-            except Exception:
-                logger.debug("Journal prune failed", exc_info=True)
+        try:
+            while True:
+                await asyncio.sleep(cfg.prune_interval_seconds)
+                try:
+                    await self.cognitive_journal.prune(
+                        retention_days=cfg.retention_days,
+                        max_rows=cfg.max_rows,
+                    )
+                except Exception:
+                    logger.debug("Journal prune failed", exc_info=True)
+        except asyncio.CancelledError:
+            logger.debug("AD-824: _journal_prune_loop cancelled")
+            raise
 
     async def _episodic_backup_loop(self) -> None:
         """AD-823: daily uncompressed-tar snapshot of chroma's on-disk footprint.
@@ -2425,24 +2473,28 @@ class ProbOSRuntime:
 
         # Warmup: 60s after start so we don't compete with boot I/O.
         await asyncio.sleep(60.0)
-        while True:
-            try:
-                result = snapshot_episodic(
-                    data_dir, backups_dir, retain_days=retain_days,
-                )
-                if result.ok:
-                    logger.info(
-                        "AD-823: snapshot tick ok path=%s bytes=%d skipped=%s",
-                        result.path, result.bytes_written, result.skipped_reason,
+        try:
+            while True:
+                try:
+                    result = snapshot_episodic(
+                        data_dir, backups_dir, retain_days=retain_days,
                     )
-                else:
-                    logger.warning(
-                        "AD-823: snapshot tick failed reason=%s",
-                        result.skipped_reason,
-                    )
-            except Exception:
-                logger.warning("AD-823: snapshot tick raised", exc_info=True)
-            await asyncio.sleep(86400.0)  # 24h
+                    if result.ok:
+                        logger.info(
+                            "AD-823: snapshot tick ok path=%s bytes=%d skipped=%s",
+                            result.path, result.bytes_written, result.skipped_reason,
+                        )
+                    else:
+                        logger.warning(
+                            "AD-823: snapshot tick failed reason=%s",
+                            result.skipped_reason,
+                        )
+                except Exception:
+                    logger.warning("AD-823: snapshot tick raised", exc_info=True)
+                await asyncio.sleep(86400.0)  # 24h
+        except asyncio.CancelledError:
+            logger.debug("AD-824: _episodic_backup_loop cancelled")
+            raise
 
     def _refresh_roster_bridge(self) -> None:
         """Bridge for Phase 5: refresh emergent detector roster before dream_adapter exists."""

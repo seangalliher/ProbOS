@@ -48,6 +48,7 @@ async def init_communication(
     process_natural_language_fn: Callable[..., Any],
     register_workforce_resources_fn: Callable[..., Any],
     journal_prune_loop_fn: Callable[[], Any],
+    background_register: Callable[[asyncio.Task], None] | None = None,
     nats_bus: Any = None,  # AD-637c: NATS event bus for JetStream ward room dispatch
 ) -> CommunicationResult:
     """Start communication services, scheduling, and identity commissioning.
@@ -310,7 +311,11 @@ async def init_communication(
             db_path=str(data_dir / "cognitive_journal.db"),
         )
         await cognitive_journal.start()
-        asyncio.create_task(journal_prune_loop_fn())
+        _journal_task = asyncio.create_task(
+            journal_prune_loop_fn(), name="cognitive-journal-prune-loop"
+        )
+        if background_register is not None:
+            background_register(_journal_task)
         logger.info("cognitive-journal started")
 
     # --- Knowledge Edge Store (AD-687) ---

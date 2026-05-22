@@ -162,6 +162,25 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     _phase1_elapsed = _time.monotonic() - _phase1_start
     logger.info("BF-207: Phase 1 (Critical Persistence) completed in %.1fs", _phase1_elapsed)
 
+    # AD-824: cancel registered long-lived background loops so the
+    # AD-820 marker write below is never blocked by a stuck task. We
+    # snapshot the set into a list because the done-callback mutates it.
+    background_tasks = getattr(runtime, "_background_tasks", None)
+    if background_tasks:
+        pending_snapshot = list(background_tasks)
+        for _task in pending_snapshot:
+            _task.cancel()
+        try:
+            _, _pending = await asyncio.wait(pending_snapshot, timeout=5.0)
+            for _task in _pending:
+                logger.warning(
+                    "AD-824: background task %s did not exit within 5s; abandoning",
+                    _task.get_name(),
+                )
+        except Exception:
+            # Sweep must never block the AD-820 marker — log and move on.
+            logger.warning("AD-824: background-task sweep raised", exc_info=True)
+
     # AD-820: write shutdown integrity marker so the next boot can detect a
     # clean vs. partial shutdown BEFORE opening ChromaDB. If consolidation
     # was 'full', the marker is 'clean'; otherwise 'partial' and the next
