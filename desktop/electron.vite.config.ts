@@ -17,6 +17,14 @@ export default defineConfig({
       outDir: "out/preload",
       rollupOptions: {
         input: resolve(__dirname, "src/preload/index.ts"),
+        // BF (2026-05-22): force CommonJS output. Sandboxed preload
+        // scripts (webPreferences.sandbox=true) MUST be CommonJS;
+        // Electron will silently skip an ESM preload (.mjs) and the
+        // renderer ends up with no `window.probos` bridge.
+        output: {
+          format: "cjs",
+          entryFileNames: "[name].js",
+        },
       },
     },
   },

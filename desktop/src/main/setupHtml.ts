@@ -163,7 +163,7 @@ export function setupHtml({ runtimeUrl, appVersion }: SetupHtmlOptions): string 
         const probos = window.probos;
         const r = probos && typeof probos.checkRuntime === 'function'
           ? await probos.checkRuntime()
-          : { ok: false, error: 'IPC bridge missing' };
+          : { ok: false, error: 'IPC bridge missing (preload not loaded?)' };
         if (r.ok) {
           probeResult.textContent = 'OK - ProbOS runtime is responding.';
           probeResult.className = 'runtime-status ok';
@@ -171,13 +171,14 @@ export function setupHtml({ runtimeUrl, appVersion }: SetupHtmlOptions): string 
           probeResult.textContent = 'Runtime returned status ' + r.status + '.';
           probeResult.className = 'runtime-status fail';
         } else {
-          probeResult.textContent = 'Could not reach the runtime. Make sure ' +
-            'probos serve is running.';
+          // Show the underlying error to aid diagnosis.
+          probeResult.textContent = 'Could not reach the runtime: ' +
+            (r.error || 'unknown error') +
+            '. Make sure probos serve is running at ' + RUNTIME_URL + '.';
           probeResult.className = 'runtime-status fail';
         }
       } catch (err) {
-        probeResult.textContent = 'Could not reach the runtime. Make sure ' +
-          'probos serve is running.';
+        probeResult.textContent = 'Probe threw: ' + String(err);
         probeResult.className = 'runtime-status fail';
       }
     });
