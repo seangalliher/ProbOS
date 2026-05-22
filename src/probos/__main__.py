@@ -610,6 +610,32 @@ async def _serve(
             pass
         raise SystemExit(3) from exc
 
+    # AD-822: probe ChromaDB in an isolated subprocess BEFORE the runtime
+    # opens it. Catches the corruption-without-unclean-shutdown class of
+    # failure that AD-820's marker misses (e.g. torn HNSW from a prior
+    # process generation, sqlite page corruption from disk error). A
+    # SIGSEGV inside the probe kills only the child; the parent observes
+    # the non-zero exit code and refuses to boot with an actionable
+    # remediation message pointing at AD-819. PROBOS_SKIP_EPISODIC_HEALTH_CHECK=1
+    # bypasses the probe with a WARNING log.
+    from probos.episodic_health import (
+        EpisodicCorruptionDetected,
+        check_episodic_health,
+    )
+    _health = check_episodic_health(resolved_data_dir)
+    if not _health.ok:
+        _exc = EpisodicCorruptionDetected(
+            resolved_data_dir,
+            _health.error or "unknown probe failure",
+            _health.duration_s,
+        )
+        console.print(f"[red]✗[/red] {_exc}")
+        try:
+            _pidfile.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise SystemExit(4) from _exc
+
     runtime, config, console = await _boot_runtime(config_path, fresh, data_dir, console)
 
     if fresh:
