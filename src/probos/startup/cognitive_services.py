@@ -6,6 +6,7 @@ engine, knowledge store, warm boot, records store, and strategy advisor.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -222,28 +223,69 @@ async def init_cognitive_services(
         except Exception:
             logger.warning("AD-541f: Eviction audit log start failed (non-fatal)", exc_info=True)
 
+    # BF (2026-05-22, #748): each episodic-memory migration below now
+    # logs a start message AND runs under asyncio.wait_for so a stuck
+    # migration honest-degrades to a warning instead of bricking boot.
+    # Generous 120s ceiling — enough for hundreds of episodes; well
+    # below the operator's typical patience threshold.
+    _MIGRATION_TIMEOUT_S = 120.0
+
+    # Operator escape hatch (BF-2026-05-22): some migrations load the
+    # entire ChromaDB collection into Python memory at once, which can
+    # OOM on large stores. Setting PROBOS_SKIP_EPISODIC_MIGRATIONS=1
+    # boots the runtime without running them; the operator can then
+    # invoke them as a separate maintenance step when ready.
+    import os as _os_for_skip
+    _skip_migrations = _os_for_skip.environ.get(
+        "PROBOS_SKIP_EPISODIC_MIGRATIONS", ""
+    ).strip() in {"1", "true", "yes"}
+    if _skip_migrations:
+        logger.warning(
+            "PROBOS_SKIP_EPISODIC_MIGRATIONS set; skipping episodic-memory "
+            "migrations (BF-103, AD-570, AD-570b, AD-584, AD-605). Run "
+            "them as maintenance when ready."
+        )
+
     # BF-103: Migrate episode agent_ids from slot IDs to sovereign IDs
-    if episodic_memory and identity_registry:
+    if episodic_memory and identity_registry and not _skip_migrations:
         try:
             from probos.cognitive.episodic import migrate_episode_agent_ids
-            migrated = await migrate_episode_agent_ids(episodic_memory, identity_registry)
+            logger.info("BF-103: starting episode agent_id migration")
+            migrated = await asyncio.wait_for(
+                migrate_episode_agent_ids(episodic_memory, identity_registry),
+                timeout=_MIGRATION_TIMEOUT_S,
+            )
             if migrated > 0:
                 logger.info("BF-103: Migrated %d episodes to sovereign IDs", migrated)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "BF-103: Episode ID migration timed out after %.0fs (skipping)",
+                _MIGRATION_TIMEOUT_S,
+            )
         except Exception:
             logger.warning("BF-103: Episode ID migration failed (non-fatal)", exc_info=True)
 
     # AD-570: Promote anchor fields to top-level ChromaDB metadata
-    if episodic_memory:
+    if episodic_memory and not _skip_migrations:
         try:
             from probos.cognitive.episodic import migrate_anchor_metadata
-            migrated = await migrate_anchor_metadata(episodic_memory)
+            logger.info("AD-570: starting anchor metadata migration")
+            migrated = await asyncio.wait_for(
+                migrate_anchor_metadata(episodic_memory),
+                timeout=_MIGRATION_TIMEOUT_S,
+            )
             if migrated > 0:
                 logger.info("AD-570: Promoted anchor metadata for %d episodes", migrated)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AD-570: Anchor metadata migration timed out after %.0fs (skipping)",
+                _MIGRATION_TIMEOUT_S,
+            )
         except Exception:
             logger.warning("AD-570: Anchor metadata migration failed (non-fatal)", exc_info=True)
 
     # AD-570b: Create and wire participant index
-    if episodic_memory:
+    if episodic_memory and not _skip_migrations:
         try:
             from probos.cognitive.participant_index import ParticipantIndex
 
@@ -256,30 +298,58 @@ async def init_cognitive_services(
 
             # One-time migration: backfill from existing episodes
             from probos.cognitive.episodic import migrate_participant_index
-            migrated = await migrate_participant_index(episodic_memory)
+            logger.info("AD-570b: starting participant index backfill")
+            migrated = await asyncio.wait_for(
+                migrate_participant_index(episodic_memory),
+                timeout=_MIGRATION_TIMEOUT_S,
+            )
             if migrated > 0:
                 logger.info("AD-570b: Indexed participants for %d episodes", migrated)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AD-570b: Participant index backfill timed out after %.0fs (skipping)",
+                _MIGRATION_TIMEOUT_S,
+            )
         except Exception:
             logger.warning("AD-570b: Participant index start failed (non-fatal)", exc_info=True)
 
     # AD-584: Embedding model migration (re-embed if model changed)
-    if episodic_memory:
+    if episodic_memory and not _skip_migrations:
         try:
             from probos.cognitive.episodic import migrate_embedding_model
             from probos.knowledge.embeddings import get_embedding_model_name
-            migrated = await migrate_embedding_model(episodic_memory, get_embedding_model_name())
+            logger.info("AD-584: starting embedding model migration")
+            migrated = await asyncio.wait_for(
+                migrate_embedding_model(episodic_memory, get_embedding_model_name()),
+                timeout=_MIGRATION_TIMEOUT_S,
+            )
             if migrated > 0:
                 logger.info("AD-584: Re-embedded %d episodes with new model", migrated)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AD-584: Embedding model migration timed out after %.0fs (skipping)",
+                _MIGRATION_TIMEOUT_S,
+            )
         except Exception:
             logger.warning("AD-584: Embedding model migration failed (non-fatal)", exc_info=True)
 
-    # AD-605: Re-embed with enriched anchor metadata
-    if episodic_memory:
+    # AD-605: Re-embed with enriched anchor metadata (synchronous)
+    if episodic_memory and not _skip_migrations:
         try:
             from probos.cognitive.episodic import migrate_enriched_embedding
-            migrated = migrate_enriched_embedding(episodic_memory)
+            logger.info("AD-605: starting enriched embedding migration (sync)")
+            loop = asyncio.get_running_loop()
+            migrated = await asyncio.wait_for(
+                loop.run_in_executor(None, migrate_enriched_embedding, episodic_memory),
+                timeout=_MIGRATION_TIMEOUT_S,
+            )
             if migrated > 0:
                 logger.info("AD-605: Re-embedded %d episodes with enriched anchor text", migrated)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AD-605: Enriched embedding migration timed out after %.0fs (skipping)",
+                _MIGRATION_TIMEOUT_S,
+            )
         except Exception:
             logger.warning("AD-605: Enriched embedding migration failed (non-fatal)", exc_info=True)
 
@@ -287,7 +357,7 @@ async def init_cognitive_services(
     # Must run AFTER all other migrations (BF-103, AD-570, AD-584, AD-605) which
     # may legitimately change metadata that affects the content hash.
     # ⚠️ MUST be the last migration. New migrations go ABOVE this block.
-    if episodic_memory and config.memory.verify_content_hash:
+    if episodic_memory and config.memory.verify_content_hash and not _skip_migrations:
         try:
             from probos.cognitive.episodic import sweep_hash_integrity
             healed = await sweep_hash_integrity(episodic_memory)
