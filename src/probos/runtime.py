@@ -441,6 +441,13 @@ class ProbOSRuntime:
             db_path=self._data_dir / "chat_threads.db",
         )
 
+        # AD-797 (Wave 195): artifact metadata store. Bytes live in the
+        # existing AttachmentStore; this is the named/versioned layer.
+        from probos.artifacts import ArtifactStore
+        self.artifact_store = ArtifactStore(
+            db_path=self._data_dir / "artifacts.db",
+        )
+
         # AD-722f: per-agent avatar-telemetry sampling state machine.
         # Initialized in __init__ (not finalize) so consumers in cognitive
         # services / routers can rely on its presence at any startup phase.
