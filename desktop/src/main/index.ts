@@ -343,9 +343,31 @@ function bootstrap(): void {
 
   app.whenReady().then(() => {
     viewMode = readViewMode();
-    // Tray icon: empty native image is acceptable on Windows for now;
-    // real icon assets are AD-759b deliverable.
-    const trayIcon = nativeImage.createEmpty();
+    // Tray icon: amber bioluminescent dot (matches HXI palette #f0b060).
+    // Resolved relative to the built main bundle at out/main/index.js;
+    // resources/ sits two levels up. Falls back to an empty image only
+    // if the asset is missing so the tray still appears.
+    const iconCandidates = [
+      // dev: out/main/index.js → ../../resources/tray-icon.png
+      join(__dirname, "../../resources/tray-icon.png"),
+      // packaged: process.resourcesPath is the asar root
+      process.resourcesPath
+        ? join(process.resourcesPath, "tray-icon.png")
+        : "",
+    ].filter(Boolean);
+    let trayIcon = nativeImage.createEmpty();
+    for (const candidate of iconCandidates) {
+      const img = nativeImage.createFromPath(candidate);
+      if (!img.isEmpty()) {
+        trayIcon = img;
+        break;
+      }
+    }
+    if (trayIcon.isEmpty()) {
+      logWarn("Tray icon asset not found; tray will render without icon", {
+        candidates: iconCandidates,
+      });
+    }
     tray = new Tray(trayIcon);
     refreshTrayMenu();
 
