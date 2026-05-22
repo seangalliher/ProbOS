@@ -1133,6 +1133,34 @@ class _OfflinePairingVOStub:
         return self._sessions.pop(did, None) is not None
 
 
+def _cmd_migrate(args: argparse.Namespace) -> int:
+    """Handle ``probos migrate <openclaw|hermes> ...`` (AD-808)."""
+    from probos.migration import (
+        execute_plan,
+        plan_migration,
+        render_text_report,
+    )
+
+    console = Console()
+    source = getattr(args, "migrate_source", None)
+    if source not in ("openclaw", "hermes"):
+        console.print("[red]Unknown migration source[/red]")
+        return 2
+    report = plan_migration(
+        source,
+        source_dir=getattr(args, "source_dir", None),
+        preset=getattr(args, "preset", "user-data"),
+        overwrite=getattr(args, "overwrite", False),
+    )
+    if report.errors:
+        for err in report.errors:
+            console.print(f"[red]{err}[/red]")
+        return 1
+    execute_plan(report, dry_run=getattr(args, "dry_run", False))
+    console.print(render_text_report(report))
+    return 0
+
+
 def _cmd_channel(args: argparse.Namespace) -> int:
     """Handle ``probos channel ...`` subcommands (AD-803a+).
 
@@ -1974,6 +2002,39 @@ def main() -> None:
         help="Password (skips interactive prompt; prefer the prompt to avoid shell history)",
     )
 
+    # --- probos migrate (AD-808) ---
+    migrate_parser = subparsers.add_parser(
+        "migrate",
+        help="Import operator state from OpenClaw / Hermes Agent (AD-808)",
+    )
+    migrate_sub = migrate_parser.add_subparsers(dest="migrate_source", required=True)
+    for _src in ("openclaw", "hermes"):
+        _p = migrate_sub.add_parser(
+            _src, help=f"Migrate from {_src} (~/.{_src}/)",
+        )
+        _p.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Show what would be imported, do nothing",
+        )
+        _p.add_argument(
+            "--preset",
+            choices=("user-data", "full"),
+            default="user-data",
+            help="user-data skips API keys / secrets (default); full includes them",
+        )
+        _p.add_argument(
+            "--overwrite",
+            action="store_true",
+            help="Replace existing files at the target paths",
+        )
+        _p.add_argument(
+            "--source-dir",
+            type=Path,
+            default=None,
+            help=f"Override source directory (default: ~/.{_src})",
+        )
+
     # --- probos qa run-contracts (AD-713 / better-agents) ---
     qa_parser = subparsers.add_parser("qa", help="Quality / behavior contract commands")
     qa_sub = qa_parser.add_subparsers(dest="qa_cmd", required=True)
@@ -2032,6 +2093,10 @@ def main() -> None:
     if args.command == "channel":
         import sys
         sys.exit(_cmd_channel(args))
+
+    if args.command == "migrate":
+        import sys
+        sys.exit(_cmd_migrate(args))
 
     if args.command == "qa":
         import sys
