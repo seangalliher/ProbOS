@@ -9,11 +9,22 @@
 export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 export type ViewMode = "compact" | "full";
 
+export interface TrayAgent {
+  /** Stable agent id used as path segment for /api/agents/{id}/chat */
+  id: string;
+  /** Display label rendered in the submenu (e.g. "Yao"). */
+  name: string;
+}
+
 export interface TrayMenuOptions {
   status: ConnectionStatus;
   proactivePaused: boolean;
   viewMode: ViewMode;
+  /** AD-815b: agents shown in the "Chat with..." submenu. Empty = submenu disabled. */
+  agents?: readonly TrayAgent[];
   onOpenRoute: (route: string) => void;
+  /** AD-815b: invoked when the captain picks an agent from the submenu. */
+  onStartChatWithAgent?: (agentId: string) => void;
   onToggleProactive: () => void;
   onToggleViewMode: () => void;
   onCheckForUpdates: () => void;
@@ -25,9 +36,10 @@ export interface TrayMenuItem {
   id: string;
   label: string;
   enabled?: boolean;
-  type?: "normal" | "separator";
+  type?: "normal" | "separator" | "submenu";
   toolTip?: string;
   click?: () => void;
+  submenu?: TrayMenuItem[];
 }
 
 function statusLabel(status: ConnectionStatus): string {
@@ -72,6 +84,7 @@ export function buildTrayMenu(opts: TrayMenuOptions): TrayMenuItem[] {
       label: "Quick capture",
       click: () => opts.onOpenRoute("/capture"),
     },
+    ...buildChatWithSubmenu(opts),
     {
       id: "toggle-proactive",
       label: opts.proactivePaused ? "Resume proactive mode" : "Pause proactive mode",
@@ -125,4 +138,33 @@ export function buildTrayMenu(opts: TrayMenuOptions): TrayMenuItem[] {
  */
 export function actionableCount(items: readonly TrayMenuItem[]): number {
   return items.filter((i) => i.type !== "separator").length;
+}
+
+/**
+ * AD-815b: build the "Chat with..." submenu entry from the supplied agents.
+ *
+ * Returns an empty array when no agents are supplied (preserves the original
+ * 10-item layout). When at least one agent is supplied, returns a single
+ * submenu item slotting between "Quick capture" and the proactive toggle.
+ */
+export function buildChatWithSubmenu(
+  opts: Pick<TrayMenuOptions, "agents" | "onStartChatWithAgent">,
+): TrayMenuItem[] {
+  const agents = opts.agents ?? [];
+  if (agents.length === 0) {
+    return [];
+  }
+  const onStart = opts.onStartChatWithAgent;
+  return [
+    {
+      id: "chat-with",
+      label: "Chat with…",
+      type: "submenu",
+      submenu: agents.map((a) => ({
+        id: `chat-with:${a.id}`,
+        label: a.name,
+        click: onStart ? (): void => onStart(a.id) : undefined,
+      })),
+    },
+  ];
 }
