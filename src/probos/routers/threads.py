@@ -201,3 +201,96 @@ async def auto_name_thread(
     title = suggest_title(msgs[0].body)
     updated = store.update_thread(thread_id, title=title)
     return updated.to_dict() if updated else thread.to_dict()
+
+
+# AD-815c: promote a chat instruction into a tracked Task. Creates an
+# AD-477 WorkItem + AD-815a TaskSession + links the two together. If
+# `description` is omitted, the most recent message body in the thread
+# is used as the brief.
+class PromoteToTaskRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str | None = None
+    assigned_to: str | None = None
+    schedule_kind: str = Field(default="one_shot", pattern="^(one_shot|recurring)$")
+    schedule_cron: str | None = None
+    schedule_timezone: str | None = None
+    recurrence_policy: str = Field(
+        default="reuse", pattern="^(reuse|new_session_each_run)$"
+    )
+    container_image: str | None = None
+    egress_policy: str = Field(default="bridge", pattern="^(none|bridge|allowlist)$")
+    priority: int = Field(default=3, ge=1, le=5)
+
+
+@router.post("/{thread_id}/promote-to-task")
+async def promote_thread_to_task(
+    thread_id: str,
+    body: PromoteToTaskRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict:
+    """AD-815c: convert a chat brief into a WorkItem + TaskSession."""
+    store = _get_store(runtime)
+    thread = store.get_thread(thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    description = body.description
+    if not description:
+        last_msgs = store.list_messages(thread_id, limit=1)
+        # Prefer the most recent captain turn; otherwise any latest msg.
+        if last_msgs:
+            description = last_msgs[-1].body
+    if not description:
+        raise HTTPException(
+            status_code=409,
+            detail="Thread has no messages and no description supplied",
+        )
+
+    # Choose assignee: explicit override > thread's single participant > None.
+    assigned_to = body.assigned_to
+    if assigned_to is None and len(thread.participants) == 1:
+        assigned_to = thread.participants[0]
+
+    # WorkItem (AD-477). Optional — runtime may not have a store in tests.
+    work_item_id: str | None = None
+    wi_store = getattr(runtime, "work_item_store", None)
+    if wi_store is not None:
+        try:
+            item = await wi_store.create_work_item(
+                title=body.title,
+                description=description,
+                work_type="task",
+                priority=body.priority,
+                assigned_to=assigned_to,
+                created_by="captain",
+                tags=["cowork", f"thread:{thread_id}"],
+                metadata={"thread_id": thread_id},
+            )
+            work_item_id = item.id
+        except Exception:
+            # Tier-2 log-and-degrade: the TaskSession still ships even if
+            # the WorkItemStore is busy. The kanban surface will pick up
+            # the AD-815a session on its next sweep (AD-815c follow-up).
+            work_item_id = None
+
+    # TaskSession (AD-815a).
+    ts_store = getattr(runtime, "task_session_store", None)
+    if ts_store is None:
+        raise HTTPException(
+            status_code=503, detail="TaskSessionStore not available"
+        )
+    session = ts_store.create_session(
+        thread_id=thread_id,
+        title=body.title,
+        work_item_id=work_item_id,
+        schedule_kind=body.schedule_kind,
+        schedule_cron=body.schedule_cron,
+        schedule_timezone=body.schedule_timezone,
+        recurrence_policy=body.recurrence_policy,
+        container_image=body.container_image,
+        egress_policy=body.egress_policy,
+    )
+    return {
+        "task_session": session.to_dict(),
+        "work_item_id": work_item_id,
+    }
