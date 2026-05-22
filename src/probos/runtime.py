@@ -448,6 +448,15 @@ class ProbOSRuntime:
             db_path=self._data_dir / "artifacts.db",
         )
 
+        # AD-815a (Wave 200): TaskSession substrate — anchors cowork-style
+        # work to a thread (AD-791) + work item (AD-477) with inputs/
+        # outputs/scratch folders under the per-thread workspace.
+        from probos.task_sessions import TaskSessionStore
+        self.task_session_store = TaskSessionStore(
+            db_path=self._data_dir / "task_sessions.db",
+            workspace_root=self._data_dir / "workspaces",
+        )
+
         # AD-722f: per-agent avatar-telemetry sampling state machine.
         # Initialized in __init__ (not finalize) so consumers in cognitive
         # services / routers can rely on its presence at any startup phase.
