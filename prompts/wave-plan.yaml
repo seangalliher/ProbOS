@@ -4214,3 +4214,32 @@ waves:
 
       Workflow: small-AD fast path - architect + builder same author,
       no formal review_1/review_2 gates. Wave 187/188 precedent.
+
+  - id: "190-telegram-adapter-substrate"
+    title: "AD-803a Telegram channel adapter substrate (polling + pairing-gate; no LGPL dep)"
+    kind: main
+    depends_on: ["189-dm-pairing-trust"]
+    dispatch_prompt: "prompts/ad-803a-telegram-adapter.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-803a-telegram-adapter.md"
+    builder_required: true
+    issues_to_close: [727]
+    estimated_hours: 4
+    status: shipped
+    notes: |
+      License-aware split of AD-803. python-telegram-bot is LGPL-3.0;
+      per the standing rule (Avoid AGPL/GPL - copyleft propagates) we
+      build a thin TelegramClient on httpx (already a dependency).
+      Substrate v1 ships: minimal client (getUpdates, sendMessage,
+      getMe), TelegramAdapter (polling loop, lifecycle, pairing-gate
+      via AD-802a ChannelAdapter hook), config model, CLI setup verb,
+      doctor check. Defers AD-803b (webhook mode, media attachments,
+      voice-memo Whisper STT, AD-720 attachment integration).
+
+      AD-802a ships as part of this wave - the ChannelAdapter base
+      class gains a _check_pairing pre-dispatch hook that AD-803a is
+      the first consumer of. AD-804..807 (Slack/Teams/Matrix/Discord
+      refresh) all reuse it.
+
+      Workflow: small-AD fast path - architect + builder same author.

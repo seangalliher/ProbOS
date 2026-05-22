@@ -15,4 +15,5 @@ from probos.doctor.checks import (  # noqa: F401
     overlay_check,
     sandbox_check,
     pairing_check,
+    channel_telegram_check,
 )

@@ -29,6 +29,11 @@ class ChannelMessage:
     user_id: str
     user_display_name: str = ""
     reply_to_message_id: str | None = None
+    # AD-802a: DID attached by `_check_pairing` for paired senders.
+    # None when no pairing exists yet (only possible inside `_check_pairing`
+    # itself; once `handle_message` runs the field is always populated for
+    # paired-channel adapters).
+    paired_did: str | None = None
 
 
 class ChannelAdapter(ABC):
@@ -39,6 +44,10 @@ class ChannelAdapter(ABC):
     The base class provides shared message processing logic via
     handle_message().
     """
+
+    #: Stable channel identifier used by AD-802 PairingService and AD-801
+    #: doctor checks (e.g. "telegram", "slack"). Subclasses MUST override.
+    channel_name: str = ""
 
     def __init__(self, runtime: ProbOSRuntime, config: ChannelConfig) -> None:
         self.runtime = runtime
@@ -64,14 +73,89 @@ class ChannelAdapter(ABC):
         """Deliver a response back to the originating channel."""
         ...
 
+    async def _check_pairing(self, message: ChannelMessage) -> bool:
+        """AD-802a: gate inbound messages from unknown senders behind a
+        pairing code.
+
+        Returns:
+            True  -> message can proceed to `handle_message` body.
+            False -> a pairing code was minted, sender notified, message
+                     dropped. Caller should NOT process further.
+
+        Default behavior:
+            * No `runtime.pairing_service` -> no-op pass-through (returns True).
+            * `channel_name` empty -> no-op pass-through (subclass didn't
+              opt in).
+            * `pairing_service.resolve_did(channel_name, user_id)`:
+                - returns a DID -> attach to `message.paired_did`, return True.
+                - returns None  -> mint pending pairing, send instructions
+                                   reply, return False.
+
+        Subclasses override only for adapter-specific behavior (per-guild
+        allow-lists, anon-mode bypasses, etc.).
+        """
+        pairing_service = getattr(self.runtime, "pairing_service", None)
+        if pairing_service is None or not self.channel_name:
+            return True
+        try:
+            did = pairing_service.resolve_did(self.channel_name, message.user_id)
+        except Exception:
+            logger.warning(
+                "AD-802a: resolve_did failed for channel=%s user_id=%s; "
+                "allowing message (fail-open)",
+                self.channel_name, message.user_id, exc_info=True,
+            )
+            return True
+
+        if did is not None:
+            message.paired_did = did
+            return True
+
+        # Unknown sender — mint a pending pairing and reply with instructions.
+        try:
+            code = await pairing_service.request_pairing(
+                channel=self.channel_name,
+                raw_id=message.user_id,
+            )
+        except Exception:
+            logger.error(
+                "AD-802a: request_pairing failed for channel=%s user_id=%s; "
+                "dropping message",
+                self.channel_name, message.user_id, exc_info=True,
+            )
+            return False
+
+        instructions = (
+            f"Hi — this is a ProbOS bot. The Captain hasn't paired your "
+            f"account yet. Please ask them to run:\n\n"
+            f"    probos pairing approve {self.channel_name} {code}\n\n"
+            f"Then send your message again."
+        )
+        try:
+            await self.send_response(message.channel_id, instructions)
+        except Exception:
+            logger.warning(
+                "AD-802a: send_response for pairing instructions failed; "
+                "user will need to retry",
+                exc_info=True,
+            )
+        return False
+
     async def handle_message(self, message: ChannelMessage) -> str:
         """Process an inbound message through the ProbOS runtime.
 
         Routes slash commands to the shell handler, natural language
         to process_natural_language(). Maintains per-channel conversation
         history.
+
+        AD-802a: pairing-gate runs first. Unknown senders receive a
+        pairing code reply and the message is dropped (returns "").
         """
         from probos.utils.response_formatter import extract_response_text
+
+        proceed = await self._check_pairing(message)
+        if not proceed:
+            return ""
 
         text = message.text.strip()
         if not text:

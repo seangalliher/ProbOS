@@ -1133,6 +1133,92 @@ class _OfflinePairingVOStub:
         return self._sessions.pop(did, None) is not None
 
 
+def _cmd_channel(args: argparse.Namespace) -> int:
+    """Handle ``probos channel ...`` subcommands (AD-803a+).
+
+    Currently routes the ``telegram setup`` flow; AD-804..807 (Slack /
+    Teams / Matrix / Discord refresh) plug in here.
+    """
+    console = Console()
+    sub = getattr(args, "channel_cmd", None)
+    if sub == "telegram":
+        tg_sub = getattr(args, "channel_tg_cmd", None)
+        if tg_sub == "setup":
+            return _cmd_channel_telegram_setup(args, console)
+        console.print(f"[red]Unknown telegram subcommand: {tg_sub!r}[/red]")
+        return 2
+    console.print(f"[red]Unknown channel subcommand: {sub!r}[/red]")
+    return 2
+
+
+def _cmd_channel_telegram_setup(args: argparse.Namespace, console: Console) -> int:
+    """AD-803a: interactive Telegram bot setup.
+
+    Validates the token via ``getMe`` and persists the config to
+    ``~/.probos/channels/telegram.yaml`` (mode 0600 on POSIX).
+    """
+    import getpass
+    import os
+
+    import yaml as _yaml
+
+    from probos.channels.telegram_client import TelegramAPIError, TelegramClient
+
+    token = getattr(args, "token", None)
+    if not token:
+        console.print(
+            "[bold blue]Telegram setup[/bold blue] — "
+            "Get a bot token from @BotFather first."
+        )
+        try:
+            token = getpass.getpass("Bot token (input hidden): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled.[/yellow]")
+            return 1
+    if not token:
+        console.print("[red]No token provided.[/red]")
+        return 1
+
+    async def _validate(t: str) -> dict | None:
+        client = TelegramClient(token=t, timeout=10.0)
+        try:
+            return await client.get_me()
+        except TelegramAPIError as exc:
+            console.print(f"[red]getMe failed:[/red] {exc}")
+            return None
+        finally:
+            await client.close()
+
+    me = asyncio.run(_validate(token))
+    if me is None:
+        return 1
+    username = me.get("username", "<unknown>") if isinstance(me, dict) else "<unknown>"
+    console.print(f"[green]\u2713[/green] Token validated as @{username}")
+
+    home = _probos_home()
+    channels_dir = home / "channels"
+    channels_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = channels_dir / "telegram.yaml"
+    payload = {
+        "enabled": True,
+        "token": token,
+        "polling_timeout_s": 25,
+        "allowed_updates": ["message"],
+    }
+    cfg_path.write_text(_yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    # Secret hygiene on POSIX. Windows ACL handling is out of scope —
+    # the file lives under the operator's home directory and inherits
+    # the parent ACL by default.
+    if os.name != "nt":
+        try:
+            os.chmod(cfg_path, 0o600)
+        except OSError:
+            console.print(f"[yellow]Could not chmod {cfg_path} to 0600 — check perms manually.[/yellow]")
+    console.print(f"[green]Wrote[/green] {cfg_path}")
+    console.print("Run [bold]probos doctor[/bold] to verify, then restart [bold]probos serve[/bold] to activate.")
+    return 0
+
+
 _RESET_SUBDIRS = ("episodes", "agents", "skills", "trust", "routing", "workflows", "qa")
 
 # ── Tiered Reset Architecture (BF-070) ──────────────────────────────
@@ -1668,6 +1754,25 @@ def main() -> None:
     pairing_revoke = pairing_sub.add_parser("revoke", help="Revoke an active pairing by DID")
     pairing_revoke.add_argument("did", type=str, help="DID of the paired user")
 
+    # --- probos channel (AD-803a Telegram setup; AD-804..807 future) ---
+    channel_parser = subparsers.add_parser(
+        "channel",
+        help="Configure channel adapters (Telegram, Slack, …) — AD-803a+",
+    )
+    channel_sub = channel_parser.add_subparsers(dest="channel_cmd", required=True)
+    channel_tg = channel_sub.add_parser(
+        "telegram",
+        help="Manage the Telegram channel adapter",
+    )
+    channel_tg_sub = channel_tg.add_subparsers(dest="channel_tg_cmd", required=True)
+    channel_tg_setup = channel_tg_sub.add_parser("setup", help="Interactive token entry + validation")
+    channel_tg_setup.add_argument(
+        "--token",
+        type=str,
+        default=None,
+        help="Bot Father token (skips the interactive prompt)",
+    )
+
     # --- probos qa run-contracts (AD-713 / better-agents) ---
     qa_parser = subparsers.add_parser("qa", help="Quality / behavior contract commands")
     qa_sub = qa_parser.add_subparsers(dest="qa_cmd", required=True)
@@ -1722,6 +1827,10 @@ def main() -> None:
     if args.command == "pairing":
         import sys
         sys.exit(_cmd_pairing(args))
+
+    if args.command == "channel":
+        import sys
+        sys.exit(_cmd_channel(args))
 
     if args.command == "qa":
         import sys
