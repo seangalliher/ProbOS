@@ -14,4 +14,5 @@ from probos.doctor.checks import (  # noqa: F401
     federation_check,
     overlay_check,
     sandbox_check,
+    pairing_check,
 )

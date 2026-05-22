@@ -284,6 +284,10 @@ class EventType(str, Enum):
     SANDBOX_CAPABILITY_DENIED = "sandbox_capability_denied"  # AD-456b
     CREDENTIAL_TIER_DENIED = "credential_tier_denied"  # AD-456c
     AUDIT_PERSISTED = "audit_persisted"  # AD-456d
+    # AD-802: DM pairing for channel-adapter inbound from unknown senders.
+    PAIRING_REQUESTED = "pairing_requested"
+    PAIRING_APPROVED = "pairing_approved"
+    PAIRING_REVOKED = "pairing_revoked"
     VERIFICATION_PASSED = "verification_passed"  # AD-528
     VERIFICATION_FAILED = "verification_failed"  # AD-528
     VERIFICATION_REJECTED = "verification_rejected"  # AD-528b

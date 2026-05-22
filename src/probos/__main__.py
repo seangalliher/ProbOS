@@ -1001,6 +1001,138 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return asyncio.run(run_doctor(args, Console(), ctx=ctx))
 
 
+def _cmd_pairing(args: argparse.Namespace) -> int:
+    """Handle ``probos pairing`` subcommands (AD-802).
+
+    Operates directly on the SQLite store + a stub VO registry so the
+    CLI works without booting the full runtime. Real runtime use goes
+    through the wired ``runtime.pairing_service`` (see startup wiring).
+
+    Returns 0 on success, non-zero on user-visible errors.
+    """
+    from probos.security.pairing import (
+        PairingRegistry,
+        PairingService,
+        UnknownPairingCode,
+    )
+
+    console = Console()
+    data_dir = _default_data_dir()
+    db_path = data_dir / "pairings.db"
+
+    sub = getattr(args, "pairing_cmd", None)
+
+    # `pending` and `list` only need the SQLite store — no VO needed.
+    if sub == "pending":
+        registry = PairingRegistry(db_path)
+        rows = registry.list_pending(channel=getattr(args, "channel", None))
+        if not rows:
+            console.print("[dim]No pending pairings.[/dim]")
+            return 0
+        for r in rows:
+            console.print(
+                f"  [yellow]{r.code}[/yellow]  channel=[bold]{r.channel}[/bold]  "
+                f"raw_id={r.raw_id}  expires_at={r.expires_at:.0f}"
+            )
+        return 0
+
+    if sub == "list":
+        registry = PairingRegistry(db_path)
+        rows = registry.list_paired(channel=getattr(args, "channel", None))
+        if not rows:
+            console.print("[dim]No active pairings.[/dim]")
+            return 0
+        for r in rows:
+            console.print(
+                f"  [green]{r.did}[/green]  channel=[bold]{r.channel}[/bold]  "
+                f"raw_id={r.raw_id}  caps={','.join(r.capabilities)}  "
+                f"expires_at={r.expires_at:.0f}"
+            )
+        return 0
+
+    # `approve` and `revoke` need a VO registry — for CLI use without a
+    # running runtime, we use a minimal stub that records sessions in
+    # memory only (the next runtime boot will re-register via
+    # restore_active_sessions). This keeps the CLI offline-usable.
+    vo_stub = _OfflinePairingVOStub()
+    service = PairingService(
+        registry=PairingRegistry(db_path),
+        visiting_officers=vo_stub,
+    )
+
+    if sub == "approve":
+        caps_override: list[str] | None = None
+        if getattr(args, "cap", None):
+            caps_override = [c.strip() for c in args.cap.split(",") if c.strip()]
+        ttl_s: float | None = None
+        if getattr(args, "ttl_days", None) is not None:
+            ttl_s = float(args.ttl_days) * 86400.0
+        try:
+            paired = asyncio.run(
+                service.approve_pairing(
+                    channel=args.channel,
+                    code=args.code,
+                    capabilities_override=caps_override,
+                    session_ttl_seconds=ttl_s,
+                ),
+            )
+        except UnknownPairingCode as exc:
+            console.print(f"[red]Approve failed:[/red] {exc}")
+            return 1
+        console.print(
+            f"[green]Approved.[/green] did={paired.did} channel={paired.channel} "
+            f"raw_id={paired.raw_id} caps={','.join(paired.capabilities)}"
+        )
+        return 0
+
+    if sub == "revoke":
+        removed = asyncio.run(service.revoke_pairing(args.did))
+        if not removed:
+            console.print(f"[yellow]No pairing found for did={args.did}[/yellow]")
+            return 1
+        console.print(f"[green]Revoked.[/green] did={args.did}")
+        return 0
+
+    console.print(f"[red]Unknown pairing subcommand: {sub!r}[/red]")
+    return 2
+
+
+class _OfflinePairingVOStub:
+    """Minimal VisitingOfficerRegistry-shaped stub used by the CLI when
+    no runtime is booted. Generates synthetic DIDs that survive in the
+    SQLite store so a subsequent runtime boot can re-register them via
+    ``PairingService.restore_active_sessions``.
+    """
+
+    def __init__(self) -> None:
+        import uuid
+        self._uuid = uuid
+        self._sessions: dict = {}
+
+    async def register(
+        self,
+        callsign: str,
+        capabilities: list[str],
+        *,
+        origin: str = "",
+        session_ttl_seconds: float | None = None,
+    ):
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class _Session:
+            did: str
+            callsign: str
+
+        did = f"did:probos:visiting:{self._uuid.uuid4().hex[:16]}"
+        sess = _Session(did=did, callsign=callsign)
+        self._sessions[did] = sess
+        return sess
+
+    def deregister(self, did: str) -> bool:
+        return self._sessions.pop(did, None) is not None
+
+
 _RESET_SUBDIRS = ("episodes", "agents", "skills", "trust", "routing", "workflows", "qa")
 
 # ── Tiered Reset Architecture (BF-070) ──────────────────────────────
@@ -1508,6 +1640,34 @@ def main() -> None:
     # --- probos doctor (AD-484) ---
     subparsers.add_parser("doctor", help="Run a diagnostic check on the ProbOS environment")
 
+    # --- probos pairing (AD-802) ---
+    pairing_parser = subparsers.add_parser(
+        "pairing",
+        help="Manage DM pairings for inbound channel adapters (AD-802)",
+    )
+    pairing_sub = pairing_parser.add_subparsers(dest="pairing_cmd", required=True)
+    pairing_pending = pairing_sub.add_parser("pending", help="List pending pairings awaiting approval")
+    pairing_pending.add_argument("--channel", type=str, default=None)
+    pairing_list = pairing_sub.add_parser("list", help="List active paired users")
+    pairing_list.add_argument("--channel", type=str, default=None)
+    pairing_approve = pairing_sub.add_parser("approve", help="Approve a pending pairing by code")
+    pairing_approve.add_argument("channel", type=str, help="Channel identifier (e.g. telegram, slack)")
+    pairing_approve.add_argument("code", type=str, help="Pairing code")
+    pairing_approve.add_argument(
+        "--cap",
+        type=str,
+        default=None,
+        help="Comma-separated capability override (e.g. 'dm.send,ward_room.post')",
+    )
+    pairing_approve.add_argument(
+        "--ttl-days",
+        type=float,
+        default=None,
+        help="Session TTL in days (default: 7)",
+    )
+    pairing_revoke = pairing_sub.add_parser("revoke", help="Revoke an active pairing by DID")
+    pairing_revoke.add_argument("did", type=str, help="DID of the paired user")
+
     # --- probos qa run-contracts (AD-713 / better-agents) ---
     qa_parser = subparsers.add_parser("qa", help="Quality / behavior contract commands")
     qa_sub = qa_parser.add_subparsers(dest="qa_cmd", required=True)
@@ -1558,6 +1718,10 @@ def main() -> None:
         # AD-484: doctor returns non-zero exit code on failure
         import sys
         sys.exit(_cmd_doctor(args))
+
+    if args.command == "pairing":
+        import sys
+        sys.exit(_cmd_pairing(args))
 
     if args.command == "qa":
         import sys
