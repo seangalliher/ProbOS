@@ -1169,6 +1169,127 @@ class _OfflinePairingVOStub:
         return self._sessions.pop(did, None) is not None
 
 
+def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
+    """Handle ``probos rebuild-episodic`` (AD-819).
+
+    Replays the surviving ward room into ChromaDB so agents regain
+    semantic recall after a ChromaDB corruption + reset event (#750).
+    Refuses to run when the runtime is using the same data dir.
+    """
+    import asyncio as _asyncio
+    from datetime import datetime as _datetime
+    from probos.maintenance.rebuild_episodic import (
+        rebuild_from_wardroom,
+        render_report,
+    )
+    from probos.pidfile_guard import (
+        AnotherInstanceRunning,
+        assert_no_other_instance,
+    )
+
+    console = Console()
+    data_dir = (getattr(args, "data_dir", None) or _default_data_dir()).resolve()
+
+    # AD-816 read-only check: refuse if the runtime currently owns the
+    # data dir. We do NOT acquire the pidfile (the runtime may legitimately
+    # need to keep running on a different dir); we only refuse on collision.
+    try:
+        assert_no_other_instance(data_dir)
+    except AnotherInstanceRunning as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        console.print(
+            "[yellow]Stop the runtime cleanly (Ctrl+C in the serve "
+            "session or POST /api/system/shutdown) before running rebuild-episodic.[/yellow]"
+        )
+        return 2
+
+    wardroom_db = data_dir / "ward_room.db"
+    if not wardroom_db.exists():
+        console.print(
+            f"[red]✗[/red] ward_room.db not found at {wardroom_db}. "
+            "Nothing to rebuild from."
+        )
+        return 3
+
+    # --since parsing
+    since_ts: float | None = None
+    raw_since = getattr(args, "since", None)
+    if raw_since:
+        try:
+            since_ts = _datetime.fromisoformat(raw_since).timestamp()
+        except ValueError:
+            console.print(
+                f"[red]✗[/red] --since must be ISO date/datetime (got {raw_since!r})"
+            )
+            return 2
+
+    dry_run = bool(getattr(args, "dry_run", False))
+
+    async def _run() -> int:
+        # In dry-run mode we use a no-op storer so we never touch ChromaDB.
+        if dry_run:
+            async def _noop_store(_kwargs: dict) -> None:
+                return None
+
+            report = await rebuild_from_wardroom(
+                wardroom_db=wardroom_db,
+                store_episode=_noop_store,
+                since_ts=since_ts,
+                dry_run=True,
+            )
+            console.print(render_report(report))
+            return 0
+
+        # Real rebuild: stand up an EpisodicMemory bound to the same
+        # ChromaDB the runtime would use, then store synthesized
+        # episodes through its public ``store(Episode)`` API so all the
+        # gates fire normally (AD-610 storage gate, AD-607h security
+        # gate, content-hash computation, etc.).
+        from probos.cognitive.episodic import EpisodicMemory
+        from probos.types import Episode
+
+        cfg, _cfg_path = _load_config_with_fallback(getattr(args, "config", None))
+        em = EpisodicMemory(
+            db_path=str(data_dir / "episodic.db"),
+            max_episodes=cfg.memory.max_episodes,
+            relevance_threshold=cfg.memory.relevance_threshold,
+            verify_content_hash=cfg.memory.verify_content_hash,
+            query_reformulation_enabled=cfg.memory.query_reformulation_enabled,
+        )
+        await em.start()
+
+        try:
+            # Snapshot existing episode ids so re-runs are fast-skip.
+            existing_ids: set[str] = set()
+            try:
+                if em._collection:
+                    result = em._collection.get(include=[])
+                    for ep_id in (result or {}).get("ids", []) or []:
+                        existing_ids.add(ep_id)
+            except Exception:
+                # Fall through with empty set — store_episode will be
+                # idempotent via stable ids + content hash anyway.
+                pass
+
+            async def _store(kwargs: dict) -> None:
+                await em.store(Episode(**kwargs))
+
+            report = await rebuild_from_wardroom(
+                wardroom_db=wardroom_db,
+                store_episode=_store,
+                existing_episode_ids=existing_ids,
+                since_ts=since_ts,
+                dry_run=False,
+            )
+        finally:
+            await em.stop()
+
+        console.print(render_report(report))
+        return 0 if not report.errors else 1
+
+    return _asyncio.run(_run())
+
+
 def _cmd_migrate(args: argparse.Namespace) -> int:
     """Handle ``probos migrate <openclaw|hermes> ...`` (AD-808)."""
     from probos.migration import (
@@ -2071,6 +2192,30 @@ def main() -> None:
             help=f"Override source directory (default: ~/.{_src})",
         )
 
+    # --- probos rebuild-episodic (AD-819) ---
+    rebuild_parser = subparsers.add_parser(
+        "rebuild-episodic",
+        help="Reconstruct ChromaDB episodic memory from surviving ward room (AD-819)",
+    )
+    rebuild_parser.add_argument(
+        "--data-dir", type=Path, default=None, help="Data directory (default: platform path)"
+    )
+    rebuild_parser.add_argument(
+        "--config", "-c", type=Path, default=None, help="Path to config YAML"
+    )
+    rebuild_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Scan and synthesize episodes but don't write to ChromaDB",
+    )
+    rebuild_parser.add_argument(
+        "--source", choices=("wardroom",), default="wardroom",
+        help="Which source store to replay (default: wardroom)",
+    )
+    rebuild_parser.add_argument(
+        "--since", type=str, default=None,
+        help="Only replay rows created at or after this ISO date (e.g. 2026-05-01)",
+    )
+
     # --- probos qa run-contracts (AD-713 / better-agents) ---
     qa_parser = subparsers.add_parser("qa", help="Quality / behavior contract commands")
     qa_sub = qa_parser.add_subparsers(dest="qa_cmd", required=True)
@@ -2139,6 +2284,10 @@ def main() -> None:
     if args.command == "migrate":
         import sys
         sys.exit(_cmd_migrate(args))
+
+    if args.command == "rebuild-episodic":
+        import sys
+        sys.exit(_cmd_rebuild_episodic(args))
 
     if args.command == "qa":
         import sys
