@@ -210,6 +210,7 @@ def create_app(runtime: Any) -> FastAPI:
         connectors,  # AD-763: M365 connector scoping + scan-config
         threads,  # AD-791 (Wave 193): chat-threads substrate
         artifacts as artifacts_router,  # AD-797 (Wave 195): artifacts pane
+        teams_webhook,  # AD-805 (Wave 198): Teams Bot Framework receiver
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -232,6 +233,7 @@ def create_app(runtime: Any) -> FastAPI:
         connectors,
         threads,
         artifacts_router,
+        teams_webhook,
     ):
         app.include_router(r.router)
 
