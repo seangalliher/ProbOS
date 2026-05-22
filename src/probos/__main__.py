@@ -566,6 +566,21 @@ async def _serve(
     from probos.api import create_app
 
     console = Console()
+
+    # AD-816: refuse to start when another ProbOS runtime owns the same
+    # data directory. SQLite + ChromaDB single-writer assumptions break
+    # when two instances share data/. Atomic O_EXCL create closes the
+    # TOCTOU race: either we win the pidfile and own it, or we lose and
+    # raise AnotherInstanceRunning. The acquired path is removed in the
+    # cleanup finally block below.
+    from probos.pidfile_guard import AnotherInstanceRunning, acquire_pidfile
+    resolved_data_dir = data_dir or _default_data_dir()
+    try:
+        _pidfile = acquire_pidfile(resolved_data_dir)
+    except AnotherInstanceRunning as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise SystemExit(2) from exc
+
     runtime, config, console = await _boot_runtime(config_path, fresh, data_dir, console)
 
     if fresh:
@@ -644,17 +659,11 @@ async def _serve(
 
     console.print()
 
-    # Pidfile: external tooling (Builder cleanup scripts, ops) can read
-    # data/probos.pid to identify the live runtime and avoid killing it
-    # when sweeping pytest workers. Per-data-dir so cluster nodes don't
-    # collide.
-    _pidfile = runtime._data_dir / "probos.pid"
-    try:
-        _pidfile.write_text(str(os.getpid()))
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "Could not write pidfile at %s", _pidfile, exc_info=True,
-        )
+    # AD-816: pidfile is already owned by us (acquired atomically at the
+    # top of _serve). The cleanup `finally` block below unlinks it on
+    # shutdown. No re-write needed here; we used to refresh it after
+    # boot but that was the regression that let a failing second-instance
+    # attempt stomp the original's PID.
 
     # Heartbeat: log every 60s so silent process death shows up as
     # "log stopped" with a clear last-alive timestamp. Helps distinguish
