@@ -982,121 +982,23 @@ def _cmd_qa_run_contracts(args: argparse.Namespace) -> int:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
-    """Handle ``probos doctor`` -- diagnostic check (AD-484).
+    """Handle ``probos doctor`` — pluggable check registry (AD-801).
 
-    Returns the number of failed checks (0 = healthy, non-zero = issues).
+    Delegates to ``probos.doctor.run_doctor``, which iterates every
+    registered ``DoctorCheck``. AD-798 (sandbox), AD-803..807 (channel
+    adapters), and AD-808 (migration) can register their own checks
+    without editing this module.
+
+    Builds the context here so the existing AD-484 monkey-patch points
+    (`_probos_home`, `_default_data_dir` in this module) still work for
+    tests.
+
+    Returns the count of failed checks (0 = healthy, non-zero = issues).
     """
-    console = Console()
-    failures: list[str] = []
-    cfg = None
-
-    console.print("[bold blue]ProbOS Doctor[/bold blue]\n")
-
-    # Check 1: config file present + parseable
-    home = _probos_home()
-    config_path = home / "config.yaml"
-    if not config_path.exists():
-        console.print("  [red]\u2717[/red] config.yaml not found at " + str(config_path))
-        console.print("    Run [bold]probos init[/bold] to create one.")
-        failures.append("missing_config")
-    else:
-        try:
-            from probos.config import load_config
-            cfg = load_config(config_path)
-            console.print(f"  [green]\u2713[/green] Config: {config_path}")
-        except Exception as exc:
-            console.print(f"  [red]\u2717[/red] Config invalid: {exc}")
-            failures.append("invalid_config")
-            cfg = None
-
-    # Check 2: data_dir writable
-    data_dir = _default_data_dir()
-    try:
-        data_dir.mkdir(parents=True, exist_ok=True)
-        probe = data_dir / ".probos_doctor_probe"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink()
-        console.print(f"  [green]\u2713[/green] Data dir writable: {data_dir}")
-    except Exception as exc:
-        console.print(f"  [red]\u2717[/red] Data dir not writable: {data_dir} ({exc})")
-        failures.append("data_dir_not_writable")
-
-    # Check 3: LLM tier endpoints reachable (if config loaded)
-    if cfg is not None:
-        try:
-            client = OpenAICompatibleClient(config=cfg.cognitive)
-            connectivity = asyncio.run(client.check_connectivity())
-            asyncio.run(client.close())
-            for tier in _LLM_TIERS:
-                tc = cfg.cognitive.tier_config(tier)
-                # AD-742a: skip unconfigured tiers (no model). Honest-degrade
-                # tiers (vision_fast / compute_use / image_gen unset) are
-                # not failures — they simply aren't enabled.
-                if not tc.get("model"):
-                    continue
-                if connectivity.get(tier):
-                    console.print(
-                        f"  [green]\u2713[/green] LLM {tier}: {tc['model']} reachable"
-                    )
-                else:
-                    console.print(
-                        f"  [yellow]\u26a0[/yellow] LLM {tier}: {tc['base_url']} unreachable"
-                    )
-                    failures.append(f"llm_{tier}_unreachable")
-        except Exception as exc:
-            console.print(f"  [yellow]\u26a0[/yellow] LLM connectivity probe failed: {exc}")
-            failures.append("llm_probe_error")
-
-    # Check 4: NATS reachable when enabled
-    if cfg is not None and getattr(cfg, "nats", None) and cfg.nats.enabled:
-        try:
-            asyncio.run(_check_nats(cfg, console))
-            console.print("  [green]\u2713[/green] NATS reachable")
-        except Exception as exc:
-            console.print(f"  [yellow]\u26a0[/yellow] NATS check error: {exc}")
-            failures.append("nats_check_error")
-
-    # Check 5: ChromaDB import-able
-    try:
-        import chromadb  # noqa: F401
-        console.print("  [green]\u2713[/green] ChromaDB import OK")
-    except Exception as exc:
-        console.print(f"  [yellow]\u26a0[/yellow] ChromaDB import failed: {exc}")
-        failures.append("chromadb_missing")
-
-    # Check 6: AD-711 security profile sanity
-    if cfg is not None:
-        sec = getattr(cfg, "security", None)
-        if sec is None:
-            failures.append(
-                "security: section missing from config.yaml -- re-run "
-                "`probos init --force --security-profile strict` to generate it"
-            )
-        else:
-            sec_profile = getattr(sec, "profile", "")
-            perms = getattr(sec, "permissions", None)
-            deny = list(getattr(perms, "deny", []) or [])
-            if sec_profile != "strict":
-                console.print(
-                    "  [yellow]![/yellow] security.profile is "
-                    f"'{sec_profile}' (not 'strict') -- review at your discretion"
-                )
-            if not deny:
-                failures.append(
-                    "security.permissions.deny is empty -- at minimum, deny "
-                    "shell:rm -rf and fs:write:.env per AD-711 defaults"
-                )
-            else:
-                console.print(
-                    f"  [green]\u2713[/green] Security profile: {sec_profile} ({len(deny)} deny rules)"
-                )
-
-    console.print()
-    if failures:
-        console.print(f"[red]{len(failures)} issue(s):[/red] {', '.join(failures)}")
-    else:
-        console.print("[green]All checks passed.[/green]")
-    return len(failures)
+    from probos.doctor import run_doctor
+    from probos.doctor.runner import build_context
+    ctx = build_context(home_dir=_probos_home(), data_dir=_default_data_dir())
+    return asyncio.run(run_doctor(args, Console(), ctx=ctx))
 
 
 _RESET_SUBDIRS = ("episodes", "agents", "skills", "trust", "routing", "workflows", "qa")

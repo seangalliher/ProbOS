@@ -4161,3 +4161,29 @@ waves:
       author) — both ADs are scoped tight enough to skip the formal
       precheck + review_1/review_2 gates per the "small UI polish"
       exception in BUILDER-EXECUTION-PLAN.md.
+
+  - id: "188-probos-doctor"
+    title: "AD-801 probos doctor - single-command operator health diagnostic CLI"
+    kind: main
+    depends_on: ["187-yeo-empty-state-polish"]
+    dispatch_prompt: "prompts/ad-801-probos-doctor.md"
+    prompts_already_drafted: false
+    prompt_paths:
+      - "prompts/ad-801-probos-doctor.md"
+    builder_required: true
+    issues_to_close: [725]
+    estimated_hours: 3
+    status: shipped
+    notes: |
+      Single-AD wave. Parity with 'openclaw doctor' and 'hermes doctor'
+      operator-facing health diagnostics. New CLI verb 'probos doctor'
+      that runs registered checks (config schema, LLM tiers, Ollama,
+      NATS, data dir, ChromaDB, federation, channel adapters, overlay
+      status, sandbox backend, disk space, audit log hash spot-check)
+      and emits OK/WARN/FAIL with remediation pointers. Exit 0 on
+      all-OK, 1 on any FAIL.
+
+      Workflow: ships under the small-AD fast-path (architect + builder
+      same author, no formal review_1/review_2 gates per the precedent
+      set in Wave 187). The orchestrator state advances draft -> build
+      -> close in a single session.
