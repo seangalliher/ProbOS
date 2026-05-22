@@ -151,8 +151,15 @@ function disconnectedHtml(): string {
 }
 
 function showAndRoute(route: string): void {
-  if (!mainWindow) {
-    return;
+  // BF (2026-05-22): if the captain closed the only window, mainWindow
+  // points at a destroyed BrowserWindow. Recreate it so tray clicks +
+  // deep links still work after the window has been closed.
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow();
+    if (!mainWindow) {
+      logWarn("createMainWindow did not produce a window; route ignored", { route });
+      return;
+    }
   }
   if (mainWindow.isMinimized()) {
     mainWindow.restore();
@@ -246,6 +253,14 @@ function createMainWindow(): void {
       nodeIntegration: false,
       preload: preloadPath,
     },
+  });
+
+  // BF (2026-05-22): null the module-level reference when the window
+  // is destroyed so subsequent tray clicks / deep links recreate it
+  // instead of throwing 'Object has been destroyed' inside showAndRoute.
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+    refreshTrayMenu();
   });
 
   mainWindow.webContents.on("did-start-loading", () => {
