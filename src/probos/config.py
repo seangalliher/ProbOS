@@ -3904,7 +3904,14 @@ class DiscordConfig(BaseModel):
 
 
 class SlackConfig(BaseModel):
-    """Slack adapter configuration (AD-472)."""
+    """Slack adapter configuration (AD-472 + AD-804).
+
+    AD-472 v1 shipped webhook-only inbound via slack-sdk (opt-in extra).
+    AD-804 (Wave 191) adds polling-mode inbound on a thin httpx client
+    (no slack-sdk dep required), AD-802a pairing-gate integration, and
+    a doctor health check. The polling-mode fields below are additive
+    and back-compat with AD-472 webhook deployments.
+    """
 
     enabled: bool = False
     bot_token: str = ""           # xoxb-... (prefer env var PROBOS_SLACK_BOT_TOKEN)
@@ -3912,6 +3919,11 @@ class SlackConfig(BaseModel):
     allowed_channel_ids: list[str] = []
     allowed_user_ids: list[str] = []
     default_thread_ts: bool = True
+    # AD-804: polling-mode inbound config (no slack-sdk dep required).
+    channels: list[str] = []      # explicit channel-id list, empty = auto-discover via conversations.list
+    poll_interval_s: float = 8.0  # seconds between conversations.history polls
+    poll_inbound: bool = True     # opt-in to polling mode; AD-472 webhook receive() always available
+    api_base: str = "https://slack.com/api"  # override only for testing
 
 
 class WebhookConfig(BaseModel):

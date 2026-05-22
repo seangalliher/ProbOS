@@ -16,4 +16,5 @@ from probos.doctor.checks import (  # noqa: F401
     sandbox_check,
     pairing_check,
     channel_telegram_check,
+    channel_slack_check,
 )

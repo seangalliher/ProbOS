@@ -53,23 +53,13 @@ def test_channels_config_includes_slack_and_webhook():
 
 
 @pytest.mark.asyncio
-async def test_slack_adapter_start_without_sdk_does_not_crash(monkeypatch):
-    """When slack-sdk is not importable, start() returns without _started=True."""
-    import builtins
+async def test_slack_adapter_start_with_empty_token_returns_without_started():
+    """AD-472/AD-804: missing bot_token -> start() refuses, _started stays False."""
     from probos.channels.slack_adapter import SlackAdapter
-
-    real_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name.startswith("slack_sdk"):
-            raise ImportError("slack-sdk not installed")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
 
     adapter = SlackAdapter(
         runtime=SimpleNamespace(),
-        config=SlackConfig(enabled=True, bot_token="xoxb-test"),
+        config=SlackConfig(enabled=True, bot_token=""),
     )
     await adapter.start()
     assert adapter._started is False
@@ -86,7 +76,7 @@ async def test_slack_adapter_send_response_emits_failure_when_not_started():
         runtime=rt,
         config=SlackConfig(enabled=True, bot_token="xoxb-test"),
     )
-    # Did not call start() -- _web_client is None
+    # Did not call start() -- _web_client (property) returns None
     await adapter.send_response("C123", "hi")
 
     rt.emit_event.assert_called_once()

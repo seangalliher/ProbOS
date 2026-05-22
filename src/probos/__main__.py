@@ -1147,6 +1147,12 @@ def _cmd_channel(args: argparse.Namespace) -> int:
             return _cmd_channel_telegram_setup(args, console)
         console.print(f"[red]Unknown telegram subcommand: {tg_sub!r}[/red]")
         return 2
+    if sub == "slack":
+        sl_sub = getattr(args, "channel_sl_cmd", None)
+        if sl_sub == "setup":
+            return _cmd_channel_slack_setup(args, console)
+        console.print(f"[red]Unknown slack subcommand: {sl_sub!r}[/red]")
+        return 2
     console.print(f"[red]Unknown channel subcommand: {sub!r}[/red]")
     return 2
 
@@ -1209,6 +1215,75 @@ def _cmd_channel_telegram_setup(args: argparse.Namespace, console: Console) -> i
     # Secret hygiene on POSIX. Windows ACL handling is out of scope —
     # the file lives under the operator's home directory and inherits
     # the parent ACL by default.
+    if os.name != "nt":
+        try:
+            os.chmod(cfg_path, 0o600)
+        except OSError:
+            console.print(f"[yellow]Could not chmod {cfg_path} to 0600 — check perms manually.[/yellow]")
+    console.print(f"[green]Wrote[/green] {cfg_path}")
+    console.print("Run [bold]probos doctor[/bold] to verify, then restart [bold]probos serve[/bold] to activate.")
+    return 0
+
+
+def _cmd_channel_slack_setup(args: argparse.Namespace, console: Console) -> int:
+    """AD-804: interactive Slack bot setup.
+
+    Validates the xoxb-… token via ``auth.test`` and persists the
+    config to ``~/.probos/channels/slack.yaml`` (mode 0600 on POSIX).
+    """
+    import getpass
+    import os
+
+    import yaml as _yaml
+
+    from probos.channels.slack_client import SlackAPIError, SlackClient
+
+    token = getattr(args, "token", None)
+    if not token:
+        console.print(
+            "[bold blue]Slack setup[/bold blue] — "
+            "Create a Slack app, install it to your workspace, copy the "
+            "Bot User OAuth Token (xoxb-…) from the OAuth & Permissions page."
+        )
+        try:
+            token = getpass.getpass("Bot token (input hidden): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled.[/yellow]")
+            return 1
+    if not token:
+        console.print("[red]No token provided.[/red]")
+        return 1
+
+    async def _validate(t: str) -> dict | None:
+        client = SlackClient(bot_token=t, timeout=10.0)
+        try:
+            return await client.auth_test()
+        except SlackAPIError as exc:
+            console.print(f"[red]auth.test failed:[/red] {exc}")
+            return None
+        finally:
+            await client.close()
+
+    identity = asyncio.run(_validate(token))
+    if identity is None:
+        return 1
+    user_id = identity.get("user_id", "<unknown>") if isinstance(identity, dict) else "<unknown>"
+    team = identity.get("team", "<unknown>") if isinstance(identity, dict) else "<unknown>"
+    console.print(f"[green]\u2713[/green] Token validated — bot user_id={user_id} team={team}")
+
+    home = _probos_home()
+    channels_dir = home / "channels"
+    channels_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = channels_dir / "slack.yaml"
+    payload = {
+        "enabled": True,
+        "bot_token": token,
+        "channels": [],
+        "poll_interval_s": 8.0,
+        "poll_inbound": True,
+        "default_thread_ts": True,
+    }
+    cfg_path.write_text(_yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     if os.name != "nt":
         try:
             os.chmod(cfg_path, 0o600)
@@ -1771,6 +1846,18 @@ def main() -> None:
         type=str,
         default=None,
         help="Bot Father token (skips the interactive prompt)",
+    )
+    channel_sl = channel_sub.add_parser(
+        "slack",
+        help="Manage the Slack channel adapter",
+    )
+    channel_sl_sub = channel_sl.add_subparsers(dest="channel_sl_cmd", required=True)
+    channel_sl_setup = channel_sl_sub.add_parser("setup", help="Interactive token entry + validation")
+    channel_sl_setup.add_argument(
+        "--token",
+        type=str,
+        default=None,
+        help="xoxb-… bot user OAuth token (skips the interactive prompt)",
     )
 
     # --- probos qa run-contracts (AD-713 / better-agents) ---
