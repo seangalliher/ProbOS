@@ -74,6 +74,25 @@ async def list_threads(
     return {"threads": [t.to_dict() for t in threads]}
 
 
+# AD-792: sidebar search + recents endpoints.
+@router.get("/search")
+async def search_threads(
+    q: str = "",
+    limit: int = 50,
+    runtime: Any = Depends(get_runtime),
+) -> dict:
+    store = _get_store(runtime)
+    results = store.search_threads(q, limit=limit)
+    return {"query": q, "results": [t.to_dict() for t in results]}
+
+
+@router.get("/recents")
+async def list_recents(limit: int = 20, runtime: Any = Depends(get_runtime)) -> dict:
+    store = _get_store(runtime)
+    items = store.recents(limit=limit)
+    return {"recents": [t.to_dict() for t in items]}
+
+
 @router.post("")
 async def create_thread(
     body: CreateThreadRequest, runtime: Any = Depends(get_runtime)

@@ -325,6 +325,39 @@ class ChatThreadStore:
             ).fetchall()
         return [_row_to_message(r) for r in rows]
 
+    # AD-792: search + recents helpers for the sidebar.
+
+    def search_threads(self, query: str, *, limit: int = 50) -> list[ChatThread]:
+        """Case-insensitive LIKE search over thread title.
+
+        v1 keeps it simple; AD-791b adds an FTS5 index covering both
+        titles and message bodies. Empty query returns no rows so the
+        UI can keep the input live without flooding the list.
+        """
+        q = query.strip()
+        if not q:
+            return []
+        pat = f"%{q}%"
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chat_threads WHERE title LIKE ? COLLATE NOCASE "
+                "ORDER BY pinned DESC, last_active_at DESC LIMIT ?",
+                (pat, max(1, min(limit, 200))),
+            ).fetchall()
+        return [_row_to_thread(r) for r in rows]
+
+    def recents(self, *, limit: int = 20) -> list[ChatThread]:
+        """Most-recently active non-archived threads, regardless of pin
+        state. Used by the sidebar's "Recents" group below the pins.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chat_threads WHERE archived = 0 "
+                "ORDER BY last_active_at DESC LIMIT ?",
+                (max(1, min(limit, 200)),),
+            ).fetchall()
+        return [_row_to_thread(r) for r in rows]
+
 
 def _row_to_thread(row: sqlite3.Row) -> ChatThread:
     return ChatThread(
