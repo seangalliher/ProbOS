@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import importlib.metadata
 import logging
+import os
 from typing import Any, Awaitable, Callable, Union
 
 logger = logging.getLogger(__name__)
@@ -84,11 +85,24 @@ def discover_extensions() -> None:
 
     Failures (import errors, raised exceptions inside the loaded
     callable) are logged and swallowed.
+
+    **Operator bypass**: setting ``PROBOS_DISABLE_OVERLAY=1`` (or any
+    truthy value other than ``0`` / ``false`` / empty string) skips
+    discovery entirely. The overlay package can remain installed in
+    the venv; nothing in it loads. Useful for running ProbOS in
+    pure-OSS mode without uninstalling the commercial package.
     """
     global _DISCOVERED
     if _DISCOVERED:
         return
     _DISCOVERED = True
+    bypass = os.environ.get("PROBOS_DISABLE_OVERLAY", "").strip().lower()
+    if bypass and bypass not in {"0", "false", "no"}:
+        logger.info(
+            "AD-697: PROBOS_DISABLE_OVERLAY=%s set; skipping overlay discovery (OSS-only mode)",
+            bypass,
+        )
+        return
     eps: Any
     try:
         eps = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
