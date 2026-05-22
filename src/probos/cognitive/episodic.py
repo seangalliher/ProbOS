@@ -305,7 +305,12 @@ async def migrate_embedding_model(
         episodic_memory._collection = episodic_memory._client.get_or_create_collection(
             name="episodes",
             embedding_function=ef,
-            metadata={"hnsw:space": "cosine", "embedding_model": model_name},
+            metadata={
+                "hnsw:space": "cosine",
+                "embedding_model": model_name,
+                "hnsw:sync_threshold": int(episodic_memory._hnsw_sync_threshold),
+                "hnsw:batch_size": int(episodic_memory._hnsw_batch_size),
+            },
         )
 
         # Re-add in batches of 100
@@ -688,6 +693,8 @@ class EpisodicMemory:
         agent_recall_threshold: float = 0.25,
         fts_keyword_floor: float = 0.2,
         query_reformulation_enabled: bool = True,
+        hnsw_sync_threshold: int = 64,
+        hnsw_batch_size: int = 32,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -697,6 +704,11 @@ class EpisodicMemory:
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
         self._fts_keyword_floor = fts_keyword_floor  # BF-134
         self._query_reformulation_enabled = query_reformulation_enabled  # AD-584
+        # AD-821: cap batch_size at threshold//2 to keep batches strictly smaller
+        # than the flush window (prevents batch-equals-window pathology where
+        # every batch triggers a flush, defeating Chroma's batched-write path).
+        self._hnsw_sync_threshold = int(hnsw_sync_threshold)
+        self._hnsw_batch_size = max(1, min(int(hnsw_batch_size), self._hnsw_sync_threshold // 2))
         self._client: Any = None
         self._collection: Any = None
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
@@ -849,7 +861,11 @@ class EpisodicMemory:
             self._collection = self._client.get_or_create_collection(
                 name="episodes",
                 embedding_function=ef,
-                metadata={"hnsw:space": "cosine"},
+                metadata={
+                    "hnsw:space": "cosine",
+                    "hnsw:sync_threshold": int(self._hnsw_sync_threshold),
+                    "hnsw:batch_size": int(self._hnsw_batch_size),
+                },
             )
         except ValueError as exc:
             if "Embedding function conflict" in str(exc):
@@ -858,7 +874,11 @@ class EpisodicMemory:
                 logger.warning("AD-584: Embedding function conflict detected — opening collection without EF for migration")
                 self._collection = self._client.get_or_create_collection(
                     name="episodes",
-                    metadata={"hnsw:space": "cosine"},
+                    metadata={
+                        "hnsw:space": "cosine",
+                        "hnsw:sync_threshold": int(self._hnsw_sync_threshold),
+                        "hnsw:batch_size": int(self._hnsw_batch_size),
+                    },
                 )
                 # Clear stale embedding_model metadata so migration detects the mismatch
                 try:

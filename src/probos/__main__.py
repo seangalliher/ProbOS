@@ -461,6 +461,8 @@ async def _boot_runtime(
         agent_recall_threshold=config.memory.agent_recall_threshold,
         fts_keyword_floor=config.memory.fts_keyword_semantic_floor,
         query_reformulation_enabled=config.memory.query_reformulation_enabled,  # AD-584
+        hnsw_sync_threshold=config.memory.hnsw_sync_threshold,  # AD-821
+        hnsw_batch_size=config.memory.hnsw_batch_size,  # AD-821
     )
 
     runtime = ProbOSRuntime(
@@ -1255,6 +1257,8 @@ def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
             relevance_threshold=cfg.memory.relevance_threshold,
             verify_content_hash=cfg.memory.verify_content_hash,
             query_reformulation_enabled=cfg.memory.query_reformulation_enabled,
+            hnsw_sync_threshold=cfg.memory.hnsw_sync_threshold,  # AD-821
+            hnsw_batch_size=cfg.memory.hnsw_batch_size,  # AD-821
         )
         await em.start()
 

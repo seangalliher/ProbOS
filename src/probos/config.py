@@ -825,6 +825,17 @@ class MemoryConfig(BaseModel):
     # consolidation tears ChromaDB's HNSW index. Default raised to 30s so
     # normal shutdowns complete; operator can lower for fast-restart workflows.
     shutdown_consolidation_timeout_s: float = 30.0
+    # AD-821: ChromaDB HNSW per-collection sync threshold.
+    # Chroma's default is 1000 records before the HNSW index flushes to disk;
+    # if the process dies before that window flushes, the unsynced batch is
+    # lost and the on-disk index can drift from SQLite metadata. Lowering to
+    # 64 caps the worst-case loss window at the cost of more frequent (but
+    # smaller) flushes during heavy writes (dream consolidation). 64/32 is a
+    # conservative midpoint; operators can raise for write-heavy workloads or
+    # lower for fast-restart workflows. Cross-field cap (batch_size <= threshold/2)
+    # is enforced at the use site in EpisodicMemory.start(), not via validator.
+    hnsw_sync_threshold: int = Field(default=64, ge=4, le=10000)
+    hnsw_batch_size: int = Field(default=32, ge=1, le=10000)
     # AD-567b/AD-584c: Salience-weighted recall (rebalanced for QA-trained embeddings)
     recall_weights: dict[str, float] = {
         "semantic": 0.35,
