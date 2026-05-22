@@ -403,6 +403,23 @@ function bootstrap(): void {
       }
     });
     ipcMain.handle("probos:quit", () => app.quit());
+    // BF (2026-05-22): renderer fetches from data: URLs are blocked by
+    // CORS (null origin). Probe the runtime from the main process where
+    // no CORS applies and return the result to the AD-790 wizard.
+    ipcMain.handle("probos:checkRuntime", async () => {
+      try {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 5000);
+        const r = await fetch(RUNTIME_URL + "/api/health", {
+          method: "GET",
+          signal: ac.signal,
+        });
+        clearTimeout(timer);
+        return { ok: r.ok, status: r.status };
+      } catch (err) {
+        return { ok: false, error: String(err) };
+      }
+    });
     ipcMain.handle("probos:getViewMode", () => viewMode);
     ipcMain.handle("probos:setViewMode", (_e, mode: unknown) => {
       if (mode !== "compact" && mode !== "full") {

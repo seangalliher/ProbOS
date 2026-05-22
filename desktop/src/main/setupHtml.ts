@@ -157,12 +157,22 @@ export function setupHtml({ runtimeUrl, appVersion }: SetupHtmlOptions): string 
       probeResult.textContent = 'Checking...';
       probeResult.className = 'runtime-status';
       try {
-        const r = await fetch(RUNTIME_URL + '/api/health', { method: 'GET' });
+        // BF (2026-05-22): use main-process IPC instead of renderer
+        // fetch. The wizard is loaded from a data: URL which has a null
+        // origin; cross-origin fetch to 127.0.0.1 fails CORS preflight.
+        const probos = window.probos;
+        const r = probos && typeof probos.checkRuntime === 'function'
+          ? await probos.checkRuntime()
+          : { ok: false, error: 'IPC bridge missing' };
         if (r.ok) {
           probeResult.textContent = 'OK - ProbOS runtime is responding.';
           probeResult.className = 'runtime-status ok';
-        } else {
+        } else if (r.status) {
           probeResult.textContent = 'Runtime returned status ' + r.status + '.';
+          probeResult.className = 'runtime-status fail';
+        } else {
+          probeResult.textContent = 'Could not reach the runtime. Make sure ' +
+            'probos serve is running.';
           probeResult.className = 'runtime-status fail';
         }
       } catch (err) {

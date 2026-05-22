@@ -17,6 +17,9 @@ interface ProbosApi {
   quit(): Promise<void>;
   getViewMode(): Promise<ViewMode>;
   setViewMode(mode: ViewMode): Promise<ViewMode>;
+  /** BF (2026-05-22): probe runtime via main process to bypass
+   * the data: URL CORS restriction in the AD-790 first-run wizard. */
+  checkRuntime(): Promise<{ ok: boolean; status?: number; error?: string }>;
   onStatusChange(cb: (s: RuntimeStatus) => void): () => void;
 }
 
@@ -28,6 +31,7 @@ const api: ProbosApi = {
   getViewMode: () => ipcRenderer.invoke("probos:getViewMode"),
   setViewMode: (mode: ViewMode) =>
     ipcRenderer.invoke("probos:setViewMode", mode),
+  checkRuntime: () => ipcRenderer.invoke("probos:checkRuntime"),
   onStatusChange: (cb: (s: RuntimeStatus) => void) => {
     const listener = (_e: unknown, s: RuntimeStatus): void => cb(s);
     ipcRenderer.on("probos:statusChanged", listener);
