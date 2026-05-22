@@ -77,7 +77,7 @@ class ContainerExec:
     command: list[str]
     workspace_root: Path | None = None
     egress_policy: EgressPolicy = "bridge"
-    image: str = "python:3.12-slim"
+    image: str = "probos/cowork-base:latest"
     env: dict[str, str] = field(default_factory=dict)
     limits: SandboxLimits = field(default_factory=SandboxLimits)
 
