@@ -163,3 +163,22 @@ async def append_message(
     if msg is None:
         raise HTTPException(status_code=404, detail="Thread not found")
     return msg.to_dict()
+
+
+# AD-794: thread auto-naming. v1 heuristic; AD-794a LLM-backed.
+@router.post("/{thread_id}/auto-name")
+async def auto_name_thread(
+    thread_id: str, runtime: Any = Depends(get_runtime)
+) -> dict:
+    from probos.threads.naming import suggest_title
+
+    store = _get_store(runtime)
+    thread = store.get_thread(thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    msgs = store.list_messages(thread_id, limit=1)
+    if not msgs:
+        raise HTTPException(status_code=409, detail="Thread has no messages yet")
+    title = suggest_title(msgs[0].body)
+    updated = store.update_thread(thread_id, title=title)
+    return updated.to_dict() if updated else thread.to_dict()
