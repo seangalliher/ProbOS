@@ -41,6 +41,13 @@ import {
 } from "./connectionStateMachine.js";
 import { notify } from "./notifications.js";
 import { logInfo, logWarn } from "./logger.js";
+import {
+  completeFirstRun,
+  isFirstRun,
+  loadState,
+  resetFirstRun,
+} from "./firstRun.js";
+import { setupHtml } from "./setupHtml.js";
 
 const RUNTIME_URL = process.env.PROBOS_RUNTIME_URL ?? "http://127.0.0.1:8765";
 
@@ -198,6 +205,17 @@ function refreshTrayMenu(): void {
     onCheckForUpdates: () => {
       logInfo("check-for-updates clicked; no-op in v1 (AD-759c)");
     },
+    onResetSetup: () => {
+      const removed = resetFirstRun(app.getPath("userData"));
+      logInfo("Reset Setup clicked (tray)", { removed });
+      if (removed && mainWindow) {
+        const appVersion = app.getVersion();
+        mainWindow.loadURL(
+          "data:text/html;charset=utf-8," +
+            encodeURIComponent(setupHtml({ runtimeUrl: RUNTIME_URL, appVersion })),
+        );
+      }
+    },
     onQuit: () => app.quit(),
   });
   const template: MenuItemConstructorOptions[] = items.map((i) => ({
@@ -262,7 +280,20 @@ function createMainWindow(): void {
     },
   );
 
-  mainWindow.loadURL(urlForViewMode(viewMode));
+  // AD-790: first-run wizard takes precedence over the runtime URL.
+  // Until completeSetup IPC fires, we render the inline setupHtml. Once
+  // first-run state is `complete`, subsequent boots skip straight to
+  // the runtime URL.
+  if (isFirstRun(app.getPath("userData"))) {
+    const appVersion = app.getVersion();
+    mainWindow.loadURL(
+      "data:text/html;charset=utf-8," +
+        encodeURIComponent(setupHtml({ runtimeUrl: RUNTIME_URL, appVersion })),
+    );
+    logInfo("first-run wizard rendered", { userData: app.getPath("userData") });
+  } else {
+    mainWindow.loadURL(urlForViewMode(viewMode));
+  }
 }
 
 function handleDeepLinkArg(raw: string): void {
@@ -344,6 +375,37 @@ function bootstrap(): void {
       applyViewMode(mode);
       return viewMode;
     });
+
+    // AD-790: first-run wizard completion + reset.
+    ipcMain.handle("probos:completeSetup", (_e, payload: unknown) => {
+      const userData = app.getPath("userData");
+      completeFirstRun(userData);
+      const detail =
+        payload && typeof payload === "object"
+          ? (payload as Record<string, unknown>)
+          : {};
+      logInfo("first-run setup completed", {
+        captainName: typeof detail.captainName === "string" ? detail.captainName : "(unset)",
+        hasSuggestedPrompt: typeof detail.suggestedPrompt === "string" && detail.suggestedPrompt.length > 0,
+      });
+      // Reload onto the runtime URL now that setup is done.
+      mainWindow?.loadURL(urlForViewMode(viewMode));
+      return { ok: true };
+    });
+    ipcMain.handle("probos:resetSetup", () => {
+      const removed = resetFirstRun(app.getPath("userData"));
+      logInfo("first-run state reset requested", { removed });
+      if (removed) {
+        // Reload onto the wizard so the operator sees it immediately.
+        const appVersion = app.getVersion();
+        mainWindow?.loadURL(
+          "data:text/html;charset=utf-8," +
+            encodeURIComponent(setupHtml({ runtimeUrl: RUNTIME_URL, appVersion })),
+        );
+      }
+      return { ok: removed };
+    });
+    ipcMain.handle("probos:getFirstRunState", () => loadState(app.getPath("userData")));
 
     // Subscribe renderer to status changes (handled by preload's event channel).
     connection.subscribe((s: ConnectionStatus) => {

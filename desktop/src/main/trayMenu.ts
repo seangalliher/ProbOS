@@ -17,6 +17,7 @@ export interface TrayMenuOptions {
   onToggleProactive: () => void;
   onToggleViewMode: () => void;
   onCheckForUpdates: () => void;
+  onResetSetup: () => void;
   onQuit: () => void;
 }
 
@@ -99,6 +100,12 @@ export function buildTrayMenu(opts: TrayMenuOptions): TrayMenuItem[] {
       enabled: false,
       toolTip: "Available in AD-759c",
       click: opts.onCheckForUpdates,
+    },
+    {
+      id: "reset-setup",
+      label: "Reset Setup…",
+      toolTip: "Re-run the first-run onboarding wizard (AD-790)",
+      click: opts.onResetSetup,
     },
     {
       id: "separator-1",

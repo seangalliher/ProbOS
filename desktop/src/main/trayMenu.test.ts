@@ -6,7 +6,7 @@ function noop(): void {
 }
 
 describe("buildTrayMenu", () => {
-  it("returns the documented 9 actionable items in order", () => {
+  it("returns the documented 10 actionable items in order", () => {
     const items = buildTrayMenu({
       status: "connected",
       proactivePaused: false,
@@ -15,10 +15,11 @@ describe("buildTrayMenu", () => {
       onToggleProactive: noop,
       onToggleViewMode: noop,
       onCheckForUpdates: noop,
+      onResetSetup: noop,
       onQuit: noop,
     });
 
-    expect(actionableCount(items)).toBe(9);
+    expect(actionableCount(items)).toBe(10);
     expect(items.map((i) => i.id)).toEqual([
       "status",
       "open-chat",
@@ -28,6 +29,7 @@ describe("buildTrayMenu", () => {
       "view-mode",
       "settings",
       "check-updates",
+      "reset-setup",
       "separator-1",
       "quit",
     ]);
@@ -42,6 +44,7 @@ describe("buildTrayMenu", () => {
       onToggleProactive: noop,
       onToggleViewMode: noop,
       onCheckForUpdates: noop,
+      onResetSetup: noop,
       onQuit: noop,
     });
     expect(items[0].label).toBe("Status: Connected");
@@ -56,6 +59,7 @@ describe("buildTrayMenu", () => {
       onToggleProactive: noop,
       onToggleViewMode: noop,
       onCheckForUpdates: noop,
+      onResetSetup: noop,
       onQuit: noop,
     });
     expect(items[0].label).toBe("Status: Connecting…");
@@ -70,6 +74,7 @@ describe("buildTrayMenu", () => {
       onToggleProactive: noop,
       onToggleViewMode: noop,
       onCheckForUpdates: noop,
+      onResetSetup: noop,
       onQuit: noop,
     });
     expect(items[0].label).toBe("Status: Disconnected");
@@ -84,6 +89,7 @@ describe("buildTrayMenu", () => {
       onToggleProactive: noop,
       onToggleViewMode: noop,
       onCheckForUpdates: noop,
+      onResetSetup: noop,
       onQuit: noop,
     });
     expect(itemsActive[4].label).toBe("Pause proactive mode");
@@ -96,6 +102,7 @@ describe("buildTrayMenu", () => {
       onToggleProactive: noop,
       onToggleViewMode: noop,
       onCheckForUpdates: noop,
+      onResetSetup: noop,
       onQuit: noop,
     });
     expect(itemsPaused[4].label).toBe("Resume proactive mode");
@@ -110,6 +117,7 @@ describe("buildTrayMenu", () => {
       onToggleProactive: noop,
       onToggleViewMode: noop,
       onCheckForUpdates: noop,
+      onResetSetup: noop,
       onQuit: noop,
     });
     const checkUpdates = items.find((i) => i.id === "check-updates");
@@ -128,6 +136,7 @@ describe("buildTrayMenu", () => {
       onToggleProactive: noop,
       onToggleViewMode: noop,
       onCheckForUpdates: noop,
+      onResetSetup: noop,
       onQuit: noop,
     });
     items.find((i) => i.id === "open-chat")?.click?.();
