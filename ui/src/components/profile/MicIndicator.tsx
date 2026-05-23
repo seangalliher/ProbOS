@@ -26,6 +26,11 @@ export interface MicIndicatorProps {
   /** Size of the rendered SVG glyph in px. Default 14 to match the
    *  existing mic button in ProfileChatTab. */
   size?: number;
+  /** BF-294b — real-audio amplitude 0..1 driving the listening ring's
+   *  opacity/scale. When undefined (or state !== 'listening'), the
+   *  ring falls back to the BF-294 keyframe pulse. Values outside
+   *  [0, 1] are clamped. */
+  intensity?: number;
 }
 
 const PALETTE = {
@@ -34,8 +39,18 @@ const PALETTE = {
   processing: '#a08040',
 } as const;
 
-export function MicIndicator({ state, size = 14 }: MicIndicatorProps): React.ReactElement {
+export function MicIndicator({ state, size = 14, intensity }: MicIndicatorProps): React.ReactElement {
   const color = PALETTE[state];
+
+  // BF-294b — when amplitude is supplied AND we're listening, override
+  // the keyframe pulse with inline opacity/scale. Otherwise fall through
+  // to the BF-294 keyframe animation.
+  const hasIntensity = state === 'listening' && typeof intensity === 'number' && Number.isFinite(intensity);
+  const clamped = hasIntensity ? Math.max(0, Math.min(1, intensity as number)) : 0;
+  // Map intensity to visual range: opacity 0.35..1.0, scale 1.0..1.35.
+  // The floor keeps the ring visible at silence (matches keyframe baseline).
+  const dynOpacity = 0.35 + 0.65 * clamped;
+  const dynScale = 1.0 + 0.35 * clamped;
   // data-bf294-state lets tests assert state without DOM-traversal heuristics.
   return (
     <span
@@ -53,13 +68,21 @@ export function MicIndicator({ state, size = 14 }: MicIndicatorProps): React.Rea
       {state === 'listening' && (
         <span
           data-testid="mic-indicator-ring-listening"
+          data-bf294b-mode={hasIntensity ? 'amplitude' : 'keyframe'}
           aria-hidden="true"
           style={{
             position: 'absolute',
             inset: -4,
             borderRadius: '50%',
             border: `1.5px solid ${PALETTE.listening}`,
-            animation: 'bf294-mic-listen 1.1s ease-in-out infinite',
+            // BF-294b — when intensity is supplied, drive opacity/scale
+            // from amplitude and suppress the keyframe pulse so the two
+            // sources of motion don't fight. Otherwise keep BF-294's
+            // keyframe behavior.
+            animation: hasIntensity ? 'none' : 'bf294-mic-listen 1.1s ease-in-out infinite',
+            opacity: hasIntensity ? dynOpacity : undefined,
+            transform: hasIntensity ? `scale(${dynScale})` : undefined,
+            transition: hasIntensity ? 'opacity 60ms linear, transform 60ms linear' : undefined,
             pointerEvents: 'none',
           }}
         />

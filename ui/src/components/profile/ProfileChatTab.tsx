@@ -23,6 +23,7 @@ import {
   onTranscribing as onWhisperTranscribing,
 } from '../../audio/whisperStt';
 import { MicIndicator } from './MicIndicator';
+import { subscribePcm } from '../../audio/voiceActivity';
 import type { ChatAttachment } from '../../store/types';
 import { ModulationIndicator } from './ModulationIndicator';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
@@ -66,6 +67,59 @@ export function ProfileChatTab({ agentId }: Props) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [listening, setListening] = useState(false);
+  // BF-294b — real-time amplitude meter for MicIndicator (0..1, smoothed
+  // via EMA at RAF cadence). Stays at 0 when the voiceActivity loop
+  // isn't armed (App.tsx gates it on perception.vad_engagement_enabled),
+  // which is the documented graceful-degrade path (#769).
+  const [audioIntensity, setAudioIntensity] = useState(0);
+  const intensityRef = useRef(0);       // EMA accumulator, written from onFrame
+  const rafPendingRef = useRef(false);  // RAF coalescing flag
+
+  // BF-294b — subscribe to voiceActivity PCM tap while listening; compute
+  // RMS per frame, smooth via EMA (alpha=0.3, Discord-style), and flush
+  // to state at RAF cadence to bound render churn. Unsubscribe and reset
+  // when listening stops or the component unmounts.
+  useEffect(() => {
+    if (!listening) {
+      intensityRef.current = 0;
+      setAudioIntensity(0);
+      return;
+    }
+    const EMA_ALPHA = 0.3;
+    const GAIN = 3.0;
+    const flushToState = () => {
+      rafPendingRef.current = false;
+      setAudioIntensity(intensityRef.current);
+    };
+    const scheduleFlush = () => {
+      if (rafPendingRef.current) return;
+      rafPendingRef.current = true;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(flushToState);
+      } else {
+        flushToState();
+      }
+    };
+    const unsubscribe = subscribePcm({
+      onFrame(frame: Float32Array, _sampleRate: number, _score?: number) {
+        let sumSq = 0;
+        for (let i = 0; i < frame.length; i++) {
+          const x = frame[i];
+          sumSq += x * x;
+        }
+        const rms = frame.length > 0 ? Math.sqrt(sumSq / frame.length) : 0;
+        const raw = Math.max(0, Math.min(1, rms * GAIN));
+        intensityRef.current = EMA_ALPHA * raw + (1 - EMA_ALPHA) * intensityRef.current;
+        scheduleFlush();
+      },
+    });
+    return () => {
+      try { unsubscribe(); } catch { /* Tier-2 — non-actionable on teardown */ }
+      intensityRef.current = 0;
+      rafPendingRef.current = false;
+      setAudioIntensity(0);
+    };
+  }, [listening]);
   // BF-294: ``processing`` is true while whisperStt is running
   // transcribeBuffer (between speech_end and transcript delivery).
   // Browser-SR's onend → onresult is effectively instant, so we only
@@ -1032,7 +1086,7 @@ export function ProfileChatTab({ agentId }: Props) {
                       : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
               }}
             >
-              <MicIndicator state={processing ? 'processing' : listening ? 'listening' : 'idle'} size={14} />
+              <MicIndicator state={processing ? 'processing' : listening ? 'listening' : 'idle'} size={14} intensity={audioIntensity} />
             </button>
             {micMenuOpen && (
               <div
