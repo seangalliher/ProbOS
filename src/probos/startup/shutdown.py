@@ -125,6 +125,36 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         runtime, "shutdown_consolidation_timeout_s", 30.0,
     )
 
+    # BF-296 Phase A: close the IntentBus to new dispatches BEFORE the
+    # DreamScheduler quiesce + explicit dream_cycle below. Without this,
+    # cognitive agent action loops continue to receive proactive_think /
+    # ward_room_notification intents during consolidation. Their writes
+    # to ChromaDB / Ward Room / Notebook stores compete with dream_cycle's
+    # consolidation writes → torn HNSW → AD-820 ``consolidation_result=failed``
+    # (see #771, 2026-05-23 10:39 UTC partial-shutdown reproduction).
+    #
+    # Honest-degrade: if the bus or method is absent (transitional running
+    # processes started before BF-296 shipped), we log and proceed — the
+    # AD-825 quiesce + AD-824 cancel sweep below remain the fallback.
+    try:
+        intent_bus = getattr(runtime, "intent_bus", None)
+        if intent_bus is not None and hasattr(intent_bus, "close_to_new_dispatches"):
+            intent_bus.close_to_new_dispatches()
+            # Brief grace so already-fanned-out broadcast() handlers and
+            # in-flight cognitive queue items finish their writes before
+            # consolidation starts.
+            await asyncio.sleep(2.0)
+            logger.info(
+                "BF-296 Phase A: intent dispatch closed; "
+                "2s grace for in-flight handlers complete"
+            )
+    except Exception:
+        logger.warning(
+            "BF-296 Phase A: failed to close intent bus; "
+            "proceeding to consolidation (concurrent-write hazard)",
+            exc_info=True,
+        )
+
     # AD-825: quiesce the DreamScheduler monitor loop BEFORE the
     # explicit dream_cycle below. Without this, the monitor loop can
     # run its own dream_cycle concurrently with the explicit one, and
@@ -140,7 +170,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             _ok = await runtime.dream_scheduler.stop_gracefully(
                 timeout=_drain_budget,
             )
-            if not _ok:
+            if _ok:
+                logger.info(
+                    "AD-825: DreamScheduler quiesced within %.1fs", _drain_budget,
+                )
+            else:
                 logger.warning(
                     "AD-825: DreamScheduler did not quiesce within %.1fs; "
                     "proceeding to explicit consolidation (concurrent-write hazard)",

@@ -112,6 +112,36 @@ class IntentBus:
         # AD-470: Intent metrics
         self._metrics = IntentMetrics()
 
+        # BF-296: shutdown gate. When True, new dispatches are rejected
+        # at all four entry points (broadcast, send, dispatch_async, and
+        # the JetStream _on_dispatch NATS callback). In-flight handlers
+        # complete normally. Idempotent. See startup/shutdown.py Phase A.
+        self._closed: bool = False
+
+    def close_to_new_dispatches(self) -> None:
+        """BF-296: stop accepting new intent dispatches.
+
+        Sets the closed flag. Subsequent broadcast(), send(),
+        dispatch_async(), and JetStream _on_dispatch callbacks
+        reject the work with an honest-degrade log. In-flight handlers
+        complete normally — this method does NOT interrupt them.
+
+        Idempotent — safe to call multiple times.
+
+        Called from startup/shutdown.py Phase A before
+        DreamScheduler.stop_gracefully() so consolidation writes do not
+        compete with concurrent agent writes (see #771).
+        """
+        if self._closed:
+            return
+        self._closed = True
+        logger.info(
+            "BF-296: IntentBus closed to new dispatches "
+            "(subscribers=%d, agent_queues=%d)",
+            len(self._subscribers),
+            len(self._agent_queues),
+        )
+
     def subscribe(self, agent_id: str, handler: IntentHandler, intent_names: list[str] | None = None) -> None:
         """Register an agent's intent handler.
 
@@ -223,7 +253,24 @@ class IntentBus:
 
             AD-654b: Enqueues to cognitive queue instead of inline processing.
             The queue manages ack/term, priority ordering, and handler dispatch.
+
+            BF-296: if the bus has been closed (shutdown Phase A), term the
+            message instead of enqueueing it. Using term() (not nak()) so
+            JetStream does NOT redeliver this intent on the next boot — that
+            would replay pre-shutdown work after consolidation completed.
             """
+            # BF-296: shutdown gate — drop on the floor, do not redeliver
+            if self._closed:
+                logger.debug(
+                    "BF-296: _on_dispatch terminating msg on closed bus agent=%s",
+                    agent_id[:12],
+                )
+                try:
+                    await msg.term()
+                except Exception:
+                    pass  # transport may already be tearing down
+                return
+
             try:
                 intent_msg = self._deserialize_intent(msg.data)
 
@@ -365,9 +412,20 @@ class IntentBus:
 
         AD-637z: BF-221 lifted. Prefix re-subscription (set_subject_prefix)
         ensures NATS subscriptions survive the Phase 7 DID assignment.
+
+        BF-296: returns ``None`` if the bus has been closed via
+        ``close_to_new_dispatches()`` (shutdown Phase A).
         """
         if not intent.target_agent_id:
             raise ValueError("send() requires target_agent_id")
+
+        # BF-296: shutdown gate
+        if self._closed:
+            logger.debug(
+                "BF-296: send rejected on closed bus intent=%s target=%s",
+                intent.intent, intent.target_agent_id[:12],
+            )
+            return None
 
         _send_start = time.monotonic()  # AD-470: timing
         try:
@@ -436,7 +494,20 @@ class IntentBus:
         Waits up to `timeout` seconds (defaults to intent TTL) for results.
 
         If intent.target_agent_id is set, delegates to send() for targeted dispatch.
+
+        BF-296: returns ``[]`` if the bus has been closed via
+        ``close_to_new_dispatches()`` (shutdown Phase A).
         """
+        # BF-296: shutdown gate. Honest-degrade — return empty result list
+        # so callers see "no agent responded" rather than an exception, which
+        # matches the existing behavior when no subscribers match.
+        if self._closed:
+            logger.debug(
+                "BF-296: broadcast rejected on closed bus intent=%s id=%s",
+                intent.intent, intent.id[:8],
+            )
+            return []
+
         # AD-397: targeted dispatch
         if intent.target_agent_id:
             result = await self.send(intent)
@@ -541,9 +612,22 @@ class IntentBus:
         when NATS/JetStream is unavailable.
 
         Requires intent.target_agent_id to be set.
+
+        BF-296: silently no-ops if the bus has been closed via
+        ``close_to_new_dispatches()`` (shutdown Phase A). Note this also
+        prevents new JetStream publishes during shutdown, so peer nodes
+        will not see fresh dispatch messages from this node post-Phase-A.
         """
         if not intent.target_agent_id:
             raise ValueError("dispatch_async() requires target_agent_id")
+
+        # BF-296: shutdown gate
+        if self._closed:
+            logger.debug(
+                "BF-296: dispatch_async rejected on closed bus intent=%s target=%s",
+                intent.intent, intent.target_agent_id[:12],
+            )
+            return
 
         # JetStream path when connected
         if self._nats_bus and self._nats_bus.connected:
