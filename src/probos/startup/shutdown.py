@@ -20,6 +20,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _memory_field(runtime: Any, name: str, default: float) -> float:
+    """BF-291: defensively read a MemoryConfig field with a fallback.
+
+    Direct attribute access raises ``AttributeError`` on Pydantic v2 models
+    when the field is absent — which happens transitionally when a process
+    started before a new field was added is shutting down with newer
+    ``shutdown.py`` code on disk. The ``getattr``-with-default form skips
+    Pydantic's strict ``__getattr__`` path entirely.
+    """
+    cfg = getattr(getattr(runtime, "config", None), "memory", None)
+    if cfg is None:
+        return default
+    return float(getattr(cfg, name, default))
+
+
 async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     """Graceful shutdown of all pools, mesh services, and persistence."""
     # BF-135: Persist session record FIRST — synchronous file write, microseconds.
@@ -106,10 +121,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # the right integrity marker before exit.
     _consolidation_result: str = "skipped"
 
-    _shutdown_consolidation_timeout = float(
-        getattr(getattr(runtime, "config", None), "memory", None).shutdown_consolidation_timeout_s
-        if (getattr(runtime, "config", None) and getattr(runtime.config, "memory", None))
-        else 30.0
+    _shutdown_consolidation_timeout = _memory_field(
+        runtime, "shutdown_consolidation_timeout_s", 30.0,
     )
 
     # AD-825: quiesce the DreamScheduler monitor loop BEFORE the
@@ -121,15 +134,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # and proceed (the AD-824 cancel sweep will reap it later).
     if runtime.dream_scheduler:
         try:
-            _drain_budget = float(
-                getattr(
-                    getattr(runtime, "config", None), "memory", None,
-                ).shutdown_drain_timeout_s
-                if (
-                    getattr(runtime, "config", None)
-                    and getattr(runtime.config, "memory", None)
-                )
-                else 30.0
+            _drain_budget = _memory_field(
+                runtime, "shutdown_drain_timeout_s", 30.0,
             )
             _ok = await runtime.dream_scheduler.stop_gracefully(
                 timeout=_drain_budget,
@@ -210,15 +216,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             runtime._signal_drain_stop()
             pending_snapshot = list(drain_tasks)
             if pending_snapshot:
-                _drain_budget = float(
-                    getattr(
-                        getattr(runtime, "config", None), "memory", None,
-                    ).shutdown_drain_timeout_s
-                    if (
-                        getattr(runtime, "config", None)
-                        and getattr(runtime.config, "memory", None)
-                    )
-                    else 30.0
+                _drain_budget = _memory_field(
+                    runtime, "shutdown_drain_timeout_s", 30.0,
                 )
                 logger.info(
                     "AD-825: draining %d write-holding task(s) (budget=%.1fs)",
