@@ -90,9 +90,14 @@ export function setupHtml({ runtimeUrl, appVersion }: SetupHtmlOptions): string 
 
     <section class="step" data-step="1">
       <h1>Runtime connection</h1>
-      <p>Yeo connects to the ProbOS runtime at <code>${runtimeUrl}</code>.
-         Click below to verify it's reachable.</p>
-      <button id="probe-btn" type="button">Check runtime</button>
+      <p>Yeo connects to the ProbOS runtime at the URL below. The default is
+         <code>http://127.0.0.1:18900</code>; change it if your runtime listens
+         on a different port.</p>
+      <input id="runtime-url-input" type="text"
+             value="${runtimeUrl}"
+             spellcheck="false"
+             placeholder="http://127.0.0.1:18900" />
+      <button id="probe-btn" type="button" style="margin-top:12px;">Check runtime</button>
       <div class="runtime-status" id="probe-result">Not checked yet.</div>
     </section>
 
@@ -154,27 +159,45 @@ export function setupHtml({ runtimeUrl, appVersion }: SetupHtmlOptions): string 
     });
 
     probeBtn.addEventListener('click', async () => {
-      probeResult.textContent = 'Checking...';
+      const urlInput = document.getElementById('runtime-url-input');
+      const value = (urlInput && urlInput.value ? urlInput.value : '').trim();
+      probeResult.textContent = 'Saving...';
       probeResult.className = 'runtime-status';
+      const setRes = await window.probos?.setRuntimeUrl(value);
+      if (!setRes || !setRes.ok) {
+        probeResult.textContent = 'Invalid URL: ' + (setRes && setRes.error
+          ? setRes.error
+          : 'expected http(s)://host[:port] with no path');
+        probeResult.className = 'runtime-status fail';
+        return;
+      }
+      probeResult.textContent = 'Checking ' + setRes.runtimeUrl + '...';
       try {
         // BF (2026-05-22): use main-process IPC instead of renderer
         // fetch. The wizard is loaded from a data: URL which has a null
         // origin; cross-origin fetch to 127.0.0.1 fails CORS preflight.
-        const probos = window.probos;
-        const r = probos && typeof probos.checkRuntime === 'function'
-          ? await probos.checkRuntime()
-          : { ok: false, error: 'IPC bridge missing (preload not loaded?)' };
+        const r = await window.probos?.checkRuntime();
+        if (!r) {
+          probeResult.textContent = 'IPC bridge missing (preload not loaded?)';
+          probeResult.className = 'runtime-status fail';
+          return;
+        }
         if (r.ok) {
-          probeResult.textContent = 'OK - ProbOS runtime is responding.';
+          probeResult.textContent = 'OK - ProbOS runtime is responding at '
+            + (r.configuredUrl || setRes.runtimeUrl) + '.';
           probeResult.className = 'runtime-status ok';
+        } else if (r.mismatch) {
+          probeResult.textContent =
+            'Desktop is configured to reach ' + r.mismatch.configured +
+            ', but only ' + r.mismatch.responding +
+            ' is responding. Update the URL above and Check again.';
+          probeResult.className = 'runtime-status fail';
         } else if (r.status) {
           probeResult.textContent = 'Runtime returned status ' + r.status + '.';
           probeResult.className = 'runtime-status fail';
         } else {
-          // Show the underlying error to aid diagnosis.
           probeResult.textContent = 'Could not reach the runtime: ' +
-            (r.error || 'unknown error') +
-            '. Make sure probos serve is running at ' + RUNTIME_URL + '.';
+            (r.error || 'unknown error') + '.';
           probeResult.className = 'runtime-status fail';
         }
       } catch (err) {

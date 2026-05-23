@@ -18,8 +18,24 @@ interface ProbosApi {
   getViewMode(): Promise<ViewMode>;
   setViewMode(mode: ViewMode): Promise<ViewMode>;
   /** BF (2026-05-22): probe runtime via main process to bypass
-   * the data: URL CORS restriction in the AD-790 first-run wizard. */
-  checkRuntime(): Promise<{ ok: boolean; status?: number; error?: string }>;
+   * the data: URL CORS restriction in the AD-790 first-run wizard.
+   * AD-817: response is extended with configuredUrl and an optional
+   * mismatch payload when a different port is responding. */
+  checkRuntime(): Promise<{
+    ok: boolean;
+    status?: number;
+    error?: string;
+    configuredUrl?: string;
+    mismatch?: { configured: string; responding: string };
+  }>;
+  /** AD-817: read the current resolved runtime URL. */
+  getRuntimeUrl(): Promise<string>;
+  /** AD-817: persist a new runtime URL. Returns ok=false on validation failure. */
+  setRuntimeUrl(value: string): Promise<{
+    ok: boolean;
+    runtimeUrl: string;
+    error?: string;
+  }>;
   /** AD-790: complete the first-run wizard and reload onto the HXI. */
   completeSetup(payload: {
     captainName: string;
@@ -42,6 +58,9 @@ const api: ProbosApi = {
   setViewMode: (mode: ViewMode) =>
     ipcRenderer.invoke("probos:setViewMode", mode),
   checkRuntime: () => ipcRenderer.invoke("probos:checkRuntime"),
+  getRuntimeUrl: () => ipcRenderer.invoke("probos:getRuntimeUrl"),
+  setRuntimeUrl: (value: string) =>
+    ipcRenderer.invoke("probos:setRuntimeUrl", value),
   completeSetup: (payload) =>
     ipcRenderer.invoke("probos:completeSetup", payload),
   resetSetup: () => ipcRenderer.invoke("probos:resetSetup"),

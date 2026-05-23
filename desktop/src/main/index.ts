@@ -5,9 +5,10 @@
  *   1. Single-instance lock (forward `probos://` argv on second-launch).
  *   2. Register `probos://` as default protocol client.
  *   3. Create tray icon + menu.
- *   4. Create main window pointed at `PROBOS_RUNTIME_URL` env var
- *      (default `http://127.0.0.1:8765`; BF-324 widened CSP so any
- *      127.0.0.1:* port works without rebuilding).
+ *   4. Create main window pointed at the AD-817 resolved runtime URL
+ *      (persisted file > `PROBOS_RUNTIME_URL` env > built-in default;
+ *      BF-324 widened CSP so any 127.0.0.1:* port works without
+ *      rebuilding).
  *   5. On `did-fail-load`, render the disconnected-state HTML.
  *   6. Listen for `second-instance` and route any new deep-link.
  *
@@ -48,8 +49,27 @@ import {
   resetFirstRun,
 } from "./firstRun.js";
 import { setupHtml } from "./setupHtml.js";
+import {
+  DEFAULT_RUNTIME_URL,
+  PORT_CANDIDATES,
+  isValidRuntimeUrl,
+  normaliseRuntimeUrl,
+  resolveRuntimeUrl,
+  saveRuntimeConfig,
+} from "./runtimeConfig.js";
 
-const RUNTIME_URL = process.env.PROBOS_RUNTIME_URL ?? "http://127.0.0.1:8765";
+/**
+ * AD-817: runtime URL is now operator-configurable via the wizard and
+ * the tray menu. The value resolves at app startup (resolveRuntimeUrl)
+ * and is mutated in-place by the `probos:setRuntimeUrl` IPC handler so
+ * downstream readers (urlForViewMode, disconnectedHtml, setupHtml,
+ * checkRuntime, openExternal gate) always see the current value.
+ */
+let runtimeUrl = DEFAULT_RUNTIME_URL;
+
+function getRuntimeUrl(): string {
+  return runtimeUrl;
+}
 
 // Window size presets per view mode. Compact ≈ Microsoft Copilot / Claude Chat
 // dimensions (narrow, tall, single-column). Full = the legacy HXI canvas.
@@ -91,7 +111,7 @@ function urlForViewMode(mode: ViewMode, route = "/"): string {
   // same `index.html` on every path; the renderer reads `location.hash` to
   // switch between full HXI and the chat-only Yeo surface.
   const hash = mode === "compact" ? "#compact" : "";
-  return `${RUNTIME_URL}${route}${hash}`;
+  return `${getRuntimeUrl()}${route}${hash}`;
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -127,7 +147,7 @@ function disconnectedHtml(): string {
 <body>
   <div class="card">
     <h1>ProbOS runtime unreachable</h1>
-    <p>The desktop host could not reach the runtime at <code>${RUNTIME_URL}</code>.
+    <p>The desktop host could not reach the runtime at <code>${getRuntimeUrl()}</code>.
        Make sure the ProbOS service is running.</p>
     <div class="row">
       <button class="primary" id="retry">Retry</button>
@@ -140,7 +160,7 @@ function disconnectedHtml(): string {
       window.probos?.retryConnect();
     });
     document.getElementById('openBrowser').addEventListener('click', () => {
-      window.probos?.openExternal('${RUNTIME_URL}');
+      window.probos?.openExternal('${getRuntimeUrl()}');
     });
     document.getElementById('quit').addEventListener('click', () => {
       window.probos?.quit();
@@ -219,7 +239,7 @@ function refreshTrayMenu(): void {
         const appVersion = app.getVersion();
         mainWindow.loadURL(
           "data:text/html;charset=utf-8," +
-            encodeURIComponent(setupHtml({ runtimeUrl: RUNTIME_URL, appVersion })),
+            encodeURIComponent(setupHtml({ runtimeUrl: getRuntimeUrl(), appVersion })),
         );
       }
     },
@@ -303,7 +323,7 @@ function createMainWindow(): void {
     const appVersion = app.getVersion();
     mainWindow.loadURL(
       "data:text/html;charset=utf-8," +
-        encodeURIComponent(setupHtml({ runtimeUrl: RUNTIME_URL, appVersion })),
+        encodeURIComponent(setupHtml({ runtimeUrl: getRuntimeUrl(), appVersion })),
     );
     logInfo("first-run wizard rendered", { userData: app.getPath("userData") });
   } else {
@@ -357,6 +377,8 @@ function bootstrap(): void {
   });
 
   app.whenReady().then(() => {
+    runtimeUrl = resolveRuntimeUrl({ userDataDir: app.getPath("userData") });
+    logInfo("runtime URL resolved", { runtimeUrl });
     viewMode = readViewMode();
     // Tray icon: amber bioluminescent dot (matches HXI palette #f0b060).
     // Resolved relative to the built main bundle at out/main/index.js;
@@ -396,7 +418,7 @@ function bootstrap(): void {
       mainWindow?.loadURL(urlForViewMode(viewMode));
     });
     ipcMain.handle("probos:openExternal", (_e, url: string) => {
-      if (typeof url === "string" && url.startsWith(RUNTIME_URL)) {
+      if (typeof url === "string" && url.startsWith(getRuntimeUrl())) {
         shell.openExternal(url);
       } else {
         logWarn("openExternal rejected; URL outside runtime origin", { url });
@@ -407,18 +429,82 @@ function bootstrap(): void {
     // CORS (null origin). Probe the runtime from the main process where
     // no CORS applies and return the result to the AD-790 wizard.
     ipcMain.handle("probos:checkRuntime", async () => {
-      try {
+      const configured = getRuntimeUrl();
+      const probe = async (
+        url: string,
+      ): Promise<{ ok: boolean; status?: number; error?: string }> => {
         const ac = new AbortController();
-        const timer = setTimeout(() => ac.abort(), 5000);
-        const r = await fetch(RUNTIME_URL + "/api/health", {
-          method: "GET",
-          signal: ac.signal,
-        });
-        clearTimeout(timer);
-        return { ok: r.ok, status: r.status };
-      } catch (err) {
-        return { ok: false, error: String(err) };
+        const timer = setTimeout(() => ac.abort(), 3000);
+        try {
+          const r = await fetch(url + "/api/health", {
+            method: "GET",
+            signal: ac.signal,
+          });
+          clearTimeout(timer);
+          return { ok: r.ok, status: r.status };
+        } catch (err) {
+          clearTimeout(timer);
+          return { ok: false, error: String(err) };
+        }
+      };
+
+      const primary = await probe(configured);
+      if (primary.ok) {
+        return { ok: true, status: primary.status, configuredUrl: configured };
       }
+
+      // Mismatch scan: try other common ports on the configured host to
+      // detect a misconfigured-URL scenario. Bounded by PORT_CANDIDATES
+      // so we don't turn a health probe into a port scanner.
+      let configuredHost = "127.0.0.1";
+      let configuredPort = "";
+      try {
+        const u = new URL(configured);
+        configuredHost = u.hostname;
+        configuredPort = u.port;
+      } catch {
+        /* configured was validated earlier; defensive only */
+      }
+
+      for (const port of PORT_CANDIDATES) {
+        if (String(port) === configuredPort) continue;
+        const candidate = `http://${configuredHost}:${port}`;
+        const result = await probe(candidate);
+        if (result.ok) {
+          return {
+            ok: false,
+            status: primary.status,
+            error: primary.error,
+            configuredUrl: configured,
+            mismatch: { configured, responding: candidate },
+          };
+        }
+      }
+
+      return {
+        ok: false,
+        status: primary.status,
+        error: primary.error,
+        configuredUrl: configured,
+      };
+    });
+
+    ipcMain.handle("probos:getRuntimeUrl", () => getRuntimeUrl());
+    ipcMain.handle("probos:setRuntimeUrl", (_e, value: unknown) => {
+      if (!isValidRuntimeUrl(value)) {
+        logWarn("setRuntimeUrl rejected; invalid URL", { value });
+        return { ok: false, runtimeUrl: getRuntimeUrl(), error: "invalid URL" };
+      }
+      const next = normaliseRuntimeUrl(value);
+      try {
+        saveRuntimeConfig(app.getPath("userData"), { runtimeUrl: next });
+      } catch (err) {
+        logWarn("setRuntimeUrl persist failed", { err: String(err) });
+        return { ok: false, runtimeUrl: getRuntimeUrl(), error: String(err) };
+      }
+      runtimeUrl = next;
+      logInfo("runtime URL updated", { runtimeUrl: next });
+      return { ok: true, runtimeUrl: next };
     });
     ipcMain.handle("probos:getViewMode", () => viewMode);
     ipcMain.handle("probos:setViewMode", (_e, mode: unknown) => {
@@ -454,7 +540,7 @@ function bootstrap(): void {
         const appVersion = app.getVersion();
         mainWindow?.loadURL(
           "data:text/html;charset=utf-8," +
-            encodeURIComponent(setupHtml({ runtimeUrl: RUNTIME_URL, appVersion })),
+            encodeURIComponent(setupHtml({ runtimeUrl: getRuntimeUrl(), appVersion })),
         );
       }
       return { ok: removed };
