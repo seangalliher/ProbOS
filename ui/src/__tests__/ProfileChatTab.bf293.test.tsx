@@ -38,11 +38,12 @@ vi.mock('../audio/conversationController', () => ({
   markAgentReplyComplete: mocks.markAgentReplyCompleteMock,
 }));
 
-vi.mock('../audio/whisperStt', () => ({
-  armWhisperStt: mocks.armWhisperSttMock,
-  disarmWhisperStt: mocks.disarmWhisperSttMock,
-  onTranscript: mocks.whisperOnTranscriptMock,
-  onTranscribing: vi.fn(() => () => {}),
+vi.mock('../audio/transformersStt', () => ({
+  armTransformersStt: mocks.armWhisperSttMock,
+  disarmTransformersStt: mocks.disarmWhisperSttMock,
+  onTransformersTranscript: mocks.whisperOnTranscriptMock,
+  onTransformersTranscribing: vi.fn(() => () => {}),
+  onTransformersProgress: vi.fn(() => () => {}),
 }));
 
 import { ProfileChatTab } from '../components/profile/ProfileChatTab';

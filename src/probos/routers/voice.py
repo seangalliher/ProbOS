@@ -31,7 +31,10 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 from probos.voice.wake_word_trainer import WakeWordTrainer, WakeWordTrainingReport
-from probos.voice.whisper_model import resolve_whisper_model_path
+# BF-301: resolve_whisper_model_path no longer used; the browser owns
+# model fetch via transformers.js. Import retained as a forward-marker
+# comment for the air-gapped-operator follow-up AD.
+# from probos.voice.whisper_model import resolve_whisper_model_path
 
 logger = logging.getLogger("probos.routers.voice")
 
@@ -40,40 +43,53 @@ router = APIRouter(prefix="/api/voice", tags=["voice"])
 
 @router.get("/health")
 async def get_voice_health(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
-    """AD-826 — STT engine availability for the UI PTT handler.
+    """BF-301 (#775, supersedes AD-826) — STT engine availability for the
+    UI PTT handler.
 
-    Returns the operator's ``cognitive.primary_stt`` selection plus an
-    honest health probe for the whisper engine. Probe is filesystem-
-    only: confirms ``cognitive.offline_stt_enabled`` is True AND the
-    operator-pulled GGML model file exists. NO subprocess, NO model
-    invocation — whisper inference runs in the browser per AD-705a.
+    The browser-side STT engine is now @huggingface/transformers Whisper
+    running in a Web Worker. The runtime no longer hosts ONNX weights —
+    the browser fetches them from HF CDN on first use and caches them.
+    This endpoint reports the operator's intent (primary_stt) and
+    whether the local-first path is enabled (offline_stt_enabled). It
+    does NOT probe the browser-to-CDN reachability — that is browser-
+    side responsibility, surfaced through the BF-301
+    ``onTransformersProgress`` channel.
 
-    Response shape::
+    Response shape (back-compat with BF-294 / AD-826 UI, plus ``model``)::
 
         {
-          "primary_stt": "whisper" | "browser",
-          "engine": "whisper" | "browser",      # primary_stt mirror
-          "backend_available": bool,             # whisper artifact present
-          "healthy": bool,                       # primary engine usable
+          "primary_stt": "transformers" | "whisper" | "browser",
+          "engine": "transformers" | "browser",
+          "backend_available": bool,
+          "healthy": bool,
+          "model": str | None,
         }
 
-    ``healthy`` semantics:
-    * ``primary_stt == "whisper"``: True iff ``backend_available``.
-    * ``primary_stt == "browser"``: always True (the UI knows whether
-      Web Speech API is supported in the current browser; backend
-      cannot probe that).
+    Engine semantics:
+    * ``primary_stt`` is the raw operator config value.
+    * ``engine`` is the resolved value: ``"whisper"`` (deprecated alias)
+      resolves to ``"transformers"``; ``"browser"`` passes through.
+    * ``backend_available`` is True iff the resolved engine is
+      ``"transformers"`` AND ``offline_stt_enabled`` is True.
+    * ``healthy`` is True iff ``backend_available`` is True OR resolved
+      engine is ``"browser"``.
+    * ``model`` is the configured transformers model id when the
+      resolved engine is ``"transformers"``; ``None`` for ``"browser"``.
     """
     config = runtime.config
     primary = config.cognitive.primary_stt
     offline_enabled = bool(config.cognitive.offline_stt_enabled)
-    model_path = resolve_whisper_model_path(config, runtime.data_dir)
-    backend_available = offline_enabled and model_path is not None
-    healthy = backend_available if primary == "whisper" else True
+    # Resolve deprecated "whisper" alias to "transformers".
+    resolved_engine = "transformers" if primary in ("transformers", "whisper") else "browser"
+    backend_available = resolved_engine == "transformers" and offline_enabled
+    healthy = backend_available or resolved_engine == "browser"
+    model = config.cognitive.transformers_model if resolved_engine == "transformers" else None
     return {
         "primary_stt": primary,
-        "engine": primary,
+        "engine": resolved_engine,
         "backend_available": backend_available,
         "healthy": healthy,
+        "model": model,
     }
 
 

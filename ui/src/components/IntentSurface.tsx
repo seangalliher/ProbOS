@@ -8,10 +8,10 @@ import type { SelfModProposal, BuildProposal, BuildFailureReport, ArchitectPropo
 import { speakResponse, stripMarkdownForSpeech } from '../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../audio/speechInput';
 import {
-  armWhisperStt,
-  onTranscript,
-  onTranscribing,
-} from '../audio/whisperStt';
+  armTransformersStt as armWhisperStt,
+  onTransformersTranscript as onTranscript,
+  onTransformersTranscribing as onTranscribing,
+} from '../audio/transformersStt';
 import { useSettingsStore } from '../store/useSettingsStore';
 import {
   startWakeWordLoop,

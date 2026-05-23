@@ -19,13 +19,13 @@ const _whisperState: {
   listener: ((text: string) => void) | null;
 } = { armed: false, listener: null };
 
-vi.mock('../whisperStt', () => ({
-  armWhisperStt: () => {
+vi.mock('../transformersStt', () => ({
+  armTransformersStt: () => {
     _whisperState.armed = true;
     return () => { _whisperState.armed = false; };
   },
-  disarmWhisperStt: () => { _whisperState.armed = false; },
-  onTranscript: (l: (text: string) => void) => {
+  disarmTransformersStt: () => { _whisperState.armed = false; },
+  onTransformersTranscript: (l: (text: string) => void) => {
     _whisperState.listener = l;
     return () => { _whisperState.listener = null; };
   },

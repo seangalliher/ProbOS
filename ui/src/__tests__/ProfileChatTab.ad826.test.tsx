@@ -45,21 +45,23 @@ vi.mock('../audio/conversationController', () => ({
   markAgentReplyComplete: mocks.markAgentReplyCompleteMock,
 }));
 
-vi.mock('../audio/whisperStt', () => ({
-  armWhisperStt: mocks.armWhisperSttMock,
-  disarmWhisperStt: mocks.disarmWhisperSttMock,
-  onTranscript: mocks.whisperOnTranscriptMock,
-  onTranscribing: mocks.whisperOnTranscribingMock,
+vi.mock('../audio/transformersStt', () => ({
+  armTransformersStt: mocks.armWhisperSttMock,
+  disarmTransformersStt: mocks.disarmWhisperSttMock,
+  onTransformersTranscript: mocks.whisperOnTranscriptMock,
+  onTransformersTranscribing: mocks.whisperOnTranscribingMock,
+  onTransformersProgress: vi.fn(() => () => {}),
 }));
 
 import { ProfileChatTab } from '../components/profile/ProfileChatTab';
 import { useStore } from '../store/useStore';
 
 type HealthShape = {
-  primary_stt: 'whisper' | 'browser';
-  engine: 'whisper' | 'browser';
+  primary_stt: 'transformers' | 'whisper' | 'browser';
+  engine: 'transformers' | 'whisper' | 'browser';
   backend_available: boolean;
   healthy: boolean;
+  model?: string | null;
 };
 
 function setupFetchWithHealth(health: HealthShape | null): void {
@@ -108,10 +110,11 @@ afterEach(() => {
 describe('AD-826 whisper-first STT priority', () => {
   it('whisper-primary + healthy → arms whisperStt, not browser SR', async () => {
     setupFetchWithHealth({
-      primary_stt: 'whisper',
-      engine: 'whisper',
+      primary_stt: 'transformers',
+      engine: 'transformers',
       backend_available: true,
       healthy: true,
+      model: 'Xenova/whisper-tiny.en',
     });
     render(<ProfileChatTab agentId="a1" />);
 
@@ -128,10 +131,11 @@ describe('AD-826 whisper-first STT priority', () => {
   it('whisper-primary + unhealthy → honest-degrades to browser SR', async () => {
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     setupFetchWithHealth({
-      primary_stt: 'whisper',
-      engine: 'whisper',
+      primary_stt: 'transformers',
+      engine: 'transformers',
       backend_available: false,
       healthy: false,
+      model: 'Xenova/whisper-tiny.en',
     });
     render(<ProfileChatTab agentId="a1" />);
     await waitFor(() =>
@@ -162,13 +166,14 @@ describe('AD-826 whisper-first STT priority', () => {
     expect(mocks.armWhisperSttMock).not.toHaveBeenCalled();
   });
 
-  it('whisper-primary: 2 empty whisper transcripts → browser SR on 3rd press', async () => {
+  it('transformers-primary: 2 empty whisper transcripts → browser SR on 3rd press', async () => {
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     setupFetchWithHealth({
-      primary_stt: 'whisper',
-      engine: 'whisper',
+      primary_stt: 'transformers',
+      engine: 'transformers',
       backend_available: true,
       healthy: true,
+      model: 'Xenova/whisper-tiny.en',
     });
     render(<ProfileChatTab agentId="a1" />);
     await waitFor(() =>

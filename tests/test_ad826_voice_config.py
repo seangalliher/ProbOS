@@ -30,9 +30,16 @@ def _make_client(runtime: _FakeRuntime) -> TestClient:
     return TestClient(app)
 
 
-def test_primary_stt_default_whisper() -> None:
+def test_primary_stt_default_transformers() -> None:
+    """BF-301: default flipped from 'whisper' to 'transformers'."""
     config = SystemConfig()
-    assert config.cognitive.primary_stt == "whisper"
+    assert config.cognitive.primary_stt == "transformers"
+
+
+def test_primary_stt_whisper_is_deprecated_alias() -> None:
+    """BF-301: 'whisper' Literal value accepted (back-compat) but resolves to transformers in health."""
+    cfg = CognitiveConfig(primary_stt="whisper")
+    assert cfg.primary_stt == "whisper"  # raw value preserved
 
 
 def test_primary_stt_accepts_browser() -> None:
@@ -57,39 +64,36 @@ def test_primary_stt_registered_in_section_registry() -> None:
     assert "cognitive.fallback_stt_enabled" in ids
 
 
-def test_voice_health_endpoint_whisper_primary_unhealthy(tmp_path: Path) -> None:
-    """Default config: whisper primary, no model on disk → unhealthy."""
+def test_voice_health_endpoint_default_transformers_offline_disabled(tmp_path: Path) -> None:
+    """BF-301: default config: transformers primary, offline_stt_enabled=False → backend unavailable and unhealthy."""
     runtime = _FakeRuntime(tmp_path)
-    # offline_stt_enabled defaults to False AND no model file → unhealthy.
     client = _make_client(runtime)
     resp = client.get("/api/voice/health")
     assert resp.status_code == 200
     data = resp.json()
     assert data == {
-        "primary_stt": "whisper",
-        "engine": "whisper",
+        "primary_stt": "transformers",
+        "engine": "transformers",
         "backend_available": False,
         "healthy": False,
+        "model": "Xenova/whisper-tiny.en",
     }
 
 
-def test_voice_health_endpoint_whisper_primary_healthy(tmp_path: Path) -> None:
-    """offline_stt_enabled + model file present → healthy."""
+def test_voice_health_endpoint_transformers_offline_enabled_healthy(tmp_path: Path) -> None:
+    """BF-301: offline_stt_enabled=True → backend_available=True, healthy=True. No filesystem probe (browser owns the model)."""
     config = SystemConfig()
     config.cognitive.offline_stt_enabled = True
-    # whisper_model_path default is "whisper/ggml-tiny.en.bin" relative to data_dir.
-    model_path = tmp_path / "whisper" / "ggml-tiny.en.bin"
-    model_path.parent.mkdir(parents=True)
-    model_path.write_bytes(b"fake ggml weights")
     runtime = _FakeRuntime(tmp_path, config)
     client = _make_client(runtime)
     resp = client.get("/api/voice/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["primary_stt"] == "whisper"
-    assert data["engine"] == "whisper"
+    assert data["primary_stt"] == "transformers"
+    assert data["engine"] == "transformers"
     assert data["backend_available"] is True
     assert data["healthy"] is True
+    assert data["model"] == "Xenova/whisper-tiny.en"
 
 
 def test_voice_health_endpoint_browser_primary_always_healthy(tmp_path: Path) -> None:
@@ -106,3 +110,4 @@ def test_voice_health_endpoint_browser_primary_always_healthy(tmp_path: Path) ->
     assert data["engine"] == "browser"
     assert data["backend_available"] is False
     assert data["healthy"] is True
+    assert data["model"] is None

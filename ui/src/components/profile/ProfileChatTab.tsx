@@ -2,12 +2,13 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
-// AD-826 — voice-health response shape (mirror of /api/voice/health).
+// BF-301 (was AD-826) — voice-health response shape (mirror of /api/voice/health).
 interface VoiceHealth {
-  primary_stt: 'whisper' | 'browser';
-  engine: 'whisper' | 'browser';
+  primary_stt: 'transformers' | 'whisper' | 'browser';
+  engine: 'transformers' | 'whisper' | 'browser';
   backend_available: boolean;
   healthy: boolean;
+  model?: string; // BF-301: transformers model id when engine === 'transformers'
 }
 import {
   armConversationMode,
@@ -17,11 +18,13 @@ import {
 } from '../../audio/conversationController';
 import { onSpeechEvent } from '../../audio/voice';
 import {
-  armWhisperStt,
-  disarmWhisperStt,
-  onTranscript as onWhisperTranscript,
-  onTranscribing as onWhisperTranscribing,
-} from '../../audio/whisperStt';
+  armTransformersStt as armWhisperStt,
+  disarmTransformersStt as disarmWhisperStt,
+  onTransformersTranscript as onWhisperTranscript,
+  onTransformersTranscribing as onWhisperTranscribing,
+  onTransformersProgress,
+  type TransformersProgressEvent,
+} from '../../audio/transformersStt';
 import { MicIndicator } from './MicIndicator';
 import { subscribePcm } from '../../audio/voiceActivity';
 import type { ChatAttachment } from '../../store/types';
@@ -183,6 +186,20 @@ export function ProfileChatTab({ agentId }: Props) {
     })();
     return () => { cancelled = true; };
   }, [agentId]);
+  // BF-301 (#775): first-load model download progress. Cleared once
+  // status === 'ready' or 'done'. Drives the inline mic-affordance
+  // progress bar (data-testid="bf301-progress").
+  const [transformersProgress, setTransformersProgress] = useState<TransformersProgressEvent | null>(null);
+  useEffect(() => {
+    const unsub = onTransformersProgress((event) => {
+      if (event.status === 'ready' || event.status === 'done') {
+        setTransformersProgress(null);
+      } else {
+        setTransformersProgress(event);
+      }
+    });
+    return () => { try { unsub(); } catch { /* Tier-2 */ } };
+  }, []);
   const globalVoiceEnabled = useStore((s) => s.voiceEnabled);
   const screenActive = useScreenStore((s) => s.active);
   // Per-agent TTS toggle: defaults to global setting; persisted in localStorage.
@@ -961,12 +978,15 @@ export function ProfileChatTab({ agentId }: Props) {
                   return;
                 }
                 setListening(true);
-                // AD-826 — branch by primary_stt.
+                // BF-301 (was AD-826) — branch by primary_stt. Accept
+                // both 'transformers' (new default) and 'whisper'
+                // (deprecated alias) as the local-first engine.
                 const primary = voiceHealth?.primary_stt ?? 'browser';
+                const isLocalEngine = primary === 'transformers' || primary === 'whisper';
                 const whisperHealthy =
                   voiceHealth?.healthy === true && voiceHealth?.backend_available === true;
 
-                if (primary === 'whisper' && whisperHealthy) {
+                if (isLocalEngine && whisperHealthy) {
                   // AD-826 — whisper-primary path. Mirror of AD-760's
                   // structure with engines swapped: arm whisperStt first;
                   // after 2 empty whisper transcripts, fall through to
@@ -1022,9 +1042,10 @@ export function ProfileChatTab({ agentId }: Props) {
                   return;
                 }
 
-                if (primary === 'whisper' && !whisperHealthy) {
-                  // Honest-degrade: operator asked for whisper but
-                  // artifacts are missing or offline_stt_enabled is False.
+                if (isLocalEngine && !whisperHealthy) {
+                  // Honest-degrade: operator asked for the local-first
+                  // engine but offline_stt_enabled is False (BF-301
+                  // browser owns the model fetch, no GGML probe).
                   // Fall through to browser SR for THIS press without
                   // consuming any counter.
                   console.info(
@@ -1118,6 +1139,7 @@ export function ProfileChatTab({ agentId }: Props) {
               title={
                 processing ? 'Transcribing…' :
                 listening ? 'Stop listening' :
+                voiceHealth?.engine === 'transformers' ? `Voice input (transformers · ${voiceHealth?.model ?? 'whisper-tiny.en'})` :
                 voiceHealth?.engine === 'whisper' ? 'Voice input (whisper)' :
                 voiceHealth?.engine === 'browser' ? 'Voice input (browser)' :
                 'Voice input'
@@ -1164,6 +1186,32 @@ export function ProfileChatTab({ agentId }: Props) {
                 intensity={audioIntensity}
               />
             </button>
+            {/* BF-301: first-load STT model download progress. */}
+            {transformersProgress && transformersProgress.progress !== undefined && transformersProgress.progress < 1 && (
+              <div
+                data-testid="bf301-progress"
+                style={{
+                  position: 'absolute',
+                  bottom: -4,
+                  left: 0,
+                  right: 0,
+                  height: 2,
+                  background: 'rgba(240, 176, 96, 0.15)',
+                  overflow: 'hidden',
+                  pointerEvents: 'none',
+                }}
+                title={`Loading STT model: ${Math.round((transformersProgress.progress ?? 0) * 100)}%`}
+              >
+                <div
+                  style={{
+                    width: `${Math.round((transformersProgress.progress ?? 0) * 100)}%`,
+                    height: '100%',
+                    background: '#f0b060',
+                    transition: 'width 200ms linear',
+                  }}
+                />
+              </div>
+            )}
             {micMenuOpen && (
               <div
                 ref={micMenuRef}

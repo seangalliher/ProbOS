@@ -1,6 +1,13 @@
 /**
  * AD-721b-3 — Browser-side whisper.cpp WASM loader.
  *
+ * **DEPRECATED in BF-301 (#775).** The whisper.cpp WASM artifact pipeline
+ * is abandoned upstream (HF tag deleted, CDN dead, npm package incomplete).
+ * All active call sites have been migrated to
+ * ``./transformersWorker.ts`` (@huggingface/transformers v3). This file
+ * is retained for one ProbOS release cycle to ease revert; a follow-up
+ * hygiene PR will delete it.
+ *
  * Lazy-loads the whisper.cpp WASM glue + tiny.en GGML model. The runtime
  * AND the model are both operator-pulled (``scripts/whisper-tiny-en-fetch.ps1``).
  * When any artifact is absent the loader honest-degrades to ``null`` and

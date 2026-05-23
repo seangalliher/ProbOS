@@ -47,10 +47,10 @@ import {
   type Lease,
 } from './speechRecognitionArbiter';
 import {
-  armWhisperStt,
-  disarmWhisperStt,
-  onTranscript as _onWhisperTranscript,
-} from './whisperStt';
+  armTransformersStt as armWhisperStt,
+  disarmTransformersStt as disarmWhisperStt,
+  onTransformersTranscript as _onWhisperTranscript,
+} from './transformersStt';
 import {
   subscribePcm as _subscribePcm,
   type PcmTapHandler,

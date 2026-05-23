@@ -250,6 +250,11 @@ class CognitiveConfig(BaseModel):
     # this via the browser-side whisperLoader; AD-705c reserves a future
     # negative-sample augmentation hook. Restart-required (the loader
     # caches the path at boot).
+    # BF-301: DEPRECATED. The whisper.cpp WASM artifact pipeline this
+    # path was created for is abandoned upstream. Retained for one
+    # release cycle; air-gapped operators may use it in a future AD to
+    # pre-warm the transformers.js Cache API. New deployments should
+    # ignore this field and rely on transformers.js's HF CDN fetch.
     whisper_model_path: str = "whisper/ggml-tiny.en.bin"
 
     # AD-705a (Wave 179): offline STT toggle. Default OFF (convention
@@ -271,15 +276,36 @@ class CognitiveConfig(BaseModel):
     # fallback (mirror image of AD-760's empty-counter logic). Set to
     # ``browser`` to preserve pre-AD-826 behavior (browser SR primary,
     # whisper after 2 empty transcripts). Hot-reload.
-    primary_stt: Literal["whisper", "browser"] = Field(
-        default="whisper",
+    primary_stt: Literal["transformers", "whisper", "browser"] = Field(
+        default="transformers",
         description=(
-            "AD-826: which STT engine the UI PTT handler arms first. "
-            "whisper = local whisper.cpp WASM (cross-browser, privacy-"
-            "aligned). browser = Web Speech API (Chrome-only reliable; "
-            "flaky on Edge/Firefox/Safari). When whisper is selected "
-            "AND artifacts/config are unavailable, the UI honest-"
-            "degrades to the browser engine. Hot-reload."
+            "BF-301 (was AD-826): which STT engine the UI PTT handler "
+            "arms first. transformers = local @huggingface/transformers "
+            "Whisper running in a Web Worker (cross-browser, no operator "
+            "setup, default since BF-301). whisper = DEPRECATED alias "
+            "for transformers — retained for back-compat with saved "
+            "operator configs; resolves to engine='transformers' in "
+            "the health endpoint. browser = Web Speech API (Chrome-only "
+            "reliable; flaky on Edge/Firefox/Safari). When transformers "
+            "is selected AND offline_stt_enabled is False, the UI "
+            "honest-degrades to the browser engine. Hot-reload."
+        ),
+    )
+    # BF-301 (#775): transformers.js Whisper model id. The browser-side
+    # @huggingface/transformers pipeline fetches the ONNX shards from HF
+    # CDN on first use and caches them in the browser's Cache API.
+    # Defaults to ``Xenova/whisper-tiny.en`` (~40 MB, English-only,
+    # lowest-latency tier with usable PTT accuracy). Operators on
+    # high-bandwidth machines can swap to ``Xenova/whisper-base.en`` for
+    # better accuracy at ~150 MB. The runtime does NOT validate the model
+    # id against the HF hub — typos surface as a model-load failure in
+    # the browser (the UI honest-degrades to browser SR). Hot-reload.
+    transformers_model: str = Field(
+        default="Xenova/whisper-tiny.en",
+        description=(
+            "BF-301: HuggingFace model id for the browser-side "
+            "transformers.js ASR pipeline. Browser fetches and caches; "
+            "the runtime never holds the weights. Hot-reload."
         ),
     )
     # AD-826: enable the cross-engine fallback (whisper→browser when

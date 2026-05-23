@@ -19,6 +19,16 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id: string) {
+          // BF-301: transformers.js + bundled onnxruntime-web for browser STT.
+          // Loaded only when the PTT handler arms (lazy `import('../audio/transformersStt')`).
+          if (
+            id.includes('node_modules/@huggingface/transformers') ||
+            id.includes('node_modules/onnxruntime-web') ||
+            id.includes('/ui/src/audio/transformersStt') ||
+            id.includes('/ui/src/audio/transformersWorker')
+          ) {
+            return 'stt-vendor';
+          }
           // Vendor: three.js + @pixiv/three-vrm. Heavy, only avatar/canvas
           // surfaces need them; defer until the App chunk is loaded.
           if (

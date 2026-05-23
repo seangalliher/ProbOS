@@ -2,6 +2,12 @@
  * AD-705a — Offline STT consumer driven by the AD-721b-3 whisper.cpp
  * loader and the AD-733c-7-5 VAD PCM tap.
  *
+ * **DEPRECATED in BF-301 (#775).** The whisper.cpp WASM artifact pipeline
+ * this module depends on is abandoned upstream (HF tag deleted, CDN dead,
+ * npm package incomplete). All active call sites have been migrated to
+ * ``./transformersStt.ts``. This file is retained for one ProbOS release
+ * cycle to ease revert; a follow-up hygiene PR will delete it.
+ *
  * Subscribes to the existing ``voiceActivity`` PCM tap when armed
  * (``cognitive.offline_stt_enabled = true``); collects PCM frames
  * between Silero VAD speech_start / speech_end; runs the recognized
