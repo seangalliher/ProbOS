@@ -358,3 +358,98 @@ class TestWiring:
 
         thread_sig = inspect.signature(ThreadManager.__init__)
         assert "identity_registry" in thread_sig.parameters
+
+
+# ===========================================================================
+# BF-289: Chunked migration upserts (2 tests)
+# ===========================================================================
+
+
+class TestMigrationChunking:
+    """BF-289: BF-103 must chunk upserts under ChromaDB's max batch size."""
+
+    @pytest.mark.asyncio
+    async def test_migration_chunks_large_batches(self):
+        """6000-episode migration must complete (chunked under 5461 cap)."""
+        from probos.cognitive.episodic import (
+            migrate_episode_agent_ids,
+            _MIGRATION_BATCH_SIZE,
+        )
+
+        n = 6000
+        ids = [f"ep-{i:05d}" for i in range(n)]
+        metas = [
+            {"agent_ids_json": '["slot-A"]', "timestamp": float(i)}
+            for i in range(n)
+        ]
+        docs = [f"doc {i}" for i in range(n)]
+
+        coll = MagicMock()
+        coll.get.return_value = {"ids": ids, "metadatas": metas, "documents": docs}
+        upsert_calls: list[int] = []
+
+        def _record_upsert(*, ids, metadatas, documents):  # noqa: A002
+            upsert_calls.append(len(ids))
+
+        coll.upsert.side_effect = _record_upsert
+
+        em = MagicMock()
+        em._collection = coll
+
+        registry = MagicMock()
+        cert = MagicMock()
+        cert.agent_uuid = "sovereign-A"
+        registry.get_by_slot.return_value = cert
+
+        migrated = await migrate_episode_agent_ids(em, registry)
+
+        assert migrated == n
+        assert len(upsert_calls) >= 3
+        assert all(c <= _MIGRATION_BATCH_SIZE for c in upsert_calls)
+        assert sum(upsert_calls) == n
+
+    @pytest.mark.asyncio
+    async def test_migration_continues_after_chunk_failure(self, caplog):
+        """A failed chunk must not abort the migration; surviving chunks persist."""
+        import logging
+        from probos.cognitive.episodic import (
+            migrate_episode_agent_ids,
+            _MIGRATION_BATCH_SIZE,
+        )
+
+        n = _MIGRATION_BATCH_SIZE * 3
+        ids = [f"ep-{i:05d}" for i in range(n)]
+        metas = [
+            {"agent_ids_json": '["slot-A"]', "timestamp": float(i)}
+            for i in range(n)
+        ]
+        docs = [f"doc {i}" for i in range(n)]
+
+        coll = MagicMock()
+        coll.get.return_value = {"ids": ids, "metadatas": metas, "documents": docs}
+
+        call_count = {"n": 0}
+
+        def _maybe_fail(*, ids, metadatas, documents):  # noqa: A002
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise RuntimeError("simulated chroma blip on chunk 2")
+
+        coll.upsert.side_effect = _maybe_fail
+
+        em = MagicMock()
+        em._collection = coll
+
+        registry = MagicMock()
+        cert = MagicMock()
+        cert.agent_uuid = "sovereign-A"
+        registry.get_by_slot.return_value = cert
+
+        with caplog.at_level(logging.WARNING, logger="probos.cognitive.episodic"):
+            migrated = await migrate_episode_agent_ids(em, registry)
+
+        assert migrated == _MIGRATION_BATCH_SIZE * 2
+        assert any(
+            "chunk" in rec.message.lower() and "failed" in rec.message.lower()
+            for rec in caplog.records
+        )

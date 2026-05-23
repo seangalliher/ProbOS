@@ -55,6 +55,13 @@ class _AnchorQueryView:
     causal: str = ""
     evidential: str = ""
 
+# BF-289: ChromaDB 1.5.8 caps single-call batch size at 5461. All
+# full-collection migration writes MUST chunk through this constant.
+# 2000 keeps a generous safety margin and survives Chroma version
+# bumps that might lower the cap further.
+_MIGRATION_BATCH_SIZE = 2000
+
+
 # ---------------------------------------------------------------------------
 # BF-103: Sovereign ID resolution helpers (DRY — one place for all callers)
 # ---------------------------------------------------------------------------
@@ -142,14 +149,26 @@ async def migrate_episode_agent_ids(
                 batch_metas.append(meta)
                 batch_docs.append(doc or "")
 
-        # Single batched upsert instead of N individual calls
-        if batch_ids:
-            episodic_memory._collection.upsert(
-                ids=batch_ids,
-                metadatas=batch_metas,
-                documents=batch_docs,
-            )
-        migrated = len(batch_ids)
+        # BF-289: chunk under ChromaDB's per-call batch cap (5461 in
+        # 1.5.8). Per-chunk failure is logged but does NOT abort the
+        # migration — committed chunks persist so a re-run only needs
+        # to redo the failed slice.
+        for start in range(0, len(batch_ids), _MIGRATION_BATCH_SIZE):
+            end = start + _MIGRATION_BATCH_SIZE
+            try:
+                episodic_memory._collection.upsert(
+                    ids=batch_ids[start:end],
+                    metadatas=batch_metas[start:end],
+                    documents=batch_docs[start:end],
+                )
+                migrated += (end - start) if end <= len(batch_ids) else (len(batch_ids) - start)
+            except Exception:
+                logger.warning(
+                    "BF-103: chunk %d..%d failed during sovereign-ID migration "
+                    "(%d total candidates); continuing with remaining chunks",
+                    start, min(end, len(batch_ids)), len(batch_ids),
+                    exc_info=True,
+                )
 
         elapsed = time.time() - t0
         if migrated > 0:
@@ -229,14 +248,25 @@ async def migrate_anchor_metadata(episodic_memory: "EpisodicMemory") -> int:
             batch_metas.append(meta)
             batch_docs.append(documents[i] if i < len(documents) else "")
 
-        # Single batched upsert instead of N individual calls
-        if batch_ids:
-            episodic_memory._collection.upsert(
-                ids=batch_ids,
-                metadatas=batch_metas,
-                documents=[d or "" for d in batch_docs],
-            )
-        migrated = len(batch_ids)
+        # BF-289: chunk under ChromaDB's per-call batch cap (5461 in
+        # 1.5.8). Per-chunk failure is logged but does NOT abort.
+        docs_clean = [d or "" for d in batch_docs]
+        for start in range(0, len(batch_ids), _MIGRATION_BATCH_SIZE):
+            end = start + _MIGRATION_BATCH_SIZE
+            try:
+                episodic_memory._collection.upsert(
+                    ids=batch_ids[start:end],
+                    metadatas=batch_metas[start:end],
+                    documents=docs_clean[start:end],
+                )
+                migrated += (end - start) if end <= len(batch_ids) else (len(batch_ids) - start)
+            except Exception:
+                logger.warning(
+                    "AD-570: chunk %d..%d failed during anchor metadata migration "
+                    "(%d total candidates); continuing with remaining chunks",
+                    start, min(end, len(batch_ids)), len(batch_ids),
+                    exc_info=True,
+                )
 
         elapsed = time.time() - t0
         if migrated > 0:
