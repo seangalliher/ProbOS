@@ -265,6 +265,19 @@ export function ProfileChatTab({ agentId }: Props) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
+  // BF-293: reset the empty-transcript counter when the agent replies so
+  // the whisperStt fallback isn't surprise-triggered by stale empty
+  // results from earlier conversational rounds. Counter still resets on
+  // agent-switch (line ~106), on a successful browser-SR transcript
+  // (line ~831), and when the fallback fires (line ~807); this closes
+  // the cross-turn gap.
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (last?.role === 'agent') {
+      emptyTranscriptCountRef.current = 0;
+    }
+  }, [messages.length]);
+
   // AD-430b: Fetch cross-session memories on mount
   useEffect(() => {
     fetch(`/api/agent/${agentId}/chat/history`)
