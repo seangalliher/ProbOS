@@ -16,5 +16,33 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          // Vendor: three.js + @pixiv/three-vrm. Heavy, only avatar/canvas
+          // surfaces need them; defer until the App chunk is loaded.
+          if (
+            id.includes('node_modules/three/') ||
+            id.includes('node_modules/@pixiv/three-vrm')
+          ) {
+            return 'avatar-vendor';
+          }
+          // App-side code that depends on three.js: canvas/* and avatar
+          // components. Grouping these prevents Rollup from re-fanning
+          // three-dependent modules back into the main chunk.
+          if (
+            id.includes('/ui/src/canvas/') ||
+            id.includes('/ui/src/components/profile/CrewVRM') ||
+            id.includes('/ui/src/components/profile/ParametricAvatar') ||
+            id.includes('/ui/src/components/profile/MemoryGraph3D') ||
+            id.includes('/ui/src/components/profile/CrewAvatarPopout') ||
+            id.includes('/ui/src/components/spatial/ShipLayoutView') ||
+            id.includes('/ui/src/components/CognitiveCanvas')
+          ) {
+            return 'avatar-app';
+          }
+        },
+      },
+    },
   },
 })
