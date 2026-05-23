@@ -215,7 +215,15 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             )
             _consolidation_result = "partial"
         except (asyncio.CancelledError, Exception) as e:
-            logger.warning("Shutdown consolidation failed: %s", e or type(e).__name__)
+            # BF-302: include exc_info so we can see WHAT inside dream_cycle
+            # actually fails. Previously this swallowed the traceback and
+            # only logged the exception's str(), which is empty for many
+            # exception types (KeyError, AssertionError without msg, etc.).
+            logger.warning(
+                "Shutdown consolidation failed: %s",
+                e or type(e).__name__,
+                exc_info=True,
+            )
             _consolidation_result = "failed"
 
     # BF-207: Close episodic memory (ChromaDB) immediately after dream
