@@ -130,8 +130,12 @@ def mark_clean_shutdown(
     note: str = "",
 ) -> None:
     """Atomically record a clean shutdown for the next boot to discover."""
+    # BF-297: "rebuilt" is also a clean state — AD-819 reconstructed the
+    # episodic memory from ward room journal, so the on-disk store is
+    # consistent. Treating it as "partial" would block boot after a
+    # successful recovery.
     payload = ShutdownStatusPayload(
-        status="clean" if consolidation_result == "full" else "partial",
+        status="clean" if consolidation_result in ("full", "rebuilt") else "partial",
         last_shutdown_at=time.time(),
         consolidation_result=consolidation_result,
         version=version,
@@ -237,9 +241,15 @@ def check_previous_shutdown(
         return
 
     status = payload.get("status", "unknown")
-    if status == "clean":
+    consolidation = payload.get("consolidation_result", "unknown")
+    # BF-297: a marker written by pre-fix BF-288 may have status="partial"
+    # but consolidation_result="rebuilt". Recognise that as clean defensively
+    # so legacy markers don't block boot after a successful AD-819 rebuild.
+    if status == "clean" or consolidation == "rebuilt":
         logger.info(
-            "AD-820: previous shutdown was clean at %.0f",
+            "AD-820: previous shutdown was %s (consolidation=%s) at %.0f",
+            "clean" if status == "clean" else "rebuilt",
+            consolidation,
             payload.get("last_shutdown_at", 0),
         )
         return
