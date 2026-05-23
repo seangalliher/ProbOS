@@ -5,8 +5,10 @@ import { startListening, stopListening, isSpeechRecognitionSupported } from '../
 import {
   armConversationMode,
   disarmConversationMode,
+  markAgentReplyComplete,
   type ArmOptions,
 } from '../../audio/conversationController';
+import { onSpeechEvent } from '../../audio/voice';
 import {
   armWhisperStt,
   disarmWhisperStt,
@@ -129,6 +131,38 @@ export function ProfileChatTab({ agentId }: Props) {
       },
       onTranscript: (text: string) => {
         setInput(text);
+      },
+      // BF-290: wire agent-reply path. Without this the controller posts the
+      // user transcript, gets a reply, calls _opts?.onAgentReply?.(replyText)
+      // which is undefined, advances to agent_speaking, and waits forever
+      // for markAgentReplyComplete() to be called. Stuck state blocks the
+      // next mic press because armConversationMode returns early when armed.
+      onAgentReply: (replyText: string) => {
+        // 1. Append to the per-agent conversation so the operator sees it
+        // in the DM thread.
+        useStore.getState().addAgentMessage(agentId, 'agent', replyText);
+        // 2. Speak it (when TTS is enabled for this agent) and signal
+        // controller completion when the TTS 'end' event fires. When TTS
+        // is disabled, signal completion immediately so the controller
+        // advances to silence_pending and the silence timer can run.
+        const currentTtsEnabled = localStorage.getItem(ttsKey) === '1'
+          || (localStorage.getItem(ttsKey) === null && useStore.getState().voiceEnabled);
+        if (!currentTtsEnabled) {
+          markAgentReplyComplete();
+          return;
+        }
+        // Subscribe BEFORE speakResponse so we don't race the 'start' event.
+        // We listen for the matching 'end' for this agent_id, then unsubscribe.
+        const unsub = onSpeechEvent((event) => {
+          if (event.type !== 'end') return;
+          if (event.agent_id && event.agent_id !== agentId) return;
+          try { unsub(); } catch { /* Tier-2 */ }
+          markAgentReplyComplete();
+        });
+        speakResponse(stripMarkdownForSpeech(replyText), voiceProfile ?? undefined, agentId);
+      },
+      onStateChange: (state) => {
+        console.info(`AD-747/BF-290: conversation state for ${agentId}: ${state}`);
       },
     };
     console.info(`AD-760: mic mode ${mode} armed for agent ${agentId}`);
@@ -741,6 +775,11 @@ export function ProfileChatTab({ agentId }: Props) {
                 }
                 if (listening) {
                   stopListening();
+                  // BF-290: also disarm whisper fallback in case the previous
+                  // press armed it but the operator never spoke. stopListening
+                  // only stops the browser SpeechRecognition; whisperStt is a
+                  // separate subsystem that needs explicit teardown.
+                  try { disarmWhisperStt(); } catch { /* Tier-2 */ }
                   setListening(false);
                   return;
                 }
@@ -759,6 +798,12 @@ export function ProfileChatTab({ agentId }: Props) {
                     setTimeout(() => handleSend(), 100);
                   });
                   armWhisperStt();
+                  // BF-290: clear visual "listening" state so the operator can
+                  // press again to abort (which now also disarms whisper via
+                  // the stopListening branch above). The whisper onTranscript
+                  // handler at the top of this block sets listening=false on
+                  // success; this matches that semantics on the give-up path.
+                  setListening(false);
                   return;
                 }
                 let gotResult = false;
