@@ -75,6 +75,14 @@ export function ProfileChatTab({ agentId }: Props) {
   const intensityRef = useRef(0);       // EMA accumulator, written from onFrame
   const rafPendingRef = useRef(false);  // RAF coalescing flag
 
+  // BF-300 — TTS-active gate. ``ttsActiveRef`` is the synchronous source
+  // of truth read by the PTT click handler; ``ttsActive`` state drives
+  // the MicIndicator 'muted' visual. Both update on 'start'/'end' events
+  // fired by ``audio/voice.ts`` for THIS agent (or unscoped events from
+  // legacy callers that don't pass agent_id).
+  const ttsActiveRef = useRef(false);
+  const [ttsActive, setTtsActive] = useState(false);
+
   // BF-294b — subscribe to voiceActivity PCM tap while listening; compute
   // RMS per frame, smooth via EMA (alpha=0.3, Discord-style), and flush
   // to state at RAF cadence to bound render churn. Unsubscribe and reset
@@ -271,6 +279,31 @@ export function ProfileChatTab({ agentId }: Props) {
       disarmConversationMode();
     };
   }, [agentId, micMode, globalVoiceEnabled]);
+
+  // BF-300 — persistent TTS-lifecycle subscription. Tracks every speak
+  // event for this agent so the PTT click handler can refuse to start a
+  // new SR session while TTS is playing (echo-loop guard), and the
+  // MicIndicator can show the 'muted' visual.
+  //
+  // Coexists with the per-reply subscription inside ``armConversationMode``
+  // (line ~256): that one fires ``markAgentReplyComplete`` on 'end' to
+  // hand back to the controller; this one is purely for PTT gating and
+  // does not call into the controller.
+  useEffect(() => {
+    const unsub = onSpeechEvent((event) => {
+      if (event.agent_id && event.agent_id !== agentId) return;
+      if (event.type === 'start') {
+        ttsActiveRef.current = true;
+        setTtsActive(true);
+      } else if (event.type === 'end') {
+        ttsActiveRef.current = false;
+        setTtsActive(false);
+      }
+    });
+    return () => {
+      try { unsub(); } catch { /* Tier-2 */ }
+    };
+  }, [agentId]);
 
   // AD-760: dismiss the mic popover on outside click or Escape.
   useEffect(() => {
@@ -913,6 +946,20 @@ export function ProfileChatTab({ agentId }: Props) {
                   setProcessing(false); // BF-294: cancel any pending processing visual
                   return;
                 }
+                // BF-300 — TTS-active gate. Refuse to start a new SR
+                // session while the agent's own TTS is playing through
+                // the speakers; otherwise the mic captures it and
+                // auto-sends it back as a new user message (echo loop,
+                // #774). The 'muted' MicIndicator state communicates
+                // this state to the operator (HXI #4 motion conveys
+                // state). Stop-path above is intentionally NOT gated:
+                // the operator must always be able to abort.
+                if (ttsActiveRef.current) {
+                  console.info(
+                    `BF-300: mic press ignored for agent ${agentId} — TTS playback in progress`,
+                  );
+                  return;
+                }
                 setListening(true);
                 // AD-826 — branch by primary_stt.
                 const primary = voiceHealth?.primary_stt ?? 'browser';
@@ -935,6 +982,10 @@ export function ProfileChatTab({ agentId }: Props) {
                         gotResult = true;
                         setInput(text);
                         setListening(false);
+                        // BF-300: terminate the continuous SR session so
+                        // the upcoming TTS reply isn't captured as the
+                        // next utterance (#774 echo loop).
+                        try { stopListening(); } catch { /* Tier-2 */ }
                         setTimeout(() => { void sendText(text); }, 100);
                       },
                       () => {
@@ -957,6 +1008,10 @@ export function ProfileChatTab({ agentId }: Props) {
                       emptyWhisperCountRef.current = 0;
                       setInput(text);
                       setListening(false);
+                      // BF-300: disarmWhisperStt above already terminated
+                      // whisper capture; nothing further needed here.
+                      // (The browser SR session is not running in this
+                      // path.)
                       setTimeout(() => { void sendText(text); }, 100);
                     } else {
                       emptyWhisperCountRef.current += 1;
@@ -982,6 +1037,8 @@ export function ProfileChatTab({ agentId }: Props) {
                       gotResult = true;
                       setInput(text);
                       setListening(false);
+                      // BF-300: terminate the continuous SR session — see 3a.
+                      try { stopListening(); } catch { /* Tier-2 */ }
                       setTimeout(() => { void sendText(text); }, 100);
                     },
                     () => {
@@ -1006,6 +1063,9 @@ export function ProfileChatTab({ agentId }: Props) {
                     try { disarmWhisperStt(); } catch { /* Tier-2 */ }
                     setInput(text);
                     setListening(false);
+                    // BF-300: disarmWhisperStt above terminated whisper
+                    // capture. The legacy AD-760 browser-SR path is not
+                    // running in this fallback branch.
                     // BF-292: pass ``text`` as an argument so the timer
                     // does not depend on the post-render value of ``input``.
                     setTimeout(() => { void sendText(text); }, 100);
@@ -1026,6 +1086,10 @@ export function ProfileChatTab({ agentId }: Props) {
                     emptyTranscriptCountRef.current = 0;
                     setInput(text);
                     setListening(false);
+                    // BF-300: terminate the continuous SR session so the
+                    // agent's TTS reply isn't captured and auto-sent as
+                    // the next user message (#774 echo loop).
+                    try { stopListening(); } catch { /* Tier-2 */ }
                     // BF-292: pass ``text`` as an argument so the timer
                     // does not depend on the post-render value of ``input``.
                     setTimeout(() => { void sendText(text); }, 100);
@@ -1086,7 +1150,19 @@ export function ProfileChatTab({ agentId }: Props) {
                       : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
               }}
             >
-              <MicIndicator state={processing ? 'processing' : listening ? 'listening' : 'idle'} size={14} intensity={audioIntensity} />
+              <MicIndicator
+                state={
+                  processing
+                    ? 'processing'
+                    : ttsActive
+                      ? 'muted'
+                      : listening
+                        ? 'listening'
+                        : 'idle'
+                }
+                size={14}
+                intensity={audioIntensity}
+              />
             </button>
             {micMenuOpen && (
               <div

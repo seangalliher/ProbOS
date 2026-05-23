@@ -19,7 +19,7 @@
  */
 import React from 'react';
 
-export type MicIndicatorState = 'idle' | 'listening' | 'processing';
+export type MicIndicatorState = 'idle' | 'listening' | 'processing' | 'muted';
 
 export interface MicIndicatorProps {
   state: MicIndicatorState;
@@ -37,6 +37,11 @@ const PALETTE = {
   idle: '#8888aa',
   listening: '#f0b060',
   processing: '#a08040',
+  // BF-300 — muted-during-TTS. Dim violet so it's visually distinct from
+  // both idle (grey) and processing (dim amber). HXI #4: motion
+  // communicates state — the static dashed ring tells the operator the
+  // mic is intentionally inactive, not broken.
+  muted: '#6a5a8a',
 } as const;
 
 export function MicIndicator({ state, size = 14, intensity }: MicIndicatorProps): React.ReactElement {
@@ -97,6 +102,23 @@ export function MicIndicator({ state, size = 14, intensity }: MicIndicatorProps)
             borderRadius: '50%',
             border: `1.5px dashed ${PALETTE.processing}`,
             animation: 'bf294-mic-process 1.4s linear infinite',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+      {state === 'muted' && (
+        // BF-300 — static dashed violet ring while TTS is playing.
+        // No animation: the absence of motion signals intentional
+        // suppression (vs. the active pulse of 'listening' or the
+        // shimmer of 'processing').
+        <span
+          data-testid="mic-indicator-ring-muted"
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            inset: -4,
+            borderRadius: '50%',
+            border: `1.5px dashed ${PALETTE.muted}`,
             pointerEvents: 'none',
           }}
         />
