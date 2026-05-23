@@ -317,8 +317,15 @@ export function ProfileChatTab({ agentId }: Props) {
     };
   }, [agentId]);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  // BF-292: sendText reads message body from the ``textArg`` parameter, NOT
+  // from the ``input`` state. PTT paths call ``setInput(text)`` then schedule
+  // a setTimeout; at scheduling time React has not re-rendered, so any
+  // callback that reads ``input`` from closure would see ``''`` and bail at
+  // the guard below. By taking the text as an argument we capture the
+  // transcript at call-time and bypass the stale-closure race.
+  // ``input`` is intentionally NOT in the deps array — it is not read here.
+  const sendText = useCallback(async (textArg: string) => {
+    const text = textArg.trim();
     if ((!text && pendingAttachments.length === 0) || sending) return;
     setInput('');
     setSending(true);
@@ -377,7 +384,16 @@ export function ProfileChatTab({ agentId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, input, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments]);
+  }, [agentId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments]);
+
+  // BF-292: thin shim for the textarea Enter-key + send-button paths. Reads
+  // current ``input`` at call time and forwards to sendText. The Enter-key
+  // and form-submit handlers are synchronous reactions to user keystrokes
+  // where ``input`` is guaranteed to be current, so closure-staleness is not
+  // a concern on this path.
+  const handleSend = useCallback(() => {
+    void sendText(input);
+  }, [input, sendText]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -795,7 +811,9 @@ export function ProfileChatTab({ agentId }: Props) {
                     try { disarmWhisperStt(); } catch { /* Tier-2 */ }
                     setInput(text);
                     setListening(false);
-                    setTimeout(() => handleSend(), 100);
+                    // BF-292: pass ``text`` as an argument so the timer
+                    // does not depend on the post-render value of ``input``.
+                    setTimeout(() => { void sendText(text); }, 100);
                   });
                   armWhisperStt();
                   // BF-290: clear visual "listening" state so the operator can
@@ -813,7 +831,9 @@ export function ProfileChatTab({ agentId }: Props) {
                     emptyTranscriptCountRef.current = 0;
                     setInput(text);
                     setListening(false);
-                    setTimeout(() => handleSend(), 100);
+                    // BF-292: pass ``text`` as an argument so the timer
+                    // does not depend on the post-render value of ``input``.
+                    setTimeout(() => { void sendText(text); }, 100);
                   },
                   () => {
                     if (!gotResult) {
