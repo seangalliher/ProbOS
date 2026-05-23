@@ -40,7 +40,7 @@ from typing import Literal
 logger = logging.getLogger(__name__)
 
 ShutdownStatus = Literal["clean", "partial", "aborted", "unknown"]
-ConsolidationResult = Literal["full", "partial", "skipped", "failed"]
+ConsolidationResult = Literal["full", "partial", "skipped", "failed", "rebuilt"]
 
 STATUS_FILENAME = "shutdown_status.json"
 

@@ -359,3 +359,106 @@ def test_render_report_with_errors_truncates_list():
     out = render_report(report)
     assert "errors:" in out
     assert "and 15 more" in out
+
+
+class TestShutdownMarkerReset:
+    """BF-288: successful rebuild must reset AD-820 shutdown_status.json."""
+
+    def test_successful_rebuild_resets_marker(self, tmp_path, monkeypatch):
+        """After a successful rebuild, marker should reflect consolidation_result='rebuilt'."""
+        import argparse
+        import json as _json
+        from probos.__main__ import _cmd_rebuild_episodic
+        from probos.shutdown_integrity import mark_dirty_shutdown, STATUS_FILENAME
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _build_wardroom_fixture(data_dir / "ward_room.db")
+
+        # Simulate the pre-rebuild state: previous shutdown was dirty.
+        mark_dirty_shutdown(
+            data_dir,
+            consolidation_result="failed",
+            note="simulated #750 crash",
+        )
+        marker = data_dir / STATUS_FILENAME
+        assert _json.loads(marker.read_text())["consolidation_result"] == "failed"
+
+        # Monkeypatch rebuild_from_wardroom to return a synthetic success
+        # report so the test does not require ChromaDB cold-start.
+        async def _fake_rebuild(**kwargs):
+            return RebuildReport(
+                source="wardroom",
+                dry_run=False,
+                rows_scanned=10,
+                episodes_written=10,
+                errors=[],
+            )
+
+        # The handler imports rebuild_from_wardroom inside _run, so patch
+        # at the source module.
+        import probos.maintenance.rebuild_episodic as _rebuild_mod
+        monkeypatch.setattr(_rebuild_mod, "rebuild_from_wardroom", _fake_rebuild)
+
+        # Also stub EpisodicMemory so we don't touch ChromaDB.
+        import probos.cognitive.episodic as _ep_mod
+
+        class _FakeEM:
+            def __init__(self, *a, **kw):
+                self._collection = None
+
+            async def start(self):
+                return None
+
+            async def stop(self):
+                return None
+
+            async def store(self, _ep):
+                return None
+
+        monkeypatch.setattr(_ep_mod, "EpisodicMemory", _FakeEM)
+
+        args = argparse.Namespace(
+            data_dir=data_dir,
+            config=None,
+            since=None,
+            dry_run=False,
+        )
+        rc = _cmd_rebuild_episodic(args)
+        assert rc == 0
+
+        payload = _json.loads(marker.read_text())
+        assert payload["consolidation_result"] == "rebuilt"
+        # mark_clean_shutdown writes status="partial" for any
+        # consolidation_result != "full". AD-820's boot gate only blocks
+        # on consolidation_result=="failed", so "rebuilt" boots.
+        assert payload["status"] in ("clean", "partial")
+        assert "rebuild" in payload.get("note", "").lower()
+
+    def test_dry_run_does_not_touch_marker(self, tmp_path):
+        """Dry-run must NOT reset the marker (no real recovery happened)."""
+        import argparse
+        import json as _json
+        from probos.__main__ import _cmd_rebuild_episodic
+        from probos.shutdown_integrity import mark_dirty_shutdown, STATUS_FILENAME
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _build_wardroom_fixture(data_dir / "ward_room.db")
+        mark_dirty_shutdown(
+            data_dir,
+            consolidation_result="failed",
+            note="simulated #750 crash",
+        )
+
+        args = argparse.Namespace(
+            data_dir=data_dir,
+            config=None,
+            since=None,
+            dry_run=True,
+        )
+        rc = _cmd_rebuild_episodic(args)
+        assert rc == 0
+
+        payload = _json.loads((data_dir / STATUS_FILENAME).read_text())
+        assert payload["consolidation_result"] == "failed"

@@ -1315,6 +1315,37 @@ def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
             await em.stop()
 
         console.print(render_report(report))
+
+        # BF-288: a successful rebuild IS the recovery signal. Reset the
+        # AD-820 marker so the next `probos serve` is not blocked by the
+        # `consolidation_result=failed` left over from the crash that
+        # forced the rebuild. On failure (errors present), leave the
+        # marker untouched so the operator still sees AD-820's warning.
+        if not report.errors and report.episodes_written > 0:
+            try:
+                from probos.shutdown_integrity import mark_clean_shutdown
+                mark_clean_shutdown(
+                    data_dir,
+                    consolidation_result="rebuilt",
+                    note=(
+                        f"AD-819 rebuild from {report.source}: "
+                        f"{report.episodes_written} episodes written"
+                    ),
+                )
+                console.print(
+                    "[green]✓[/green] AD-820 shutdown marker reset "
+                    "(consolidation_result=rebuilt)"
+                )
+            except Exception:
+                # Marker write failure is non-fatal — operator can re-run
+                # or delete the marker manually. Log via Console so the
+                # signal isn't lost in the rebuild summary.
+                console.print(
+                    "[yellow]![/yellow] Could not reset shutdown_status.json "
+                    "(rebuild itself succeeded; you may need to delete "
+                    "the marker manually before the next boot)."
+                )
+
         return 0 if not report.errors else 1
 
     return _asyncio.run(_run())
