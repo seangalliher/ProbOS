@@ -50,6 +50,22 @@ def _probe(data_dir: Path) -> int:
         print("ok rows=0 no-chroma-sqlite", file=sys.stdout)
         return 0
 
+    # AD-822b: structural HNSW file validation BEFORE chromadb touches
+    # the files. Catches torn writes that would segfault inside the
+    # native mmap path. Read-only, <10ms.
+    try:
+        from probos.episodic_health import validate_hnsw_files
+        validation = validate_hnsw_files(data_dir)
+    except Exception as exc:
+        # Defensive: if validation itself throws, treat as a soft
+        # failure rather than masking it with a successful open.
+        print(f"hnsw-validation-crashed: {exc!r}", file=sys.stderr)
+        return 5
+    if not validation.ok:
+        for err in validation.errors:
+            print(f"hnsw-validation: {err}", file=sys.stderr)
+        return 5
+
     try:
         client = chromadb.PersistentClient(path=str(data_dir))
     except Exception as exc:

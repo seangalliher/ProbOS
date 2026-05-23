@@ -628,6 +628,7 @@ async def _serve(
             resolved_data_dir,
             _health.error or "unknown probe failure",
             _health.duration_s,
+            file_validation_failed=_health.file_validation_failed,
         )
         console.print(f"[red]✗[/red] {_exc}")
         try:
