@@ -856,6 +856,22 @@ class MemoryConfig(BaseModel):
     # consolidation tears ChromaDB's HNSW index. Default raised to 30s so
     # normal shutdowns complete; operator can lower for fast-restart workflows.
     shutdown_consolidation_timeout_s: float = 30.0
+    # BF-295 (#748): per-migration timeout for episodic-memory startup
+    # migrations (BF-103, AD-570, AD-570b, AD-584, AD-605). Stuck or
+    # CPU-bound migrations honest-degrade to a warning after this
+    # ceiling and boot continues. Default 300s (5 min) — generous
+    # enough for AD-605 enriched re-embed on a 10k-episode store on
+    # CPU; operator can raise for very large stores or lower for
+    # fast-restart workflows. Replaces the hardcoded 120.0 in
+    # cognitive_services.py shipped with commit 44c80c70.
+    migration_timeout_s: float = Field(
+        default=300.0, ge=10.0, le=3600.0,
+        description=(
+            "BF-295 (#748): per-migration timeout in seconds for episodic-memory "
+            "startup migrations. Stuck migrations honest-degrade after this "
+            "ceiling. Default 300s; range 10s–3600s."
+        ),
+    )
     # AD-825: max seconds to wait for write-holding background tasks
     # (dream monitor loop, episodic backup) to finish their current
     # operation before the AD-824 cancel sweep force-cancels them. Drain
