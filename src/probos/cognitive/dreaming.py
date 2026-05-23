@@ -2891,6 +2891,47 @@ class DreamScheduler:
                 pass
             self._task = None
 
+    async def stop_gracefully(self, timeout: float = 30.0) -> bool:
+        """AD-825: stop the monitor loop after current dream cycle completes.
+
+        Signals the loop to stop accepting new work (``self._stopped =
+        True``) and waits up to ``timeout`` seconds for any in-flight
+        dream cycle to finish. Returns True if the loop exited cleanly
+        within the budget, False if the timeout expired and the task
+        is still alive (in which case the caller should fall through
+        to ``self.stop()`` for forceful cancellation).
+
+        Called from ``startup/shutdown.py`` BEFORE Phase 1's explicit
+        ``dream_cycle()`` so the explicit call is the only writer to
+        the Chroma collection during shutdown consolidation. Without
+        this, the monitor loop's own dream cycle could collide with
+        the shutdown's explicit cycle (concurrent writers on the same
+        collection → torn HNSW index → AD-820 ``consolidation_result=
+        failed``).
+
+        Safe to call when ``_task`` is None or already stopped — both
+        return True immediately.
+        """
+        self._stopped = True
+        if self._task is None or self._task.done():
+            return True
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(self._task), timeout=timeout,
+            )
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AD-825: DreamScheduler.stop_gracefully timed out "
+                "after %.1fs; in-flight dream cycle did not complete",
+                timeout,
+            )
+            return False
+        except asyncio.CancelledError:
+            # The shielded task can still raise CancelledError if WE
+            # are cancelled. Re-raise so the outer shutdown sees it.
+            raise
+
     async def force_dream(self) -> DreamReport:
         """Force an immediate dream cycle (for /dream now command)."""
         self._is_dreaming = True

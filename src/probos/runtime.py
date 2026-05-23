@@ -935,6 +935,20 @@ class ProbOSRuntime:
         # here — those use _nats_publish_tasks or are intentionally fire-
         # and-forget with their own bounded lifetimes.
         self._background_tasks: set[asyncio.Task] = set()
+        # AD-825: separate registry for write-holding background loops
+        # (episodic backup, dream-cycle adjacent work). The shutdown
+        # sequence drains these BEFORE the AD-824 cancel sweep so any
+        # atomic write (Chroma add/upsert, SQLite checkpoint, tar copy)
+        # can finish cleanly. Tasks that don't drain in time are
+        # force-cancelled by the AD-824 sweep that runs immediately
+        # after the drain phase.
+        self._drain_tasks: set[asyncio.Task] = set()
+        # AD-825: shutdown signal. Drain-tagged loops replace bare
+        # ``asyncio.sleep(N)`` with ``asyncio.wait_for(self._shutdown_event.wait(),
+        # timeout=N)`` so they exit cleanly the moment shutdown is
+        # initiated, instead of waiting up to N seconds for the next
+        # iteration tick.
+        self._shutdown_event: asyncio.Event = asyncio.Event()
         self._nats_events_wired: bool = False  # AD-637z: gate for inline NATS event subscription
 
         self._started = False
@@ -2310,13 +2324,17 @@ class ProbOSRuntime:
                 post_budget_telemetry=self.post_budget_telemetry,
             )
 
-        # AD-823 + AD-824: schedule the daily episodic backup loop via
-        # the runtime's background-task registry so the shutdown sweep
-        # can cancel it deterministically before AD-820's clean-shutdown
-        # marker is written.
+        # AD-823 + AD-824 + AD-825: schedule the daily episodic backup
+        # loop via the runtime's drain-on-shutdown registry. The loop
+        # writes a tar snapshot of Chroma's on-disk footprint; if
+        # cancelled mid-tar the snapshot file is corrupt. The drain
+        # phase in startup/shutdown.py gives it the configured
+        # ``memory.shutdown_drain_timeout_s`` window to finish the
+        # current tar before the AD-824 cancel sweep would fire.
         self._episodic_backup_task = self._spawn_background(
             self._episodic_backup_loop(),
             name="episodic-backup-loop",
+            drain_on_shutdown=True,
         )
 
     async def _initialize_semantic_work_layer(self) -> None:
@@ -2387,25 +2405,74 @@ class ProbOSRuntime:
     # --- BF-071: Retention prune loops ---
 
     def _spawn_background(
-        self, coro: "Coroutine[Any, Any, Any]", name: str
+        self,
+        coro: "Coroutine[Any, Any, Any]",
+        name: str,
+        *,
+        drain_on_shutdown: bool = False,
     ) -> asyncio.Task:
-        """AD-824: spawn a long-lived runtime-owned background task.
+        """AD-824 + AD-825: spawn a long-lived runtime-owned background task.
 
-        Stores the task in ``self._background_tasks`` so the shutdown
-        sweep in ``startup/shutdown.py`` can cancel it before the AD-820
-        clean-shutdown marker is written. Uses ``.discard`` (not
-        ``.remove``) in the done-callback so a duplicate removal never
-        raises.
+        By default the task is stored in ``self._background_tasks`` and
+        the shutdown sweep in ``startup/shutdown.py`` cancels it before
+        the AD-820 clean-shutdown marker is written. Uses ``.discard``
+        (not ``.remove``) in the done-callback so a duplicate removal
+        never raises.
 
         Use ONLY for loops that live for the runtime's lifetime. For
         per-event fan-out tasks (ward room alerts, QA, NATS publish)
         continue to use ``asyncio.create_task`` directly with whatever
         per-feature registry already exists.
+
+        AD-825 — ``drain_on_shutdown=True``:
+            The task is stored in ``self._drain_tasks`` instead. The
+            shutdown sequence runs a drain phase BEFORE the AD-824
+            cancel sweep: ``self._shutdown_event`` is set and the
+            shutdown awaits ``asyncio.wait(_drain_tasks,
+            timeout=memory.shutdown_drain_timeout_s)``. Tasks that
+            exit cleanly within the budget never see ``CancelledError``;
+            tasks that don't exit in time fall through to the AD-824
+            cancel sweep.
+
+            Drain-tagged loops MUST follow this contract:
+            1. Replace inner ``await asyncio.sleep(N)`` with::
+
+                   try:
+                       await asyncio.wait_for(
+                           self._shutdown_event.wait(),
+                           timeout=N,
+                       )
+                   except asyncio.TimeoutError:
+                       pass  # normal idle tick
+
+               (Exits the wait immediately on shutdown; otherwise
+               continues looping each N seconds.)
+            2. On ``self._shutdown_event.is_set()`` becoming True,
+               finish the current atomic operation (any open write)
+               inside a ``try/finally`` and ``return`` cleanly — do NOT
+               ``raise CancelledError``.
+            3. Keep the outer ``except asyncio.CancelledError:
+               <cleanup>; raise`` arm from AD-824 as the fallback path
+               for the cancel sweep.
         """
         task = asyncio.create_task(coro, name=name)
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        if drain_on_shutdown:
+            registry = self._drain_tasks
+        else:
+            registry = self._background_tasks
+        registry.add(task)
+        task.add_done_callback(registry.discard)
         return task
+
+    def _signal_drain_stop(self) -> None:
+        """AD-825: signal drain-tagged background loops to exit cleanly.
+
+        Idempotent — calling more than once is a no-op. Drain-tagged
+        loops check ``self._shutdown_event`` on every iteration and
+        return cleanly the next time they wake up.
+        """
+        if not self._shutdown_event.is_set():
+            self._shutdown_event.set()
 
     async def _event_log_prune_loop(self) -> None:
         """Periodic event log retention cleanup.
@@ -2471,27 +2538,52 @@ class ProbOSRuntime:
         backups_dir = data_dir / "backups" / "episodic"
         retain_days = self.config.memory.backup_retain_days
 
-        # Warmup: 60s after start so we don't compete with boot I/O.
-        await asyncio.sleep(60.0)
+        # AD-825: warmup before first snapshot — exit immediately if
+        # shutdown was signalled during the warmup window.
+        try:
+            await asyncio.wait_for(
+                self._shutdown_event.wait(), timeout=60.0,
+            )
+            return
+        except asyncio.TimeoutError:
+            pass
         try:
             while True:
+                # AD-825: early-exit check before starting a new tar.
+                if self._shutdown_event.is_set():
+                    return
                 try:
-                    result = snapshot_episodic(
-                        data_dir, backups_dir, retain_days=retain_days,
+                    try:
+                        result = snapshot_episodic(
+                            data_dir, backups_dir, retain_days=retain_days,
+                        )
+                        if result.ok:
+                            logger.info(
+                                "AD-823: snapshot tick ok path=%s bytes=%d skipped=%s",
+                                result.path, result.bytes_written, result.skipped_reason,
+                            )
+                        else:
+                            logger.warning(
+                                "AD-823: snapshot tick failed reason=%s",
+                                result.skipped_reason,
+                            )
+                    except Exception:
+                        logger.warning("AD-823: snapshot tick raised", exc_info=True)
+                finally:
+                    # AD-825: after the atomic tar attempt, re-check
+                    # shutdown so the loop returns cleanly without
+                    # waiting another 24h tick when drain is pending.
+                    if self._shutdown_event.is_set():
+                        return
+                # AD-825: drain-aware idle wait — wakes immediately on
+                # shutdown instead of sleeping the full 24h.
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown_event.wait(), timeout=86400.0,
                     )
-                    if result.ok:
-                        logger.info(
-                            "AD-823: snapshot tick ok path=%s bytes=%d skipped=%s",
-                            result.path, result.bytes_written, result.skipped_reason,
-                        )
-                    else:
-                        logger.warning(
-                            "AD-823: snapshot tick failed reason=%s",
-                            result.skipped_reason,
-                        )
-                except Exception:
-                    logger.warning("AD-823: snapshot tick raised", exc_info=True)
-                await asyncio.sleep(86400.0)  # 24h
+                    return
+                except asyncio.TimeoutError:
+                    pass  # normal idle tick
         except asyncio.CancelledError:
             logger.debug("AD-824: _episodic_backup_loop cancelled")
             raise

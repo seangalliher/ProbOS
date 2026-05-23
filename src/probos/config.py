@@ -825,6 +825,20 @@ class MemoryConfig(BaseModel):
     # consolidation tears ChromaDB's HNSW index. Default raised to 30s so
     # normal shutdowns complete; operator can lower for fast-restart workflows.
     shutdown_consolidation_timeout_s: float = 30.0
+    # AD-825: max seconds to wait for write-holding background tasks
+    # (dream monitor loop, episodic backup) to finish their current
+    # operation before the AD-824 cancel sweep force-cancels them. Drain
+    # is best-effort; cancel is the fallback. Default 30s mirrors
+    # shutdown_consolidation_timeout_s. Operator can lower for
+    # fast-restart workflows or raise for write-heavy snapshots.
+    shutdown_drain_timeout_s: float = Field(
+        default=30.0, ge=1.0, le=300.0,
+        description=(
+            "AD-825: max seconds to wait for write-holding tasks (dreaming, "
+            "consolidation, episodic backup) to finish current operation "
+            "before falling through to AD-824 cancel sweep."
+        ),
+    )
     # AD-821: ChromaDB HNSW per-collection sync threshold.
     # Chroma's default is 1000 records before the HNSW index flushes to disk;
     # if the process dies before that window flushes, the unsynced batch is

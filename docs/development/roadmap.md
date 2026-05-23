@@ -373,6 +373,7 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-811 | A2UI — agent-rendered interactive UI surfaces (form / list-pick / multi-select; OpenClaw "Canvas with A2UI" parity); pairs with AD-797 artifacts + AD-445 decision queue — forward marker | [#735](https://github.com/seangalliher/ProbOS/issues/735) | 3 |
 | AD-812 | Natural-language scheduled automations with platform delivery — NL parser → AD-707 cron + AD-803+ delivery sinks ("every weekday at 7am send my LinkedIn metrics to Telegram") — forward marker | [#736](https://github.com/seangalliher/ProbOS/issues/736) | 3 |
 | AD-813 | Skills hub — community-curated skill catalog + `probos skill install <url>`; agentskills.io-compatible package format; commercial-overlay seam for curated / verified hub tier — forward marker | [#737](https://github.com/seangalliher/ProbOS/issues/737) | 3 |
+| AD-825 | Drain-before-cancel shutdown semantics — insert drain phase before AD-824 cancel sweep; quiesce DreamScheduler before Phase 1 consolidation — SHIPPED Wave 192 | [#760](https://github.com/seangalliher/ProbOS/issues/760) | 2 |
 
 **From the 2026-05-08 chat-experience enhancements (Captain's request):**
 

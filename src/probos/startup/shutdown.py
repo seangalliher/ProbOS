@@ -112,6 +112,41 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         else 30.0
     )
 
+    # AD-825: quiesce the DreamScheduler monitor loop BEFORE the
+    # explicit dream_cycle below. Without this, the monitor loop can
+    # run its own dream_cycle concurrently with the explicit one, and
+    # the two writers collide on the same Chroma collection — torn
+    # HNSW index → AD-820 ``consolidation_result=failed``. We give it
+    # the configured drain budget; if it doesn't exit cleanly we log
+    # and proceed (the AD-824 cancel sweep will reap it later).
+    if runtime.dream_scheduler:
+        try:
+            _drain_budget = float(
+                getattr(
+                    getattr(runtime, "config", None), "memory", None,
+                ).shutdown_drain_timeout_s
+                if (
+                    getattr(runtime, "config", None)
+                    and getattr(runtime.config, "memory", None)
+                )
+                else 30.0
+            )
+            _ok = await runtime.dream_scheduler.stop_gracefully(
+                timeout=_drain_budget,
+            )
+            if not _ok:
+                logger.warning(
+                    "AD-825: DreamScheduler did not quiesce within %.1fs; "
+                    "proceeding to explicit consolidation (concurrent-write hazard)",
+                    _drain_budget,
+                )
+        except Exception:
+            logger.warning(
+                "AD-825: DreamScheduler.stop_gracefully raised; "
+                "proceeding to explicit consolidation",
+                exc_info=True,
+            )
+
     # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
     # Must run BEFORE pools stop (dream_cycle may trigger Ward Room notifications)
     # and BEFORE LLM client is closed (dream_cycle makes LLM calls).
@@ -162,12 +197,64 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     _phase1_elapsed = _time.monotonic() - _phase1_start
     logger.info("BF-207: Phase 1 (Critical Persistence) completed in %.1fs", _phase1_elapsed)
 
+    # AD-825: drain phase — let write-holding background loops finish
+    # their current operation (Chroma add/upsert, SQLite checkpoint,
+    # tar snapshot) before the AD-824 cancel sweep below force-cancels
+    # them. Tasks that don't drain within the budget fall through to
+    # cancel — drain is best-effort, cancel is the fallback. The drain
+    # phase must NEVER raise out of shutdown(); on error we log and
+    # proceed so the AD-820 marker still gets written.
+    drain_tasks = getattr(runtime, "_drain_tasks", None)
+    if drain_tasks:
+        try:
+            runtime._signal_drain_stop()
+            pending_snapshot = list(drain_tasks)
+            if pending_snapshot:
+                _drain_budget = float(
+                    getattr(
+                        getattr(runtime, "config", None), "memory", None,
+                    ).shutdown_drain_timeout_s
+                    if (
+                        getattr(runtime, "config", None)
+                        and getattr(runtime.config, "memory", None)
+                    )
+                    else 30.0
+                )
+                logger.info(
+                    "AD-825: draining %d write-holding task(s) (budget=%.1fs)",
+                    len(pending_snapshot), _drain_budget,
+                )
+                _, _pending = await asyncio.wait(
+                    pending_snapshot, timeout=_drain_budget,
+                )
+                for _task in _pending:
+                    logger.warning(
+                        "AD-825: drain task %s did not exit within %.1fs; "
+                        "falling through to AD-824 cancel sweep",
+                        _task.get_name(), _drain_budget,
+                    )
+        except Exception:
+            # Drain must never block the AD-820 marker — log and proceed
+            # to the cancel sweep.
+            logger.warning(
+                "AD-825: drain phase raised; proceeding to cancel sweep",
+                exc_info=True,
+            )
+
     # AD-824: cancel registered long-lived background loops so the
     # AD-820 marker write below is never blocked by a stuck task. We
     # snapshot the set into a list because the done-callback mutates it.
+    # AD-825: this also catches any drain-tagged tasks that didn't exit
+    # cleanly within the drain budget — drain was best-effort, this is
+    # the fallback. We sweep _drain_tasks here too for that reason.
     background_tasks = getattr(runtime, "_background_tasks", None)
+    drain_tasks_remaining = getattr(runtime, "_drain_tasks", None)
+    pending_snapshot: list[asyncio.Task] = []
     if background_tasks:
-        pending_snapshot = list(background_tasks)
+        pending_snapshot.extend(background_tasks)
+    if drain_tasks_remaining:
+        pending_snapshot.extend(drain_tasks_remaining)
+    if pending_snapshot:
         for _task in pending_snapshot:
             _task.cancel()
         try:
