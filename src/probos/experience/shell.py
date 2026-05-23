@@ -31,6 +31,7 @@ from probos.experience.commands import (
     commands_manifest,
 )
 from probos.experience.commands import commands_wake_word
+from probos.experience.commands import commands_insights  # AD-810
 from probos.experience.commands.approval_callbacks import (
     user_escalation_callback,
     user_self_mod_approval,
@@ -111,6 +112,7 @@ class ProbOSShell:
         "/clinical":  "Clinical telemetry (dreams/traces/breakers/audit) — Captain authority",
         "/diagnostic": "Run a multi-level system diagnostic (/diagnostic [<level>] [<focus>]) — AD-700a",
         "/debug":     "Toggle debug mode (/debug on|off)",
+        "/insights":  "Show recent-activity summary (/insights [--days N], default 7) — AD-810",
         "/help":      "Show this help message",
         "/quit":      "Exit ProbOS",
     }
@@ -249,6 +251,7 @@ class ProbOSShell:
             "/peers":      lambda: commands_status.cmd_peers(rt, con, arg),
             "/credentials": lambda: commands_status.cmd_credentials(rt, con, arg),
             "/debug":      lambda: commands_status.cmd_debug(rt, con, arg, shell=self),
+            "/insights":   lambda: commands_insights.cmd_insights(rt, con, arg),
             "/security":   lambda: commands_status.cmd_security(rt, con, arg),
             "/help":       lambda: commands_status.cmd_help(con, self.COMMANDS),
 

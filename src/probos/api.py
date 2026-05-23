@@ -212,6 +212,7 @@ def create_app(runtime: Any) -> FastAPI:
         artifacts as artifacts_router,  # AD-797 (Wave 195): artifacts pane
         teams_webhook,  # AD-805 (Wave 198): Teams Bot Framework receiver
         task_sessions as task_sessions_router,  # AD-815a (Wave 200): TaskSession
+        insights as insights_router,  # AD-810: operator-facing recent-activity summary
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -236,6 +237,7 @@ def create_app(runtime: Any) -> FastAPI:
         artifacts_router,
         teams_webhook,
         task_sessions_router,
+        insights_router,
     ):
         app.include_router(r.router)
 

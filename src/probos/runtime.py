@@ -2011,6 +2011,14 @@ class ProbOSRuntime:
         self.task_scheduler = dream_result.task_scheduler
         self._flush_task = dream_result.flush_task
         self.dreaming_engine = dream_result.dreaming_engine  # AD-690: needed by finalize wiring
+
+        # AD-810: operator-facing recent-activity summary (read-side aggregation)
+        from probos.cognitive.insights import InsightService
+        self.insight_service = InsightService(
+            runtime=self,
+            llm_client=self.llm_client,  # fast tier honest-degrades if not configured
+        )
+
         self._cold_start = cold_start
         if self._cold_start:
             self._lifecycle_state = "reset"
