@@ -30,6 +30,7 @@ import {
   type WakeAgent,
   type WakeRoute,
 } from './wakeWord.router';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 export type WakeWordState =
   | 'off'
@@ -287,7 +288,6 @@ export async function _loadOnnxRuntime(): Promise<boolean> {
   // wake-word loop arms).
   let customFilename = 'captain.onnx';
   try {
-    const { useSettingsStore } = await import('../store/useSettingsStore');
     const snapshot = useSettingsStore.getState().snapshot;
     const cognitiveCfg = (snapshot?.config as Record<string, unknown> | undefined)
       ?.['cognitive'] as Record<string, unknown> | undefined;

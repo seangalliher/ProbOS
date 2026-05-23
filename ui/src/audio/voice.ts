@@ -3,6 +3,7 @@
 import { applyEmotionalModulation } from './voiceModulation';
 import { deriveAgentSignals } from '../components/profile/avatarSignals';
 import { useStore } from '../store/useStore';
+import { injectLipSyncFrames } from './useLipSyncCapture';
 
 let voicesLoaded = false;
 let cachedVoice: SpeechSynthesisVoice | null = null;
@@ -288,7 +289,6 @@ export function speakResponse(
       // AD-738: feed visemes directly to useLipSyncCapture via the new injection setter.
       if (Array.isArray(data.visemes) && data.visemes.length > 0) {
         try {
-          const { injectLipSyncFrames } = await import('./useLipSyncCapture');
           injectLipSyncFrames(data.visemes, agent_id);
         } catch {
           // ignore — visemes are best-effort
