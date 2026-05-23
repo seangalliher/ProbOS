@@ -1,4 +1,4 @@
-# Edited via HXI 2026-05-18 09:30:19 UTC
+# Edited via HXI 2026-05-21 21:31:46 UTC
 system:
   name: ProbOS
   version: 0.4.0
@@ -52,15 +52,6 @@ cognitive:
   llm_model_vision: qwen3.6:27b
   llm_timeout_vision: 120.0
   llm_api_format_vision: openai
-  # AD-742a (Wave 174): vision_fast tier — per-frame supervisor describes.
-  # Re-enabled #680: swapped moondream → qwen2.5vl:3b after BF-315.
-  # Qwen2.5-VL is properly instruction-tuned (same family as the AD-732
-  # qwen3.6:27b deep tier, OpenAI-compat wire shape). Fallback to vision
-  # tier preserved via BF-269 if endpoint unreachable.
-  llm_base_url_vision_fast: http://127.0.0.1:11434/v1
-  llm_api_format_vision_fast: openai
-  llm_model_vision_fast: qwen2.5vl:3b
-  llm_timeout_vision_fast: 30.0
   llm_base_url_compute_use: null
   llm_api_key_compute_use: null
   llm_model_compute_use: null
@@ -69,6 +60,16 @@ cognitive:
   llm_temperature_compute_use: null
   llm_top_p_compute_use: null
   llm_max_tokens_compute_use: null
+  llm_base_url_vision_fast: http://127.0.0.1:11434/v1
+  llm_api_key_vision_fast: null
+  llm_model_vision_fast: qwen2.5vl:3b
+  llm_timeout_vision_fast: 30.0
+  llm_api_format_vision_fast: openai
+  whisper_model_path: whisper/ggml-tiny.en.bin
+  offline_stt_enabled: false
+  conversation_mode_enabled: false
+  conversation_silence_timeout_ms: 30000
+  conversation_barge_in_enabled: true
   llm_base_url_image_gen: null
   llm_api_key_image_gen: null
   llm_model_image_gen: null
@@ -599,11 +600,11 @@ security:
     anchor_mismatch_threshold: 0.7
     dp_min_cohort_size: 3
   profile: strict
-  permission_mode: manual
-  policy_engine_class: NullPolicyEngine
   permissions:
     allow: []
     deny: []
+  permission_mode: manual
+  policy_engine_class: NullPolicyEngine
 auth:
   crew_scope_token: ''
 emergent_detector:
@@ -643,7 +644,7 @@ earned_agency:
     proactive: 0.7
 duty_schedule:
   work_hours:
-    start_time: '08:00'
+    start_time: 08:00
     end_time: '18:00'
     days:
     - 0
@@ -653,13 +654,13 @@ duty_schedule:
     - 4
   quiet_hours:
     start_time: '19:00'
-    end_time: '08:00'
+    end_time: 08:00
     days: []
   scan_throttle_sec:
     inbox: 300
     calendar: 600
     teams: 900
-  daily_briefing_time: '08:00'
+  daily_briefing_time: 08:00
   briefing_reminder_throttle_sec: 3600
 proactive_cognitive:
   enabled: true
@@ -730,6 +731,21 @@ proactive_cognitive:
     use_work_items: false
   stagger_enabled: true
   min_stagger_seconds: 5.0
+  yeoman_digest_window_seconds: 60.0
+proactive_scan:
+  inbox:
+    folders:
+    - Inbox
+    lookback_hours: 24
+    importance_filter: any
+    unread_only: false
+    sender_allowlist: []
+    sender_denylist: []
+  calendar:
+    calendar_ids:
+    - primary
+    lookahead_hours: 24
+    include_declined: false
 persistent_tasks:
   enabled: true
   tick_interval_seconds: 5.0
@@ -758,13 +774,13 @@ channels:
 m365:
   enabled: false
   client_id: null
-  authority: "https://login.microsoftonline.com/common"
+  authority: https://login.microsoftonline.com/common
   scopes:
-    - "https://graph.microsoft.com/.default"
-  cache_dir: "~/.probos/m365_cache"
+  - https://graph.microsoft.com/.default
+  cache_dir: C:\Users\seang/.probos/m365_cache
 office_skills:
   enabled: true
-  template_dir: "~/.probos/templates"
+  template_dir: C:\Users\seang/.probos/templates
 medical:
   enabled: true
   vitals_interval_seconds: 5.0
@@ -884,6 +900,7 @@ security_infra:
   credential_tier_enforcement: false
   audit_persistence_enabled: false
   audit_persistence_filename: audit_log.db
+  audit_retention_days: 90
 ground_truth:
   enabled: true
   threshold: 0.75
@@ -945,7 +962,7 @@ mcp_app_host:
   external_default_csp: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'
   bundles_dir: ''
 browser_tool:
-  enabled: false
+  enabled: true
   headless: true
   default_timeout_ms: 30000
   session_max_duration_seconds: 1800
@@ -986,6 +1003,21 @@ browser_tool:
     file_path: data/credential_vault.json
     max_credentials: 100
     require_https_for_fill: true
+  action_dispatch_enabled: false
+  action_dispatch_max_consecutive_autonomous: 5
+  action_dispatch_max_per_dm_turn: 1
+  action_dispatch_ack_timeout_seconds: 60
+  destructive_url_patterns:
+  - '*/checkout*'
+  - '*/payment*'
+  - '*/billing*'
+  - '*/auth/*'
+  - '*/login*'
+  - '*/oauth*'
+  - '*/admin/*'
+  - '*/settings/account*'
+  - '*/delete*'
+  - '*/destroy*'
 avatars:
   enabled: true
   avatars_dir: data/avatars
@@ -1031,6 +1063,12 @@ avatars:
   canvas_vrm_lod_distance: 15.0
   animations_dir: data/avatars/animations
   animations_enabled: false
+  pacing_enabled: false
+  pacing_max_followups_per_active_conversation: 2
+  pacing_max_followups_per_hour_per_agent: 6
+  pacing_active_window_seconds: 600
+  pacing_min_delay_seconds: 1
+  pacing_max_delay_seconds: 300
 avatar_telemetry:
   enabled: true
   inject_into_agent_context: true
@@ -1113,6 +1151,7 @@ attachments:
   daily_image_budget_per_captain: 50
   image_budget_path: null
   vision_tier_overrides: {}
+  max_store_bytes: 5368709120
 cloud_pickers:
   enabled: false
   max_file_size_bytes: 50000000
@@ -1181,18 +1220,48 @@ perception:
     default_fps: 1
     frame_jpeg_quality: 0.6
     frame_max_dimension: 512
+  screen:
+    enabled: true
+    default_fps: 1
+  explicit_share_enabled: true
   camera_max_fps_server: 4
+  screen_max_fps_server: 2
   frame_max_size_bytes: 524288
+  frame_retention_seconds: 300
+  reaper_interval_seconds: 60
   vision_consumer_enabled: true
   vision_min_interval_seconds: 5.0
   vision_novelty_threshold: 0.15
+  vision_baseline_max_age_seconds: 30.0
+  vision_supervisor_strategy: ahash
   working_memory_capacity: 8
+  wm_persistence_enabled: true
   vision_tier: vision
+  vision_fast_tier: vision_fast
+  dm_force_describe_enabled: true
+  engaged_idle_seconds: 300.0
+  ambient_idle_seconds: 1800.0
+  idle_watchdog_tick_seconds: 30.0
   captain_avatar_ref: ''
+  identity_match_threshold: 0.6
+  identity_resolver_enabled: true
   proactive_observer_enabled: true
   proactive_max_emissions: 3
   proactive_dwell_seconds: 30.0
   proactive_novelty_threshold: 0.5
+  engaged_budget_enforcement: true
+  engaged_call_cap_per_session: 200
+  engaged_call_cap_per_day: 2000
+  vad_engagement_enabled: false
+  vad_min_speech_duration_ms: 400
+  source_fusion_enabled: true
+  fusion_window_ms: 800
+wake_word:
+  wake_word_trainer_enabled: false
+  custom_model_filename: captain.onnx
+  retain_training_samples: false
+  training_samples_max_count: 200
+  training_audio_max_bytes: 1048576
 engineering_sensors:
   enabled: true
   report_interval_seconds: 60.0
@@ -1732,12 +1801,11 @@ spc:
   enabled: true
   sample_window: 100
 desktop:
-  # AD-751: Desktop UX Surface for personal desktop environments
-  enabled: false  # Flip to true to enable desktop surface (tray, hotkey, autostart)
+  enabled: false
   tray_autostart: true
-  hotkey: "ctrl+shift+space"
+  hotkey: ctrl+shift+space
   notification_timeout_sec: 5
-  quiet_hours_start: "19:00"
-  quiet_hours_end: "08:00"
-  lock_file: "~/.probos/yeo.lock"
+  quiet_hours_start: '19:00'
+  quiet_hours_end: 08:00
+  lock_file: ~/.probos/yeo.lock
   autostart_enabled: false
