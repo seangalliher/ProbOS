@@ -13,7 +13,9 @@ import {
   armWhisperStt,
   disarmWhisperStt,
   onTranscript as onWhisperTranscript,
+  onTranscribing as onWhisperTranscribing,
 } from '../../audio/whisperStt';
+import { MicIndicator } from './MicIndicator';
 import type { ChatAttachment } from '../../store/types';
 import { ModulationIndicator } from './ModulationIndicator';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
@@ -57,6 +59,20 @@ export function ProfileChatTab({ agentId }: Props) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [listening, setListening] = useState(false);
+  // BF-294: ``processing`` is true while whisperStt is running
+  // transcribeBuffer (between speech_end and transcript delivery).
+  // Browser-SR's onend → onresult is effectively instant, so we only
+  // wire this to the whisper path. Falls back to false on error.
+  const [processing, setProcessing] = useState(false);
+  useEffect(() => {
+    const unsub = onWhisperTranscribing((active) => {
+      setProcessing(active);
+    });
+    return () => {
+      try { unsub(); } catch { /* Tier-2 */ }
+      setProcessing(false);
+    };
+  }, []);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [screenMode, setScreenMode] = useState<ScreenMode>(() => loadScreenMode(agentId));
@@ -810,6 +826,7 @@ export function ProfileChatTab({ agentId }: Props) {
                   // separate subsystem that needs explicit teardown.
                   try { disarmWhisperStt(); } catch { /* Tier-2 */ }
                   setListening(false);
+                  setProcessing(false); // BF-294: cancel any pending processing visual
                   return;
                 }
                 setListening(true);
@@ -869,36 +886,39 @@ export function ProfileChatTab({ agentId }: Props) {
                   setMicMenuOpen((open) => !open);
                 }
               }}
-              title={listening ? 'Stop listening' : 'Voice input'}
-              aria-label={listening ? 'Stop listening' : 'Voice input'}
+              title={
+                processing ? 'Transcribing…' :
+                listening ? 'Stop listening' : 'Voice input'
+              }
+              aria-label={
+                processing ? 'Transcribing speech' :
+                listening ? 'Stop listening' : 'Voice input'
+              }
               aria-haspopup="menu"
               aria-expanded={micMenuOpen}
               style={{
-                background: listening ? 'rgba(255, 102, 102, 0.15)' : 'transparent',
+                background: listening
+                  ? 'rgba(240, 176, 96, 0.12)' // amber wash, matches MicIndicator listening
+                  : processing
+                    ? 'rgba(160, 128, 64, 0.10)' // dim-amber wash
+                    : 'transparent',
                 border: 'none',
-                color: listening ? '#ff6666' : '#8888aa',
                 cursor: 'pointer',
                 fontSize: 14,
                 padding: '4px',
                 borderRadius: 4,
-                transition: 'color 0.2s, filter 0.2s',
+                transition: 'background 0.2s, filter 0.2s',
                 flexShrink: 0,
-                animation: listening ? 'pulse-mic 1s ease-in-out infinite' : undefined,
                 filter: listening
-                  ? 'drop-shadow(0 0 4px #ff6666)'
-                  : micMode === 'conversation'
-                    ? 'drop-shadow(0 0 4px #f0b060)'
-                    : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
+                  ? 'drop-shadow(0 0 4px #f0b060)'
+                  : processing
+                    ? 'drop-shadow(0 0 3px #a08040)'
+                    : micMode === 'conversation'
+                      ? 'drop-shadow(0 0 4px #f0b060)'
+                      : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
-                   stroke={listening ? '#ff6666' : micMode === 'conversation' ? '#f0b060' : 'currentColor'}
-                   strokeWidth="2" strokeLinecap="round">
-                <line x1="8" y1="2" x2="8" y2="9" />
-                <path d="M5 7c0 1.7 1.3 3 3 3s3-1.3 3-3" />
-                <line x1="8" y1="12" x2="8" y2="14" />
-                <line x1="6" y1="14" x2="10" y2="14" />
-              </svg>
+              <MicIndicator state={processing ? 'processing' : listening ? 'listening' : 'idle'} size={14} />
             </button>
             {micMenuOpen && (
               <div
@@ -1011,6 +1031,15 @@ export function ProfileChatTab({ agentId }: Props) {
         @keyframes screen-share-pulse {
           0%, 100% { opacity: 0.85; }
           50% { opacity: 1; }
+        }
+        @keyframes bf294-mic-listen {
+          0%, 100% { opacity: 0.35; transform: scale(1.0); }
+          50%      { opacity: 0.85; transform: scale(1.18); }
+        }
+        @keyframes bf294-mic-process {
+          0%   { transform: rotate(0deg);   opacity: 0.55; }
+          50%  { transform: rotate(180deg); opacity: 0.85; }
+          100% { transform: rotate(360deg); opacity: 0.55; }
         }
       `}</style>
     </div>

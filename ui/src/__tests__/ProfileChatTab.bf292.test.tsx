@@ -46,6 +46,7 @@ vi.mock('../audio/whisperStt', () => ({
   armWhisperStt: mocks.armWhisperSttMock,
   disarmWhisperStt: mocks.disarmWhisperSttMock,
   onTranscript: mocks.whisperOnTranscriptMock,
+  onTranscribing: vi.fn(() => () => {}),
 }));
 
 import { ProfileChatTab } from '../components/profile/ProfileChatTab';
