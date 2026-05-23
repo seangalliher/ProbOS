@@ -63,7 +63,13 @@ def _write_valid_hnsw_dir(
     cur_element_count: int = 50,
     size_data_per_element: int = 1676,
 ) -> Path:
-    """Construct a structurally valid HNSW segment dir."""
+    """Construct a structurally valid HNSW segment dir.
+
+    BF-298: data_level0.bin and length.bin are sized to cur_element_count
+    (the actual count), NOT max_elements (the allocation capacity). hnswlib
+    only writes up to the actual count; a real healthy HNSW with headroom
+    has data files smaller than max_elements * size_data_per_element.
+    """
     seg = parent / "deadbeef-0000-0000-0000-000000000000"
     seg.mkdir()
     header_bytes = _build_test_header(
@@ -74,10 +80,10 @@ def _write_valid_hnsw_dir(
     assert len(header_bytes) == HNSW_HEADER_BYTES
     (seg / "header.bin").write_bytes(header_bytes)
     (seg / "data_level0.bin").write_bytes(
-        b"\x00" * (size_data_per_element * max_elements)
+        b"\x00" * (size_data_per_element * cur_element_count)
     )
     (seg / "length.bin").write_bytes(
-        b"\x00" * (max_elements * HNSW_LENGTH_ENTRY_BYTES)
+        b"\x00" * (cur_element_count * HNSW_LENGTH_ENTRY_BYTES)
     )
     (seg / "link_lists.bin").write_bytes(b"\x00" * 64)
     return seg

@@ -273,28 +273,50 @@ def validate_hnsw_files(data_dir: Path) -> HnswValidationResult:
                 f"[{HNSW_MIN_SIZE_PER_ELEMENT}, {HNSW_MAX_SIZE_PER_ELEMENT}]"
             )
 
+        # BF-298: validate INTERNAL CONSISTENCY between header, length.bin,
+        # and data_level0.bin rather than against header.max_elements. The
+        # latter is allocated capacity; hnswlib only writes up to the actual
+        # element count, so a healthy non-full index always has files smaller
+        # than max_elements * size_data_per_element. AD-822b's original check
+        # false-positive blocked any healthy non-full HNSW.
+        #
+        # A real torn write produces MISMATCH between length.bin entries and
+        # header.cur_element_count, or between data_level0.bin size and what
+        # length.bin reports. Those are the invariants we actually check.
+        length_bin = entry / "length.bin"
+        length_bin_entries: int | None = None
+        if not length_bin.is_file():
+            errors.append(f"{entry.name}/length.bin: missing")
+        else:
+            length_bin_entries = length_bin.stat().st_size // HNSW_LENGTH_ENTRY_BYTES
+            # Sanity: length.bin should not exceed max_elements (allocation)
+            if length_bin_entries > header.max_elements:
+                errors.append(
+                    f"{entry.name}/length.bin: {length_bin_entries} entries "
+                    f"exceeds max_elements={header.max_elements} (allocation overrun)"
+                )
+            # The torn-write signature: header.cur_element_count mismatches
+            # length.bin. A graceful flush writes both atomically; only a
+            # partial flush leaves them disagreeing.
+            if length_bin_entries != header.cur_element_count:
+                errors.append(
+                    f"{entry.name}: header.cur_element_count={header.cur_element_count} "
+                    f"!= length.bin entries={length_bin_entries} (torn write signature)"
+                )
+
         data_level0 = entry / "data_level0.bin"
         if not data_level0.is_file():
             errors.append(f"{entry.name}/data_level0.bin: missing")
-        else:
-            expected = header.size_data_per_element * header.max_elements
+        elif length_bin_entries is not None:
+            # data_level0.bin must hold exactly length_bin_entries * size_per_element
+            # bytes — anything else indicates the data file was truncated mid-write
+            # relative to the length counter.
+            expected = header.size_data_per_element * length_bin_entries
             actual = data_level0.stat().st_size
             if actual != expected:
                 errors.append(
                     f"{entry.name}/data_level0.bin: size {actual} "
-                    f"expected {expected} (size_data_per_element * max_elements)"
-                )
-
-        length_bin = entry / "length.bin"
-        if not length_bin.is_file():
-            errors.append(f"{entry.name}/length.bin: missing")
-        else:
-            expected_entries = header.max_elements
-            actual_entries = length_bin.stat().st_size // HNSW_LENGTH_ENTRY_BYTES
-            if actual_entries != expected_entries:
-                errors.append(
-                    f"{entry.name}/length.bin: {actual_entries} entries "
-                    f"expected {expected_entries} (max_elements)"
+                    f"expected {expected} (size_data_per_element * length_bin_entries)"
                 )
 
         link_lists = entry / "link_lists.bin"
