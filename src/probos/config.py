@@ -265,6 +265,37 @@ class CognitiveConfig(BaseModel):
     # Hot-reload via the BF-308 settings watcher.
     offline_stt_enabled: bool = False
 
+    # AD-826 — Primary STT engine. ``whisper`` (default) routes PTT and
+    # conversation-mode utterances through the AD-705a browser-side
+    # whisper.cpp WASM path first; browser ``SpeechRecognition`` is the
+    # fallback (mirror image of AD-760's empty-counter logic). Set to
+    # ``browser`` to preserve pre-AD-826 behavior (browser SR primary,
+    # whisper after 2 empty transcripts). Hot-reload.
+    primary_stt: Literal["whisper", "browser"] = Field(
+        default="whisper",
+        description=(
+            "AD-826: which STT engine the UI PTT handler arms first. "
+            "whisper = local whisper.cpp WASM (cross-browser, privacy-"
+            "aligned). browser = Web Speech API (Chrome-only reliable; "
+            "flaky on Edge/Firefox/Safari). When whisper is selected "
+            "AND artifacts/config are unavailable, the UI honest-"
+            "degrades to the browser engine. Hot-reload."
+        ),
+    )
+    # AD-826: enable the cross-engine fallback (whisper→browser when
+    # primary=whisper, browser→whisper when primary=browser). Defaults
+    # to True; set False to lock the primary engine with no cross-over.
+    fallback_stt_enabled: bool = Field(
+        default=True,
+        description=(
+            "AD-826: when True, two consecutive empty transcripts from "
+            "the primary STT engine fall through to the other engine "
+            "for the next press. When False, the primary engine is the "
+            "only path and empty transcripts are surfaced as-is. "
+            "Hot-reload."
+        ),
+    )
+
     # AD-747 — Always-on conversation mode (LiveKit VoicePipelineAgent
     # pattern absorbed Apache 2.0). When ON and a DM thread is active,
     # the ConversationController acquires PRIORITY_CONVERSATION on the

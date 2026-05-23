@@ -2,6 +2,13 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
+// AD-826 — voice-health response shape (mirror of /api/voice/health).
+interface VoiceHealth {
+  primary_stt: 'whisper' | 'browser';
+  engine: 'whisper' | 'browser';
+  backend_available: boolean;
+  healthy: boolean;
+}
 import {
   armConversationMode,
   disarmConversationMode,
@@ -91,6 +98,29 @@ export function ProfileChatTab({ agentId }: Props) {
   const micMenuRef = useRef<HTMLDivElement>(null);
   // AD-760: empty-transcript count for the press-to-talk whisper fallback.
   const emptyTranscriptCountRef = useRef(0);
+  // AD-826 — separate counter for whisper-empty transcripts so that the
+  // whisper→browser fallback in primary=whisper mode is independent of
+  // the browser→whisper fallback in primary=browser mode (AD-760).
+  const emptyWhisperCountRef = useRef(0);
+  // AD-826 — fetch voice-health on mount. The health endpoint is cheap
+  // (filesystem stat); we refetch when the agent changes so a swap to
+  // a tab with different STT settings honors the new config.
+  const [voiceHealth, setVoiceHealth] = useState<VoiceHealth | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/voice/health');
+        if (!res.ok) return;
+        const data = (await res.json()) as VoiceHealth;
+        if (!cancelled) setVoiceHealth(data);
+      } catch {
+        // Tier-2 honest-degrade — without health data, the PTT handler
+        // falls through to the AD-760 browser-primary path.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [agentId]);
   const globalVoiceEnabled = useStore((s) => s.voiceEnabled);
   const screenActive = useScreenStore((s) => s.active);
   // Per-agent TTS toggle: defaults to global setting; persisted in localStorage.
@@ -830,6 +860,87 @@ export function ProfileChatTab({ agentId }: Props) {
                   return;
                 }
                 setListening(true);
+                // AD-826 — branch by primary_stt.
+                const primary = voiceHealth?.primary_stt ?? 'browser';
+                const whisperHealthy =
+                  voiceHealth?.healthy === true && voiceHealth?.backend_available === true;
+
+                if (primary === 'whisper' && whisperHealthy) {
+                  // AD-826 — whisper-primary path. Mirror of AD-760's
+                  // structure with engines swapped: arm whisperStt first;
+                  // after 2 empty whisper transcripts, fall through to
+                  // browser SR for the next press.
+                  if (emptyWhisperCountRef.current >= 2) {
+                    emptyWhisperCountRef.current = 0;
+                    console.info(
+                      `AD-826: browser-SR fallback for agent ${agentId} after 2 empty whisper transcripts`,
+                    );
+                    let gotResult = false;
+                    startListening(
+                      (text) => {
+                        gotResult = true;
+                        setInput(text);
+                        setListening(false);
+                        setTimeout(() => { void sendText(text); }, 100);
+                      },
+                      () => {
+                        // BF-293 mirror: empty browser SR in whisper-
+                        // primary fallback mode does NOT increment the
+                        // whisper counter; the operator already paid the
+                        // whisper-empty price to get here.
+                        if (!gotResult) { /* no counter update */ }
+                        setListening(false);
+                      },
+                      () => setListening(false),
+                      { continuous: true, interimResults: true, endOfSpeechGapMs: 1500 },
+                    );
+                    return;
+                  }
+                  const unsub = onWhisperTranscript((text: string) => {
+                    try { unsub(); } catch { /* Tier-2 */ }
+                    try { disarmWhisperStt(); } catch { /* Tier-2 */ }
+                    if (text && text.trim().length > 0) {
+                      emptyWhisperCountRef.current = 0;
+                      setInput(text);
+                      setListening(false);
+                      setTimeout(() => { void sendText(text); }, 100);
+                    } else {
+                      emptyWhisperCountRef.current += 1;
+                      setListening(false);
+                    }
+                  });
+                  armWhisperStt();
+                  return;
+                }
+
+                if (primary === 'whisper' && !whisperHealthy) {
+                  // Honest-degrade: operator asked for whisper but
+                  // artifacts are missing or offline_stt_enabled is False.
+                  // Fall through to browser SR for THIS press without
+                  // consuming any counter.
+                  console.info(
+                    `AD-826: whisper primary but unhealthy (backend_available=${voiceHealth?.backend_available}); ` +
+                      `using browser SR for agent ${agentId}`,
+                  );
+                  let gotResult = false;
+                  startListening(
+                    (text) => {
+                      gotResult = true;
+                      setInput(text);
+                      setListening(false);
+                      setTimeout(() => { void sendText(text); }, 100);
+                    },
+                    () => {
+                      if (!gotResult) { /* no counter update on honest-degrade press */ }
+                      setListening(false);
+                    },
+                    () => setListening(false),
+                    { continuous: true, interimResults: true, endOfSpeechGapMs: 1500 },
+                  );
+                  return;
+                }
+
+                // primary === 'browser' — AD-760 legacy path preserved verbatim.
                 if (emptyTranscriptCountRef.current >= 2) {
                   // AD-760: route the next capture through whisperStt
                   // after 2 consecutive empty browser-SpeechRecognition
@@ -888,7 +999,10 @@ export function ProfileChatTab({ agentId }: Props) {
               }}
               title={
                 processing ? 'Transcribing…' :
-                listening ? 'Stop listening' : 'Voice input'
+                listening ? 'Stop listening' :
+                voiceHealth?.engine === 'whisper' ? 'Voice input (whisper)' :
+                voiceHealth?.engine === 'browser' ? 'Voice input (browser)' :
+                'Voice input'
               }
               aria-label={
                 processing ? 'Transcribing speech' :

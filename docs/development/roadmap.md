@@ -374,6 +374,7 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-812 | Natural-language scheduled automations with platform delivery — NL parser → AD-707 cron + AD-803+ delivery sinks ("every weekday at 7am send my LinkedIn metrics to Telegram") — forward marker | [#736](https://github.com/seangalliher/ProbOS/issues/736) | 3 |
 | AD-813 | Skills hub — community-curated skill catalog + `probos skill install <url>`; agentskills.io-compatible package format; commercial-overlay seam for curated / verified hub tier — forward marker | [#737](https://github.com/seangalliher/ProbOS/issues/737) | 3 |
 | AD-825 | Drain-before-cancel shutdown semantics — insert drain phase before AD-824 cancel sweep; quiesce DreamScheduler before Phase 1 consolidation — SHIPPED Wave 192 | [#760](https://github.com/seangalliher/ProbOS/issues/760) | 2 |
+| AD-826 | Whisper-first STT priority — invert default PTT path so whisper.cpp WASM is primary; browser SpeechRecognition fallback after 2 empty whisper transcripts; new `/api/voice/health` filesystem probe — SHIPPED 2026-05-22 | [#767](https://github.com/seangalliher/ProbOS/issues/767) | 2 |
 
 **From the 2026-05-08 chat-experience enhancements (Captain's request):**
 

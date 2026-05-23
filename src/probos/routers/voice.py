@@ -31,10 +31,50 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 from probos.voice.wake_word_trainer import WakeWordTrainer, WakeWordTrainingReport
+from probos.voice.whisper_model import resolve_whisper_model_path
 
 logger = logging.getLogger("probos.routers.voice")
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
+
+
+@router.get("/health")
+async def get_voice_health(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-826 — STT engine availability for the UI PTT handler.
+
+    Returns the operator's ``cognitive.primary_stt`` selection plus an
+    honest health probe for the whisper engine. Probe is filesystem-
+    only: confirms ``cognitive.offline_stt_enabled`` is True AND the
+    operator-pulled GGML model file exists. NO subprocess, NO model
+    invocation — whisper inference runs in the browser per AD-705a.
+
+    Response shape::
+
+        {
+          "primary_stt": "whisper" | "browser",
+          "engine": "whisper" | "browser",      # primary_stt mirror
+          "backend_available": bool,             # whisper artifact present
+          "healthy": bool,                       # primary engine usable
+        }
+
+    ``healthy`` semantics:
+    * ``primary_stt == "whisper"``: True iff ``backend_available``.
+    * ``primary_stt == "browser"``: always True (the UI knows whether
+      Web Speech API is supported in the current browser; backend
+      cannot probe that).
+    """
+    config = runtime.config
+    primary = config.cognitive.primary_stt
+    offline_enabled = bool(config.cognitive.offline_stt_enabled)
+    model_path = resolve_whisper_model_path(config, runtime.data_dir)
+    backend_available = offline_enabled and model_path is not None
+    healthy = backend_available if primary == "whisper" else True
+    return {
+        "primary_stt": primary,
+        "engine": primary,
+        "backend_available": backend_available,
+        "healthy": healthy,
+    }
 
 
 _WAV_MAGIC = b"RIFF"

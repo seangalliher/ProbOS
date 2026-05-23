@@ -133,6 +133,30 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
                 ),
                 hot_reload=True,
             ),
+            # AD-826 — Whisper-first STT priority.
+            FieldDescriptor(
+                "cognitive.primary_stt",
+                "Primary STT engine",
+                "text",
+                description=(
+                    "AD-826: which STT engine PTT arms first. "
+                    "'whisper' (default) = local whisper.cpp WASM, "
+                    "cross-browser reliable. 'browser' = Web Speech "
+                    "API (Chrome-only reliable). Hot-reload."
+                ),
+                hot_reload=True,
+            ),
+            FieldDescriptor(
+                "cognitive.fallback_stt_enabled",
+                "Cross-engine STT fallback",
+                "bool",
+                description=(
+                    "AD-826: when True, two consecutive empty "
+                    "transcripts from the primary engine route the "
+                    "next press through the other engine. Hot-reload."
+                ),
+                hot_reload=True,
+            ),
             # AD-747 — Always-on conversation mode.
             FieldDescriptor(
                 "cognitive.conversation_mode_enabled",
