@@ -79,6 +79,13 @@ export default function CompactApp() {
     return () => window.removeEventListener('beforeunload', onUnload);
   }, []);
 
+  /* BF-304: fetch /api/config on mount so vad_engagement_enabled is
+   * available without requiring the operator to open Settings. */
+  const loadSnapshot = useSettingsStore((s) => s.loadSnapshot);
+  useEffect(() => {
+    void loadSnapshot();
+  }, [loadSnapshot]);
+
   const vadEnabled = useSettingsStore(
     (s) => Boolean((s.snapshot?.config as { perception?: { vad_engagement_enabled?: boolean } })?.perception?.vad_engagement_enabled),
   );

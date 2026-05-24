@@ -180,6 +180,16 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', onUnload);
   }, []);
 
+  /* BF-304: fetch /api/config on app mount so the snapshot is
+   * populated immediately, without requiring the operator to open
+   * the Settings dialog. App-level selectors that gate on snapshot
+   * values (notably vad_engagement_enabled below) need the config
+   * available at first paint, not after a manual interaction. */
+  const loadSnapshot = useSettingsStore((s) => s.loadSnapshot);
+  useEffect(() => {
+    void loadSnapshot();
+  }, [loadSnapshot]);
+
   /* AD-733c-7-5: arm/disarm the browser-side Silero VAD loop in sync
    * with the snapshot toggle. Solo-Captain deployments (default
    * vad_engagement_enabled=false) render no audio context, no mic
