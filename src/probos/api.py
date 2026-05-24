@@ -353,6 +353,34 @@ def create_app(runtime: Any) -> FastAPI:
                     response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
                 return response
 
+        # BF-305: serve operator-pulled browser-side ML model artifacts under
+        # ``/data/<class>/...`` so the UI can fetch Silero VAD + whisper.cpp
+        # WASM + ggml model bytes via the same origin as the bundle. Only
+        # whitelisted subdirs of the data dir are exposed — the rest of the
+        # data dir contains SQLite stores (trust, events, episodes, etc.)
+        # which must NEVER be reachable over HTTP. The mounts MUST be added
+        # BEFORE the catch-all ``app.mount("/", ...)`` for the HXI bundle,
+        # because FastAPI routes by registration order.
+        try:
+            _data_dir = getattr(runtime, "_data_dir", None) or getattr(runtime, "data_dir", None)
+        except Exception:
+            _data_dir = None
+        if _data_dir is not None:
+            _data_dir = Path(_data_dir)
+            for _model_subdir in ("silero-vad", "whisper"):
+                _model_path = _data_dir / _model_subdir
+                # check_dir=False keeps the mount alive even when the operator
+                # hasn't pulled the model yet — fetches just 404 cleanly.
+                try:
+                    _model_path.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
+                app.mount(
+                    f"/data/{_model_subdir}",
+                    StaticFiles(directory=str(_model_path), check_dir=False),
+                    name=f"data-{_model_subdir}",
+                )
+
         app.mount("/", _CacheAwareStaticFiles(directory=str(_ui_dist), html=True), name="hxi")
     else:
         from fastapi.responses import HTMLResponse
