@@ -196,10 +196,41 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             _shutdown_consolidation_timeout,
         )
         try:
-            report = await asyncio.wait_for(
+            # BF-303: shutdown() is typically awaited from a task that's
+            # already in cancelled state (operator Ctrl+C cancels the outer
+            # server task; the `finally:` block then awaits us). Every await
+            # in a cancelled task re-raises CancelledError, which kills
+            # dream_cycle's in-flight SQLite writes (activation_tracker,
+            # quality_router, etc.). Spawn dream_cycle in a FRESH task and
+            # shield the await so the consolidation runs to completion
+            # independent of the outer cancel state. The wait_for still
+            # bounds total time via the 30s budget.
+            _dream_task = asyncio.create_task(
                 runtime.dream_scheduler.engine.dream_cycle(),
-                timeout=_shutdown_consolidation_timeout,
+                name="shutdown-dream-cycle",
             )
+            try:
+                report = await asyncio.wait_for(
+                    asyncio.shield(_dream_task),
+                    timeout=_shutdown_consolidation_timeout,
+                )
+            except asyncio.CancelledError:
+                # Outer task cancelled us; let dream_cycle finish (shield
+                # gave us this chance). Wait for it to complete, but bound
+                # by the same budget so a stuck dream_cycle doesn't hang
+                # shutdown indefinitely.
+                logger.info(
+                    "BF-303: shutdown task cancelled mid-consolidation; "
+                    "awaiting dream_cycle completion under the same %.0fs budget",
+                    _shutdown_consolidation_timeout,
+                )
+                try:
+                    report = await asyncio.wait_for(
+                        _dream_task, timeout=_shutdown_consolidation_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    _dream_task.cancel()
+                    raise
             logger.info(
                 "Session consolidation complete: replayed=%d strengthened=%d pruned=%d",
                 report.episodes_replayed,
