@@ -167,6 +167,17 @@ export function ProfileChatTab({ agentId }: Props) {
   // whisper→browser fallback in primary=whisper mode is independent of
   // the browser→whisper fallback in primary=browser mode (AD-760).
   const emptyWhisperCountRef = useRef(0);
+  // BF-319: ref holding the current click cycle's transcript-listener
+  // unsubscribe handle. The listener was previously closed-over inside
+  // the click handler with no way for the cancel branch (a second click
+  // while listening) to unsubscribe it — leaving a zombie listener in
+  // the global _transcriptListeners set. The next click's transcript
+  // event would fan out to BOTH zombie + new listener, calling
+  // sendText() twice with the same text, double-posting the Captain's
+  // message AND triggering a duplicate agent reply. Storing the unsub
+  // on a ref lets EVERY exit path (cancel click, agent switch, unmount)
+  // tear the listener down cleanly.
+  const transcriptUnsubRef = useRef<(() => void) | null>(null);
   // AD-826 — fetch voice-health on mount. The health endpoint is cheap
   // (filesystem stat); we refetch when the agent changes so a swap to
   // a tab with different STT settings honors the new config.
@@ -959,6 +970,16 @@ export function ProfileChatTab({ agentId }: Props) {
                   // only stops the browser SpeechRecognition; whisperStt is a
                   // separate subsystem that needs explicit teardown.
                   try { disarmWhisperStt(); } catch { /* Tier-2 */ }
+                  // BF-319: tear down the per-click transcript listener so
+                  // a straggler transcript event (whisper-medium can take
+                  // 3-4s) does not fire a zombie handler. Without this,
+                  // a cancel-then-new-PTT sequence registers TWO listeners
+                  // that BOTH call sendText on the next transcript →
+                  // duplicate Captain message + duplicate agent reply.
+                  if (transcriptUnsubRef.current) {
+                    try { transcriptUnsubRef.current(); } catch { /* Tier-2 */ }
+                    transcriptUnsubRef.current = null;
+                  }
                   setListening(false);
                   setProcessing(false); // BF-294: cancel any pending processing visual
                   return;
@@ -1023,6 +1044,7 @@ export function ProfileChatTab({ agentId }: Props) {
                   }
                   const unsub = onWhisperTranscript((text: string) => {
                     try { unsub(); } catch { /* Tier-2 */ }
+                    transcriptUnsubRef.current = null; // BF-319: clear ref on natural completion
                     try { disarmWhisperStt(); } catch { /* Tier-2 */ }
                     if (text && text.trim().length > 0) {
                       emptyWhisperCountRef.current = 0;
@@ -1052,6 +1074,7 @@ export function ProfileChatTab({ agentId }: Props) {
                       setTimeout(() => setProcessing(false), 300); // BF-314 sweep
                     }
                   });
+                  transcriptUnsubRef.current = unsub; // BF-319: enable cancel-path cleanup
                   armWhisperStt();
                   return;
                 }
@@ -1095,6 +1118,7 @@ export function ProfileChatTab({ agentId }: Props) {
                   console.info(`AD-760: whisperStt fallback for agent ${agentId} after 2 empty transcripts`);
                   const unsub = onWhisperTranscript((text: string) => {
                     try { unsub(); } catch { /* Tier-2 */ }
+                    transcriptUnsubRef.current = null; // BF-319: clear ref on natural completion
                     try { disarmWhisperStt(); } catch { /* Tier-2 */ }
                     setInput(text);
                     setListening(false);
@@ -1106,6 +1130,7 @@ export function ProfileChatTab({ agentId }: Props) {
                     // does not depend on the post-render value of ``input``.
                     setTimeout(() => { void sendText(text); }, 100);
                   });
+                  transcriptUnsubRef.current = unsub; // BF-319: enable cancel-path cleanup
                   armWhisperStt();
                   // BF-290: clear visual "listening" state so the operator can
                   // press again to abort (which now also disarms whisper via
