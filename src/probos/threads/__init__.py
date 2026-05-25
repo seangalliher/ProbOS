@@ -12,8 +12,10 @@ backlog discussion — belongs to a thread. Until AD-791, /api/agent/
   workspace_root (AD-799).
 * Append-only `chat_thread_messages` table for the turn log.
 * REST CRUD via ``probos.routers.threads``.
-* IntentMessage.thread_id already exists (activation/task_event.py),
-  so emitters can set it once threads exist.
+* AD-791a adds ``IntentMessage.thread_id`` so chat-routed intents carry
+  conversation provenance through the bus; non-chat intents leave it
+  ``None``. (The earlier docstring referenced ``activation/task_event.py``
+  which is a different ``TaskEvent.thread_id`` namespace.)
 
 What v1 deliberately does NOT do:
 * Refactor /api/agent/{id}/chat to require a thread_id — that's a
@@ -80,6 +82,16 @@ class ChatThread:
     archived: bool = False
     personality_override: str | None = None
     workspace_root: str | None = None
+    # AD-791a: additive columns absorbed from huggingface/chat-ui shape.
+    # ``preprompt`` is an OVERLAY on the agent's birth-certificate
+    # instructions, not a replacement (see AD-791a Section 0). ``model``
+    # is an optional per-thread LLM tier override (e.g. "deep");
+    # NULL = use the agent's natural routing tier. ``metadata`` is a
+    # JSON-shaped dict for flexible per-thread tags (is_default,
+    # last-summarized timestamp, archive reason, etc.).
+    preprompt: str | None = None
+    model: str | None = None
+    metadata: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -94,6 +106,9 @@ class ChatThread:
             "workspace_root": self.workspace_root,
             "created_at": self.created_at,
             "last_active_at": self.last_active_at,
+            "preprompt": self.preprompt,
+            "model": self.model,
+            "metadata": dict(self.metadata),
         }
 
 
@@ -139,6 +154,9 @@ class ChatThreadStore:
         self._id_factory = id_factory
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # AD-791a: idempotent additive-column migration. SQLite has no
+            # ``ADD COLUMN IF NOT EXISTS``, so we PRAGMA-introspect first.
+            _migrate_v2(conn)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path), isolation_level=None)
@@ -269,6 +287,146 @@ class ChatThreadStore:
             cur = conn.execute("DELETE FROM chat_threads WHERE id = ?", (thread_id,))
             return cur.rowcount > 0
 
+    # ---------- AD-791a: implicit default-thread helpers ----------
+
+    def find_default_for_agent(self, agent_id: str) -> ChatThread | None:
+        """Find the implicit default 1:1 thread for an agent.
+
+        Convention (AD-791a Section 5.1): a default thread is the oldest
+        non-archived, non-project-bound row whose sole participant is the
+        given ``agent_id``. The Captain is implicit \u2014 there is only ever
+        one Captain per ProbOS instance, so ``participants = [agent_id]``
+        uniquely identifies the Captain-to-agent 1:1 thread.
+
+        Returns ``None`` if no such thread exists. Callers should use
+        ``get_or_create_default_for_agent`` instead unless they want
+        explicit no-create semantics.
+        """
+        participants_json = json.dumps([agent_id])
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM chat_threads "
+                "WHERE participants = ? AND archived = 0 AND project_id IS NULL "
+                "ORDER BY created_at ASC LIMIT 1",
+                (participants_json,),
+            ).fetchone()
+        return _row_to_thread(row) if row else None
+
+    def create_default_for_agent(
+        self, agent_id: str, agent_callsign: str
+    ) -> ChatThread:
+        """Create the default 1:1 thread for an agent with ``metadata.is_default=True``.
+
+        Title defaults to the agent's callsign (e.g. ``"Ezri"``). Not
+        race-safe on its own \u2014 callers handling concurrent first-turn
+        requests should use ``get_or_create_default_for_agent``.
+        """
+        thread_id = self._id_factory()
+        now = self._clock()
+        metadata = {"is_default": True}
+        meta_json = json.dumps(metadata)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO chat_threads "
+                "(id, title, participants, project_id, task_id, pinned, archived, "
+                " personality_override, workspace_root, created_at, last_active_at, "
+                " preprompt, model, metadata) "
+                "VALUES (?,?,?,NULL,NULL,0,0,NULL,NULL,?,?,NULL,NULL,?)",
+                (
+                    thread_id,
+                    agent_callsign,
+                    json.dumps([agent_id]),
+                    now,
+                    now,
+                    meta_json,
+                ),
+            )
+        return ChatThread(
+            id=thread_id,
+            title=agent_callsign,
+            participants=[agent_id],
+            project_id=None,
+            task_id=None,
+            pinned=False,
+            archived=False,
+            personality_override=None,
+            workspace_root=None,
+            created_at=now,
+            last_active_at=now,
+            preprompt=None,
+            model=None,
+            metadata=metadata,
+        )
+
+    def get_or_create_default_for_agent(
+        self, agent_id: str, agent_callsign: str
+    ) -> ChatThread:
+        """Atomic find-or-create: returns the implicit default 1:1 thread.
+
+        Wraps the lookup-then-insert in ``BEGIN IMMEDIATE`` so two
+        concurrent first-turn requests for the same ``agent_id`` cannot
+        both insert. The second transaction blocks on the RESERVED lock
+        held by the first, then on retry finds the row inserted by the
+        first transaction and returns it.
+
+        AD-791a Section 5.3: race-safe shim entry point. The 1:1 chat
+        router (``routers/agents.py::agent_chat``) MUST use this rather
+        than the bare ``find`` + ``create`` pair.
+        """
+        participants_json = json.dumps([agent_id])
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT * FROM chat_threads "
+                    "WHERE participants = ? AND archived = 0 "
+                    "AND project_id IS NULL "
+                    "ORDER BY created_at ASC LIMIT 1",
+                    (participants_json,),
+                ).fetchone()
+                if row is not None:
+                    conn.execute("COMMIT")
+                    return _row_to_thread(row)
+                thread_id = self._id_factory()
+                now = self._clock()
+                metadata = {"is_default": True}
+                meta_json = json.dumps(metadata)
+                conn.execute(
+                    "INSERT INTO chat_threads "
+                    "(id, title, participants, project_id, task_id, pinned, "
+                    " archived, personality_override, workspace_root, "
+                    " created_at, last_active_at, preprompt, model, metadata) "
+                    "VALUES (?,?,?,NULL,NULL,0,0,NULL,NULL,?,?,NULL,NULL,?)",
+                    (
+                        thread_id,
+                        agent_callsign,
+                        participants_json,
+                        now,
+                        now,
+                        meta_json,
+                    ),
+                )
+                conn.execute("COMMIT")
+                return ChatThread(
+                    id=thread_id,
+                    title=agent_callsign,
+                    participants=[agent_id],
+                    project_id=None,
+                    task_id=None,
+                    pinned=False,
+                    archived=False,
+                    personality_override=None,
+                    workspace_root=None,
+                    created_at=now,
+                    last_active_at=now,
+                    preprompt=None,
+                    model=None,
+                    metadata=metadata,
+                )
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
     # ---------- messages ----------
 
     def append_message(
@@ -360,6 +518,19 @@ class ChatThreadStore:
 
 
 def _row_to_thread(row: sqlite3.Row) -> ChatThread:
+    # AD-791a: read the additive v2 columns defensively. ``PRAGMA
+    # table_info``-driven migration guarantees they exist post-init,
+    # but row access via column name fails with KeyError if a stale
+    # connection was opened before migration ran in another process —
+    # so we use ``row.keys()`` membership before indexing.
+    keys = set(row.keys())
+    preprompt = row["preprompt"] if "preprompt" in keys else None
+    model = row["model"] if "model" in keys else None
+    raw_meta = row["metadata"] if "metadata" in keys else None
+    try:
+        metadata = json.loads(raw_meta) if raw_meta else {}
+    except (json.JSONDecodeError, TypeError):
+        metadata = {}
     return ChatThread(
         id=row["id"],
         title=row["title"],
@@ -372,6 +543,62 @@ def _row_to_thread(row: sqlite3.Row) -> ChatThread:
         workspace_root=row["workspace_root"],
         created_at=row["created_at"],
         last_active_at=row["last_active_at"],
+        preprompt=preprompt,
+        model=model,
+        metadata=metadata,
+    )
+
+
+def _migrate_v2(conn: sqlite3.Connection) -> None:
+    """AD-791a: idempotently add v2 columns to chat_threads / chat_thread_messages.
+
+    SQLite has no ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS``, so we
+    enumerate existing columns via ``PRAGMA table_info`` and only emit
+    DDL for columns that are missing. Safe to call on every
+    ``ChatThreadStore.__init__`` — first boot adds the columns, every
+    subsequent boot is a no-op.
+
+    Pattern absorbed from ``substrate/event_log.py`` lines 86-124
+    (translated from ``aiosqlite`` async to sync ``sqlite3``).
+    """
+    threads_cols = {row[1] for row in conn.execute("PRAGMA table_info(chat_threads)")}
+    messages_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(chat_thread_messages)")
+    }
+
+    threads_additions = {
+        "preprompt": "ALTER TABLE chat_threads ADD COLUMN preprompt TEXT",
+        "model": "ALTER TABLE chat_threads ADD COLUMN model TEXT",
+        "metadata": "ALTER TABLE chat_threads ADD COLUMN metadata TEXT",
+    }
+    for col, ddl in threads_additions.items():
+        if col not in threads_cols:
+            conn.execute(ddl)
+
+    messages_additions = {
+        "parent_message_id": (
+            "ALTER TABLE chat_thread_messages ADD COLUMN parent_message_id TEXT"
+        ),
+        "branch_ordinal": (
+            "ALTER TABLE chat_thread_messages ADD COLUMN branch_ordinal "
+            "INTEGER NOT NULL DEFAULT 0"
+        ),
+        "score": (
+            "ALTER TABLE chat_thread_messages ADD COLUMN score "
+            "INTEGER NOT NULL DEFAULT 0"
+        ),
+        "interrupted": (
+            "ALTER TABLE chat_thread_messages ADD COLUMN interrupted "
+            "INTEGER NOT NULL DEFAULT 0"
+        ),
+    }
+    for col, ddl in messages_additions.items():
+        if col not in messages_cols:
+            conn.execute(ddl)
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_branch "
+        "ON chat_thread_messages (thread_id, parent_message_id)"
     )
 
 

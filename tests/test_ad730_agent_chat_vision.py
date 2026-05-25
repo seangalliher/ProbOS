@@ -106,6 +106,12 @@ def _req(message: str = "look at this", attachment_ids: list[str] | None = None)
     r.message = message
     r.history = []
     r.attachment_ids = attachment_ids or []
+    # AD-791a: explicit None so the router's optional-thread branch
+    # short-circuits to the implicit-default lookup. MagicMock auto-creates
+    # attributes as truthy proxies otherwise, which would route this stub
+    # request through the explicit-thread path and 400 on participants
+    # mismatch.
+    r.thread_id = None
     return r
 
 

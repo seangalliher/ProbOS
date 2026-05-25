@@ -57,6 +57,14 @@ class DmReplyContext:
     avatar_event_bus: Any | None
     emotion: str | None = None
     game_move_result: dict[str, Any] | None = None
+    # AD-791a: chat-thread provenance. Passed by the router (``routers/
+    # agents.py:2089``) at construction time from ``thread.id``. Threaded
+    # into both AnchorFrame sites below (L658 action-dispatch episode,
+    # L757 DM episode) so any episode written by this pipeline carries
+    # its chat-thread tag. Defaults to ``""`` so the 7+ existing
+    # ``DmReplyContext(...)`` constructions in tests continue to pass
+    # without modification.
+    chat_thread_id: str = ""
     # AD-728d: task reference for the fire-and-forget check_own_render
     # dispatch. Held on ctx so the asyncio runtime does not GC the
     # coroutine mid-flight. Tier-2: read by tests, not by other steps.
@@ -659,6 +667,7 @@ class DmReplyPipeline:
                             channel="action",
                             trigger_type="agent_action_executed",
                             trigger_agent=self.ctx.agent_id,
+                            chat_thread_id=self.ctx.chat_thread_id,  # AD-791a
                         ),
                     )
                     await episodic.store(ep)
@@ -759,6 +768,7 @@ class DmReplyPipeline:
                         trigger_type="direct_message",
                         trigger_agent="captain",
                         participants=["captain", self.ctx.callsign or self.ctx.agent_id],
+                        chat_thread_id=self.ctx.chat_thread_id,  # AD-791a
                     ),
                 )
                 await self.ctx.runtime.episodic_memory.store(episode)

@@ -38,6 +38,10 @@ class ChatResponse(BaseModel):
     # AD-719: multi-agent fan-out attribution. Both optional for backward compat.
     mentions: list[str] = Field(default_factory=list)
     per_agent_replies: list[PerAgentReply] = Field(default_factory=list)
+    # AD-791a: chat-thread provenance. Populated by the inline-callsign and
+    # vision branches; ``None`` for the fan-out path (deferred to AD-791g)
+    # and for the no-default-thread response shapes (slash commands, etc.).
+    thread_id: str | None = None
 
 
 # ── Chat attachments (AD-720) ─────────────────────────────────────
@@ -151,6 +155,11 @@ class AgentChatRequest(BaseModel):
     # extracted text + image markers before /api/agent/{id}/chat dispatches the
     # direct_message intent. Mirrors ChatRequest.attachment_ids.
     attachment_ids: list[str] = Field(default_factory=list)
+    # AD-791a: optional explicit thread override. ``None`` (default) routes
+    # the turn to the implicit default 1:1 thread for the target agent.
+    # When set, must reference an existing thread that includes this agent
+    # in its participants list; otherwise the router returns 400.
+    thread_id: str | None = None
 
 
 # ── Ward Room models (AD-407, AD-424) ────────────────────────────

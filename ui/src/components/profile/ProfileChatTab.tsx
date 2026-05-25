@@ -530,16 +530,30 @@ export function ProfileChatTab({ agentId }: Props) {
     setPendingAttachments([]);
 
     try {
+      // AD-791a: round-trip the chat-thread ID so subsequent turns route
+      // to the same thread on the server. ``threadIdByAgent`` is empty on
+      // first turn; the server creates the implicit default and returns
+      // ``thread_id`` on the response, which we cache back into the map.
+      const knownThreadId = useStore.getState().threadIdByAgent.get(agentId);
+      const requestBody: Record<string, unknown> = {
+        message: text || '(attachment)',
+        history: fullHistory,
+        attachment_ids: attachmentIds,
+      };
+      if (knownThreadId) requestBody.thread_id = knownThreadId;
       const res = await fetch(`/api/agent/${agentId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text || '(attachment)',
-          history: fullHistory,
-          attachment_ids: attachmentIds,
-        }),
+        body: JSON.stringify(requestBody),
       });
       const data = await res.json();
+      // AD-791a: capture the server-assigned thread_id (whether it's the
+      // implicit default created on first turn or the same one echoed
+      // back on subsequent turns). Tolerate missing field so older
+      // backends keep working.
+      if (typeof data?.thread_id === 'string' && data.thread_id.length > 0) {
+        useStore.getState().setThreadForAgent(agentId, data.thread_id);
+      }
       const reply = data.response || '(no response)';
       useStore.getState().addAgentMessage(agentId, 'agent', reply);
       // AD-718: TTS playback for agent reply only (skip system error placeholders).

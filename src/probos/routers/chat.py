@@ -278,15 +278,71 @@ async def chat(
                     "results": None,
                 }
             from probos.types import IntentMessage
+            # AD-791a: inline-callsign branch — resolve the implicit default
+            # 1:1 thread for the addressed agent (parity with the
+            # /api/agent/{id}/chat handler). Tier-2 log-and-degrade: a
+            # thread-store outage cannot block the DM round-trip. The
+            # downstream cognitive-layer DM reply pipeline does NOT
+            # currently fire from this branch (no episode write today —
+            # preserves existing behavior); IntentMessage.thread_id is the
+            # wire that AD-791g's future multi-agent main-chat handler can
+            # consume.
+            _thread_store_inline = getattr(runtime, "chat_thread_store", None)
+            _inline_thread = None
+            if _thread_store_inline is not None:
+                try:
+                    _title_inline = resolved["callsign"] or resolved["agent_id"]
+                    _inline_thread = (
+                        _thread_store_inline.get_or_create_default_for_agent(
+                            resolved["agent_id"], _title_inline,
+                        )
+                    )
+                    _thread_store_inline.append_message(
+                        _inline_thread.id,
+                        author_id="captain",
+                        role="captain",
+                        body=message_text,
+                        metadata={"source": "inline_callsign"},
+                    )
+                except Exception:
+                    logger.warning(
+                        "AD-791a: inline-callsign thread resolve failed for %s",
+                        resolved["agent_id"], exc_info=True,
+                    )
+                    _inline_thread = None
             intent = IntentMessage(
                 intent="direct_message",
                 params={"text": message_text, "from": "hxi", "session": False},
                 target_agent_id=resolved["agent_id"],
                 ttl_seconds=60.0,  # AD-636: Extended TTL for Captain DMs
+                thread_id=_inline_thread.id if _inline_thread is not None else None,  # AD-791a
             )
             result = await runtime.intent_bus.send(intent)
             response = f"{resolved['callsign']}: {result.result}" if result and result.result else f"{resolved['callsign']}: (no response)"
-            return {"response": response, "dag": None, "results": None}
+            # AD-791a: log the agent reply on the thread for parity with the
+            # 1:1 endpoint. The bare ``response`` string is the user-visible
+            # text; if it's the "(no response)" fallback we still log it so
+            # the message timeline reflects what the operator saw.
+            if _inline_thread is not None:
+                try:
+                    _thread_store_inline.append_message(
+                        _inline_thread.id,
+                        author_id=resolved["agent_id"],
+                        role="agent",
+                        body=result.result if (result and result.result) else "(no response)",
+                        metadata={"intent_id": intent.id, "source": "inline_callsign"},
+                    )
+                except Exception:
+                    logger.warning(
+                        "AD-791a: inline-callsign agent-reply append failed for %s",
+                        resolved["agent_id"], exc_info=True,
+                    )
+            return {
+                "response": response,
+                "dag": None,
+                "results": None,
+                "thread_id": _inline_thread.id if _inline_thread is not None else None,  # AD-791a
+            }
         # Callsign not found — fall through to NL processing
 
     # AD-720d (Wave 139): vision pipe-through + non-image inline extraction.
@@ -424,6 +480,17 @@ async def chat(
                             anchors=AnchorFrame(
                                 channel="captain_chat",
                                 trigger_type="vision_attachment",
+                                # AD-791a: vision-routed /api/chat is Captain
+                                # ↔ LLM with no specific crew member as a
+                                # participant, so there is no default 1:1
+                                # thread to resolve here. Explicit "" makes
+                                # the namespace separation visible and
+                                # prevents future contributors from
+                                # accidentally aliasing the Ward Room
+                                # thread_id (above) into the chat-thread
+                                # namespace. Captain↔Computer threading is
+                                # AD-791g territory.
+                                chat_thread_id="",
                             ),
                         )
                         await episodic_memory.store(episode)

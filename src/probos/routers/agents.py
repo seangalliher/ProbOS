@@ -1666,6 +1666,69 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if not is_crew_agent(agent, runtime.ontology):
         raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent — direct chat is crew-only")
 
+    # AD-791a: resolve (or create) the implicit default 1:1 thread for this
+    # agent. The chat-thread substrate exists since AD-791; AD-791a wires
+    # it into the actual turn flow. ``get_or_create_default_for_agent`` is
+    # race-safe via BEGIN IMMEDIATE so two concurrent first-turn requests
+    # can't both insert. Tier-2 log-and-degrade: a missing store (early
+    # boot / test runtime) yields ``thread = None`` and the rest of the
+    # handler proceeds without thread wiring — backward-compatible with
+    # any caller that never sees chat_thread_store.
+    _thread_store = getattr(runtime, "chat_thread_store", None)
+    thread = None
+    if _thread_store is not None:
+        try:
+            _callsign_for_thread = ""
+            if hasattr(runtime, "callsign_registry"):
+                try:
+                    _callsign_for_thread = (
+                        runtime.callsign_registry.get_callsign(agent.agent_type) or ""
+                    )
+                except Exception:
+                    _callsign_for_thread = ""
+            _title = _callsign_for_thread or agent_id
+            # AD-791a: optional explicit thread_id override (forward-compat
+            # with AD-792 sidebar). When set, must reference an existing
+            # thread that includes this agent in its participants list.
+            _explicit_id = getattr(req, "thread_id", None)
+            if _explicit_id:
+                _explicit = _thread_store.get_thread(_explicit_id)
+                if _explicit is None or agent_id not in _explicit.participants:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid thread_id for this agent",
+                    )
+                thread = _explicit
+            else:
+                thread = _thread_store.get_or_create_default_for_agent(
+                    agent_id, _title,
+                )
+            # AD-791a: log the captain side of the turn before dispatch so
+            # the message log reflects the operator's input even if the
+            # downstream pipeline raises.
+            try:
+                _thread_store.append_message(
+                    thread.id,
+                    author_id="captain",
+                    role="captain",
+                    body=req.message,
+                    metadata={},
+                )
+            except Exception:
+                logger.warning(
+                    "AD-791a: append captain message failed for thread=%s agent=%s",
+                    thread.id, agent_id, exc_info=True,
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            logger.warning(
+                "AD-791a: chat-thread resolve failed for agent=%s; "
+                "continuing without thread wiring",
+                agent_id, exc_info=True,
+            )
+            thread = None
+
     # AD-743: Captain interruption cancels any pending pacing follow-up so the
     # synthesized user-turn doesn't double-fire after a fresh Captain message.
     _pacing = getattr(runtime, "conversation_pacing_scheduler", None)
@@ -2007,6 +2070,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
         params=_params,
         target_agent_id=agent_id,
         ttl_seconds=60.0,  # AD-636: Extended TTL for Captain DMs
+        thread_id=thread.id if thread is not None else None,  # AD-791a
     )
 
     # AD-722 BF (2026-05-10): refresh self-avatar snapshot before the agent
@@ -2100,9 +2164,30 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
         message_text=message_text,
         sampling_state=_sampling_state,
         avatar_event_bus=_avatar_event_bus,
+        chat_thread_id=thread.id if thread is not None else "",  # AD-791a
     ))
     await pipeline.run()
-    return pipeline.build_response()
+    response = pipeline.build_response()
+    # AD-791a: append the agent's reply to the thread message log and
+    # surface the thread_id on the response dict. Both steps are
+    # log-and-degrade so an outage in the thread store cannot block a
+    # successful DM round-trip.
+    if thread is not None:
+        try:
+            _thread_store.append_message(
+                thread.id,
+                author_id=agent_id,
+                role="agent",
+                body=response.get("response", "") or "",
+                metadata={"intent_id": intent.id},
+            )
+        except Exception:
+            logger.warning(
+                "AD-791a: append agent reply failed for thread=%s agent=%s",
+                thread.id, agent_id, exc_info=True,
+            )
+        response["thread_id"] = thread.id
+    return response
 
 
 @router.get("/{agent_id}/chat/history")

@@ -197,6 +197,32 @@ function computeLayout(
   return { agents: updated, groupCenters };
 }
 
+/**
+ * AD-791a chat-thread view.
+ *
+ * Thin shape mirroring the server's ``ChatThread.to_dict()`` payload.
+ * The AD-791a wiring uses ``id``, ``title``, ``participants``, and
+ * ``last_active_at`` for the round-trip and (future) sidebar list;
+ * other fields ride through as opaque properties so AD-792 / AD-793
+ * can consume them without another store migration.
+ */
+export interface AD791aChatThreadView {
+  id: string;
+  title: string;
+  participants: string[];
+  created_at: number;
+  last_active_at: number;
+  project_id?: string | null;
+  task_id?: string | null;
+  pinned?: boolean;
+  archived?: boolean;
+  personality_override?: string | null;
+  workspace_root?: string | null;
+  preprompt?: string | null;
+  model?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 export interface HXIState {
   // Data
   agents: Map<string, Agent>;
@@ -262,6 +288,15 @@ export interface HXIState {
   activeProfileAgent: string | null;
   profilePanelPos: { x: number; y: number };
   agentConversations: Map<string, AgentConversation>;
+  // AD-791a: chat-thread provenance round-trip. ``threadIdByAgent`` maps
+  // an agent's ID to the chat-thread the next /api/agent/{id}/chat
+  // request should reference (defaulting to the agent's implicit
+  // default 1:1 thread on the server). ``chatThreads`` is a thin view
+  // hydrated from /api/threads; the AD-792 sidebar consumes it. No
+  // existing selectors depend on these, so adding them is additive.
+  threadIdByAgent: Map<string, string>;
+  chatThreads: Map<string, AD791aChatThreadView>;
+  activeThreadId: string | null;
   // Ward Room (AD-407)
   wardRoomChannels: WardRoomChannel[];
   // Ward Room HXI (AD-407c)
@@ -367,6 +402,12 @@ export interface HXIState {
   addAgentMessage: (agentId: string, role: 'user' | 'agent', text: string) => void;
   markAgentRead: (agentId: string) => void;
   setProfilePanelPos: (pos: { x: number; y: number }) => void;
+  // AD-791a: chat-thread state setters. ProfileChatTab + CompactApp round-trip
+  // the response.thread_id field here; AD-792 sidebar consumes the hydrated map.
+  setThreadForAgent: (agentId: string, threadId: string) => void;
+  setChatThread: (thread: AD791aChatThreadView) => void;
+  setActiveThread: (threadId: string | null) => void;
+  hydrateChatThreads: (threads: AD791aChatThreadView[]) => void;
   // Crew Manifest actions (AD-513)
   openCrewManifest: () => void;
   closeCrewManifest: () => void;
@@ -559,6 +600,11 @@ export const useStore = create<HXIState>((set, get) => ({
   activeProfileAgent: null,
   profilePanelPos: { x: 100, y: 100 },
   agentConversations: new Map(),
+  // AD-791a: empty maps at boot; ProfileChatTab + hydrateChatThreads
+  // populate them as turns and /api/threads responses land.
+  threadIdByAgent: new Map(),
+  chatThreads: new Map(),
+  activeThreadId: null,
   // Ward Room (AD-407)
   wardRoomChannels: [],
   // Ward Room HXI (AD-407c)
@@ -985,6 +1031,26 @@ export const useStore = create<HXIState>((set, get) => ({
     }
   },
   setProfilePanelPos: (pos) => set({ profilePanelPos: pos }),
+  // AD-791a: chat-thread state actions. ``setThreadForAgent`` is invoked
+  // by ProfileChatTab + the inline-callsign handler in CompactApp when a
+  // server response carries thread_id. ``hydrateChatThreads`` is called
+  // once on store init (or on demand) with the /api/threads payload.
+  setThreadForAgent: (agentId, threadId) => {
+    const next = new Map(get().threadIdByAgent);
+    next.set(agentId, threadId);
+    set({ threadIdByAgent: next });
+  },
+  setChatThread: (thread) => {
+    const next = new Map(get().chatThreads);
+    next.set(thread.id, thread);
+    set({ chatThreads: next });
+  },
+  setActiveThread: (threadId) => set({ activeThreadId: threadId }),
+  hydrateChatThreads: (threads) => {
+    const next = new Map<string, AD791aChatThreadView>();
+    for (const t of threads) next.set(t.id, t);
+    set({ chatThreads: next });
+  },
   // Ward Room HXI actions (AD-407c)
   openWardRoom: async (channelId?: string) => {
     set({ wardRoomOpen: true });

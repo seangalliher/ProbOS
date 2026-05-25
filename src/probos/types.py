@@ -58,6 +58,12 @@ class IntentMessage:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     target_agent_id: str | None = None  # AD-397: if set, deliver only to this agent
+    # AD-791a: chat-thread provenance for intents dispatched from chat
+    # endpoints (1:1 DM, inline-callsign, vision). ``None`` for non-chat
+    # dispatches (proactive scans, decomposer-spawned subtasks, federation
+    # bridges, etc.). Distinct namespace from ``AnchorFrame.thread_id``
+    # (Ward Room) — see the comment block at AnchorFrame.chat_thread_id.
+    thread_id: str | None = None
 
 
 @dataclass
@@ -387,6 +393,20 @@ class AnchorFrame:
 
     # EVIDENTIAL — what corroborates this?
     thread_id: str = ""              # Ward Room thread ID for cross-reference
+    # AD-791a: chat-thread provenance for episodes originating from chat
+    # turns (1:1 DM via routers/agents.py, inline-callsign + vision via
+    # routers/chat.py, cognitive-layer DM reply pipeline). ``""`` for
+    # non-chat episodes (proactive scans, dream consolidation, action
+    # dispatches outside a chat turn, etc.).
+    #
+    # DELIBERATELY SEPARATE NAMESPACE from ``thread_id`` above. The
+    # Ward Room field is for inter-channel cross-reference within the
+    # Ward Room subsystem; ``chat_thread_id`` is for the chat-thread
+    # substrate (probos.threads.ChatThreadStore — see AD-791). Merging
+    # them would silently conflate two distinct ID spaces and break
+    # cross-thread recall ranking in future AD-810 work. Future
+    # contributors: add a NEW field; do NOT reuse either.
+    chat_thread_id: str = ""
     event_log_window: float = 0.0    # Timestamp range for EventLog cross-verification
 
     # SOURCE PROVENANCE — where did the observed data originate? (AD-662)
