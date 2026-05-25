@@ -37,6 +37,13 @@ const SAMPLE_RATE = 16000;
 // missed speech_end signal eating unbounded memory. ~30 s of 16 kHz
 // f32 mono = ~1.9 MB. Matches whisperStt.ts.
 const MAX_UTTERANCE_SAMPLES = SAMPLE_RATE * 30;
+// BF-310: pre-roll buffer length. The VAD's minSpeechMs=400 ms means
+// onSpeechStart fires ~400 ms AFTER speech actually began — without a
+// pre-roll, whisper sees audio that starts mid-word and routinely
+// hallucinates ("Testing" → "as retail"). Keep a 600 ms rolling
+// pre-buffer at all times; prepend it to the utterance when
+// speech_start fires so whisper gets the word onset.
+const PREROLL_SAMPLES = Math.floor(SAMPLE_RATE * 0.6);
 
 const DEFAULT_MODEL = 'Xenova/whisper-tiny.en';
 
@@ -58,6 +65,11 @@ interface SttState {
   unsubscribe: () => void;
   ringBuffers: Float32Array[];
   ringSampleCount: number;
+  // BF-310: rolling pre-speech buffer. Always accumulating; trimmed to
+  // ``PREROLL_SAMPLES`` worth of audio. Dumped into ``ringBuffers`` at
+  // speech_start so whisper receives the word onset.
+  preroll: Float32Array[];
+  prerollCount: number;
 }
 
 let _state: SttState | null = null;
@@ -153,10 +165,17 @@ function _buildTapHandler(): PcmTapHandler {
   return {
     onFrame(frame, _sr) {
       if (!_state) return;
-      // Only retain frames once speech has started — otherwise we'd
-      // accumulate silence between utterances unboundedly. Matches
-      // whisperStt.ts gating.
+      // BF-310: while pre-speech, accumulate into the rolling preroll
+      // buffer (FIFO trim to PREROLL_SAMPLES). Once speech_start has
+      // fired (ringBuffers non-empty), append to the utterance ring.
       if (_state.ringBuffers.length === 0 && _state.ringSampleCount === 0) {
+        // Pre-speech: append to preroll, trim oldest frames.
+        _state.preroll.push(new Float32Array(frame));
+        _state.prerollCount += frame.length;
+        while (_state.prerollCount > PREROLL_SAMPLES && _state.preroll.length > 1) {
+          const dropped = _state.preroll.shift();
+          if (dropped) _state.prerollCount -= dropped.length;
+        }
         return;
       }
       if (_state.ringSampleCount + frame.length > MAX_UTTERANCE_SAMPLES) {
@@ -168,11 +187,21 @@ function _buildTapHandler(): PcmTapHandler {
     },
     onSpeechStart(_now) {
       if (!_state) return;
-      // Seed the ring with a marker so the first onFrame past
-      // speech_start actually collects (gate above checks length 0 AND
-      // count 0). An empty buffer flips the gate.
-      _state.ringBuffers = [new Float32Array(0)];
-      _state.ringSampleCount = 0;
+      // BF-310: seed the utterance ring with the rolling pre-roll so
+      // whisper sees the word onset (otherwise the first 400 ms is
+      // lost). Clear the preroll buffer after the dump — the next
+      // utterance gathers fresh pre-roll while the current one is
+      // being collected (we keep filling preroll between utterances).
+      const seed: Float32Array[] = [];
+      let seedCount = 0;
+      for (const b of _state.preroll) {
+        seed.push(b);
+        seedCount += b.length;
+      }
+      _state.ringBuffers = seed.length > 0 ? seed : [new Float32Array(0)];
+      _state.ringSampleCount = seedCount;
+      _state.preroll = [];
+      _state.prerollCount = 0;
     },
     onSpeechEnd(_now) {
       if (!_state) return;
@@ -248,6 +277,8 @@ export function armTransformersStt(): () => void {
     unsubscribe: subscribePcm(_buildTapHandler()),
     ringBuffers: [],
     ringSampleCount: 0,
+    preroll: [],
+    prerollCount: 0,
   };
   return disarmTransformersStt;
 }
