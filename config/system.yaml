@@ -68,7 +68,7 @@ cognitive:
   whisper_model_path: whisper/ggml-tiny.en.bin
   offline_stt_enabled: true
   primary_stt: transformers
-  transformers_model: Xenova/whisper-base.en
+  transformers_model: Xenova/whisper-small.en
   fallback_stt_enabled: true
   conversation_mode_enabled: true
   conversation_silence_timeout_ms: 30000
