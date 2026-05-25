@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 from probos.api_models import ShutdownRequest
 from probos.proactive import build_proactive_status_snapshot
@@ -70,6 +71,24 @@ async def extensions(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
         "hooks": list(registered_hook_names()),
         "pre_intent_auth_hooks": list(registered_pre_intent_auth_hook_names()),
     }
+
+
+class SystemExtensionsResponse(BaseModel):
+    """BF-321 (#790): response model for ``/api/system/extensions`` stub."""
+
+    extensions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@router.get("/system/extensions", response_model=SystemExtensionsResponse)
+async def list_system_extensions() -> SystemExtensionsResponse:
+    """BF-321 (#790): stub for the UI's extensions poller.
+
+    Empty list until extension infrastructure lands (see roadmap #788
+    absorption + future mcp-dynamic-registration AD). Exists solely to
+    silence the 30s-interval ``/api/system/extensions`` 404 spam from
+    ``CommercialOverlayBadge``.
+    """
+    return SystemExtensionsResponse(extensions=[])
 
 
 @router.get("/causal-templates")

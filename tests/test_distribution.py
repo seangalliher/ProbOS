@@ -514,6 +514,19 @@ class TestFastAPIEndpoints:
         assert "pools" in data
 
     @pytest.mark.asyncio
+    async def test_system_extensions_returns_empty_list(self, app_and_runtime):
+        """BF-321 (#790): /api/system/extensions returns the empty-stub shape."""
+        from httpx import ASGITransport, AsyncClient
+
+        app, _rt = app_and_runtime
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/system/extensions")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"extensions": []}
+
+    @pytest.mark.asyncio
     async def test_chat_endpoint(self, app_and_runtime):
         """POST /api/chat processes message and returns response."""
         from httpx import ASGITransport, AsyncClient
