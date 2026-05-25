@@ -1028,24 +1028,28 @@ export function ProfileChatTab({ agentId }: Props) {
                       emptyWhisperCountRef.current = 0;
                       setInput(text);
                       setListening(false);
-                      // BF-311: defensively clear the 'processing' spinner.
-                      // After disarmWhisperStt nullifies state and schedules
-                      // a 250 ms worker.terminate(), the worker's final
-                      // ``transcribing: false`` message can be lost in the
-                      // teardown race, leaving the dashed-amber processing
-                      // ring spinning forever. The transcript landing is
-                      // an unambiguous signal that whisper finished; clear
-                      // the spinner here so we don't depend on the message
-                      // ordering. PTT semantics: mic disarms cleanly after
-                      // each utterance.
                       setProcessing(false);
+                      // BF-314: sweep ``processing`` again after 300 ms.
+                      // Belt-and-suspenders for BF-311: even when the
+                      // worker's finally-block ``transcribing: false`` is
+                      // delivered, a SECOND consumer (IntentSurface in
+                      // wake-word mode, ConversationController if armed
+                      // mid-utterance) can re-emit ``transcribing: true``
+                      // for an overlapping arm cycle and leave the
+                      // spinner stuck. By the time 300 ms has passed,
+                      // any straggler from the previous arm cycle has
+                      // arrived; force-false guarantees the spinner
+                      // clears for THIS chat tab regardless of what other
+                      // subsystems do.
+                      setTimeout(() => setProcessing(false), 300);
                       // BF-300: disarmWhisperStt above already terminated
                       // whisper capture; nothing further needed here.
                       setTimeout(() => { void sendText(text); }, 100);
                     } else {
                       emptyWhisperCountRef.current += 1;
                       setListening(false);
-                      setProcessing(false); // BF-311: same race on empty transcript path.
+                      setProcessing(false);
+                      setTimeout(() => setProcessing(false), 300); // BF-314 sweep
                     }
                   });
                   armWhisperStt();
