@@ -238,12 +238,19 @@ export function IntentSurface() {
     };
   }, [wakeWordEnabled, agentsMap]);
 
-  /* ── AD-705a: offline STT subscription.
-     Arms only when ``cognitive.offline_stt_enabled = true``. Transcripts
-     dispatch through the same handleSubmit path keyboard input takes —
-     audio bytes never leave the browser (privacy invariant). */
+  /* ── AD-705a / BF-309: offline STT subscription for the MAIN CHAT.
+     Arms only when BOTH ``cognitive.offline_stt_enabled = true`` AND
+     the Captain has explicitly enabled wake-word / always-listening
+     mode (``wakeWordEnabled``). Without the wake-word gate the main
+     chat goes hot the moment STT is enabled — and BF-308 made PCM
+     actually flow, so VAD threshold crossings on background noise
+     start auto-submitting [BLANK_AUDIO]/garbled transcripts as Captain
+     messages. Per-button PTT in 1:1 chats (ProfileChatTab) is the
+     correct path when wake-word mode is off; this branch is for
+     hands-free always-on operation only. Audio bytes never leave the
+     browser (privacy invariant). */
   useEffect(() => {
-    if (!sttEnabled) return;
+    if (!sttEnabled || !wakeWordEnabled) return;
     const unarm = armWhisperStt();
     const unsubTranscript = onTranscript((text: string) => {
       const trimmed = (text || '').trim();
@@ -263,7 +270,7 @@ export function IntentSurface() {
       try { unsubTranscribing(); } catch { /* Tier-2 */ }
       try { unarm(); } catch { /* Tier-2 */ }
     };
-  }, [sttEnabled]);
+  }, [sttEnabled, wakeWordEnabled]);
 
   /* ── DAG progress text ── */
   const dagProgress = activeDag && activeDag.length > 0

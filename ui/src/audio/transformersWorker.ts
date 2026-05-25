@@ -45,6 +45,29 @@ function _post(message: unknown): void {
   (self as unknown as Worker).postMessage(message);
 }
 
+/**
+ * BF-309: whisper emits special tokens like ``[BLANK_AUDIO]``,
+ * ``[INAUDIBLE]``, ``[MUSIC]``, ``(silence)`` for non-speech VAD
+ * windows. With BF-308 PCM now flowing live, the VAD's 0.5 threshold
+ * fires on background noise frequently — and every empty-audio
+ * transcription was being shipped as a real transcript, spamming chat
+ * with ``[BLANK_AUDIO]`` user messages. Filter at the worker boundary
+ * so no consumer sees these tokens.
+ */
+function _isMeaningfulTranscript(text: string): boolean {
+  const trimmed = (text || '').trim();
+  if (trimmed.length === 0) return false;
+  // Whisper special-token markers: bracketed [TAG] or parenthetical (tag).
+  // Examples observed in production: [BLANK_AUDIO], [INAUDIBLE], [MUSIC],
+  // [SOUND], (silence), (music), ( . . . ). If the trimmed text is ONLY
+  // a single bracketed/parenthetical token, treat as non-speech.
+  if (/^[\[\(][^\]\)]*[\]\)]$/.test(trimmed)) return false;
+  // Reject pure-punctuation transcripts (".", "...", "!") that whisper
+  // sometimes emits for silence.
+  if (/^[\p{P}\s]+$/u.test(trimmed)) return false;
+  return true;
+}
+
 self.addEventListener('message', async (e: MessageEvent) => {
   const msg = e.data;
   if (!msg || typeof msg !== 'object') return;
@@ -85,13 +108,13 @@ self.addEventListener('message', async (e: MessageEvent) => {
         // chunk_callback fires per chunk during transcription, enabling
         // progressive partial transcripts (xenova/whisper-web pattern).
         chunk_callback: (chunk: { text?: string }) => {
-          if (chunk && typeof chunk.text === 'string' && chunk.text.length > 0) {
+          if (chunk && typeof chunk.text === 'string' && _isMeaningfulTranscript(chunk.text)) {
             _post({ type: 'transcript', text: chunk.text, isPartial: true });
           }
         },
       } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
       const text = (out as { text?: string })?.text ?? '';
-      if (text.length > 0) {
+      if (_isMeaningfulTranscript(text)) {
         _post({ type: 'transcript', text, isPartial: false });
       }
     } catch (err) {
