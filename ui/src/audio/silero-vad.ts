@@ -23,17 +23,21 @@ export interface VadSession {
 
 /**
  * Internal seam — exported so vitest can stub the runtime import without
- * touching the public API. Mirrors ``wakeWord.ts:_loadOnnxRuntime``.
+ * touching the public API.
  *
- * Hard rule: NEVER replace this with a static top-level ``import`` of
- * ``onnxruntime-web``. The package lives in ``optionalDependencies`` and
- * is not installed by default — static import breaks first paint.
+ * BF-307: previously used an indirect-string + ``@vite-ignore`` pattern
+ * to keep ORT out of the bundle on the assumption that it was an
+ * operator-pulled ``optionalDependency``. That assumption was wrong
+ * (BF-306 promoted ``onnxruntime-web`` to a real dep) AND the indirection
+ * made the dynamic import resolve to a bare specifier the browser
+ * cannot resolve — ``_loadOnnxRuntime`` always returned ``null`` in
+ * production. Use a regular dynamic import so Vite code-splits ORT into
+ * its own chunk (lazy-loaded only when VAD is engaged, preserving
+ * first-paint for Captains who never enable it).
  */
 export async function _loadOnnxRuntime(): Promise<unknown | null> {
   try {
-    const moduleName = 'onnxruntime-web';
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _mod = await import(/* @vite-ignore */ moduleName);
+    const _mod = await import('onnxruntime-web');
     return _mod;
   } catch {
     return null;

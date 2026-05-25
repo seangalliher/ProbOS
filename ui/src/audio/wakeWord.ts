@@ -266,18 +266,17 @@ export function stopWakeWordLoop(): void {
  * Internal helper: dynamically import `onnxruntime-web`. Exported as `_`-
  * prefixed so tests can stub the resolution without touching public API.
  *
- * Uses an indirect string variable so Vite/Vitest do not statically analyse
- * the import — when the package is not installed, the dynamic import throws,
- * the caller catches, and the loop falls back to substring match.
- *
- * Hard requirement (AD-705 §7 #10): NEVER replace this with a static
- * top-level `import` of `onnxruntime-web`. First-paint must not regress for
- * Captains who never enable voice.
+ * BF-307: previously used an indirect string + ``@vite-ignore`` to keep
+ * ORT out of the bundle. With ``onnxruntime-web`` now a real dep
+ * (BF-306), the indirection actively broke production — the browser
+ * cannot resolve a bare specifier from a dynamic ``import()`` so this
+ * function always threw. Use a regular dynamic import so Vite
+ * code-splits ORT into its own chunk (lazy-loaded on first arm; the
+ * function is only called when the wake-word loop engages, so
+ * first-paint posture remains intact).
  */
 export async function _loadOnnxRuntime(): Promise<boolean> {
-  const moduleName = 'onnxruntime-web';
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _mod = await import(/* @vite-ignore */ moduleName);
+  const _mod = await import('onnxruntime-web');
   // AD-705c (Wave 179): prefer the Captain-trained ``captain.onnx``
   // (or the operator-configured ``cognitive.custom_model_filename``)
   // over the stock community model. The fetch order ensures the
