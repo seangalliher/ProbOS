@@ -1028,14 +1028,24 @@ export function ProfileChatTab({ agentId }: Props) {
                       emptyWhisperCountRef.current = 0;
                       setInput(text);
                       setListening(false);
+                      // BF-311: defensively clear the 'processing' spinner.
+                      // After disarmWhisperStt nullifies state and schedules
+                      // a 250 ms worker.terminate(), the worker's final
+                      // ``transcribing: false`` message can be lost in the
+                      // teardown race, leaving the dashed-amber processing
+                      // ring spinning forever. The transcript landing is
+                      // an unambiguous signal that whisper finished; clear
+                      // the spinner here so we don't depend on the message
+                      // ordering. PTT semantics: mic disarms cleanly after
+                      // each utterance.
+                      setProcessing(false);
                       // BF-300: disarmWhisperStt above already terminated
                       // whisper capture; nothing further needed here.
-                      // (The browser SR session is not running in this
-                      // path.)
                       setTimeout(() => { void sendText(text); }, 100);
                     } else {
                       emptyWhisperCountRef.current += 1;
                       setListening(false);
+                      setProcessing(false); // BF-311: same race on empty transcript path.
                     }
                   });
                   armWhisperStt();
@@ -1084,6 +1094,7 @@ export function ProfileChatTab({ agentId }: Props) {
                     try { disarmWhisperStt(); } catch { /* Tier-2 */ }
                     setInput(text);
                     setListening(false);
+                    setProcessing(false); // BF-311: clear spinner; worker teardown race can lose transcribing:false.
                     // BF-300: disarmWhisperStt above terminated whisper
                     // capture. The legacy AD-760 browser-SR path is not
                     // running in this fallback branch.
