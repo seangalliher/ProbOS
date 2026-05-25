@@ -145,23 +145,24 @@ describe('BF-301 transformersStt worker boundary', () => {
     expect(events[0].progress).toBe(0.42);
   });
 
-  it('disarmTransformersStt posts shutdown and terminates worker after grace, next arm builds fresh worker', () => {
+  it('disarmTransformersStt detaches PCM tap but keeps worker resident (BF-320); re-arm reuses worker', () => {
     vi.useFakeTimers();
     armTransformersStt();
     const first = FakeWorker.instances[0];
 
     disarmTransformersStt();
-    expect(first.posted.some((m) => m.type === 'shutdown')).toBe(true);
+    // BF-320: disarm no longer posts shutdown or terminates the worker.
+    expect(first.posted.some((m) => m.type === 'shutdown')).toBe(false);
     expect(_isArmed()).toBe(false);
 
-    // Grace timer pending — terminate not yet called.
-    expect(first.terminated).toBe(false);
+    // No grace-period terminate either — worker survives the disarm.
     vi.advanceTimersByTime(300);
-    expect(first.terminated).toBe(true);
+    expect(first.terminated).toBe(false);
 
     armTransformersStt();
-    expect(FakeWorker.instances).toHaveLength(2);
-    expect(FakeWorker.instances[1].posted[0].type).toBe('init');
+    // Same worker is reused — no fresh init / new instance.
+    expect(FakeWorker.instances).toHaveLength(1);
+    expect(_isArmed()).toBe(true);
   });
 
   it('_setTransformersModel propagates to next init', () => {

@@ -60,8 +60,7 @@ type TranscriptListener = (text: string) => void;
 type TranscribingListener = (active: boolean) => void;
 type ProgressListener = (event: TransformersProgressEvent) => void;
 
-interface SttState {
-  worker: Worker;
+interface Engaged {
   unsubscribe: () => void;
   ringBuffers: Float32Array[];
   ringSampleCount: number;
@@ -72,7 +71,12 @@ interface SttState {
   prerollCount: number;
 }
 
-let _state: SttState | null = null;
+// BF-320: worker + whisper pipeline survive across arm/disarm cycles so
+// PTT clicks don't pay the ~2-4s whisper-medium.en re-init cost.
+// ``_engaged`` carries the PCM-tap subscription + per-utterance ring
+// buffers and is allocated only while armed.
+let _worker: Worker | null = null;
+let _engaged: Engaged | null = null;
 const _transcriptListeners: Set<TranscriptListener> = new Set();
 const _transcribingListeners: Set<TranscribingListener> = new Set();
 const _progressListeners: Set<ProgressListener> = new Set();
@@ -92,11 +96,15 @@ export function _setTransformersWorkerOverride(
 
 /** Test seam — reset module-scoped state between tests. */
 export function _resetTransformersStt(): void {
-  if (_state) {
-    try { _state.unsubscribe(); } catch { /* Tier-2 */ }
-    try { _state.worker.terminate(); } catch { /* Tier-2 */ }
+  if (_engaged) {
+    try { _engaged.unsubscribe(); } catch { /* Tier-2 */ }
   }
-  _state = null;
+  _engaged = null;
+  if (_worker) {
+    try { _worker.postMessage({ type: 'shutdown' }); } catch { /* Tier-2 */ }
+    try { _worker.terminate(); } catch { /* Tier-2 */ }
+  }
+  _worker = null;
   _transcriptListeners.clear();
   _transcribingListeners.clear();
   _progressListeners.clear();
@@ -106,7 +114,7 @@ export function _resetTransformersStt(): void {
 
 /** Test seam — inspect armed state. */
 export function _isArmed(): boolean {
-  return _state !== null;
+  return _engaged !== null;
 }
 
 /**
@@ -164,29 +172,29 @@ function _defaultWorkerFactory(): Worker {
 function _buildTapHandler(): PcmTapHandler {
   return {
     onFrame(frame, _sr) {
-      if (!_state) return;
+      if (!_engaged) return;
       // BF-310: while pre-speech, accumulate into the rolling preroll
       // buffer (FIFO trim to PREROLL_SAMPLES). Once speech_start has
       // fired (ringBuffers non-empty), append to the utterance ring.
-      if (_state.ringBuffers.length === 0 && _state.ringSampleCount === 0) {
+      if (_engaged.ringBuffers.length === 0 && _engaged.ringSampleCount === 0) {
         // Pre-speech: append to preroll, trim oldest frames.
-        _state.preroll.push(new Float32Array(frame));
-        _state.prerollCount += frame.length;
-        while (_state.prerollCount > PREROLL_SAMPLES && _state.preroll.length > 1) {
-          const dropped = _state.preroll.shift();
-          if (dropped) _state.prerollCount -= dropped.length;
+        _engaged.preroll.push(new Float32Array(frame));
+        _engaged.prerollCount += frame.length;
+        while (_engaged.prerollCount > PREROLL_SAMPLES && _engaged.preroll.length > 1) {
+          const dropped = _engaged.preroll.shift();
+          if (dropped) _engaged.prerollCount -= dropped.length;
         }
         return;
       }
-      if (_state.ringSampleCount + frame.length > MAX_UTTERANCE_SAMPLES) {
+      if (_engaged.ringSampleCount + frame.length > MAX_UTTERANCE_SAMPLES) {
         return;
       }
       // Defensive copy — the VAD loop may reuse the buffer.
-      _state.ringBuffers.push(new Float32Array(frame));
-      _state.ringSampleCount += frame.length;
+      _engaged.ringBuffers.push(new Float32Array(frame));
+      _engaged.ringSampleCount += frame.length;
     },
     onSpeechStart(_now) {
-      if (!_state) return;
+      if (!_engaged) return;
       // BF-310: seed the utterance ring with the rolling pre-roll so
       // whisper sees the word onset (otherwise the first 400 ms is
       // lost). Clear the preroll buffer after the dump — the next
@@ -194,20 +202,20 @@ function _buildTapHandler(): PcmTapHandler {
       // being collected (we keep filling preroll between utterances).
       const seed: Float32Array[] = [];
       let seedCount = 0;
-      for (const b of _state.preroll) {
+      for (const b of _engaged.preroll) {
         seed.push(b);
         seedCount += b.length;
       }
-      _state.ringBuffers = seed.length > 0 ? seed : [new Float32Array(0)];
-      _state.ringSampleCount = seedCount;
-      _state.preroll = [];
-      _state.prerollCount = 0;
+      _engaged.ringBuffers = seed.length > 0 ? seed : [new Float32Array(0)];
+      _engaged.ringSampleCount = seedCount;
+      _engaged.preroll = [];
+      _engaged.prerollCount = 0;
     },
     onSpeechEnd(_now) {
-      if (!_state) return;
-      const buffers = _state.ringBuffers;
-      _state.ringBuffers = [];
-      _state.ringSampleCount = 0;
+      if (!_engaged || !_worker) return;
+      const buffers = _engaged.ringBuffers;
+      _engaged.ringBuffers = [];
+      _engaged.ringSampleCount = 0;
       // Concatenate and ship to the worker.
       let total = 0;
       for (const b of buffers) total += b.length;
@@ -219,7 +227,7 @@ function _buildTapHandler(): PcmTapHandler {
         offset += b.length;
       }
       try {
-        _state.worker.postMessage(
+        _worker.postMessage(
           { type: 'transcribe', samples: merged, sampleRate: SAMPLE_RATE },
           [merged.buffer],
         );
@@ -257,23 +265,29 @@ function _wireWorker(worker: Worker): void {
 /**
  * Arm the STT consumer. Idempotent. Returns the disarm handle so callers
  * can hot-toggle off the settings store.
+ *
+ * BF-320: the Worker + whisper pipeline is created ONCE per page
+ * lifetime and reused across arm/disarm cycles. Subsequent arm calls
+ * only re-subscribe the PCM tap; the model stays resident.
  */
 export function armTransformersStt(): () => void {
-  if (_state) return disarmTransformersStt;
-  const factory = _workerOverride ?? _defaultWorkerFactory;
-  const worker = factory();
-  _wireWorker(worker);
-  // Init the pipeline; the worker emits progress events back through the
-  // message channel.
-  try {
-    worker.postMessage({ type: 'init', model: _model });
-  } catch {
-    // Tier-2 — surface a synthetic error progress event so subscribers
-    // can fall through.
-    _emitProgress({ status: 'error', name: _model, file: 'postMessage init failed' });
+  if (_engaged) return disarmTransformersStt;
+  if (_worker === null) {
+    const factory = _workerOverride ?? _defaultWorkerFactory;
+    const worker = factory();
+    _wireWorker(worker);
+    // Init the pipeline; the worker emits progress events back through
+    // the message channel.
+    try {
+      worker.postMessage({ type: 'init', model: _model });
+    } catch {
+      // Tier-2 — surface a synthetic error progress event so subscribers
+      // can fall through.
+      _emitProgress({ status: 'error', name: _model, file: 'postMessage init failed' });
+    }
+    _worker = worker;
   }
-  _state = {
-    worker,
+  _engaged = {
     unsubscribe: subscribePcm(_buildTapHandler()),
     ringBuffers: [],
     ringSampleCount: 0,
@@ -283,23 +297,41 @@ export function armTransformersStt(): () => void {
   return disarmTransformersStt;
 }
 
-/** Disarm the STT consumer. Idempotent. */
+/**
+ * Disarm the STT consumer. Idempotent. Detaches the PCM tap only — the
+ * worker + whisper pipeline remain resident for the next arm cycle.
+ * Use ``terminateTransformersStt`` to fully tear down (e.g. on page
+ * unload).
+ */
 export function disarmTransformersStt(): void {
-  if (!_state) return;
-  const worker = _state.worker;
+  if (!_engaged) return;
   try {
-    _state.unsubscribe();
+    _engaged.unsubscribe();
   } catch {
     // Tier-2.
   }
+  _engaged = null;
+}
+
+/**
+ * Fully shut down the worker + whisper pipeline. Disarms first if armed.
+ * Wired to ``beforeunload`` in production; callable directly from tests.
+ */
+export function terminateTransformersStt(): void {
+  if (_engaged) {
+    try { _engaged.unsubscribe(); } catch { /* Tier-2 */ }
+    _engaged = null;
+  }
+  if (_worker === null) return;
+  const worker = _worker;
+  _worker = null;
   try {
     worker.postMessage({ type: 'shutdown' });
   } catch {
     // Tier-2.
   }
-  _state = null;
   // 250 ms grace before terminate; covers in-flight transcribe responses
-  // that the operator still wants to receive on the next arm cycle.
+  // still being delivered.
   setTimeout(() => {
     try {
       worker.terminate();
@@ -340,4 +372,13 @@ export function onTransformersProgress(listener: ProgressListener): () => void {
   return () => {
     _progressListeners.delete(listener);
   };
+}
+
+// BF-320: tear down the resident worker on page unload so the model
+// doesn't keep its WebGPU/wasm allocations alive past the page lifetime.
+// Guarded for SSR / non-browser test environments without a real window.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('beforeunload', () => {
+    try { terminateTransformersStt(); } catch { /* Tier-2 */ }
+  });
 }
