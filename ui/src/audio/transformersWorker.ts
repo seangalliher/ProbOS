@@ -46,25 +46,23 @@ function _post(message: unknown): void {
 }
 
 /**
- * BF-309: whisper emits special tokens like ``[BLANK_AUDIO]``,
- * ``[INAUDIBLE]``, ``[MUSIC]``, ``(silence)`` for non-speech VAD
- * windows. With BF-308 PCM now flowing live, the VAD's 0.5 threshold
- * fires on background noise frequently — and every empty-audio
- * transcription was being shipped as a real transcript, spamming chat
- * with ``[BLANK_AUDIO]`` user messages. Filter at the worker boundary
- * so no consumer sees these tokens.
+ * BF-309 + BF-315: whisper emits special tokens like ``[BLANK_AUDIO]``,
+ * ``[INAUDIBLE]``, ``[MUSIC]``, ``(silence)`` for non-speech VAD windows,
+ * and occasionally hallucinates symbol-only output like ``">>"`` or
+ * ``"--"`` on near-silent audio. Filter at the worker boundary so no
+ * consumer sees these markers. The strict rule: a meaningful transcript
+ * MUST contain at least one letter or digit. Anything that doesn't is
+ * non-speech and gets dropped.
  */
 function _isMeaningfulTranscript(text: string): boolean {
   const trimmed = (text || '').trim();
   if (trimmed.length === 0) return false;
   // Whisper special-token markers: bracketed [TAG] or parenthetical (tag).
-  // Examples observed in production: [BLANK_AUDIO], [INAUDIBLE], [MUSIC],
-  // [SOUND], (silence), (music), ( . . . ). If the trimmed text is ONLY
-  // a single bracketed/parenthetical token, treat as non-speech.
   if (/^[\[\(][^\]\)]*[\]\)]$/.test(trimmed)) return false;
-  // Reject pure-punctuation transcripts (".", "...", "!") that whisper
-  // sometimes emits for silence.
-  if (/^[\p{P}\s]+$/u.test(trimmed)) return false;
+  // BF-315: must contain at least one letter (any script) or digit. This
+  // is strictly stronger than the prior pure-punctuation check, which
+  // missed Unicode math/symbol categories (">>" is \p{Sm}, not \p{P}).
+  if (!/[\p{L}\p{N}]/u.test(trimmed)) return false;
   return true;
 }
 
