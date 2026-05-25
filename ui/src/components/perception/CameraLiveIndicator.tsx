@@ -16,7 +16,6 @@ import { usePerceptionModeStore, type PerceptionMode } from '../../store/usePerc
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { stopCameraStream } from '../../hooks/useCameraStream';
 import { stopScreenStream } from '../../hooks/useScreenStream';
-import { loadWhisperModel } from '../../audio/whisperLoader';
 import { onTranscribing } from '../../audio/whisperStt';
 
 const STROKE_AMBER = '#f0b060';
@@ -82,9 +81,18 @@ export default function CameraLiveIndicator() {
   useEffect(() => {
     if (!sttEnabled) return;
     let cancelled = false;
-    void loadWhisperModel().then((handle) => {
-      if (!cancelled) setSttModelLoaded(handle !== null);
-    });
+    // BF-322: post-BF-301 the AD-705a /data/whisper/whisper.js artifact no
+    // longer exists, so loadWhisperModel() always 404s. Derive the badge
+    // state from /api/voice/health (the actual backend health surface)
+    // instead.
+    fetch('/api/voice/health')
+      .then((r) => r.json())
+      .then((j) => {
+        if (!cancelled) setSttModelLoaded(Boolean(j?.healthy && j?.backend_available));
+      })
+      .catch(() => {
+        if (!cancelled) setSttModelLoaded(false);
+      });
     const unsub = onTranscribing((active) => {
       if (!cancelled) setSttTranscribing(active);
     });
