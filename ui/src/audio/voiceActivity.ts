@@ -82,6 +82,9 @@ interface LoopState {
   // Bookkeeping for the next-tick scheduler when we are not using an
   // AudioWorklet (jsdom path).
   pendingTimer: ReturnType<typeof setTimeout> | null;
+  // BF-308: production capture chain — null in jsdom / test pumps.
+  source: MediaStreamAudioSourceNode | null;
+  workletNode: AudioWorkletNode | null;
 }
 
 let _state: LoopState | null = null;
@@ -241,6 +244,50 @@ export async function startVoiceActivity(opts: VadOptions = {}): Promise<boolean
   } catch {
     audioCtx = null;
   }
+  // BF-308: wire the production PCM capture chain. The previous code
+  // opened the mic + AudioContext but never connected anything, so no
+  // PCM ever reached ``_processFrame`` — Silero never scored, no
+  // speech_start ever fired, every downstream consumer sat forever
+  // waiting for events that never came. The "follow-up shim" comment
+  // from AD-733c-7-5-1 referred to this missing wiring; BF-308 ships
+  // it. jsdom does not implement AudioWorklet, so addModule throws —
+  // we honest-degrade to the test-pump path (``_processFrame`` direct
+  // invocation) without disabling the loop.
+  let source: MediaStreamAudioSourceNode | null = null;
+  let workletNode: AudioWorkletNode | null = null;
+  if (audioCtx && stream && typeof (audioCtx as any).audioWorklet?.addModule === 'function') {
+    try {
+      const workletUrl = (await import('./pcmCaptureWorklet.js?url')).default;
+      await (audioCtx as any).audioWorklet.addModule(workletUrl);
+      source = audioCtx.createMediaStreamSource(stream);
+      workletNode = new AudioWorkletNode(audioCtx, 'pcm-capture');
+      workletNode.port.onmessage = (e: MessageEvent) => {
+        const frame = e.data as Float32Array;
+        if (frame && frame.length > 0) {
+          void _processFrame(frame);
+        }
+      };
+      source.connect(workletNode);
+      // Worklet must connect to destination for ``process()`` to be
+      // pumped reliably across browsers — route through a zero-gain
+      // node so no audio is actually played back. Chrome/Edge will
+      // pump the worklet without this; Safari/Firefox edge-cases
+      // require it. Cheap insurance.
+      const muteGain = audioCtx.createGain();
+      muteGain.gain.value = 0;
+      workletNode.connect(muteGain);
+      muteGain.connect(audioCtx.destination);
+    } catch (err) {
+      // Tier-2: worklet wiring failure leaves the mic stream open + the
+      // loop "armed" so test pumps still work, but production capture is
+      // dead. Logged so operators can diagnose (BF-307 retro: silent
+      // null is operator-hostile).
+      // eslint-disable-next-line no-console
+      console.warn('[voiceActivity] BF-308: failed to install PCM capture worklet — VAD will not score live audio', err);
+      source = null;
+      workletNode = null;
+    }
+  }
   _state = {
     stream,
     audioCtx,
@@ -250,6 +297,8 @@ export async function startVoiceActivity(opts: VadOptions = {}): Promise<boolean
     speechStartedAt: null,
     options,
     pendingTimer: null,
+    source,
+    workletNode,
   };
   _scheduleNextTick();
   return true;
@@ -264,6 +313,20 @@ export function stopVoiceActivity(): void {
   if (_state.pendingTimer) {
     clearTimeout(_state.pendingTimer);
     _state.pendingTimer = null;
+  }
+  // BF-308: tear down the capture chain before closing the context.
+  try {
+    _state.source?.disconnect();
+  } catch {
+    // Tier-2.
+  }
+  try {
+    if (_state.workletNode) {
+      _state.workletNode.port.onmessage = null;
+      _state.workletNode.disconnect();
+    }
+  } catch {
+    // Tier-2.
   }
   try {
     _state.stream?.getTracks().forEach((t) => t.stop());
