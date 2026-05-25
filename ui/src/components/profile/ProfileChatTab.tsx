@@ -1174,13 +1174,29 @@ export function ProfileChatTab({ agentId }: Props) {
                 borderRadius: 4,
                 transition: 'background 0.2s, filter 0.2s',
                 flexShrink: 0,
+                // BF-313: filter glow encodes ACTIVE state only — listening
+                // or processing. Previously a permanent amber drop-shadow
+                // was applied whenever micMode === 'conversation', making
+                // the button look "lit" at rest and indistinguishable from
+                // actually-listening. Operators reported the mic icon
+                // staying amber after each transcript even after BF-311
+                // cleared the processing spinner — root cause was this
+                // mode-driven glow, not a real state-stuck bug. The mic
+                // mode is already visible in the right-click popover; a
+                // permanent glow added no information and conflicted with
+                // HXI Design Principle #4 (motion/glow communicates state).
+                //
+                // BF-313 follow-up: the idle dim drop-shadow was also too
+                // easy to misread as "still slightly on" once the real
+                // listening/processing glows disappeared. Idle state now
+                // renders with NO filter at all — same as the other
+                // resting input-row buttons. Glow = active. No glow = idle.
+                // Unambiguous.
                 filter: listening
                   ? 'drop-shadow(0 0 4px #f0b060)'
                   : processing
                     ? 'drop-shadow(0 0 3px #a08040)'
-                    : micMode === 'conversation'
-                      ? 'drop-shadow(0 0 4px #f0b060)'
-                      : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
+                    : 'none',
               }}
             >
               <MicIndicator

@@ -1,4 +1,4 @@
-# Edited via HXI 2026-05-21 21:31:46 UTC
+# Edited via HXI 2026-05-24 00:18:21 UTC
 system:
   name: ProbOS
   version: 0.4.0
@@ -66,8 +66,11 @@ cognitive:
   llm_timeout_vision_fast: 30.0
   llm_api_format_vision_fast: openai
   whisper_model_path: whisper/ggml-tiny.en.bin
-  offline_stt_enabled: false
-  conversation_mode_enabled: false
+  offline_stt_enabled: true
+  primary_stt: transformers
+  transformers_model: Xenova/whisper-base.en
+  fallback_stt_enabled: true
+  conversation_mode_enabled: true
   conversation_silence_timeout_ms: 30000
   conversation_barge_in_enabled: true
   llm_base_url_image_gen: null
@@ -114,6 +117,13 @@ memory:
   similarity_threshold: 0.6
   verify_content_hash: true
   eviction_audit_enabled: true
+  shutdown_consolidation_timeout_s: 30.0
+  migration_timeout_s: 300.0
+  shutdown_drain_timeout_s: 30.0
+  hnsw_sync_threshold: 64
+  hnsw_batch_size: 32
+  backup_enabled: true
+  backup_retain_days: 7
   recall_weights:
     semantic: 0.35
     keyword: 0.2
@@ -767,6 +777,10 @@ channels:
     allowed_channel_ids: []
     allowed_user_ids: []
     default_thread_ts: true
+    channels: []
+    poll_interval_s: 8.0
+    poll_inbound: true
+    api_base: https://slack.com/api
   webhook:
     enabled: false
     shared_secret: ''
@@ -1252,7 +1266,7 @@ perception:
   engaged_budget_enforcement: true
   engaged_call_cap_per_session: 200
   engaged_call_cap_per_day: 2000
-  vad_engagement_enabled: false
+  vad_engagement_enabled: true
   vad_min_speech_duration_ms: 400
   source_fusion_enabled: true
   fusion_window_ms: 800
