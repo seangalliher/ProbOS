@@ -64,6 +64,17 @@ const FRAME_SAMPLES = 480; // 30 ms @ 16 kHz
 // (or any other consumer) is armed. Empty set = zero overhead.
 const _pcmSubscribers: Set<PcmTapHandler> = new Set();
 let _speechActiveForTap = false;
+// BF-316: silence hangover for onSpeechEnd. Normal speech has natural
+// sub-threshold micro-pauses between syllables (Silero score dips below
+// 0.5 momentarily between e.g. "Hello" and "Ezri"). The prior code fired
+// onSpeechEnd on the FIRST sub-threshold frame (~30 ms), which ended the
+// utterance mid-word and shipped clipped audio to whisper. Industry
+// pattern (e.g. @ricky0123/vad-web): require sustained silence for ~700 ms
+// before declaring end-of-utterance. We track the timestamp of the first
+// sub-threshold frame after speech began and only fire onSpeechEnd after
+// the hangover elapses. Any new above-threshold frame resets the timer.
+const SILENCE_HANGOVER_MS = 700;
+let _silenceStartAt: number | null = null;
 
 interface LoopState {
   stream: MediaStream | null;
@@ -121,6 +132,7 @@ export async function _processFrame(buffer: Float32Array, now: number = Date.now
     const aboveThreshold = score >= _state.options.scoreThreshold;
     if (aboveThreshold && !_speechActiveForTap) {
       _speechActiveForTap = true;
+      _silenceStartAt = null;
       for (const handler of _pcmSubscribers) {
         try {
           handler.onSpeechStart?.(now);
@@ -128,13 +140,26 @@ export async function _processFrame(buffer: Float32Array, now: number = Date.now
           // Tier-2.
         }
       }
+    } else if (aboveThreshold && _speechActiveForTap) {
+      // BF-316: ANY new above-threshold frame during speech resets the
+      // silence-hangover timer. This lets micro-pauses between syllables
+      // pass without ending the utterance.
+      _silenceStartAt = null;
     } else if (!aboveThreshold && _speechActiveForTap) {
-      _speechActiveForTap = false;
-      for (const handler of _pcmSubscribers) {
-        try {
-          handler.onSpeechEnd?.(now);
-        } catch {
-          // Tier-2.
+      // BF-316: don't fire onSpeechEnd until the silence has been
+      // sustained for SILENCE_HANGOVER_MS. The first sub-threshold
+      // frame just starts the clock.
+      if (_silenceStartAt === null) {
+        _silenceStartAt = now;
+      } else if (now - _silenceStartAt >= SILENCE_HANGOVER_MS) {
+        _speechActiveForTap = false;
+        _silenceStartAt = null;
+        for (const handler of _pcmSubscribers) {
+          try {
+            handler.onSpeechEnd?.(now);
+          } catch {
+            // Tier-2.
+          }
         }
       }
     }

@@ -106,6 +106,11 @@ describe('transcribe on VAD speech_end and emit transcript', () => {
     await _processFrame(frame1, 1030);
     const silentFrame = new Float32Array(480);
     await _processFrame(silentFrame, 1060);
+    // BF-316: silence hangover is 700 ms. The silent frame at 1060 just
+    // STARTS the silence-window clock; onSpeechEnd does not fire until a
+    // later sub-threshold frame after the hangover elapses. Pump another
+    // silent frame past the hangover to trigger end-of-utterance.
+    await _processFrame(silentFrame, 1800);
     // Allow the queued microtask transcription to settle.
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(handle.transcribeBuffer).toHaveBeenCalled();
