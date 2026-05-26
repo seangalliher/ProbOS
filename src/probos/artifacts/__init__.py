@@ -120,35 +120,46 @@ class ArtifactStore:
         artifact_id = self._id_factory()
         now = self._clock()
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT id, version FROM artifacts "
-                "WHERE thread_id = ? AND name = ? "
-                "ORDER BY version DESC LIMIT 1",
-                (thread_id, name),
-            ).fetchone()
-            if row is None:
-                version = 1
-                supersedes = None
-            else:
-                version = row["version"] + 1
-                supersedes = row["id"]
-            conn.execute(
-                "INSERT INTO artifacts (id, thread_id, name, version, content_hash, "
-                "mime, size_bytes, created_by, created_at, supersedes) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (
-                    artifact_id,
-                    thread_id,
-                    name,
-                    version,
-                    content_hash,
-                    mime,
-                    size_bytes,
-                    created_by,
-                    now,
-                    supersedes,
-                ),
-            )
+            # BF-324 (Wave 197): wrap SELECT MAX + INSERT in BEGIN IMMEDIATE
+            # so two concurrent add_version calls on the same
+            # (thread_id, name) cannot collide on the
+            # UNIQUE (thread_id, name, version) constraint. Matches the
+            # AD-791a / AD-793 transaction pattern.
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT id, version FROM artifacts "
+                    "WHERE thread_id = ? AND name = ? "
+                    "ORDER BY version DESC LIMIT 1",
+                    (thread_id, name),
+                ).fetchone()
+                if row is None:
+                    version = 1
+                    supersedes = None
+                else:
+                    version = row["version"] + 1
+                    supersedes = row["id"]
+                conn.execute(
+                    "INSERT INTO artifacts (id, thread_id, name, version, content_hash, "
+                    "mime, size_bytes, created_by, created_at, supersedes) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        artifact_id,
+                        thread_id,
+                        name,
+                        version,
+                        content_hash,
+                        mime,
+                        size_bytes,
+                        created_by,
+                        now,
+                        supersedes,
+                    ),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
         return Artifact(
             id=artifact_id,
             thread_id=thread_id,
@@ -212,6 +223,26 @@ class ArtifactStore:
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
             return cur.rowcount > 0
+
+    def find_first_by_hash(self, content_hash: str) -> Artifact | None:
+        """AD-797 (Wave 197): return the earliest-created Artifact whose
+        ``content_hash`` matches, or ``None`` if no row exists.
+
+        Used by the project-pinned merge in
+        ``routers/artifacts.list_thread_artifacts`` to surface artifacts
+        pinned at the project scope but originally created in a different
+        thread. First-by-time is deterministic; AD-797h is the forward
+        marker for canonical cross-thread artifact identity.
+
+        Uses the existing ``idx_artifacts_hash`` index.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifacts WHERE content_hash = ? "
+                "ORDER BY created_at ASC LIMIT 1",
+                (content_hash,),
+            ).fetchone()
+        return _row(row) if row else None
 
 
 def _row(row: sqlite3.Row) -> Artifact:

@@ -16,6 +16,7 @@ import { ProfileChatTab } from './components/profile/ProfileChatTab';
 import { YeoStarterChips } from './components/YeoStarterChips';
 import { YeoEmptyGreeting } from './components/YeoEmptyGreeting';
 import { ThreadSidebar, loadSidebarCollapsed } from './components/sidebar/ThreadSidebar';
+import { ArtifactDrawer } from './components/artifacts/ArtifactDrawer';
 import { stopCameraStream } from './hooks/useCameraStream';
 import { startVoiceActivity, stopVoiceActivity } from './audio/voiceActivity';
 import { useSettingsStore } from './store/useSettingsStore';
@@ -218,6 +219,7 @@ export default function CompactApp() {
           </div>
         )}
         </div>
+        <ArtifactDrawer />
       </div>
     </div>
   );

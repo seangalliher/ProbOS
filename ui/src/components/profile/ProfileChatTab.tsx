@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../audio/voice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
+import { ArtifactCard } from '../artifacts/ArtifactCard';
+import { parseArtifactStub } from '../artifacts/artifactApi';
 // BF-301 (was AD-826) — voice-health response shape (mirror of /api/voice/health).
 interface VoiceHealth {
   primary_stt: 'transformers' | 'whisper' | 'browser';
@@ -72,6 +74,41 @@ function loadMicMode(agentId: string): MicMode {
   return localStorage.getItem(getMicModeKey(agentId)) === 'conversation'
     ? 'conversation'
     : 'ptt';
+}
+
+/** AD-797 (Wave 197): split a message body by lines and replace any
+ *  ``[Artifact: name vN - N lines, mime]`` stubs with the inline
+ *  ArtifactCard component. If ``threadId`` is undefined (1:1 cold-start
+ *  before a thread exists), the stub is rendered as plain text — the
+ *  card cannot resolve without the thread context. */
+function renderMessageBodyWithArtifacts(
+  text: string, threadId: string | undefined,
+): React.ReactNode {
+  if (!text) return text;
+  const lines = text.split('\n');
+  return lines.map((line, idx) => {
+    const stub = parseArtifactStub(line);
+    const isLast = idx === lines.length - 1;
+    if (stub && threadId) {
+      return (
+        <span key={idx} style={{ display: 'block' }}>
+          <ArtifactCard
+            threadId={threadId}
+            name={stub.name}
+            version={stub.version}
+            lineCount={stub.lineCount}
+            mime={stub.mime}
+          />
+          {!isLast && '\n'}
+        </span>
+      );
+    }
+    return (
+      <span key={idx}>
+        {line}{!isLast && '\n'}
+      </span>
+    );
+  });
 }
 
 export function ProfileChatTab({ agentId, threadId }: Props) {
@@ -737,7 +774,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
             }}>
-              {msg.text}
+              {renderMessageBodyWithArtifacts(msg.text, threadId)}
             </div>
           </div>
         ))}

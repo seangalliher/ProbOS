@@ -86,6 +86,7 @@ class FilesystemAttachmentStore:
         "browser_screenshot",
         "avatar_render",
         "chat_attachment",
+        "agent_artifact",
     )
 
     def __init__(self, root: Path) -> None:

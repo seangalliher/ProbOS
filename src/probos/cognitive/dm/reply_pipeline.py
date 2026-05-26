@@ -98,6 +98,7 @@ class DmReplyPipeline:
             self.step_4d_follow_up_parse,  # AD-743
             self.step_4e_action_dispatch,  # AD-745
             self.step_4b_dm_outbound_parse,
+            self.step_4f_extract_artifacts,  # AD-797 (Wave 197)
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
             self.step_7_divergence_check,
@@ -726,6 +727,82 @@ class DmReplyPipeline:
                 "BF-296: [DM] extraction failed for agent=%s; leaving markers "
                 "in reply (Captain will see them as fallback signal)",
                 self.ctx.agent_id, exc_info=True,
+            )
+
+    # --- step 4f: AD-797 (Wave 197) artifact extractor ---
+    async def step_4f_extract_artifacts(self) -> None:
+        """AD-797 (Wave 197): extract ``<artifact>`` tags + large fenced-code
+        blocks from ``self.ctx.response_text``, persist bytes to the
+        AttachmentStore + metadata to the ArtifactStore, and rewrite
+        ``response_text`` with stub lines so downstream episodic storage
+        + Captain-visible text see the clean scrollback.
+
+        Runs AFTER ``step_4b_dm_outbound_parse`` (so [DM] markers are
+        already extracted into outbound DMs and the body is final) and
+        BEFORE ``step_5_episodic_store`` (so the stored episode carries
+        the stubbed body, not the raw blocks).
+
+        Honest-degrade: any failure logs a warning and leaves
+        ``response_text`` untouched. The whole step is Tier-2.
+        """
+        try:
+            text = self.ctx.response_text or ""
+            if not text:
+                return
+            artifact_store = getattr(self.ctx.runtime, "artifact_store", None)
+            attachment_store = getattr(self.ctx.runtime, "attachment_store", None)
+            if artifact_store is None or attachment_store is None:
+                return
+            thread_id = self.ctx.chat_thread_id
+            if not thread_id:
+                return  # no thread context — nothing to anchor extraction
+            try:
+                existing = artifact_store.list_thread_latest(thread_id)
+            except Exception:
+                logger.warning(
+                    "AD-797: list_thread_latest failed for thread=%s; "
+                    "skipping extraction",
+                    thread_id, exc_info=True,
+                )
+                return
+            unnamed_count = sum(
+                1 for a in existing if a.name.startswith("artifact-")
+            )
+            config = getattr(self.ctx.runtime, "config", None)
+            cognitive_cfg = getattr(config, "cognitive", None) if config else None
+            threshold = getattr(
+                cognitive_cfg, "artifact_fenced_threshold_lines", 40,
+            )
+            from probos.cognitive.dm.artifact_extractor import (
+                extract_artifacts,
+                replace_with_stubs,
+            )
+            extracted = extract_artifacts(
+                text,
+                fenced_threshold_lines=threshold,
+                existing_unnamed_count=unnamed_count,
+            )
+            if not extracted:
+                return
+            new_text, _artifacts = await replace_with_stubs(
+                text, extracted,
+                artifact_store=artifact_store,
+                attachment_store=attachment_store,
+                thread_id=thread_id,
+                created_by=self.ctx.agent_id or "agent",
+            )
+            self.ctx.response_text = new_text
+            if _artifacts:
+                logger.info(
+                    "AD-797: extracted %d artifact(s) from agent=%s reply "
+                    "in thread=%s",
+                    len(_artifacts), self.ctx.agent_id, thread_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "AD-797: artifact extractor failed for agent=%s; "
+                "response_text left intact (%s)",
+                self.ctx.agent_id, exc, exc_info=True,
             )
 
     # --- step 5: AD-430b HXI 1:1 episodic store ---

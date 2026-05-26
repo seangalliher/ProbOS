@@ -529,6 +529,19 @@ class CognitiveConfig(BaseModel):
         ),
     )
 
+    # AD-797 (Wave 197): minimum line count for a fenced code block to be
+    # extracted as an artifact. Below this threshold, fenced blocks stay
+    # inline in the chat scrollback. Default 40 — short snippets read
+    # better inline; long files belong in the drawer.
+    artifact_fenced_threshold_lines: int = Field(
+        default=40,
+        ge=10,
+        description=(
+            "AD-797: fenced code block line-count threshold for artifact "
+            "extraction. Blocks shorter than this stay inline."
+        ),
+    )
+
 
 class SubTaskConfig(BaseModel):
     """AD-632a: Sub-task protocol configuration."""

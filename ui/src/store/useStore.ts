@@ -239,6 +239,28 @@ export interface ProjectView {
   last_active_at: number;
 }
 
+/**
+ * AD-797 (Wave 197) artifact view.
+ *
+ * Mirrors the server's ``Artifact.to_dict()`` payload plus the
+ * ``_pinned_from_project`` flag added by the list endpoint when the
+ * artifact is surfaced through a project pin rather than being native
+ * to the thread.
+ */
+export interface ArtifactView {
+  id: string;
+  thread_id: string;
+  name: string;
+  version: number;
+  content_hash: string;
+  mime: string;
+  size_bytes: number;
+  created_by: string;
+  created_at: number;
+  supersedes: string | null;
+  _pinned_from_project: boolean;
+}
+
 export interface HXIState {
   // Data
   agents: Map<string, Agent>;
@@ -317,6 +339,14 @@ export interface HXIState {
   // mount and consumes it for the Projects section. Mirrors the
   // chatThreads pattern (Map + hydrate + per-entry update).
   projects: Map<string, ProjectView>;
+  // AD-797 (Wave 197): artifacts slice. ArtifactDrawer hydrates
+  // ``artifactsByThread`` for the active thread; ArtifactCard
+  // resolves stub lines via lookup. ``selectedArtifactId`` drives
+  // the active viewer panel. ``artifactDrawerCollapsed`` is
+  // persisted in localStorage under ``probos.artifactDrawer.collapsed``.
+  artifactsByThread: Map<string, ArtifactView[]>;
+  selectedArtifactId: string | null;
+  artifactDrawerCollapsed: boolean;
   // Ward Room (AD-407)
   wardRoomChannels: WardRoomChannel[];
   // Ward Room HXI (AD-407c)
@@ -432,6 +462,10 @@ export interface HXIState {
   hydrateProjects: (projects: ProjectView[]) => void;
   setProject: (project: ProjectView) => void;
   removeProject: (projectId: string) => void;
+  // AD-797 (Wave 197): artifact state actions.
+  hydrateArtifacts: (threadId: string, list: ArtifactView[]) => void;
+  selectArtifact: (artifactId: string | null) => void;
+  setArtifactDrawerCollapsed: (collapsed: boolean) => void;
   // Crew Manifest actions (AD-513)
   openCrewManifest: () => void;
   closeCrewManifest: () => void;
@@ -632,6 +666,14 @@ export const useStore = create<HXIState>((set, get) => ({
   // AD-793 (Wave 196): empty Map at boot; ThreadSidebar mounts
   // hydrateProjects from /api/projects.
   projects: new Map(),
+  // AD-797 (Wave 197): artifact slice boot state. Drawer hydrates
+  // the active thread on mount + on activeThreadId change. Persisted
+  // collapsed state is hydrated by ArtifactDrawer on mount (we can't
+  // read localStorage during module evaluation in some test
+  // environments).
+  artifactsByThread: new Map(),
+  selectedArtifactId: null,
+  artifactDrawerCollapsed: false,
   // Ward Room (AD-407)
   wardRoomChannels: [],
   // Ward Room HXI (AD-407c)
@@ -1094,6 +1136,21 @@ export const useStore = create<HXIState>((set, get) => ({
     const next = new Map(get().projects);
     next.delete(projectId);
     set({ projects: next });
+  },
+  // AD-797 (Wave 197): artifact actions.
+  hydrateArtifacts: (threadId, list) => {
+    const next = new Map(get().artifactsByThread);
+    next.set(threadId, list);
+    set({ artifactsByThread: next });
+  },
+  selectArtifact: (artifactId) => set({ selectedArtifactId: artifactId }),
+  setArtifactDrawerCollapsed: (collapsed) => {
+    try {
+      localStorage.setItem('probos.artifactDrawer.collapsed', collapsed ? '1' : '0');
+    } catch {
+      // honest-degrade — storage may be unavailable in some browsers/tests.
+    }
+    set({ artifactDrawerCollapsed: collapsed });
   },
   // Ward Room HXI actions (AD-407c)
   openWardRoom: async (channelId?: string) => {
