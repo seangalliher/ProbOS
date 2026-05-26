@@ -28,6 +28,10 @@ from probos.api_models import (
 )
 from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
+from probos.cognitive.commands.personality_command import (
+    handle_personality_command,
+    is_personality_command,
+)
 from probos.routers.deps import get_runtime
 from probos.routers.auth import require_crew_scope, verify_ws_token
 
@@ -1703,22 +1707,10 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 thread = _thread_store.get_or_create_default_for_agent(
                     agent_id, _title,
                 )
-            # AD-791a: log the captain side of the turn before dispatch so
-            # the message log reflects the operator's input even if the
-            # downstream pipeline raises.
-            try:
-                _thread_store.append_message(
-                    thread.id,
-                    author_id="captain",
-                    role="captain",
-                    body=req.message,
-                    metadata={},
-                )
-            except Exception:
-                logger.warning(
-                    "AD-791a: append captain message failed for thread=%s agent=%s",
-                    thread.id, agent_id, exc_info=True,
-                )
+            # AD-794/AD-809: the captain-message append happens AFTER
+            # the /personality slash-command guard + maybe_auto_name
+            # below — the slash-command handler logs the captain side
+            # itself, and auto-name needs to see the original title.
         except HTTPException:
             raise
         except Exception:
@@ -1728,6 +1720,91 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 agent_id, exc_info=True,
             )
             thread = None
+
+    # AD-809: /personality slash command — pure thread-state op. Runs
+    # BEFORE auto-name (so the slash-command syntax never names the
+    # thread) and BEFORE the captain-message append (the handler logs
+    # both the captain command and the system reply itself). Early-
+    # return short-circuits IntentBus dispatch and the agent turn.
+    if (
+        _thread_store is not None
+        and thread is not None
+        and is_personality_command(req.message)
+    ):
+        try:
+            _personality_result = handle_personality_command(
+                req.message,
+                thread_id=thread.id,
+                store=_thread_store,
+            )
+            _thread_store.append_message(
+                thread.id,
+                author_id="captain",
+                role="captain",
+                body=req.message,
+                metadata={"slash_command": "personality"},
+            )
+            _thread_store.append_message(
+                thread.id,
+                author_id="system",
+                role="system",
+                body=_personality_result["system_reply"],
+                metadata={
+                    "slash_command": "personality",
+                    "applied": _personality_result["applied"],
+                },
+            )
+        except Exception:
+            logger.warning(
+                "AD-809: /personality handler failed for thread=%s agent=%s",
+                thread.id, agent_id, exc_info=True,
+            )
+            _personality_result = {
+                "system_reply": "Personality command failed; please try again.",
+                "applied": None,
+            }
+        return {
+            "response": _personality_result["system_reply"],
+            "thread_id": thread.id,
+            "system": True,
+            "applied": _personality_result.get("applied"),
+            "dag": None,
+            "results": None,
+        }
+
+    # AD-794: first-turn auto-name from the message body. Idempotent;
+    # returns None when the thread is locked, already renamed, or the
+    # heuristic produced no useful title. Refresh the local ``thread``
+    # var after so downstream code sees the new title.
+    if _thread_store is not None and thread is not None:
+        try:
+            _renamed = _thread_store.maybe_auto_name(thread.id, req.message)
+            if _renamed is not None:
+                thread = _renamed
+        except Exception:
+            logger.warning(
+                "AD-794: maybe_auto_name failed for thread=%s agent=%s",
+                thread.id, agent_id, exc_info=True,
+            )
+
+    # AD-791a: log the captain side of the turn before dispatch so the
+    # message log reflects the operator's input even if the downstream
+    # pipeline raises. (Moved below the /personality guard + auto-name
+    # per AD-794 Section 2 ordering.)
+    if _thread_store is not None and thread is not None:
+        try:
+            _thread_store.append_message(
+                thread.id,
+                author_id="captain",
+                role="captain",
+                body=req.message,
+                metadata={},
+            )
+        except Exception:
+            logger.warning(
+                "AD-791a: append captain message failed for thread=%s agent=%s",
+                thread.id, agent_id, exc_info=True,
+            )
 
     # AD-743: Captain interruption cancels any pending pacing follow-up so the
     # synthesized user-turn doesn't double-fire after a fresh Captain message.
@@ -2187,6 +2264,10 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 thread.id, agent_id, exc_info=True,
             )
         response["thread_id"] = thread.id
+        # AD-794: surface the current thread title on the response so
+        # the UI can update its chatThreads map without an extra
+        # /api/threads/{id} round-trip. Cheap — already in memory.
+        response["title"] = thread.title
     return response
 
 

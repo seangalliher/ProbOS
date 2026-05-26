@@ -1571,6 +1571,12 @@ class CognitiveAgent(BaseAgent):
                 "context": intent.context,
                 "intent_id": intent.id,  # AD-432: Preserve for journal traceability
                 "correlation_id": correlation_id,  # AD-492
+                # AD-809: chat-thread provenance — the receiving agent's
+                # decide() reads this to resolve the per-thread
+                # personality overlay (if any) and append it to the
+                # built system prompt. AD-791a populates thread_id on
+                # every chat dispatch.
+                "thread_id": getattr(intent, "thread_id", None),
             }
         else:
             # Dict fallback (for compatibility with BaseAgent contract)
@@ -2113,6 +2119,35 @@ class CognitiveAgent(BaseAgent):
         _skill_instr = observation.get("cognitive_skill_instructions")
         if _skill_instr:
             composed += f"\n\n---\n\n## Active Skill: {observation.get('cognitive_skill_name', 'Unknown')}\n\n{_skill_instr}"
+
+        # AD-809: per-thread personality overlay. The Captain may have
+        # set a register (e.g. `/personality concise`) on this thread;
+        # ``resolve_personality`` reads the
+        # ``chat_threads.personality_override`` column for the thread
+        # ID that AD-791a wired onto the IntentMessage. This is an
+        # OVERLAY on the agent's identity (Section 0 of the AD-809
+        # spec) — it adjusts register, not who the agent is. Honest-
+        # degrade: when the runtime or store is missing (test
+        # harnesses, federated peers without local store access) the
+        # overlay is silently skipped and the agent gets its base
+        # identity-only prompt.
+        _ad809_thread_id = observation.get("thread_id")
+        if _ad809_thread_id and self._runtime is not None:
+            _ad809_store = getattr(self._runtime, "chat_thread_store", None)
+            if _ad809_store is not None:
+                try:
+                    from probos.threads.naming import resolve_personality
+
+                    _ad809_thread = _ad809_store.get_thread(_ad809_thread_id)
+                    _ad809_overlay = resolve_personality(_ad809_thread, default="")
+                    if _ad809_overlay:
+                        composed += "\n\n" + _ad809_overlay
+                except Exception:
+                    logger.debug(
+                        "AD-809: personality overlay resolution failed for "
+                        "thread=%s; falling back to base identity prompt",
+                        _ad809_thread_id, exc_info=True,
+                    )
 
         # AD-700c: Per-observation LLM tier override (e.g. DiagnosticianAgent L1=deep, L2/L3=fast, L4/L5=no-LLM).
         _per_call_tier = self._resolve_tier_for_observation(observation)

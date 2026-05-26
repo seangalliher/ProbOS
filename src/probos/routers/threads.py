@@ -49,6 +49,14 @@ class UpdateThreadRequest(BaseModel):
     workspace_root: str | None = None
     project_id: str | None = None
     task_id: str | None = None
+    # AD-794: when True, the title update routes through
+    # ``set_title(lock=True)`` which atomically writes
+    # ``metadata.title_locked = true`` so subsequent first-turn auto-
+    # naming skips this thread. Operator-initiated renames (sidebar
+    # right-click, future UI) should send this; the internal first-
+    # turn auto-name path bypasses the API and calls
+    # ``set_title(lock=False)`` directly.
+    title_locked: bool | None = None
 
 
 class AppendMessageRequest(BaseModel):
@@ -125,6 +133,32 @@ async def update_thread(
     runtime: Any = Depends(get_runtime),
 ) -> dict:
     store = _get_store(runtime)
+    # AD-794: when an operator-initiated rename arrives with
+    # ``title_locked=True``, route the title update through
+    # ``set_title(lock=True)`` so the metadata flag is written
+    # atomically alongside the new title. All other fields fall
+    # through to the existing ``update_thread`` shape so nothing else
+    # changes for non-lock callers.
+    if body.title is not None and body.title_locked is True:
+        if store.get_thread(thread_id) is None:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        store.set_title(thread_id, body.title, lock=True)
+        # Apply any remaining fields (pinned/archived/etc.) via the
+        # normal path so a single PATCH can carry both a locked rename
+        # and a sibling flag change in one round-trip.
+        thread = store.update_thread(
+            thread_id,
+            pinned=body.pinned,
+            archived=body.archived,
+            personality_override=body.personality_override,
+            workspace_root=body.workspace_root,
+            project_id=body.project_id,
+            task_id=body.task_id,
+        )
+        if thread is None:
+            thread = store.get_thread(thread_id)
+        return thread.to_dict() if thread else {"id": thread_id}
+
     thread = store.update_thread(
         thread_id,
         title=body.title,
@@ -189,8 +223,6 @@ async def append_message(
 async def auto_name_thread(
     thread_id: str, runtime: Any = Depends(get_runtime)
 ) -> dict:
-    from probos.threads.naming import suggest_title
-
     store = _get_store(runtime)
     thread = store.get_thread(thread_id)
     if thread is None:
@@ -198,8 +230,13 @@ async def auto_name_thread(
     msgs = store.list_messages(thread_id, limit=1)
     if not msgs:
         raise HTTPException(status_code=409, detail="Thread has no messages yet")
-    title = suggest_title(msgs[0].body)
-    updated = store.update_thread(thread_id, title=title)
+    # AD-794: refactor to share ``maybe_auto_name`` with the first-turn
+    # auto-trigger in the chat handlers. ``force=True`` preserves this
+    # endpoint's pre-AD-794 always-rename behavior — only the
+    # title_locked flag short-circuits it. The first-turn caller uses
+    # ``force=False`` to apply the single-participant + default-title
+    # pre-conditions.
+    updated = store.maybe_auto_name(thread_id, msgs[0].body, force=True)
     return updated.to_dict() if updated else thread.to_dict()
 
 

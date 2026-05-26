@@ -279,6 +279,140 @@ class ChatThreadStore:
                 return None
         return self.get_thread(thread_id)
 
+    # ---------- AD-794 / AD-809: title-lock + personality helpers ----------
+
+    def set_personality_override(
+        self, thread_id: str, *, override: str | None
+    ) -> None:
+        """AD-809: update ``chat_threads.personality_override``.
+
+        Pass ``override=None`` to clear; pass a non-empty string to set.
+        Silent no-op when the thread row is missing (caller is the
+        ``/personality`` slash command which has already resolved the
+        thread for the current turn).
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE chat_threads SET personality_override = ? WHERE id = ?",
+                (override, thread_id),
+            )
+
+    def set_title(
+        self, thread_id: str, title: str, *, lock: bool = False
+    ) -> None:
+        """AD-794: update the thread title.
+
+        When ``lock=True``, also writes ``metadata.title_locked = true``
+        atomically so subsequent first-turn auto-naming attempts skip
+        this thread. The read-modify-write of the JSON ``metadata``
+        column uses ``BEGIN IMMEDIATE`` for race safety, matching the
+        AD-791a ``get_or_create_default_for_agent`` pattern.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if lock:
+                    row = conn.execute(
+                        "SELECT metadata FROM chat_threads WHERE id = ?",
+                        (thread_id,),
+                    ).fetchone()
+                    existing: dict = {}
+                    if row and row["metadata"]:
+                        try:
+                            existing = json.loads(row["metadata"]) or {}
+                        except (json.JSONDecodeError, TypeError):
+                            existing = {}
+                    existing["title_locked"] = True
+                    conn.execute(
+                        "UPDATE chat_threads SET title = ?, metadata = ? "
+                        "WHERE id = ?",
+                        (title, json.dumps(existing), thread_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE chat_threads SET title = ? WHERE id = ?",
+                        (title, thread_id),
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    def is_title_locked(self, thread_id: str) -> bool:
+        """AD-794: True when ``metadata.title_locked`` is set.
+
+        Defensive against malformed JSON (architect R2): any decode or
+        type error degrades to ``False`` rather than raising — auto-
+        naming will be a no-op on the next call instead of bringing
+        down the chat turn.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT metadata FROM chat_threads WHERE id = ?", (thread_id,)
+            ).fetchone()
+        if not row or not row["metadata"]:
+            return False
+        try:
+            return bool(json.loads(row["metadata"]).get("title_locked"))
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            return False
+
+    def maybe_auto_name(
+        self, thread_id: str, body: str, *, force: bool = False
+    ) -> "ChatThread | None":
+        """AD-794: idempotent auto-name from a message body.
+
+        Returns the renamed thread when naming fired; ``None`` when
+        conditions weren't met.
+
+        ``force=False`` (default — used by the first-turn auto-trigger
+        wired in ``agent_chat``): the thread must have no prior
+        messages (first-turn only), be single-participant, and have
+        an unlocked title. Subsequent turns naturally accumulate
+        messages, so a second auto-name attempt on the same thread
+        no-ops without needing a per-thread "already renamed" flag.
+
+        ``force=True`` (used by ``POST /api/threads/{id}/auto-name`` to
+        preserve its pre-AD-794 always-rename behavior): only the
+        title-lock check applies; any other state is renamed.
+
+        Both modes respect the title_locked flag — manual operator
+        rename via PATCH is always authoritative.
+        """
+        from probos.threads.naming import suggest_title
+
+        thread = self.get_thread(thread_id)
+        if thread is None:
+            return None
+        if self.is_title_locked(thread_id):
+            return None
+
+        suggested = suggest_title(body)
+        if not suggested or suggested == "New thread":
+            return None
+
+        if not force:
+            # First-turn auto-trigger pre-conditions: single-
+            # participant + zero prior messages (anything else means
+            # the thread has been used and its title — whether the
+            # callsign default or an operator-chosen name — should be
+            # left alone).
+            if len(thread.participants) != 1:
+                return None
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS n FROM chat_thread_messages "
+                    "WHERE thread_id = ?",
+                    (thread_id,),
+                ).fetchone()
+            if row and int(row["n"]) > 0:
+                return None
+
+        if suggested == thread.title:
+            return None
+        self.set_title(thread_id, suggested, lock=False)
+        return self.get_thread(thread_id)
+
     def delete_thread(self, thread_id: str) -> bool:
         with self._connect() as conn:
             conn.execute(

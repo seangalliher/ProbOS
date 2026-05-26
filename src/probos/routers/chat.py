@@ -15,6 +15,10 @@ from probos.api_models import (
     EnrichRequest, SelfModRequest,
 )
 from probos.events import EventType
+from probos.cognitive.commands.personality_command import (
+    handle_personality_command,
+    is_personality_command,
+)
 from probos.routers.deps import (
     get_pending_designs, get_runtime, get_task_tracker, get_ws_broadcast,
 )
@@ -297,6 +301,87 @@ async def chat(
                             resolved["agent_id"], _title_inline,
                         )
                     )
+                    # AD-794/AD-809: captain-message append moved below
+                    # the /personality guard + maybe_auto_name so the
+                    # ordering matches agent_chat (Section 2).
+                except Exception:
+                    logger.warning(
+                        "AD-791a: inline-callsign thread resolve failed for %s",
+                        resolved["agent_id"], exc_info=True,
+                    )
+                    _inline_thread = None
+
+            # AD-809: /personality slash command on the @-stripped body.
+            # Pure thread-state op — no intent dispatch, no agent reply.
+            if (
+                _thread_store_inline is not None
+                and _inline_thread is not None
+                and is_personality_command(message_text)
+            ):
+                try:
+                    _personality_result = handle_personality_command(
+                        message_text,
+                        thread_id=_inline_thread.id,
+                        store=_thread_store_inline,
+                    )
+                    _thread_store_inline.append_message(
+                        _inline_thread.id,
+                        author_id="captain",
+                        role="captain",
+                        body=message_text,
+                        metadata={"slash_command": "personality"},
+                    )
+                    _thread_store_inline.append_message(
+                        _inline_thread.id,
+                        author_id="system",
+                        role="system",
+                        body=_personality_result["system_reply"],
+                        metadata={
+                            "slash_command": "personality",
+                            "applied": _personality_result["applied"],
+                        },
+                    )
+                except Exception:
+                    logger.warning(
+                        "AD-809: inline /personality handler failed for %s",
+                        resolved["agent_id"], exc_info=True,
+                    )
+                    _personality_result = {
+                        "system_reply": "Personality command failed; please try again.",
+                        "applied": None,
+                    }
+                # Plain dict matching the inline-callsign branch wire-
+                # format (see L344-348 below). ChatResponse has no
+                # ``system`` field; the UI selects on the dict key.
+                return {
+                    "response": _personality_result["system_reply"],
+                    "thread_id": _inline_thread.id,
+                    "system": True,
+                    "applied": _personality_result.get("applied"),
+                    "dag": None,
+                    "results": None,
+                }
+
+            # AD-794: first-turn auto-name from the @-stripped body.
+            # Idempotent; only fires on default-state single-participant
+            # threads with unlocked titles.
+            if _thread_store_inline is not None and _inline_thread is not None:
+                try:
+                    _renamed_inline = _thread_store_inline.maybe_auto_name(
+                        _inline_thread.id, message_text,
+                    )
+                    if _renamed_inline is not None:
+                        _inline_thread = _renamed_inline
+                except Exception:
+                    logger.warning(
+                        "AD-794: inline maybe_auto_name failed for %s",
+                        resolved["agent_id"], exc_info=True,
+                    )
+
+            # AD-791a: captain-message append (moved below AD-794/809
+            # guards per Section 2 ordering).
+            if _thread_store_inline is not None and _inline_thread is not None:
+                try:
                     _thread_store_inline.append_message(
                         _inline_thread.id,
                         author_id="captain",
@@ -306,10 +391,9 @@ async def chat(
                     )
                 except Exception:
                     logger.warning(
-                        "AD-791a: inline-callsign thread resolve failed for %s",
+                        "AD-791a: inline-callsign captain append failed for %s",
                         resolved["agent_id"], exc_info=True,
                     )
-                    _inline_thread = None
             intent = IntentMessage(
                 intent="direct_message",
                 params={"text": message_text, "from": "hxi", "session": False},

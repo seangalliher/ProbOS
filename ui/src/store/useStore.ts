@@ -399,7 +399,7 @@ export interface HXIState {
   openAgentProfile: (agentId: string) => void;
   closeAgentProfile: () => void;
   minimizeAgentProfile: () => void;
-  addAgentMessage: (agentId: string, role: 'user' | 'agent', text: string) => void;
+  addAgentMessage: (agentId: string, role: 'user' | 'agent' | 'system', text: string) => void;
   markAgentRead: (agentId: string) => void;
   setProfilePanelPos: (pos: { x: number; y: number }) => void;
   // AD-791a: chat-thread state setters. ProfileChatTab + CompactApp round-trip

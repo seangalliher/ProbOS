@@ -553,6 +553,31 @@ export function ProfileChatTab({ agentId }: Props) {
       // backends keep working.
       if (typeof data?.thread_id === 'string' && data.thread_id.length > 0) {
         useStore.getState().setThreadForAgent(agentId, data.thread_id);
+        // AD-794: when the response carries an updated thread title
+        // (first-turn auto-name fired) or any other thread fields,
+        // hydrate the local chatThreads map so the future sidebar
+        // (AD-792) sees the rename without a full reload.
+        const _threadView = useStore.getState().chatThreads.get(data.thread_id);
+        if (typeof data?.title === 'string' && data.title.length > 0) {
+          const _next = _threadView
+            ? { ..._threadView, title: data.title, last_active_at: Date.now() / 1000 }
+            : {
+                id: data.thread_id,
+                title: data.title,
+                participants: [agentId],
+                created_at: Date.now() / 1000,
+                last_active_at: Date.now() / 1000,
+              };
+          useStore.getState().setChatThread(_next);
+        }
+      }
+      // AD-809: the /personality slash command returns {system: true,
+      // response: "Personality set to ..."}. Render as a system note
+      // rather than an agent reply, and skip TTS.
+      if (data?.system === true) {
+        const _sysReply = data.response || '(personality command)';
+        useStore.getState().addAgentMessage(agentId, 'system', _sysReply);
+        return;
       }
       const reply = data.response || '(no response)';
       useStore.getState().addAgentMessage(agentId, 'agent', reply);
@@ -675,7 +700,7 @@ export function ProfileChatTab({ agentId }: Props) {
             key={msg.id}
             style={{
               marginBottom: 8,
-              textAlign: msg.role === 'user' ? 'right' : 'left',
+              textAlign: msg.role === 'user' ? 'right' : (msg.role === 'system' ? 'center' : 'left'),
             }}
           >
             <div style={{
@@ -687,11 +712,16 @@ export function ProfileChatTab({ agentId }: Props) {
               lineHeight: 1.5,
               background: msg.role === 'user'
                 ? 'rgba(240, 176, 96, 0.15)'
-                : 'rgba(255, 255, 255, 0.05)',
+                : (msg.role === 'system'
+                  ? 'rgba(255, 255, 255, 0.02)'
+                  : 'rgba(255, 255, 255, 0.05)'),
               border: msg.role === 'user'
                 ? '1px solid rgba(240, 176, 96, 0.2)'
-                : '1px solid rgba(255, 255, 255, 0.06)',
-              color: '#e0dcd4',
+                : (msg.role === 'system'
+                  ? '1px dashed rgba(255, 255, 255, 0.12)'
+                  : '1px solid rgba(255, 255, 255, 0.06)'),
+              color: msg.role === 'system' ? '#9a9a9a' : '#e0dcd4',
+              fontStyle: msg.role === 'system' ? 'italic' : 'normal',
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
             }}>
