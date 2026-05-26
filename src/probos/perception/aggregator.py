@@ -145,21 +145,33 @@ class VisionAggregator:
         return None
 
     async def _expire_window(self, session_id: str, msg: IntentMessage) -> None:
-        """Timer: when the debounce window expires, forward the buffered
-        frame UNCHANGED (single-source passthrough)."""
+        """Timer: when the debounce window expires, forward whatever
+        frame is currently pending for this session.
+
+        BF-323: the original identity check (``if pending is not msg:
+        return``) deadlocked every camera-only session after the first
+        same-source replacement. The replacement branch in ``_handle``
+        intentionally does NOT arm a new timer ("keep timer" semantics);
+        the original timer must forward the *latest* pending frame, not
+        bail when its captured ``msg`` is stale. The fusion path clears
+        ``_pending`` under the lock before it forwards, so a concurrent
+        expire after a fusion sees ``pending is None`` and no-ops —
+        double-forward is impossible.
+
+        ``msg`` is retained on the signature for backward compatibility
+        with tests + as a debug breadcrumb, but is no longer consulted.
+        """
         try:
             await asyncio.sleep(self._window_s)
         except asyncio.CancelledError:
             return
         async with self._lock:
-            pending = self._pending.get(session_id)
-            # Only forward if THIS message is still the pending one
-            # (replacement under the lock means a later frame won the
-            # slot — the later frame's timer owns the forward).
-            if pending is not msg:
-                return
-            self._pending.pop(session_id, None)
-        await self._forward(msg)
+            pending = self._pending.pop(session_id, None)
+        if pending is None:
+            # Fusion path already forwarded + cleared, or another
+            # expire_window won the race. Nothing to do.
+            return
+        await self._forward(pending)
 
     def _build_fused_message(
         self, first: IntentMessage, second: IntentMessage,

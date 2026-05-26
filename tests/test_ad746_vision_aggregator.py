@@ -295,3 +295,64 @@ async def test_cancellation_cleanup(tmp_path: Path) -> None:
     assert agg._timers == {}
     assert agg._pending == {}
 
+
+@pytest.mark.asyncio
+async def test_bf323_same_source_replacement_does_not_deadlock(tmp_path: Path) -> None:
+    """BF-323: multiple same-source frames in a single session must NOT
+    deadlock the aggregator. The replacement branch keeps the original
+    timer; when it expires, it must forward whatever is currently
+    pending (the most-recent replacement), not bail on identity mismatch.
+
+    Pre-BF-323 behavior: after the first same-source replacement, the
+    original timer's identity check fired, returned without forwarding,
+    and ``_pending`` was stuck forever. All subsequent frames hit the
+    "pending != None" branch and never armed a new timer. Zero forwards
+    for the entire session — matches the 2026-05-25 field report
+    ("sent: 724 / supervisor: 0 described · 0 dropped").
+    """
+    runtime = _build_runtime(tmp_path)
+    consumer = VisionConsumer(runtime)
+    forwarded: list[IntentMessage] = []
+    async def _capture(msg: IntentMessage) -> None:
+        forwarded.append(msg)
+    consumer._handle = _capture  # type: ignore[assignment]
+    agg = VisionAggregator(runtime, consumer, fusion_window_ms=100)
+    sha_a = await _store(runtime, _make_jpeg((10, 20, 30)))
+    sha_b = await _store(runtime, _make_jpeg((40, 50, 60)))
+    sha_c = await _store(runtime, _make_jpeg((70, 80, 90)))
+    # Three same-source frames in rapid succession, all within the
+    # 100ms fusion window. F1 arms timer; F2 + F3 replace pending.
+    await agg._handle(IntentMessage(intent="vision_observation", params={
+        "attachment_ref": sha_a, "session_id": "bf323", "source": "camera",
+    }))
+    await agg._handle(IntentMessage(intent="vision_observation", params={
+        "attachment_ref": sha_b, "session_id": "bf323", "source": "camera",
+    }))
+    await agg._handle(IntentMessage(intent="vision_observation", params={
+        "attachment_ref": sha_c, "session_id": "bf323", "source": "camera",
+    }))
+    # Window expires.
+    await asyncio.sleep(0.25)
+    # Latest frame must have been forwarded (most-recent-wins).
+    assert len(forwarded) == 1, (
+        f"BF-323 regression: expected 1 forward (latest), got {len(forwarded)}"
+    )
+    assert forwarded[0].params["attachment_ref"] == sha_c, (
+        "BF-323 regression: forwarded frame is not the latest replacement"
+    )
+    # And ``_pending`` must be cleared so the NEXT frame in this session
+    # can arm a fresh timer (the second half of the deadlock).
+    assert agg._pending.get("bf323") is None, (
+        "BF-323 regression: _pending not cleared after expire — next "
+        "frame would hit replacement branch and never arm a timer"
+    )
+    # Send a fourth frame AFTER the window has expired. It must arm a
+    # new timer and forward through the normal path.
+    sha_d = await _store(runtime, _make_jpeg((100, 110, 120)))
+    await agg._handle(IntentMessage(intent="vision_observation", params={
+        "attachment_ref": sha_d, "session_id": "bf323", "source": "camera",
+    }))
+    await asyncio.sleep(0.25)
+    await agg.stop()
+    assert len(forwarded) == 2
+    assert forwarded[1].params["attachment_ref"] == sha_d
