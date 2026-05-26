@@ -15,6 +15,7 @@ import { useStore } from './store/useStore';
 import { ProfileChatTab } from './components/profile/ProfileChatTab';
 import { YeoStarterChips } from './components/YeoStarterChips';
 import { YeoEmptyGreeting } from './components/YeoEmptyGreeting';
+import { ThreadSidebar, loadSidebarCollapsed } from './components/sidebar/ThreadSidebar';
 import { stopCameraStream } from './hooks/useCameraStream';
 import { startVoiceActivity, stopVoiceActivity } from './audio/voiceActivity';
 import { useSettingsStore } from './store/useSettingsStore';
@@ -60,17 +61,31 @@ export default function CompactApp() {
 
   const yeoId = yeo?.id ?? null;
 
+  // AD-792 (Wave 195): active-thread driven agent resolution. When the
+  // operator picks a thread in the sidebar, the chat panel re-mounts
+  // against ``participants[0]`` (single-participant 1:1 threads in v1).
+  // Fall back to Yeo when no thread is active (cold-start parity).
+  const activeThreadId = useStore((s) => s.activeThreadId);
+  const chatThreads = useStore((s) => s.chatThreads);
+  const derivedAgentId = useMemo(() => {
+    if (activeThreadId) {
+      const t = chatThreads.get(activeThreadId);
+      if (t && t.participants.length > 0) return t.participants[0];
+    }
+    return yeoId;
+  }, [activeThreadId, chatThreads, yeoId]);
+
   // AD-795/796: render starter chips + greeting only on the empty-thread
   // state. Subscribe directly to the message count so we re-render when
   // the first turn lands (chips/greeting must disappear immediately).
   const yeoMessageCount = useStore((s) =>
-    yeoId ? s.agentConversations.get(yeoId)?.messages.length ?? 0 : 0,
+    derivedAgentId ? s.agentConversations.get(derivedAgentId)?.messages.length ?? 0 : 0,
   );
-  const isEmptyThread = yeoId !== null && yeoMessageCount === 0;
+  const isEmptyThread = derivedAgentId !== null && yeoMessageCount === 0;
 
   useEffect(() => {
-    if (yeoId) markAgentRead(yeoId);
-  }, [yeoId, markAgentRead]);
+    if (derivedAgentId) markAgentRead(derivedAgentId);
+  }, [derivedAgentId, markAgentRead]);
 
   // Mirror App.tsx camera cleanup and VAD arming so audio features stay parity.
   useEffect(() => {
@@ -164,18 +179,24 @@ export default function CompactApp() {
         </button>
       </div>
 
-      {/* Chat surface — fills the rest of the window. */}
-      <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {yeoId ? (
+      {/* Chat surface — sidebar (left) + chat (right) fill the rest of the window. */}
+      <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex' }}>
+        <ThreadSidebar
+          initialCollapsed={loadSidebarCollapsed()}
+          onThreadSelected={(tid) => useStore.getState().setActiveThread(tid)}
+          activeThreadId={activeThreadId}
+        />
+        <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {derivedAgentId ? (
           <>
             {isEmptyThread && (
               <div style={{ flex: '0 0 auto' }}>
                 <YeoEmptyGreeting />
-                <YeoStarterChips agentId={yeoId} />
+                <YeoStarterChips agentId={derivedAgentId} />
               </div>
             )}
             <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <ProfileChatTab agentId={yeoId} />
+              <ProfileChatTab agentId={derivedAgentId} threadId={activeThreadId ?? undefined} />
             </div>
           </>
         ) : (
@@ -196,6 +217,7 @@ export default function CompactApp() {
               : 'Connecting to Yeo…'}
           </div>
         )}
+        </div>
       </div>
     </div>
   );

@@ -35,6 +35,15 @@ import { useScreenStore } from '../../store/useScreenStore';
 
 interface Props {
   agentId: string;
+  /** AD-792 (Wave 195): when set, this thread_id is used for chat
+   * requests instead of the per-agent default in ``threadIdByAgent``.
+   * Precedence: ``props.threadId ?? threadIdByAgent.get(agentId)``.
+   * If the server response carries a different ``thread_id`` (route
+   * mismatch / reassignment), the response is authoritative and
+   * ``setThreadForAgent`` is still called to preserve the AD-791a
+   * invariant that the store reflects the latest server-confirmed
+   * thread. When unset, behavior is unchanged. */
+  threadId?: string;
 }
 
 type ScreenMode = 'once' | 'live';
@@ -65,7 +74,7 @@ function loadMicMode(agentId: string): MicMode {
     : 'ptt';
 }
 
-export function ProfileChatTab({ agentId }: Props) {
+export function ProfileChatTab({ agentId, threadId }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -534,7 +543,10 @@ export function ProfileChatTab({ agentId }: Props) {
       // to the same thread on the server. ``threadIdByAgent`` is empty on
       // first turn; the server creates the implicit default and returns
       // ``thread_id`` on the response, which we cache back into the map.
-      const knownThreadId = useStore.getState().threadIdByAgent.get(agentId);
+      // AD-792 (Wave 195): explicit ``threadId`` prop wins over the
+      // per-agent default in ``threadIdByAgent``. When the prop is
+      // unset, behavior is unchanged from AD-791a.
+      const knownThreadId = threadId ?? useStore.getState().threadIdByAgent.get(agentId);
       const requestBody: Record<string, unknown> = {
         message: text || '(attachment)',
         history: fullHistory,
@@ -597,7 +609,7 @@ export function ProfileChatTab({ agentId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments]);
+  }, [agentId, threadId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments]);
 
   // BF-292: thin shim for the textarea Enter-key + send-button paths. Reads
   // current ``input`` at call time and forwards to sendText. The Enter-key

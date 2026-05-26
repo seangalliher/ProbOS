@@ -1,0 +1,116 @@
+/*
+ * AD-792 (Wave 195) — Thin fetch wrappers for the threads REST surface.
+ *
+ * Centralizes the response-shape contracts so the React component and
+ * its tests both agree:
+ *   - GET /api/threads                  -> {threads: ChatThreadView[]}
+ *   - GET /api/threads/search?q=...     -> {query: string, results: ChatThreadView[]}
+ *   - POST /api/threads                 -> ChatThreadView (thread.to_dict() DIRECT)
+ *   - PATCH /api/threads/{id}           -> ChatThreadView
+ *   - DELETE /api/threads/{id}          -> {deleted: true, thread_id: string}
+ *
+ * Verified against ``src/probos/routers/threads.py`` (Wave 193/194):
+ *   line 82: return {"threads": [...]}    (list)
+ *   line 94: return {"query": q, "results": [...]}    (search)
+ *   line 117: return thread.to_dict()      (create — DIRECT, NOT wrapped)
+ *   line 174: return thread.to_dict()      (patch)
+ *   line 183: return {"deleted": True, "thread_id": ...}    (delete)
+ *
+ * All wrappers honest-degrade on network failure: they return ``null``
+ * (or empty array) so the sidebar can keep rendering its current state
+ * instead of throwing — Tier-2 log-and-degrade per the engineering
+ * principles stack.
+ */
+import type { AD791aChatThreadView } from '../../store/useStore';
+
+export interface ListThreadsOptions {
+  includeArchived?: boolean;
+  limit?: number;
+}
+
+export async function listThreads(opts: ListThreadsOptions = {}): Promise<AD791aChatThreadView[]> {
+  const includeArchived = opts.includeArchived ?? false;
+  const limit = opts.limit ?? 100;
+  try {
+    const res = await fetch(`/api/threads?include_archived=${includeArchived}&limit=${limit}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { threads?: AD791aChatThreadView[] };
+    return Array.isArray(data?.threads) ? data.threads : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function searchThreads(query: string): Promise<AD791aChatThreadView[]> {
+  if (!query.trim()) return [];
+  try {
+    const res = await fetch(`/api/threads/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { query?: string; results?: AD791aChatThreadView[] };
+    return Array.isArray(data?.results) ? data.results : [];
+  } catch {
+    return [];
+  }
+}
+
+export interface CreateThreadBody {
+  title: string;
+  participants: string[];
+  project_id?: string | null;
+  task_id?: string | null;
+  preprompt?: string | null;
+  model?: string | null;
+}
+
+export async function createThread(body: CreateThreadBody): Promise<AD791aChatThreadView | null> {
+  try {
+    const res = await fetch('/api/threads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    // POST /api/threads returns thread.to_dict() DIRECTLY (verified
+    // at routers/threads.py:117) — not wrapped under {thread: ...}.
+    const data = (await res.json()) as AD791aChatThreadView;
+    return data && typeof data.id === 'string' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface PatchThreadBody {
+  title?: string;
+  title_locked?: boolean;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
+export async function patchThread(
+  threadId: string,
+  body: PatchThreadBody,
+): Promise<AD791aChatThreadView | null> {
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as AD791aChatThreadView;
+    return data && typeof data.id === 'string' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteThread(threadId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
