@@ -34,7 +34,12 @@ describe('ThreadSidebar render', () => {
     expect(screen.getByTestId('sidebar-search-input')).toBeInTheDocument();
     expect(screen.getByText('Pinned chat')).toBeInTheDocument();
     expect(screen.getByText('Recent chat')).toBeInTheDocument();
-    expect(screen.getByText('Coming with AD-793.')).toBeInTheDocument();
+    // AD-793 (Wave 196): the "Coming with AD-793." placeholder is gone.
+    // The real Projects section now renders an empty-state line when
+    // no projects exist, plus a "+" button to create one.
+    expect(screen.queryByText('Coming with AD-793.')).not.toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-projects-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-new-project')).toBeInTheDocument();
   });
 
   it('renders empty-state messages when no threads', () => {

@@ -84,6 +84,10 @@ export interface PatchThreadBody {
   title_locked?: boolean;
   pinned?: boolean;
   archived?: boolean;
+  // AD-793 (Wave 196): re-parenting threads between projects via the
+  // existing PATCH endpoint (the server already supports project_id
+  // per AD-791a).
+  project_id?: string | null;
 }
 
 export async function patchThread(

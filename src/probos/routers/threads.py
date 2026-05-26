@@ -215,6 +215,24 @@ async def append_message(
     )
     if msg is None:
         raise HTTPException(status_code=404, detail="Thread not found")
+    # AD-793 (Wave 196): when the thread belongs to a project, bump the
+    # project's last_active_at so the sidebar's last-active-ordered
+    # project list reflects conversational tempo. Router-layer call
+    # site keeps threads/__init__.py decoupled from the projects layer.
+    # Tier-2 honest-degrade: missing project_store or vanished project
+    # row is debug-logged and skipped.
+    try:
+        thread = store.get_thread(thread_id)
+        if thread is not None and thread.project_id:
+            project_store = getattr(runtime, "project_store", None)
+            if project_store is not None:
+                project_store.touch(thread.project_id)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).debug(
+            "AD-793: project touch failed for thread=%s", thread_id,
+            exc_info=True,
+        )
     return msg.to_dict()
 
 

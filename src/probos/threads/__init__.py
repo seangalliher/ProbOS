@@ -66,6 +66,21 @@ CREATE TABLE IF NOT EXISTS chat_thread_messages (
     FOREIGN KEY (thread_id) REFERENCES chat_threads (id)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON chat_thread_messages (thread_id, created_at);
+
+-- AD-793 (Wave 196): projects substrate — long-lived context groups
+-- that own N chat threads + pinned attachment refs. The threads side
+-- already carries the FK column (chat_threads.project_id, AD-791a).
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',          -- injected as preamble; empty allowed
+    pinned_attachment_ids TEXT NOT NULL DEFAULT '[]', -- JSON list[str] of SHA-256 refs
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    last_active_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects (archived);
+CREATE INDEX IF NOT EXISTS idx_projects_last_active ON projects (last_active_at);
 """
 
 
@@ -649,6 +664,321 @@ class ChatThreadStore:
                 (max(1, min(limit, 200)),),
             ).fetchall()
         return [_row_to_thread(r) for r in rows]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# AD-793 (Wave 196): Project substrate.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Project:
+    """AD-793: long-lived context group owning N chat threads + pinned files.
+
+    The ``description`` is the project's defining contribution: a plain-
+    prose "what this project is about" written by the Captain that
+    injects as a system-message preamble on every chat turn inside
+    threads belonging to the project (see ``routers/agents.py`` AD-793
+    block — order is ``visual → project → recall → user``).
+    """
+
+    id: str
+    name: str
+    created_at: float
+    last_active_at: float
+    description: str = ""
+    pinned_attachment_ids: list[str] = field(default_factory=list)
+    archived: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "pinned_attachment_ids": list(self.pinned_attachment_ids),
+            "archived": self.archived,
+            "created_at": self.created_at,
+            "last_active_at": self.last_active_at,
+        }
+
+
+class ProjectStore:
+    """SQLite-backed Project store. Decoupled from ``ChatThreadStore``
+    but shares the same db_path so cascade/unparent operations can
+    touch chat_threads in the same database file via a single
+    connection.
+
+    Synchronous API — callers from async code should wrap in
+    ``loop.run_in_executor`` per the substrate-store convention.
+    """
+
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        clock: Callable[[], float] = time.time,
+        id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
+    ) -> None:
+        self._db_path = Path(db_path)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._clock = clock
+        self._id_factory = id_factory
+        # Schema is shipped in ChatThreadStore's _SCHEMA; running it
+        # again is idempotent (CREATE TABLE IF NOT EXISTS) and means
+        # ProjectStore is self-sufficient even if instantiated before
+        # ChatThreadStore in tests.
+        with self._connect() as conn:
+            conn.executescript(_SCHEMA)
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._db_path), isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+
+    # ---------- CRUD ----------
+
+    def create_project(
+        self,
+        *,
+        name: str,
+        description: str = "",
+        pinned_attachment_ids: list[str] | None = None,
+    ) -> Project:
+        project_id = self._id_factory()
+        now = self._clock()
+        pins = list(pinned_attachment_ids or [])
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO projects (id, name, description, "
+                "pinned_attachment_ids, archived, created_at, "
+                "last_active_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    project_id,
+                    name,
+                    description,
+                    json.dumps(pins),
+                    0,
+                    now,
+                    now,  # last_active_at == created_at at creation (spec)
+                ),
+            )
+        return Project(
+            id=project_id,
+            name=name,
+            description=description,
+            pinned_attachment_ids=pins,
+            archived=False,
+            created_at=now,
+            last_active_at=now,
+        )
+
+    def get_project(self, project_id: str) -> Project | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+        return _row_to_project(row) if row else None
+
+    def list_projects(
+        self, *, include_archived: bool = False, limit: int = 100
+    ) -> list[Project]:
+        clauses: list[str] = []
+        params: list = []
+        if not include_archived:
+            clauses.append("archived = 0")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM projects {where} "
+                "ORDER BY last_active_at DESC LIMIT ?",
+                (*params, max(1, min(limit, 500))),
+            ).fetchall()
+        return [_row_to_project(r) for r in rows]
+
+    def update_project(
+        self,
+        project_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        archived: bool | None = None,
+    ) -> Project | None:
+        sets: list[str] = []
+        params: list = []
+        for col, val in (
+            ("name", name),
+            ("description", description),
+            ("archived", None if archived is None else int(archived)),
+        ):
+            if val is not None:
+                sets.append(f"{col} = ?")
+                params.append(val)
+        if not sets:
+            return self.get_project(project_id)
+        params.append(project_id)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE projects SET {', '.join(sets)} WHERE id = ?", params
+            )
+            if cur.rowcount == 0:
+                return None
+        return self.get_project(project_id)
+
+    def delete_project(
+        self, project_id: str, *, cascade: bool = False
+    ) -> tuple[bool, int]:
+        """Delete a project. Returns ``(deleted, affected_threads)``.
+
+        Default (``cascade=False``): set ``project_id=NULL`` on contained
+        threads (unparent), then delete the project row.
+
+        ``cascade=True``: delete contained threads + their messages
+        (matches ``ChatThreadStore.delete_thread`` cascade pattern),
+        then delete the project row.
+
+        Episodes / AD-541b anchors are preserved in BOTH paths — this
+        store only touches the chat_threads + chat_thread_messages +
+        projects tables.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # Confirm the project exists first so we return a clean
+                # (False, 0) when the row is already gone.
+                row = conn.execute(
+                    "SELECT id FROM projects WHERE id = ?", (project_id,)
+                ).fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    return False, 0
+
+                if cascade:
+                    thread_rows = conn.execute(
+                        "SELECT id FROM chat_threads WHERE project_id = ?",
+                        (project_id,),
+                    ).fetchall()
+                    affected = len(thread_rows)
+                    for tr in thread_rows:
+                        conn.execute(
+                            "DELETE FROM chat_thread_messages "
+                            "WHERE thread_id = ?",
+                            (tr["id"],),
+                        )
+                    conn.execute(
+                        "DELETE FROM chat_threads WHERE project_id = ?",
+                        (project_id,),
+                    )
+                else:
+                    cur = conn.execute(
+                        "UPDATE chat_threads SET project_id = NULL "
+                        "WHERE project_id = ?",
+                        (project_id,),
+                    )
+                    affected = cur.rowcount
+
+                conn.execute(
+                    "DELETE FROM projects WHERE id = ?", (project_id,)
+                )
+                conn.execute("COMMIT")
+                return True, affected
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    # ---------- Pin/unpin ----------
+
+    def pin_attachment(
+        self, project_id: str, attachment_id: str
+    ) -> Project | None:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT pinned_attachment_ids FROM projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    return None
+                try:
+                    pins = json.loads(row["pinned_attachment_ids"]) or []
+                except (json.JSONDecodeError, TypeError):
+                    pins = []
+                if attachment_id not in pins:
+                    pins.append(attachment_id)
+                    conn.execute(
+                        "UPDATE projects SET pinned_attachment_ids = ? "
+                        "WHERE id = ?",
+                        (json.dumps(pins), project_id),
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.get_project(project_id)
+
+    def unpin_attachment(
+        self, project_id: str, attachment_id: str
+    ) -> Project | None:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT pinned_attachment_ids FROM projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    return None
+                try:
+                    pins = json.loads(row["pinned_attachment_ids"]) or []
+                except (json.JSONDecodeError, TypeError):
+                    pins = []
+                if attachment_id in pins:
+                    pins = [a for a in pins if a != attachment_id]
+                    conn.execute(
+                        "UPDATE projects SET pinned_attachment_ids = ? "
+                        "WHERE id = ?",
+                        (json.dumps(pins), project_id),
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.get_project(project_id)
+
+    # ---------- touch ----------
+
+    def touch(self, project_id: str, *, now: float | None = None) -> None:
+        """AD-793: bump ``last_active_at`` for a project.
+
+        Called from the router-layer message-append handler in
+        ``routers/threads.py`` so the threads substrate stays decoupled
+        from the projects layer. Honest-degrade: missing row no-ops.
+        """
+        ts = now if now is not None else self._clock()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE projects SET last_active_at = ? WHERE id = ?",
+                (ts, project_id),
+            )
+
+
+def _row_to_project(row: sqlite3.Row) -> Project:
+    try:
+        pins = json.loads(row["pinned_attachment_ids"]) or []
+    except (json.JSONDecodeError, TypeError):
+        pins = []
+    return Project(
+        id=row["id"],
+        name=row["name"],
+        description=row["description"] or "",
+        pinned_attachment_ids=list(pins),
+        archived=bool(row["archived"]),
+        created_at=row["created_at"],
+        last_active_at=row["last_active_at"],
+    )
 
 
 def _row_to_thread(row: sqlite3.Row) -> ChatThread:

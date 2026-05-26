@@ -2075,6 +2075,41 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if targeted_recall_block is not None:
         message_text = f"{targeted_recall_block}\n\n{message_text}"
 
+    # AD-793 (Wave 196): project preamble. When the thread belongs to a
+    # project with a non-empty description, prepend the Captain-authored
+    # "what this project is about" framing. Inserts BETWEEN recall and
+    # visual prepend so the final on-the-wire order is:
+    #     visual → project → recall → user
+    # Tier-2 honest-degrade: missing store / deleted project / empty
+    # description silently omit the block (no crash, no fabrication).
+    # Delimiter framing matches AD-733a / BF-294 provenance pattern.
+    _project_preamble: str | None = None
+    try:
+        _project_id = getattr(thread, "project_id", None) if thread else None
+        # Type-guard: real ChatThread.project_id is str | None. Defends
+        # against MagicMock-auto-attribute test stubs (BF-287 / phantom-
+        # via-MagicMock pattern) where attribute access returns a
+        # truthy mock that would otherwise inject a garbage preamble.
+        if isinstance(_project_id, str) and _project_id:
+            _project_store = getattr(runtime, "project_store", None)
+            if _project_store is not None:
+                _project = _project_store.get_project(_project_id)
+                if (
+                    _project is not None
+                    and isinstance(getattr(_project, "description", None), str)
+                    and _project.description.strip()
+                    and isinstance(getattr(_project, "name", None), str)
+                ):
+                    _project_preamble = (
+                        f"--- Project: {_project.name} ---\n"
+                        f"{_project.description.strip()}\n"
+                        f"--- End Project Context ---"
+                    )
+    except Exception:
+        logger.debug("AD-793: project preamble lookup failed", exc_info=True)
+    if _project_preamble is not None:
+        message_text = f"{_project_preamble}\n\n{message_text}"
+
     # AD-733a (Wave 171): prepend the agent's current visual context.
     # Confabulation guard (BF-294 lesson): render_for_prompt returns a
     # non-empty "no data" sentinel when the buffer is empty, so the agent

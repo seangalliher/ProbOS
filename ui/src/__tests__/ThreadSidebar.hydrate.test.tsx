@@ -6,6 +6,7 @@ import { useStore } from '../store/useStore';
 import { ThreadSidebar } from '../components/sidebar/ThreadSidebar';
 
 let lastUrl: string = '';
+const seenUrls: string[] = [];
 
 beforeEach(() => {
   localStorage.clear();
@@ -16,8 +17,19 @@ beforeEach(() => {
     threadIdByAgent: new Map(),
   });
   lastUrl = '';
+  seenUrls.length = 0;
   global.fetch = vi.fn((url: any) => {
-    lastUrl = String(url);
+    const u = String(url);
+    lastUrl = u;
+    seenUrls.push(u);
+    // AD-793: ThreadSidebar now hydrates threads + projects in
+    // parallel. Distinguish by URL so each receives a valid body.
+    if (u.startsWith('/api/projects')) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ projects: [] }),
+      }) as any;
+    }
     return Promise.resolve({
       ok: true,
       json: async () => ({
@@ -37,8 +49,10 @@ describe('ThreadSidebar hydration', () => {
   it('fires GET /api/threads with include_archived=false and seeds chatThreads', async () => {
     render(<ThreadSidebar onThreadSelected={() => {}} activeThreadId={null} />);
     await waitFor(() => {
-      expect(lastUrl).toContain('/api/threads?include_archived=false');
-      expect(lastUrl).toContain('limit=100');
+      const threadsUrl = seenUrls.find((u) => u.startsWith('/api/threads?'));
+      expect(threadsUrl).toBeDefined();
+      expect(threadsUrl).toContain('include_archived=false');
+      expect(threadsUrl).toContain('limit=100');
     });
     await waitFor(() => {
       expect(useStore.getState().chatThreads.get('h1')?.title).toBe('Hydrated');

@@ -223,6 +223,22 @@ export interface AD791aChatThreadView {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * AD-793 (Wave 196) project view.
+ *
+ * Mirrors the server's ``Project.to_dict()`` payload. Sidebar consumes
+ * this to render the expandable Projects section under Pinned.
+ */
+export interface ProjectView {
+  id: string;
+  name: string;
+  description: string;
+  pinned_attachment_ids: string[];
+  archived: boolean;
+  created_at: number;
+  last_active_at: number;
+}
+
 export interface HXIState {
   // Data
   agents: Map<string, Agent>;
@@ -297,6 +313,10 @@ export interface HXIState {
   threadIdByAgent: Map<string, string>;
   chatThreads: Map<string, AD791aChatThreadView>;
   activeThreadId: string | null;
+  // AD-793 (Wave 196): projects slice. ThreadSidebar hydrates this on
+  // mount and consumes it for the Projects section. Mirrors the
+  // chatThreads pattern (Map + hydrate + per-entry update).
+  projects: Map<string, ProjectView>;
   // Ward Room (AD-407)
   wardRoomChannels: WardRoomChannel[];
   // Ward Room HXI (AD-407c)
@@ -408,6 +428,10 @@ export interface HXIState {
   setChatThread: (thread: AD791aChatThreadView) => void;
   setActiveThread: (threadId: string | null) => void;
   hydrateChatThreads: (threads: AD791aChatThreadView[]) => void;
+  // AD-793 (Wave 196): project state actions.
+  hydrateProjects: (projects: ProjectView[]) => void;
+  setProject: (project: ProjectView) => void;
+  removeProject: (projectId: string) => void;
   // Crew Manifest actions (AD-513)
   openCrewManifest: () => void;
   closeCrewManifest: () => void;
@@ -605,6 +629,9 @@ export const useStore = create<HXIState>((set, get) => ({
   threadIdByAgent: new Map(),
   chatThreads: new Map(),
   activeThreadId: null,
+  // AD-793 (Wave 196): empty Map at boot; ThreadSidebar mounts
+  // hydrateProjects from /api/projects.
+  projects: new Map(),
   // Ward Room (AD-407)
   wardRoomChannels: [],
   // Ward Room HXI (AD-407c)
@@ -1050,6 +1077,23 @@ export const useStore = create<HXIState>((set, get) => ({
     const next = new Map<string, AD791aChatThreadView>();
     for (const t of threads) next.set(t.id, t);
     set({ chatThreads: next });
+  },
+  // AD-793 (Wave 196): projects slice actions. Mirror the chatThreads
+  // Map + hydrate + per-entry update pattern.
+  hydrateProjects: (projects) => {
+    const next = new Map<string, ProjectView>();
+    for (const p of projects) next.set(p.id, p);
+    set({ projects: next });
+  },
+  setProject: (project) => {
+    const next = new Map(get().projects);
+    next.set(project.id, project);
+    set({ projects: next });
+  },
+  removeProject: (projectId) => {
+    const next = new Map(get().projects);
+    next.delete(projectId);
+    set({ projects: next });
   },
   // Ward Room HXI actions (AD-407c)
   openWardRoom: async (channelId?: string) => {

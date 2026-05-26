@@ -440,8 +440,14 @@ class ProbOSRuntime:
 
         # AD-791 (Wave 193): chat-threads substrate. Eager init so REST
         # routes + IntentMessage emitters can reference it from any phase.
-        from probos.threads import ChatThreadStore
+        from probos.threads import ChatThreadStore, ProjectStore
         self.chat_thread_store = ChatThreadStore(
+            db_path=self._data_dir / "chat_threads.db",
+        )
+        # AD-793 (Wave 196): projects substrate. Shares the chat_threads
+        # database file so cascade/unparent operations on contained
+        # threads can run inside the same SQLite transaction context.
+        self.project_store = ProjectStore(
             db_path=self._data_dir / "chat_threads.db",
         )
 

@@ -214,6 +214,7 @@ def create_app(runtime: Any) -> FastAPI:
         task_sessions as task_sessions_router,  # AD-815a (Wave 200): TaskSession
         insights as insights_router,  # AD-810: operator-facing recent-activity summary
         schedule_nl as schedule_nl_router,  # AD-812: NL scheduled actions
+        projects as projects_router,  # AD-793 (Wave 196): projects substrate
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -240,6 +241,7 @@ def create_app(runtime: Any) -> FastAPI:
         task_sessions_router,
         insights_router,
         schedule_nl_router,
+        projects_router,
     ):
         app.include_router(r.router)
 

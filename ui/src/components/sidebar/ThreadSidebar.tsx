@@ -1,12 +1,12 @@
 /*
  * AD-792 (Wave 195) — ThreadSidebar: chat-thread navigation rail for
  * Compact Yeo (Yeoman desktop tray). The sidebar shows the operator
- * which conversations exist, organized Pinned -> Projects (placeholder)
+ * which conversations exist, organized Pinned -> Projects (AD-793)
  * -> Recents (Today / Yesterday / Earlier), and lets them switch
  * between threads, search, pin/archive/delete, and start new chats.
  *
- * Pure UI. All state mutations go through ``threadApi`` -> existing
- * Wave 193/194 backend endpoints. No new pipes, no new store slices.
+ * Pure UI. All state mutations go through ``threadApi`` /
+ * ``projectApi`` -> existing Wave 193/194/196 backend endpoints.
  *
  * HXI design constraints honored:
  *   #1 system understands the human  -> sections sorted by salience
@@ -15,7 +15,7 @@
  *   #5 progressive disclosure         -> 240px <-> 56px collapse w/ localStorage
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useStore, type AD791aChatThreadView } from '../../store/useStore';
+import { useStore, type AD791aChatThreadView, type ProjectView } from '../../store/useStore';
 import {
   createThread,
   deleteThread,
@@ -23,6 +23,20 @@ import {
   patchThread,
   searchThreads,
 } from './threadApi';
+import {
+  createProject,
+  deleteProject,
+  listProjects,
+  patchProject,
+} from './projectApi';
+import { ProjectRow } from './ProjectRow';
+import { NewProjectModal } from './NewProjectModal';
+import {
+  ProjectContextMenu,
+  ProjectDeleteConfirm,
+  EditDescriptionModal,
+} from './ProjectContextMenu';
+import { MoveToProjectMenu } from './MoveToProjectMenu';
 import { TIME_OF_LIFE_LABELS, timeOfLifeGroup, type TimeOfLifeGroup } from './threadGrouping';
 
 const AMBER = '#f0b060';
@@ -38,6 +52,8 @@ const SIDEBAR_WIDTH_COLLAPSED = 56;
 const COLLAPSED_KEY = 'probos.sidebar.collapsed';
 const SEARCH_DEBOUNCE_MS = 300; // matches useStore.ts:549 precedent
 const MAX_PER_GROUP = 50;
+// AD-793 (Wave 196): persisted Projects-section expansion state.
+const PROJECTS_EXPANDED_KEY = 'probos.sidebar.projects.expanded';
 
 export interface ThreadSidebarProps {
   /** When undefined, sidebar renders un-collapsed. */
@@ -61,6 +77,29 @@ function persistSidebarCollapsed(v: boolean): void {
     localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0');
   } catch {
     // localStorage may be unavailable (private mode, quota); ignore.
+  }
+}
+
+// AD-793 (Wave 196): per-project expansion state persistence.
+function loadProjectsExpanded(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(PROJECTS_EXPANDED_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      return parsed as Record<string, boolean>;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function persistProjectsExpanded(state: Record<string, boolean>): void {
+  try {
+    localStorage.setItem(PROJECTS_EXPANDED_KEY, JSON.stringify(state));
+  } catch {
+    // localStorage may be unavailable; ignore.
   }
 }
 
@@ -289,10 +328,11 @@ interface ContextMenuViewProps {
   onTogglePin: () => void;
   onArchive: () => void;
   onDelete: () => void;
+  onMoveToProject: (x: number, y: number) => void;
   onClose: () => void;
 }
 
-function ContextMenuView({ state, thread, onRename, onTogglePin, onArchive, onDelete, onClose }: ContextMenuViewProps) {
+function ContextMenuView({ state, thread, onRename, onTogglePin, onArchive, onDelete, onMoveToProject, onClose }: ContextMenuViewProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -340,6 +380,16 @@ function ContextMenuView({ state, thread, onRename, onTogglePin, onArchive, onDe
     >
       <MenuItem testid="ctx-rename" label="Rename" onClick={onRename} />
       <MenuItem testid="ctx-pin" label={pinned ? 'Unpin' : 'Pin'} onClick={onTogglePin} />
+      <MenuItem
+        testid="ctx-move-to-project"
+        label="Move to project…"
+        onClick={() => {
+          // AD-793: position the submenu just to the right of this item.
+          const rect = menuRef.current?.getBoundingClientRect();
+          if (rect) onMoveToProject(rect.right + 4, rect.top);
+          else onMoveToProject(state.x + menuWidth, state.y);
+        }}
+      />
       <MenuItem testid="ctx-archive" label="Archive" onClick={onArchive} />
       <MenuItem testid="ctx-delete" label="Delete" onClick={onDelete} danger />
     </div>
@@ -441,6 +491,11 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
   const setActiveThread = useStore((s) => s.setActiveThread);
   const setThreadForAgent = useStore((s) => s.setThreadForAgent);
   const agents = useStore((s) => s.agents);
+  // AD-793: projects slice.
+  const projects = useStore((s) => s.projects);
+  const hydrateProjects = useStore((s) => s.hydrateProjects);
+  const setProject = useStore((s) => s.setProject);
+  const removeProject = useStore((s) => s.removeProject);
 
   const [collapsed, setCollapsed] = useState<boolean>(() => initialCollapsed ?? loadSidebarCollapsed());
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -448,19 +503,41 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // AD-793: project UI state.
+  const [projectsExpanded, setProjectsExpanded] = useState<Record<string, boolean>>(
+    () => loadProjectsExpanded(),
+  );
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [projectContextMenu, setProjectContextMenu] = useState<{
+    projectId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [projectDeletingId, setProjectDeletingId] = useState<string | null>(null);
+  const [editDescriptionProjectId, setEditDescriptionProjectId] = useState<string | null>(null);
+  const [moveSubmenu, setMoveSubmenu] = useState<{
+    threadId: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
   // Hydrate once on mount. The store action absorbs the response.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const threads = await listThreads({ includeArchived: false, limit: 100 });
+      // AD-793: hydrate threads + projects in parallel.
+      const [threads, projectList] = await Promise.all([
+        listThreads({ includeArchived: false, limit: 100 }),
+        listProjects({ includeArchived: false, limit: 100 }),
+      ]);
       if (cancelled) return;
       if (threads.length > 0) hydrateChatThreads(threads);
+      if (projectList.length > 0) hydrateProjects(projectList);
     })();
     return () => {
       cancelled = true;
     };
-  }, [hydrateChatThreads]);
+  }, [hydrateChatThreads, hydrateProjects]);
 
   // Persist collapse preference.
   useEffect(() => {
@@ -495,10 +572,38 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
   const recents = useMemo(
     () =>
       allThreads
-        .filter((t) => !t.pinned && !t.archived)
+        // AD-793 (Wave 196): exclude project-bound threads from Recents
+        // (they appear under their project section instead). Pinned
+        // overrides project grouping — pinned threads stay in Pinned
+        // regardless of project_id (handled by the `pinned` slice above).
+        .filter((t) => !t.pinned && !t.archived && t.project_id == null)
         .sort((a, b) => b.last_active_at - a.last_active_at),
     [allThreads],
   );
+
+  // AD-793: derive threads-per-project map for the Projects section.
+  const projectsList = useMemo(() => Array.from(projects.values()), [projects]);
+  const threadsByProject = useMemo(() => {
+    const map = new Map<string, AD791aChatThreadView[]>();
+    for (const t of allThreads) {
+      if (t.archived || t.pinned) continue; // pinned go to Pinned section
+      const pid = t.project_id;
+      if (!pid) continue;
+      const bucket = map.get(pid) ?? [];
+      bucket.push(t);
+      map.set(pid, bucket);
+    }
+    // Sort each bucket by last_active_at desc.
+    for (const bucket of map.values()) {
+      bucket.sort((a, b) => b.last_active_at - a.last_active_at);
+    }
+    return map;
+  }, [allThreads]);
+
+  // Persist projects-expanded changes.
+  useEffect(() => {
+    persistProjectsExpanded(projectsExpanded);
+  }, [projectsExpanded]);
 
   const groupedRecents = useMemo(() => {
     const now = Date.now();
@@ -614,6 +719,142 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
 
   const handleDeleteCancel = useCallback(() => setDeletingId(null), []);
 
+  // AD-793 (Wave 196): project handlers.
+  const toggleProjectExpanded = useCallback((projectId: string) => {
+    setProjectsExpanded((prev) => ({ ...prev, [projectId]: !prev[projectId] }));
+  }, []);
+
+  const handleProjectContextMenu = useCallback(
+    (projectId: string, x: number, y: number) => {
+      setProjectContextMenu({ projectId, x, y });
+    },
+    [],
+  );
+
+  const handleNewProjectSubmit = useCallback(
+    async (name: string, description: string) => {
+      const project = await createProject({ name, description });
+      if (project) {
+        setProject(project);
+        // Auto-expand the newly-created project so the operator sees it.
+        setProjectsExpanded((prev) => ({ ...prev, [project.id]: true }));
+      }
+      setNewProjectOpen(false);
+    },
+    [setProject],
+  );
+
+  const handleProjectRename = useCallback(() => {
+    if (!projectContextMenu) return;
+    const current = projects.get(projectContextMenu.projectId);
+    if (!current) {
+      setProjectContextMenu(null);
+      return;
+    }
+    // Reuse prompt() for v1 simple rename (matches the simple Rename in
+    // ThreadRow's context menu before the inline-edit affordance).
+    const next = window.prompt('Project name', current.name);
+    setProjectContextMenu(null);
+    if (next == null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === current.name) return;
+    void (async () => {
+      const updated = await patchProject(current.id, { name: trimmed });
+      if (updated) setProject(updated);
+    })();
+  }, [projectContextMenu, projects, setProject]);
+
+  const handleProjectEditDescription = useCallback(() => {
+    if (!projectContextMenu) return;
+    setEditDescriptionProjectId(projectContextMenu.projectId);
+    setProjectContextMenu(null);
+  }, [projectContextMenu]);
+
+  const handleProjectEditDescriptionSubmit = useCallback(
+    (description: string) => {
+      const id = editDescriptionProjectId;
+      setEditDescriptionProjectId(null);
+      if (!id) return;
+      void (async () => {
+        const updated = await patchProject(id, { description });
+        if (updated) setProject(updated);
+      })();
+    },
+    [editDescriptionProjectId, setProject],
+  );
+
+  const handleProjectArchive = useCallback(() => {
+    if (!projectContextMenu) return;
+    const id = projectContextMenu.projectId;
+    setProjectContextMenu(null);
+    void (async () => {
+      const updated = await patchProject(id, { archived: true });
+      if (updated) {
+        // Archived → drop from the in-memory map so the section refreshes.
+        removeProject(id);
+      }
+    })();
+  }, [projectContextMenu, removeProject]);
+
+  const handleProjectDeleteRequest = useCallback(() => {
+    if (!projectContextMenu) return;
+    setProjectDeletingId(projectContextMenu.projectId);
+    setProjectContextMenu(null);
+  }, [projectContextMenu]);
+
+  const handleProjectDeleteConfirm = useCallback(
+    (cascade: boolean) => {
+      const id = projectDeletingId;
+      setProjectDeletingId(null);
+      if (!id) return;
+      void (async () => {
+        const result = await deleteProject(id, { cascade });
+        if (result?.deleted) {
+          removeProject(id);
+          if (cascade) {
+            // Remove contained threads from the store.
+            const next = new Map(useStore.getState().chatThreads);
+            for (const [tid, t] of next.entries()) {
+              if (t.project_id === id) next.delete(tid);
+            }
+            useStore.setState({ chatThreads: next });
+          } else {
+            // Unparent contained threads in the store.
+            const next = new Map(useStore.getState().chatThreads);
+            for (const [tid, t] of next.entries()) {
+              if (t.project_id === id) {
+                next.set(tid, { ...t, project_id: null });
+              }
+            }
+            useStore.setState({ chatThreads: next });
+          }
+        }
+      })();
+    },
+    [projectDeletingId, removeProject],
+  );
+
+  const handleMoveToProject = useCallback((x: number, y: number) => {
+    if (!contextMenu) return;
+    setMoveSubmenu({ threadId: contextMenu.threadId, x, y });
+    setContextMenu(null);
+  }, [contextMenu]);
+
+  const handleMoveToProjectPick = useCallback(
+    async (newProjectId: string | null) => {
+      if (!moveSubmenu) return;
+      const id = moveSubmenu.threadId;
+      const current = chatThreads.get(id);
+      setMoveSubmenu(null);
+      if (!current) return;
+      // Optimistic store update.
+      setChatThread({ ...current, project_id: newProjectId });
+      const updated = await patchThread(id, { project_id: newProjectId });
+      if (updated) setChatThread(updated);
+    },
+    [chatThreads, moveSubmenu, setChatThread],
+  );
+
   // ---------- Render helpers ----------
   const yeoLoaded = useMemo(() => {
     for (const a of agents.values()) {
@@ -685,7 +926,7 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
             />
           ))}
         </div>
-        {contextMenu && <ContextMenuView state={contextMenu} thread={ctxThread} onRename={handleRenameStart} onTogglePin={handleTogglePin} onArchive={handleArchive} onDelete={handleDeleteRequest} onClose={closeContextMenu} />}
+        {contextMenu && <ContextMenuView state={contextMenu} thread={ctxThread} onRename={handleRenameStart} onTogglePin={handleTogglePin} onArchive={handleArchive} onDelete={handleDeleteRequest} onMoveToProject={handleMoveToProject} onClose={closeContextMenu} />}
         {delThread && <DeleteConfirm thread={delThread} onConfirm={handleDeleteConfirm} onCancel={handleDeleteCancel} />}
       </div>
     );
@@ -815,8 +1056,89 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
               )}
             </section>
             <section data-testid="sidebar-section-projects">
-              <SectionHeader label="Projects" />
-              <div style={{ padding: '4px 12px', fontSize: 11, color: DIM }}>Coming with AD-793.</div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingRight: 8,
+                }}
+              >
+                <SectionHeader label="Projects" />
+                <button
+                  type="button"
+                  data-testid="sidebar-new-project"
+                  aria-label="New project"
+                  title="New project"
+                  onClick={() => setNewProjectOpen(true)}
+                  style={{
+                    background: 'transparent',
+                    border: `1px solid ${BORDER}`,
+                    color: AMBER,
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <GlyphPlus color={AMBER} />
+                </button>
+              </div>
+              {projectsList.length === 0 ? (
+                <div
+                  data-testid="sidebar-projects-empty"
+                  style={{ padding: '4px 12px', fontSize: 11, color: DIM }}
+                >
+                  No projects yet
+                </div>
+              ) : (
+                projectsList.map((p) => {
+                  const threadsInProject = threadsByProject.get(p.id) ?? [];
+                  const expanded = Boolean(projectsExpanded[p.id]);
+                  return (
+                    <div key={p.id} data-testid={`project-block-${p.id}`}>
+                      <ProjectRow
+                        projectId={p.id}
+                        name={p.name}
+                        threadCount={threadsInProject.length}
+                        expanded={expanded}
+                        onToggle={toggleProjectExpanded}
+                        onContextMenu={handleProjectContextMenu}
+                      />
+                      {expanded &&
+                        (threadsInProject.length === 0 ? (
+                          <div
+                            data-testid={`project-empty-${p.id}`}
+                            style={{
+                              padding: '2px 12px 4px 28px',
+                              fontSize: 11,
+                              color: DIM,
+                            }}
+                          >
+                            No threads yet
+                          </div>
+                        ) : (
+                          <div style={{ paddingLeft: 12 }}>
+                            {threadsInProject.map((t) => (
+                              <ThreadRow
+                                key={t.id}
+                                thread={t}
+                                active={t.id === activeThreadId}
+                                collapsed={false}
+                                onSelect={handleSelect}
+                                onContextMenu={handleContextMenu}
+                                renaming={renamingId === t.id}
+                                onRenameSubmit={handleRenameSubmit}
+                                onRenameCancel={handleRenameCancel}
+                              />
+                            ))}
+                          </div>
+                        ))}
+                    </div>
+                  );
+                })
+              )}
             </section>
             <section data-testid="sidebar-section-recents">
               <SectionHeader label="Recents" />
@@ -856,10 +1178,66 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
           onTogglePin={handleTogglePin}
           onArchive={handleArchive}
           onDelete={handleDeleteRequest}
+          onMoveToProject={handleMoveToProject}
           onClose={closeContextMenu}
         />
       )}
       {delThread && <DeleteConfirm thread={delThread} onConfirm={handleDeleteConfirm} onCancel={handleDeleteCancel} />}
+      {/* AD-793 (Wave 196): project UI overlays. */}
+      {newProjectOpen && (
+        <NewProjectModal
+          onSubmit={handleNewProjectSubmit}
+          onCancel={() => setNewProjectOpen(false)}
+        />
+      )}
+      {projectContextMenu && (
+        <ProjectContextMenu
+          projectId={projectContextMenu.projectId}
+          x={projectContextMenu.x}
+          y={projectContextMenu.y}
+          onRename={handleProjectRename}
+          onEditDescription={handleProjectEditDescription}
+          onArchive={handleProjectArchive}
+          onDelete={handleProjectDeleteRequest}
+          onClose={() => setProjectContextMenu(null)}
+        />
+      )}
+      {projectDeletingId && (() => {
+        const p = projects.get(projectDeletingId);
+        if (!p) return null;
+        const count = (threadsByProject.get(projectDeletingId) ?? []).length;
+        return (
+          <ProjectDeleteConfirm
+            projectName={p.name}
+            threadCount={count}
+            onConfirm={handleProjectDeleteConfirm}
+            onCancel={() => setProjectDeletingId(null)}
+          />
+        );
+      })()}
+      {editDescriptionProjectId && (() => {
+        const p = projects.get(editDescriptionProjectId);
+        if (!p) return null;
+        return (
+          <EditDescriptionModal
+            projectName={p.name}
+            initialDescription={p.description}
+            onSubmit={handleProjectEditDescriptionSubmit}
+            onCancel={() => setEditDescriptionProjectId(null)}
+          />
+        );
+      })()}
+      {moveSubmenu && (
+        <MoveToProjectMenu
+          threadId={moveSubmenu.threadId}
+          x={moveSubmenu.x}
+          y={moveSubmenu.y}
+          projects={projectsList}
+          currentProjectId={chatThreads.get(moveSubmenu.threadId)?.project_id ?? null}
+          onPick={(pid) => void handleMoveToProjectPick(pid)}
+          onClose={() => setMoveSubmenu(null)}
+        />
+      )}
     </div>
   );
 }
