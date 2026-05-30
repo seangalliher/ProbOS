@@ -10,6 +10,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-828: Partial-shutdown diagnostic + startup-incomplete classification
+
+**Date:** 2026-05-29
+**Decision:** Carve out a recoverable sub-case of the AD-820 unclean-shutdown gate. The consolidation gate at `src/probos/startup/shutdown.py:193` (`if runtime.dream_scheduler and runtime.episodic_memory:`) previously had no `else` branch; when either component was None at shutdown the gate skipped silently, `_consolidation_result` kept its initial `"skipped"` value, the marker was written `consolidation_result="skipped" status="partial"`, and the next boot refused to start. **AD-828a:** add the `else` branch with a structured WARNING log naming which component was None and the value of `_startup_complete` — pure diagnostic, zero behavior change. **AD-828b:** add `runtime._startup_complete: bool` (False in `__init__`, True as the unconditional final statement of `start()`); when the gate skips AND `_startup_complete` is falsy (via `getattr(..., True)` honest-degrade), reclassify the result as the new Literal `"startup_incomplete"` instead of `"skipped"`. Teach `check_previous_shutdown` in `src/probos/shutdown_integrity.py` to permit boot for `consolidation == "startup_incomplete"` with a WARNING. Real consolidation failures still stamp `"failed"` and still block.
+**Rationale:** Observed three boot refusals in 7 days (May 22 / 26 / 29; ~4-day cadence consistent with Windows sleep/wake). The `phase1_elapsed=2.1s` in the marker ≈ the BF-296 Phase A `asyncio.sleep(2.0)` grace + nothing else, demonstrating the dream-cycle branch never ran. The most likely trigger is a kill before Phase 5 (`init_dreaming`) wires `dream_scheduler` at `runtime.py:1986` — the marker mislabels this as `"partial"` even though the actual event was "startup never completed." Letting that sub-case boot is safe because (a) the shutdown handler still runs `episodic_memory.stop()` (graceful HNSW close) and (b) the AD-822/AD-822b subprocess structural HNSW probe runs BEFORE the real ChromaDB client opens — so the carve-out trusts an actual integrity check, not the marker's verbal claim of skipped consolidation. Honest-degrade default-True keeps pre-fix running processes on the old behavior (BF-291 transitional-process convention).
+**Status:** Implemented (Wave 198, commit `1d752ad4`)
+
 ### AD-674: Graduated Initiative Scale
 
 **Date:** 2026-04-28
