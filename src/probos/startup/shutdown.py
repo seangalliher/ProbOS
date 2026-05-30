@@ -257,6 +257,34 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             )
             _consolidation_result = "failed"
 
+    else:
+        # AD-828a: the consolidation gate skipped. Log WHICH component was
+        # absent so the next recurrence is diagnosable instead of silent.
+        _ds_present = runtime.dream_scheduler is not None
+        _em_present = getattr(runtime, "episodic_memory", None) is not None
+        # AD-828b: distinguish "killed before the cognitive layer was wired"
+        # (startup_incomplete — recoverable, the shutdown handler below still
+        # closes episodic memory cleanly and AD-822b's HNSW probe is the boot
+        # backstop) from a deliberately disabled subsystem (leave "skipped").
+        _startup_done = getattr(runtime, "_startup_complete", True)
+        if not _startup_done:
+            _consolidation_result = "startup_incomplete"
+            logger.warning(
+                "AD-828: consolidation skipped because startup never completed "
+                "(dream_scheduler=%s episodic_memory=%s, _startup_complete=False). "
+                "Classifying as startup_incomplete — boot will be permitted; the "
+                "AD-822b HNSW structural probe remains the integrity backstop.",
+                _ds_present, _em_present,
+            )
+        else:
+            logger.warning(
+                "AD-828: consolidation skipped with startup complete "
+                "(dream_scheduler=%s episodic_memory=%s). Leaving "
+                "consolidation_result=%r — subsystem appears disabled or "
+                "torn down early.",
+                _ds_present, _em_present, _consolidation_result,
+            )
+
     # BF-207: Close episodic memory (ChromaDB) immediately after dream
     # consolidation — this is the critical operation that caused hash mismatches
     # when it was positioned after ~25 service stops.

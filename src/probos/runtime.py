@@ -964,6 +964,12 @@ class ProbOSRuntime:
         self._start_time_wall: float = time.time()
         self._session_id: str = str(_uuid.uuid4())
         self._lifecycle_state: str = "first_boot"
+        # AD-828b: set True only at the very end of start() (Phase 8 finalize
+        # complete). shutdown() reads this to distinguish "killed before the
+        # cognitive layer was wired" (startup_incomplete — recoverable) from
+        # a real consolidation failure (failed — blocks boot). Default False so
+        # any kill before start() returns is correctly classified.
+        self._startup_complete: bool = False
         self._stasis_duration: float = 0.0
         self._previous_session: dict | None = None
 
@@ -2350,6 +2356,11 @@ class ProbOSRuntime:
             name="episodic-backup-loop",
             drain_on_shutdown=True,
         )
+
+        # AD-828b: startup fully complete — the cognitive layer (dream_scheduler,
+        # episodic_memory) is wired. A shutdown after this point that still skips
+        # consolidation is a real failure, not a killed-mid-boot event.
+        self._startup_complete = True
 
     async def _initialize_semantic_work_layer(self) -> None:
         """AD-750: Initialize semantic storage, session continuity, and data mapping.

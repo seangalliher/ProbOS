@@ -40,7 +40,9 @@ from typing import Literal
 logger = logging.getLogger(__name__)
 
 ShutdownStatus = Literal["clean", "partial", "aborted", "unknown"]
-ConsolidationResult = Literal["full", "partial", "skipped", "failed", "rebuilt"]
+ConsolidationResult = Literal[
+    "full", "partial", "skipped", "failed", "rebuilt", "startup_incomplete"
+]
 
 STATUS_FILENAME = "shutdown_status.json"
 
@@ -250,6 +252,22 @@ def check_previous_shutdown(
             "AD-820: previous shutdown was %s (consolidation=%s) at %.0f",
             "clean" if status == "clean" else "rebuilt",
             consolidation,
+            payload.get("last_shutdown_at", 0),
+        )
+        return
+
+    # AD-828b: a shutdown that skipped consolidation purely because startup
+    # never completed (killed before the cognitive layer was wired) is
+    # recoverable: the shutdown handler still closed episodic memory cleanly,
+    # so the on-disk HNSW reflects the last good state, and AD-822b's pre-open
+    # structural probe (running in the AD-822 subprocess) is the backstop that
+    # refuses boot if the index is actually torn. Permit boot with a WARNING.
+    if consolidation == "startup_incomplete":
+        logger.warning(
+            "AD-828b: previous shutdown was startup_incomplete at %.0f — the "
+            "runtime was killed before startup finished wiring the cognitive "
+            "layer. Permitting boot; the AD-822b HNSW probe will refuse if the "
+            "index is genuinely torn.",
             payload.get("last_shutdown_at", 0),
         )
         return
