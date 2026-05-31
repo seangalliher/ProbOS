@@ -237,6 +237,19 @@ async def upload_camera_frame(
         intent="vision_observation",
         params=_params,
     )
+    # AD-746a: mirror the latest-frame cache at admission time so FORCE
+    # DESCRIBE has a warm SHA even if the VisionAggregator buffers or
+    # deadlocks and never forwards this frame to ``_handle`` (BF-323).
+    # Tier-1 swallow: a mirror failure must never break frame admission.
+    _vc = getattr(runtime, "vision_consumer", None)
+    if _vc is not None:
+        try:
+            _vc.record_uploaded_frame(sha, session_id, captured_at)
+        except Exception:
+            logger.debug(
+                "AD-746a: latest-frame mirror failed (session=%s, sha=%s)",
+                session_id[:8], sha[:8], exc_info=True,
+            )
     try:
         await runtime.intent_bus.broadcast(msg)
     except Exception as ex:

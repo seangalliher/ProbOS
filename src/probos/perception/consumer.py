@@ -576,6 +576,25 @@ class VisionConsumer:
                 return entries[-1].description
         return None
 
+    def record_uploaded_frame(
+        self, sha: str, session_id: str, captured_at: float
+    ) -> None:
+        """AD-746a: mirror the latest-frame cache at upload time.
+
+        Defense-in-depth for FORCE DESCRIBE. The router endpoint calls this
+        when it accepts a camera/screen frame, BEFORE broadcasting the
+        ``vision_observation`` intent — so ``force_describe_current_frame``
+        has a warm SHA even if the VisionAggregator buffers/deadlocks and
+        never forwards the frame to ``_handle`` (BF-323). Idempotent with the
+        ``_handle`` write: both store ``(sha, captured_at)`` keyed by session
+        plus the global slot. No-op on empty sha.
+        """
+        if not sha:
+            return
+        if session_id:
+            self._latest_frame_by_session[session_id] = (sha, captured_at)
+        self._latest_frame_global = (sha, captured_at)
+
     async def _describe(self, sha: str) -> str:
         """Call the vision LLM on a single frame. Returns description or empty string."""
         try:

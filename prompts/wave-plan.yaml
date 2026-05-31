@@ -4604,7 +4604,7 @@ waves:
     builder_required: true
     issues_to_close: [794]
     estimated_hours: 1
-    status: ready
+    status: done
     notes: |
       AD-746a (defense-in-depth, filed during BF-323 retrospective):
       VisionConsumer.force_describe_current_frame reads
@@ -4629,6 +4629,16 @@ waves:
       dispatch), so AD-746a's concern is specifically the aggregator
       BUFFER/forward chain (BF-323), independent of BF-326 - no
       retry/recover note needed, the router mirror is the direct path.
+
+      SHIPPED: VisionConsumer.record_uploaded_frame(sha, session_id,
+      captured_at) public method mirrors the _handle write
+      (_latest_frame_by_session + _latest_frame_global), no-op on empty
+      sha. perception.py upload_camera_frame calls it via
+      getattr(runtime,"vision_consumer",None) with a Tier-1 swallow BEFORE
+      broadcast. 3 new tests in test_ad746a_force_describe_mirror.py (both
+      caches populated; force-describe resolves mirrored SHA with _process
+      stubbed, no _handle call; empty-sha no-op). Scoped regression 94
+      passed.
 
 
 
