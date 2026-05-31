@@ -30,8 +30,32 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Data classes
+# Service-subscriber allowlist (BF-329)
 # ---------------------------------------------------------------------------
+#
+# Some intent-bus subscribers are *services*, not agents, so their IDs never
+# appear in the agent registry. Treating them as "orphaned" produces a
+# false-positive integrity drop on every clean boot (observed 89%) and
+# auto-dispatches a high-severity DIAGNOSE remediation for a non-issue.
+#
+# These prefixes identify the known non-agent service subscribers. Sources:
+#   - "perception." → probos/perception/aggregator.py
+#       (SUBSCRIBER_AGENT_ID = "perception.vision_aggregator")
+#   - "yeoman-proactive-" → probos/cognitive/yeoman.py
+#       (self._proactive_sub_id = f"yeoman-proactive-{self.id[:8]}")
+#
+# This narrows the orphan check — it does not disable it. A subscriber that
+# matches neither a registered agent nor a service prefix is still flagged.
+_SERVICE_SUBSCRIBER_PREFIXES: tuple[str, ...] = (
+    "perception.",
+    "yeoman-proactive-",
+)
+
+
+def _is_service_subscriber(subscriber_id: str) -> bool:
+    """True if the subscriber ID belongs to a known non-agent service."""
+    return subscriber_id.startswith(_SERVICE_SUBSCRIBER_PREFIXES)
+
 
 
 @dataclass
@@ -282,6 +306,11 @@ class StructuralIntegrityField:
                 details=f"registry read error: {exc}",
             )
         orphaned = subscriber_ids - registered_ids
+        # BF-329: Exclude known non-agent service subscribers (perception
+        # aggregator, yeoman proactive sub) — they intentionally use synthetic
+        # IDs that are not in the agent registry. A genuine orphan (no matching
+        # agent AND not a known service) is still flagged.
+        orphaned = {s for s in orphaned if not _is_service_subscriber(s)}
         if orphaned:
             return SIFCheckResult(
                 name="intent_bus_coherence",

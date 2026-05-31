@@ -56,7 +56,7 @@ async def test_main_post_suppressed_when_action_extractor_posts(caplog):
     agent.agent_type = "science_officer"
     agent.id = "agent-1"
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         await pipeline.process_and_post(
             agent=agent,
             response_text="Hello ward room",
@@ -66,8 +66,10 @@ async def test_main_post_suppressed_when_action_extractor_posts(caplog):
 
     # Step 7 create_post should NOT have been called
     ward_room.create_post.assert_not_called()
-    assert "BF-237" in caplog.text
-    assert "Suppressing main post" in caplog.text
+    # AD-832: suppression is now logged at INFO with self-documenting text so
+    # observers do not misread the expected dedup as a fault.
+    assert "AD-832" in caplog.text
+    assert "Duplicate post suppressed" in caplog.text
 
 
 # ── Test 2 ────────────────────────────────────────────────────────────
@@ -315,7 +317,12 @@ async def test_telemetry_event_emitted_on_suppression():
     event_log.log.assert_called_once()
     call_kwargs = event_log.log.call_args[1]
     assert call_kwargs["category"] == "pipeline"
-    assert call_kwargs["event"] == "pipeline_post_budget_exceeded"
+    # AD-832: event renamed to be self-documenting (was pipeline_post_budget_exceeded);
+    # enriched with a benign machine-readable marker so observers never misread the
+    # expected dedup signal as a resource-exhaustion fault.
+    assert call_kwargs["event"] == "pipeline_duplicate_post_suppressed"
+    assert call_kwargs["data"]["benign"] is True
+    assert call_kwargs["data"]["expected"] is True
 
 
 # ── Test 9 ────────────────────────────────────────────────────────────

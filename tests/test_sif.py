@@ -145,6 +145,62 @@ class TestPoolConsistency:
 
 
 # ---------------------------------------------------------------------------
+# Intent bus coherence (BF-329)
+# ---------------------------------------------------------------------------
+
+
+def _make_intent_bus(subscriber_ids: set[str]) -> MagicMock:
+    bus = MagicMock()
+    bus._subscribers = {sid: object() for sid in subscriber_ids}
+    return bus
+
+
+class TestIntentBusCoherence:
+    def test_orphaned_agent_subscriber_fails(self) -> None:
+        """A subscriber with no matching agent and no service prefix is flagged."""
+        sif = StructuralIntegrityField(
+            intent_bus=_make_intent_bus({"ghost-agent-xyz"}),
+            spawner=_make_spawner([], registered_ids=set()),
+        )
+        result = sif.check_intent_bus_coherence()
+        assert not result.passed
+        assert "ghost-agent-xyz" in result.details
+
+    def test_known_service_subscribers_pass(self) -> None:
+        """BF-329: perception + yeoman-proactive service IDs are not orphans."""
+        sif = StructuralIntegrityField(
+            intent_bus=_make_intent_bus(
+                {"perception.vision_aggregator", "yeoman-proactive-abc12345"}
+            ),
+            spawner=_make_spawner([], registered_ids=set()),
+        )
+        result = sif.check_intent_bus_coherence()
+        assert result.passed
+
+    def test_registered_agent_subscriber_passes(self) -> None:
+        """Happy path: subscriber that maps to a registered agent passes."""
+        sif = StructuralIntegrityField(
+            intent_bus=_make_intent_bus({"agent-1"}),
+            spawner=_make_spawner([], registered_ids={"agent-1"}),
+        )
+        result = sif.check_intent_bus_coherence()
+        assert result.passed
+
+    def test_service_subscriber_mixed_with_real_orphan_still_fails(self) -> None:
+        """A real orphan is still caught even when service subscribers are present."""
+        sif = StructuralIntegrityField(
+            intent_bus=_make_intent_bus(
+                {"perception.vision_aggregator", "ghost-agent-xyz"}
+            ),
+            spawner=_make_spawner([], registered_ids=set()),
+        )
+        result = sif.check_intent_bus_coherence()
+        assert not result.passed
+        assert "ghost-agent-xyz" in result.details
+        assert "perception.vision_aggregator" not in result.details
+
+
+# ---------------------------------------------------------------------------
 # Aggregate / report
 # ---------------------------------------------------------------------------
 

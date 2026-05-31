@@ -4283,7 +4283,7 @@ waves:
     builder_required: true
     issues_to_close: [800, 801, 802, 803]
     estimated_hours: 2
-    status: pending
+    status: complete
     notes: |
       Source: docs/development/codebase-review-2026-05-30.md (Architect
       read-only review). Four verified, untracked engineering-quality
@@ -4309,3 +4309,51 @@ waves:
       single review pass, full-suite green gate (no MagicMock/ dir
       produced) before commit. Branch-protection hardening for the red
       gate is a separate operator task (noted in #800), not in scope.
+
+  - id: "200-observability-false-positive-hygiene"
+    title: "AD-832 + BF-329 observability false-positive hygiene"
+    kind: bf
+    depends_on: ["199-codebase-review-hygiene"]
+    dispatch_prompt: "prompts/ad-832-self-documenting-dedup-telemetry.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-832-self-documenting-dedup-telemetry.md"
+    builder_required: true
+    issues_to_close: [804, 806]
+    estimated_hours: 1
+    status: pending
+    notes: |
+      Two false-positive observability fixes that make the runtime stop
+      reporting expected behavior as faults:
+        - AD-832 (#806): ward_room_pipeline.py BF-237 post-budget
+          suppression was logged at warning ("Suppressing main post") and
+          emitted event "pipeline_post_budget_exceeded" — both read like a
+          resource-exhaustion fault. It is in fact expected dedup: the
+          action extractor already posted a [REPLY]/[MOVE] in the same
+          invocation. Renamed the event to
+          "pipeline_duplicate_post_suppressed", dropped to info level with
+          self-documenting text, and added a machine-readable
+          data={benign, expected, reason} marker so downstream observers
+          (and the agents reading their own telemetry) never confabulate a
+          failure. Only test coupling was two assertions in
+          test_bf237_pipeline_post_budget.py (event name + log
+          level/text).
+        - BF-329 (#804): SIF check_intent_bus_coherence flagged the
+          perception aggregator ("perception.vision_aggregator", see
+          perception/aggregator.py) and the yeoman proactive subscriber
+          ("yeoman-proactive-<id>", see cognitive/yeoman.py) as orphaned
+          subscribers on every clean boot — a ~89% integrity false
+          positive that auto-dispatched a high-severity DIAGNOSE
+          remediation for a non-issue. Added a narrow service-subscriber
+          prefix allowlist (perception., yeoman-proactive-) that excludes
+          known non-agent services from the orphan set. A genuinely
+          orphaned subscriber (no matching agent, not on the allowlist)
+          still fails. Boundary tests added in test_sif.py
+          (TestIntentBusCoherence): genuine orphan fails, the two service
+          subscribers pass, registered-agent happy path, and a mixed case
+          where a real orphan still fails alongside a service subscriber.
+
+      Workflow: small-AD fast path - Architect + Builder same author,
+      single review pass, targeted green gate (test_sif.py +
+      test_bf237_pipeline_post_budget.py) before commit.
+

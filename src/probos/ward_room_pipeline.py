@@ -344,8 +344,13 @@ class WardRoomPostPipeline:
         # Step 7: Post to Ward Room
         # BF-237: If action extractor already posted, suppress the main post.
         if budget.spent:
-            logger.warning(
-                "BF-237: Suppressing main post for %s — action extractor already posted in this invocation",
+            # AD-832: This is expected, healthy dedup behavior — the action
+            # extractor already posted a [REPLY]/[MOVE] in this invocation, so
+            # the redundant main post is intentionally suppressed. Logged at
+            # info (not warning) so observers do not misread it as a fault.
+            logger.info(
+                "AD-832: Duplicate post suppressed for %s — action extractor already posted "
+                "in this invocation (expected dedup behavior, not an error)",
                 agent.agent_type,
             )
             # BF-238: Aggregate counter + threshold-alert surface.
@@ -353,18 +358,27 @@ class WardRoomPostPipeline:
                 self._post_budget_telemetry.record_exhaustion(
                     agent.agent_type, thread_id,
                 )
-            # BF-237: Emit telemetry event for observability
+            # BF-237 / AD-832: Emit self-documenting telemetry event for observability.
             if self._runtime and getattr(self._runtime, 'event_log', None):
                 try:
                     await self._runtime.event_log.log(
                         category="pipeline",
-                        event="pipeline_post_budget_exceeded",
+                        event="pipeline_duplicate_post_suppressed",
                         agent_id=agent.id,
                         agent_type=agent.agent_type,
-                        detail=f"thread_id={thread_id}",
+                        detail=(
+                            f"thread_id={thread_id} — expected dedup: action extractor "
+                            "already posted in this invocation (benign, not a fault)"
+                        ),
+                        data={
+                            "benign": True,
+                            "reason": "action_extractor_already_posted",
+                            "thread_id": thread_id,
+                            "expected": True,
+                        },
                     )
                 except Exception:
-                    logger.debug("BF-237: telemetry log failed", exc_info=True)
+                    logger.debug("AD-832: telemetry log failed", exc_info=True)
         else:
             parent_id = post_id if event_type == "ward_room_post_created" else None
             await self._ward_room.create_post(
