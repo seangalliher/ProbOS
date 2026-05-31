@@ -113,3 +113,78 @@ describe('WardRoomPanel window mode (AD-837)', () => {
     expect(/\p{Extended_Pictographic}/u.test(undock.textContent || '')).toBe(false);
   });
 });
+
+describe('WardRoomPanel three-pane reading layout (AD-837a)', () => {
+  it('9. docked mode stays single-column (no three-pane)', () => {
+    useStore.setState({ wardRoomDisplayMode: 'docked' });
+    render(<WardRoomPanel />);
+    expect(screen.queryByTestId('wardroom-three-pane')).toBeNull();
+  });
+
+  it('10. maximized mode opens the three-pane channels surface', () => {
+    useStore.setState({ wardRoomDisplayMode: 'maximized', wardRoomView: 'channels' });
+    render(<WardRoomPanel />);
+    expect(screen.getByTestId('wardroom-three-pane')).toBeTruthy();
+    expect(screen.getByTestId('wardroom-pane-channels')).toBeTruthy();
+    expect(screen.getByTestId('wardroom-pane-threads')).toBeTruthy();
+    expect(screen.getByTestId('wardroom-pane-detail')).toBeTruthy();
+  });
+
+  it('11. wide floating window (>= threshold) opens three panes', () => {
+    useStore.setState({
+      wardRoomDisplayMode: 'floating',
+      wardRoomWindowRect: { x: 40, y: 40, w: 900, h: 700 },
+      wardRoomView: 'channels',
+    });
+    render(<WardRoomPanel />);
+    expect(screen.getByTestId('wardroom-three-pane')).toBeTruthy();
+  });
+
+  it('12. narrow floating window (< threshold) stays single-column', () => {
+    useStore.setState({
+      wardRoomDisplayMode: 'floating',
+      wardRoomWindowRect: { x: 40, y: 40, w: 420, h: 600 },
+      wardRoomView: 'channels',
+    });
+    render(<WardRoomPanel />);
+    expect(screen.queryByTestId('wardroom-three-pane')).toBeNull();
+  });
+
+  it('13. detail pane shows an empty-state placeholder until a thread is selected', () => {
+    useStore.setState({
+      wardRoomDisplayMode: 'maximized',
+      wardRoomView: 'channels',
+      wardRoomActiveThread: null,
+    });
+    render(<WardRoomPanel />);
+    const empty = screen.getByTestId('wardroom-detail-empty');
+    expect(empty).toBeTruthy();
+    expect(empty.querySelector('svg')).toBeTruthy();
+    expect(/\p{Extended_Pictographic}/u.test(empty.textContent || '')).toBe(false);
+  });
+
+  it('14. selecting a thread keeps the channel + thread rails visible in wide mode', () => {
+    useStore.setState({
+      wardRoomDisplayMode: 'maximized',
+      wardRoomView: 'channels',
+      wardRoomActiveThread: 'thread-1',
+    });
+    render(<WardRoomPanel />);
+    // Rails persist alongside the detail pane (no narrow takeover).
+    expect(screen.getByTestId('wardroom-pane-channels')).toBeTruthy();
+    expect(screen.getByTestId('wardroom-pane-threads')).toBeTruthy();
+    expect(screen.queryByTestId('wardroom-detail-empty')).toBeNull();
+  });
+
+  it('15. DM Log view does not use the three-pane layout even when wide', () => {
+    useStore.setState({
+      wardRoomDisplayMode: 'maximized',
+      wardRoomView: 'dms',
+      // Stub the mount-time refresh so the bare fetch mock can't corrupt the
+      // dmChannels array — this test only asserts layout selection.
+      refreshWardRoomDmChannels: vi.fn(),
+    });
+    render(<WardRoomPanel />);
+    expect(screen.queryByTestId('wardroom-three-pane')).toBeNull();
+  });
+});

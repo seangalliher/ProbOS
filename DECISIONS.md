@@ -10,6 +10,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-837a: Ward Room three-pane reading layout when opened up wide
+
+**Date:** 2026-05-31
+**Decision:** When the Ward Room is opened up past a width threshold (maximized, or a floating window resized to ≥ 680px effective width), the channels experience expands from the narrow single-column stack into a three-pane reading surface — channel rail (230px) | thread list (320px) | thread detail (flex) — all visible simultaneously, matching the Slack/Discord forum-reading pattern. Below the threshold (docked 420px sidebar and narrow floating windows) the body stays byte-identical single-column (regression-safe). Frontend-only: no backend, no API, no store change — a derived `isWide` flag (`effectiveWidth >= 680`, computed from `displayMode` + `windowRect.w`) selects the layout. In wide mode the header drops the per-thread back-arrow and `# channel` title (returns to "WARD ROOM") since the channel context now lives in the rails, the Channels/DM-Log tabs stay visible (the channel rail is persistent), and the detail pane shows a stroke-SVG empty-state ("Select a thread to read the full discussion", HXI #3 no-emoji) until a thread is selected. The existing self-contained child components (`WardRoomChannelList`, `WardRoomThreadList`, `WardRoomThreadDetail`) are reused unchanged (DRY) — only the parent's body composition changes. DM views (`dms`, `dm-detail`) fall through to the existing narrow body in all modes.
+**Rationale:** AD-837 shipped the detachable window chrome but the body still collapsed to a single column — selecting a thread replaced the whole panel, so a maximized Ward Room wasted its width. The operator's expectation (and the reference screenshot) is a true reading workspace where channels, threads, and the open discussion are co-visible. HXI Principle #5 (progressive disclosure driven by engagement) and #6 (the canvas IS the information) both argue the surface should reshape into a denser, more capable layout as the operator promotes it. Gating on effective width rather than mode alone keeps a hand-shrunk floating window usable and the docked default untouched.
+**Status:** Implemented (Wave 201). +7 vitest (`ui/src/components/wardroom/__tests__/WardRoomPanel.windowmode.test.tsx`, now 15 total); vitest 1031 → 1038; `npm run build` green per BF-279 gate; zero new deps. Builds on AD-837. Forward markers: AD-837e (SHIP/SECTIONS channel grouping in the rail to match the screenshot's richer grouping), AD-837f (per-pane width persistence / draggable splitters).
+
 ### AD-837: Ward Room detachable window mode (docked ↔ floating ↔ maximized)
 
 **Date:** 2026-05-31

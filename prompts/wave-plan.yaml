@@ -4390,4 +4390,34 @@ waves:
       AD-837b (true OS-level detached window via portal/Tauri), AD-837c
       (edge resize handles), AD-837d (snap-to-edge / tiling).
 
+  - id: "201a-wardroom-three-pane"
+    title: "AD-837a Ward Room three-pane reading layout when wide"
+    kind: main
+    depends_on: ["201-wardroom-detachable-window"]
+    builder_required: false
+    issues_to_close: []
+    estimated_hours: 1
+    status: done
+    notes: |
+      AD-837a: when the Ward Room is opened up wide (maximized, or a
+      floating window resized to >= 680px effective width) the channels
+      experience expands into a three-pane reading surface - channel rail
+      (230px) | thread list (320px) | thread detail (flex), all visible
+      at once - instead of the narrow single-column stack that replaces
+      the whole panel on thread select. Below the threshold (docked 420px
+      + narrow floating) the body stays byte-identical single-column
+      (regression-safe). Frontend-only (no backend, no API, no store
+      change) - a derived isWide flag (effectiveWidth >= 680 from
+      displayMode + windowRect.w) selects the layout. Wide mode drops the
+      per-thread back-arrow / channel title (back to WARD ROOM), keeps the
+      Channels/DM-Log tabs visible, and shows a stroke-SVG empty-state in
+      the detail pane until a thread is selected. Reuses the existing
+      WardRoomChannelList / WardRoomThreadList / WardRoomThreadDetail
+      children unchanged (DRY); DM views fall through to the narrow body.
+      +7 vitest (WardRoomPanel.windowmode.test.tsx, now 15 total); vitest
+      1031 to 1038; npm run build green per BF-279 gate; zero new deps.
+      Builds on AD-837. Forward markers: AD-837e (SHIP/SECTIONS channel
+      grouping in the rail), AD-837f (per-pane width persistence /
+      draggable splitters).
+
 

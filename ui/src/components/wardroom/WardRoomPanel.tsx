@@ -179,6 +179,17 @@ export function WardRoomPanel() {
   const channelName = channels.find(c => c.id === activeChannel)?.name || '';
   const dmChannelInfo = dmChannels.find(d => d.channel.id === activeChannel)?.channel;
 
+  // AD-837a: when the panel is opened up wide (maximized, or a floating window
+  // resized past the three-pane threshold), the channels experience expands
+  // into a Slack/Discord-style reading surface — channel rail | thread list |
+  // thread detail, all visible at once — instead of the narrow stacked column.
+  // Docked (420px) and narrow floating stay single-column (regression-safe).
+  const effectiveWidth =
+    displayMode === 'maximized' ? window.innerWidth - 32
+    : displayMode === 'floating' ? windowRect.w
+    : 420;
+  const isWide = effectiveWidth >= 680;
+
   const tabStyle = (active: boolean) => ({
     padding: '4px 12px',
     fontSize: 10,
@@ -263,7 +274,7 @@ export function WardRoomPanel() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {activeThread && (
+          {activeThread && !isWide && (
             <span onClick={closeThread} onMouseDown={e => e.stopPropagation()} style={{
               cursor: 'pointer', color: '#8888a0', fontSize: 14, marginRight: 4,
             }}><ArrowLeft size={14} /></span>
@@ -272,7 +283,7 @@ export function WardRoomPanel() {
             fontSize: 11, letterSpacing: 1.5, fontWeight: 700,
             color: '#f0b060', textTransform: 'uppercase' as const,
           }}>
-            {activeThread ? `# ${channelName}` : 'WARD ROOM'}
+            {activeThread && !isWide ? `# ${channelName}` : 'WARD ROOM'}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -306,8 +317,9 @@ export function WardRoomPanel() {
         </div>
       </div>
 
-      {/* View tabs (only when not in a thread or dm-detail) */}
-      {!activeThread && view !== 'dm-detail' && (
+      {/* View tabs (Channels / DM Log). Always shown in wide mode (the channel
+          rail is persistent); in narrow mode hidden once a thread is open. */}
+      {view !== 'dm-detail' && (isWide || !activeThread) && (
         <div style={{
           display: 'flex', gap: 8, padding: '4px 16px',
           borderBottom: '1px solid rgba(255,255,255,0.04)',
@@ -322,7 +334,43 @@ export function WardRoomPanel() {
       )}
 
       {/* Body */}
-      {activeThread ? (
+      {isWide && view === 'channels' ? (
+        /* AD-837a: three-pane reading surface — channel rail | thread list |
+           thread detail, all visible simultaneously. */
+        <div data-testid="wardroom-three-pane" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+          <div data-testid="wardroom-pane-channels" style={{
+            width: 230, flexShrink: 0, overflowY: 'auto',
+            borderRight: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <WardRoomChannelList />
+          </div>
+          <div data-testid="wardroom-pane-threads" style={{
+            width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column',
+            minHeight: 0, borderRight: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <WardRoomThreadList />
+          </div>
+          <div data-testid="wardroom-pane-detail" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            {activeThread ? (
+              <WardRoomThreadDetail />
+            ) : (
+              <div data-testid="wardroom-detail-empty" style={{
+                flex: 1, display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center', gap: 12,
+                color: '#666680', padding: 32, textAlign: 'center' as const,
+              }}>
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#444458"
+                     strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <div style={{ fontSize: 12, letterSpacing: 0.5 }}>
+                  Select a thread to read the full discussion
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : activeThread ? (
         <WardRoomThreadDetail />
       ) : view === 'dm-detail' ? (
         <>
