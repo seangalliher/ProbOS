@@ -4496,7 +4496,7 @@ waves:
     builder_required: true
     issues_to_close: [810]
     estimated_hours: 1
-    status: ready
+    status: done
     notes: |
       AD-836: pure-scoring offline eval loop so AgenticLoop/decomposer
       changes get an aggregate behavioral score (resolution_rate,
