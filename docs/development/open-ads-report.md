@@ -1,5 +1,12 @@
 # ProbOS — Open Architecture Decisions (Prioritized)
 
+> **⚠️ STALE SNAPSHOT — DO NOT TREAT AS CURRENT.** This report was generated
+> on 2026-03-31 (around Wave 6) and is no longer maintained. The backlog,
+> wave numbers, AD/BF counts, and priorities below are months out of date.
+> For the authoritative current state, read **PROGRESS.md** (status, current
+> wave, test count) and **DECISIONS.md** (shipped ADs). This file is retained
+> for historical reference only.
+
 *Generated 2026-03-31. 87 open ADs + 7 open bugs = 94 open items.*
 
 ---

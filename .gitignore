@@ -2,6 +2,7 @@
 dashboard.html
 /tools/
 test_output*.txt
+tmp_*.txt
 
 # Python
 __pycache__/

@@ -4271,3 +4271,41 @@ waves:
       via libolm), AD-790a (signed installer flow).
 
       Workflow: small-AD fast path, three commits per wave.
+
+  - id: "199-codebase-review-hygiene"
+    title: "BF-325..328 codebase-review hygiene (P0 red-gate fix + repo/test cleanup)"
+    kind: bf
+    depends_on: ["191-channel-adapters-plus-onboarding"]
+    dispatch_prompt: "prompts/wave-199-codebase-review-hygiene/WAVE-199-SPEC.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/wave-199-codebase-review-hygiene/WAVE-199-SPEC.md"
+    builder_required: true
+    issues_to_close: [800, 801, 802, 803]
+    estimated_hours: 2
+    status: pending
+    notes: |
+      Source: docs/development/codebase-review-2026-05-30.md (Architect
+      read-only review). Four verified, untracked engineering-quality
+      issues:
+        - BF-325 (#800, P0): main test gate RED - TransferCertificate
+          referenced but never imported in identity.py (11 failures in
+          test_ad443_mobility.py). Import-only fix + dedupe double
+          `import hashlib`. No circular-import risk (mobility.py does not
+          import identity).
+        - BF-326 (#801): MagicMock/ working-tree pollution. Tests pass
+          bare MagicMock where a real path is expected; production mkdir
+          creates ./MagicMock/mock.*/ dirs. Root-cause fix is test-side
+          (real tmp_path) + a tests/conftest.py session guard. No
+          defensive prod-code branches.
+        - BF-327 (#802): repo hygiene - git rm tracked scratch files
+          (.tmp_issue160.txt, PROGRESS.md.new, tmp_test.txt), add
+          tmp_*.txt gitignore rule, delete untracked test_output/tmp
+          artifacts.
+        - BF-328 (#803): stale open-ads-report.md (2026-03-31) - add a
+          stale banner pointing to PROGRESS.md / DECISIONS.md.
+
+      Workflow: small-AD fast path - Architect + Builder same author,
+      single review pass, full-suite green gate (no MagicMock/ dir
+      produced) before commit. Branch-protection hardening for the red
+      gate is a separate operator task (noted in #800), not in scope.

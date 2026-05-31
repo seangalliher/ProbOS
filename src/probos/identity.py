@@ -29,8 +29,8 @@ from pathlib import Path
 from typing import Any
 
 
-import hashlib
 from probos.captain_card.card import CaptainCard
+from probos.mobility import TransferCertificate
 
 
 logger = logging.getLogger(__name__)

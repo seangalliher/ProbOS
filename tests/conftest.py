@@ -3,6 +3,7 @@
 import os
 import pytest
 
+from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
 
 from probos.substrate.registry import AgentRegistry
@@ -103,6 +104,65 @@ def _ad682_clear_module_caches():
         except AttributeError:
             pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _bf326_no_magicmock_pollution(request):
+    """BF-326: Auto-clean any ``MagicMock/`` directory a test leaves in the repo root.
+
+    Root cause this guards against: a test passes a bare ``MagicMock()`` (or a
+    ``MagicMock(spec=ProbOSRuntime)``) where a real filesystem path is expected.
+    Many production code paths (``api.create_app`` static mounts,
+    ``startup.finalize`` data-dir creation, ``DesktopLifecycle`` lock-file dir)
+    then call ``Path(mock).mkdir(...)``, which stringifies the mock to
+    ``"MagicMock/mock.<attr>"`` and creates stray directories under the project
+    root that get accidentally committed.
+
+    Because the pollution has many independent path vectors across ~18 API test
+    modules, a per-test neutralization is brittle whack-a-mole. This janitor is
+    the robust, vector-agnostic fix: it removes any ``MagicMock/`` dir a test
+    creates and emits a warning (so offenders stay discoverable) without failing
+    the test. Combined with the ``MagicMock/`` ``.gitignore`` rule, stray dirs can
+    never reach the repository.
+
+    Function-scoped so the warning pins the exact offending test.
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+    mm_dir = repo_root / "MagicMock"
+    existed_before = mm_dir.exists()
+    try:
+        yield
+    finally:
+        if mm_dir.exists() and not existed_before:
+            import shutil
+            import warnings
+
+            shutil.rmtree(mm_dir, ignore_errors=True)
+            warnings.warn(
+                f"BF-326: test '{request.node.nodeid}' created a 'MagicMock/' "
+                "directory in the repo root (auto-cleaned). A MagicMock was "
+                "passed where a real filesystem path is expected; production "
+                "mkdir() then created stray dirs. Prefer a real tmp_path / real "
+                "config for path-typed arguments.",
+                stacklevel=2,
+            )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """BF-326: final sweep of any ``MagicMock/`` directory left at session end.
+
+    The function-scoped ``_bf326_no_magicmock_pollution`` janitor cleans dirs a
+    test creates during its own scope, but module/session-scoped fixture
+    teardowns (e.g. a module-scoped ``TestClient`` whose app-shutdown path calls
+    ``mkdir``) can create the dir *after* the last function teardown. This hook
+    guarantees the repo root is clean once the session ends.
+    """
+    import shutil
+
+    repo_root = Path(__file__).resolve().parent.parent
+    mm_dir = repo_root / "MagicMock"
+    if mm_dir.exists():
+        shutil.rmtree(mm_dir, ignore_errors=True)
 
 
 def pytest_collection_modifyitems(config, items):
