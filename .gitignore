@@ -1,6 +1,7 @@
 # Personal
 dashboard.html
 /tools/
+test_output*.txt
 
 # Python
 __pycache__/
