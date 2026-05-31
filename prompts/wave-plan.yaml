@@ -4470,7 +4470,7 @@ waves:
     builder_required: true
     issues_to_close: [809]
     estimated_hours: 1
-    status: ready
+    status: done
     notes: |
       AD-835: add an optional per-tier system_prompt_suffix (str | None =
       None) to the per-tier Pydantic config (config.py) and apply it at

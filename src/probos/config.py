@@ -391,6 +391,20 @@ class CognitiveConfig(BaseModel):
     llm_max_tokens_deep: int | None = None
     llm_max_tokens_vision: int | None = None
 
+    # AD-835 (Wave 202): per-tier system-prompt suffix. None = no-op (the
+    # composed system message is byte-identical to pre-AD-835 behaviour).
+    # When set, the LLM client appends this text to the system message of
+    # any call routed to that tier — the seam by which a tier can carry a
+    # terse harness adaptation (e.g. a deep-tier reasoning preamble, or a
+    # vision-tier "describe only what is visible" guard) without the caller
+    # knowing which tier it landed on. Follows the ATTEMPT tier during
+    # fallback (the suffix that ships is the one for the tier that actually
+    # served the request). Never applied to user or tool messages.
+    llm_system_prompt_suffix_fast: str | None = None
+    llm_system_prompt_suffix_standard: str | None = None
+    llm_system_prompt_suffix_deep: str | None = None
+    llm_system_prompt_suffix_vision: str | None = None
+
     # Default tier for LLM requests ("fast", "standard", or "deep")
     default_llm_tier: str = "fast"
 
@@ -486,6 +500,13 @@ class CognitiveConfig(BaseModel):
             "compute_use": self.llm_max_tokens_compute_use,
             "image_gen": None,
         }
+        # AD-835: per-tier system-prompt suffix (None = no per-tier suffix).
+        suffix_map = {
+            "fast": self.llm_system_prompt_suffix_fast,
+            "standard": self.llm_system_prompt_suffix_standard,
+            "deep": self.llm_system_prompt_suffix_deep,
+            "vision": self.llm_system_prompt_suffix_vision,
+        }
         return {
             "base_url": url_map.get(tier) or self.llm_base_url,
             "api_key": key_map.get(tier) if key_map.get(tier) is not None else self.llm_api_key,
@@ -495,6 +516,7 @@ class CognitiveConfig(BaseModel):
             "temperature": temp_map.get(tier),   # None = use request default
             "top_p": top_p_map.get(tier),        # None = don't send
             "max_tokens": max_tokens_map.get(tier),  # None = use request default
+            "system_prompt_suffix": suffix_map.get(tier),  # AD-835: None = no-op
         }
 
     # AD-739: Captain Card — operator self-card always-in-context.

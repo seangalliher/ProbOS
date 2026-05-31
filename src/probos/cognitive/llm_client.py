@@ -601,6 +601,13 @@ class OpenAICompatibleClient(BaseLLMClient):
             if effective_max_tokens == 2048 and tc.get("max_tokens") is not None:
                 effective_max_tokens = tc["max_tokens"]
 
+            # AD-835: per-tier system-prompt suffix follows the ATTEMPT tier
+            # (the suffix that ships is the one for the tier that actually
+            # serves the request during fallback). None = no-op. Resolved
+            # here where the tier config is in scope and threaded down — the
+            # transport layer never reads global tier state (DIP).
+            effective_system_suffix = tc.get("system_prompt_suffix")
+
             # AD-617: Inner retry loop for 429 backpressure (stays on same tier)
             _max_429_retries = 5
             for _429_attempt in range(_max_429_retries):
@@ -611,6 +618,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         effective_temp=effective_temp,
                         effective_top_p=effective_top_p,
                         effective_max_tokens=effective_max_tokens,
+                        effective_system_suffix=effective_system_suffix,
                     )
                     # Cache successful non-empty responses (keyed by original
                     # tier + prompt). BF-272 (2026-05-12): empty content is
@@ -765,6 +773,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         *, api_format: str = "openai", timeout: float = 30.0,
         effective_temp: float | None = None, effective_top_p: float | None = None,
         effective_max_tokens: int | None = None,
+        effective_system_suffix: str | None = None,
     ) -> LLMResponse:
         """Make the actual API call, routing by api_format."""
         if api_format == "ollama":
@@ -777,6 +786,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             request, model, client, timeout=timeout,
             effective_temp=effective_temp, effective_top_p=effective_top_p,
             effective_max_tokens=effective_max_tokens,
+            effective_system_suffix=effective_system_suffix,
         )
 
     def set_attachment_store(self, store: AttachmentStore | None) -> None:
@@ -883,8 +893,25 @@ class OpenAICompatibleClient(BaseLLMClient):
         *, timeout: float = 30.0,
         effective_temp: float | None = None, effective_top_p: float | None = None,
         effective_max_tokens: int | None = None,
+        effective_system_suffix: str | None = None,
     ) -> LLMResponse:
-        """OpenAI-compatible chat/completions call."""
+        """OpenAI-compatible chat/completions call.
+
+        AD-835 (Wave 202): ``effective_system_suffix`` is the per-tier
+        system-prompt adaptation hook. It is resolved at the call site from
+        the ATTEMPT tier's config and threaded down — this method never
+        reads global tier state (Dependency Inversion). When non-empty, the
+        suffix is appended to the composed system message only; None/empty
+        leaves the payload byte-identical to pre-AD-835 behaviour.
+
+        AD-835b forward marker: per-tier *tool-format* remapping (e.g. a
+        tier that wants Anthropic-shape tool blocks instead of OpenAI
+        ``tools``/``tool_choice``) is the planned extension. It will hook the
+        SAME ``tc``-threaded path — a new ``effective_*`` parameter resolved
+        at the call site and passed in here — NOT a new global lookup. Keep
+        adaptation flowing through the call-site tier config so the transport
+        stays a pure function of its arguments.
+        """
         if effective_temp is None:
             effective_temp = request.temperature
         if effective_max_tokens is None:
@@ -904,6 +931,29 @@ class OpenAICompatibleClient(BaseLLMClient):
             if request.system_prompt:
                 messages.append({"role": "system", "content": request.system_prompt})
             messages.append({"role": "user", "content": request.prompt})
+
+        # AD-835: append the per-tier system-prompt suffix to the composed
+        # system message only — never to user or tool messages. Applies to
+        # BOTH the pre-built ``request.messages`` branch and the prompt-
+        # synthesis ``else`` branch above (both converge on ``messages``).
+        # When no system message exists, the suffix becomes a fresh system
+        # message at the head. Replaces (does not mutate) ``messages[0]`` so
+        # the caller's original message dicts are never altered.
+        if effective_system_suffix:
+            if messages and messages[0].get("role") == "system":
+                base = messages[0].get("content")
+                if isinstance(base, str):
+                    messages[0] = {
+                        **messages[0],
+                        "content": f"{base}\n\n{effective_system_suffix}",
+                    }
+                elif isinstance(base, list):
+                    messages[0] = {
+                        **messages[0],
+                        "content": [*base, {"type": "text", "text": effective_system_suffix}],
+                    }
+            else:
+                messages.insert(0, {"role": "system", "content": effective_system_suffix})
 
         payload = {
             "model": model,
