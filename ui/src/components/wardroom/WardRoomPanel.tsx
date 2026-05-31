@@ -2,8 +2,8 @@ import { useStore } from '../../store/useStore';
 import { WardRoomChannelList } from './WardRoomChannelList';
 import { WardRoomThreadList } from './WardRoomThreadList';
 import { WardRoomThreadDetail } from './WardRoomThreadDetail';
-import { useEffect } from 'react';
-import { ArrowRight, ArrowLeft, Close } from '../icons/Glyphs';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { ArrowRight, ArrowLeft, Close, Dock, Undock, Maximize, Restore } from '../icons/Glyphs';
 
 /** AD-485/BF-054/BF-080: DM Activity Log — chronological feed with navigation */
 function DmActivityLog() {
@@ -113,6 +113,69 @@ export function WardRoomPanel() {
   const view = useStore(s => s.wardRoomView);
   const setView = useStore(s => s.setWardRoomView);
 
+  // AD-837: window display mode (docked ↔ floating ↔ maximized).
+  const displayMode = useStore(s => s.wardRoomDisplayMode);
+  const windowRect = useStore(s => s.wardRoomWindowRect);
+  const setDisplayMode = useStore(s => s.setWardRoomDisplayMode);
+
+  const [isDragging, setIsDragging] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
+
+  // Drag (floating only) — mirror AgentProfilePanel's add-on-down /
+  // remove-on-up listener discipline (no always-on global listeners).
+  const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
+    if (displayMode !== 'floating') return;
+    setIsDragging(true);
+    dragOffset.current = { x: e.clientX - windowRect.x, y: e.clientY - windowRect.y };
+  }, [displayMode, windowRect]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const onMove = (e: MouseEvent) => {
+      const rect = useStore.getState().wardRoomWindowRect;
+      const newX = Math.max(0, Math.min(window.innerWidth - rect.w, e.clientX - dragOffset.current.x));
+      const newY = Math.max(0, Math.min(window.innerHeight - 100, e.clientY - dragOffset.current.y));
+      useStore.getState().setWardRoomWindowRect({ ...rect, x: newX, y: newY });
+    };
+    const onUp = () => setIsDragging(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [isDragging]);
+
+  // Resize (floating only) — bottom-right corner, same min/clamp shape as
+  // AgentProfilePanel (min 360×320, max viewport-40).
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    setIsResizing(true);
+    resizeStart.current = { x: e.clientX, y: e.clientY, w: windowRect.w, h: windowRect.h };
+    e.preventDefault();
+    e.stopPropagation();
+  }, [windowRect]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMove = (e: MouseEvent) => {
+      const rect = useStore.getState().wardRoomWindowRect;
+      const dw = e.clientX - resizeStart.current.x;
+      const dh = e.clientY - resizeStart.current.y;
+      const nw = Math.max(360, Math.min(window.innerWidth - 40, resizeStart.current.w + dw));
+      const nh = Math.max(320, Math.min(window.innerHeight - 40, resizeStart.current.h + dh));
+      useStore.getState().setWardRoomWindowRect({ ...rect, w: nw, h: nh });
+    };
+    const onUp = () => setIsResizing(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [isResizing]);
+
   const channelName = channels.find(c => c.id === activeChannel)?.name || '';
   const dmChannelInfo = dmChannels.find(d => d.channel.id === activeChannel)?.channel;
 
@@ -127,33 +190,81 @@ export function WardRoomPanel() {
     textTransform: 'uppercase' as const,
   });
 
-  return (
-    <div style={{
+  // AD-837: container chrome derived from display mode. The docked branch is
+  // byte-equivalent to the pre-AD-837 sidebar (regression-safe default);
+  // floating/maximized are windows gated by opacity/visibility (a window does
+  // not slide in from the edge). The body components render identically in all
+  // three modes — only the outer chrome changes.
+  const baseChrome = {
+    background: 'rgba(10, 10, 18, 0.92)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    fontFamily: "'JetBrains Mono', monospace",
+    color: '#e0dcd4',
+  };
+  let containerStyle: React.CSSProperties;
+  if (displayMode === 'floating') {
+    containerStyle = {
+      ...baseChrome,
+      position: 'fixed',
+      left: windowRect.x, top: windowRect.y,
+      width: windowRect.w, height: windowRect.h,
+      border: '1px solid rgba(240, 176, 96, 0.25)',
+      borderRadius: 12,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+      overflow: 'hidden',
+      zIndex: 30,
+      opacity: open ? 1 : 0,
+      visibility: open ? 'visible' : 'hidden',
+      pointerEvents: open ? 'auto' : 'none',
+    };
+  } else if (displayMode === 'maximized') {
+    containerStyle = {
+      ...baseChrome,
+      position: 'fixed',
+      inset: 16,
+      border: '1px solid rgba(240, 176, 96, 0.25)',
+      borderRadius: 12,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+      overflow: 'hidden',
+      zIndex: 30,
+      opacity: open ? 1 : 0,
+      visibility: open ? 'visible' : 'hidden',
+      pointerEvents: open ? 'auto' : 'none',
+    };
+  } else {
+    // docked (default) — unchanged 420px left sidebar.
+    containerStyle = {
+      ...baseChrome,
       position: 'fixed',
       top: 0, left: 0, bottom: 0,
       width: 420,
-      background: 'rgba(10, 10, 18, 0.92)',
-      backdropFilter: 'blur(16px)',
-      WebkitBackdropFilter: 'blur(16px)',
       borderRight: '1px solid rgba(240, 176, 96, 0.15)',
       zIndex: 20,
       transform: open ? 'translateX(0)' : 'translateX(-100%)',
       transition: 'transform 0.25s ease-out',
-      display: 'flex',
-      flexDirection: 'column',
-      fontFamily: "'JetBrains Mono', monospace",
       pointerEvents: open ? 'auto' : 'none',
-      color: '#e0dcd4',
-    }}>
-      {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 16px',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-      }}>
+    };
+  }
+
+  return (
+    <div data-testid="wardroom-panel" data-mode={displayMode} style={containerStyle}>
+      {/* Header (drag handle in floating mode) */}
+      <div
+        onMouseDown={onHeaderMouseDown}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          cursor: displayMode === 'floating' ? (isDragging ? 'grabbing' : 'grab') : 'default',
+          userSelect: 'none',
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {activeThread && (
-            <span onClick={closeThread} style={{
+            <span onClick={closeThread} onMouseDown={e => e.stopPropagation()} style={{
               cursor: 'pointer', color: '#8888a0', fontSize: 14, marginRight: 4,
             }}><ArrowLeft size={14} /></span>
           )}
@@ -164,9 +275,35 @@ export function WardRoomPanel() {
             {activeThread ? `# ${channelName}` : 'WARD ROOM'}
           </span>
         </div>
-        <span onClick={onClose} style={{
-          cursor: 'pointer', color: '#8888a0', fontSize: 16, lineHeight: 1,
-        }}><Close size={16} /></span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* AD-837: Dock/Undock toggle */}
+          <span
+            role="button"
+            aria-label={displayMode === 'docked' ? 'Undock Ward Room' : 'Dock Ward Room'}
+            title={displayMode === 'docked' ? 'Undock to floating window' : 'Dock to sidebar'}
+            onMouseDown={e => e.stopPropagation()}
+            onClick={() => setDisplayMode(displayMode === 'docked' ? 'floating' : 'docked')}
+            style={{ cursor: 'pointer', display: 'flex', color: displayMode === 'docked' ? '#8888a0' : '#f0b060' }}
+          >
+            {displayMode === 'docked' ? <Undock size={15} /> : <Dock size={15} />}
+          </span>
+          {/* AD-837: Maximize/Restore — hidden in docked mode */}
+          {displayMode !== 'docked' && (
+            <span
+              role="button"
+              aria-label={displayMode === 'maximized' ? 'Restore Ward Room' : 'Maximize Ward Room'}
+              title={displayMode === 'maximized' ? 'Restore window' : 'Maximize'}
+              onMouseDown={e => e.stopPropagation()}
+              onClick={() => setDisplayMode(displayMode === 'maximized' ? 'floating' : 'maximized')}
+              style={{ cursor: 'pointer', display: 'flex', color: '#f0b060' }}
+            >
+              {displayMode === 'maximized' ? <Restore size={15} /> : <Maximize size={15} />}
+            </span>
+          )}
+          <span onClick={onClose} onMouseDown={e => e.stopPropagation()} style={{
+            cursor: 'pointer', color: '#8888a0', fontSize: 16, lineHeight: 1, display: 'flex',
+          }}><Close size={16} /></span>
+        </div>
       </div>
 
       {/* View tabs (only when not in a thread or dm-detail) */}
@@ -212,6 +349,31 @@ export function WardRoomPanel() {
           <WardRoomChannelList />
           <WardRoomThreadList />
         </>
+      )}
+
+      {/* AD-837: resize handle (floating only, bottom-right corner) —
+          mirrors AgentProfilePanel's nwse-resize handle. */}
+      {displayMode === 'floating' && (
+        <div
+          onMouseDown={onResizeMouseDown}
+          aria-label="Resize Ward Room"
+          title="Drag to resize"
+          style={{
+            position: 'absolute',
+            right: 0,
+            bottom: 0,
+            width: 14,
+            height: 14,
+            cursor: 'nwse-resize',
+            zIndex: 5,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#8888a0"
+               strokeWidth="1.25" strokeLinecap="round">
+            <line x1="5" y1="14" x2="14" y2="5" />
+            <line x1="9" y1="14" x2="14" y2="9" />
+          </svg>
+        </div>
       )}
     </div>
   );

@@ -73,6 +73,42 @@ export const Close: React.FC<GlyphProps> = ({ size = 12, className, style }) => 
   </svg>
 );
 
+// AD-837: Ward Room window controls (HXI Principle #3 — stroke-SVG, no emoji).
+// Undock — detach docked sidebar into a floating window (arrow leaving a frame).
+export const Undock: React.FC<GlyphProps> = ({ size = 12, className, style }) => (
+  <svg {...defaultProps} width={size} height={size} viewBox="0 0 16 16" className={className} style={{ ...baseStyle, ...style }}>
+    <path d="M7 3 H4 A1 1 0 0 0 3 4 V12 A1 1 0 0 0 4 13 H12 A1 1 0 0 0 13 12 V9" />
+    <path d="M9 3 H13 V7" />
+    <path d="M13 3 L8 8" />
+  </svg>
+);
+
+// Dock — re-attach a floating window back into the sidebar (arrow into a frame).
+export const Dock: React.FC<GlyphProps> = ({ size = 12, className, style }) => (
+  <svg {...defaultProps} width={size} height={size} viewBox="0 0 16 16" className={className} style={{ ...baseStyle, ...style }}>
+    <path d="M3 4 A1 1 0 0 1 4 3 H12 A1 1 0 0 1 13 4 V12 A1 1 0 0 1 12 13 H4 A1 1 0 0 1 3 12" />
+    <path d="M6 4 V12" />
+  </svg>
+);
+
+// Maximize — expand floating window to full screen (corner-bracket frame).
+export const Maximize: React.FC<GlyphProps> = ({ size = 12, className, style }) => (
+  <svg {...defaultProps} width={size} height={size} viewBox="0 0 16 16" className={className} style={{ ...baseStyle, ...style }}>
+    <path d="M3 6 V3 H6" />
+    <path d="M10 3 H13 V6" />
+    <path d="M13 10 V13 H10" />
+    <path d="M6 13 H3 V10" />
+  </svg>
+);
+
+// Restore — return maximized window to its prior floating size (inset frame).
+export const Restore: React.FC<GlyphProps> = ({ size = 12, className, style }) => (
+  <svg {...defaultProps} width={size} height={size} viewBox="0 0 16 16" className={className} style={{ ...baseStyle, ...style }}>
+    <path d="M6 6 H13 V13 H6 Z" />
+    <path d="M6 4 V3 H11 V8 H10" />
+  </svg>
+);
+
 export const Warning: React.FC<GlyphProps> = ({ size = 12, className, style }) => (
   <svg {...defaultProps} width={size} height={size} viewBox="0 0 16 16" className={className} style={{ ...baseStyle, ...style }}>
     <path d="M8 3 L14 13 H2 Z" />

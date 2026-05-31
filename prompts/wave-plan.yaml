@@ -4357,3 +4357,37 @@ waves:
       single review pass, targeted green gate (test_sif.py +
       test_bf237_pipeline_post_budget.py) before commit.
 
+  - id: "201-wardroom-detachable-window"
+    title: "AD-837 Ward Room detachable window mode"
+    kind: main
+    depends_on: ["200-observability-false-positive-hygiene"]
+    dispatch_prompt: "prompts/ad-837-wardroom-detachable-window.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-837-wardroom-detachable-window.md"
+    builder_required: true
+    issues_to_close: [811]
+    estimated_hours: 2
+    status: done
+    notes: |
+      AD-837: Ward Room three-state display mode (docked / floating /
+      maximized) with one-click header controls. Frontend-only (no
+      backend, no API, no server-data-model change). Reuses the AD-721
+      AgentProfilePanel drag/resize/persist convention (DRY): header
+      onMouseDown captures a dragOffset; a mousemove/mouseup listener
+      pair is added on drag-start and torn down on release; the
+      bottom-right corner handle resizes with min 360x320, max
+      viewport-40. New store slice in useStore.ts (WardRoomDisplayMode /
+      WardRoomWindowRect types, loadWardRoomLayout with malformed-JSON
+      fallback, setWardRoomDisplayMode / setWardRoomWindowRect writing
+      through to localStorage probos.wardroom.mode / probos.wardroom.rect
+      with Tier-2 log-and-degrade). Four stroke-SVG glyphs (Undock /
+      Dock / Maximize / Restore) per HXI #3 (no emoji). The docked branch
+      is byte-equivalent to the pre-AD-837 sidebar so the default is
+      regression-safe. +8 vitest
+      (WardRoomPanel.windowmode.test.tsx); vitest 1023 to 1031; npm run
+      build green per BF-279 gate; zero new deps. Forward markers:
+      AD-837b (true OS-level detached window via portal/Tauri), AD-837c
+      (edge resize handles), AD-837d (snap-to-edge / tiling).
+
+

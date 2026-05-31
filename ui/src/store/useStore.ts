@@ -357,6 +357,9 @@ export interface HXIState {
   wardRoomThreadDetail: { thread: WardRoomThread; posts: WardRoomPost[] } | null;
   wardRoomUnread: Record<string, number>;
   wardRoomView: 'channels' | 'dms' | 'dm-detail';
+  // AD-837: Ward Room window display mode + floating geometry (frontend-only).
+  wardRoomDisplayMode: WardRoomDisplayMode;
+  wardRoomWindowRect: WardRoomWindowRect;
   // AD-574b: target_agent_id added to per-channel entry; null when participant
   // cannot be resolved by backend (deleted/renamed agent → UI falls back to
   // existing async post-only path).
@@ -505,6 +508,9 @@ export interface HXIState {
   refreshWardRoomUnread: () => void;
   setWardRoomView: (view: 'channels' | 'dms' | 'dm-detail') => void;
   setWardRoomDmPending: (pending: import('./types').WardRoomDmPending | null) => void;
+  // AD-837: Ward Room window display-mode controls (frontend-only).
+  setWardRoomDisplayMode: (mode: WardRoomDisplayMode) => void;
+  setWardRoomWindowRect: (rect: WardRoomWindowRect) => void;
   selectDmChannel: (channelId: string) => void;
   refreshWardRoomDmChannels: () => void;
   // Communications settings (AD-485)
@@ -607,6 +613,63 @@ function _scheduleWardRoomRefresh(store: any) {
   }, 300); // 300ms debounce window — fast enough for UX, eliminates bursts
 }
 
+// AD-837: Ward Room display-mode + window-geometry persistence.
+// Mirrors the loadSidebarCollapsed / artifactDrawer.collapsed precedent —
+// localStorage-backed, log-and-degrade, validated on load. Read at module
+// load (not inside the reducer body) to seed the store defaults.
+export type WardRoomDisplayMode = 'docked' | 'floating' | 'maximized';
+export interface WardRoomWindowRect { x: number; y: number; w: number; h: number }
+
+const WARDROOM_MODE_KEY = 'probos.wardroom.mode';
+const WARDROOM_RECT_KEY = 'probos.wardroom.rect';
+const WARDROOM_DEFAULT_RECT: WardRoomWindowRect = { x: 80, y: 80, w: 720, h: 640 };
+
+export function loadWardRoomLayout(): {
+  mode: WardRoomDisplayMode;
+  rect: WardRoomWindowRect;
+} {
+  let mode: WardRoomDisplayMode = 'docked';
+  let rect: WardRoomWindowRect = { ...WARDROOM_DEFAULT_RECT };
+  try {
+    const storedMode = localStorage.getItem(WARDROOM_MODE_KEY);
+    if (storedMode === 'docked' || storedMode === 'floating' || storedMode === 'maximized') {
+      mode = storedMode;
+    }
+    const storedRect = localStorage.getItem(WARDROOM_RECT_KEY);
+    if (storedRect) {
+      const parsed = JSON.parse(storedRect) as unknown;
+      if (
+        parsed && typeof parsed === 'object' &&
+        typeof (parsed as WardRoomWindowRect).x === 'number' &&
+        typeof (parsed as WardRoomWindowRect).y === 'number' &&
+        typeof (parsed as WardRoomWindowRect).w === 'number' &&
+        typeof (parsed as WardRoomWindowRect).h === 'number'
+      ) {
+        rect = parsed as WardRoomWindowRect;
+      }
+    }
+  } catch {
+    // localStorage unavailable or malformed JSON — fall back to defaults.
+  }
+  return { mode, rect };
+}
+
+function persistWardRoomMode(mode: WardRoomDisplayMode): void {
+  try {
+    localStorage.setItem(WARDROOM_MODE_KEY, mode);
+  } catch {
+    // honest-degrade — storage may be unavailable in some browsers/tests.
+  }
+}
+
+function persistWardRoomRect(rect: WardRoomWindowRect): void {
+  try {
+    localStorage.setItem(WARDROOM_RECT_KEY, JSON.stringify(rect));
+  } catch {
+    // honest-degrade — storage may be unavailable in some browsers/tests.
+  }
+}
+
 export const useStore = create<HXIState>((set, get) => ({
   agents: new Map(),
   connections: [],
@@ -687,6 +750,9 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomDmPending: null,
   wardRoomDmChannels: [],
   _wardRoomThreadCache: new Map(),
+  // AD-837: seed display-mode + window rect from persisted layout.
+  wardRoomDisplayMode: loadWardRoomLayout().mode,
+  wardRoomWindowRect: loadWardRoomLayout().rect,
   communicationsSettings: { dm_min_rank: 'ensign', recreation_min_rank: 'ensign' },
   // Crew Manifest (AD-513)
   crewManifestOpen: false,
@@ -1237,6 +1303,15 @@ export const useStore = create<HXIState>((set, get) => ({
   },
   setWardRoomView: (view: 'channels' | 'dms' | 'dm-detail') => set({ wardRoomView: view }),
   setWardRoomDmPending: (pending: import('./types').WardRoomDmPending | null) => set({ wardRoomDmPending: pending }),
+  // AD-837: display-mode + window geometry, persisted through to localStorage.
+  setWardRoomDisplayMode: (mode: WardRoomDisplayMode) => {
+    persistWardRoomMode(mode);
+    set({ wardRoomDisplayMode: mode });
+  },
+  setWardRoomWindowRect: (rect: WardRoomWindowRect) => {
+    persistWardRoomRect(rect);
+    set({ wardRoomWindowRect: rect });
+  },
   selectDmChannel: async (channelId: string) => {
     await get().selectWardRoomChannel(channelId);
     set({ wardRoomView: 'dm-detail' as const });
