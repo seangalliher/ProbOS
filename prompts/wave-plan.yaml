@@ -4420,4 +4420,180 @@ waves:
       grouping in the rail), AD-837f (per-pane width persistence /
       draggable splitters).
 
+  # =====================================================================
+  # WAVE 202 — Harness adaptation + Work-Tab activation + eval loop +
+  # proposal grounding. Three drafted-and-ready builds (834/835/836), one
+  # Architect design pass (833), and a vision-reliability mini-batch
+  # (BF-326 triage -> AD-746a fix). The three ready builds came out of the
+  # VS Code "Coding Harness" blog analysis (835 per-model adaptation, 836
+  # offline eval loop) plus the Work-Tab activation (834). All three are
+  # small, grounded, single-review fast-path candidates.
+  # =====================================================================
+
+  - id: "202a-nl-task-creation-dispatch"
+    title: "AD-834 NL task creation + dispatch (HXI Work Tab)"
+    kind: main
+    depends_on: ["201a-wardroom-three-pane"]
+    dispatch_prompt: "prompts/ad-834-nl-task-creation-dispatch.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-834-nl-task-creation-dispatch.md"
+    builder_required: true
+    issues_to_close: [808]
+    estimated_hours: 1
+    status: ready
+    notes: |
+      AD-834: extend the Work-Tab "Create Task" form (ProfileWorkTab.tsx)
+      + its createWorkItem store action ONLY. Add a natural-language
+      instructions textarea (sent as WorkItem.description) and a "Dispatch
+      to agent now" toggle (default ON) that sets metadata.dispatchable =
+      true so WorkItemRouter.is_dispatchable() routes the task to the
+      assigned CognitiveAgent for execution. The engine is already wired
+      end-to-end in OSS (POST /api/work-items accepts description +
+      metadata; work_item_router.py:104 already forwards description to
+      the agent; the agent already drives the browser tool) - the UI just
+      never exposed the field or the flag. NO backend change, no new
+      execution machinery, no new config. +3 vitest (form render, create
+      payload carries description, dispatch toggle sets metadata). UI
+      gate: cd ui && npx vitest run ProfileWorkTab.create AND npm run
+      build (BF-279). Frontend-only. Does NOT change the WorkItem model,
+      WorkItemRouter, or any API.
+
+  - id: "202b-tier-harness-adaptation"
+    title: "AD-835 Per-tier harness adaptation layer"
+    kind: main
+    depends_on: ["202a-nl-task-creation-dispatch"]
+    dispatch_prompt: "prompts/ad-835-per-tier-harness-adaptation.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-835-per-tier-harness-adaptation.md"
+    builder_required: true
+    issues_to_close: [809]
+    estimated_hours: 1
+    status: ready
+    notes: |
+      AD-835: add an optional per-tier system_prompt_suffix (str | None =
+      None) to the per-tier Pydantic config (config.py) and apply it at
+      the system-message composition point in _call_openai
+      (llm_client.py:900), threaded through _call_api alongside the
+      existing effective_* sampling params - no global reads. The suffix
+      follows the ATTEMPT tier during fallback (per-model adaptation, the
+      VS Code Coding Harness blog's highest-leverage differentiator).
+      Zero-config boot is byte-identical to today (default None = no-op).
+      +6 pytest in tests/test_ad835_tier_adaptation.py. Document the
+      AD-835b seam (per-model tool-format remap: Claude
+      replace_string_in_file vs GPT apply_patch). Does NOT change
+      AgenticLoop/ToolExecutor, _TIER_ORDER/_LLM_TIERS, or ModelRouter.
+
+  - id: "202c-offline-eval-harness"
+    title: "AD-836 Offline agent-eval harness (ProbOS-Bench v1)"
+    kind: main
+    depends_on: ["202b-tier-harness-adaptation"]
+    dispatch_prompt: "prompts/ad-836-offline-agent-eval-harness.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-836-offline-agent-eval-harness.md"
+    builder_required: true
+    issues_to_close: [810]
+    estimated_hours: 1
+    status: ready
+    notes: |
+      AD-836: pure-scoring offline eval loop so AgenticLoop/decomposer
+      changes get an aggregate behavioral score (resolution_rate,
+      intent_precision, mean_intents effort, total_tokens efficiency)
+      before shipping - the VSC-Bench discipline from the VS Code Coding
+      Harness blog. Adds tests/benchmarks/probos_bench.py (load_cases /
+      score_case / aggregate), an opt-in runner
+      test_probos_bench_decomposer.py (PROBOS_BENCHMARK=1, scores the
+      decomposer against the existing tests/fixtures/eval/
+      decomposer_cases.json, emits a PROBOS_BENCH {json} scoreline), and
+      always-on self-tests test_ad836_probos_bench.py (5 tests). NO
+      production-code change, no live-model calls (uses the existing mock
+      client), no full-trajectory scoring (AD-836b), no pre-merge gate
+      wiring (AD-836c), no new deps. Default run skips the opt-in runner.
+
+  - id: "202d-proposal-grounding-gate-design"
+    title: "AD-833 Improvement-proposal grounding gate (DESIGN)"
+    kind: design
+    depends_on: ["202c-offline-eval-harness"]
+    builder_required: false
+    issues_to_close: []
+    estimated_hours: 2
+    status: design
+    notes: |
+      ARCHITECT design pass - no build this wave. The 2026-05-31 Ward Room
+      "Improvement Proposals" validation found 0 of 18 agent-authored
+      proposals were verifiable bugs; the dominant failure mode is a
+      confabulation cascade (agents form a fault hypothesis and file a
+      proposal without verifying it against the codebase or trackers:
+      misreading benign telemetry as a fault, naming symbols/events that
+      do not exist, re-filing CLOSED work, conflating similarly-named
+      subsystems, treating LLM-confabulated prose as a code calculation).
+      AD-832 fixed ONE misread event; this AD designs the general
+      grounding gate (analogous to AD-734 capability-claim verification):
+      a lightweight check that runs when a proposal is submitted and
+      attaches a grounding score + evidence before the proposal surfaces
+      for crew/Captain review. Candidate checks: symbol existence (event/
+      intent/duty/file/class named in the proposal must resolve against
+      CodebaseIndex), tracker cross-ref (is this already CLOSED?),
+      telemetry-event semantics (is the cited event benign/expected per
+      its data marker?). DELIVERABLE: a build prompt under prompts/ +
+      DECISIONS.md design entry; assign the next AD number after grepping
+      PROGRESS.md for the actual highest. Output feeds a later wave's
+      Builder. Do NOT implement the gate in this wave.
+
+  - id: "202e-vision-aggregator-subscribe-triage"
+    title: "BF-326 VisionAggregator JetStream subscribe timeout (TRIAGE)"
+    kind: design
+    depends_on: ["202d-proposal-grounding-gate-design"]
+    builder_required: false
+    issues_to_close: []
+    estimated_hours: 2
+    status: triage
+    notes: |
+      ARCHITECT triage - determine whether the BF-326 subscribe timeout
+      (perception.vision_aggregator JetStream subscribe to intent.dispatch
+      times out, observed immediately after the BF-241 mid-boot stream
+      delete+recreate) is (a) a benign slow-first-connect that retries and
+      recovers, or (b) a stream-recreation ordering race that leaves the
+      vision-observation path silently unsubscribed for the whole session.
+      In the observed run Ollama was down so the impact was masked. Steps:
+      read aggregator.py subscribe path + finalize.py:4131 wiring + the
+      BF-241 stream-recreate ordering; determine retry/recover behavior;
+      with Ollama running, confirm end-to-end that a vision_observation
+      frame actually reaches the aggregator over JetStream after a clean
+      boot. DELIVERABLE: either a "benign - close with evidence" finding
+      OR a BF prompt under prompts/ with the ordering fix. Pairs with
+      AD-746a (202f) - both touch the vision force-describe/aggregator
+      reliability path.
+
+  - id: "202f-force-describe-frame-mirror"
+    title: "AD-746a router-side _latest_frame mirror for force-describe"
+    kind: bf
+    depends_on: ["202e-vision-aggregator-subscribe-triage"]
+    builder_required: true
+    issues_to_close: [794]
+    estimated_hours: 1
+    status: pending
+    notes: |
+      AD-746a (defense-in-depth, filed during BF-323 retrospective):
+      VisionConsumer.force_describe_current_frame reads
+      _latest_frame_by_session / _latest_frame_global, which are only
+      populated by consumer._handle when the aggregator FORWARDS a frame -
+      so Captain-initiated FORCE DESCRIBE is transitively dependent on the
+      aggregator debounce/timer state machine being healthy (when the
+      aggregator deadlocked in BF-323 the cache stayed empty and FORCE
+      DESCRIBE silently returned None, no vision LLM call). Fix: the
+      router endpoint POST /api/perception/camera/frame
+      (perception.py:131-251) already knows sha + captured_at +
+      session_id + source when it accepts the upload; have it populate the
+      consumer cache directly as a mirror BEFORE intent_bus.broadcast, via
+      a small PUBLIC method (e.g. record_uploaded_frame(sha, session_id,
+      captured_at)) rather than poking private attrs (Law of Demeter /
+      Open-Closed). This gives FORCE DESCRIBE a direct path independent of
+      the bus/aggregator chain. ARCHITECT drafts the prompt (no prompt
+      drafted yet); small, single-file + one test. Sequence after 202e so
+      the BF-326 finding can inform whether the mirror also needs a
+      retry/recover note.
+
 
