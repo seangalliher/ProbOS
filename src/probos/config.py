@@ -4837,6 +4837,7 @@ class DmTargetedLookupConfig(BaseModel):  # AD-725 (Wave 159)
     enable_episodic: bool = True
     enable_codebase: bool = False              # default OFF — codebase queries can be slow
     enable_knowledge: bool = True
+    identity_enabled: bool = True              # AD-735: cheap in-memory self-identity lookup
     max_lookup_chars: int = 1500               # truncate lookup result before injection
 
     @field_validator("classifier_tier")

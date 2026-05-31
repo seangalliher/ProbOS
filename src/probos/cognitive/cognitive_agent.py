@@ -4580,6 +4580,74 @@ class CognitiveAgent(BaseAgent):
                 return cert.callsign
         return None
 
+    def whoami(self) -> dict[str, str]:
+        """AD-735: assemble verified self-identity facts for fact-grounded DM replies.
+
+        Sources are authoritative (birth certificate + public identity attrs), never
+        generated. Honest-degrade: missing cert yields the public-attr subset.
+        """
+        # Seed from the canonical callsign resolver (BF-101 cert fallback inside).
+        callsign = self._resolve_callsign() or self.agent_type
+        facts: dict[str, str] = {
+            "callsign": callsign,
+            "agent_type": self.agent_type,
+        }
+
+        cert = None
+        rt = getattr(self, "_runtime", None)
+        if rt is not None and getattr(rt, "_identity_registry", None):
+            try:
+                cert = rt._identity_registry.get_by_slot(self.id)
+            except Exception:
+                logger.debug(
+                    "AD-735: birth-cert lookup failed for %s; degrading to public attrs",
+                    self.agent_type, exc_info=True,
+                )
+                cert = None
+
+        if cert is not None:
+            if cert.callsign:
+                facts["callsign"] = cert.callsign
+            if cert.department:
+                facts["department"] = cert.department
+            if cert.did:
+                facts["did"] = cert.did
+            # Guard the float — a malformed cert must not raise in conversion.
+            if isinstance(cert.birth_timestamp, (int, float)):
+                facts["birth_iso"] = datetime.fromtimestamp(cert.birth_timestamp).isoformat()
+            if cert.certificate_hash:
+                facts["certificate_hash"] = cert.certificate_hash[:12]
+            if cert.vessel_name:
+                facts["vessel_name"] = cert.vessel_name
+        else:
+            # No cert — derive department from the static mapping; do NOT fabricate
+            # did/birth/hash.
+            from probos.cognitive.standing_orders import get_department
+            dept = get_department(self.agent_type)
+            if dept:
+                facts["department"] = dept
+
+        # Drop any empty/None values that slipped through.
+        return {k: v for k, v in facts.items() if v}
+
+    def whoami_block(self) -> str:
+        """AD-735: render whoami() as a compact verified-fact block for prompt injection."""
+        facts = self.whoami()
+        callsign = facts.get("callsign", "")
+        lines: list[str] = []
+        if callsign:
+            spelled = "-".join(callsign)
+            lines.append(f"Callsign: {callsign} (spelled {spelled})")
+        if facts.get("agent_type"):
+            lines.append(f"Role / agent_type: {facts['agent_type']}")
+        if facts.get("department"):
+            lines.append(f"Department: {facts['department']}")
+        if facts.get("birth_iso"):
+            lines.append(f"Commissioned: {facts['birth_iso']}")
+        if facts.get("certificate_hash"):
+            lines.append(f"Identity hash: {facts['certificate_hash']}")
+        return "\n".join(lines)
+
     def _get_comm_proficiency_guidance(self) -> str | None:
         """AD-625: Return tier-specific communication guidance based on proficiency."""
         profile = getattr(self, '_skill_profile', None)

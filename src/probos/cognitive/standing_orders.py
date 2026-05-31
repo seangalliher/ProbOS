@@ -192,6 +192,14 @@ def _build_personality_block(agent_type: str, department: str | None = None, cal
 
     lines.append(identity)
 
+    # AD-735: defer to injected verified-identity facts when present.
+    lines.append(
+        "When a `--- Targeted Recall (identity) ---` block is present, those are your "
+        "verified commissioning facts (callsign spelling, department, age). Answer "
+        "self-identity questions from that block verbatim; never guess your own name "
+        "spelling or age."
+    )
+
     # Behavioral guidance from Big Five traits
     personality = profile.get("personality", {})
     if personality:

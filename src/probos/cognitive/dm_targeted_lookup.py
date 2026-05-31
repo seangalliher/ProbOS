@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-LookupType = Literal["oracle", "episodic", "codebase", "knowledge", "none"]
+LookupType = Literal["identity", "oracle", "episodic", "codebase", "knowledge", "none"]
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,15 @@ class SubintentClassifier(Protocol):
 
 
 # v1 regex ladder
+_IDENTITY_PATTERNS = [
+    re.compile(r"\b(your|whats?\s+your)\s+(name|callsign)\b", re.I),
+    re.compile(r"\bhow\s+(is|do you spell)\b.*\byour\s+(name|callsign)\b", re.I),
+    re.compile(r"\bspell(ed|ing)?\b.*\byour\s+(name|callsign)\b", re.I),
+    re.compile(r"\bwho\s+are\s+you\b", re.I),
+    re.compile(r"\bwhat\s+(is\s+)?your\s+(department|role|rank)\b", re.I),
+    re.compile(r"\b(how\s+old\s+are\s+you|when\s+were\s+you\s+(born|commissioned))\b", re.I),
+]
+
 _EPISODIC_PATTERNS = [
     re.compile(r"\b(last|previous|recent|earlier)\s+(time|conversation|chat|1:1|meeting)\b", re.I),
     re.compile(r"\bdid (we|you|i) (talk|discuss|mention)\b", re.I),
@@ -71,12 +80,13 @@ _ORACLE_PATTERNS = [
 
 
 class RegexSubintentClassifier:
-    """v1 ladder. Order: episodic -> codebase -> knowledge -> oracle -> none."""
+    """v1 ladder. Order: identity -> episodic -> codebase -> knowledge -> oracle -> none."""
 
     def classify(self, message: str, *, agent_id: str) -> tuple[LookupType, str]:
         if not message:
             return "none", ""
         for pats, name in (
+            (_IDENTITY_PATTERNS, "identity"),
             (_EPISODIC_PATTERNS, "episodic"),
             (_CODEBASE_PATTERNS, "codebase"),
             (_KNOWLEDGE_PATTERNS, "knowledge"),
@@ -153,6 +163,7 @@ class LookupDispatcher:
 
     def _is_lookup_enabled(self, lookup_type: LookupType) -> bool:
         return {
+            "identity": self._cfg.identity_enabled,
             "oracle": self._cfg.enable_oracle,
             "episodic": self._cfg.enable_episodic,
             "codebase": self._cfg.enable_codebase,
@@ -167,6 +178,21 @@ class LookupDispatcher:
         Defensive: missing methods log INFO and return "" — the AD-725
         contract is "degrade silently to no recall block."
         """
+        if lookup_type == "identity":
+            registry = getattr(self._runtime, "registry", None)
+            if registry is None or not hasattr(registry, "get"):
+                logger.info(
+                    "AD-735: identity lookup unavailable (no runtime.registry.get)",
+                )
+                return ""
+            agent = registry.get(agent_id)
+            if agent is None or not hasattr(agent, "whoami_block"):
+                logger.info(
+                    "AD-735: identity lookup found no whoami-capable agent for %s",
+                    agent_id,
+                )
+                return ""
+            return self._stringify(agent.whoami_block())
         if lookup_type == "oracle":
             oracle = getattr(self._runtime, "oracle", None)
             if oracle is None or not hasattr(oracle, "query"):
