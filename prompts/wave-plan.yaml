@@ -4519,28 +4519,38 @@ waves:
     builder_required: false
     issues_to_close: []
     estimated_hours: 2
-    status: design
+    status: done
+    deliverable_prompt: "prompts/ad-833-proposal-grounding-gate.md"
     notes: |
-      ARCHITECT design pass - no build this wave. The 2026-05-31 Ward Room
-      "Improvement Proposals" validation found 0 of 18 agent-authored
-      proposals were verifiable bugs; the dominant failure mode is a
-      confabulation cascade (agents form a fault hypothesis and file a
-      proposal without verifying it against the codebase or trackers:
-      misreading benign telemetry as a fault, naming symbols/events that
-      do not exist, re-filing CLOSED work, conflating similarly-named
-      subsystems, treating LLM-confabulated prose as a code calculation).
-      AD-832 fixed ONE misread event; this AD designs the general
-      grounding gate (analogous to AD-734 capability-claim verification):
-      a lightweight check that runs when a proposal is submitted and
-      attaches a grounding score + evidence before the proposal surfaces
-      for crew/Captain review. Candidate checks: symbol existence (event/
-      intent/duty/file/class named in the proposal must resolve against
-      CodebaseIndex), tracker cross-ref (is this already CLOSED?),
-      telemetry-event semantics (is the cited event benign/expected per
-      its data marker?). DELIVERABLE: a build prompt under prompts/ +
-      DECISIONS.md design entry; assign the next AD number after grepping
-      PROGRESS.md for the actual highest. Output feeds a later wave's
-      Builder. Do NOT implement the gate in this wave.
+      DESIGN COMPLETE (2026-05-31). ARCHITECT design pass - no build this
+      wave. The 2026-05-31 Ward Room "Improvement Proposals" validation
+      found 0 of 18 agent-authored proposals were verifiable bugs; the
+      dominant failure mode is a confabulation cascade (agents form a
+      fault hypothesis and file a proposal without verifying it against the
+      codebase or trackers: misreading benign telemetry as a fault, naming
+      symbols/events that do not exist, re-filing CLOSED work, conflating
+      similarly-named subsystems, treating LLM-confabulated prose as a code
+      calculation). AD-832 fixed ONE misread event; this AD designs the
+      general grounding gate (analogous to AD-734 capability-claim
+      verification). DELIVERED: build prompt
+      prompts/ad-833-proposal-grounding-gate.md (Ready for a future wave) +
+      DECISIONS design entry in decisions-era-5-unification.md. Design:
+      ProposalGroundingVerifier mirroring AD-734's ObservableStateVerifier
+      provider pattern - narrow GroundingProvider plugins behind a Protocol,
+      log-and-degrade, aggregated ProposalGroundingResult (score + evidence,
+      ADVISORY only - never blocks submit). Phased because only one provider
+      has a clean existing API: SymbolExistenceProvider (reuses
+      CodebaseIndex.query/find_callers/get_full_api_surface) = AD-833 v1;
+      TrackerCrossRefProvider = AD-833a (needs new CodebaseIndex CLOSED-scan
+      method, no API today); BenignTelemetryProvider = AD-833b (needs
+      event-log query-by-event-name, no API today). Runs at the async
+      proposal-authoring boundary, NOT inside the synchronous
+      ProposalStore.submit (avoids a 6+ caller async ripple). Highest AD at
+      design time confirmed AD-837a; AD-833 is the pre-reserved number. Gate
+      is advisory in v1; auto-reject/veto is a later AD. Verified against
+      HEAD: proposal.py, codebase_index.py, observable_state.py,
+      ward_room_pipeline.py (AD-832 benign marker), finalize.py wiring seam.
+
 
   - id: "202e-vision-aggregator-subscribe-triage"
     title: "BF-326 VisionAggregator JetStream subscribe timeout (TRIAGE)"
