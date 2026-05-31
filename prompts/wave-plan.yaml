@@ -4549,32 +4549,62 @@ waves:
     builder_required: false
     issues_to_close: []
     estimated_hours: 2
-    status: triage
+    status: done
+    disposition: "benign-no-fix"
     notes: |
-      ARCHITECT triage - determine whether the BF-326 subscribe timeout
-      (perception.vision_aggregator JetStream subscribe to intent.dispatch
-      times out, observed immediately after the BF-241 mid-boot stream
-      delete+recreate) is (a) a benign slow-first-connect that retries and
-      recovers, or (b) a stream-recreation ordering race that leaves the
-      vision-observation path silently unsubscribed for the whole session.
-      In the observed run Ollama was down so the impact was masked. Steps:
-      read aggregator.py subscribe path + finalize.py:4131 wiring + the
-      BF-241 stream-recreate ordering; determine retry/recover behavior;
-      with Ollama running, confirm end-to-end that a vision_observation
-      frame actually reaches the aggregator over JetStream after a clean
-      boot. DELIVERABLE: either a "benign - close with evidence" finding
-      OR a BF prompt under prompts/ with the ordering fix. Pairs with
-      AD-746a (202f) - both touch the vision force-describe/aggregator
-      reliability path.
+      ARCHITECT triage COMPLETE (2026-05-31). DETERMINATION: OPTION (a) -
+      benign for the vision data path. NOT a stream-recreation race that
+      kills vision; the BF-326 timeout is on the durable JetStream
+      DISPATCH consumer (intent.dispatch.perception.vision_aggregator),
+      which is NEVER used to deliver vision_observation. Evidence chain
+      (all verified against HEAD):
+        1. intent_bus.subscribe() (mesh/intent.py:145) registers the
+           handler SYNCHRONOUSLY into _subscribers + _intent_index; the
+           NATS + JetStream dispatch-consumer subscriptions are
+           fire-and-forget loop.create_task() calls (NOT awaited, only
+           except RuntimeError for "no running loop"). A JS subscribe
+           timeout therefore CANNOT propagate to finalize.py:4131's
+           try/except - the Explore report's claim that it is caught there
+           and falls back is wrong.
+        2. broadcast() (mesh/intent.py:483) fans out to local handlers via
+           _intent_index - in-process asyncio.create_task(_invoke_handler)
+           calls. NATS/JetStream is not involved in local fan-out at all.
+        3. The camera-frame endpoint (routers/perception.py:241) publishes
+           IntentMessage(intent="vision_observation") via
+           runtime.intent_bus.broadcast(msg) with NO target_agent_id - so
+           it goes through the in-process fan-out path (2), reaching the
+           aggregator's synchronously-registered _intent_index entry every
+           time, regardless of whether the durable dispatch consumer was
+           created.
+        4. In the observed run vision failed because OLLAMA WAS DOWN, not
+           because of BF-326.
+      The durable dispatch consumer only matters for targeted send() to
+      the aggregator or cross-node delivery - neither is how vision flows
+      in single-node operation. NO boot-ordering change, NO retry/barrier,
+      NO re-architecture (would be changing a load-bearing invariant to
+      fix a non-bug). RESIDUE: the fire-and-forget JS subscribe logs an
+      error/warning on each boot when the post-recreate consumer create
+      times out - a false-positive that LOOKS alarming (it is the line
+      that made BF-326 get filed). Filed as forward marker BF-330
+      (downgrade the perception.vision_aggregator dispatch-consumer
+      subscribe-timeout log from error to debug/info, or annotate it as
+      benign-for-broadcast-intents) - fits the Wave 200 observability-
+      false-positive-hygiene theme. CLOSE #805 with this evidence (GH API
+      EMU-403 blocked this session - close manually or via a later
+      gh-enabled session).
 
   - id: "202f-force-describe-frame-mirror"
     title: "AD-746a router-side _latest_frame mirror for force-describe"
     kind: bf
     depends_on: ["202e-vision-aggregator-subscribe-triage"]
+    dispatch_prompt: "prompts/ad-746a-force-describe-frame-mirror.md"
+    prompts_already_drafted: true
+    prompt_paths:
+      - "prompts/ad-746a-force-describe-frame-mirror.md"
     builder_required: true
     issues_to_close: [794]
     estimated_hours: 1
-    status: pending
+    status: ready
     notes: |
       AD-746a (defense-in-depth, filed during BF-323 retrospective):
       VisionConsumer.force_describe_current_frame reads
@@ -4588,12 +4618,17 @@ waves:
       (perception.py:131-251) already knows sha + captured_at +
       session_id + source when it accepts the upload; have it populate the
       consumer cache directly as a mirror BEFORE intent_bus.broadcast, via
-      a small PUBLIC method (e.g. record_uploaded_frame(sha, session_id,
-      captured_at)) rather than poking private attrs (Law of Demeter /
+      a small PUBLIC method record_uploaded_frame(sha, session_id,
+      captured_at) rather than poking private attrs (Law of Demeter /
       Open-Closed). This gives FORCE DESCRIBE a direct path independent of
-      the bus/aggregator chain. ARCHITECT drafts the prompt (no prompt
-      drafted yet); small, single-file + one test. Sequence after 202e so
-      the BF-326 finding can inform whether the mirror also needs a
-      retry/recover note.
+      the bus/aggregator chain. PROMPT DRAFTED + verified against HEAD:
+      prompts/ad-746a-force-describe-frame-mirror.md (2 pytest, single
+      public method on consumer.py + one guarded call site in
+      perception.py before broadcast). The 202e BF-326 finding confirmed
+      the aggregator delivery path is in-process broadcast (not JS
+      dispatch), so AD-746a's concern is specifically the aggregator
+      BUFFER/forward chain (BF-323), independent of BF-326 - no
+      retry/recover note needed, the router mirror is the direct path.
+
 
 
