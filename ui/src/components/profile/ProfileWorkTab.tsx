@@ -45,6 +45,8 @@ export function ProfileWorkTab({ agentId }: Props) {
   const [showCreate, setShowCreate] = useState(false);
   const [createTitle, setCreateTitle] = useState('');
   const [createPriority, setCreatePriority] = useState(3);
+  const [createInstructions, setCreateInstructions] = useState('');
+  const [dispatchNow, setDispatchNow] = useState(true);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<WorkItemTemplateView | null>(null);
   const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
@@ -77,11 +79,21 @@ export function ProfileWorkTab({ agentId }: Props) {
 
   const handleCreate = useCallback(async () => {
     if (!createTitle.trim()) return;
-    await createWorkItem({ title: createTitle.trim(), priority: createPriority, work_type: 'task', assigned_to: agentUuid });
+    await createWorkItem({
+      title: createTitle.trim(),
+      priority: createPriority,
+      work_type: 'task',
+      assigned_to: agentUuid,
+      description: createInstructions.trim() || undefined,
+      // AD-834: dispatch flag activates WorkItemRouter -> assigned agent.
+      metadata: dispatchNow ? { dispatchable: true } : undefined,
+    });
     setCreateTitle('');
     setCreatePriority(3);
+    setCreateInstructions('');
+    setDispatchNow(true);
     setShowCreate(false);
-  }, [createTitle, createPriority, agentUuid, createWorkItem]);
+  }, [createTitle, createPriority, createInstructions, dispatchNow, agentUuid, createWorkItem]);
 
   const handleTemplateCreate = useCallback(async () => {
     if (!selectedTemplate) return;
@@ -207,7 +219,6 @@ export function ProfileWorkTab({ agentId }: Props) {
           <div style={{ ...cardStyle, background: 'rgba(80,176,160,0.05)', border: '1px solid rgba(80,176,160,0.2)' }}>
             <input
               value={createTitle} onChange={e => setCreateTitle(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
               placeholder="Task title..."
               autoFocus
               style={{
@@ -216,11 +227,27 @@ export function ProfileWorkTab({ agentId }: Props) {
                 color: '#c8d0e0', outline: 'none', marginBottom: 4, boxSizing: 'border-box',
               }}
             />
-            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <textarea
+              value={createInstructions} onChange={e => setCreateInstructions(e.target.value)}
+              placeholder="Describe what the agent should do (natural language)..."
+              rows={3}
+              style={{
+                width: '100%', padding: '4px 6px', fontSize: 11, borderRadius: 3,
+                background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
+                color: '#c8d0e0', outline: 'none', marginBottom: 4, boxSizing: 'border-box',
+                resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4,
+              }}
+            />
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
               <select value={createPriority} onChange={e => setCreatePriority(Number(e.target.value))}
                 style={{ fontSize: 10, padding: '2px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#aaa', borderRadius: 3 }}>
                 {[1,2,3,4,5].map(p => <option key={p} value={p}>P{p}</option>)}
               </select>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: '#8888a0', cursor: 'pointer' }}>
+                <input type="checkbox" checked={dispatchNow} onChange={e => setDispatchNow(e.target.checked)}
+                  style={{ cursor: 'pointer' }} />
+                Dispatch to agent now
+              </label>
               <button onClick={handleCreate} style={{ ...actionBtnStyle, color: '#50b0a0', borderColor: 'rgba(80,176,160,0.3)' }}>Create</button>
               <button onClick={() => setShowCreate(false)} style={actionBtnStyle}>Cancel</button>
             </div>

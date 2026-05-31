@@ -544,7 +544,7 @@ export interface HXIState {
   // Workforce actions (AD-497)
   moveWorkItem: (itemId: string, newStatus: string) => Promise<void>;
   assignWorkItem: (itemId: string, resourceId: string) => Promise<void>;
-  createWorkItem: (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string }) => Promise<void>;
+  createWorkItem: (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string; metadata?: Record<string, unknown> }) => Promise<void>;
   // AD-498: Template actions
   fetchWorkTypes: () => Promise<void>;
   fetchWorkTemplates: () => Promise<void>;
@@ -1378,7 +1378,7 @@ export const useStore = create<HXIState>((set, get) => ({
       console.error('Failed to assign work item:', e);
     }
   },
-  createWorkItem: async (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string }) => {
+  createWorkItem: async (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string; metadata?: Record<string, unknown> }) => {
     try {
       const resp = await fetch('/api/work-items', {
         method: 'POST',
