@@ -2,7 +2,7 @@
 
 **Status:** Ready
 **Dependencies:** AD-211–215 (`DependencyResolver` — detect/approve/install machinery), AD-838 (office-skills wiring; this is its `AD-838c` forward marker), AD-214 (shell approval-callback wiring)
-**Estimated tests:** 8 pytest
+**Estimated tests:** 9 pytest
 **Parent:** AD-838 (sub-letter; no new top-level AD number consumed)
 
 ## Problem
@@ -65,22 +65,25 @@ Add an explicit **policy mode** so the same resolver serves both callers:
   is unlisted, the human prompt IS the authorization.)
 
 Boundary rules: `probos` internal imports and stdlib-resolvable names are still skipped in
-both modes (existing `find_spec` / `name == "probos"` guards retained).
+both modes (existing `find_spec` / `name == "probos"` guards retained). An import that is
+already installed (resolvable via `find_spec`) is **not** returned under `prompt_unlisted`
+either — only genuinely-missing imports are offered.
 
 ### Section 2 — Config: opt-in dynamic-install policy
 
 File: `src/probos/config.py`
 
-Add to `SelfModConfig` (or a small new `DependencyConfig` consumed by the runtime — match
-the existing config-model conventions; Pydantic, sensible defaults, validated at parse time):
+Add a new top-level `DependencyConfig` Pydantic model (do **not** overload `SelfModConfig`),
+consumed by the runtime. It reuses `config.self_mod.allowed_imports`
+([`config.py:2738`](../src/probos/config.py#L2738)) as the auto-approve tier rather than
+duplicating that list. Pydantic, sensible defaults, validated at parse time:
 
 - `dynamic_install_enabled: bool = False` — master opt-in for the task-path resolver.
   Default `False` → zero behavior change, ProbOS boots identically.
 - `dynamic_install_policy: Literal["whitelist", "prompt_unlisted"] = "prompt_unlisted"` —
   only consulted when `dynamic_install_enabled`.
-- `dynamic_install_deny: list[str] = [...]` — seed with a few obviously-unsafe names
-  (e.g. `os`-shadowing typosquats are out of scope; seed conservative, e.g. empty or a tiny
-  known-bad list). Document that approval is still required regardless.
+- `dynamic_install_deny: list[str] = []` — hard deny set; seed **empty** (approval is the
+  gate, not a static block-list). Document that approval is still required regardless.
 
 ### Section 3 — Runtime service + request-driven entry point
 
@@ -99,13 +102,40 @@ Files: `src/probos/startup/cognitive_services.py`, `src/probos/runtime.py`
   ([`shell.py:155`](../src/probos/experience/shell.py#L155)) so the task-path resolver shares
   the existing `user_dep_install_approval` prompt — one consistent UX.
 
+  **SECURITY (OWASP — required, blocker).** Today the shell wires `_approval_fn` **only**
+  inside `if self.runtime.self_mod_pipeline:` ([`shell.py:145`](../src/probos/experience/shell.py#L145)
+  → [`shell.py:155`](../src/probos/experience/shell.py#L155)). If `dynamic_install_enabled=True`
+  while `self_mod` is disabled, there is no `self_mod_pipeline`, so the approval callback is
+  never wired — `_approval_fn` stays `None`, the `if self._approval_fn:` gate in `resolve`
+  ([`dependency_resolver.py:122`](../src/probos/cognitive/dependency_resolver.py#L122)) is
+  falsy, and packages would install **without consent**. Add a **standalone** wiring branch,
+  outside the self-mod guard:
+
+  ```python
+  if getattr(self.runtime, "dependency_resolver", None):
+      self.runtime.dependency_resolver._approval_fn = (
+          lambda pkgs: user_dep_install_approval(self.console, self.renderer, pkgs)
+      )
+  ```
+
+  **Defense in depth (required).** `ensure_dependency` must hard-decline if any package falls
+  under the prompt tier while `_approval_fn is None` — return
+  `DependencyResult(success=False, error="approval callback unavailable")` and install
+  nothing. Never fall through to an unguarded install.
+
 ### Section 4 — Emit governance events
 
 File: `src/probos/runtime.py` (or wherever `ensure_dependency` lives)
 
-Mirror the self-mod event taxonomy (`dependency_check`, `dependency_install_approved`,
-`dependency_install_success/declined/failed`) so task-path installs are auditable in the
-event log exactly like designed-agent installs (AD-215 parity).
+Mirror the self-mod event taxonomy so task-path installs are auditable in the event log
+exactly like designed-agent installs (AD-215 parity). Use the existing string-event API —
+**no new `EventType` enum is needed**: `await self._event_log.log(category="dependency",
+event="dependency_check", detail=json.dumps({...}))`, mirroring the self-mod emit pattern
+([`self_mod.py:241-266`](../src/probos/cognitive/self_mod.py#L241)). Use a distinct
+`category` (e.g. `"dependency"`) to separate task-path installs from self-mod ones. Confirm
+the runtime exposes the event log with a `.log(...)` method before wiring. Emit:
+`dependency_check`, `dependency_install_approved`,
+`dependency_install_success` / `declined` / `failed`.
 
 ## Tests
 
@@ -126,6 +156,9 @@ New file: `tests/test_ad838c_dynamic_install.py`
    the runtime reuses one resolver instance (assert identity).
 8. **Governance events** — `ensure_dependency` emits `dependency_check` +
    `dependency_install_approved/success` (or `declined`) via the event hook.
+9. **No approval callback → hard-decline (security)** — with `policy="prompt_unlisted"`,
+   `_approval_fn = None`, and an unlisted missing import, `ensure_dependency` installs
+   **nothing** and returns `DependencyResult(success=False)` (no unguarded install).
 
 Run: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad838c_dynamic_install.py -v -n 0`
 
@@ -156,5 +189,6 @@ Run: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad838c_dynamic_install.py -v
 3. Defaults (`dynamic_install_enabled=False`) leave boot and the self-mod path byte-identical.
 4. One resolver instance is shared when both paths are enabled.
 5. Task-path installs emit the same governance events as designed-agent installs.
-6. `tests/test_ad838c_dynamic_install.py` passes (8 tests).
-7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+6. When `_approval_fn` is unavailable, no package installs under any policy (hard-decline).
+7. `tests/test_ad838c_dynamic_install.py` passes (9 tests).
+8. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

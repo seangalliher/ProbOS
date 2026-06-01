@@ -2,8 +2,8 @@
 
 **Status:** Ready
 **Dependencies:** AD-755 (office agents + `OfficeSkillsConfig`), AD-211–215 (`DependencyResolver` — context only, not modified here)
-**Estimated tests:** 9 pytest
-**Current highest AD:** AD-837 (next sequential top-level: AD-838)
+**Estimated tests:** 10 pytest
+**Current highest AD:** AD-839 (shipped Wave 202). AD-838 is an unconsumed number — AD-839 shipped out of order; this AD backfills AD-838.
 
 ## Problem
 
@@ -54,26 +54,48 @@ non-designed/tool-acquisition path is out of scope (forward marker **AD-838c**).
 
 Wire the existing create/summarize/update methods to their intents, honor an output path,
 and add an LLM-backed content path so a bare NL brief yields a real deck/doc. No new
-third-party dependency. No change to the decomposer, consensus, or `DependencyResolver`.
+third-party dependency. No change to the decomposer, trust, or routing. Consensus gating is
+**added** to the four filesystem-mutating intents (see Section 1).
 
-### Section 1 — Intent → method dispatch on the office agents
+### Section 1 — Intent → method dispatch + consensus gate on the office agents
 
 File: `src/probos/skill_framework.py`
 
 Override `handle_intent` on `DocxAgent`, `PptxAgent`, and `XlsxAgent` to map the declared
 intent names to their existing methods, returning a proper `IntentResult`. Unknown intents
-return `None` (decline) — preserving the `_BundledMixin`/broadcast self-deselect contract so
-these agents do not hijack unrelated intents on the bus.
+return `None` — the concrete decline contract: `SkillBasedAgent.handle_intent` returns
+`None` for any intent not in `self._skills`
+([`skill_agent.py:81`](../src/probos/substrate/skill_agent.py#L81)), and `None` is how an
+agent declines on the broadcast bus so it does not hijack unrelated intents. Each override
+must return `None` (not a failed `IntentResult`) for intents it does not own.
 
 - `DocxAgent`: `docx_summarize` → `summarize_docx`, `docx_create` → `create_docx`,
   `docx_revise` → `revise_docx`.
 - `PptxAgent`: `pptx_summarize` → `summarize_pptx`, `pptx_create` → `create_pptx`.
 - `XlsxAgent`: `xlsx_read_range` → `read_xlsx_range`, `xlsx_update` → `update_xlsx`.
 
+**Consensus gate (governance — required).** Set `requires_consensus=True` on the
+`docx_create`, `pptx_create`, `xlsx_update`, and `docx_revise` `IntentDescriptor`s
+([`skill_framework.py:41/45/143/224`](../src/probos/skill_framework.py)) — these write or
+overwrite files on disk and must match the existing filesystem/exec mutators
+([`file_writer.py:36`](../src/probos/agents/file_writer.py) `write_file` and
+[`shell_command.py:52`](../src/probos/agents/shell_command.py) `run_command` are both
+`requires_consensus=True`). Pre-wiring these intents declined (no risk); post-wiring they
+overwrite an arbitrary `output_path`, so the gate becomes load-bearing here. The read-only
+intents (`docx_summarize`, `pptx_summarize`, `xlsx_read_range`) stay
+`requires_consensus=False`.
+
 Each handler pulls typed params from `intent.params`, calls the method, and wraps the
-returned path/summary in `IntentResult(success=True, ...)` with the output path surfaced in
-the result payload so the shell/HXI can report *where* the file landed. Missing required
-params → `IntentResult(success=False, error=...)` (boundary validation), never a raw raise.
+returned path/summary in an `IntentResult`. Use the real dataclass shape
+([`types.py:70`](../src/probos/types.py)): `intent_id` and `agent_id` are **required** (no
+defaults) and the payload field is `result` (there is **no** `params` field on
+`IntentResult`):
+
+- Success: `IntentResult(intent_id=intent.id, agent_id=self.id, success=True, result={"path": output_path, ...})`
+- Missing required param: `IntentResult(intent_id=intent.id, agent_id=self.id, success=False, error="...")` (boundary validation, never a raw raise).
+
+(`IntentMessage.id` confirmed at [`types.py:56`](../src/probos/types.py); `self.id` on
+`BaseAgent`.)
 
 ### Section 2 — Honor an output path / filename
 
@@ -100,8 +122,10 @@ When `pptx_create` / `docx_create` arrives with a `prompt`/`brief` param (NL req
 
 - New private helper `_synthesize_slides(brief, title) -> list[dict]` (PPTX) and
   `_synthesize_paragraphs(brief, title) -> list[str]` (DOCX): a single strict-JSON-output LLM
-  call (await-aware, mirrors the existing `summarize_docx` LLM guard at
-  [`skill_framework.py:54`](../src/probos/skill_framework.py#L54)). On no LLM / parse failure
+  call via `self._llm_client.complete(prompt)`, await-aware exactly like `summarize_docx`
+  ([`skill_framework.py:76-86`](../src/probos/skill_framework.py#L76) — `maybe = self._llm_client.complete(...)`;
+  `if hasattr(maybe, "__await__"): result = await maybe`). Use `complete`, not an invented
+  method. On no LLM / parse failure
   → honest-degrade to a single title slide / one-paragraph stub (Tier-2 log-and-degrade,
   never raise). Structured `slides`/`content` params, when present, bypass synthesis entirely
   (deterministic path unchanged).
@@ -130,6 +154,9 @@ New file: `tests/test_ad838_office_create_wiring.py`
    a valid single-slide deck (no raise).
 9. **Missing required param** — `pptx_create` with no `title` → `IntentResult(success=False)`,
    no exception.
+10. **Consensus flag set** — assert the `pptx_create` / `docx_create` / `xlsx_update` /
+    `docx_revise` `IntentDescriptor`s carry `requires_consensus=True`, and the
+    `*_summarize` / `xlsx_read_range` descriptors carry `requires_consensus=False`.
 
 Run: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad838_office_create_wiring.py -v -n 0`
 
@@ -137,7 +164,9 @@ Run: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad838_office_create_wiring.p
 
 - No change to `DependencyResolver` / `self_mod.py` (the dynamic-install path is already
   shipped for designed agents; office deps are pre-bundled). Forward marker **AD-838c**.
-- No change to the decomposer, consensus gating, trust, or routing.
+- No change to decomposer, trust, or routing. Consensus gating is **added** to the four
+  filesystem-mutating intents (create/update/revise), matching `write_file`; read intents
+  (`*_summarize`, `xlsx_read_range`) unchanged.
 - No change to `summarize_*` / `revise_docx` behavior beyond being reachable via
   `handle_intent`.
 - No SharePoint/OneDrive upload of the produced file (AD-755 commercial routing seam) —
@@ -162,7 +191,9 @@ Run: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad838_office_create_wiring.p
    `OfficeSkillsConfig.output_dir` with a slugified name.
 3. A NL `prompt` with no structured content yields an LLM-populated deck/doc, with
    honest-degrade to a stub when no LLM is available.
-4. `tests/test_ad838_office_create_wiring.py` passes (9 tests).
-5. Zero-config boot unchanged; existing `tests/test_office_agents.py` direct-call tests still
+4. The four filesystem-mutating intents carry `requires_consensus=True`; read intents stay
+   `requires_consensus=False`.
+5. `tests/test_ad838_office_create_wiring.py` passes (10 tests).
+6. Zero-config boot unchanged; existing `tests/test_office_agents.py` direct-call tests still
    pass.
-6. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
