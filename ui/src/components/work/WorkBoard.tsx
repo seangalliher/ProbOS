@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo, DragEvent } from 'react';
 import { useStore } from '../../store/useStore';
-import type { WorkItemView, BookableResourceView, WorkItemTemplateView } from '../../store/types';
-import { ChevronDown, ChevronRight, ChevronUp, Warning } from '../icons/Glyphs';
+import type { WorkItemView, WorkItemTemplateView } from '../../store/types';
+import { ChevronDown, ChevronRight, ChevronUp, Warning, Close } from '../icons/Glyphs';
 
 // ── Column config ──────────────────────────────────────────────────
 type ColKey = 'backlog' | 'ready' | 'in_progress' | 'review' | 'done';
@@ -48,12 +48,12 @@ function relTime(ts: number): string {
 }
 
 // ── Work Card ──────────────────────────────────────────────────────
-function WorkCard({ item, resources, onDragStart }: {
+function WorkCard({ item, assigneeLabel, onDragStart, onOpen }: {
   item: WorkItemView;
-  resources: BookableResourceView[];
+  assigneeLabel: string | null;
   onDragStart: (e: DragEvent, id: string) => void;
+  onOpen: (item: WorkItemView) => void;
 }) {
-  const agent = resources.find(r => r.resource_id === item.assigned_to);
   const stepsComplete = item.steps.filter(s => s.status === 'completed').length;
   const overdue = item.due_at && item.due_at < Date.now() / 1000;
 
@@ -61,8 +61,12 @@ function WorkCard({ item, resources, onDragStart }: {
     <div
       draggable
       onDragStart={e => onDragStart(e, item.id)}
+      onClick={() => onOpen(item)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(item); } }}
       style={{
-        padding: '7px 9px', marginBottom: 4, borderRadius: 5, cursor: 'grab',
+        padding: '7px 9px', marginBottom: 4, borderRadius: 5, cursor: 'pointer',
         background: 'rgba(255,255,255,0.04)',
         border: '1px solid rgba(255,255,255,0.07)',
         fontSize: 11, transition: 'opacity 0.15s',
@@ -86,10 +90,10 @@ function WorkCard({ item, resources, onDragStart }: {
           background: `${(WORK_TYPE_COLORS[item.work_type] || '#888')}20`,
           color: WORK_TYPE_COLORS[item.work_type] || '#888',
         }}>{item.work_type}</span>
-        {agent ? (
+        {assigneeLabel ? (
           <span style={{ fontSize: 9, color: '#8888a0', display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#50b0a0', display: 'inline-block' }} />
-            {agent.callsign || agent.agent_type}
+            {assigneeLabel}
           </span>
         ) : (
           <span style={{ fontSize: 9, color: '#555' }}>Unassigned</span>
@@ -131,6 +135,7 @@ function WorkCard({ item, resources, onDragStart }: {
 export default function WorkBoard() {
   const workItems = useStore(s => s.workItems);
   const bookableResources = useStore(s => s.bookableResources);
+  const agents = useStore(s => s.agents);
   const workTemplates = useStore(s => s.workTemplates);
   const moveWorkItem = useStore(s => s.moveWorkItem);
   const createWorkItem = useStore(s => s.createWorkItem);
@@ -176,19 +181,34 @@ export default function WorkBoard() {
 
   const resources = bookableResources ?? [];
 
-  // Filter logic
+  // BF-332: resolve an assignee's display info, falling back to the agent
+  // registry when no bookable resource matches. The bookable-resource registry
+  // can be empty (e.g. before crew commissioning completes), but the agent map
+  // is populated independently — so the board should still show the callsign
+  // rather than "Unassigned".
+  const resolveAssignee = useCallback((assignedTo: string | null | undefined): { label: string; department: string } | null => {
+    if (!assignedTo) return null;
+    const res = resources.find(r => r.resource_id === assignedTo);
+    if (res) return { label: res.callsign || res.agent_type, department: res.department };
+    const agent = agents.get(assignedTo);
+    if (agent) return { label: agent.callsign || agent.agentType, department: '' };
+    return null;
+  }, [resources, agents]);
+
+  // BF-332: clicked work item for the detail modal.
+  const [detailItem, setDetailItem] = useState<WorkItemView | null>(null);
   const filtered = useMemo(() => {
     return allItems.filter(item => {
       if (filterPriorities.size > 0 && !filterPriorities.has(item.priority)) return false;
       if (filterTypes.size > 0 && !filterTypes.has(item.work_type)) return false;
       if (filterAgents.size > 0 && (!item.assigned_to || !filterAgents.has(item.assigned_to))) return false;
       if (filterDepts.size > 0) {
-        const agent = resources.find(r => r.resource_id === item.assigned_to);
-        if (!agent || !filterDepts.has(agent.department)) return false;
+        const assignee = resolveAssignee(item.assigned_to);
+        if (!assignee || !filterDepts.has(assignee.department)) return false;
       }
       return true;
     });
-  }, [allItems, filterPriorities, filterTypes, filterAgents, filterDepts, resources]);
+  }, [allItems, filterPriorities, filterTypes, filterAgents, filterDepts, resolveAssignee]);
 
   const blockedItems = filtered.filter(i => ['failed', 'cancelled', 'blocked'].includes(i.status));
 
@@ -217,13 +237,13 @@ export default function WorkBoard() {
     for (const item of filtered) {
       let key = '';
       if (swimLane === 'department') {
-        const agent = resources.find(r => r.resource_id === item.assigned_to);
-        key = agent?.department || 'Unassigned';
+        const assignee = resolveAssignee(item.assigned_to);
+        key = assignee?.department || 'Unassigned';
       } else if (swimLane === 'priority') {
         key = `P${item.priority}`;
       } else if (swimLane === 'agent') {
-        const agent = resources.find(r => r.resource_id === item.assigned_to);
-        key = agent?.callsign || agent?.agent_type || 'Unassigned';
+        const assignee = resolveAssignee(item.assigned_to);
+        key = assignee?.label || 'Unassigned';
       }
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(item);
@@ -231,7 +251,7 @@ export default function WorkBoard() {
     return Array.from(groups.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, items]) => ({ key, label: key, items }));
-  }, [filtered, swimLane, resources]);
+  }, [filtered, swimLane, resolveAssignee]);
 
   // Unique departments and agents for filters
   const departments = useMemo(() => [...new Set(resources.map(r => r.department).filter(Boolean))].sort(), [resources]);
@@ -335,7 +355,13 @@ export default function WorkBoard() {
         {/* Cards */}
         <div style={{ padding: '4px 6px', overflowY: 'auto', flex: 1, minHeight: 80 }}>
           {items.map(item => (
-            <WorkCard key={item.id} item={item} resources={resources} onDragStart={handleDragStart} />
+            <WorkCard
+              key={item.id}
+              item={item}
+              assigneeLabel={resolveAssignee(item.assigned_to)?.label ?? null}
+              onDragStart={handleDragStart}
+              onOpen={setDetailItem}
+            />
           ))}
         </div>
       </div>
@@ -540,6 +566,103 @@ export default function WorkBoard() {
           )}
         </div>
       )}
+
+      {/* BF-332: Work item detail modal */}
+      {detailItem && (
+        <div
+          onClick={() => setDetailItem(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: 'min(560px, 92vw)', maxHeight: '82vh', overflowY: 'auto',
+              background: '#14141c', border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: 8, padding: '18px 20px', boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+              fontSize: 12, color: '#c8d0e0',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
+              <span style={{
+                width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 5,
+                background: PRIORITY_COLORS[detailItem.priority] || '#888', display: 'inline-block',
+              }} />
+              <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.3, flex: 1 }}>{detailItem.title}</div>
+              <button
+                onClick={() => setDetailItem(null)}
+                aria-label="Close"
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#888', padding: 2, display: 'flex' }}
+              >
+                <Close size={14} />
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+              <span style={{
+                fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                background: `${(WORK_TYPE_COLORS[detailItem.work_type] || '#888')}20`,
+                color: WORK_TYPE_COLORS[detailItem.work_type] || '#888',
+              }}>{detailItem.work_type}</span>
+              <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.06)', color: '#9aa' }}>{detailItem.status}</span>
+              <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.06)', color: '#9aa' }}>P{detailItem.priority}</span>
+              {(detailItem.metadata as { dispatchable?: unknown })?.dispatchable ? (
+                <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(80,176,160,0.15)', color: '#50b0a0' }}>dispatched</span>
+              ) : null}
+            </div>
+
+            <DetailRow label="Assigned to" value={resolveAssignee(detailItem.assigned_to)?.label ?? 'Unassigned'} />
+            <DetailRow label="Created by" value={detailItem.created_by || '\u2014'} />
+            {detailItem.due_at ? <DetailRow label="Due" value={new Date(detailItem.due_at * 1000).toLocaleString()} /> : null}
+
+            {detailItem.description ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 10, color: '#777', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Description</div>
+                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5, color: '#c0c8d8' }}>{detailItem.description}</div>
+              </div>
+            ) : (
+              <div style={{ marginTop: 12, color: '#666', fontStyle: 'italic' }}>No description provided.</div>
+            )}
+
+            {detailItem.steps.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 10, color: '#777', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                  Steps ({detailItem.steps.filter(s => s.status === 'completed').length}/{detailItem.steps.length})
+                </div>
+                {detailItem.steps.map((s, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
+                    <span style={{
+                      width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
+                      background: s.status === 'completed' ? '#50b0a0' : '#555',
+                    }} />
+                    <span style={{ color: s.status === 'completed' ? '#8a9' : '#aab' }}>{s.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {detailItem.tags.length > 0 && (
+              <div style={{ display: 'flex', gap: 4, marginTop: 14, flexWrap: 'wrap' }}>
+                {detailItem.tags.map(t => (
+                  <span key={t} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'rgba(255,255,255,0.06)', color: '#888' }}>{t}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+      <span style={{ fontSize: 11, color: '#777', width: 90, flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 11, color: '#c0c8d8' }}>{value}</span>
     </div>
   );
 }

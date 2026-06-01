@@ -107,7 +107,7 @@ async def init_communication(
             },
         )
         await work_item_store.start()
-        await register_workforce_resources_fn()
+        await register_workforce_resources_fn(work_item_store)
         logger.info("workforce-scheduling-engine started")
 
     # --- Ward Room (AD-407) ---

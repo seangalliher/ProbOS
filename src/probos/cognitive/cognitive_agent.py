@@ -1079,6 +1079,113 @@ class CognitiveAgent(BaseAgent):
             confidence=1.0,
         )
 
+    async def _handle_work_item_dispatch(self, intent: IntentMessage) -> IntentResult:
+        """AD-839: Surface a directly-dispatched work item to this agent.
+
+        When the AD-581a WorkItemRouter direct-assigns a dispatchable work
+        item to this agent ("dispatch to agent now"), deliver it as a
+        Captain-originated task message in the agent's DM thread, let the
+        agent acknowledge it via the normal direct-message lifecycle, and
+        transition the work item to ``in_progress`` so the dispatch actually
+        starts the work and the agent is aware of it.
+
+        Tier-2 log-and-degrade: failures here must never raise into the
+        cognitive queue. On failure the work item stays ``open`` and the
+        agent simply produces no acknowledgment.
+        """
+        params = intent.params or {}
+        work_item_id = params.get("work_item_id", "")
+        title = (params.get("title") or "").strip()
+        description = (params.get("description") or "").strip()
+
+        task_lines = [f"You've been assigned a new task: {title or '(untitled)'}"]
+        if description:
+            task_lines.append("")
+            task_lines.append(description)
+        task_lines.append("")
+        task_lines.append(
+            "Acknowledge this assignment and briefly describe how you'll approach it."
+        )
+        task_text = "\n".join(task_lines)
+
+        runtime = self._runtime
+        thread = None
+        thread_store = getattr(runtime, "chat_thread_store", None) if runtime else None
+        if thread_store is not None:
+            try:
+                _title = getattr(self, "callsign", "") or self.agent_type
+                thread = thread_store.get_or_create_default_for_agent(self.id, _title)
+                thread_store.append_message(
+                    thread.id,
+                    author_id="captain",
+                    role="captain",
+                    body=task_text,
+                    metadata={
+                        "work_item_id": work_item_id,
+                        "source": "work_item_dispatch",
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "AD-839: failed to log captain task message for work_item "
+                    "%s to agent %s; continuing without thread wiring",
+                    work_item_id, self.id, exc_info=True,
+                )
+                thread = None
+
+        # Run the assignment through the normal direct-message lifecycle so the
+        # agent reasons about it and produces an acknowledgment.
+        dm = IntentMessage(
+            intent="direct_message",
+            params={"text": task_text, "from": "captain", "session": False},
+            context="",
+            target_agent_id=self.id,
+            ttl_seconds=120.0,
+            thread_id=thread.id if thread is not None else None,
+        )
+        result = await self.handle_intent(dm)
+
+        reply_text = ""
+        if result is not None and getattr(result, "result", None):
+            reply_text = str(result.result)
+
+        if thread is not None and thread_store is not None and reply_text:
+            try:
+                thread_store.append_message(
+                    thread.id,
+                    author_id=self.id,
+                    role="agent",
+                    body=reply_text,
+                    metadata={"intent_id": intent.id, "work_item_id": work_item_id},
+                )
+            except Exception:
+                logger.warning(
+                    "AD-839: failed to log agent acknowledgment for work_item "
+                    "%s; continuing",
+                    work_item_id, exc_info=True,
+                )
+
+        store = getattr(runtime, "work_item_store", None) if runtime else None
+        if store is not None and work_item_id:
+            try:
+                await store.transition_work_item(
+                    work_item_id, "in_progress", source=self.id,
+                )
+            except Exception:
+                logger.warning(
+                    "AD-839: failed to transition work_item %s to in_progress; "
+                    "it remains in its prior status",
+                    work_item_id, exc_info=True,
+                )
+
+        return IntentResult(
+            intent_id=intent.id,
+            agent_id=self.id,
+            success=True,
+            result=reply_text or "[NO_RESPONSE]",
+            confidence=self.confidence,
+        )
+
     async def _build_guided_decision(
         self, procedure: Any, observation: dict, match_score: float
     ) -> dict:
@@ -4421,6 +4528,18 @@ class CognitiveAgent(BaseAgent):
                         result="[NO_RESPONSE]",
                         confidence=self.confidence,
                     )
+
+        # AD-839: a work item directly assigned to this agent (via the
+        # AD-581a WorkItemRouter "dispatch to agent now" path) is surfaced as
+        # a Captain task message, acknowledged through the normal direct-
+        # message lifecycle, and transitioned to in_progress. Handled before
+        # the self-deselect fast path because ``work_item_dispatched`` is not
+        # in ``_handled_intents``.
+        if (
+            intent.intent == "work_item_dispatched"
+            and intent.target_agent_id == self.id
+        ):
+            return await self._handle_work_item_dispatch(intent)
 
         # Fast path: self-deselect for unrecognized intents before any LLM call
         # AD-596b: Check cognitive skill catalog before self-deselecting

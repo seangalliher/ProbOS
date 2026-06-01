@@ -2643,9 +2643,19 @@ class ProbOSRuntime:
 
     # --- Workforce Scheduling Engine helpers (AD-496) ---
 
-    async def _register_workforce_resources(self) -> None:
-        """Register all commissioned agents as BookableResources."""
-        if not self.work_item_store:
+    async def _register_workforce_resources(
+        self, work_item_store: Any | None = None
+    ) -> None:
+        """Register all commissioned agents as BookableResources.
+
+        BF-331: ``work_item_store`` may be passed explicitly by the
+        communication startup phase, which calls this *before*
+        ``self.work_item_store`` has been assigned from the returned
+        ``init_communication`` result. Falling back to the instance
+        attribute keeps the existing zero-argument call sites working.
+        """
+        store = work_item_store or self.work_item_store
+        if not store:
             return
         from probos.workforce import BookableResource, AgentCalendar, CalendarEntry
         for agent in self.registry.all():
@@ -2660,12 +2670,12 @@ class ProbOSRuntime:
                 display_on_board=hasattr(agent, 'personality'),
                 active=True,
             )
-            self.work_item_store.register_resource(resource)
+            store.register_resource(resource)
             calendar = AgentCalendar(
                 resource_id=resource.resource_id,
                 entries=[CalendarEntry()],
             )
-            self.work_item_store.register_calendar(calendar)
+            store.register_calendar(calendar)
 
     def _build_resource_characteristics(self, agent: Any) -> list[dict[str, Any]]:
         """Build characteristics list from agent capabilities and trust."""
