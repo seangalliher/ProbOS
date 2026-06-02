@@ -1,8 +1,8 @@
 # AD-833 — Improvement-proposal grounding gate (DESIGN + phased build prompt)
 
-**Status:** Design complete — build prompt ready for a future wave (NOT this wave)
+**Status:** Ready — Architect-reviewed (revisions applied); build prompt for the current wave (v1)
 **Kind:** design → bf (phased)
-**Current highest AD at design time:** AD-837a (AD-833 is the pre-reserved number for this work)
+**Current highest shipped:** AD-839 (Wave 203). AD-833 is the pre-reserved number — this prompt consumes it for the v1 build. Sub-letters AD-833a / AD-833b stay deferred.
 **Motivating evidence:** 2026-05-31 Ward Room "Improvement Proposals" validation — **0 of 18**
 agent-authored proposals were verifiable bugs. AD-832 fixed ONE misread telemetry event; this
 designs the *general* gate.
@@ -45,16 +45,16 @@ is information, not a veto).
 @dataclass(frozen=True)
 class GroundingFinding:
     provider_name: str
-    verified: bool | None        # True=grounded, False=contradicted, None=undetermined
+    verified: bool | None        # True=grounded, False=contradicted, None=undetermined/abstain
     score: float                 # 0.0–1.0 contribution
     evidence: list[str]          # human-readable, surfaced in the UI
 
 @dataclass(frozen=True)
 class ProposalGroundingResult:
-    score: float                 # aggregate 0.0–1.0
-    verified: bool               # score >= threshold AND no provider returned False
+    score: float                 # aggregate 0.0–1.0 (mean of finding scores; 1.0 when empty)
+    verified: bool               # see aggregation rule in §3 (threshold + no-False)
     findings: list[GroundingFinding]
-    confidence: float
+    confidence: float            # fraction of findings whose verified is not None
 ```
 
 ### Provider interface (typing.Protocol)
@@ -64,6 +64,12 @@ class GroundingProvider(Protocol):
     name: str
     async def check(self, proposal: CapabilityProposal) -> GroundingFinding: ...
 ```
+
+> A provider **abstains** by returning `GroundingFinding(verified=None, score=0.0, evidence=[...])`
+> — NOT by returning `None`. This is an intentional divergence from the AD-583f template
+> (`check(...) -> VerificationResult | None`): with a single provider in v1, always returning a
+> finding keeps the aggregation math simple and makes `confidence` meaningful (it counts findings
+> that actually made a determination).
 
 ### Three providers — phased, because only one has a clean existing API
 
@@ -116,27 +122,63 @@ caller (anti-pattern: 6+ call-site migrations = defer). Instead:
 - `SymbolExistenceProvider` (constructor takes a `CodebaseIndex`; `name="symbol_existence"`).
 - `ProposalGroundingVerifier(providers: list[GroundingProvider])` with
   `async def verify(self, proposal: CapabilityProposal) -> ProposalGroundingResult` —
-  runs providers, aggregates (mean of contributing scores; `verified` = aggregate ≥ threshold AND
-  no provider returned `verified is False`; `confidence` = fraction of providers that returned
-  non-None), log-and-degrade per provider.
+  runs providers with a per-provider `try/except Exception` (log at `debug`/`warning` with
+  `exc_info=True`, skip the provider — exact mirror of
+  [`observable_state.py:75-78`](../src/probos/cognitive/observable_state.py#L75)), then aggregates:
+  - `score` = mean of finding `score` values (empty findings → `1.0`).
+  - `verified` = `aggregate_score >= _GROUNDING_VERIFIED_THRESHOLD` **AND** no finding has
+    `verified is False`. Define a module constant `_GROUNDING_VERIFIED_THRESHOLD: float = 0.5`
+    (single source of truth — do not inline the literal).
+  - `confidence` = fraction of findings whose `verified is not None` (i.e. providers that made a
+    determination; `0.0` when there are no findings).
 
 **`ProposalStore`** ([`proposal.py`](../src/probos/cognitive/self_improvement/proposal.py)):
-- Add `_grounding: dict[str, ProposalGroundingResult]` and a public
-  `attach_grounding(proposal_id: str, result: ProposalGroundingResult) -> None` +
+- Add `_grounding: dict[str, ProposalGroundingResult]` (init in `__init__`, which ends at
+  [`proposal.py:127`](../src/probos/cognitive/self_improvement/proposal.py#L127)) and a public
+  `attach_grounding(proposal_id: str, result: ProposalGroundingResult) -> None` (insert after
+  `list_pending`, ~L165; unknown id → `logger.warning(...)` + return, never raise) +
   `get_grounding(proposal_id: str) -> ProposalGroundingResult | None`. `submit` stays sync and
-  signature-unchanged.
+  signature-unchanged. Use a `TYPE_CHECKING` import of `ProposalGroundingResult` from `.grounding`
+  (annotation only) to avoid a runtime import cycle (`grounding.py` imports `CapabilityProposal`
+  from `proposal.py`).
 
-**`ApprovalGate.list_pending`** ([`approval_gate.py`](../src/probos/cognitive/self_improvement/approval_gate.py)):
-- Return proposals paired with their grounding (e.g. `list[tuple[CapabilityProposal,
-  ProposalGroundingResult | None]]`, OR a small view dataclass) so the surfacing path carries the
-  score. Update the Ward Room resolver/UI to render a grounding badge (separate UI sub-AD if it
-  touches `ui/` — keep this AD backend-only and emit the data; do NOT change `ui/` here).
+**`ApprovalGate`** ([`approval_gate.py:30`](../src/probos/cognitive/self_improvement/approval_gate.py#L30)):
+- Do **NOT** change `list_pending` — it has zero external callers but must stay
+  `list[CapabilityProposal]` to mirror `ProposalStore.list_pending`. Add an additive sibling:
+  ```python
+  def list_pending_grounded(self) -> list[tuple[CapabilityProposal, ProposalGroundingResult | None]]:
+      return [(p, self._proposals.get_grounding(p.id)) for p in self._proposals.list_pending()]
+  ```
+- Add an optional constructor param `grounding_verifier: ProposalGroundingVerifier | None = None`
+  (default `None` → behavior byte-identical to today; store as `self._grounding_verifier`) and an
+  **async authoring seam** — the concrete home for verify→submit→attach:
+  ```python
+  async def enqueue_grounded(self, proposal: CapabilityProposal) -> str:
+      pid = self._proposals.submit(proposal)
+      if self._grounding_verifier is not None:
+          try:
+              result = await self._grounding_verifier.verify(proposal)
+              self._proposals.attach_grounding(pid, result)
+          except Exception:
+              logger.warning("AD-833: grounding verify failed for %s; submit stands", pid, exc_info=True)
+      return pid
+  ```
+  Grounding stays advisory — a verifier fault degrades to a plain submit, never blocks authoring.
+  Use a `TYPE_CHECKING` import of `ProposalGroundingVerifier` from `.grounding`.
 
 **Wiring** ([`finalize.py`](../src/probos/startup/finalize.py) near the existing
-`ProposalStore` / `ApprovalGate` construction): build a `ProposalGroundingVerifier` with the
-`SymbolExistenceProvider` over the runtime's `CodebaseIndex`, expose it as
-`runtime.proposal_grounding_verifier`. Do NOT auto-run it inside `submit`; the authoring path
-calls `verify(...)` then `proposal_store.attach_grounding(...)`.
+`ProposalStore` / `ApprovalGate` construction at
+[`finalize.py:1509-1517`](../src/probos/startup/finalize.py#L1509)): build a
+`ProposalGroundingVerifier` with a `SymbolExistenceProvider` over `getattr(runtime,
+"codebase_index", None)` (set at [`runtime.py:1759`](../src/probos/runtime.py#L1759) during the
+fleet phase, which runs before finalize). If the index is absent (config-disabled / degraded
+boot), build `ProposalGroundingVerifier(providers=[])` and log-and-degrade — never crash finalize.
+**Pass the verifier into `ApprovalGate(grounding_verifier=...)`** (the authoring seam) **and**
+expose it as `runtime.proposal_grounding_verifier` for introspection/UI. Declare the attribute
+per convention in `runtime.py` next to `approval_gate`: add `proposal_grounding_verifier: Any |
+None  # AD-833` to the annotation block (~[`runtime.py:280`](../src/probos/runtime.py#L280)) and
+`self.proposal_grounding_verifier: Any | None = None` (~[`runtime.py:825`](../src/probos/runtime.py#L825)).
+Do NOT auto-run the verifier inside `submit`; only `enqueue_grounded` runs it.
 
 ## 4. Tests (phase 1)
 
@@ -147,9 +189,14 @@ calls `verify(...)` then `proposal_store.attach_grounding(...)`.
   proposal → `verified=None`. Use a real or lightweight stub `CodebaseIndex` (prefer real over
   MagicMock at this boundary — the Phantom-via-MagicMock memory lesson).
 - `ProposalGroundingVerifier.verify`: aggregation happy path; a provider that raises is logged and
-  skipped (degrade), not fatal; `confidence` reflects None returns.
-- `ProposalStore.attach_grounding` / `get_grounding` round-trip; `submit` signature unchanged.
-- `ApprovalGate.list_pending` surfaces grounding (None when not attached).
+  skipped (degrade), not fatal; `confidence` reflects findings whose `verified is not None`.
+- `ProposalStore.attach_grounding` / `get_grounding` round-trip; unknown-id `attach_grounding` is a
+  no-op warning (no raise); `get_grounding` on unknown id returns `None`; `submit` signature unchanged.
+- `ApprovalGate.list_pending_grounded` surfaces grounding (None when not attached) and
+  `ApprovalGate.list_pending` remains `list[CapabilityProposal]` (unchanged).
+- `ApprovalGate.enqueue_grounded`: with a wired verifier, submits AND attaches a retrievable
+  grounding result; with `grounding_verifier=None`, submits normally and `get_grounding` is `None`;
+  with a verifier whose `verify` raises, the proposal is still submitted (id returned), grounding absent.
 
 Run serial: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad833_grounding_gate.py -v -n 0`.
 
@@ -165,11 +212,16 @@ Run serial: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad833_grounding_gate.
 ## 6. Acceptance criteria
 
 1. `ProposalGroundingVerifier` + `SymbolExistenceProvider` + result dataclasses exist, fully typed,
-   provider plugins behind a `Protocol`, log-and-degrade per provider.
+   provider plugins behind a `Protocol`, log-and-degrade per provider; `verified` uses the
+   `_GROUNDING_VERIFIED_THRESHOLD = 0.5` rule and `confidence` counts determinations.
 2. `ProposalStore` carries grounding via parallel store (model unchanged, `submit` sync + unchanged).
-3. `ApprovalGate.list_pending` surfaces the grounding result.
-4. `runtime.proposal_grounding_verifier` wired in finalize; gate is advisory (never blocks submit).
-5. `tests/test_ad833_grounding_gate.py` passes.
+3. `ApprovalGate.list_pending` is unchanged; a new `list_pending_grounded` surfaces the grounding
+   result, and async `enqueue_grounded` runs verify→submit→attach (advisory; degrades to plain
+   submit on verifier fault or when no verifier is wired).
+4. The verifier is constructed from `runtime.codebase_index` in finalize, injected into
+   `ApprovalGate`, and also exposed as `runtime.proposal_grounding_verifier`; absent index → empty
+   provider list, never crashes finalize. The gate is advisory (never blocks submit).
+5. `tests/test_ad833_grounding_gate.py` passes; the full gate (`pytest tests/ -q -n 0`) shows no regressions.
 6. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 7. Verified against codebase (2026-05-31)
