@@ -933,6 +933,10 @@ class MemoryConfig(BaseModel):
             "ceiling. Default 300s; range 10s–3600s."
         ),
     )
+    # AD-818 (#751): skip a migration's full-collection scan when its recorded
+    # schema version matches. Default False (opt-in) for one release of bake
+    # time; a grandchild AD flips it True.
+    schema_version_tracking: bool = False
     # AD-825: max seconds to wait for write-holding background tasks
     # (dream monitor loop, episodic backup) to finish their current
     # operation before the AD-824 cancel sweep force-cancels them. Drain

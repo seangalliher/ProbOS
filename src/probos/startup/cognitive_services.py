@@ -40,6 +40,10 @@ async def _run_one_migration(
     timeout_s: float,
     success_template: str,
     noop_template: str,
+    *,
+    schema_store: Any | None = None,   # AD-818
+    migration_id: str | None = None,   # AD-818
+    version_hash: str | None = None,   # AD-818
 ) -> None:
     """BF-295 (#748): wrap a single episodic-memory migration with start log,
     timeout, elapsed-time logging, and honest-degrade on failure.
@@ -53,7 +57,22 @@ async def _run_one_migration(
 
     On `asyncio.TimeoutError`: WARNING + return (non-fatal).
     On any other exception: WARNING with `exc_info=True` + return (non-fatal).
+
+    AD-818 (#751): when `schema_store`, `migration_id`, and `version_hash` are
+    all set, skip the migration entirely (no scan) if the recorded schema
+    version matches, and record the version on clean success (NOT on timeout or
+    exception — a migration that does not complete must retry next boot).
     """
+    # AD-818: short-circuit — recorded schema version matches → skip the scan.
+    if schema_store is not None and migration_id is not None and version_hash is not None:
+        if await schema_store.is_current(migration_id, version_hash):
+            logger.info(
+                "%s: schema current (version %s) — skipping scan",
+                label,
+                version_hash,
+            )
+            return
+
     logger.info("%s: starting (timeout=%.0fs)", label, timeout_s)
     t0 = time.perf_counter()
     try:
@@ -63,6 +82,16 @@ async def _run_one_migration(
             logger.info(success_template, migrated, elapsed)
         else:
             logger.info(noop_template, elapsed)
+        # AD-818 R1: record-on-clean-success ONLY. This MUST be the final
+        # statement inside the try — placing it after the try/except would
+        # reference `migrated` (unbound on timeout) → UnboundLocalError boot
+        # crash, and would falsely mark a timed-out migration as current.
+        if schema_store is not None and migration_id is not None and version_hash is not None:
+            await schema_store.record(
+                migration_id,
+                episode_count=int(migrated or 0),
+                version_hash=version_hash,
+            )
     except asyncio.TimeoutError:
         logger.warning(
             "%s: timed out after %.0fs — proceeding with degraded state",
@@ -301,26 +330,54 @@ async def init_cognitive_services(
             "them as maintenance when ready."
         )
 
+    # AD-818 (#751): schema-version sidecar. When enabled, records which
+    # migration ran at which version so subsequent boots can skip a migration's
+    # full-collection scan when its recorded version matches. Guarded: a
+    # build/start failure leaves schema_store=None so every migration runs
+    # unversioned exactly as today.
+    schema_store = None
+    if episodic_memory and not _skip_migrations and config.memory.schema_version_tracking:
+        try:
+            from probos.cognitive.schema_versions import SchemaVersionStore
+            schema_store = SchemaVersionStore(db_path=str(data_dir / "schema_versions.db"))
+            await schema_store.start()
+            logger.info("AD-818: schema-version store started")
+        except Exception:
+            logger.warning(
+                "AD-818: schema-version store start failed (non-fatal); "
+                "migrations will run unversioned",
+                exc_info=True,
+            )
+            schema_store = None
+
     # BF-103: Migrate episode agent_ids from slot IDs to sovereign IDs
     if episodic_memory and identity_registry and not _skip_migrations:
         from probos.cognitive.episodic import migrate_episode_agent_ids
+        from probos.cognitive.schema_versions import MIGRATION_VERSIONS
         await _run_one_migration(
             "BF-103",
             lambda: migrate_episode_agent_ids(episodic_memory, identity_registry),
             _migration_timeout_s,
             "BF-103: Migrated %d episodes to sovereign IDs in %.1fs",
             "BF-103: episode agent_id migration completed in %.1fs (no episodes needed migration)",
+            schema_store=schema_store,
+            migration_id="BF-103",
+            version_hash=MIGRATION_VERSIONS["BF-103"],
         )
 
     # AD-570: Promote anchor fields to top-level ChromaDB metadata
     if episodic_memory and not _skip_migrations:
         from probos.cognitive.episodic import migrate_anchor_metadata
+        from probos.cognitive.schema_versions import MIGRATION_VERSIONS
         await _run_one_migration(
             "AD-570",
             lambda: migrate_anchor_metadata(episodic_memory),
             _migration_timeout_s,
             "AD-570: Promoted anchor metadata for %d episodes in %.1fs",
             "AD-570: anchor metadata migration completed in %.1fs (no episodes needed migration)",
+            schema_store=schema_store,
+            migration_id="AD-570",
+            version_hash=MIGRATION_VERSIONS["AD-570"],
         )
 
     # AD-570b: Create and wire participant index
@@ -339,17 +396,22 @@ async def init_cognitive_services(
         else:
             # One-time migration: backfill from existing episodes
             from probos.cognitive.episodic import migrate_participant_index
+            from probos.cognitive.schema_versions import MIGRATION_VERSIONS
             await _run_one_migration(
                 "AD-570b",
                 lambda: migrate_participant_index(episodic_memory),
                 _migration_timeout_s,
                 "AD-570b: Indexed participants for %d episodes in %.1fs",
                 "AD-570b: participant index backfill completed in %.1fs (no episodes needed migration)",
+                schema_store=schema_store,
+                migration_id="AD-570b",
+                version_hash=MIGRATION_VERSIONS["AD-570b"],
             )
 
     # AD-584: Embedding model migration (re-embed if model changed)
     if episodic_memory and not _skip_migrations:
         from probos.cognitive.episodic import migrate_embedding_model
+        from probos.cognitive.schema_versions import MIGRATION_VERSIONS
         from probos.knowledge.embeddings import get_embedding_model_name
         _embedding_model_name = get_embedding_model_name()
         await _run_one_migration(
@@ -358,11 +420,15 @@ async def init_cognitive_services(
             _migration_timeout_s,
             "AD-584: Re-embedded %d episodes with new model in %.1fs",
             "AD-584: embedding model migration completed in %.1fs (no episodes needed migration)",
+            schema_store=schema_store,
+            migration_id="AD-584",
+            version_hash=MIGRATION_VERSIONS["AD-584"],
         )
 
     # AD-605: Re-embed with enriched anchor metadata (synchronous)
     if episodic_memory and not _skip_migrations:
         from probos.cognitive.episodic import migrate_enriched_embedding
+        from probos.cognitive.schema_versions import MIGRATION_VERSIONS
         _loop = asyncio.get_running_loop()
         await _run_one_migration(
             "AD-605",
@@ -370,6 +436,9 @@ async def init_cognitive_services(
             _migration_timeout_s,
             "AD-605: Re-embedded %d episodes with enriched anchor text in %.1fs",
             "AD-605: enriched embedding migration completed in %.1fs (no episodes needed migration)",
+            schema_store=schema_store,
+            migration_id="AD-605",
+            version_hash=MIGRATION_VERSIONS["AD-605"],
         )
 
     # BF-207: Proactive hash integrity sweep — heal stale hashes from unclean shutdown.
@@ -657,4 +726,5 @@ async def init_cognitive_services(
         telemetry_service=telemetry_service,  # AD-461
         archive_store=archive_store,  # AD-524
         dependency_resolver=dependency_resolver,  # AD-838c
+        schema_version_store=schema_store,  # AD-818
     )

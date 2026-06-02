@@ -114,6 +114,7 @@ class CognitiveServicesResult:
     telemetry_service: Any = None  # AD-461
     archive_store: Any = None  # AD-524
     dependency_resolver: Any = None  # AD-838c
+    schema_version_store: Any = None  # AD-818
 
 
 @dataclass

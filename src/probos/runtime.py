@@ -1851,6 +1851,7 @@ class ProbOSRuntime:
         self._expertise_directory = cog.expertise_directory  # AD-600
         self._telemetry_service = cog.telemetry_service  # AD-461
         self.dependency_resolver = cog.dependency_resolver  # AD-838c
+        self.schema_version_store = cog.schema_version_store  # AD-818
 
         # AD-588: Introspective Telemetry Service
         try:

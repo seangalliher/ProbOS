@@ -503,6 +503,16 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         except Exception:
             logger.warning("AD-733-1: attachment_reaper.stop() failed", exc_info=True)
 
+    # AD-818 (#751): Stop schema-version sidecar (R2). Unlike ParticipantIndex
+    # (owned by EpisodicMemory.stop()), this store has no owner — left unstopped
+    # its aiosqlite WAL connection holds schema_versions.db-wal/-shm locks, a
+    # real test-isolation hazard on Windows.
+    if getattr(runtime, "schema_version_store", None) is not None:
+        try:
+            await runtime.schema_version_store.stop()
+        except Exception:
+            logger.warning("AD-818: schema_version_store.stop() failed", exc_info=True)
+
     # AD-751: Stop desktop UX surface (tray, hotkey, autostart, notifications)
     if hasattr(runtime, 'hotkey_listener') and runtime.hotkey_listener is not None:
         try:
