@@ -425,14 +425,13 @@ async def init_cognitive_services(
             version_hash=MIGRATION_VERSIONS["AD-584"],
         )
 
-    # AD-605: Re-embed with enriched anchor metadata (synchronous)
+    # AD-605: Re-embed with enriched anchor metadata (AD-818a-2: async + paginated)
     if episodic_memory and not _skip_migrations:
         from probos.cognitive.episodic import migrate_enriched_embedding
         from probos.cognitive.schema_versions import MIGRATION_VERSIONS
-        _loop = asyncio.get_running_loop()
         await _run_one_migration(
             "AD-605",
-            lambda: _loop.run_in_executor(None, migrate_enriched_embedding, episodic_memory),
+            lambda: migrate_enriched_embedding(episodic_memory),
             _migration_timeout_s,
             "AD-605: Re-embedded %d episodes with enriched anchor text in %.1fs",
             "AD-605: enriched embedding migration completed in %.1fs (no episodes needed migration)",
@@ -446,13 +445,14 @@ async def init_cognitive_services(
     # may legitimately change metadata that affects the content hash.
     # ⚠️ MUST be the last migration. New migrations go ABOVE this block.
     if episodic_memory and config.memory.verify_content_hash and not _skip_migrations:
-        try:
-            from probos.cognitive.episodic import sweep_hash_integrity
-            healed = await sweep_hash_integrity(episodic_memory)
-            if healed > 0:
-                logger.info("BF-207: Healed %d hash mismatches from previous shutdown", healed)
-        except Exception:
-            logger.warning("BF-207: Hash integrity sweep failed (non-fatal)", exc_info=True)
+        from probos.cognitive.episodic import sweep_hash_integrity
+        await _run_one_migration(
+            "BF-207",
+            lambda: sweep_hash_integrity(episodic_memory),
+            _migration_timeout_s,
+            "BF-207: Healed %d hash mismatches in startup sweep in %.1fs",
+            "BF-207: hash integrity sweep completed in %.1fs (0 mismatches)",
+        )
 
     # Create FeedbackEngine (AD-219)
     from probos.cognitive.feedback import FeedbackEngine

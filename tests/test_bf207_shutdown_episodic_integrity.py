@@ -521,8 +521,13 @@ class TestStartupHashSweep:
         assert healed == 0
 
     @pytest.mark.asyncio
-    async def test_sweep_graceful_on_exception(self):
-        """Sweep catches exceptions and returns 0."""
+    async def test_sweep_propagates_exception_to_wrapper(self):
+        """AD-818a-2: Sweep no longer swallows exceptions internally.
+
+        Honest-degrade is owned by the _run_one_migration wrapper at the call
+        site, so an underlying ChromaDB failure must propagate out of
+        sweep_hash_integrity rather than being caught and returning 0.
+        """
         from probos.cognitive.episodic import sweep_hash_integrity
 
         mock_em = MagicMock()
@@ -530,5 +535,5 @@ class TestStartupHashSweep:
         mock_em._collection = mock_collection
         mock_collection.get.side_effect = RuntimeError("ChromaDB unavailable")
 
-        healed = await sweep_hash_integrity(mock_em)
-        assert healed == 0
+        with pytest.raises(RuntimeError):
+            await sweep_hash_integrity(mock_em)

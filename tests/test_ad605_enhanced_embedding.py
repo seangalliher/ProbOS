@@ -266,7 +266,8 @@ class TestMetadataPreservation:
 class TestMigration:
     """Test migrate_enriched_embedding() migration function."""
 
-    def test_migration_enriches_existing_episodes(self):
+    @pytest.mark.asyncio
+    async def test_migration_enriches_existing_episodes(self):
         """Test 12: Migration re-embeds episodes with enriched text and populates user_input."""
         from probos.cognitive.episodic import EpisodicMemory, migrate_enriched_embedding
 
@@ -293,7 +294,7 @@ class TestMigration:
         }
         em._collection = mock_collection
 
-        count = migrate_enriched_embedding(em)
+        count = await migrate_enriched_embedding(em)
 
         assert count == 1
         # Verify update was called with enriched doc
@@ -308,7 +309,8 @@ class TestMigration:
         # Verify version marker set
         mock_collection.modify.assert_called_once()
 
-    def test_migration_skips_if_already_done(self):
+    @pytest.mark.asyncio
+    async def test_migration_skips_if_already_done(self):
         """Test 13: Migration returns 0 if enriched_embedding_version >= 1."""
         from probos.cognitive.episodic import EpisodicMemory, migrate_enriched_embedding
 
@@ -320,11 +322,12 @@ class TestMigration:
         mock_collection.metadata = {"enriched_embedding_version": 1}
         em._collection = mock_collection
 
-        count = migrate_enriched_embedding(em)
+        count = await migrate_enriched_embedding(em)
         assert count == 0
         mock_collection.get.assert_not_called()
 
-    def test_migration_handles_empty_collection(self):
+    @pytest.mark.asyncio
+    async def test_migration_handles_empty_collection(self):
         """Test 14: Migration with empty collection updates version and returns 0."""
         from probos.cognitive.episodic import EpisodicMemory, migrate_enriched_embedding
 
@@ -337,13 +340,14 @@ class TestMigration:
         mock_collection.get.return_value = {"ids": [], "documents": [], "metadatas": []}
         em._collection = mock_collection
 
-        count = migrate_enriched_embedding(em)
+        count = await migrate_enriched_embedding(em)
         assert count == 0
         mock_collection.modify.assert_called_once()
         modify_meta = mock_collection.modify.call_args.kwargs.get("metadata")
         assert modify_meta["enriched_embedding_version"] == 1
 
-    def test_migration_preserves_original_user_input(self):
+    @pytest.mark.asyncio
+    async def test_migration_preserves_original_user_input(self):
         """Test 15: After migration, _metadata_to_episode returns original user_input."""
         from probos.cognitive.episodic import EpisodicMemory, migrate_enriched_embedding
 
@@ -364,7 +368,7 @@ class TestMigration:
         }
         em._collection = mock_collection
 
-        migrate_enriched_embedding(em)
+        await migrate_enriched_embedding(em)
 
         # Get the metadata that was written during migration
         update_call = mock_collection.update.call_args

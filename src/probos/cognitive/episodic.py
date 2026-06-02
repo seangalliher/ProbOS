@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import heapq
 import json
 import logging
 import math
@@ -484,7 +485,7 @@ async def migrate_participant_index(
     return migrated
 
 
-def migrate_enriched_embedding(
+async def migrate_enriched_embedding(
     episodic_memory: "EpisodicMemory",
 ) -> int:
     """AD-605: Re-embed all episodes with enriched document text.
@@ -492,6 +493,13 @@ def migrate_enriched_embedding(
     Reads all episodes, rebuilds documents via _prepare_document(), and
     re-adds with enriched text. Also populates the user_input metadata
     field for backward compatibility.
+
+    AD-818a-2: streamed one bounded page at a time via
+    ``_iter_collection_pages`` so only one page is resident in memory and the
+    event loop yields between pages (lets ``_run_one_migration``'s
+    ``asyncio.wait_for`` cancel at a page boundary). Each page is re-embedded
+    with ONE batched in-place ``collection.update`` (offset-stable: update
+    rewrites rows in place, so the pagination offset stays valid).
 
     Must run AFTER collection creation, BEFORE any queries.
     Returns count of re-embedded episodes (0 if no migration needed).
@@ -511,24 +519,18 @@ def migrate_enriched_embedding(
     migrated = 0
 
     try:
-        existing = collection.get(include=["documents", "metadatas"])
-        ids = existing.get("ids") or []
-        documents = existing.get("documents") or []
-        metadatas = existing.get("metadatas") or []
+        async for page in _iter_collection_pages(
+            collection, include=["documents", "metadatas"]
+        ):
+            ids = page.get("ids") or []
+            documents = page.get("documents") or []
+            metadatas = page.get("metadatas") or []
 
-        if not ids:
-            # Filter out ChromaDB internal keys (hnsw:space etc.) to avoid
-            # "Changing the distance function" ValueError on modify().
-            safe_meta = {k: v for k, v in meta.items() if not k.startswith("hnsw:")}
-            collection.modify(metadata={**safe_meta, "enriched_embedding_version": 1})
-            logger.info("AD-605: No episodes to re-embed, updated metadata")
-            return 0
+            page_ids: list[str] = []
+            page_docs: list[str] = []
+            page_metas: list[dict] = []
 
-        # Rebuild enriched documents from metadata (reconstruct Episode enough for _prepare_document)
-        batch_size = 100
-        for start in range(0, len(ids), batch_size):
-            end = min(start + batch_size, len(ids))
-            for i in range(start, end):
+            for i, ep_id in enumerate(ids):
                 ep_meta = metadatas[i] or {}
                 original_doc = documents[i] or ""
 
@@ -541,7 +543,7 @@ def migrate_enriched_embedding(
                 anchors = AnchorFrame(**json.loads(anchors_raw)) if anchors_raw else None
                 enriched_doc = EpisodicMemory._prepare_document(
                     Episode(
-                        id=ids[i],
+                        id=ep_id,
                         timestamp=float(ep_meta.get("timestamp", 0.0)),
                         user_input=original_doc,
                         dag_summary={},
@@ -551,17 +553,26 @@ def migrate_enriched_embedding(
                         anchors=anchors,
                     )
                 )
+                page_ids.append(ep_id)
+                page_docs.append(enriched_doc)
+                page_metas.append(ep_meta)
 
-                # Update in place
-                collection.update(
-                    ids=[ids[i]],
-                    documents=[enriched_doc],
-                    metadatas=[ep_meta],
+            # AD-818a-2: ONE batched in-place update per page (not per episode).
+            # to_thread keeps the event loop responsive between pages so the
+            # _run_one_migration wait_for can cancel at a page boundary.
+            if page_ids:
+                await asyncio.to_thread(
+                    collection.update,
+                    ids=page_ids,
+                    documents=page_docs,
+                    metadatas=page_metas,
                 )
-                migrated += 1
+                migrated += len(page_ids)
 
-        # Mark migration complete — filter out ChromaDB internal keys
-        # (hnsw:space etc.) to avoid "Changing the distance function" ValueError.
+        # Mark migration complete UNCONDITIONALLY (also covers the empty
+        # collection: the async-for yields nothing and migrated stays 0).
+        # Filter out ChromaDB internal keys (hnsw:space etc.) to avoid
+        # "Changing the distance function" ValueError on modify().
         safe_meta = {k: v for k, v in meta.items() if not k.startswith("hnsw:")}
         collection.modify(metadata={**safe_meta, "enriched_embedding_version": 1})
         elapsed = time.time() - t0
@@ -588,76 +599,76 @@ async def sweep_hash_integrity(
     episodes stale, but the generous budget costs little (sub-second
     for 200 episodes).
 
-    Note: ChromaDB's .get() and .update() are synchronous. This function
-    is async to fit the startup migration interface but blocks the event
-    loop briefly. For 200 episodes this is sub-second. If collection sizes
-    grow or the sweep expands, consider wrapping ChromaDB calls in
-    asyncio.to_thread().
+    AD-818a-2: streamed one bounded page at a time via
+    ``_iter_collection_pages`` (problem #2). ChromaDB's .get() returns rows
+    in INSERTION order, not timestamp order, so we cannot simply take the
+    first page — every page is scanned and a bounded size-``max_episodes``
+    min-heap retains only the newest episodes by timestamp. The heap is
+    drained newest-first so the batched update lists episodes in descending
+    (timestamp, seq) order, matching the pre-pagination sweep. Honest-degrade
+    is owned by the _run_one_migration wrapper at the call site, so this
+    function no longer swallows exceptions internally.
 
     Returns the number of episodes healed.
     """
     if not episodic_memory or not episodic_memory._collection:
         return 0
 
-    t0 = time.time()
+    collection = episodic_memory._collection
+
+    # AD-818a-2: bounded min-heap keeps only the newest `max_episodes` episodes
+    # resident while streaming. Heap entry: (timestamp, seq, ep_id, meta, doc).
+    # `seq` is a monotonic int tiebreaker so heap comparison never falls through
+    # to comparing dicts/None when timestamps are equal.
+    heap: list[tuple[float, int, str, dict, str]] = []
+    seq = 0
+    async for page in _iter_collection_pages(
+        collection, include=["metadatas", "documents"]
+    ):
+        ids_list = page.get("ids") or []
+        metadatas = page.get("metadatas") or []
+        documents = page.get("documents") or []
+        for i, ep_id in enumerate(ids_list):
+            meta = metadatas[i] if i < len(metadatas) else None
+            doc = documents[i] if i < len(documents) else ""
+            ts = float(meta.get("timestamp", 0)) if meta else 0.0
+            heapq.heappush(heap, (ts, seq, ep_id, meta, doc))
+            seq += 1
+            if len(heap) > max_episodes:
+                heapq.heappop(heap)  # evict oldest
+
+    # Drain newest-first so the batched update lists episodes in descending
+    # (timestamp, seq) order — REQUIRED for parity with the pre-pagination sweep.
+    ordered = sorted(heap, key=lambda t: (t[0], t[1]), reverse=True)
+
+    batch_ids: list[str] = []
+    batch_metas: list[dict] = []
+
+    for _ts, _seq, ep_id, meta, doc in ordered:
+        if not meta:
+            continue
+        stored_hash = meta.get("content_hash", "")
+        if not stored_hash:
+            continue  # Legacy episode — no hash to verify
+
+        ep = EpisodicMemory._metadata_to_episode(ep_id, doc or "", meta)
+        recomputed = compute_episode_hash(ep)
+
+        if recomputed != stored_hash:
+            updated_meta = dict(meta)
+            updated_meta["content_hash"] = recomputed
+            updated_meta["_hash_v"] = _HASH_VERSION
+            batch_ids.append(ep_id)
+            batch_metas.append(updated_meta)
+
+    # Batch update — ChromaDB's .update() accepts arrays natively
     healed = 0
-
-    try:
-        result = episodic_memory._collection.get(
-            include=["metadatas", "documents"],
+    if batch_ids:
+        collection.update(
+            ids=batch_ids,
+            metadatas=batch_metas,
         )
-        if not result or not result.get("ids"):
-            return 0
-
-        ids_list = result["ids"]
-        metadatas = result.get("metadatas", [])
-        documents = result.get("documents", [])
-
-        # Sort by timestamp descending, check most recent first
-        paired = list(zip(ids_list, metadatas, documents))
-        paired.sort(
-            key=lambda x: float(x[1].get("timestamp", 0)) if x[1] else 0,
-            reverse=True,
-        )
-
-        batch_ids: list[str] = []
-        batch_metas: list[dict] = []
-
-        for ep_id, meta, doc in paired[:max_episodes]:
-            if not meta:
-                continue
-            stored_hash = meta.get("content_hash", "")
-            if not stored_hash:
-                continue  # Legacy episode — no hash to verify
-
-            ep = EpisodicMemory._metadata_to_episode(ep_id, doc or "", meta)
-            recomputed = compute_episode_hash(ep)
-
-            if recomputed != stored_hash:
-                updated_meta = dict(meta)
-                updated_meta["content_hash"] = recomputed
-                updated_meta["_hash_v"] = _HASH_VERSION
-                batch_ids.append(ep_id)
-                batch_metas.append(updated_meta)
-
-        # Batch update — ChromaDB's .update() accepts arrays natively
-        if batch_ids:
-            episodic_memory._collection.update(
-                ids=batch_ids,
-                metadatas=batch_metas,
-            )
-            healed = len(batch_ids)
-
-        elapsed = time.time() - t0
-        if healed > 0:
-            logger.info(
-                "BF-207: Healed %d hash mismatches in startup sweep (%.1fs)",
-                healed, elapsed,
-            )
-        else:
-            logger.debug("BF-207: Hash integrity sweep clean — 0 mismatches (%.1fs)", elapsed)
-    except Exception:
-        logger.warning("BF-207: Hash integrity sweep failed (non-fatal)", exc_info=True)
+        healed = len(batch_ids)
 
     return healed
 
