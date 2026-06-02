@@ -4985,6 +4985,20 @@ class DesktopConfig(BaseModel):
         return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
 
 
+class DependencyConfig(BaseModel):
+    """AD-838c: Dynamic dependency installation for the task path.
+
+    Distinct from SelfModConfig — this governs whether runtime task execution
+    may install missing third-party packages (Copilot-style ask-before-install),
+    independent of the self-modification pipeline. ``config.self_mod.allowed_imports``
+    is reused as the auto-approve tier.
+    """
+
+    dynamic_install_enabled: bool = False
+    dynamic_install_policy: Literal["whitelist", "prompt_unlisted"] = "prompt_unlisted"
+    dynamic_install_deny: list[str] = Field(default_factory=list)
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -5000,6 +5014,7 @@ class SystemConfig(BaseModel):
     scaling: ScalingConfig = ScalingConfig()
     federation: FederationConfig = FederationConfig()
     self_mod: SelfModConfig = SelfModConfig()
+    dependency: DependencyConfig = Field(default_factory=DependencyConfig)  # AD-838c
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     records: RecordsConfig = RecordsConfig()

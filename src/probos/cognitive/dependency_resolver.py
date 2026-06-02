@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,8 @@ class DependencyResolver:
         allowed_imports: list[str],
         install_fn: Callable[[str], Awaitable[tuple[bool, str]]] | None = None,
         approval_fn: Callable[[list[str]], Awaitable[bool]] | None = None,
+        policy: Literal["whitelist", "prompt_unlisted"] = "whitelist",
+        deny_imports: list[str] | None = None,
     ) -> None:
         """
         Args:
@@ -55,10 +57,18 @@ class DependencyResolver:
                         Signature: async (package_name: str) -> tuple[bool, str]
             approval_fn: Optional async callback for user approval.
                         Signature: async (packages: list[str]) -> bool
+            policy: AD-838c — "whitelist" (default; only allowed_imports are
+                    offerable, preserving AD-213 behavior) or "prompt_unlisted"
+                    (unlisted missing imports are also offerable for approval).
+            deny_imports: AD-838c — imports that are never offerable under
+                    "prompt_unlisted" (silently skipped). Ignored in whitelist
+                    mode since unlisted imports are skipped there anyway.
         """
         self._allowed_imports = set(allowed_imports)
         self._install_fn = install_fn
         self._approval_fn = approval_fn
+        self._policy = policy
+        self._deny_imports = set(deny_imports or [])
 
     def detect_missing(self, source_code: str) -> list[str]:
         """Parse imports from source code and find missing-but-allowed packages.
@@ -83,13 +93,18 @@ class DependencyResolver:
 
         missing: list[str] = []
         for name in sorted(import_names):
-            # Only check imports that are on the allowed list
-            if name not in self._allowed_imports:
-                # Check if a dotted form is allowed (e.g., "urllib.parse")
-                in_allowed = any(
-                    a.split(".")[0] == name for a in self._allowed_imports
-                )
-                if not in_allowed:
+            # Determine whether this import is on the allowlist (direct match or
+            # a dotted form such as "urllib.parse" listed for "urllib").
+            in_allowed = name in self._allowed_imports or any(
+                a.split(".")[0] == name for a in self._allowed_imports
+            )
+            if not in_allowed:
+                if self._policy != "prompt_unlisted":
+                    # whitelist mode (AD-213): only allowlisted imports offerable
+                    continue
+                # prompt_unlisted mode (AD-838c): unlisted imports are offerable
+                # for approval unless explicitly denied
+                if name in self._deny_imports:
                     continue
 
             # Check if the module is actually available

@@ -113,6 +113,7 @@ class CognitiveServicesResult:
     expertise_directory: Any = None  # AD-600
     telemetry_service: Any = None  # AD-461
     archive_store: Any = None  # AD-524
+    dependency_resolver: Any = None  # AD-838c
 
 
 @dataclass

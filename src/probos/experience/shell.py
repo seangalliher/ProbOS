@@ -156,6 +156,14 @@ class ProbOSShell:
                     lambda pkgs: user_dep_install_approval(self.console, self.renderer, pkgs)
                 )
 
+        # AD-838c: Wire dependency approval for the task-path resolver, which may
+        # exist independently of the self-mod pipeline (dynamic_install_enabled).
+        # Idempotent when both paths share the same resolver instance.
+        if getattr(self.runtime, "dependency_resolver", None):
+            self.runtime.dependency_resolver._approval_fn = (
+                lambda pkgs: user_dep_install_approval(self.console, self.renderer, pkgs)
+            )
+
     # ------------------------------------------------------------------
     # Health and prompt
     # ------------------------------------------------------------------

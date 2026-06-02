@@ -149,6 +149,7 @@ if TYPE_CHECKING:
     from probos.avatars.divergence_detector import DivergenceHistoryEntry  # AD-722a-5
     from probos.cognitive.codebase_index import CodebaseIndex
     from probos.cognitive.correction_detector import CorrectionDetector
+    from probos.cognitive.dependency_resolver import DependencyResult  # AD-838c
     from probos.cognitive.episodic import EpisodicMemory
     from probos.cognitive.feedback import FeedbackEngine
     from probos.cognitive.journal import CognitiveJournal
@@ -1847,6 +1848,7 @@ class ProbOSRuntime:
         self._consultation_protocol = cog.consultation_protocol  # AD-594
         self._expertise_directory = cog.expertise_directory  # AD-600
         self._telemetry_service = cog.telemetry_service  # AD-461
+        self.dependency_resolver = cog.dependency_resolver  # AD-838c
 
         # AD-588: Introspective Telemetry Service
         try:
@@ -2751,6 +2753,100 @@ class ProbOSRuntime:
         )
 
         return results
+
+    async def ensure_dependency(
+        self, import_name: str | list[str]
+    ) -> "DependencyResult":
+        """AD-838c: Ensure one or more third-party packages are importable.
+
+        Copilot-style ask-before-install for the runtime task path. Disabled by
+        default; requires ``config.dependency.dynamic_install_enabled``. Auto-approves
+        imports already in ``config.self_mod.allowed_imports`` (the whitelist tier);
+        unlisted imports require an approval callback (wired by the shell) under the
+        ``prompt_unlisted`` policy. All install activity is logged to the event log.
+        """
+        from probos.cognitive.dependency_resolver import DependencyResult
+
+        resolver = getattr(self, "dependency_resolver", None)
+        if resolver is None:
+            return DependencyResult(
+                success=False,
+                error="dynamic dependency installation disabled",
+            )
+
+        names = [import_name] if isinstance(import_name, str) else list(import_name)
+        source = "\n".join(f"import {n}" for n in names)
+        missing = resolver.detect_missing(source)
+
+        if self.event_log:
+            await self.event_log.log(
+                category="dependency",
+                event="dependency_check",
+                detail=json.dumps(
+                    {"requested": names, "missing_count": len(missing), "missing": missing}
+                ),
+            )
+
+        if not missing:
+            return DependencyResult(success=True, installed=[])
+
+        # Defense in depth: if no approval callback is wired, the prompt tier
+        # cannot be approved interactively. Hard-decline unlisted packages rather
+        # than installing silently. Use the PUBLIC allowed_imports as the
+        # auto-approve set (do not reach into resolver privates).
+        if resolver._approval_fn is None:
+            auto = set(self.config.self_mod.allowed_imports)
+            prompt_tier = [
+                m
+                for m in missing
+                if m not in auto
+                and not any(a.split(".")[0] == m for a in auto)
+            ]
+            if prompt_tier:
+                if self.event_log:
+                    await self.event_log.log(
+                        category="dependency",
+                        event="dependency_install_declined",
+                        detail=json.dumps(
+                            {"packages": prompt_tier, "reason": "approval_callback_unavailable"}
+                        ),
+                    )
+                return DependencyResult(
+                    success=False,
+                    declined=prompt_tier,
+                    error="approval callback unavailable",
+                )
+
+        result = await resolver.resolve(source)
+
+        if (result.installed or result.failed) and self.event_log:
+            await self.event_log.log(
+                category="dependency",
+                event="dependency_install_approved",
+                detail=json.dumps({"packages": result.installed + result.failed}),
+            )
+        if result.installed and self.event_log:
+            for pkg in result.installed:
+                await self.event_log.log(
+                    category="dependency",
+                    event="dependency_install_success",
+                    detail=json.dumps({"package": pkg, "import_name": pkg}),
+                )
+        if result.declined and self.event_log:
+            await self.event_log.log(
+                category="dependency",
+                event="dependency_install_declined",
+                detail=json.dumps({"packages": result.declined}),
+            )
+        if result.failed and self.event_log:
+            for pkg in result.failed:
+                await self.event_log.log(
+                    category="dependency",
+                    event="dependency_install_failed",
+                    detail=json.dumps({"package": pkg, "error": result.error or "unknown"}),
+                )
+
+        return result
 
     async def submit_intent_with_consensus(
         self,

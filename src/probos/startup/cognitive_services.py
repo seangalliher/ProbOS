@@ -107,11 +107,29 @@ async def init_cognitive_services(
     behavioral_monitor = None
     system_qa = None
 
+    # AD-838c: Construct a DependencyResolver for the task path (runtime dynamic
+    # install) and/or the self-mod pipeline. A single shared instance is used
+    # when both are enabled so approval wiring and policy stay consistent.
+    dependency_resolver = None
+    dep_cfg = config.dependency
+    if config.self_mod.enabled or dep_cfg.dynamic_install_enabled:
+        from probos.cognitive.dependency_resolver import DependencyResolver
+
+        if dep_cfg.dynamic_install_enabled:
+            dependency_resolver = DependencyResolver(
+                allowed_imports=config.self_mod.allowed_imports,
+                policy=dep_cfg.dynamic_install_policy,
+                deny_imports=dep_cfg.dynamic_install_deny,
+            )
+        else:
+            dependency_resolver = DependencyResolver(
+                allowed_imports=config.self_mod.allowed_imports,
+            )
+
     # Start self-modification pipeline if enabled
     if config.self_mod.enabled:
         from probos.cognitive.agent_designer import AgentDesigner
         from probos.cognitive.code_validator import CodeValidator
-        from probos.cognitive.dependency_resolver import DependencyResolver
         from probos.cognitive.sandbox import SandboxRunner
         from probos.cognitive.behavioral_monitor import BehavioralMonitor
         from probos.cognitive.self_mod import SelfModificationPipeline
@@ -124,9 +142,6 @@ async def init_cognitive_services(
         behavioral_monitor = BehavioralMonitor()
         skill_designer = SkillDesigner(llm_client, config.self_mod)
         skill_validator = SkillValidator(config.self_mod)
-        dependency_resolver = DependencyResolver(
-            allowed_imports=config.self_mod.allowed_imports,
-        )
 
         # Optional research phase
         research = None
@@ -641,4 +656,5 @@ async def init_cognitive_services(
         expertise_directory=expertise_directory,  # AD-600
         telemetry_service=telemetry_service,  # AD-461
         archive_store=archive_store,  # AD-524
+        dependency_resolver=dependency_resolver,  # AD-838c
     )
