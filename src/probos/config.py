@@ -4921,10 +4921,16 @@ class OfficeSkillsConfig(BaseModel):
 
     enabled: bool = False
     template_dir: str = "~/.probos/templates"
+    output_dir: str = "~/.probos/output"
 
     @field_validator("template_dir")
     @classmethod
     def _expand_template_dir(cls, v: str) -> str:
+        return os.path.expanduser(v)
+
+    @field_validator("output_dir")
+    @classmethod
+    def _expand_output_dir(cls, v: str) -> str:
         return os.path.expanduser(v)
 
 

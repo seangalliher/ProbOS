@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -19,9 +21,51 @@ import aiosqlite
 from probos.protocols import ConnectionFactory, DatabaseConnection
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.tools.protocol import ToolPreference
-from probos.types import IntentDescriptor
+from probos.types import IntentDescriptor, IntentMessage, IntentResult
 
 logger = logging.getLogger(__name__)
+
+
+def _slugify(title: str) -> str:
+    """Slugify a title into a filesystem-safe base filename (no extension)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (title or "").strip().lower()).strip("-")
+    return slug[:80]
+
+
+def _parse_json_list(raw: Any) -> list[Any] | None:
+    """Parse an LLM response into a JSON list, tolerating markdown code fences.
+
+    Returns ``None`` when the response is not a JSON array, so callers can
+    honest-degrade to a stub.
+    """
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+def _resolve_default_output_path(runtime: Any, title: str, suffix: str) -> str | None:
+    """Resolve a default output path under ``OfficeSkillsConfig.output_dir``.
+
+    Returns ``None`` when no runtime/config output directory is available, so the
+    caller falls back to the random-tempfile path (regression-safe for direct
+    create_* calls that pass neither ``output_path`` nor a resolvable config).
+    """
+    config = getattr(runtime, "config", None)
+    office_cfg = getattr(config, "office_skills", None)
+    output_dir = getattr(office_cfg, "output_dir", None)
+    if not output_dir:
+        return None
+    base = _slugify(title) or "document"
+    directory = Path(os.path.expanduser(output_dir))
+    return str(directory / f"{base}{suffix}")
 
 
 class DocxAgent(SkillBasedAgent):
@@ -41,15 +85,69 @@ class DocxAgent(SkillBasedAgent):
             name="docx_create",
             description="Create a DOCX document",
             params={"title": "Document title", "content": "Paragraph list"},
-            requires_consensus=False,
+            requires_consensus=True,
         ),
         IntentDescriptor(
             name="docx_revise",
             description="Revise an existing DOCX document",
             params={"file_path": "Path to the DOCX file", "instructions": "Revision instructions"},
-            requires_consensus=False,
+            requires_consensus=True,
         ),
     ]
+
+    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
+        """Dispatch DOCX intents to bound methods; decline unowned intents."""
+        params = intent.params or {}
+        if intent.intent == "docx_summarize":
+            file_path = params.get("file_path")
+            if not file_path:
+                return IntentResult(
+                    intent_id=intent.id, agent_id=self.id, success=False,
+                    error="docx_summarize requires 'file_path'",
+                )
+            summary = await self.summarize_docx(str(file_path))
+            return IntentResult(
+                intent_id=intent.id, agent_id=self.id, success=True,
+                result={"summary": summary},
+            )
+        if intent.intent == "docx_create":
+            title = params.get("title")
+            if not title:
+                return IntentResult(
+                    intent_id=intent.id, agent_id=self.id, success=False,
+                    error="docx_create requires 'title'",
+                )
+            content = params.get("content")
+            if not content:
+                brief = params.get("prompt") or params.get("brief")
+                content = await self._synthesize_paragraphs(str(brief), str(title)) if brief else []
+            output_path = params.get("output_path") or _resolve_default_output_path(
+                self._runtime, str(title), ".docx"
+            )
+            path = await self.create_docx(
+                title=str(title),
+                content=list(content),
+                template=params.get("template"),
+                output_path=output_path,
+            )
+            return IntentResult(
+                intent_id=intent.id, agent_id=self.id, success=True,
+                result={"path": path},
+            )
+        if intent.intent == "docx_revise":
+            file_path = params.get("file_path")
+            instructions = params.get("instructions")
+            if not file_path or not instructions:
+                return IntentResult(
+                    intent_id=intent.id, agent_id=self.id, success=False,
+                    error="docx_revise requires 'file_path' and 'instructions'",
+                )
+            path = await self.revise_docx(str(file_path), str(instructions))
+            return IntentResult(
+                intent_id=intent.id, agent_id=self.id, success=True,
+                result={"path": path},
+            )
+        return None
 
     async def summarize_docx(self, file_path: str) -> str:
         """Extract full text from .docx and return a concise summary."""
@@ -90,7 +188,13 @@ class DocxAgent(SkillBasedAgent):
 
         return self._summarize_text(full_text)
 
-    async def create_docx(self, title: str, content: list[str], template: str | None = None) -> str:
+    async def create_docx(
+        self,
+        title: str,
+        content: list[str],
+        template: str | None = None,
+        output_path: str | None = None,
+    ) -> str:
         """Create new .docx from template or blank document."""
         from docx import Document
 
@@ -99,10 +203,46 @@ class DocxAgent(SkillBasedAgent):
         for paragraph in content:
             doc.add_paragraph(paragraph)
 
+        if output_path:
+            target = Path(os.path.expanduser(output_path))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            doc.save(str(target))
+            return str(target)
+
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
-            output_path = tmp.name
-        doc.save(output_path)
-        return output_path
+            tmp_path = tmp.name
+        doc.save(tmp_path)
+        return tmp_path
+
+    async def _synthesize_paragraphs(self, brief: str, title: str) -> list[str]:
+        """Synthesize document paragraphs from a natural-language brief via the LLM.
+
+        Honest-degrades to a single one-paragraph stub when no LLM client is
+        attached or the response cannot be parsed as a JSON string array.
+        """
+        llm_client = getattr(self, "_llm_client", None)
+        if llm_client is not None and hasattr(llm_client, "complete"):
+            prompt = (
+                "Write the body paragraphs for a document titled "
+                f"\"{title}\" based on this brief:\n\n{brief[:4000]}\n\n"
+                "Respond with ONLY a strict JSON array of paragraph strings, "
+                'e.g. ["First paragraph.", "Second paragraph."]. No prose, no markdown.'
+            )
+            try:
+                maybe = llm_client.complete(prompt)
+                if hasattr(maybe, "__await__"):
+                    maybe = await maybe
+                parsed = _parse_json_list(maybe)
+                if parsed is not None:
+                    paragraphs = [str(item) for item in parsed if str(item).strip()]
+                    if paragraphs:
+                        return paragraphs
+            except Exception:
+                logger.warning(
+                    "DocxAgent paragraph synthesis failed; falling back to stub",
+                    exc_info=True,
+                )
+        return [brief.strip() or title]
 
     async def revise_docx(self, file_path: str, instructions: str) -> str:
         """Apply revision instructions to an existing .docx file."""
@@ -144,9 +284,50 @@ class PptxAgent(SkillBasedAgent):
             name="pptx_create",
             description="Create a PPTX deck",
             params={"title": "Deck title", "slides": "Slide definitions"},
-            requires_consensus=False,
+            requires_consensus=True,
         ),
     ]
+
+    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
+        """Dispatch PPTX intents to bound methods; decline unowned intents."""
+        params = intent.params or {}
+        if intent.intent == "pptx_summarize":
+            file_path = params.get("file_path")
+            if not file_path:
+                return IntentResult(
+                    intent_id=intent.id, agent_id=self.id, success=False,
+                    error="pptx_summarize requires 'file_path'",
+                )
+            summary = await self.summarize_pptx(str(file_path))
+            return IntentResult(
+                intent_id=intent.id, agent_id=self.id, success=True,
+                result={"summary": summary},
+            )
+        if intent.intent == "pptx_create":
+            title = params.get("title")
+            if not title:
+                return IntentResult(
+                    intent_id=intent.id, agent_id=self.id, success=False,
+                    error="pptx_create requires 'title'",
+                )
+            slides = params.get("slides")
+            if not slides:
+                brief = params.get("prompt") or params.get("brief")
+                slides = await self._synthesize_slides(str(brief), str(title)) if brief else []
+            output_path = params.get("output_path") or _resolve_default_output_path(
+                self._runtime, str(title), ".pptx"
+            )
+            path = await self.create_pptx(
+                title=str(title),
+                slides=list(slides),
+                template=params.get("template"),
+                output_path=output_path,
+            )
+            return IntentResult(
+                intent_id=intent.id, agent_id=self.id, success=True,
+                result={"path": path},
+            )
+        return None
 
     async def summarize_pptx(self, file_path: str) -> str:
         """Extract slide titles and notes from .pptx and return summary text."""
@@ -180,7 +361,13 @@ class PptxAgent(SkillBasedAgent):
             snippet += "..."
         return f"PPTX Summary: {snippet}"
 
-    async def create_pptx(self, title: str, slides: list[dict[str, Any]], template: str | None = None) -> str:
+    async def create_pptx(
+        self,
+        title: str,
+        slides: list[dict[str, Any]],
+        template: str | None = None,
+        output_path: str | None = None,
+    ) -> str:
         """Create a .pptx deck with title and slide content."""
         from pptx import Presentation
 
@@ -207,10 +394,47 @@ class PptxAgent(SkillBasedAgent):
                     paragraph = text_frame.add_paragraph()
                     paragraph.text = str(line)
 
+        if output_path:
+            target = Path(os.path.expanduser(output_path))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            deck.save(str(target))
+            return str(target)
+
         with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as tmp:
-            output_path = tmp.name
-        deck.save(output_path)
-        return output_path
+            tmp_path = tmp.name
+        deck.save(tmp_path)
+        return tmp_path
+
+    async def _synthesize_slides(self, brief: str, title: str) -> list[dict[str, Any]]:
+        """Synthesize slide definitions from a natural-language brief via the LLM.
+
+        Honest-degrades to an empty slide list (title slide only) when no LLM
+        client is attached or the response cannot be parsed.
+        """
+        llm_client = getattr(self, "_llm_client", None)
+        if llm_client is not None and hasattr(llm_client, "complete"):
+            prompt = (
+                "Design the content slides for a deck titled "
+                f"\"{title}\" based on this brief:\n\n{brief[:4000]}\n\n"
+                "Respond with ONLY a strict JSON array of slide objects, each "
+                '{"title": "Slide title", "bullets": ["point one", "point two"]}. '
+                "No prose, no markdown."
+            )
+            try:
+                maybe = llm_client.complete(prompt)
+                if hasattr(maybe, "__await__"):
+                    maybe = await maybe
+                parsed = _parse_json_list(maybe)
+                if parsed is not None:
+                    slides = [item for item in parsed if isinstance(item, dict)]
+                    if slides:
+                        return slides
+            except Exception:
+                logger.warning(
+                    "PptxAgent slide synthesis failed; falling back to title slide only",
+                    exc_info=True,
+                )
+        return []
 
 
 class XlsxAgent(SkillBasedAgent):
@@ -230,9 +454,42 @@ class XlsxAgent(SkillBasedAgent):
             name="xlsx_update",
             description="Update XLSX cells or formulas",
             params={"file_path": "Workbook path", "sheet": "Sheet name", "updates": "Cell updates"},
-            requires_consensus=False,
+            requires_consensus=True,
         ),
     ]
+
+    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
+        """Dispatch XLSX intents to bound methods; decline unowned intents."""
+        params = intent.params or {}
+        if intent.intent == "xlsx_read_range":
+            file_path = params.get("file_path")
+            sheet = params.get("sheet")
+            cell_range = params.get("range")
+            if not file_path or not sheet or not cell_range:
+                return IntentResult(
+                    intent_id=intent.id, agent_id=self.id, success=False,
+                    error="xlsx_read_range requires 'file_path', 'sheet', and 'range'",
+                )
+            values = await self.read_xlsx_range(str(file_path), str(sheet), str(cell_range))
+            return IntentResult(
+                intent_id=intent.id, agent_id=self.id, success=True,
+                result={"values": values},
+            )
+        if intent.intent == "xlsx_update":
+            file_path = params.get("file_path")
+            sheet = params.get("sheet")
+            updates = params.get("updates")
+            if not file_path or not sheet or not updates:
+                return IntentResult(
+                    intent_id=intent.id, agent_id=self.id, success=False,
+                    error="xlsx_update requires 'file_path', 'sheet', and 'updates'",
+                )
+            path = await self.update_xlsx(str(file_path), str(sheet), dict(updates))
+            return IntentResult(
+                intent_id=intent.id, agent_id=self.id, success=True,
+                result={"path": path},
+            )
+        return None
 
     async def read_xlsx_range(self, file_path: str, sheet: str, range: str) -> list[list[Any]]:
         """Read a rectangular range from a workbook sheet."""
