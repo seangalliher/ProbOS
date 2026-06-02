@@ -20,9 +20,17 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _prompt(name: str) -> str:
+    # Closed-issue prompts are archived to prompts/archive/ (383dde25).
+    p = ROOT / "prompts" / name
+    if not p.exists():
+        p = ROOT / "prompts" / "archive" / name
+    return _read(p)
+
+
 def test_captain_invariant_exposure_gate() -> None:
     for name in PROMPTS:
-        text = _read(ROOT / "prompts" / name).lower()
+        text = _prompt(name).lower()
         assert "captain invariant" in text
         assert "capability is usable by all crew agents" in text
         assert "yeo is the front-door orchestrator and delegates to specialists" in text

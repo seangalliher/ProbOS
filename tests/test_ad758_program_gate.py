@@ -35,8 +35,17 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _prompt(name: str) -> str:
+    # Prompts for closed issues are archived to prompts/archive/ (383dde25).
+    # Resolve from prompts/ first, then fall back to the archive.
+    p = PROMPTS_DIR / name
+    if not p.exists():
+        p = PROMPTS_DIR / "archive" / name
+    return _read(p)
+
+
 def test_ad758_program_completion_rubric_and_dedupe_gate() -> None:
-    ad758_text = _read(PROMPTS_DIR / "ad-758-yeo-feature-complete-integration-gate.md")
+    ad758_text = _prompt("ad-758-yeo-feature-complete-integration-gate.md")
 
     for ad in CHILD_TEST_COUNTS:
         assert f"AD-{ad}" in ad758_text
@@ -46,7 +55,7 @@ def test_ad758_program_completion_rubric_and_dedupe_gate() -> None:
 
     measured_total = 0
     for ad, expected in CHILD_TEST_COUNTS.items():
-        child_text = _read(PROMPTS_DIR / CHILD_PROMPT_FILES[ad])
+        child_text = _prompt(CHILD_PROMPT_FILES[ad])
         match = re.search(r"Total:\s*(\d+)\s+new tests", child_text)
         assert match, f"Missing test total for AD-{ad}"
         count = int(match.group(1))
@@ -62,7 +71,7 @@ def test_ad758_program_completion_rubric_and_dedupe_gate() -> None:
     for issue in range(695, 705):
         assert f"[#{issue}]" in roadmap_text
 
-    wave_plan = _read(PROMPTS_DIR / "wave-plan.yaml")
+    wave_plan = _prompt("wave-plan.yaml")
     wave_181 = re.search(r'id: "181-yeo-kickoff".*?status:\s*(\w+)', wave_plan, re.S)
     assert wave_181
     assert wave_181.group(1) == "shipped"

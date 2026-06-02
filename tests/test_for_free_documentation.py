@@ -20,7 +20,15 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _prompt(name: str) -> str:
+    # Closed-issue prompts are archived to prompts/archive/ (383dde25).
+    p = ROOT / "prompts" / name
+    if not p.exists():
+        p = ROOT / "prompts" / "archive" / name
+    return _read(p)
+
+
 def test_for_free_learning_documented_for_all_child_ads() -> None:
     for file_name in CHILD_AD_PROMPTS:
-        text = _read(ROOT / "prompts" / file_name).lower()
+        text = _prompt(file_name).lower()
         assert "for free leverage" in text

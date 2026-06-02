@@ -209,25 +209,35 @@ class TestShutdownOrdering:
         assert eviction_pos < knowledge_persist_pos, \
             "eviction_audit should come before knowledge store persist"
 
-    def test_dream_cycle_timeout_is_2s(self):
-        """Dream cycle shutdown timeout is 2s (reduced from 5s by BF-207)."""
+    def test_dream_cycle_timeout_is_configurable(self):
+        """AD-820: consolidation timeout is configurable (default 30s), not a
+        hardcoded 2s. The old hardcoded 2s tore ChromaDB's HNSW index when the
+        dream cycle had real work (#750)."""
         from probos.startup import shutdown as shutdown_mod
         source = inspect.getsource(shutdown_mod.shutdown)
 
-        # Should contain timeout=2.0 for dream cycle
-        assert "timeout=2.0" in source, \
-            "Dream cycle timeout should be 2.0s"
-        # Should NOT contain the old 5.0 timeout
-        assert "timeout=5.0" not in source, \
-            "Old 5.0s dream cycle timeout should be removed"
+        # Timeout is driven by the configurable consolidation budget, not a literal.
+        assert "_shutdown_consolidation_timeout" in source, \
+            "Consolidation timeout should be configurable"
+        assert "shutdown_consolidation_timeout_s" in source, \
+            "Should read the configurable memory field"
+        # The hardcoded 2.0s dream-cycle timeout must be gone (AD-820). (Note:
+        # an unrelated timeout=5.0 for AD-824 background-task draining remains.)
+        assert "timeout=2.0" not in source, \
+            "Hardcoded 2.0s dream cycle timeout should be removed (AD-820)"
 
-    def test_timeout_warning_says_2s(self):
-        """Timeout warning message mentions 2s limit."""
+    def test_timeout_warning_mentions_consolidation_budget(self):
+        """AD-820: timeout warning reports the configurable budget, not '2s limit'."""
         from probos.startup import shutdown as shutdown_mod
         source = inspect.getsource(shutdown_mod.shutdown)
 
-        assert 'timed out (2s limit)' in source, \
-            "Timeout warning should say '2s limit'"
+        assert "Shutdown consolidation timed out" in source, \
+            "Timeout warning should mention shutdown consolidation"
+        assert "(%.0fs limit)" in source, \
+            "Timeout warning should report the configurable budget"
+        # Old hardcoded-2s/5s wording must be gone.
+        assert 'timed out (2s limit)' not in source, \
+            "Old '2s limit' warning should be removed (AD-820)"
         assert 'timed out (5s limit)' not in source, \
             "Old '5s limit' warning should be removed"
 

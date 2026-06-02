@@ -9,6 +9,14 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _prompt(name: str) -> str:
+    # Closed-issue prompts are archived to prompts/archive/ (383dde25).
+    p = ROOT / "prompts" / name
+    if not p.exists():
+        p = ROOT / "prompts" / "archive" / name
+    return _read(p)
+
+
 def test_delegation_policy_conformance_gate() -> None:
     connector_text = _read(ROOT / "src" / "probos" / "integrations" / "m365_connector.py")
     descriptor_count = connector_text.count("IntentDescriptor(")
@@ -19,6 +27,6 @@ def test_delegation_policy_conformance_gate() -> None:
     runtime_text = _read(ROOT / "src" / "probos" / "runtime.py")
     assert "intent_bus" in runtime_text
 
-    ad756_text = _read(ROOT / "prompts" / "ad-756-yeo-conversational-front-door-ux.md")
+    ad756_text = _prompt("ad-756-yeo-conversational-front-door-ux.md")
     assert "delegation_reason" in ad756_text
     assert "/dag/{dag_id}/delegation-trace" in ad756_text
