@@ -13,13 +13,19 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from probos.cognitive.self_improvement.proposal import (
     CapabilityProposal,
     ProposalState,
     ProposalStore,
 )
+
+if TYPE_CHECKING:
+    from probos.cognitive.self_improvement.grounding import (
+        ProposalGroundingResult,
+        ProposalGroundingVerifier,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +39,12 @@ class ApprovalGate:
         proposal_store: ProposalStore,
         event_emit_fn: Callable[..., Any] | None = None,
         clock: Callable[[], float] = time.time,
+        grounding_verifier: "ProposalGroundingVerifier | None" = None,
     ) -> None:
         self._proposals = proposal_store
         self._emit = event_emit_fn
         self._clock = clock
+        self._grounding_verifier = grounding_verifier
         # audit_log: append-only (proposal_id, decision, approver, ts, rationale)
         self._audit_log: list[tuple[str, str, str, float, str]] = []
 
@@ -53,6 +61,34 @@ class ApprovalGate:
 
     def list_pending(self) -> list[CapabilityProposal]:
         return self._proposals.list_pending()
+
+    def list_pending_grounded(
+        self,
+    ) -> list[tuple[CapabilityProposal, "ProposalGroundingResult | None"]]:
+        """AD-833: pending proposals paired with their grounding (None if absent)."""
+        return [
+            (p, self._proposals.get_grounding(p.id))
+            for p in self._proposals.list_pending()
+        ]
+
+    async def enqueue_grounded(self, proposal: CapabilityProposal) -> str:
+        """AD-833: async authoring seam -- submit, then verify+attach grounding.
+
+        Grounding is advisory: a verifier fault degrades to a plain submit and
+        never blocks authoring.
+        """
+        pid = self._proposals.submit(proposal)
+        if self._grounding_verifier is not None:
+            try:
+                result = await self._grounding_verifier.verify(proposal)
+                self._proposals.attach_grounding(pid, result)
+            except Exception:
+                logger.warning(
+                    "AD-833: grounding verify failed for %s; submit stands",
+                    pid,
+                    exc_info=True,
+                )
+        return pid
 
     def approve(
         self,

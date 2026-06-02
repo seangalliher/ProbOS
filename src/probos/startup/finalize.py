@@ -1482,6 +1482,10 @@ def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
             QAAgentPool,
             AgentVersionStore,
         )
+        from probos.cognitive.self_improvement.grounding import (
+            ProposalGroundingVerifier,
+            SymbolExistenceProvider,
+        )
     except Exception:
         logger.warning(
             "AD-482: self_improvement package import failed -- skipping wiring",
@@ -1512,9 +1516,24 @@ def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
         iteration_cap=cfg.iteration_cap,
     )
 
+    # AD-833: build the advisory grounding verifier over the codebase index.
+    # If the index is absent (config-disabled / degraded boot), use an empty
+    # provider list and log-and-degrade -- never crash finalize.
+    codebase_index = getattr(runtime, "codebase_index", None)
+    if codebase_index is not None:
+        proposal_grounding_verifier = ProposalGroundingVerifier(
+            providers=[SymbolExistenceProvider(codebase_index)]
+        )
+    else:
+        logger.warning(
+            "AD-833: codebase_index absent at finalize; grounding verifier has no providers"
+        )
+        proposal_grounding_verifier = ProposalGroundingVerifier(providers=[])
+
     approval_gate = ApprovalGate(
         proposal_store=proposal_store,
         event_emit_fn=emit,
+        grounding_verifier=proposal_grounding_verifier,
     )
 
     # Pull QA agents from the spawner. Degrade to single in-process agent on absence.
@@ -1561,6 +1580,7 @@ def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
 
     runtime.proposal_store = proposal_store
     runtime.approval_gate = approval_gate
+    runtime.proposal_grounding_verifier = proposal_grounding_verifier
     runtime.evolution_store = evolution_store
     runtime.qa_agent_pool = qa_agent_pool
     runtime.agent_version_store = agent_version_store

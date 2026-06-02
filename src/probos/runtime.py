@@ -278,6 +278,7 @@ class ProbOSRuntime:
     mcp_app_registry: "MCPAppRegistry | None"  # AD-597
     proposal_store: Any | None  # AD-482b ProposalStore
     approval_gate: Any | None  # AD-482c ApprovalGate
+    proposal_grounding_verifier: Any | None  # AD-833
     evolution_store: Any | None  # AD-482d EvolutionStore
     qa_agent_pool: Any | None  # AD-482f QAAgentPool
     agent_version_store: Any | None  # AD-482g AgentVersionStore
@@ -823,6 +824,7 @@ class ProbOSRuntime:
         self.self_mod_pipeline: SelfModificationPipeline | None = None
         self.proposal_store: Any | None = None  # AD-482b
         self.approval_gate: Any | None = None  # AD-482c
+        self.proposal_grounding_verifier: Any | None = None  # AD-833
         self.evolution_store: Any | None = None  # AD-482d
         self.qa_agent_pool: Any | None = None  # AD-482f
         self.agent_version_store: Any | None = None  # AD-482g

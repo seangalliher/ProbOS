@@ -17,7 +17,10 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from probos.cognitive.self_improvement.grounding import ProposalGroundingResult
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +122,7 @@ class ProposalStore:
         self._records: dict[str, CapabilityProposal] = {}
         self._states: dict[str, ProposalState] = {}
         self._guards: dict[str, IterationGuard] = {}
+        self._grounding: dict[str, ProposalGroundingResult] = {}
         self._evolution_callback = evolution_store_callback
         self._emit = event_emit_fn
         self._clock = clock
@@ -163,6 +167,25 @@ class ProposalStore:
             for pid, state in self._states.items()
             if state is ProposalState.PENDING
         ]
+
+    def attach_grounding(
+        self, proposal_id: str, result: "ProposalGroundingResult"
+    ) -> None:
+        """AD-833: associate a grounding result with a known proposal.
+
+        Unknown id -> warn and return (advisory, never raises).
+        """
+        if proposal_id not in self._records:
+            logger.warning(
+                "AD-833: attach_grounding for unknown proposal %r; ignoring",
+                proposal_id,
+            )
+            return
+        self._grounding[proposal_id] = result
+
+    def get_grounding(self, proposal_id: str) -> "ProposalGroundingResult | None":
+        """AD-833: return the grounding result for a proposal, or None."""
+        return self._grounding.get(proposal_id)
 
     def state(self, proposal_id: str) -> ProposalState | None:
         return self._states.get(proposal_id)
