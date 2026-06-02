@@ -385,7 +385,19 @@ class TestMigrationChunking:
         docs = [f"doc {i}" for i in range(n)]
 
         coll = MagicMock()
-        coll.get.return_value = {"ids": ids, "metadatas": metas, "documents": docs}
+        # AD-818a: migration now reads via paginated _collection.get(limit=, offset=).
+        # The mock must honor limit/offset (slice) or pagination would never
+        # terminate. Preserves this test's intent: 6000 episodes => chunked writes.
+        def _paged_get(**kwargs):
+            start = kwargs.get("offset") or 0
+            lim = kwargs.get("limit")
+            end = start + lim if lim is not None else len(ids)
+            return {
+                "ids": ids[start:end],
+                "metadatas": metas[start:end],
+                "documents": docs[start:end],
+            }
+        coll.get.side_effect = _paged_get
         upsert_calls: list[int] = []
 
         def _record_upsert(*, ids, metadatas, documents):  # noqa: A002
@@ -426,7 +438,18 @@ class TestMigrationChunking:
         docs = [f"doc {i}" for i in range(n)]
 
         coll = MagicMock()
-        coll.get.return_value = {"ids": ids, "metadatas": metas, "documents": docs}
+        # AD-818a: honor limit/offset so the paginated read terminates.
+        # Preserves intent: a failing write batch must not abort the migration.
+        def _paged_get(**kwargs):
+            start = kwargs.get("offset") or 0
+            lim = kwargs.get("limit")
+            end = start + lim if lim is not None else len(ids)
+            return {
+                "ids": ids[start:end],
+                "metadatas": metas[start:end],
+                "documents": docs[start:end],
+            }
+        coll.get.side_effect = _paged_get
 
         call_count = {"n": 0}
 
@@ -449,7 +472,11 @@ class TestMigrationChunking:
             migrated = await migrate_episode_agent_ids(em, registry)
 
         assert migrated == _MIGRATION_BATCH_SIZE * 2
+        # AD-818a: the migration now writes per-page; the non-fatal warning
+        # names the failed unit "page upsert" (was "chunk"). Intent unchanged:
+        # a failed write batch is logged and does not abort the migration.
         assert any(
-            "chunk" in rec.message.lower() and "failed" in rec.message.lower()
+            ("page" in rec.message.lower() or "chunk" in rec.message.lower())
+            and "failed" in rec.message.lower()
             for rec in caplog.records
         )

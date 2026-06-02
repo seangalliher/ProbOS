@@ -7,12 +7,14 @@ implementation (Phase 14b).
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import json
 import logging
 import math
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +62,57 @@ class _AnchorQueryView:
 # 2000 keeps a generous safety margin and survives Chroma version
 # bumps that might lower the cap further.
 _MIGRATION_BATCH_SIZE = 2000
+
+
+async def _iter_collection_pages(
+    collection: Any,  # ChromaDB Collection
+    *,
+    include: list[str],
+    page_size: int | None = None,
+) -> "AsyncIterator[dict[str, Any]]":
+    """AD-818a: stream a ChromaDB collection one bounded page at a time.
+
+    Each page is fetched via ``asyncio.to_thread`` so (1) only one page is
+    resident in memory at a time (problem #2) and (2) the event loop yields
+    between pages, letting ``asyncio.wait_for`` cancel a long migration at a
+    page boundary (problem #3).
+
+    Yields the raw ChromaDB ``get`` result dict for each non-empty page
+    (keys: ``ids`` plus whatever was requested in ``include``). Stops when a
+    page returns fewer than the effective page size ids (the last page) or
+    zero ids.
+
+    R1: ``page_size`` defaults to ``None`` and the module global
+    ``_MIGRATION_BATCH_SIZE`` is read INSIDE the body (call time), NOT bound as
+    a default-argument value (def time). This is what lets tests monkeypatch
+    ``episodic._MIGRATION_BATCH_SIZE`` to a small value and actually force
+    multi-page behavior. Do NOT write ``page_size: int = _MIGRATION_BATCH_SIZE``.
+
+    Rec2 — OFFSET-STABILITY PRECONDITION: this design writes page k before
+    reading page k+1 (the old code read everything first). That is only safe
+    because the three callers either ``upsert`` existing ids IN PLACE (no add,
+    no delete, no reorder of the row set being paginated) or write to a
+    separate sidecar. ChromaDB does not formally contract ``.get()`` ordering,
+    so any future caller that ADDS or DELETES collection rows mid-iteration
+    would make ``offset`` skip/double-read and must NOT use this helper.
+    """
+    effective = page_size if page_size is not None else _MIGRATION_BATCH_SIZE
+    offset = 0
+    while True:
+        page = await asyncio.to_thread(
+            collection.get, include=include, limit=effective, offset=offset
+        )
+        ids = (page or {}).get("ids") or []
+        if not ids:
+            return
+        yield page
+        # Rec3: at an exact multiple (e.g. 2N rows, page_size N) this does one
+        # final get(offset=2N) returning zero ids before the `if not ids`
+        # return above — correct (no dup, no infinite loop). Do NOT "optimize"
+        # this `len(ids) < effective` early-return away.
+        if len(ids) < effective:
+            return
+        offset += effective
 
 
 # ---------------------------------------------------------------------------
@@ -110,65 +163,68 @@ async def migrate_episode_agent_ids(
     migrated = 0
 
     try:
-        result = episodic_memory._collection.get(include=["metadatas", "documents"])
-        if not result or not result.get("ids"):
-            return 0
+        async for page in _iter_collection_pages(
+            episodic_memory._collection, include=["metadatas", "documents"]
+        ):
+            ids_list = page.get("ids") or []
+            metadatas = page.get("metadatas", [])
+            documents = page.get("documents", [])
 
-        ids_list = result["ids"]
-        metadatas = result.get("metadatas", [])
-        documents = result.get("documents", [])
+            # Collect batch for single upsert (BF-134: avoid per-episode round-trips)
+            batch_ids: list[str] = []
+            batch_metas: list[dict] = []
+            batch_docs: list[str] = []
 
-        # Collect batch for single upsert (BF-134: avoid per-episode round-trips)
-        batch_ids: list[str] = []
-        batch_metas: list[dict] = []
-        batch_docs: list[str] = []
+            for i, ep_id in enumerate(ids_list):
+                meta = metadatas[i] if i < len(metadatas) else {}
+                agent_ids_json = meta.get("agent_ids_json", "[]")
+                try:
+                    agent_ids = json.loads(agent_ids_json)
+                except (json.JSONDecodeError, TypeError):
+                    continue
 
-        for i, ep_id in enumerate(ids_list):
-            meta = metadatas[i] if i < len(metadatas) else {}
-            agent_ids_json = meta.get("agent_ids_json", "[]")
-            try:
-                agent_ids = json.loads(agent_ids_json)
-            except (json.JSONDecodeError, TypeError):
-                continue
+                changed = False
+                new_ids: list[str] = []
+                for aid in agent_ids:
+                    resolved = resolve_sovereign_id_from_slot(aid, identity_registry)
+                    new_ids.append(resolved)
+                    if resolved != aid:
+                        changed = True
 
-            changed = False
-            new_ids: list[str] = []
-            for aid in agent_ids:
-                resolved = resolve_sovereign_id_from_slot(aid, identity_registry)
-                new_ids.append(resolved)
-                if resolved != aid:
-                    changed = True
+                if changed:
+                    meta["agent_ids_json"] = json.dumps(new_ids)
+                    doc = documents[i] if i < len(documents) else ""
+                    # Recompute content hash after agent ID migration (AD-541e)
+                    ep = EpisodicMemory._metadata_to_episode(ep_id, doc or "", meta)
+                    meta["content_hash"] = compute_episode_hash(ep)
+                    batch_ids.append(ep_id)
+                    batch_metas.append(meta)
+                    batch_docs.append(doc or "")
 
-            if changed:
-                meta["agent_ids_json"] = json.dumps(new_ids)
-                doc = documents[i] if i < len(documents) else ""
-                # Recompute content hash after agent ID migration (AD-541e)
-                ep = EpisodicMemory._metadata_to_episode(ep_id, doc or "", meta)
-                meta["content_hash"] = compute_episode_hash(ep)
-                batch_ids.append(ep_id)
-                batch_metas.append(meta)
-                batch_docs.append(doc or "")
-
-        # BF-289: chunk under ChromaDB's per-call batch cap (5461 in
-        # 1.5.8). Per-chunk failure is logged but does NOT abort the
-        # migration — committed chunks persist so a re-run only needs
-        # to redo the failed slice.
-        for start in range(0, len(batch_ids), _MIGRATION_BATCH_SIZE):
-            end = start + _MIGRATION_BATCH_SIZE
-            try:
-                episodic_memory._collection.upsert(
-                    ids=batch_ids[start:end],
-                    metadatas=batch_metas[start:end],
-                    documents=batch_docs[start:end],
-                )
-                migrated += (end - start) if end <= len(batch_ids) else (len(batch_ids) - start)
-            except Exception:
-                logger.warning(
-                    "BF-103: chunk %d..%d failed during sovereign-ID migration "
-                    "(%d total candidates); continuing with remaining chunks",
-                    start, min(end, len(batch_ids)), len(batch_ids),
-                    exc_info=True,
-                )
+            # AD-818a: write this page's batch before fetching the next page so
+            # only one page is resident at a time (problem #2) and the loop
+            # yields between pages (problem #3). BF-289: page_size (2000) is
+            # already <= ChromaDB's per-call cap (5461 in 1.5.8), so each page
+            # is a single upsert. Per-page failure is logged but does NOT abort
+            # the migration — committed pages persist so a re-run only needs to
+            # redo the failed slice.
+            if batch_ids:
+                try:
+                    await asyncio.to_thread(
+                        episodic_memory._collection.upsert,
+                        ids=batch_ids,
+                        metadatas=batch_metas,
+                        documents=batch_docs,
+                    )
+                    migrated += len(batch_ids)
+                except Exception:
+                    logger.warning(
+                        "BF-103: page upsert of %d candidates failed during "
+                        "sovereign-ID migration; continuing with remaining pages",
+                        len(batch_ids),
+                        exc_info=True,
+                    )
+                    continue
 
         elapsed = time.time() - t0
         if migrated > 0:
@@ -200,73 +256,75 @@ async def migrate_anchor_metadata(episodic_memory: "EpisodicMemory") -> int:
     migrated = 0
 
     try:
-        result = episodic_memory._collection.get(include=["metadatas", "documents"])
-        if not result or not result.get("ids"):
-            return 0
+        async for page in _iter_collection_pages(
+            episodic_memory._collection, include=["metadatas", "documents"]
+        ):
+            ids_list = page.get("ids") or []
+            metadatas = page.get("metadatas", [])
+            documents = page.get("documents", [])
 
-        ids_list = result["ids"]
-        metadatas = result.get("metadatas", [])
-        documents = result.get("documents", [])
+            # Collect batch for single upsert (BF-134: avoid per-episode round-trips)
+            batch_ids: list[str] = []
+            batch_metas: list[dict] = []
+            batch_docs: list[str] = []
 
-        # Collect batch for single upsert (BF-134: avoid per-episode round-trips)
-        batch_ids: list[str] = []
-        batch_metas: list[dict] = []
-        batch_docs: list[str] = []
+            for i, ep_id in enumerate(ids_list):
+                meta = metadatas[i] if i < len(metadatas) else {}
+                # BF-134: Check for the newest promoted field, not just any promoted field.
+                # Episodes migrated by AD-570 have anchor_department but lack anchor_watch_section.
+                if "anchor_watch_section" in meta:
+                    continue  # Already has all promoted fields
 
-        for i, ep_id in enumerate(ids_list):
-            meta = metadatas[i] if i < len(metadatas) else {}
-            # BF-134: Check for the newest promoted field, not just any promoted field.
-            # Episodes migrated by AD-570 have anchor_department but lack anchor_watch_section.
-            if "anchor_watch_section" in meta:
-                continue  # Already has all promoted fields
+                anchors_json = meta.get("anchors_json", "")
+                anchor_department = ""
+                anchor_channel = ""
+                anchor_trigger_type = ""
+                anchor_trigger_agent = ""
+                anchor_watch_section = ""
 
-            anchors_json = meta.get("anchors_json", "")
-            anchor_department = ""
-            anchor_channel = ""
-            anchor_trigger_type = ""
-            anchor_trigger_agent = ""
-            anchor_watch_section = ""
+                if anchors_json:
+                    try:
+                        anchors_data = json.loads(anchors_json)
+                        anchor_department = anchors_data.get("department", "") or ""
+                        anchor_channel = anchors_data.get("channel", "") or ""
+                        anchor_trigger_type = anchors_data.get("trigger_type", "") or ""
+                        anchor_trigger_agent = anchors_data.get("trigger_agent", "") or ""
+                        anchor_watch_section = anchors_data.get("watch_section", "") or ""
+                    except (json.JSONDecodeError, TypeError):
+                        pass
 
-            if anchors_json:
+                meta["anchor_department"] = anchor_department
+                meta["anchor_channel"] = anchor_channel
+                meta["anchor_trigger_type"] = anchor_trigger_type
+                meta["anchor_trigger_agent"] = anchor_trigger_agent
+                meta["anchor_watch_section"] = anchor_watch_section
+
+                batch_ids.append(ep_id)
+                batch_metas.append(meta)
+                batch_docs.append(documents[i] if i < len(documents) else "")
+
+            # AD-818a: write this page's batch before fetching the next page.
+            # BF-289: page_size (2000) is already <= ChromaDB's per-call cap, so
+            # each page is a single upsert. Per-page failure is logged but does
+            # NOT abort the migration.
+            if batch_ids:
+                docs_clean = [d or "" for d in batch_docs]
                 try:
-                    anchors_data = json.loads(anchors_json)
-                    anchor_department = anchors_data.get("department", "") or ""
-                    anchor_channel = anchors_data.get("channel", "") or ""
-                    anchor_trigger_type = anchors_data.get("trigger_type", "") or ""
-                    anchor_trigger_agent = anchors_data.get("trigger_agent", "") or ""
-                    anchor_watch_section = anchors_data.get("watch_section", "") or ""
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-            meta["anchor_department"] = anchor_department
-            meta["anchor_channel"] = anchor_channel
-            meta["anchor_trigger_type"] = anchor_trigger_type
-            meta["anchor_trigger_agent"] = anchor_trigger_agent
-            meta["anchor_watch_section"] = anchor_watch_section
-
-            batch_ids.append(ep_id)
-            batch_metas.append(meta)
-            batch_docs.append(documents[i] if i < len(documents) else "")
-
-        # BF-289: chunk under ChromaDB's per-call batch cap (5461 in
-        # 1.5.8). Per-chunk failure is logged but does NOT abort.
-        docs_clean = [d or "" for d in batch_docs]
-        for start in range(0, len(batch_ids), _MIGRATION_BATCH_SIZE):
-            end = start + _MIGRATION_BATCH_SIZE
-            try:
-                episodic_memory._collection.upsert(
-                    ids=batch_ids[start:end],
-                    metadatas=batch_metas[start:end],
-                    documents=docs_clean[start:end],
-                )
-                migrated += (end - start) if end <= len(batch_ids) else (len(batch_ids) - start)
-            except Exception:
-                logger.warning(
-                    "AD-570: chunk %d..%d failed during anchor metadata migration "
-                    "(%d total candidates); continuing with remaining chunks",
-                    start, min(end, len(batch_ids)), len(batch_ids),
-                    exc_info=True,
-                )
+                    await asyncio.to_thread(
+                        episodic_memory._collection.upsert,
+                        ids=batch_ids,
+                        metadatas=batch_metas,
+                        documents=docs_clean,
+                    )
+                    migrated += len(batch_ids)
+                except Exception:
+                    logger.warning(
+                        "AD-570: page upsert of %d candidates failed during "
+                        "anchor metadata migration; continuing with remaining pages",
+                        len(batch_ids),
+                        exc_info=True,
+                    )
+                    continue
 
         elapsed = time.time() - t0
         if migrated > 0:
@@ -382,37 +440,48 @@ async def migrate_participant_index(
         return 0
 
     t0 = time.time()
-    result = episodic_memory._collection.get(include=["metadatas"])
-    ids = result.get("ids") or []
-    metas = result.get("metadatas") or []
+    migrated = 0
+    async for page in _iter_collection_pages(
+        episodic_memory._collection, include=["metadatas"]
+    ):
+        ids = page.get("ids") or []
+        metas = page.get("metadatas") or []
 
-    batch = []
-    for ep_id, meta in zip(ids, metas):
-        # Parse agent_ids
-        try:
-            agent_ids = json.loads(meta.get("agent_ids_json", "[]"))
-        except (json.JSONDecodeError, TypeError):
-            agent_ids = []
-
-        # Parse participants from anchors
-        participants: list[str] = []
-        anchors_raw = meta.get("anchors_json", "")
-        if anchors_raw:
+        page_batch = []
+        for ep_id, meta in zip(ids, metas):
+            # Parse agent_ids
             try:
-                anchors_dict = json.loads(anchors_raw)
-                participants = anchors_dict.get("participants", [])
+                agent_ids = json.loads(meta.get("agent_ids_json", "[]"))
             except (json.JSONDecodeError, TypeError):
-                pass
+                agent_ids = []
 
-        if agent_ids or participants:
-            batch.append((ep_id, agent_ids, participants))
+            # Parse participants from anchors
+            participants: list[str] = []
+            anchors_raw = meta.get("anchors_json", "")
+            if anchors_raw:
+                try:
+                    anchors_dict = json.loads(anchors_raw)
+                    participants = anchors_dict.get("participants", [])
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
-    if batch:
-        await episodic_memory._participant_index.record_episode_batch(batch)
+            if agent_ids or participants:
+                page_batch.append((ep_id, agent_ids, participants))
+
+        # AD-818a: write this page's batch before fetching the next page.
+        # record_episode_batch is already async, so no to_thread. R2: NO new
+        # try/except — a failure here propagates to _run_one_migration's
+        # honest-degrade wrapper exactly as today (wrapping it would hide a
+        # failure that currently aborts the migration).
+        if page_batch:
+            await episodic_memory._participant_index.record_episode_batch(page_batch)
+        # R3: accumulate the count of participating episodes across pages and
+        # return that total — do NOT return record_episode_batch's return value.
+        migrated += len(page_batch)
 
     elapsed = time.time() - t0
-    logger.info("AD-570b: Participant index populated for %d episodes in %.1fs", len(batch), elapsed)
-    return len(batch)
+    logger.info("AD-570b: Participant index populated for %d episodes in %.1fs", migrated, elapsed)
+    return migrated
 
 
 def migrate_enriched_embedding(
