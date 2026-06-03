@@ -1745,6 +1745,54 @@ def _wire_hybrid_dispatch(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_capability_gap_driver(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-855: Wire the CapabilityGapDriver.
+
+    Closes the BLOCKED -> request -> approve -> resume loop on the work-item
+    board. Requires ``runtime.work_item_store`` and
+    ``runtime.capability_request_store``; registers the driver as a listener
+    for CAPABILITY_REQUEST_FULFILLED / CAPABILITY_REQUEST_DECIDED via
+    ``runtime.add_event_listener``. Tier-2 log-and-degrade: missing any
+    dependency -> no-op + INFO log.
+    """
+    work_item_store = getattr(runtime, "work_item_store", None)
+    request_store = getattr(runtime, "capability_request_store", None)
+    if work_item_store is None or request_store is None:
+        logger.info(
+            "AD-855: work_item_store or capability_request_store unavailable; "
+            "capability gap driver skipped"
+        )
+        return False
+
+    from probos.cognitive.capability_gap_driver import CapabilityGapDriver
+
+    runtime.capability_gap_driver = CapabilityGapDriver(  # public attr
+        runtime=runtime,
+        work_item_store=work_item_store,
+        capability_request_store=request_store,
+    )
+
+    add_listener = getattr(runtime, "add_event_listener", None)
+    if add_listener is not None:
+        try:
+            add_listener(
+                runtime.capability_gap_driver.on_capability_event,
+                event_types=[
+                    "capability_request_fulfilled",
+                    "capability_request_decided",
+                ],
+            )
+        except Exception:
+            logger.warning(
+                "AD-855: add_event_listener failed; CapabilityGapDriver "
+                "resume loop inactive",
+                exc_info=True,
+            )
+
+    logger.info("AD-855: CapabilityGapDriver wired")
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -3378,6 +3426,12 @@ async def finalize_startup(
             # is available. _wire_hybrid_dispatch is tier-2 log-and-degrade.
             if _wire_hybrid_dispatch(runtime=runtime, config=config):
                 logger.info("AD-581 v1: HybridDispatch wired during finalization")
+
+            # AD-855: CapabilityGapDriver -- BLOCKED -> request -> approve ->
+            # resume loop. Independent of hybrid dispatch; only needs the
+            # work-item + capability-request stores. Tier-2 log-and-degrade.
+            if _wire_capability_gap_driver(runtime=runtime, config=config):
+                logger.info("AD-855: CapabilityGapDriver wired during finalization")
 
             # BF-223: Create per-agent JetStream dispatch consumers AFTER ship
             # commissioning has set the stable DID-based NATS prefix. During

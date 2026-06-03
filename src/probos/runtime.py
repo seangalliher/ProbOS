@@ -145,6 +145,7 @@ if TYPE_CHECKING:
     from probos.capability_request import CapabilityRequestStore
     from probos.clearance_grants import ClearanceGrantStore
     from probos.cognitive.agent_patcher import AgentPatcher
+    from probos.cognitive.capability_gap_driver import CapabilityGapDriver
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
     from probos.avatars.divergence_detector import DivergenceResult  # AD-722a
     from probos.avatars.divergence_detector import DivergenceHistoryEntry  # AD-722a-5
@@ -705,6 +706,9 @@ class ProbOSRuntime:
 
         # --- Capability Requests (AD-853) ---
         self.capability_request_store: CapabilityRequestStore | None = None
+
+        # --- Capability Gap Driver (AD-855) ---
+        self.capability_gap_driver: "CapabilityGapDriver | None" = None
 
         # --- Tool Registry (AD-423a) ---
         self.tool_registry: ToolRegistry | None = None
