@@ -228,6 +228,39 @@ class CapabilityRequestStore(EventEmitterMixin):
         )
         return req
 
+    async def mark_fulfilled(self, request_id: str) -> CapabilityRequest | None:
+        """Mark a request fulfilled once its rung's fulfiller has completed.
+
+        Updates DB + cache and emits FULFILLED. Returns the updated request, or
+        None if the id is unknown.
+        """
+        req = await self.get(request_id)
+        if req is None:
+            logger.warning(
+                "AD-854: mark_fulfilled() called for unknown request %s; ignoring",
+                request_id[:12],
+            )
+            return None
+        req.status = "fulfilled"
+        if self._db:
+            await self._db.execute(
+                "UPDATE capability_requests SET status = ? WHERE id = ?",
+                (req.status, req.id),
+            )
+            await self._db.commit()
+        self._cache[req.id] = req
+        self._emit(EventType.CAPABILITY_REQUEST_FULFILLED, {
+            "id": req.id,
+            "agent_id": req.agent_id,
+            "kind": req.kind,
+            "status": req.status,
+        })
+        logger.info(
+            "AD-854: Capability request %s — fulfilled",
+            req.id[:12],
+        )
+        return req
+
     async def list_pending(self) -> list[CapabilityRequest]:
         """Return all requests still awaiting a decision."""
         return [r for r in self._cache.values() if r.status == "pending"]

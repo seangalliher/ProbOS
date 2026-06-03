@@ -5012,6 +5012,25 @@ class DependencyConfig(BaseModel):
     dynamic_install_deny: list[str] = Field(default_factory=list)
 
 
+class CapabilityTriageConfig(BaseModel):
+    """AD-854: Acquire-vs-build triage grant fast-path gating.
+
+    Conservative defaults — the zero-prompt grant fast path is OFF and the trust
+    floor is high, so a grant is auto-approved only after the operator opts in.
+    ``install`` and ``build`` never use the fast path (Captain / self-mod gate).
+    """
+
+    grant_fast_path_enabled: bool = False
+    grant_trust_floor: float = 0.8
+
+    @field_validator("grant_trust_floor")
+    @classmethod
+    def _trust_floor_in_unit(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("grant_trust_floor must be in [0.0, 1.0]")
+        return v
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -5176,6 +5195,9 @@ class SystemConfig(BaseModel):
     consultation_dispatch: ConsultationDispatchConfig = Field(
         default_factory=ConsultationDispatchConfig
     )  # AD-594c
+    capability_triage: CapabilityTriageConfig = Field(
+        default_factory=CapabilityTriageConfig
+    )  # AD-854
     hybrid_dispatch: HybridDispatchConfig = Field(
         default_factory=HybridDispatchConfig
     )  # AD-581 v1 (sub-ADs 581a/b/d)
