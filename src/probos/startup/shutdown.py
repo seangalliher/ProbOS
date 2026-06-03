@@ -37,6 +37,22 @@ def _memory_field(runtime: Any, name: str, default: float) -> float:
 
 async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     """Graceful shutdown of all pools, mesh services, and persistence."""
+    # BF-598: idempotency guard. A second shutdown() invocation (a duplicate
+    # SIGTERM during Windows sleep/wake, or a retried stop()) must NOT re-run
+    # teardown. The first invocation already consolidated and wrote the AD-820
+    # integrity marker; re-running finds the cognitive subsystems torn down,
+    # skips consolidation, and would DOWNGRADE the clean marker to partial —
+    # the root cause of the recurring boot refusal. Use getattr-with-default so
+    # a process that started before this field existed still degrades safely.
+    if getattr(runtime, "_shutdown_started", False):
+        logger.info(
+            "BF-598: shutdown() re-entered (reason=%r); first invocation already "
+            "ran — skipping teardown and preserving the AD-820 marker.",
+            reason,
+        )
+        return
+    runtime._shutdown_started = True
+
     # BF-135: Persist session record FIRST — synchronous file write, microseconds.
     # Must happen before any async operations (Ward Room, event log) because
     # __main__.py enforces a 5s timeout on stop(). If Ward Room create_thread()
@@ -373,7 +389,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # was 'full', the marker is 'clean'; otherwise 'partial' and the next
     # boot refuses to start unless --force-unclean is passed.
     try:
-        from probos.shutdown_integrity import mark_clean_shutdown, mark_dirty_shutdown
+        from probos.shutdown_integrity import (
+            mark_clean_shutdown,
+            mark_dirty_shutdown,
+            read_shutdown_status,
+        )
         _data_dir = getattr(runtime, "_data_dir", None)
         if _data_dir is not None:
             if _consolidation_result == "full":
@@ -382,7 +402,31 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                     consolidation_result="full",
                     note="phase1_ok",
                 )
+            elif _consolidation_result == "skipped":
+                # BF-598: a SKIP means the cognitive subsystems were absent, so
+                # nothing was written to the HNSW index — this event cannot
+                # corrupt it. Never let a skip DOWNGRADE an existing
+                # clean/rebuilt marker (that is the recurring boot-refusal bug).
+                # If no clean marker exists, fall through to the dirty write so a
+                # genuinely-disabled-episodic first boot still surfaces honestly.
+                _existing = read_shutdown_status(_data_dir)
+                if _existing.get("status") == "clean" or _existing.get(
+                    "consolidation_result"
+                ) in ("full", "rebuilt"):
+                    logger.info(
+                        "BF-598: consolidation skipped but a clean marker already "
+                        "exists (consolidation=%s); preserving it — a skip cannot "
+                        "tear the index.",
+                        _existing.get("consolidation_result"),
+                    )
+                else:
+                    mark_dirty_shutdown(
+                        _data_dir,
+                        consolidation_result="skipped",
+                        note=f"phase1_elapsed={_phase1_elapsed:.1f}s",
+                    )
             else:
+                # partial / failed / startup_incomplete → unchanged behaviour
                 mark_dirty_shutdown(
                     _data_dir,
                     consolidation_result=_consolidation_result,  # type: ignore[arg-type]

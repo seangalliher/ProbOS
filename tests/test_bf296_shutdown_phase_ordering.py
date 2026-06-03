@@ -25,6 +25,7 @@ async def test_phase_a_runs_before_stop_gracefully(tmp_path: Any) -> None:
 
     runtime = MagicMock()
     runtime._started = True
+    runtime._shutdown_started = False  # BF-598: MagicMock auto-creates a truthy attr otherwise
     runtime._session_id = "s1"
     runtime._start_time_wall = time.time()
     runtime._start_time = time.monotonic()
@@ -94,6 +95,7 @@ async def test_phase_a_logs_info_on_success(
 
     runtime = MagicMock()
     runtime._started = True
+    runtime._shutdown_started = False  # BF-598: MagicMock auto-creates a truthy attr otherwise
     runtime._session_id = "s1"
     runtime._start_time_wall = time.time()
     runtime._start_time = time.monotonic()
@@ -133,6 +135,7 @@ async def test_phase_a_honest_degrades_when_method_missing(
 
     runtime = MagicMock()
     runtime._started = True
+    runtime._shutdown_started = False  # BF-598: MagicMock auto-creates a truthy attr otherwise
     runtime._session_id = "s1"
     runtime._start_time_wall = time.time()
     runtime._start_time = time.monotonic()

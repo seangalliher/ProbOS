@@ -973,6 +973,11 @@ class ProbOSRuntime:
         # a real consolidation failure (failed — blocks boot). Default False so
         # any kill before start() returns is correctly classified.
         self._startup_complete: bool = False
+        # BF-598: idempotency guard for shutdown(). Set True at the top of the
+        # first shutdown() invocation so a duplicate SIGTERM (Windows sleep/wake)
+        # or a retried stop() returns early instead of re-running teardown and
+        # downgrading the clean AD-820 marker. Separate from _started (BF-137).
+        self._shutdown_started: bool = False
         self._stasis_duration: float = 0.0
         self._previous_session: dict | None = None
 
