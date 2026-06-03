@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from probos.bridge_alerts import BridgeAlertService
     from probos.build_dispatcher import BuildDispatcher
     from probos.build_queue import BuildQueue
+    from probos.capability_request import CapabilityRequestStore
     from probos.clearance_grants import ClearanceGrantStore
     from probos.cognitive.agent_patcher import AgentPatcher
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
@@ -162,6 +163,7 @@ class CommunicationResult:
     acm: "AgentCapitalService"
     ontology: "VesselOntologyService | None"
     clearance_grant_store: "ClearanceGrantStore | None"
+    capability_request_store: "CapabilityRequestStore | None"  # AD-853
     tool_registry: "ToolRegistry | None"
     tool_permission_store: "ToolPermissionStore | None"
     cognitive_skill_catalog: "CognitiveSkillCatalog | None"

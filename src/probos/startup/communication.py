@@ -296,6 +296,16 @@ async def init_communication(
     await clearance_grant_store.start()
     logger.info("clearance-grant-store started")
 
+    # --- Capability Request Store (AD-853) ---
+    from probos.capability_request import CapabilityRequestStore
+
+    capability_request_store = CapabilityRequestStore(
+        db_path=str(data_dir / "capability_requests.db"),
+        emit_event=emit_event_fn,
+    )
+    await capability_request_store.start()
+    logger.info("capability-request-store started")
+
     # --- Tool Registry (AD-423a) ---
     from probos.tools.registry import ToolRegistry
 
@@ -487,6 +497,7 @@ async def init_communication(
         acm=acm,
         ontology=ontology,
         clearance_grant_store=clearance_grant_store,
+        capability_request_store=capability_request_store,
         tool_registry=tool_registry,
         tool_permission_store=tool_permission_store,
         cognitive_skill_catalog=cognitive_catalog,

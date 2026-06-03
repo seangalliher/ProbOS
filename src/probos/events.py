@@ -104,6 +104,11 @@ class EventType(str, Enum):
     BOOKING_COMPLETED = "booking_completed"
     BOOKING_CANCELLED = "booking_cancelled"
 
+    # Capability requests (AD-853)
+    CAPABILITY_REQUEST_FILED = "capability_request_filed"
+    CAPABILITY_REQUEST_DECIDED = "capability_request_decided"
+    CAPABILITY_REQUEST_FULFILLED = "capability_request_fulfilled"
+
     # Scheduled tasks
     SCHEDULED_TASK_CREATED = "scheduled_task_created"
     SCHEDULED_TASK_CANCELLED = "scheduled_task_cancelled"

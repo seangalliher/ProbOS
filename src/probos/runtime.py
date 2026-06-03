@@ -142,6 +142,7 @@ if TYPE_CHECKING:
     from probos.acm import AgentCapitalService
     from probos.assignment import AssignmentService
     from probos.bridge_alerts import BridgeAlertService
+    from probos.capability_request import CapabilityRequestStore
     from probos.clearance_grants import ClearanceGrantStore
     from probos.cognitive.agent_patcher import AgentPatcher
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
@@ -257,6 +258,7 @@ class ProbOSRuntime:
     assignment_service: AssignmentService | None
     bridge_alerts: BridgeAlertService | None
     clearance_grant_store: ClearanceGrantStore | None
+    capability_request_store: CapabilityRequestStore | None
     tool_registry: ToolRegistry | None
     dream_scheduler: DreamScheduler | None
     task_scheduler: TaskScheduler | None
@@ -700,6 +702,9 @@ class ProbOSRuntime:
 
         # --- Clearance Grants (AD-622) ---
         self.clearance_grant_store: ClearanceGrantStore | None = None
+
+        # --- Capability Requests (AD-853) ---
+        self.capability_request_store: CapabilityRequestStore | None = None
 
         # --- Tool Registry (AD-423a) ---
         self.tool_registry: ToolRegistry | None = None
@@ -2144,6 +2149,7 @@ class ProbOSRuntime:
         self.assignment_service = comm.assignment_service
         self.bridge_alerts = comm.bridge_alerts
         self.clearance_grant_store = comm.clearance_grant_store
+        self.capability_request_store = comm.capability_request_store
         self.tool_registry = comm.tool_registry
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
