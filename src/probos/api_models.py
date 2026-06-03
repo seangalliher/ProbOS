@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ── Chat models ───────────────────────────────────────────────────
@@ -226,6 +226,24 @@ class SkillCommissionRequest(BaseModel):
 class AgentLifecycleRequest(BaseModel):
     """Request body for ACM lifecycle transitions (decommission/suspend/reinstate)."""
     reason: str = ""
+
+
+# ── Capability-request decision model (AD-857) ───────────────────
+
+class CapabilityRequestDecideRequest(BaseModel):
+    """Request body for approving/denying a pending capability request.
+
+    A deny (``approve=False``) requires a non-empty ``reason`` so the
+    requesting agent gets actionable feedback; an approve may omit it.
+    """
+    approve: bool
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def _require_reason_on_deny(self) -> "CapabilityRequestDecideRequest":
+        if not self.approve and not (self.reason or "").strip():
+            raise ValueError("a reason is required when denying a capability request")
+        return self
 
 
 # ── Agent cooldown model (BF-093) ────────────────────────────────

@@ -1793,6 +1793,42 @@ def _wire_capability_gap_driver(*, runtime: Any, config: "SystemConfig") -> bool
     return True
 
 
+def _wire_capability_request_notifier(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-857: Wire the capability-request Captain-DM notifier.
+
+    Chat half of the dual-surface decision surface: registers a listener for
+    CAPABILITY_REQUEST_FILED that posts a Captain-DM notice via the AD-485
+    primitive. Tier-2 log-and-degrade: no ``add_event_listener`` -> no-op +
+    INFO log. The HXI card remains the decision path regardless.
+    """
+    from probos.capability_request_notifier import (
+        notify_captain_of_capability_request,
+    )
+
+    async def _on_filed(event: Any) -> None:
+        await notify_captain_of_capability_request(runtime, event)
+
+    add_listener = getattr(runtime, "add_event_listener", None)
+    if add_listener is None:
+        logger.info(
+            "AD-857: add_event_listener unavailable; capability-request "
+            "Captain-DM notifier skipped"
+        )
+        return False
+    try:
+        add_listener(_on_filed, event_types=["capability_request_filed"])
+    except Exception:
+        logger.warning(
+            "AD-857: add_event_listener failed; capability-request "
+            "Captain-DM notifier inactive",
+            exc_info=True,
+        )
+        return False
+
+    logger.info("AD-857: capability-request Captain-DM notifier wired")
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -3432,6 +3468,14 @@ async def finalize_startup(
             # work-item + capability-request stores. Tier-2 log-and-degrade.
             if _wire_capability_gap_driver(runtime=runtime, config=config):
                 logger.info("AD-855: CapabilityGapDriver wired during finalization")
+
+            # AD-857: capability-request Captain-DM notifier -- chat half of the
+            # dual-surface decision surface. Tier-2 log-and-degrade.
+            if _wire_capability_request_notifier(runtime=runtime, config=config):
+                logger.info(
+                    "AD-857: capability-request Captain-DM notifier wired "
+                    "during finalization"
+                )
 
             # BF-223: Create per-agent JetStream dispatch consumers AFTER ship
             # commissioning has set the stable DID-based NATS prefix. During
