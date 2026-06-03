@@ -1769,6 +1769,12 @@ class CognitiveAgent(BaseAgent):
             "Use sparingly — routine reports belong in your observation post.\n\n"
         )
 
+    def _conversational_capability_block(self, observation: dict) -> str:
+        """Overridable hook: extra live-capability grounding appended to the
+        conversational system prompt. Default returns "" so non-overriding
+        agents are unaffected (BF-599)."""
+        return ""
+
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
 
@@ -2212,6 +2218,13 @@ class CognitiveAgent(BaseAgent):
                         "You can still chat naturally — the move tag can appear "
                         "anywhere in your response alongside your conversational text."
                     )
+
+            # BF-599: Append live-capability grounding to EVERY conversational
+            # reply (1:1, ward room, proactive). Overridable hook; base returns
+            # "" so only opting-in agents (e.g. Yeo) are affected.
+            _cap_block = self._conversational_capability_block(observation)
+            if _cap_block:
+                composed += _cap_block
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

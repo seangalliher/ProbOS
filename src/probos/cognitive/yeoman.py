@@ -256,6 +256,55 @@ class YeomanAgent(CognitiveAgent):
             )
 
     # ------------------------------------------------------------------
+    # Conversational capability grounding (BF-599)
+    # ------------------------------------------------------------------
+
+    def _conversational_capability_block(self, observation: dict) -> str:
+        """Ground Yeo in the ship's *live* delegable web capabilities.
+
+        Renders a positive instruction listing only the mesh intents whose
+        pools are actually registered right now, so Yeo delegates web
+        research/page-reading through the mesh instead of confabulating a
+        limitation (BF-599). Honest-degrade: returns "" when no runtime,
+        no registry, or none of the relevant pools are present.
+        """
+        runtime = self._runtime
+        if runtime is None or not hasattr(runtime, "registry") or runtime.registry is None:
+            return ""
+
+        # (pool name, exposed intent name, human description). Only pools with
+        # at least one registered agent become delegable capabilities.
+        _pool_caps: tuple[tuple[str, str, str], ...] = (
+            ("web_search", "web_search", "search the web"),
+            ("page_reader", "read_page", "read + summarize a URL"),
+            ("http", "http_fetch", "fetch a URL"),
+        )
+
+        caps: list[tuple[str, str]] = []
+        try:
+            for pool_name, intent_name, desc in _pool_caps:
+                if runtime.registry.get_by_pool(pool_name):
+                    caps.append((intent_name, desc))
+        except Exception:
+            logger.warning(
+                "BF-599: YeomanAgent capability grounding failed reading the "
+                "registry; falling back to no capability block this turn",
+                exc_info=True,
+            )
+            return ""
+
+        if not caps:
+            return ""
+
+        rendered = ", ".join(f"{name} ({desc})" for name, desc in caps)
+        return (
+            "\n\nShip capabilities you can delegate through the mesh: "
+            f"{rendered}. When the Captain asks you to research or read a web "
+            "page, delegate to the right specialist (for Science research, "
+            "@Number One) rather than declining."
+        )
+
+    # ------------------------------------------------------------------
     # Proactive-scan aggregation
     # ------------------------------------------------------------------
 
