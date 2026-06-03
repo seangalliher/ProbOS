@@ -159,6 +159,7 @@ def test_workitem_spec_to_dict_roundtrip():
         "spec_id": "a", "title": "A", "description": "d", "work_type": "duty",
         "agent": "agent-1", "priority": 2, "depends_on": ["x"],
         "resources": ["r1", "r2"], "metadata": {"k": "v"},
+        "expected_output": None,
     }
     # Mutate the dict; original tuples preserved
     d["depends_on"].append("mut")

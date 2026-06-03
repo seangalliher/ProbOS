@@ -55,6 +55,13 @@ class WorkItemSpec:
     depends_on: tuple[str, ...] = ()             # spec_ids this spec waits on
     resources: tuple[str, ...] = ()              # files/paths/locks the spec touches
     metadata: dict[str, Any] = field(default_factory=dict)
+    # AD-858: optional declared acceptance criterion for this sub-task. When an
+    # LLM decomposer supplies it, the AD-860 verifier judges the result against
+    # this contract; ``None`` (the backward-compatible default for
+    # ``MarkdownPlanDecomposer`` and all existing call sites) means the verifier
+    # falls back to free-text critique. Placed after ``metadata`` so the
+    # defaulted-field-ordering rule holds.
+    expected_output: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +74,7 @@ class WorkItemSpec:
             "depends_on": list(self.depends_on),
             "resources": list(self.resources),
             "metadata": dict(self.metadata),
+            "expected_output": self.expected_output,
         }
 
 

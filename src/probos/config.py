@@ -4465,6 +4465,15 @@ class ConsultationDispatchConfig(BaseModel):
     # Progress event emission cadence (caller-driven; no internal timer in v1).
     # When True, get_progress() emits PARALLEL_DISPATCH_PROGRESS on each call.
     progress_subscription_enabled: bool = True
+    # AD-858: pluggable plan decomposer. "markdown" preserves the v1
+    # MarkdownPlanDecomposer behaviour; "llm" selects the semantic
+    # LLMPlanDecomposer (single goal -> validated WorkItemSpec DAG).
+    decomposer: Literal["markdown", "llm"] = "markdown"
+    # AD-858: Safety Budget cap on how many sub-tasks the LLM decomposer may
+    # emit for a single goal. Bounds unbounded fan-out.
+    max_subtasks: int = 12
+    # AD-858: LLM tier used by the semantic decomposer.
+    decomposer_tier: str = "standard"
 
 
 class HybridDispatchConfig(BaseModel):

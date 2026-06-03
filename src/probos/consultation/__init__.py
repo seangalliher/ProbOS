@@ -64,6 +64,7 @@ from probos.consultation.dispatch import (
     ProgressSnapshot,
     WorkItemSpec,
 )
+from probos.consultation.llm_decomposer import LLMPlanDecomposer
 
 __all__ = [
     "AdapterResult",
@@ -83,6 +84,7 @@ __all__ = [
     "GitHubAdapter",
     "InputProcessor",
     "JSONToMarkdownTransformer",
+    "LLMPlanDecomposer",
     "LocalFileAdapter",
     "MarkdownPlanDecomposer",
     "MarkdownToHTMLTransformer",
