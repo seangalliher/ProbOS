@@ -319,6 +319,41 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD-709 | MemoryForge — implanted birth memories | [#485](https://github.com/seangalliher/ProbOS/issues/485) | 5 (Long Horizon) |
 | AD-710 | Captain's Yeoman — personal AI assistant | [#486](https://github.com/seangalliher/ProbOS/issues/486) | 4 |
 
+**Desktop Management Console (OpenClaw-pattern, applied to a multi-agent civilization):**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-840 | HXI Skill Registry + per-agent ACM skill-assignment surface | [#819](https://github.com/seangalliher/ProbOS/issues/819) | 3 |
+| AD-841 | Desktop management-console parity (Electron tray app expansion) | [#820](https://github.com/seangalliher/ProbOS/issues/820) | 3 |
+| AD-842 | Per-agent tool grants in the ACM profile | [#821](https://github.com/seangalliher/ProbOS/issues/821) | 3 |
+| AD-843 | DeviceNodeAdapter — trust/consensus-gated remote device actuation (brain→limb tier) | [#822](https://github.com/seangalliher/ProbOS/issues/822) | 3 |
+| AD-844 | Mobile / Compact-Yeo device-node client (pairs to a home mesh as a device node) | (forward marker, downstream of AD-843) | 4 |
+
+**Crew Autonomy northstar — give commands by conversation or assignment, work tracked on the kanban board, agents unblock themselves by requesting grants/skills/builds (2026-06-03 decomposition). Highest committed AD at authoring: AD-839.**
+
+| AD | Title | Epic | Priority |
+|----|-------|------|----------|
+| AD-845 | Yeo creates a dispatchable task from a 1:1 chat reply (supersedes BF-599b/D2) | Yeo async task workflow | 2 |
+| AD-846 | Task completion → proactive Yeo DM to the Captain (1:1 + Ward Room) | Yeo async task workflow | 2 |
+| AD-847 | Desktop OS notification on completion, click opens Yeo chat | Yeo async task workflow | 3 |
+| AD-848 | Kanban auto-refresh on `WORK_ITEM_STATUS_CHANGED` (forward marker) | Yeo async task workflow | 4 |
+| AD-849 | In-HXI "Yeo is working on N tasks" ambient indicator (forward marker) | Yeo async task workflow | 4 |
+| AD-850 | Captain asks Yeo task status in chat — read-back from work_item_store (forward marker) | Yeo async task workflow | 4 |
+| AD-851 | Readability content extractor for PageReaderAgent (replace regex strip) | Web research depth | 2 |
+| AD-852 | Web-research tool loop — AgenticLoop driven over mesh web intents w/ provenance | Web research depth | 2 |
+| AD-853 | Unified `CapabilityRequest` model + single approval queue (generalizes vision/tool/build/extension proposals) | Crew self-unblock | 1 |
+| AD-854 | Acquire-vs-build triage router — grant → install skill → build, mapped to the three governance axioms | Crew self-unblock | 1 |
+| AD-855 | BLOCKED → request → approve → resume work-item loop driver | Crew self-unblock | 1 |
+| AD-856 | `AgenticLoop` as the executor for dispatchable work items (bridge) | Crew self-unblock | 1 |
+| AD-857 | Capability-request HXI/chat decision surface (alert-driven, dual-surface approve) | Crew self-unblock | 2 |
+| AD-858 | LLM-driven semantic plan decomposer (single goal → sub-task DAG, plugs into `PlanDecomposer`) | Crew collaboration | 1 |
+| AD-859 | Crew fan-out executor — each subtask runs the AD-856 AgenticLoop, results collected with persistent-agent provenance | Crew collaboration | 1 |
+| AD-860 | Adversarial verification + convergence gate — independent semantic verifier refutes until results converge | Crew collaboration | 1 |
+| AD-861 | Result synthesis + Shapley attribution → parent completion (records trust + episode for the collaboration) | Crew collaboration | 1 |
+| AD-862 | HXI crew-collaboration surface — live fan-out/verify/converge on the canvas (forward marker, dual-surface) | Crew collaboration | 3 |
+
+**Crew collaboration northstar — one hard goal → decompose → fan out across persistent trusted crew → adversarial-verify until converge → synthesize one completion with per-agent attribution (2026-06-03). Depends on AD-856; reuses `ParallelDispatcher` (AD-594c), `RedTeamAgent` pattern, `compute_shapley_values`. Spec: `prompts/ad-858-crew-collaboration-task-completion.md`. Highest reserved AD at authoring: AD-857.**
+
 **From the 2026-05-20 Yeo feature-complete decomposition (gap doc + AionUi pattern absorption):**
 
 | AD | Title | Issue | Priority |
