@@ -1143,11 +1143,21 @@ class CognitiveAgent(BaseAgent):
             ttl_seconds=120.0,
             thread_id=thread.id if thread is not None else None,
         )
-        result = await self.handle_intent(dm)
 
-        reply_text = ""
-        if result is not None and getattr(result, "result", None):
-            reply_text = str(result.result)
+        # AD-856: when the multi-turn agentic dispatch path is enabled and its
+        # dependencies are wired, execute the work item through the AgenticLoop
+        # so the agent can call tools across iterations. Otherwise fall back to
+        # the single-shot direct-message lifecycle (AD-839 behaviour).
+        reply_text = await self._run_agentic_dispatch(
+            work_item_id=work_item_id,
+            task_text=task_text,
+            runtime=runtime,
+        )
+        if reply_text is None:
+            result = await self.handle_intent(dm)
+            reply_text = ""
+            if result is not None and getattr(result, "result", None):
+                reply_text = str(result.result)
 
         if thread is not None and thread_store is not None and reply_text:
             try:
@@ -1185,6 +1195,111 @@ class CognitiveAgent(BaseAgent):
             result=reply_text or "[NO_RESPONSE]",
             confidence=self.confidence,
         )
+
+    async def _run_agentic_dispatch(
+        self,
+        *,
+        work_item_id: str,
+        task_text: str,
+        runtime: Any,
+    ) -> str | None:
+        """AD-856: Execute a dispatched work item via the AgenticLoop.
+
+        Returns the loop's final text when the agentic path runs, or ``None``
+        to signal the caller to fall back to the single-shot direct-message
+        lifecycle. The path runs only when ``config.agentic_dispatch.enabled``
+        is set and the LLM client, tool permission store, capability-gap driver
+        and tool registry are all wired.
+
+        Permission denials raised inside the loop are captured by
+        ``DispatchToolExecutor`` and surfaced to the AD-855 capability-gap
+        driver after the loop finishes, so a missing tool becomes a tracked
+        capability request rather than a silent dead end.
+        """
+        if runtime is None:
+            return None
+        config = getattr(runtime, "config", None)
+        ad_cfg = getattr(config, "agentic_dispatch", None) if config else None
+        if not (ad_cfg is not None and getattr(ad_cfg, "enabled", False)):
+            return None
+
+        llm = self._llm_client
+        perm_store = getattr(runtime, "tool_permission_store", None)
+        gap_driver = getattr(runtime, "capability_gap_driver", None)
+        registry = getattr(runtime, "tool_registry", None)
+        intent_bus = getattr(runtime, "intent_bus", None)
+        if llm is None or perm_store is None or gap_driver is None or registry is None:
+            return None
+
+        from probos.cognitive.agentic_dispatch import (
+            DispatchToolExecutor,
+            register_mesh_intent_tools,
+        )
+        from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+        from probos.cognitive.swe_harness.tool_call import (
+            tool_registration_to_llm_definition,
+        )
+
+        executor = DispatchToolExecutor(registry=registry)
+
+        mesh_ids: list[str] = []
+        if intent_bus is not None:
+            try:
+                mesh_ids = register_mesh_intent_tools(registry, intent_bus)
+            except Exception:
+                logger.warning(
+                    "AD-856: failed to register mesh-intent tools for work_item "
+                    "%s; continuing with granted tools only",
+                    work_item_id, exc_info=True,
+                )
+                mesh_ids = []
+
+        grants = perm_store.get_active_grants_sync(self.id)
+        granted_ids = [g.tool_id for g in grants if not g.is_restriction]
+        tool_ids = list(dict.fromkeys([*granted_ids, *mesh_ids]))
+
+        tools: list[dict] = []
+        for tid in tool_ids:
+            reg = registry.get(tid)
+            if reg is None:
+                continue
+            tools.append(tool_registration_to_llm_definition(reg))
+
+        system_prompt = getattr(self, "instructions", "") or ""
+        department = getattr(self, "department", "") or ""
+        rank = getattr(self, "rank", "ensign") or "ensign"
+
+        loop = AgenticLoop(
+            llm_client=llm,
+            tool_executor=executor,
+            event_emit_fn=getattr(runtime, "emit_event", None),
+        )
+        agentic_result = await loop.run(
+            system_prompt=system_prompt,
+            user_message=task_text,
+            tools=tools,
+            context={
+                "agent_id": self.id,
+                "department": department,
+                "rank": rank,
+            },
+        )
+
+        for denied_tool in executor.denied_tools:
+            try:
+                await gap_driver.on_capability_gap(
+                    work_item_id=work_item_id,
+                    gap_target=denied_tool,
+                    agent_id=self.id,
+                )
+            except Exception:
+                logger.warning(
+                    "AD-856: failed to surface capability gap for denied tool "
+                    "%s on work_item %s; continuing",
+                    denied_tool, work_item_id, exc_info=True,
+                )
+
+        return agentic_result.final_text or ""
 
     async def _build_guided_decision(
         self, procedure: Any, observation: dict, match_score: float

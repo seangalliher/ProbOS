@@ -5031,6 +5031,17 @@ class CapabilityTriageConfig(BaseModel):
         return v
 
 
+class AgenticDispatchConfig(BaseModel):
+    """AD-856: Gate the AgenticLoop execution path for dispatched work items.
+
+    Conservative default per convention #14 — the multi-turn loop is OFF, so
+    dispatched work items keep using the existing single-shot ``handle_intent``
+    path until the operator opts in.
+    """
+
+    enabled: bool = False
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -5198,6 +5209,9 @@ class SystemConfig(BaseModel):
     capability_triage: CapabilityTriageConfig = Field(
         default_factory=CapabilityTriageConfig
     )  # AD-854
+    agentic_dispatch: AgenticDispatchConfig = Field(
+        default_factory=AgenticDispatchConfig
+    )  # AD-856
     hybrid_dispatch: HybridDispatchConfig = Field(
         default_factory=HybridDispatchConfig
     )  # AD-581 v1 (sub-ADs 581a/b/d)

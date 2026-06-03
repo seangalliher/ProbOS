@@ -79,6 +79,7 @@ def _make_runtime(thread_store: Any = None, work_item_store: Any = None) -> Any:
     rt = MagicMock()
     rt.chat_thread_store = thread_store
     rt.work_item_store = work_item_store
+    rt.config.agentic_dispatch.enabled = False  # AD-856: gate off -> single-shot fallback
     return rt
 
 
