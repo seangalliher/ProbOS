@@ -339,6 +339,11 @@ def _make_agent_chat_runtime(
 
     runtime.episodic_memory = None
 
+    # AD-791a: opt out of chat-thread wiring so the explicit-thread-id
+    # validation branch is skipped (MagicMock would otherwise auto-create a
+    # truthy ``chat_thread_store``/``thread_id`` and raise HTTP 400).
+    runtime.chat_thread_store = None
+
     from probos.cognitive.dm_sanity_gate import DmSanityGate
     runtime.dm_sanity_gate = DmSanityGate()
     return runtime

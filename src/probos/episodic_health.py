@@ -298,7 +298,24 @@ def validate_hnsw_files(data_dir: Path) -> HnswValidationResult:
             # The torn-write signature: header.cur_element_count mismatches
             # length.bin. A graceful flush writes both atomically; only a
             # partial flush leaves them disagreeing.
-            if length_bin_entries != header.cur_element_count:
+            #
+            # BF-600: exempt cur_element_count == 0. ChromaDB >= 1.5.x writes
+            # length.bin at the index allocation capacity (== max_elements,
+            # default 100) and leaves header.bin at the init value
+            # cur_element_count=0 until a real sync/compaction flushes it. A
+            # small or freshly-built store therefore legitimately shows
+            # ``cur=0`` with ``length.bin=100`` while every added row is still
+            # safe in the WAL (chroma rebuilds the in-memory index on next
+            # open). That is NOT a torn write — a genuine partial flush leaves
+            # a NON-ZERO cur_element_count disagreeing with length.bin (e.g.
+            # the BF-298 reference case header=70779 vs length=70966). Gating
+            # on ``cur > 0`` removes the false positive that hard-blocked
+            # boot/backup on fresh and small data dirs without weakening
+            # detection of real mid-flush corruption.
+            if (
+                header.cur_element_count > 0
+                and length_bin_entries != header.cur_element_count
+            ):
                 errors.append(
                     f"{entry.name}: header.cur_element_count={header.cur_element_count} "
                     f"!= length.bin entries={length_bin_entries} (torn write signature)"

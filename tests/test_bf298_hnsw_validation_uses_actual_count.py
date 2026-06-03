@@ -137,3 +137,39 @@ def test_length_bin_overruns_max_elements_fails(tmp_path: Path) -> None:
     result = validate_hnsw_files(tmp_path)
     assert not result.ok
     assert any("allocation overrun" in e for e in result.errors)
+
+
+def test_fresh_unsynced_index_cur_zero_passes(tmp_path: Path) -> None:
+    """BF-600: a freshly-built / small ChromaDB >= 1.5.x store writes
+    length.bin at the allocation capacity (== max_elements, default 100)
+    but leaves header.cur_element_count at the init value 0 until a real
+    sync/compaction flushes it. Rows are safe in the WAL and the index
+    rebuilds on open, so this is NOT a torn write and must PASS the
+    structural pre-check (which otherwise hard-blocks boot/backup).
+    """
+    _write_hnsw(
+        tmp_path,
+        max_elements=100,
+        cur_element_count=0,        # header never synced
+        length_bin_entries=100,     # length.bin at allocation capacity
+        data_level0_elements=100,   # data_level0 sized to allocation, internally consistent
+    )
+    result = validate_hnsw_files(tmp_path)
+    assert result.ok, f"fresh un-synced index must pass; errors={result.errors}"
+
+
+def test_torn_write_nonzero_cur_still_flagged_after_bf600(tmp_path: Path) -> None:
+    """BF-600: the cur==0 exemption must NOT mask a genuine torn write,
+    which always has a NON-ZERO cur_element_count disagreeing with
+    length.bin (the 2026-05-22 corruption signature).
+    """
+    _write_hnsw(
+        tmp_path,
+        max_elements=131072,
+        cur_element_count=70779,
+        length_bin_entries=70966,
+    )
+    result = validate_hnsw_files(tmp_path)
+    assert not result.ok
+    assert any("torn write signature" in e for e in result.errors)
+

@@ -57,6 +57,11 @@ def _make_runtime(
     # Episodic memory — disable
     runtime.episodic_memory = None
 
+    # AD-791a: opt out of chat-thread wiring so the explicit-thread-id
+    # validation branch is skipped (MagicMock would otherwise auto-create a
+    # truthy ``chat_thread_store``/``thread_id`` and raise HTTP 400).
+    runtime.chat_thread_store = None
+
     # AD-724: tests using MagicMock-based runtime must opt out of the
     # sanity gate or its mocked methods will short-circuit the migration.
     from probos.cognitive.dm_sanity_gate import DmSanityGate
