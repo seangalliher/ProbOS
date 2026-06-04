@@ -88,6 +88,16 @@ ALLOWED_EXCEPTIONS = {
     # — TYPE_CHECKING-only import for SystemQAAgent type annotations; runtime
     # access via injected pool.
     ("cognitive/self_improvement/qa_pool.py", "probos.agents.system_qa"),
+    # AD-863..868 (Wave 215): chain-of-command-aware crew collaboration.
+    # trust + shapley are Ship's Computer consensus services consumed by the
+    # crew modules (same precedent as AD-399 cognitive→consensus.trust and
+    # AD-482 cognitive→consensus.shapley). All TrustNetwork imports are
+    # TYPE_CHECKING-only (DI via constructor); compute_shapley_values is a
+    # pure function used for cross-verifier Shapley attribution.
+    ("cognitive/crew_assignment.py", "probos.consensus.trust"),
+    ("cognitive/crew_synth.py", "probos.consensus.shapley"),
+    ("cognitive/crew_synth.py", "probos.consensus.trust"),
+    ("cognitive/crew_verifier.py", "probos.consensus.trust"),
 }
 
 
