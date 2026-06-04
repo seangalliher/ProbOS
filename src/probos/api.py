@@ -216,6 +216,7 @@ def create_app(runtime: Any) -> FastAPI:
         schedule_nl as schedule_nl_router,  # AD-812: NL scheduled actions
         projects as projects_router,  # AD-793 (Wave 196): projects substrate
         capability_requests as capability_requests_router,  # AD-857: capability-request decision surface
+        crew_tasks as crew_tasks_router,  # AD-862: crew-collaboration surface
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -244,6 +245,7 @@ def create_app(runtime: Any) -> FastAPI:
         schedule_nl_router,
         projects_router,
         capability_requests_router,
+        crew_tasks_router,
     ):
         app.include_router(r.router)
 
