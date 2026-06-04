@@ -18,7 +18,11 @@ execute a dispatched work item:
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
+import json
 import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from probos.tools.executor import ToolExecutor
@@ -198,3 +202,164 @@ def register_mesh_intent_tools(
         )
         registry.register(tool, provider="AD-856")
     return available
+
+
+@dataclass
+class WorkItemAgenticOutcome:
+    """AD-859a: structured result of a single dispatched agentic work-item run.
+
+    Replaces the bare ``str | None`` the AD-856 inline loop returned so BOTH the
+    AD-839 dispatch handler AND the crew fan-out executor (AD-859) can collect a
+    result with provenance. ``tool_trace_ref`` is a content-addressable SHA ref
+    to the serialized ``AgenticResult.tool_calls`` in ``AttachmentStore`` (AD-731
+    rule: refs on the bus, bytes in the store), or ``None`` when no store is
+    wired (honest-degrade).
+    """
+
+    final_text: str = ""
+    stopped_reason: str = ""
+    denied_tools: list[str] = field(default_factory=list)
+    tool_trace_ref: str | None = None
+
+
+class WorkItemAgenticExecutor:
+    """AD-859a: reusable executor that runs a dispatched work item through the
+    AgenticLoop (AD-545) and returns a structured :class:`WorkItemAgenticOutcome`.
+
+    Extracted from ``CognitiveAgent._run_agentic_dispatch`` (AD-856) so the loop
+    wiring (build :class:`DispatchToolExecutor`, register mesh-intent tools,
+    gather grants into tool defs, construct the loop, await it) lives in one
+    place callable by both the AD-839 handler and the crew executor.
+
+    Capability-gap surfacing for ``denied_tools`` stays the CALLER's
+    responsibility — the executor only records which tools were denied; it does
+    not call the gap driver.
+    """
+
+    def __init__(self, *, llm_client: Any) -> None:
+        self._llm = llm_client
+
+    async def run(
+        self,
+        *,
+        agent_id: str,
+        instructions: str,
+        task_text: str,
+        runtime: Any,
+        department: str = "",
+        rank: str = "ensign",
+    ) -> WorkItemAgenticOutcome:
+        """Run one agentic work-item session and return its structured outcome.
+
+        Reads the tool permission store, tool registry and intent bus off the
+        ``runtime``. Mirrors the AD-856 inline loop exactly (zero behavior
+        change on the AD-839 path), then additionally persists the tool trace to
+        ``runtime.attachment_store`` and returns a :class:`WorkItemAgenticOutcome`.
+        """
+        from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+        from probos.cognitive.swe_harness.tool_call import (
+            tool_registration_to_llm_definition,
+        )
+
+        registry = getattr(runtime, "tool_registry", None)
+        perm_store = getattr(runtime, "tool_permission_store", None)
+        intent_bus = getattr(runtime, "intent_bus", None)
+
+        executor = DispatchToolExecutor(registry=registry)
+
+        mesh_ids: list[str] = []
+        if intent_bus is not None and registry is not None:
+            try:
+                mesh_ids = register_mesh_intent_tools(registry, intent_bus)
+            except Exception:
+                logger.warning(
+                    "AD-859a: failed to register mesh-intent tools for agent "
+                    "%s; continuing with granted tools only",
+                    agent_id, exc_info=True,
+                )
+                mesh_ids = []
+
+        granted_ids: list[str] = []
+        if perm_store is not None:
+            grants = perm_store.get_active_grants_sync(agent_id)
+            granted_ids = [g.tool_id for g in grants if not g.is_restriction]
+        tool_ids = list(dict.fromkeys([*granted_ids, *mesh_ids]))
+
+        tools: list[dict] = []
+        if registry is not None:
+            for tid in tool_ids:
+                reg = registry.get(tid)
+                if reg is None:
+                    continue
+                tools.append(tool_registration_to_llm_definition(reg))
+
+        loop = AgenticLoop(
+            llm_client=self._llm,
+            tool_executor=executor,
+            event_emit_fn=getattr(runtime, "emit_event", None),
+        )
+        agentic_result = await loop.run(
+            system_prompt=instructions or "",
+            user_message=task_text,
+            tools=tools,
+            context={
+                "agent_id": agent_id,
+                "department": department,
+                "rank": rank,
+            },
+        )
+
+        tool_trace_ref = await self._persist_tool_trace(
+            agentic_result, runtime, agent_id
+        )
+
+        return WorkItemAgenticOutcome(
+            final_text=agentic_result.final_text or "",
+            stopped_reason=agentic_result.stopped_reason,
+            denied_tools=list(executor.denied_tools),
+            tool_trace_ref=tool_trace_ref,
+        )
+
+    async def _persist_tool_trace(
+        self,
+        agentic_result: Any,
+        runtime: Any,
+        agent_id: str,
+    ) -> str | None:
+        """Persist the loop's tool_calls to AttachmentStore; return the SHA ref.
+
+        Honest-degrade to ``None`` (log a warning) when the store is unwired or
+        the write fails — the trace ref is provenance, not correctness, so a
+        missing store must not fail the dispatch (AD-731 / log-and-degrade tier).
+        """
+        try:
+            store = getattr(runtime, "attachment_store", None)
+        except Exception:
+            logger.warning(
+                "AD-859a: attachment_store accessor raised while persisting the "
+                "tool trace for agent %s; tool_trace_ref will be None",
+                agent_id, exc_info=True,
+            )
+            return None
+        if store is None:
+            return None
+        try:
+            payload = [
+                dataclasses.asdict(tc) for tc in getattr(agentic_result, "tool_calls", [])
+            ]
+            blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+            content_hash = hashlib.sha256(blob).hexdigest()
+            await store.write(
+                content_hash=content_hash,
+                blob=blob,
+                mime="application/json",
+                origin="crew_trace",
+            )
+            return content_hash
+        except Exception:
+            logger.warning(
+                "AD-859a: failed to persist the tool trace for agent %s; "
+                "tool_trace_ref will be None",
+                agent_id, exc_info=True,
+            )
+            return None

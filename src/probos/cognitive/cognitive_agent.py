@@ -1227,65 +1227,22 @@ class CognitiveAgent(BaseAgent):
         perm_store = getattr(runtime, "tool_permission_store", None)
         gap_driver = getattr(runtime, "capability_gap_driver", None)
         registry = getattr(runtime, "tool_registry", None)
-        intent_bus = getattr(runtime, "intent_bus", None)
         if llm is None or perm_store is None or gap_driver is None or registry is None:
             return None
 
-        from probos.cognitive.agentic_dispatch import (
-            DispatchToolExecutor,
-            register_mesh_intent_tools,
-        )
-        from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
-        from probos.cognitive.swe_harness.tool_call import (
-            tool_registration_to_llm_definition,
-        )
+        from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 
-        executor = DispatchToolExecutor(registry=registry)
-
-        mesh_ids: list[str] = []
-        if intent_bus is not None:
-            try:
-                mesh_ids = register_mesh_intent_tools(registry, intent_bus)
-            except Exception:
-                logger.warning(
-                    "AD-856: failed to register mesh-intent tools for work_item "
-                    "%s; continuing with granted tools only",
-                    work_item_id, exc_info=True,
-                )
-                mesh_ids = []
-
-        grants = perm_store.get_active_grants_sync(self.id)
-        granted_ids = [g.tool_id for g in grants if not g.is_restriction]
-        tool_ids = list(dict.fromkeys([*granted_ids, *mesh_ids]))
-
-        tools: list[dict] = []
-        for tid in tool_ids:
-            reg = registry.get(tid)
-            if reg is None:
-                continue
-            tools.append(tool_registration_to_llm_definition(reg))
-
-        system_prompt = getattr(self, "instructions", "") or ""
-        department = getattr(self, "department", "") or ""
-        rank = getattr(self, "rank", "ensign") or "ensign"
-
-        loop = AgenticLoop(
-            llm_client=llm,
-            tool_executor=executor,
-            event_emit_fn=getattr(runtime, "emit_event", None),
-        )
-        agentic_result = await loop.run(
-            system_prompt=system_prompt,
-            user_message=task_text,
-            tools=tools,
-            context={
-                "agent_id": self.id,
-                "department": department,
-                "rank": rank,
-            },
+        executor = WorkItemAgenticExecutor(llm_client=llm)
+        outcome = await executor.run(
+            agent_id=self.id,
+            instructions=getattr(self, "instructions", "") or "",
+            task_text=task_text,
+            runtime=runtime,
+            department=getattr(self, "department", "") or "",
+            rank=getattr(self, "rank", "ensign") or "ensign",
         )
 
-        for denied_tool in executor.denied_tools:
+        for denied_tool in outcome.denied_tools:
             try:
                 await gap_driver.on_capability_gap(
                     work_item_id=work_item_id,
@@ -1299,7 +1256,7 @@ class CognitiveAgent(BaseAgent):
                     denied_tool, work_item_id, exc_info=True,
                 )
 
-        return agentic_result.final_text or ""
+        return outcome.final_text or ""
 
     async def _build_guided_decision(
         self, procedure: Any, observation: dict, match_score: float
