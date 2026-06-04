@@ -5041,6 +5041,11 @@ class AgenticDispatchConfig(BaseModel):
 
     enabled: bool = False
 
+    # AD-859: bound the crew fan-out so a wide parent (many child subtasks)
+    # cannot exhaust the LLM tier. Conservative default per Safety Budget —
+    # keeps concurrent subtask runs small until the operator widens it.
+    max_parallel_subtasks: int = 3
+
 
 class SystemConfig(BaseModel):
     """Root configuration model."""
