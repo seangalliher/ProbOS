@@ -48,10 +48,15 @@ _SYSTEM_PROMPT = (
     "JSON array (no prose, no markdown fences). Each element is an object with "
     "keys: \"spec_id\" (short stable slug, unique), \"title\" (imperative "
     "phrase), \"description\" (optional), \"depends_on\" (array of spec_id "
-    "strings that must finish first; [] for none), and \"expected_output\" "
-    "(optional one-sentence acceptance criterion, or null). Do not invent "
-    "dependency ids that are not themselves spec_ids in the array. Keep the "
-    "graph acyclic. Emit the smallest number of sub-tasks that fully covers "
+    "strings that must finish first; [] for none), \"expected_output\" "
+    "(optional one-sentence acceptance criterion, or null), \"capability\" "
+    "(optional short phrase describing the kind of work, e.g. \"web research\", "
+    "\"write code\", \"analyze data\", or null), and \"department\" (optional, "
+    "one of: engineering, science, medical, security, bridge, operations, or "
+    "null). Both \"capability\" and \"department\" are advisory hints; null is "
+    "acceptable and you must not invent a department if you are unsure. Do not "
+    "invent dependency ids that are not themselves spec_ids in the array. Keep "
+    "the graph acyclic. Emit the smallest number of sub-tasks that fully covers "
     "the goal."
 )
 
@@ -236,6 +241,12 @@ class LLMPlanDecomposer:
             expected = item.get("expected_output")
             expected_output = str(expected).strip() if isinstance(expected, str) and expected.strip() else None
 
+            capability_raw = item.get("capability")
+            capability = str(capability_raw).strip() if isinstance(capability_raw, str) and capability_raw.strip() else None
+
+            department_raw = item.get("department")
+            department = str(department_raw).strip() if isinstance(department_raw, str) and department_raw.strip() else None
+
             description = str(item.get("description") or "").strip()
 
             specs.append(
@@ -245,6 +256,8 @@ class LLMPlanDecomposer:
                     description=description,
                     depends_on=depends_on,
                     expected_output=expected_output,
+                    capability=capability,
+                    department=department,
                 )
             )
         return specs
@@ -300,6 +313,8 @@ class LLMPlanDecomposer:
             resources=spec.resources,
             metadata=dict(spec.metadata),
             expected_output=spec.expected_output,
+            capability=spec.capability,
+            department=spec.department,
         )
 
     @staticmethod
@@ -337,4 +352,6 @@ class LLMPlanDecomposer:
             description=goal,
             depends_on=(),
             expected_output=None,
+            capability=None,
+            department=None,
         )

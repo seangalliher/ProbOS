@@ -62,6 +62,8 @@ class WorkItemSpec:
     # falls back to free-text critique. Placed after ``metadata`` so the
     # defaulted-field-ordering rule holds.
     expected_output: str | None = None
+    capability: str | None = None   # AD-863: one-phrase "kind of work" for agent resolution
+    department: str | None = None   # AD-863: optional department hint (engineering/science/medical/security/bridge/operations)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +77,8 @@ class WorkItemSpec:
             "resources": list(self.resources),
             "metadata": dict(self.metadata),
             "expected_output": self.expected_output,
+            "capability": self.capability,
+            "department": self.department,
         }
 
 
@@ -455,6 +459,8 @@ class ParallelDispatcher:
                 "resources": list(spec.resources),
                 "plan_version": version,
                 "expected_output": spec.expected_output,
+                "capability": spec.capability,
+                "department": spec.department,
             })
             try:
                 item = await self._store.create_work_item(
