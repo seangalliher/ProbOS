@@ -5046,6 +5046,12 @@ class AgenticDispatchConfig(BaseModel):
     # keeps concurrent subtask runs small until the operator widens it.
     max_parallel_subtasks: int = 3
 
+    # AD-860: cap the adversarial verify -> re-run -> re-verify convergence
+    # loop. Conservative default per Safety Budget — at most two correction
+    # rounds before a still-refuted subtask is escalated as "unverified"
+    # rather than looped indefinitely.
+    max_convergence_rounds: int = 2
+
 
 class SystemConfig(BaseModel):
     """Root configuration model."""

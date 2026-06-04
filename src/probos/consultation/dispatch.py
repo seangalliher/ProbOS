@@ -454,6 +454,7 @@ class ParallelDispatcher:
                 "spec_id": spec.spec_id,
                 "resources": list(spec.resources),
                 "plan_version": version,
+                "expected_output": spec.expected_output,
             })
             try:
                 item = await self._store.create_work_item(
