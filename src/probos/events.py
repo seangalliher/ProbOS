@@ -103,6 +103,7 @@ class EventType(str, Enum):
     CREW_TASK_STARTED = "crew_task_started"  # AD-859
     SUBTASK_COMPLETED = "subtask_completed"  # AD-859
     CREW_TASK_COMPLETED = "crew_task_completed"  # AD-861
+    CREW_ORCHESTRATION_STARTED = "crew_orchestration_started"  # AD-867
     BOOKING_STARTED = "booking_started"
     BOOKING_COMPLETED = "booking_completed"
     BOOKING_CANCELLED = "booking_cancelled"

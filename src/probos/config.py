@@ -5052,6 +5052,12 @@ class AgenticDispatchConfig(BaseModel):
     # rather than looped indefinitely.
     max_convergence_rounds: int = 2
 
+    # AD-867: gate the full crew pipeline (resolve -> delegate -> fan-out ->
+    # verify -> synthesize) behind one runtime entry point. Conservative default
+    # per convention #14 — the orchestrator trigger stays OFF so a multi-spec
+    # dispatch keeps the existing single-agent path until the operator opts in.
+    orchestrator_enabled: bool = False
+
 
 class SystemConfig(BaseModel):
     """Root configuration model."""

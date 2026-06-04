@@ -1450,6 +1450,124 @@ def _wire_consultation_dispatch(*, runtime: Any, config: "SystemConfig") -> bool
     return True
 
 
+def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-867: wire :class:`CrewOrchestrator` behind ``runtime.crew_orchestrator``.
+
+    Threads the dormant crew collaborators (AD-859 executor, AD-860 verifier,
+    AD-861 synthesizer, AD-864 assignment resolver, AD-865 delegator) into one
+    end-to-end pipeline. Gated on ``config.agentic_dispatch.orchestrator_enabled``
+    (default OFF). Tier-2 log-and-degrade: any missing shared dependency -> no-op
+    + INFO log.
+    """
+    cfg = getattr(config, "agentic_dispatch", None)
+    if not cfg or not getattr(cfg, "orchestrator_enabled", False):
+        return False
+
+    work_item_store = getattr(runtime, "work_item_store", None)
+    registry = getattr(runtime, "registry", None)
+    capability_registry = getattr(runtime, "capability_registry", None)
+    ontology = getattr(runtime, "ontology", None)
+    trust_network = getattr(runtime, "trust_network", None)
+    llm_client = getattr(runtime, "llm_client", None)
+    missing = [
+        name
+        for name, dep in (
+            ("work_item_store", work_item_store),
+            ("registry", registry),
+            ("capability_registry", capability_registry),
+            ("ontology", ontology),
+            ("trust_network", trust_network),
+            ("llm_client", llm_client),
+        )
+        if dep is None
+    ]
+    if missing:
+        logger.info(
+            "AD-867: crew_orchestrator skipped; missing dependencies: %s",
+            ", ".join(missing),
+        )
+        return False
+
+    from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+    from probos.cognitive.crew_assignment import CrewAssignmentResolver
+    from probos.cognitive.crew_delegation import CrewDelegator
+    from probos.cognitive.crew_executor import CrewTaskExecutor
+    from probos.cognitive.crew_orchestrator import CrewOrchestrator
+    from probos.cognitive.crew_synth import CrewSynthesizer
+    from probos.cognitive.crew_verifier import SubtaskVerifier
+
+    emit_fn = getattr(runtime, "emit_event", None)
+    order_manager = getattr(runtime, "order_manager", None)
+    episodic_memory = getattr(runtime, "episodic_memory", None)
+    try:
+        from probos.routers.chat import _get_attachment_store
+
+        attachment_store = _get_attachment_store(runtime)
+    except Exception:
+        # Honest-degrade: synthesis stores no attachment provenance without a
+        # store, but the pipeline still completes.
+        attachment_store = None
+
+    agentic_executor = WorkItemAgenticExecutor(llm_client=llm_client)
+    max_parallel = getattr(cfg, "max_parallel_subtasks", 3)
+    max_rounds = getattr(cfg, "max_convergence_rounds", 2)
+
+    assignment_resolver = CrewAssignmentResolver(
+        capability_registry=capability_registry,
+        ontology=ontology,
+        trust_network=trust_network,
+        agent_registry=registry,
+    )
+    delegator = CrewDelegator(
+        ontology=ontology,
+        order_manager=order_manager,
+        agent_registry=registry,
+    )
+    crew_executor = CrewTaskExecutor(
+        work_item_store=work_item_store,
+        agent_registry=registry,
+        agentic_executor=agentic_executor,
+        runtime=runtime,
+        max_parallel_subtasks=max_parallel,
+        emit_fn=emit_fn,
+    )
+    verifier = SubtaskVerifier(
+        llm_client=llm_client,
+        work_item_store=work_item_store,
+        agent_registry=registry,
+        trust_network=trust_network,
+        agentic_executor=agentic_executor,
+        runtime=runtime,
+        max_convergence_rounds=max_rounds,
+        ontology=ontology,
+    )
+    synthesizer = CrewSynthesizer(
+        llm_client=llm_client,
+        work_item_store=work_item_store,
+        trust_network=trust_network,
+        episodic_memory=episodic_memory,
+        attachment_store=attachment_store,
+        runtime=runtime,
+        emit_fn=emit_fn,
+    )
+    runtime.crew_orchestrator = CrewOrchestrator(  # public attr (Wave 5 conv #1)
+        assignment_resolver=assignment_resolver,
+        delegator=delegator,
+        crew_executor=crew_executor,
+        verifier=verifier,
+        synthesizer=synthesizer,
+        work_item_store=work_item_store,
+        runtime=runtime,
+        emit_fn=emit_fn,
+        config=config,
+    )
+    logger.info(
+        "AD-867: CrewOrchestrator initialized (max_parallel=%d, max_rounds=%d)",
+        max_parallel, max_rounds,
+    )
+    return True
+
+
 def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-482 v1: wire the self-improvement pipeline.
 
@@ -2181,6 +2299,9 @@ async def finalize_startup(
 
     if _wire_consultation_dispatch(runtime=runtime, config=config):
         logger.info("AD-594c: ParallelDispatcher v1 wired during finalization")
+
+    if _wire_crew_orchestrator(runtime=runtime, config=config):
+        logger.info("AD-867: CrewOrchestrator wired during finalization")
 
     if _wire_workspace_ontology(runtime=runtime, config=config):
         logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")
