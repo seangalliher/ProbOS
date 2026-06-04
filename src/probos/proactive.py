@@ -3343,6 +3343,51 @@ class ProactiveCognitiveLoop:
                         logger.info("AD-654d: %s assigned task to @%s", agent.id[:12], target_callsign)
         text = re.sub(assign_pattern, '', text, flags=re.DOTALL).strip()
 
+        # --- CREW (AD-868) — Lieutenant+ only: self-originate a crew task ---
+        crew_min_rank = Rank.LIEUTENANT
+        can_originate_crew = (
+            _RANK_ORDER_ASSIGN.index(rank)
+            >= _RANK_ORDER_ASSIGN.index(crew_min_rank)
+        )
+        crew_pattern = r'\[CREW\]\s*(.*?)\s*\[/CREW\]'
+        if can_originate_crew:
+            orchestrator = getattr(rt, "crew_orchestrator", None)
+            for match in re.finditer(crew_pattern, text, re.DOTALL):
+                goal = match.group(1).strip()
+                if not goal:
+                    continue
+                if orchestrator is None:
+                    logger.info(
+                        "AD-868: %s emitted a [CREW] goal but crew_orchestrator "
+                        "is not wired; skipping (no crew task originated)",
+                        agent.id[:12],
+                    )
+                    continue
+                try:
+                    parent_id = await orchestrator.originate_crew_task(
+                        origin_agent_id=agent.id,
+                        goal=goal,
+                    )
+                except Exception:
+                    logger.warning(
+                        "AD-868: originate_crew_task raised for %s; the "
+                        "proactive loop continues without a crew task",
+                        agent.id[:12], exc_info=True,
+                    )
+                    continue
+                if parent_id:
+                    actions_executed.append({
+                        "type": "crew",
+                        "parent_id": parent_id,
+                        "goal": goal,
+                    })
+                    logger.info(
+                        "AD-868: %s originated crew task %s",
+                        agent.id[:12], parent_id,
+                    )
+        # Ensign silently ignored (no [CREW] privilege); strip the tag regardless.
+        text = re.sub(crew_pattern, '', text, flags=re.DOTALL).strip()
+
         # --- HANDOFF (AD-654d) — any rank ---
         handoff_pattern = r'\[HANDOFF\s+@([\w-]+)\]\s*(.*?)\s*\[/HANDOFF\]'
         for match in re.finditer(handoff_pattern, text, re.DOTALL):
