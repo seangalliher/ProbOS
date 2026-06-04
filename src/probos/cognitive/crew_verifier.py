@@ -104,6 +104,7 @@ class SubtaskVerifier:
         agentic_executor: "WorkItemAgenticExecutor",
         runtime: Any,
         max_convergence_rounds: int = 2,
+        ontology: Any = None,
     ) -> None:
         self._llm = llm_client
         self._store = work_item_store
@@ -112,6 +113,11 @@ class SubtaskVerifier:
         self._executor = agentic_executor
         self._runtime = runtime
         self._max_rounds = max(1, int(max_convergence_rounds))
+        # AD-866 (optional, Dependency Inversion): when wired, verifier selection
+        # prefers a department peer or the producer's chief over a random
+        # independent agent. Default ``None`` preserves the AD-860 any-independent
+        # behavior verbatim for every existing call site.
+        self._ontology = ontology
 
     # ------------------------------------------------------------------ public
 
@@ -267,8 +273,21 @@ class SubtaskVerifier:
     def _pick_independent_verifier(self, producer_id: str) -> str | None:
         """Return an agent id that differs from ``producer_id``, or ``None``.
 
-        Independence is the gate: the producer can never verify itself. Returns
-        the first registered agent whose id is not the producer's.
+        Independence is the gate: the producer can never verify itself.
+
+        AD-866 selection order (only when an ``ontology`` was wired):
+
+        1. **Department peer** — an alive agent ``!= producer`` in the *same
+           department* as the producer (the most qualified independent judge).
+        2. **Authority chain** — the producer's chief (a superior post's alive
+           agent) when no peer is available.
+        3. **Any independent** (AD-860 behavior) — the first registered agent
+           whose id is not the producer's.
+        4. **None** — honest-degrade to ``unverified``.
+
+        When no ontology is wired (default), steps 1–2 are skipped and the
+        AD-860 any-independent path runs verbatim. Any ontology lookup error is
+        Tier-2 log-and-degraded — it falls through to step 3, never propagates.
         """
         try:
             agents = self._registry.all()
@@ -279,10 +298,78 @@ class SubtaskVerifier:
                 producer_id, exc_info=True,
             )
             return None
+
+        if self._ontology is not None:
+            try:
+                peer = self._pick_department_peer(producer_id, agents)
+                if peer is not None:
+                    return peer
+                chief = self._pick_authority_chief(producer_id, agents)
+                if chief is not None:
+                    return chief
+            except Exception:
+                logger.warning(
+                    "AD-866: ontology-aware verifier selection failed for "
+                    "producer %s; falling back to any-independent selection",
+                    producer_id, exc_info=True,
+                )
+
         for agent in agents:
             agent_id = getattr(agent, "id", None)
             if agent_id and agent_id != producer_id:
                 return agent_id
+        return None
+
+    def _agent_type_for(self, producer_id: str, agents: list[Any]) -> str | None:
+        """Map a producer ``agent_id`` to its ``agent_type`` via the registry."""
+        for agent in agents:
+            if getattr(agent, "id", None) == producer_id:
+                return getattr(agent, "agent_type", None)
+        return None
+
+    def _pick_department_peer(self, producer_id: str, agents: list[Any]) -> str | None:
+        """AD-866 step 1: first alive same-department agent ``!= producer``."""
+        producer_type = self._agent_type_for(producer_id, agents)
+        if producer_type is None:
+            return None
+        producer_dept = self._ontology.get_agent_department(producer_type)
+        if producer_dept is None:
+            return None
+        for agent in agents:
+            agent_id = getattr(agent, "id", None)
+            if not agent_id or agent_id == producer_id:
+                continue
+            if self._registry.get(agent_id) is None:
+                continue  # dead/unregistered — excluded
+            cand_type = getattr(agent, "agent_type", None)
+            if cand_type is None:
+                continue
+            if self._ontology.get_agent_department(cand_type) == producer_dept:
+                return agent_id
+        return None
+
+    def _pick_authority_chief(self, producer_id: str, agents: list[Any]) -> str | None:
+        """AD-866 step 2: the producer's chief — an alive superior-post agent.
+
+        Walks the producer's chain of command and returns the first superior
+        post's live wired agent ``!= producer``. Dead/unwired posts are skipped.
+        """
+        producer_type = self._agent_type_for(producer_id, agents)
+        if producer_type is None:
+            return None
+        producer_post = self._ontology.get_post_for_agent(producer_type)
+        if producer_post is None:
+            return None
+        for post in self._ontology.get_chain_of_command(producer_post.id):
+            if post.id == producer_post.id:
+                continue  # the producer's own post is not a superior
+            for assignment in self._ontology.get_agents_for_post(post.id):
+                cand_id = getattr(assignment, "agent_id", None)
+                if not cand_id or cand_id == producer_id:
+                    continue
+                if self._registry.get(cand_id) is None:
+                    continue  # superior post unfilled by a live agent — excluded
+                return cand_id
         return None
 
     async def _resolve_expected_output(self, work_item_id: str) -> str | None:
