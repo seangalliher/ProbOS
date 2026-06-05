@@ -29,6 +29,11 @@ class QuartermasterAgent(BaseAgent):
 
     agent_type = "quartermaster"
     tier = "utility"
+    # AD-884: the Quartermaster's authority is scoped to reconcile-only board
+    # housekeeping (unassign / re-dispatch / quarantine-flag), all reversible.
+    # Per the Reversibility Preference + Minimal Authority axioms no consensus
+    # gate is required; this allow-list is the regression lock for that scope.
+    RECONCILE_ONLY_INTENTS: frozenset[str] = frozenset({"reconcile_board"})
     default_capabilities = [
         CapabilityDescriptor(
             can="reconcile_board",
