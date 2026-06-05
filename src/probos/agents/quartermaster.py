@@ -77,6 +77,26 @@ class QuartermasterAgent(BaseAgent):
         self._reconcile_backoff_seconds = reconcile_backoff_seconds
         # AD-878: boot-race grace period — skip items younger than this age
         self._min_item_age_seconds = min_item_age_seconds
+        # AD-883: last-sweep summary for observability (None = never run)
+        self._last_sweep: dict[str, Any] | None = None
+
+    # ------------------------------------------------------------------
+    # Observability
+    # ------------------------------------------------------------------
+
+    def info(self) -> dict[str, Any]:
+        """AD-883: surface the last reconcile sweep via the introspection path."""
+        snapshot = super().info()
+        if self._last_sweep is None:
+            snapshot["reconciliation"] = {"last_sweep": None}
+        else:
+            counts = self._last_sweep.get("counts") or {}
+            snapshot["reconciliation"] = {
+                "last_sweep": dict(counts),
+                "age_seconds": round(time.time() - self._last_sweep["at"], 1),
+                "trigger": self._last_sweep.get("trigger"),
+            }
+        return snapshot
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -283,4 +303,10 @@ class QuartermasterAgent(BaseAgent):
             counts["cleared"],
             counts["skipped"],
         )
+        # AD-883: record last-sweep summary for the info() observability surface.
+        self._last_sweep = {
+            "counts": dict(counts),
+            "at": time.time(),
+            "trigger": "periodic",
+        }
         return counts
