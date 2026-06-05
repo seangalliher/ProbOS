@@ -136,9 +136,24 @@ class QuartermasterAgent(BaseAgent):
             "quarantined": 0,
             "quarantined_skipped": 0,
             "backoff_skipped": 0,
+            # AD-879: starvation visibility
+            "truncated": False,
         }
 
-        for item in merged.values():
+        # AD-879: process oldest-first within each priority band. list_work_items
+        # returns created_at DESC (newest-first), so an explicit re-sort is required
+        # to avoid starving the oldest stranded items under the scan_limit cap.
+        if len(merged) >= self._scan_limit:
+            counts["truncated"] = True
+            logger.warning(
+                "Board reconcile truncated: merged=%d >= scan_limit=%d; "
+                "oldest items prioritized but backlog growing",
+                len(merged),
+                self._scan_limit,
+            )
+        ordered = sorted(merged.values(), key=lambda i: (i.priority, i.created_at))
+
+        for item in ordered:
             try:
                 counts["scanned"] += 1
                 wi = item.to_dict()

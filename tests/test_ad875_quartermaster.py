@@ -190,6 +190,8 @@ async def test_reconcile_empty_board_all_zero(store: WorkItemStore) -> None:
         "scanned": 0, "redispatched": 0, "cleared": 0, "skipped": 0, "degraded": False,
         # AD-877: thrash-guard counters always present in the summary
         "quarantined": 0, "quarantined_skipped": 0, "backoff_skipped": 0,
+        # AD-879: starvation-visibility flag always present in the summary
+        "truncated": False,
     }
 
 
