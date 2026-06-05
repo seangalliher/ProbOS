@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
 from typing import Any
@@ -491,6 +491,72 @@ class Episode:
     # AD-579b: Temporal validity windows — when is this episode's content valid?
     valid_from: float = 0.0    # epoch timestamp; 0.0 = episode.timestamp (creation time)
     valid_until: float = 0.0   # epoch timestamp; 0.0 = no expiry (valid forever)
+    # AD-871: Provenance-aware memory envelope — graded belief, not flat truth.
+    source_type: str = ""      # graded origin: user_statement|tool_result|observation|external|agent_inference|reflection ("" = back-fill from source at store time)
+    confidence: float = 1.0    # store-time belief strength (0.0–1.0); derived from source_type when graded, else caller-authoritative
+    verification_count: int = 0  # how many independent corroborations have been observed
+    contradicted_by: list[str] = field(default_factory=list)  # episode ids that contradict this record
+
+
+# ------------------------------------------------------------------
+# AD-871: Provenance-aware memory envelope — graded-belief constants/helpers
+# ------------------------------------------------------------------
+
+# Graded ``source_type`` -> store-time default confidence (belief strength).
+SOURCE_TYPE_CONFIDENCE: dict[str, float] = {
+    "user_statement": 1.0,
+    "tool_result": 1.0,
+    "observation": 0.8,
+    "external": 0.8,
+    "agent_inference": 0.5,
+    "reflection": 0.5,
+}
+
+# Confidence used when a ``source_type`` is unknown/unmapped.
+DEFAULT_PROVENANCE_CONFIDENCE: float = 1.0
+
+# Back-fill map: legacy ``Episode.source`` (MemorySource value) -> graded source_type.
+SOURCE_TO_SOURCE_TYPE: dict[str, str] = {
+    "direct": "observation",       # agent personally observed it
+    "secondhand": "agent_inference",  # heard about it from another agent
+    "ship_records": "external",    # read from ship's records
+    "briefing": "external",        # received during onboarding
+    "reflection": "reflection",    # synthesized during dream consolidation
+}
+
+# ``source_type`` used when a legacy ``source`` tag is unrecognized.
+DEFAULT_SOURCE_TYPE: str = "observation"
+
+
+def resolve_provenance(source: str, source_type: str, confidence: float) -> tuple[str, float]:
+    """AD-871: Resolve graded provenance ``(source_type, confidence)`` at store time.
+
+    Back-fills an empty ``source_type`` from the legacy ``source`` origin tag.
+    When the caller opted into a graded ``source_type`` but left ``confidence``
+    at the neutral default (1.0), the confidence is derived from
+    ``SOURCE_TYPE_CONFIDENCE``. Caller-provided non-default confidence and
+    pre-AD-871 episodes (empty ``source_type``) are never silently downgraded —
+    "store raw, never derived".
+    """
+    resolved_type = source_type or SOURCE_TO_SOURCE_TYPE.get(source or "direct", DEFAULT_SOURCE_TYPE)
+    if source_type and confidence == 1.0:
+        resolved_conf = SOURCE_TYPE_CONFIDENCE.get(resolved_type, DEFAULT_PROVENANCE_CONFIDENCE)
+    else:
+        resolved_conf = confidence
+    return resolved_type, resolved_conf
+
+
+def mark_contradicted(episode: Episode, contradicting_id: str) -> Episode:
+    """AD-871: Return a copy of ``episode`` with ``contradicting_id`` appended to
+    ``contradicted_by`` (frozen-safe via ``dataclasses.replace``).
+
+    Duplicate or empty ids are a no-op (the same episode is returned).
+    """
+    if not contradicting_id or contradicting_id in episode.contradicted_by:
+        return episode
+    return replace(
+        episode, contradicted_by=[*episode.contradicted_by, contradicting_id]
+    )
 
 
 # ------------------------------------------------------------------

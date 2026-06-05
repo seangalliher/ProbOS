@@ -22,7 +22,7 @@ from typing import Any
 from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.similarity import jaccard_similarity
 from probos.cognitive.temporal_context import serialize_tcm_vector, deserialize_tcm_vector
-from probos.types import AnchorFrame, Episode, RecallScore
+from probos.types import AnchorFrame, Episode, RecallScore, resolve_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -1254,26 +1254,11 @@ class EpisodicMemory:
         if episode.importance == 5:  # Only score if not already set (default)
             _importance = compute_importance(episode)
             if _importance != 5:
-                # Reconstruct frozen Episode with computed importance
-                episode = Episode(
-                    id=episode.id,
-                    timestamp=episode.timestamp,
-                    user_input=episode.user_input,
-                    dag_summary=episode.dag_summary,
-                    outcomes=episode.outcomes,
-                    reflection=episode.reflection,
-                    agent_ids=episode.agent_ids,
-                    duration_ms=episode.duration_ms,
-                    embedding=episode.embedding,
-                    shapley_values=episode.shapley_values,
-                    trust_deltas=episode.trust_deltas,
-                    source=episode.source,
-                    anchors=episode.anchors,
-                    importance=_importance,
-                    correlation_id=episode.correlation_id,
-                    valid_from=episode.valid_from,
-                    valid_until=episode.valid_until,
-                )
+                # AD-871: Reconstruct frozen Episode via dataclasses.replace so
+                # every carried field (incl. the provenance envelope:
+                # source_type/confidence/verification_count/contradicted_by) is
+                # preserved. A field-by-field copy silently drops new fields.
+                episode = dataclasses.replace(episode, importance=_importance)
 
         anomaly_window_manager = getattr(self, "_anomaly_window_manager", None)
         if anomaly_window_manager is not None:
@@ -2312,6 +2297,12 @@ class EpisodicMemory:
         from dataclasses import replace
         normalized = replace(ep, timestamp=ts, duration_ms=dur, source=ep.source or "direct", anchors=None)
 
+        # AD-871: Resolve graded provenance (back-fill source_type from the
+        # legacy source tag; derive confidence from source_type when graded).
+        _source_type, _confidence = resolve_provenance(
+            ep.source or "direct", ep.source_type, ep.confidence
+        )
+
         metadata = {
             "timestamp": ts,
             "intent_type": intent_type,
@@ -2330,6 +2321,11 @@ class EpisodicMemory:
             "importance": int(ep.importance),  # AD-598: importance score (1-10)
             "valid_from": float(ep.valid_from),
             "valid_until": float(ep.valid_until),
+            # AD-871: Provenance-aware memory envelope (graded belief)
+            "source_type": _source_type,
+            "confidence": float(_confidence),
+            "verification_count": int(ep.verification_count),
+            "contradicted_by_json": json.dumps(ep.contradicted_by or []),
         }
         # AD-570: Promote key anchor fields for ChromaDB where-clause filtering
         if ep.anchors:
@@ -2429,6 +2425,25 @@ class EpisodicMemory:
         """Convert ChromaDB result back to an Episode."""
         anchors_raw = metadata.get("anchors_json", "")
         anchors = AnchorFrame(**json.loads(anchors_raw)) if anchors_raw else None
+        # AD-871: Decode provenance envelope with honest-degrade fallbacks.
+        # Pre-AD-871 episodes lack these keys → safe defaults (empty
+        # source_type, confidence 1.0, 0 verifications, no contradictions).
+        source_type = metadata.get("source_type", "") or ""
+        try:
+            confidence = float(metadata.get("confidence", 1.0))
+        except (TypeError, ValueError):
+            confidence = 1.0
+        try:
+            verification_count = int(metadata.get("verification_count", 0))
+        except (TypeError, ValueError):
+            verification_count = 0
+        contradicted_raw = metadata.get("contradicted_by_json", "")
+        try:
+            contradicted_by = json.loads(contradicted_raw) if contradicted_raw else []
+            if not isinstance(contradicted_by, list):
+                contradicted_by = []
+        except (json.JSONDecodeError, TypeError):
+            contradicted_by = []
         return Episode(
             id=doc_id,
             timestamp=round(float(metadata.get("timestamp", 0.0)), 6),
@@ -2446,6 +2461,11 @@ class EpisodicMemory:
             importance=int(metadata.get("importance", 5)),
             valid_from=float(metadata.get("valid_from", 0.0)),
             valid_until=float(metadata.get("valid_until", 0.0)),
+            # AD-871: Provenance-aware memory envelope
+            source_type=source_type,
+            confidence=confidence,
+            verification_count=verification_count,
+            contradicted_by=contradicted_by,
         )
 
     # ---- AD-567b: Salience-weighted recall pipeline --------------------
