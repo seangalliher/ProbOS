@@ -4555,6 +4555,10 @@ class WorkBoardReconcilerConfig(BaseModel):
     interval_seconds: int = Field(default=300, ge=30, le=3600)
     warm_boot: bool = True
     scan_limit: int = Field(default=200, ge=1, le=2000)
+    # AD-877: thrash guard — bounded re-route attempts before dead-letter
+    # quarantine (metadata flag), and a per-item backoff between sweeps.
+    max_reconcile_attempts: int = Field(default=3, ge=1, le=20)
+    reconcile_backoff_seconds: int = Field(default=600, ge=0, le=86400)
 
 
 class CommunicationsConfig(BaseModel):

@@ -1917,6 +1917,9 @@ def _wire_board_reconciler(*, runtime: Any, config: "SystemConfig") -> bool:
     agent._emit = getattr(runtime, "emit_event", None)
     agent._episodic = getattr(runtime, "episodic_memory", None)
     agent._scan_limit = cfg.scan_limit
+    # AD-877: thrash guard config (bounded re-route attempts + per-item backoff).
+    agent._max_reconcile_attempts = cfg.max_reconcile_attempts
+    agent._reconcile_backoff_seconds = cfg.reconcile_backoff_seconds
 
     ticker = BoardReconcilerTicker(
         agent=agent,
