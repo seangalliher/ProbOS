@@ -9,6 +9,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from probos.cognitive.forge_observability import (
+    ForgeStatsAggregator,
+    validate_forge_shape,
+)
+
 if TYPE_CHECKING:
     from probos.cognitive.agent_designer import AgentDesigner
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
@@ -106,6 +111,34 @@ class SelfModificationPipeline:
 
         Returns DesignedAgentRecord if successful, None if any step fails.
         """
+        # AD-872: cheap pre-design shape gate. Honest-degrade (Tier-2): a gate
+        # failure must NEVER block a legitimate forge — log and fall through to
+        # normal design.
+        try:
+            shape_errors = validate_forge_shape(intent_name, intent_description, parameters)
+        except Exception:
+            logger.warning(
+                "AD-872: forge shape gate raised for %s; falling through to normal design",
+                intent_name, exc_info=True,
+            )
+            shape_errors = []
+        if shape_errors:
+            logger.info(
+                "AD-872: rejecting malformed forge request for %s before design: %s",
+                intent_name, shape_errors,
+            )
+            record = DesignedAgentRecord(
+                intent_name=intent_name,
+                agent_type=intent_name,
+                class_name="",
+                source_code="",
+                created_at=time.time(),
+                status="shape_rejected",
+                error="; ".join(shape_errors),
+            )
+            self._records.append(record)
+            return None
+
         # Check max limit
         active_count = sum(1 for r in self._records if r.status == "active")
         if active_count >= self._config.max_designed_agents:
@@ -574,6 +607,13 @@ class SelfModificationPipeline:
     def designed_agents(self) -> list[DesignedAgentRecord]:
         """Return all designed agent records (active and removed)."""
         return list(self._records)
+
+    def forge_stats(self) -> ForgeStatsAggregator:
+        """Return a ForgeStatsAggregator over all design records (AD-872).
+
+        Read-only: builds the aggregator from a snapshot of ``self._records``.
+        """
+        return ForgeStatsAggregator(list(self._records))
 
     # ------------------------------------------------------------------
     # AD-514: Public API
