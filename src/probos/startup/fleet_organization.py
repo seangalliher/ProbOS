@@ -114,11 +114,11 @@ async def organize_fleet(
         startup_phase=2,
     ))
 
-    # Bridge pool group (BF-015: Counselor was ungrouped)
+    # Bridge pool group (BF-015: Counselor was ungrouped; AD-766: Yeoman joins the Bridge)
     pool_groups.register(PoolGroup(
         name="bridge",
         display_name="Bridge",
-        pool_names={"counselor"},
+        pool_names={"counselor", "yeoman"},
         exclude_from_scaler=True,
         startup_phase=1,  # AD-447: bridge is infrastructure
     ))

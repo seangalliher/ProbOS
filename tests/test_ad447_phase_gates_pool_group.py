@@ -108,3 +108,8 @@ async def test_core_is_phase_1() -> None:
     assert bridge is not None
     assert core.startup_phase == 1
     assert bridge.startup_phase == 1
+    # AD-766: Yeoman joins the Bridge so it renders inside the bridge sphere
+    # on the HXI canvas (pool_to_group drives cluster membership).
+    assert "counselor" in bridge.pool_names
+    assert "yeoman" in bridge.pool_names
+    assert pool_groups.get_group_for_pool("yeoman") == "bridge"
