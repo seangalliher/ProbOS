@@ -4540,6 +4540,23 @@ class HybridDispatchConfig(BaseModel):
         return v
 
 
+class WorkBoardReconcilerConfig(BaseModel):
+    """AD-876: periodic + warm-boot work-board reconciliation (Quartermaster).
+
+    Requires ``hybrid_dispatch`` enabled — the reconciler re-dispatches through
+    ``runtime.work_item_router``, which only exists when hybrid dispatch is
+    wired. Default ``enabled=False`` is load-bearing: unlike
+    ``HybridDispatchConfig.enabled`` (a read-only boot path), this gate guards a
+    side-effecting ticker that unassigns / re-dispatches work items, so it ships
+    off and is flipped by operator config.
+    """
+
+    enabled: bool = False  # transitional flag — default False (conv #14)
+    interval_seconds: int = Field(default=300, ge=30, le=3600)
+    warm_boot: bool = True
+    scan_limit: int = Field(default=200, ge=1, le=2000)
+
+
 class CommunicationsConfig(BaseModel):
     """Communications settings (AD-485)."""
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
@@ -5246,6 +5263,9 @@ class SystemConfig(BaseModel):
     hybrid_dispatch: HybridDispatchConfig = Field(
         default_factory=HybridDispatchConfig
     )  # AD-581 v1 (sub-ADs 581a/b/d)
+    work_board_reconciler: WorkBoardReconcilerConfig = Field(
+        default_factory=WorkBoardReconcilerConfig
+    )  # AD-876
     process_chain_registry: ProcessChainRegistryConfig = Field(
         default_factory=ProcessChainRegistryConfig
     )  # AD-647b

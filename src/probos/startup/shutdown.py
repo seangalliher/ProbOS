@@ -567,6 +567,16 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         except Exception:
             logger.warning("AD-733-1: attachment_reaper.stop() failed", exc_info=True)
 
+    # AD-876: Stop the board-reconciler cadence ticker (Quartermaster).
+    if getattr(runtime, "board_reconciler_ticker", None) is not None:
+        try:
+            await runtime.board_reconciler_ticker.stop()
+        except Exception:
+            logger.warning(
+                "AD-876: board_reconciler_ticker.stop() failed", exc_info=True
+            )
+        runtime.board_reconciler_ticker = None
+
     # AD-818 (#751): Stop schema-version sidecar (R2). Unlike ParticipantIndex
     # (owned by EpisodicMemory.stop()), this store has no owner — left unstopped
     # its aiosqlite WAL connection holds schema_versions.db-wal/-shm locks, a

@@ -1863,6 +1863,77 @@ def _wire_hybrid_dispatch(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_board_reconciler(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-876: Wire the Quartermaster cadence ticker (warm-boot + periodic).
+
+    Requires ``runtime.work_item_router`` (only present when hybrid_dispatch is
+    enabled), ``runtime.work_item_store``, and ``runtime.registry``. Tier-2
+    log-and-degrade: missing any dependency or disabled config -> no-op + INFO.
+    """
+    cfg = getattr(config, "work_board_reconciler", None)
+    if not cfg or not cfg.enabled:
+        return False
+
+    router = getattr(runtime, "work_item_router", None)
+    if router is None:
+        logger.info(
+            "AD-876: work_item_router unavailable (requires hybrid_dispatch); "
+            "board reconciler skipped"
+        )
+        return False
+    store = getattr(runtime, "work_item_store", None)
+    if store is None:
+        logger.info(
+            "AD-876: work_item_store unavailable; board reconciler skipped"
+        )
+        return False
+    registry = getattr(runtime, "registry", None)
+    if registry is None:
+        logger.info(
+            "AD-876: registry unavailable; board reconciler skipped"
+        )
+        return False
+
+    from probos.cognitive.work_reconciler import WorkItemReconciler
+    from probos.mesh.board_reconciler_ticker import BoardReconcilerTicker
+
+    reconciler = WorkItemReconciler(
+        registry=registry,
+        identity_registry=getattr(runtime, "identity_registry", None),
+    )
+
+    # Resolve the live quartermaster agent and inject collaborators by the
+    # exact private attrs the constructor uses (NOT the public kwarg names).
+    agents = registry.get_by_pool("quartermaster")
+    if not agents:
+        logger.info(
+            "AD-876: no quartermaster agent in pool; board reconciler skipped"
+        )
+        return False
+    agent = agents[0]
+    agent._reconciler = reconciler
+    agent._store = store
+    agent._router = router
+    agent._emit = getattr(runtime, "emit_event", None)
+    agent._episodic = getattr(runtime, "episodic_memory", None)
+    agent._scan_limit = cfg.scan_limit
+
+    ticker = BoardReconcilerTicker(
+        agent=agent,
+        interval_seconds=cfg.interval_seconds,
+        warm_boot=cfg.warm_boot,
+    )
+    runtime.board_reconciler_ticker = ticker  # public attr (Wave 5 conv #1)
+    ticker.start()
+
+    logger.info(
+        "AD-876: BoardReconciler wired "
+        "(interval=%ds, warm_boot=%s, scan_limit=%d)",
+        cfg.interval_seconds, cfg.warm_boot, cfg.scan_limit,
+    )
+    return True
+
+
 def _wire_capability_gap_driver(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-855: Wire the CapabilityGapDriver.
 
@@ -3620,6 +3691,12 @@ async def finalize_startup(
             # is available. _wire_hybrid_dispatch is tier-2 log-and-degrade.
             if _wire_hybrid_dispatch(runtime=runtime, config=config):
                 logger.info("AD-581 v1: HybridDispatch wired during finalization")
+
+            # AD-876: Quartermaster board reconciler cadence -- must follow
+            # _wire_hybrid_dispatch (depends on runtime.work_item_router).
+            # Tier-2 log-and-degrade.
+            if _wire_board_reconciler(runtime=runtime, config=config):
+                logger.info("AD-876: BoardReconciler wired during finalization")
 
             # AD-855: CapabilityGapDriver -- BLOCKED -> request -> approve ->
             # resume loop. Independent of hybrid dispatch; only needs the

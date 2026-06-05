@@ -25,6 +25,7 @@ from probos.service_profile import ServiceProfileStore
 from probos.directive_store import DirectiveStore
 from probos.cognitive.standing_orders import set_directive_store
 from probos.agents.introspect import IntrospectionAgent
+from probos.agents.quartermaster import QuartermasterAgent  # AD-876
 from probos.agents.utility.nl_graph_query_agent import NLGraphQueryAgent  # AD-691
 from probos.agents.utility.avatar_agents import AvatarRendererAgent  # AD-721i
 from probos.agents.red_team import RedTeamAgent
@@ -1005,6 +1006,7 @@ class ProbOSRuntime:
         self.spawner.register_template("http_fetch", HttpFetchAgent)
         self.spawner.register_template("red_team", RedTeamAgent)
         self.spawner.register_template("introspect", IntrospectionAgent)
+        self.spawner.register_template("quartermaster", QuartermasterAgent)  # AD-876
         self.spawner.register_template("nl_graph_query", NLGraphQueryAgent)  # AD-691
         self.spawner.register_template("avatar_renderer", AvatarRendererAgent)  # AD-721i
         self.spawner.register_template("skill_agent", SkillBasedAgent)

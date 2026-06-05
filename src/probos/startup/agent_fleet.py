@@ -59,6 +59,18 @@ async def create_agent_fleet(
     ids = generate_pool_ids("introspect", "introspect", 2)
     await create_pool_fn("introspect", "introspect", target_size=2, agent_ids=ids, runtime=runtime)
 
+    # Quartermaster pool (AD-876) — single utility agent; cadence wired in
+    # finalize. Gated off by default (work_board_reconciler.enabled=False).
+    if (
+        getattr(config, "work_board_reconciler", None)
+        and config.work_board_reconciler.enabled
+    ):
+        ids = generate_pool_ids("quartermaster", "quartermaster", 1)
+        await create_pool_fn(
+            "quartermaster", "quartermaster",
+            target_size=1, agent_ids=ids, runtime=runtime,
+        )
+
     # NL-to-Graph Query pool (AD-691) — single-agent dispatcher onto runtime.nl_graph_query
     # BF-262: removed runtime.nl_graph_query guard (service wired in finalize, after fleet)
     if (
