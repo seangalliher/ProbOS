@@ -1,14 +1,28 @@
 /* View Switcher — top-left tab switcher for main viewer mode (AD-325) */
 
+import { useEffect } from 'react';
 import { useStore } from '../store/useStore';
 
 export function ViewSwitcher() {
   const mainViewer = useStore(s => s.mainViewer);
+  // KANBAN (Mission Control) only surfaces the build/design pipeline. Hide it
+  // when there are no active builds so it isn't a confusing empty board next to
+  // the crew WORK board (HXI progressive-disclosure, AD-325).
+  const buildCount = useStore(s => s.missionControlTasks?.length ?? 0);
+  const hasBuilds = buildCount > 0;
+
+  // If the Kanban tab is hidden out from under the viewer, fall back to WORK.
+  useEffect(() => {
+    if (mainViewer === 'kanban' && !hasBuilds) {
+      useStore.setState({ mainViewer: 'work' });
+    }
+  }, [mainViewer, hasBuilds]);
+
   if (mainViewer === 'canvas') return null;
 
   const tabs: { key: 'canvas' | 'kanban' | 'system' | 'work' | 'bills'; label: string }[] = [
     { key: 'canvas', label: 'CANVAS' },
-    { key: 'kanban', label: 'KANBAN' },
+    ...(hasBuilds ? [{ key: 'kanban' as const, label: 'KANBAN' }] : []),
     { key: 'system', label: 'SYSTEM' },
     { key: 'work', label: 'WORK' },
     { key: 'bills', label: 'BILLS' },

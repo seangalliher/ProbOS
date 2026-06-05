@@ -106,7 +106,12 @@ describe('ViewSwitcher', () => {
   });
 
   it('renders tab buttons when mainViewer is not canvas', () => {
-    renderWithStore(<ViewSwitcher />, { mainViewer: 'kanban' });
+    // BF-604: KANBAN is now conditional on active builds; provide one so the
+    // full tab set renders.
+    renderWithStore(<ViewSwitcher />, {
+      mainViewer: 'kanban',
+      missionControlTasks: [{ id: 'b1', status: 'working' } as never],
+    });
     expect(screen.getByText('CANVAS')).toBeInTheDocument();
     expect(screen.getByText('KANBAN')).toBeInTheDocument();
     expect(screen.getByText('SYSTEM')).toBeInTheDocument();

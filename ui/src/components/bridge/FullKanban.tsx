@@ -127,6 +127,7 @@ export function FullKanban() {
       background: '#0a0a12',
       display: 'flex', flexDirection: 'column',
       fontFamily: "'JetBrains Mono', monospace",
+      paddingTop: 40, boxSizing: 'border-box',
     }}>
       <div style={{
         padding: '12px 20px',

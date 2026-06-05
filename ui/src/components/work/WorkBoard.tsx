@@ -24,6 +24,11 @@ const COLUMNS: ColConfig[] = [
   { key: 'done',        label: 'DONE',        statuses: ['done'],          targetStatus: 'done',        wipLimit: null },
 ];
 
+// Top padding so the board header clears the fixed ViewSwitcher tab bar (top:12 + button height).
+const TAB_BAR_CLEARANCE = 40;
+// Minimum draggable column width.
+const MIN_COL_WIDTH = 140;
+
 const PRIORITY_COLORS: Record<number, string> = {
   1: '#d05050', 2: '#e08040', 3: '#d0b050', 4: '#5090d0', 5: '#888',
 };
@@ -160,6 +165,10 @@ export default function WorkBoard() {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<WorkItemTemplateView | null>(null);
   const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
+  // Per-column widths (null = flex/auto). Drag a column's right edge to resize.
+  const [colWidths, setColWidths] = useState<Record<ColKey, number | null>>({
+    backlog: null, ready: null, in_progress: null, review: null, done: null,
+  });
 
   // Fetch done items on mount
   const [doneItems, setDoneItems] = useState<WorkItemView[]>([]);
@@ -290,6 +299,25 @@ export default function WorkBoard() {
     setDropTarget(null);
   }, []);
 
+  // Column resize: drag the divider on a column's right edge.
+  const startResize = useCallback((col: ColKey, e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const colEl = (e.currentTarget.parentElement as HTMLElement | null);
+    const startW = colEl?.getBoundingClientRect().width ?? 200;
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.max(MIN_COL_WIDTH, startW + (ev.clientX - startX));
+      setColWidths(prev => ({ ...prev, [col]: next }));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, []);
+
   // Quick create
   const handleQuickCreate = useCallback(async () => {
     if (!quickTitle.trim()) return;
@@ -328,6 +356,7 @@ export default function WorkBoard() {
   const renderColumn = (col: ColConfig, items: WorkItemView[]) => {
     const count = items.length;
     const atLimit = col.wipLimit !== null && count >= col.wipLimit;
+    const width = colWidths[col.key];
     return (
       <div
         key={col.key}
@@ -335,7 +364,8 @@ export default function WorkBoard() {
         onDragLeave={() => setDropTarget(null)}
         onDrop={e => handleDrop(e, col)}
         style={{
-          flex: 1, minWidth: 160, display: 'flex', flexDirection: 'column',
+          ...(width != null ? { width, flex: '0 0 auto' } : { flex: 1, minWidth: MIN_COL_WIDTH }),
+          position: 'relative', display: 'flex', flexDirection: 'column',
           background: dropTarget === col.key ? 'rgba(80,176,160,0.06)' : 'transparent',
           borderRadius: 6, transition: 'background 0.15s',
           borderRight: col.key !== 'done' ? '1px solid rgba(255,255,255,0.04)' : 'none',
@@ -364,12 +394,25 @@ export default function WorkBoard() {
             />
           ))}
         </div>
+        {/* Resize handle on the column's right edge (AD-497 layout fix) */}
+        {col.key !== 'done' && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={`Resize ${col.label} column`}
+            onPointerDown={e => startResize(col.key, e)}
+            style={{
+              position: 'absolute', top: 0, right: -3, width: 6, height: '100%',
+              cursor: 'col-resize', zIndex: 2, touchAction: 'none',
+            }}
+          />
+        )}
       </div>
     );
   };
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', fontFamily: "'JetBrains Mono', monospace" }} onDragEnd={handleDragEnd}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', fontFamily: "'JetBrains Mono', monospace", paddingTop: TAB_BAR_CLEARANCE, boxSizing: 'border-box' }} onDragEnd={handleDragEnd}>
       {/* Toolbar */}
       <div style={{
         padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10,
