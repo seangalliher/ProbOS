@@ -40,7 +40,7 @@ import {
   createConnectionStateMachine,
   type ConnectionStateMachine,
 } from "./connectionStateMachine.js";
-import { notify } from "./notifications.js";
+import { notify, coerceTaskDonePayload } from "./notifications.js";
 import { logInfo, logWarn } from "./logger.js";
 import {
   completeFirstRun,
@@ -425,6 +425,19 @@ function bootstrap(): void {
       }
     });
     ipcMain.handle("probos:quit", () => app.quit());
+    // AD-847: native desktop notification for a completed task. The
+    // renderer-supplied payload is untrusted across the context-isolation
+    // boundary, so coerce it first; a valid `route` (e.g. Yeo's 1:1 chat)
+    // makes the notification click activate the window and route there.
+    ipcMain.handle("probos:notifyTaskDone", (_e, payload: unknown) => {
+      const coerced = coerceTaskDonePayload(payload);
+      if (!coerced) {
+        logWarn("notifyTaskDone rejected; invalid payload");
+        return { ok: false };
+      }
+      notify(coerced, { showAndRoute });
+      return { ok: true };
+    });
     // BF (2026-05-22): renderer fetches from data: URLs are blocked by
     // CORS (null origin). Probe the runtime from the main process where
     // no CORS applies and return the result to the AD-790 wizard.

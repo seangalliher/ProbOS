@@ -39,3 +39,27 @@ export function notify(args: NotifyArgs, activator: NotifyActivator): void {
 
   n.show();
 }
+
+/**
+ * AD-847: validate an untrusted renderer-supplied task-completion payload.
+ *
+ * The renderer reaches the main process across the context-isolation
+ * boundary, so the payload is untrusted: coerce it into a `NotifyArgs` or
+ * return `null` when the required fields are missing/ill-typed. A blank
+ * `route` is dropped so a click never routes to an empty path.
+ */
+export function coerceTaskDonePayload(payload: unknown): NotifyArgs | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const p = payload as Record<string, unknown>;
+  if (typeof p.title !== "string" || p.title.length === 0) {
+    return null;
+  }
+  if (typeof p.body !== "string") {
+    return null;
+  }
+  const route =
+    typeof p.route === "string" && p.route.length > 0 ? p.route : undefined;
+  return { title: p.title, body: p.body, route };
+}

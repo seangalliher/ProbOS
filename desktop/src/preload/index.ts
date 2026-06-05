@@ -46,6 +46,14 @@ interface ProbosApi {
   resetSetup(): Promise<{ ok: boolean }>;
   /** AD-790: read the persisted first-run state (debug + tests). */
   getFirstRunState(): Promise<unknown>;
+  /** AD-847: surface a native desktop notification for a completed task.
+   * When `route` is provided, clicking the notification activates the
+   * window and routes there (e.g. Yeo's 1:1 chat). Fire-and-forget. */
+  notifyTaskDone(payload: {
+    title: string;
+    body: string;
+    route?: string;
+  }): Promise<{ ok: boolean }>;
   onStatusChange(cb: (s: RuntimeStatus) => void): () => void;
 }
 
@@ -65,6 +73,8 @@ const api: ProbosApi = {
     ipcRenderer.invoke("probos:completeSetup", payload),
   resetSetup: () => ipcRenderer.invoke("probos:resetSetup"),
   getFirstRunState: () => ipcRenderer.invoke("probos:getFirstRunState"),
+  notifyTaskDone: (payload) =>
+    ipcRenderer.invoke("probos:notifyTaskDone", payload),
   onStatusChange: (cb: (s: RuntimeStatus) => void) => {
     const listener = (_e: unknown, s: RuntimeStatus): void => cb(s);
     ipcRenderer.on("probos:statusChanged", listener);
