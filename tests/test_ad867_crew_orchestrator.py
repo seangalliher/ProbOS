@@ -365,6 +365,9 @@ async def test_promote_parent_open_to_in_progress(store):
 
     reloaded = await store.get_work_item(parent.id)
     assert reloaded.status == "in_progress"
+    # BF-608: the coordination parent is claimed for the orchestrating
+    # subsystem so the assignment-gated open->in_progress transition succeeds.
+    assert reloaded.assigned_to == "crew_orchestrator"
 
 
 # ---------------------------------------------------------------- honest-degrade

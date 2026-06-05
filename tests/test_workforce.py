@@ -147,7 +147,8 @@ class TestWorkItemCRUD:
     @pytest.mark.asyncio
     async def test_list_work_items_filter_status(self, store):
         await store.create_work_item(title="Open 1")
-        item2 = await store.create_work_item(title="Done 1")
+        # BF-608: in_progress requires an assignee (task open->in_progress).
+        item2 = await store.create_work_item(title="Done 1", assigned_to="agent-1")
         # task: open -> in_progress -> done (AD-498 state machine)
         await store.transition_work_item(item2.id, "in_progress")
         await store.transition_work_item(item2.id, "done")
@@ -204,17 +205,127 @@ class TestWorkItemCRUD:
 
     @pytest.mark.asyncio
     async def test_transition_work_item(self, store):
-        item = await store.create_work_item(title="Transition me")
+        # BF-608: in_progress requires an assignee (task open->in_progress).
+        item = await store.create_work_item(title="Transition me", assigned_to="agent-1")
         updated = await store.transition_work_item(item.id, "in_progress")
         assert updated is not None
         assert updated.status == "in_progress"
 
     @pytest.mark.asyncio
     async def test_transition_from_terminal_status_rejected(self, store):
-        item = await store.create_work_item(title="Terminal")
+        # BF-608: in_progress requires an assignee (task open->in_progress).
+        item = await store.create_work_item(title="Terminal", assigned_to="agent-1")
+        # Reach the terminal 'done' status via the valid task path
+        # (open -> in_progress -> done); open -> done is not a legal task
+        # transition, so the item must be moved through in_progress first.
+        await store.transition_work_item(item.id, "in_progress")
         await store.transition_work_item(item.id, "done")
         result = await store.transition_work_item(item.id, "open")
-        assert result is None  # Can't transition from done
+        assert result is None  # Can't transition from done (terminal)
+
+    @pytest.mark.asyncio
+    async def test_transition_same_status_is_idempotent_noop(self, store, mock_emit):
+        """BF-606: re-dispatching an already-in_progress item is a no-op success.
+
+        ``work_item_dispatched`` is delivered at-least-once (broadcast fan-out,
+        AD-855 resume re-dispatch, bus redelivery). The redundant
+        ``in_progress -> in_progress`` must NOT log a warning, must NOT write
+        the DB, must NOT emit STATUS_CHANGED, and must return the item (not
+        None) so callers don't read it as a failure.
+        """
+        # BF-608: in_progress requires an assignee (task open->in_progress).
+        item = await store.create_work_item(
+            title="Dispatched", work_type="task", assigned_to="agent-1",
+        )
+        moved = await store.transition_work_item(item.id, "in_progress")
+        assert moved is not None and moved.status == "in_progress"
+
+        mock_emit.reset_mock()
+        again = await store.transition_work_item(item.id, "in_progress")
+
+        # Returns the item unchanged (no-op success), not None.
+        assert again is not None
+        assert again.status == "in_progress"
+        # No event of any kind was emitted for the redundant transition.
+        mock_emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_transition_same_status_no_invalid_warning(self, store, caplog):
+        """BF-606: same-status transition must not emit the 'Invalid transition'
+        warning that previously spammed the log dozens of times for a stuck item.
+        """
+        # BF-608: in_progress requires an assignee (task open->in_progress).
+        item = await store.create_work_item(
+            title="Stuck", work_type="task", assigned_to="agent-1",
+        )
+        await store.transition_work_item(item.id, "in_progress")
+
+        with caplog.at_level("WARNING", logger="probos.workforce"):
+            result = await store.transition_work_item(item.id, "in_progress")
+
+        assert result is not None
+        assert "Invalid transition" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_requires_assignment_blocks_unassigned_in_progress(self, store, mock_emit):
+        """BF-608: a transition flagged ``requires_assignment`` (task
+        ``open -> in_progress``) is refused while the item is unassigned, so the
+        board can never show the contradictory "in_progress / Unassigned" state
+        (work item 1e0ffcdb7b57). The item stays ``open`` and dispatchable.
+        """
+        item = await store.create_work_item(title="Unowned", work_type="task")
+        assert item.assigned_to is None
+
+        mock_emit.reset_mock()
+        result = await store.transition_work_item(item.id, "in_progress")
+
+        # Refused: returns None and the item stays in its prior dispatchable status.
+        assert result is None
+        unchanged = await store.get_work_item(item.id)
+        assert unchanged.status == "open"
+        # No DB write / STATUS_CHANGED event for the refused transition.
+        status_changed = [
+            c for c in mock_emit.call_args_list
+            if c[0][0] == "work_item_status_changed"
+        ]
+        assert status_changed == []
+
+    @pytest.mark.asyncio
+    async def test_requires_assignment_warns_on_refusal(self, store, caplog):
+        """BF-608: the refusal log names the item and its dispatchable status."""
+        item = await store.create_work_item(title="Unowned", work_type="task")
+        with caplog.at_level("WARNING", logger="probos.workforce"):
+            result = await store.transition_work_item(item.id, "in_progress")
+        assert result is None
+        assert "BF-608" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_requires_assignment_allows_assigned_in_progress(self, store):
+        """BF-608: once an owner is set, ``open -> in_progress`` proceeds."""
+        item = await store.create_work_item(
+            title="Owned", work_type="task", assigned_to="agent-1",
+        )
+        result = await store.transition_work_item(item.id, "in_progress")
+        assert result is not None
+        assert result.status == "in_progress"
+
+    @pytest.mark.asyncio
+    async def test_blocked_to_in_progress_keeps_existing_assignment(self, store):
+        """BF-608: the AD-855 capability-gap resume (``blocked -> in_progress``,
+        which is NOT assignment-gated) still works for an item that already has
+        an owner — the resume path is not broken for properly-assigned items.
+        """
+        item = await store.create_work_item(
+            title="Resumable", work_type="task", assigned_to="agent-1",
+        )
+        await store.transition_work_item(item.id, "in_progress")
+        await store.transition_work_item(item.id, "blocked")
+        resumed = await store.transition_work_item(
+            item.id, "in_progress", source="capability_gap_driver",
+        )
+        assert resumed is not None
+        assert resumed.status == "in_progress"
+        assert resumed.assigned_to == "agent-1"
 
     @pytest.mark.asyncio
     async def test_delete_work_item_cascades(self, store_with_resource):
@@ -589,7 +700,8 @@ class TestWorkforceSnapshot:
 
     @pytest.mark.asyncio
     async def test_snapshot_excludes_terminal_items(self, store):
-        item = await store.create_work_item(title="Terminal item")
+        # BF-608: in_progress requires an assignee (task open->in_progress).
+        item = await store.create_work_item(title="Terminal item", assigned_to="agent-1")
         # task: open -> in_progress -> done (AD-498 state machine)
         await store.transition_work_item(item.id, "in_progress")
         await store.transition_work_item(item.id, "done")
@@ -621,7 +733,8 @@ class TestEventEmission:
 
     @pytest.mark.asyncio
     async def test_transition_emits_status_changed(self, store, mock_emit):
-        item = await store.create_work_item(title="Transition emit")
+        # BF-608: in_progress requires an assignee (task open->in_progress).
+        item = await store.create_work_item(title="Transition emit", assigned_to="agent-1")
         mock_emit.reset_mock()
         await store.transition_work_item(item.id, "in_progress")
         calls = [c for c in mock_emit.call_args_list if c[0][0] == "work_item_status_changed"]
@@ -1051,7 +1164,10 @@ class TestWorkTypeValidationIntegration:
         store = WorkItemStore(db_path=str(tmp_path / "test.db"))
         await store.start()
         try:
-            item = await store.create_work_item(title="T", work_type="task")
+            # BF-608: in_progress requires an assignee (task open->in_progress).
+            item = await store.create_work_item(
+                title="T", work_type="task", assigned_to="agent-1",
+            )
             result = await store.transition_work_item(item.id, "in_progress")
             assert result is not None
             assert result.status == "in_progress"
@@ -1090,7 +1206,10 @@ class TestWorkTypeValidationIntegration:
         store = WorkItemStore(db_path=str(tmp_path / "test.db"))
         await store.start()
         try:
-            item = await store.create_work_item(title="WO", work_type="work_order")
+            # BF-608: scheduled->in_progress requires an assignee (work_order).
+            item = await store.create_work_item(
+                title="WO", work_type="work_order", assigned_to="agent-1",
+            )
             assert item.status == "draft"
             item = await store.transition_work_item(item.id, "open")
             item = await store.transition_work_item(item.id, "scheduled")
@@ -1235,3 +1354,27 @@ class TestWorkTypeAPI:
             assert result is not None  # permissive for unknown types
         finally:
             await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_transition_requires_assignment_helper(self, tmp_path):
+        """BF-608: the registry exposes AD-498's per-edge ``requires_assignment``
+        flag so the store can enforce it where ``assigned_to`` is available.
+        """
+        store = WorkItemStore(db_path=str(tmp_path / "test.db"))
+        await store.start()
+        try:
+            reg = store.work_type_registry
+            # task open->in_progress is assignment-gated; its other edges are not.
+            assert reg.transition_requires_assignment("task", "open", "in_progress") is True
+            assert reg.transition_requires_assignment("task", "in_progress", "done") is False
+            assert reg.transition_requires_assignment("task", "blocked", "in_progress") is False
+            # work_order scheduled->in_progress is also gated.
+            assert reg.transition_requires_assignment(
+                "work_order", "scheduled", "in_progress"
+            ) is True
+            # Unknown type / unknown edge -> permissive False.
+            assert reg.transition_requires_assignment("mystery", "open", "in_progress") is False
+            assert reg.transition_requires_assignment("task", "open", "review") is False
+        finally:
+            await store.stop()
+

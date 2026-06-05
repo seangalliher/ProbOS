@@ -279,6 +279,28 @@ class WorkTypeRegistry:
             return False, f"Work type '{type_id}' does not allow transition '{from_status}' → '{to_status}'"
         return True, ""
 
+    def transition_requires_assignment(
+        self, type_id: str, from_status: str, to_status: str,
+    ) -> bool:
+        """Return True if the ``from_status → to_status`` edge is flagged
+        ``requires_assignment``.
+
+        AD-498 attached ``requires_assignment`` to transitions such as ``task``
+        ``open → in_progress`` to encode "you cannot start work without an
+        owner", but ``validate_transition`` never read the flag. BF-608 enforces
+        it at the store boundary (where ``assigned_to`` is available); this
+        helper exposes the per-edge flag without leaking the transition objects.
+        Unknown type or unknown edge → ``False`` (permissive, matching
+        ``validate_transition``'s backward-compat stance).
+        """
+        wt = self._types.get(type_id)
+        if not wt:
+            return False
+        for t in wt.valid_transitions:
+            if t.from_status == from_status and t.to_status == to_status:
+                return bool(t.requires_assignment)
+        return False
+
     def get_valid_targets(self, type_id: str, from_status: str) -> list[str]:
         """Return list of valid target statuses from a given status."""
         wt = self._types.get(type_id)
@@ -1145,12 +1167,46 @@ class WorkItemStore(EventEmitterMixin):
         item = await self.get_work_item(work_item_id)
         if not item:
             return None
+        # BF-606: A same-status transition is an idempotent no-op, not a state
+        # machine violation. ``work_item_dispatched`` is delivered at-least-once
+        # (broadcast fan-out to every crew agent, AD-855 capability-gap resume
+        # which sets in_progress *then* re-dispatches, and bus redelivery), so an
+        # already-in_progress item is repeatedly re-dispatched. Treating
+        # ``in_progress -> in_progress`` as invalid spammed "Invalid transition"
+        # warnings dozens of times for a single stuck item (observed: work item
+        # 1e0ffcdb7b57) and returned None, which callers read as failure. Return
+        # the item unchanged: no DB write, no STATUS_CHANGED event, no warning.
+        if new_status == item.status:
+            return item
         # AD-498: Validate against work type state machine
         valid, reason = self.work_type_registry.validate_transition(
             item.work_type, item.status, new_status,
         )
         if not valid:
             logger.warning("Invalid transition for %s: %s", work_item_id, reason)
+            return None
+        # BF-608: Enforce AD-498's ``requires_assignment`` flag. The flag was
+        # defined on transitions like ``task`` ``open → in_progress`` but
+        # ``validate_transition`` never read it, so an *unassigned* item could
+        # enter ``in_progress`` and surface on the board as the contradictory
+        # "in_progress / Unassigned" state (observed: work item 1e0ffcdb7b57,
+        # which BF-606/BF-607 only partially addressed — BF-607 claims the item
+        # on the *direct*-dispatch path, but a broadcast/AD-855 capability-gap
+        # resume reached ``in_progress`` without ever assigning an owner). This
+        # is the single store-boundary chokepoint with access to ``assigned_to``:
+        # a transition that requires assignment is refused while the item is
+        # unassigned, so the item stays in its prior (dispatchable) status until
+        # an agent claims it. Crew children (crew_executor) and the BF-607
+        # dispatch handler assign *before* transitioning, so they are unaffected.
+        if item.assigned_to is None and self.work_type_registry.transition_requires_assignment(
+            item.work_type, item.status, new_status,
+        ):
+            logger.warning(
+                "BF-608: refusing %s transition '%s' → '%s' for work item %s: "
+                "this transition requires assignment but the item is unassigned; "
+                "it remains '%s' and dispatchable until an agent claims it",
+                item.work_type, item.status, new_status, work_item_id, item.status,
+            )
             return None
         old_status = item.status
         now = time.time()

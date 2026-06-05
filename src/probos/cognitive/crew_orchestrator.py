@@ -350,6 +350,16 @@ class CrewOrchestrator:
                 return
             if parent.status != "open":
                 return
+            # BF-608: ``task`` ``open -> in_progress`` requires an owner. The
+            # crew parent is a coordination container — its children carry the
+            # real per-agent assignments, so it has no single worker. Claim it
+            # for the orchestrating subsystem before promoting; otherwise the
+            # BF-608 store guard refuses the unassigned transition and the
+            # parent can never reach in_progress (and thus never ``done``).
+            if parent.assigned_to is None:
+                await self._work_item_store.update_work_item(
+                    parent_id, assigned_to="crew_orchestrator",
+                )
             moved = await self._work_item_store.transition_work_item(
                 parent_id, "in_progress", source="crew_orchestrator",
             )
