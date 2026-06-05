@@ -65,6 +65,97 @@ class WorkItemRouter:
         meta = work_item_dict.get("metadata") or {}
         return bool(meta.get("dispatchable"))
 
+    async def dispatch_work_item(self, wi: dict[str, Any]) -> None:
+        """Route + dispatch a single work-item dict.
+
+        AD-874: extracted from ``on_work_item_created`` so the create-listener
+        and the Quartermaster reconciler (AD-875) share one dispatch path
+        (Open/Closed). Behavior-preserving for the create path: keeps the
+        ``is_dispatchable`` early-return and every emit/log line.
+        """
+        if not self.is_dispatchable(wi):
+            return
+
+        intent = f"work_item:{wi.get('work_type', '')}".strip(":")
+        assigned = wi.get("assigned_to") or None
+        tags = wi.get("tags") or []
+
+        candidates = [
+            getattr(a, "id", "")
+            for a in self._registry.all()
+            if getattr(a, "id", "")
+        ]
+
+        decision = self._dept_dispatcher.route(
+            intent=intent,
+            candidates=candidates,
+            work_item=_WorkItemView(assigned),
+        )
+
+        from probos.activation.task_event import (
+            task_event_broadcast,
+            task_event_for_agent,
+        )
+
+        priority = self._priority_from_int(int(wi.get("priority", 3)))
+        payload_out: dict[str, Any] = {
+            "work_item_id": wi.get("id", ""),
+            "title": wi.get("title", ""),
+            "description": wi.get("description", ""),
+            "work_type": wi.get("work_type", ""),
+            "tags": tags,
+            "metadata": wi.get("metadata") or {},
+            "routing_reason": decision.reason,
+            "routing_confidence": decision.confidence,
+        }
+
+        if decision.is_direct() and decision.agent_id:
+            task_event = task_event_for_agent(
+                agent_id=decision.agent_id,
+                source_type="work_item_router",
+                source_id=wi.get("id", ""),
+                event_type="work_item_dispatched",
+                priority=priority,
+                payload=payload_out,
+            )
+            if self._emit is not None:
+                try:
+                    self._emit(EventType.HYBRID_DISPATCH_DIRECT, {
+                        "work_item_id": wi.get("id", ""),
+                        "agent_id": decision.agent_id,
+                        "confidence": decision.confidence,
+                        "reason": decision.reason,
+                        "department_id": decision.department_id,
+                    })
+                except Exception:
+                    logger.warning(
+                        "AD-581a: HYBRID_DISPATCH_DIRECT emit failed",
+                        exc_info=True,
+                    )
+        else:
+            task_event = task_event_broadcast(
+                source_type="work_item_router",
+                source_id=wi.get("id", ""),
+                event_type="work_item_dispatched",
+                priority=priority,
+                payload=payload_out,
+            )
+            if self._emit is not None:
+                try:
+                    self._emit(EventType.HYBRID_DISPATCH_BROADCAST, {
+                        "work_item_id": wi.get("id", ""),
+                        "confidence": decision.confidence,
+                        "reason": decision.reason,
+                        "department_id": decision.department_id,
+                    })
+                except Exception:
+                    logger.warning(
+                        "AD-581a: HYBRID_DISPATCH_BROADCAST emit failed",
+                        exc_info=True,
+                    )
+
+        await self._dispatcher.dispatch(task_event)
+
     async def on_work_item_created(self, event: dict[str, Any]) -> None:
         """Handle the WORK_ITEM_CREATED event envelope.
 
@@ -76,88 +167,7 @@ class WorkItemRouter:
         try:
             data = event.get("data") or {}
             wi = data.get("work_item") or {}
-            if not self.is_dispatchable(wi):
-                return
-
-            intent = f"work_item:{wi.get('work_type', '')}".strip(":")
-            assigned = wi.get("assigned_to") or None
-            tags = wi.get("tags") or []
-
-            candidates = [
-                getattr(a, "id", "")
-                for a in self._registry.all()
-                if getattr(a, "id", "")
-            ]
-
-            decision = self._dept_dispatcher.route(
-                intent=intent,
-                candidates=candidates,
-                work_item=_WorkItemView(assigned),
-            )
-
-            from probos.activation.task_event import (
-                task_event_broadcast,
-                task_event_for_agent,
-            )
-
-            priority = self._priority_from_int(int(wi.get("priority", 3)))
-            payload_out: dict[str, Any] = {
-                "work_item_id": wi.get("id", ""),
-                "title": wi.get("title", ""),
-                "description": wi.get("description", ""),
-                "work_type": wi.get("work_type", ""),
-                "tags": tags,
-                "metadata": wi.get("metadata") or {},
-                "routing_reason": decision.reason,
-                "routing_confidence": decision.confidence,
-            }
-
-            if decision.is_direct() and decision.agent_id:
-                task_event = task_event_for_agent(
-                    agent_id=decision.agent_id,
-                    source_type="work_item_router",
-                    source_id=wi.get("id", ""),
-                    event_type="work_item_dispatched",
-                    priority=priority,
-                    payload=payload_out,
-                )
-                if self._emit is not None:
-                    try:
-                        self._emit(EventType.HYBRID_DISPATCH_DIRECT, {
-                            "work_item_id": wi.get("id", ""),
-                            "agent_id": decision.agent_id,
-                            "confidence": decision.confidence,
-                            "reason": decision.reason,
-                            "department_id": decision.department_id,
-                        })
-                    except Exception:
-                        logger.warning(
-                            "AD-581a: HYBRID_DISPATCH_DIRECT emit failed",
-                            exc_info=True,
-                        )
-            else:
-                task_event = task_event_broadcast(
-                    source_type="work_item_router",
-                    source_id=wi.get("id", ""),
-                    event_type="work_item_dispatched",
-                    priority=priority,
-                    payload=payload_out,
-                )
-                if self._emit is not None:
-                    try:
-                        self._emit(EventType.HYBRID_DISPATCH_BROADCAST, {
-                            "work_item_id": wi.get("id", ""),
-                            "confidence": decision.confidence,
-                            "reason": decision.reason,
-                            "department_id": decision.department_id,
-                        })
-                    except Exception:
-                        logger.warning(
-                            "AD-581a: HYBRID_DISPATCH_BROADCAST emit failed",
-                            exc_info=True,
-                        )
-
-            await self._dispatcher.dispatch(task_event)
+            await self.dispatch_work_item(wi)
         except Exception:
             logger.warning(
                 "AD-581a: WorkItemRouter.on_work_item_created failed; "

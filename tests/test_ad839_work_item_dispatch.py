@@ -312,3 +312,148 @@ async def test_handler_degrades_when_claim_fails() -> None:
     assert result.success is True
     # claim failed but the work item still moves to in_progress
     assert work_item_store.transitions == [("wi-1", "in_progress", agent.id)]
+
+
+# ------------------------------------------------------------------ AD-874
+# WorkItemRouter.dispatch_work_item extracted from on_work_item_created.
+# Behavior-preserving: direct/broadcast routing identical, the create
+# listener still works through the shared dispatch path.
+
+from types import SimpleNamespace  # noqa: E402
+
+from probos.events import EventType  # noqa: E402
+from probos.mesh.work_item_router import WorkItemRouter  # noqa: E402
+from probos.substrate.agent import BaseAgent  # noqa: E402
+from probos.substrate.registry import AgentRegistry  # noqa: E402
+
+
+class _RouterAgent(BaseAgent):
+    agent_type = "worker"
+
+    async def perceive(self, intent: dict[str, Any]) -> Any:  # pragma: no cover
+        return None
+
+    async def decide(self, observation: Any) -> Any:  # pragma: no cover
+        return None
+
+    async def act(self, plan: Any) -> Any:  # pragma: no cover
+        return None
+
+    async def report(self, result: Any) -> dict[str, Any]:  # pragma: no cover
+        return {}
+
+
+class _RecordingDispatcher:
+    def __init__(self) -> None:
+        self.dispatched: list[Any] = []
+
+    async def dispatch(self, task_event: Any) -> None:
+        self.dispatched.append(task_event)
+
+
+class _FakeDecision:
+    def __init__(
+        self, *, direct: bool, agent_id: str | None = None,
+        reason: str = "r", confidence: float = 0.9, department_id: str = "ops",
+    ) -> None:
+        self._direct = direct
+        self.agent_id = agent_id
+        self.reason = reason
+        self.confidence = confidence
+        self.department_id = department_id
+
+    def is_direct(self) -> bool:
+        return self._direct
+
+
+class _RecordingDeptDispatcher:
+    def __init__(self, decision: _FakeDecision) -> None:
+        self._decision = decision
+        self.calls: list[dict[str, Any]] = []
+
+    def route(self, *, intent: str, candidates: list[str], work_item: Any) -> _FakeDecision:
+        self.calls.append(
+            {"intent": intent, "candidates": candidates,
+             "assigned_to": work_item.assigned_to}
+        )
+        return self._decision
+
+
+async def _make_router(decision: _FakeDecision, emit: Any = None) -> tuple[Any, Any, Any]:
+    registry = AgentRegistry()
+    await registry.register(_RouterAgent(pool="workers", agent_id="agent-1"))
+    dispatcher = _RecordingDispatcher()
+    dept = _RecordingDeptDispatcher(decision)
+    router = WorkItemRouter(
+        dispatcher=dispatcher,
+        department_dispatcher=dept,
+        registry=registry,
+        config=SimpleNamespace(dispatchable_tags=["auto"]),
+        emit_event=emit,
+    )
+    return router, dispatcher, dept
+
+
+def _dispatchable_wi() -> dict[str, Any]:
+    return {
+        "id": "wi-9", "title": "T", "description": "D",
+        "work_type": "research", "tags": ["auto"], "priority": 3,
+        "assigned_to": None, "metadata": {},
+    }
+
+
+@pytest.mark.asyncio
+async def test_dispatch_work_item_direct_routes_to_agent() -> None:
+    emitted: list[tuple[Any, dict[str, Any]]] = []
+    router, dispatcher, _ = await _make_router(
+        _FakeDecision(direct=True, agent_id="agent-1"),
+        emit=lambda et, payload: emitted.append((et, payload)),
+    )
+
+    await router.dispatch_work_item(_dispatchable_wi())
+
+    assert len(dispatcher.dispatched) == 1
+    assert dispatcher.dispatched[0].target.agent_id == "agent-1"
+    assert emitted[0][0] == EventType.HYBRID_DISPATCH_DIRECT
+    assert emitted[0][1]["agent_id"] == "agent-1"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_work_item_broadcast_routes_to_all() -> None:
+    emitted: list[tuple[Any, dict[str, Any]]] = []
+    router, dispatcher, _ = await _make_router(
+        _FakeDecision(direct=False),
+        emit=lambda et, payload: emitted.append((et, payload)),
+    )
+
+    await router.dispatch_work_item(_dispatchable_wi())
+
+    assert len(dispatcher.dispatched) == 1
+    assert dispatcher.dispatched[0].target.broadcast is True
+    assert emitted[0][0] == EventType.HYBRID_DISPATCH_BROADCAST
+
+
+@pytest.mark.asyncio
+async def test_dispatch_work_item_not_dispatchable_early_returns() -> None:
+    router, dispatcher, dept = await _make_router(
+        _FakeDecision(direct=True, agent_id="agent-1")
+    )
+
+    await router.dispatch_work_item({"id": "wi-x", "tags": [], "metadata": {}})
+
+    assert dispatcher.dispatched == []
+    assert dept.calls == []
+
+
+@pytest.mark.asyncio
+async def test_on_work_item_created_routes_through_dispatch_path() -> None:
+    router, dispatcher, _ = await _make_router(
+        _FakeDecision(direct=True, agent_id="agent-1")
+    )
+
+    await router.on_work_item_created(
+        {"type": "work_item_created", "data": {"work_item": _dispatchable_wi()}}
+    )
+
+    assert len(dispatcher.dispatched) == 1
+    assert dispatcher.dispatched[0].target.agent_id == "agent-1"
