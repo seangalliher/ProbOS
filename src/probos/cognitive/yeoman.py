@@ -313,6 +313,40 @@ class YeomanAgent(CognitiveAgent):
         )
 
     # ------------------------------------------------------------------
+    # Conversational task-creation protocol (AD-845)
+    # ------------------------------------------------------------------
+
+    def _conversational_task_protocol(self, observation: dict) -> str:
+        """Teach Yeo to spawn a dispatchable task from a 1:1 chat reply.
+
+        Yeo's static ``instructions``/``_ROLE_RULES`` never reach the
+        conversational prompt (composed with ``hardcoded_instructions=""``),
+        so the task-creation protocol is injected here the same way BF-599's
+        capability block is. The emitted ``[CREATE_TASK ...]`` tag is parsed
+        by the DM reply pipeline, which creates a dispatchable work item that
+        the AD-834/AD-839 engine runs automatically.
+
+        Honest-degrade: returns "" when no runtime or no work-item store is
+        wired, so Yeo is never told it can open tasks when the substrate to
+        back them is absent. Tag text is gap-regex-safe (BF-599 lesson).
+        """
+        runtime = self._runtime
+        if runtime is None or getattr(runtime, "work_item_store", None) is None:
+            return ""
+        return (
+            "\n\nWhen the Captain asks you to research, investigate, or "
+            "produce something that is substantial work — rather than a quick "
+            "reply you give immediately — open a tracked task instead of "
+            "answering inline: emit [CREATE_TASK title=<short title> | "
+            "instructions=<what to do> | specialist=@Callsign] anywhere in "
+            "your reply, and confirm conversationally that you have opened "
+            "the task and will report back when it is done. Choose the "
+            "specialist by department (@Number One for Science research). The "
+            "task runs on the mesh and appears on the Captain's board "
+            "automatically."
+        )
+
+    # ------------------------------------------------------------------
     # Proactive-scan aggregation
     # ------------------------------------------------------------------
 

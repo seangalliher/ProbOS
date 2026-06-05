@@ -1847,6 +1847,13 @@ class CognitiveAgent(BaseAgent):
         agents are unaffected (BF-599)."""
         return ""
 
+    def _conversational_task_protocol(self, observation: dict) -> str:
+        """Overridable hook (AD-845): task-creation protocol appended to the
+        conversational system prompt. Default returns "" so only opting-in
+        agents (e.g. Yeo) learn the ``[CREATE_TASK ...]`` reply tag that lets
+        a 1:1 chat reply spawn a dispatchable work item."""
+        return ""
+
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
 
@@ -2297,6 +2304,15 @@ class CognitiveAgent(BaseAgent):
             _cap_block = self._conversational_capability_block(observation)
             if _cap_block:
                 composed += _cap_block
+            # AD-845: task-creation protocol. Overridable hook; base returns
+            # "" so only opting-in agents (Yeo) learn the [CREATE_TASK ...]
+            # reply tag. Sits next to the BF-599 capability block because
+            # both are injected the same way (the conversational prompt is
+            # composed with hardcoded_instructions="", so static instructions
+            # never reach this path).
+            _task_proto = self._conversational_task_protocol(observation)
+            if _task_proto:
+                composed += _task_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

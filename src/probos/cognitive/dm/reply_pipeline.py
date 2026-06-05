@@ -99,6 +99,7 @@ class DmReplyPipeline:
             self.step_4e_action_dispatch,  # AD-745
             self.step_4b_dm_outbound_parse,
             self.step_4f_extract_artifacts,  # AD-797 (Wave 197)
+            self.step_4g_create_task_parse,  # AD-845
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
             self.step_7_divergence_check,
@@ -804,6 +805,119 @@ class DmReplyPipeline:
                 "response_text left intact (%s)",
                 self.ctx.agent_id, exc, exc_info=True,
             )
+
+    # --- step 4g: AD-845 [CREATE_TASK ...] parse + dispatchable work item ---
+    async def step_4g_create_task_parse(self) -> None:
+        """AD-845: parse a ``[CREATE_TASK title=... | instructions=... |
+        specialist=@callsign]`` tag from the reply, create a dispatchable
+        work item assigned to the resolved specialist, and strip the tag.
+
+        Only Yeo is taught the tag (via ``_conversational_task_protocol``),
+        so this is effectively Yeo-scoped; the parser is agent-agnostic and a
+        no-op for any reply without the tag. The created item carries
+        ``metadata.dispatchable=True`` + ``tags=["yeo-delegated"]`` so the
+        AD-834/AD-839 ``WorkItemRouter`` runs the work automatically and it
+        surfaces on the Captain's kanban board.
+
+        Tier-2 honest-degrade: a missing sanity gate, missing work-item
+        store, or a create failure logs a warning, strips the tag, and ships
+        the conversational reply unchanged. NEVER raises (the top-level
+        ``run()`` guard is belt-and-braces).
+        """
+        if not self.ctx.response_text or self.ctx.sanity_gate is None:
+            return
+        parsed = self.ctx.sanity_gate.extract_create_task(self.ctx.response_text)
+        if parsed is None:
+            return
+        title, instructions, specialist = parsed
+
+        store = getattr(self.ctx.runtime, "work_item_store", None)
+        if store is None:
+            logger.warning(
+                "AD-845: [CREATE_TASK] from agent=%s but runtime.work_item_store "
+                "is None; stripping tag and degrading (no task created)",
+                self.ctx.agent_id,
+            )
+            self.ctx.response_text = self.ctx.sanity_gate.strip_create_task(
+                self.ctx.response_text
+            )
+            return
+
+        # Resolve specialist callsign -> live agent UUID. assigned_to may
+        # remain None (no live specialist) — the item is still created and
+        # dispatchable so the router can assign it (AD-845 acceptance (e)).
+        assigned_to = self._resolve_specialist_agent_id(specialist, instructions)
+
+        try:
+            item = await store.create_work_item(
+                title=title,
+                description=instructions,
+                work_type="task",
+                assigned_to=assigned_to,
+                created_by="captain",
+                metadata={"dispatchable": True},
+                tags=["yeo-delegated"],
+            )
+            logger.info(
+                "AD-845: agent=%s opened dispatchable task %s "
+                "(assigned_to=%s) from chat: %r",
+                self.ctx.agent_id, item.id, assigned_to, title,
+            )
+            self.ctx.response_text = (
+                self.ctx.sanity_gate.strip_create_task(self.ctx.response_text)
+                + f"\n\n(Task opened: {item.id})"
+            )
+        except Exception:
+            logger.warning(
+                "AD-845: create_work_item failed for agent=%s title=%r; "
+                "stripping tag and shipping reply unchanged",
+                self.ctx.agent_id, title, exc_info=True,
+            )
+            self.ctx.response_text = self.ctx.sanity_gate.strip_create_task(
+                self.ctx.response_text
+            )
+
+    def _resolve_specialist_agent_id(
+        self, specialist: str, instructions: str,
+    ) -> str | None:
+        """AD-845: resolve a specialist callsign to a live agent UUID.
+
+        Primary: ``callsign_registry.resolve``. Fallback when the callsign is
+        unknown or has no live agent: Yeo's department keyword map
+        (``resolve_delegate``) over the instructions text. Returns ``None``
+        when neither path yields a live agent — the work item is still
+        created (unassigned but dispatchable). Tier-2: never raises.
+        """
+        registry = getattr(self.ctx.runtime, "callsign_registry", None)
+
+        def _lookup(callsign: str) -> str | None:
+            if registry is None or not callsign:
+                return None
+            try:
+                resolved = registry.resolve(callsign)
+            except Exception:
+                logger.debug(
+                    "AD-845: callsign resolve raised for %r",
+                    callsign, exc_info=True,
+                )
+                return None
+            if resolved is None:
+                return None
+            return resolved.get("agent_id")
+
+        agent_id = _lookup(specialist)
+        if agent_id is not None:
+            return agent_id
+
+        # Fallback: keyword-map the instructions to a department callsign.
+        try:
+            from probos.cognitive.yeoman import resolve_delegate
+            fallback_callsign = resolve_delegate(instructions)
+        except Exception:
+            fallback_callsign = None
+        if fallback_callsign:
+            return _lookup(fallback_callsign)
+        return None
 
     # --- step 5: AD-430b HXI 1:1 episodic store ---
     async def step_5_episodic_store(self) -> None:

@@ -41,6 +41,22 @@ _CHALLENGE_STRIP_RE = re.compile(r"\[CHALLENGE\s+@\w+\s+\w+\]")
 _MOVE_RE = re.compile(r"\[MOVE\s+(\S+)\]")
 _MOVE_STRIP_RE = re.compile(r"\[MOVE\s+\S+\]")
 
+# AD-845: well-formed task-creation tag emitted by Yeo in a 1:1 chat reply.
+# Pipe-delimited key=value fields. ``title``/``instructions`` are free-form
+# (no embedded ``|``, ``]`` or newline); ``specialist`` is an optional
+# @-prefixed callsign (letters/digits/space/apostrophe/hyphen/underscore, to
+# cover callsigns like "Number One" and "O'Brien"). Length ceilings guard
+# against runaway regex backtracking; per-field semantic limits are enforced
+# at creation time.
+_CREATE_TASK_RE = re.compile(
+    r"\[CREATE_TASK\s+title=([^|\]\n]{1,200})\|\s*"
+    r"instructions=([^|\]\n]{1,2000})\|\s*"
+    r"specialist=@?([A-Za-z0-9 '_-]{1,40})\]"
+)
+# Lax strip removes well-formed AND malformed variants so no marker leaks
+# into Captain-visible text (mirrors AD-728d / AD-730-3 contract).
+_CREATE_TASK_STRIP_RE = re.compile(r"\[CREATE_TASK\b[^\]\n]*\]?")
+
 # AD-728d: self-image-awareness marker. Reason is 1-64 chars of
 # [a-z_-]+ — invalid reasons fall through to silent strip, no dispatch.
 _SELF_CHECK_RE = re.compile(r"\[SELF_CHECK\s+([a-z_-]{1,64})\]")
@@ -221,6 +237,36 @@ class DmSanityGate:
         if not text:
             return text
         return _MOVE_STRIP_RE.sub("", text).strip()
+
+    def extract_create_task(self, text: str) -> tuple[str, str, str] | None:
+        """AD-845: extract ``(title, instructions, specialist)`` from a
+        well-formed ``[CREATE_TASK ...]`` tag.
+
+        Returns ``None`` when no well-formed tag is present. The specialist
+        is returned without its leading ``@`` and with surrounding
+        whitespace stripped; an empty specialist field yields ``None`` for
+        the whole match (the tag is then treated as malformed and only
+        stripped, never dispatched).
+        """
+        if not text:
+            return None
+        m = _CREATE_TASK_RE.search(text)
+        if not m:
+            return None
+        title = m.group(1).strip()
+        instructions = m.group(2).strip()
+        specialist = m.group(3).strip()
+        if not title or not instructions or not specialist:
+            return None
+        return (title, instructions, specialist)
+
+    def strip_create_task(self, text: str) -> str:
+        """AD-845: remove all ``[CREATE_TASK ...]`` markers (well-formed and
+        malformed) from Captain-visible text, including the trailing
+        ``.strip()`` (mirrors the AD-572 / AD-728d strip contract)."""
+        if not text:
+            return text
+        return _CREATE_TASK_STRIP_RE.sub("", text).strip()
 
     def extract_self_check(self, text: str) -> list[str]:
         """AD-728d: return all valid [SELF_CHECK reason] reasons in order.
