@@ -144,6 +144,54 @@ def test_strip_self_tag_does_not_touch_prose():
     assert strip_intent_self_tag(text) == text
 
 
+# ── BF-603: quoted value + non-trailing position must still parse + strip ──
+
+
+def test_parse_self_tag_double_quoted_value():
+    """LLM sometimes emits ``emotion=\"warm\"`` -- must still parse."""
+    assert parse_intent_self_tag('Hello.\n<intent emotion="warm">') == "warm"
+
+
+def test_parse_self_tag_single_quoted_value():
+    assert parse_intent_self_tag("Hello.\n<intent emotion='warm'>") == "warm"
+
+
+def test_parse_self_tag_quoted_self_closing():
+    assert parse_intent_self_tag('Reply.\n<intent emotion="concerned"/>') == "concerned"
+
+
+def test_strip_self_tag_double_quoted_value():
+    """The exact BF-603 leak shape -- quoted value at the start of the reply."""
+    text = '<intent emotion="warm">\nUnderstood, Captain. Task opened.'
+    stripped = strip_intent_self_tag(text)
+    assert "<intent" not in stripped
+    assert stripped == "Understood, Captain. Task opened."
+
+
+def test_strip_self_tag_leading_position():
+    """Tag at the very start (unquoted) must be stripped too."""
+    text = "<intent emotion=warm>\nHello, Captain."
+    stripped = strip_intent_self_tag(text)
+    assert "<intent" not in stripped
+    assert stripped == "Hello, Captain."
+
+
+def test_strip_self_tag_inline_does_not_merge_words():
+    """Inline removal must not glue the surrounding words together."""
+    text = "Acknowledged <intent emotion='warm'> Captain."
+    stripped = strip_intent_self_tag(text)
+    assert "<intent" not in stripped
+    assert stripped == "Acknowledged Captain."
+
+
+def test_strip_self_tag_quoted_idempotent():
+    text = 'Reply. <intent emotion="warm">'
+    once = strip_intent_self_tag(text)
+    twice = strip_intent_self_tag(once)
+    assert once == twice
+    assert "<intent" not in once
+
+
 # ── §B. compute_divergence — match cases ─────────────────────────────────
 
 

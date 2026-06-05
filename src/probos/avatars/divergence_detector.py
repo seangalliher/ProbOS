@@ -86,8 +86,12 @@ INTENT_DIRECTION: Final[dict[str, int]] = {
 # Self-tag parse + strip regexes (server-side, single source of truth).
 # Matches ``<intent emotion=NAME>`` or ``<intent emotion=NAME/>``,
 # anywhere in the reply (multi-line). NAME is ``[a-zA-Z_]+``; lowercased on parse.
+# BF-603: tolerate an optional quote (``"`` or ``'``) around the value --
+# the LLM sometimes emits ``<intent emotion="warm">``; without quote
+# tolerance the value fails to parse AND fails to strip, leaking the
+# raw tag to the Captain.
 _TAG_RE: Final[re.Pattern[str]] = re.compile(
-    r"<intent\s+emotion\s*=\s*([a-zA-Z_]+)\s*/?\s*>",
+    r"<intent\s+emotion\s*=\s*[\"']?([a-zA-Z_]+)[\"']?\s*/?\s*>",
     re.IGNORECASE,
 )
 
@@ -129,10 +133,16 @@ def _resolve_intent_name(
 resolve_emotion_to_v1 = _resolve_intent_name
 
 
-# Strip regex anchored to optional trailing whitespace at end-of-line.
+# BF-603: strip the tag wherever it appears (leading / inline / trailing)
+# rather than only at end-of-line, and tolerate the optional quote. The
+# Captain-facing contract is "the tag MUST NEVER reach the Captain", so the
+# strip must not depend on the model placing the tag at the end. Trailing
+# whitespace is consumed with the tag; ``strip_intent_self_tag`` collapses
+# the match to a single space and trims, so inline removal never merges
+# adjacent words.
 _TAG_STRIP_RE: Final[re.Pattern[str]] = re.compile(
-    r"\s*<intent\s+emotion\s*=\s*[a-zA-Z_]+\s*/?\s*>\s*$",
-    re.IGNORECASE | re.MULTILINE,
+    r"\s*<intent\s+emotion\s*=\s*[\"']?[a-zA-Z_]+[\"']?\s*/?\s*>\s*",
+    re.IGNORECASE,
 )
 
 
@@ -246,13 +256,16 @@ def parse_intent_self_tag(
 def strip_intent_self_tag(text: str) -> str:
     """Remove the trailing ``<intent emotion=...>`` tag from a reply.
 
-    Server-side strip -- the tag MUST NEVER reach the Captain. Trims
-    trailing whitespace produced by the strip. Idempotent -- calling
-    twice on the same text returns the same result.
+    Server-side strip -- the tag MUST NEVER reach the Captain. BF-603:
+    removes the tag from any position (leading / inline / trailing) and
+    tolerates an optional quote around the value; the match collapses to
+    a single space so inline removal never merges adjacent words, then
+    surrounding whitespace is trimmed. Idempotent -- calling twice on the
+    same text returns the same result.
     """
     if not text:
         return text
-    return _TAG_STRIP_RE.sub("", text).rstrip()
+    return _TAG_STRIP_RE.sub(" ", text).strip()
 
 
 def _applied_direction(applied: tuple[str, ...]) -> int:
