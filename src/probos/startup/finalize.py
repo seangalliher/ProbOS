@@ -1947,6 +1947,43 @@ def _wire_capability_request_notifier(*, runtime: Any, config: "SystemConfig") -
     return True
 
 
+def _wire_task_completion_notifier(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-846: Wire the Yeo task-completion Captain-DM notifier.
+
+    Async half of Yeo's Tier-3 delegation loop: registers a listener for
+    WORK_ITEM_STATUS_CHANGED that DMs the Captain (via the AD-485 primitive)
+    when a Yeo-delegated dispatchable task reaches a terminal status. Tier-2
+    log-and-degrade: no ``add_event_listener`` -> no-op + INFO log. The kanban
+    board remains the result surface regardless.
+    """
+    from probos.task_completion_notifier import (
+        notify_captain_of_task_completion,
+    )
+
+    async def _on_status_changed(event: Any) -> None:
+        await notify_captain_of_task_completion(runtime, event)
+
+    add_listener = getattr(runtime, "add_event_listener", None)
+    if add_listener is None:
+        logger.info(
+            "AD-846: add_event_listener unavailable; task-completion "
+            "Captain-DM notifier skipped"
+        )
+        return False
+    try:
+        add_listener(_on_status_changed, event_types=["work_item_status_changed"])
+    except Exception:
+        logger.warning(
+            "AD-846: add_event_listener failed; task-completion "
+            "Captain-DM notifier inactive",
+            exc_info=True,
+        )
+        return False
+
+    logger.info("AD-846: task-completion Captain-DM notifier wired")
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -3595,6 +3632,14 @@ async def finalize_startup(
             if _wire_capability_request_notifier(runtime=runtime, config=config):
                 logger.info(
                     "AD-857: capability-request Captain-DM notifier wired "
+                    "during finalization"
+                )
+
+            # AD-846: Yeo task-completion Captain-DM notifier -- async half of
+            # Yeo's Tier-3 delegation loop. Tier-2 log-and-degrade.
+            if _wire_task_completion_notifier(runtime=runtime, config=config):
+                logger.info(
+                    "AD-846: task-completion Captain-DM notifier wired "
                     "during finalization"
                 )
 

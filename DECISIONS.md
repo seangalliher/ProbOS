@@ -10,6 +10,12 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-846: Yeo task-completion → proactive Captain DM (async half of the Tier-3 delegation loop)
+
+**Decision:** Added `src/probos/task_completion_notifier.py` (`notify_captain_of_task_completion(runtime, event)`) and wired it in `startup/finalize.py` (`_wire_task_completion_notifier`) as a listener on `EventType.WORK_ITEM_STATUS_CHANGED`. When a work item reaches a terminal status (`done`/`failed`) AND it is a Yeo-originated dispatchable task (`metadata.dispatchable` truthy AND `tags` contains `"yeo-delegated"`), Yeo proactively DMs the Captain with the outcome — a one-line "Task complete: <title>." (done) or "Task did not finish: <title>… let me know if you'd like me to open it again." (failed). The DM reuses the AD-485 Captain-DM primitive: find-or-create the `dm-captain-{yeo_id[:8]}` channel via `ward_room.list_channels()`/`create_channel(channel_type="dm")`, then `ward_room.create_thread(...)` authored by the live Yeo agent (resolved from the `yeoman` registry pool). Listener wired via `runtime.add_event_listener(_on_status_changed, event_types=["work_item_status_changed"])`.
+
+**Rationale:** AD-845 gave Yeo Tier-3 (`[CREATE_TASK]` → kanban) but the loop was open: once Yeo wrote a task down, the Captain had to discover the result on the board. AD-846 closes the async half so a task Yeo opened on the Captain's behalf reports back to the same 1:1 channel it came from. The `yeo-delegated` tag gate is load-bearing — only tasks Yeo opened notify, so system/crew work items never spam the Captain's DM. Every failure mode is Tier-2 honest-degrade (no ward room, no live Yeo, registry raises, non-matching event → log if relevant and return, never raise); a missing chat substrate never blocks a status transition. The kanban board remains the result surface regardless. Desktop notification (AD-847) is the gated follow-up, NOT built here. Tests: `tests/test_ad846_completion_dm.py` (9, real fake ward room + real registry pool fixtures per the no-MagicMock-at-substrate-boundary rule).
+
 ### AD-870: Yeo's four-tier delegation threshold instructions (when to [MESH] vs [CREATE_TASK])
 
 **Date:** 2026-06-04
