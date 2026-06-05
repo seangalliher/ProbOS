@@ -152,3 +152,56 @@ def test_yeoman_no_direct_http_import() -> None:
     source = inspect.getsource(yeoman)
     assert "import httpx" not in source
     assert "import requests" not in source
+
+
+# ---------------------------------------------------------------------------
+# BF-601: filesystem capability grounding (sibling of the web variant).
+# Yeo confabulated "I don't have a filesystem browsing capability" despite the
+# always-registered core ``directory``/``filesystem``/``search`` pools.
+# ---------------------------------------------------------------------------
+
+
+def test_capability_block_lists_filesystem_pools() -> None:
+    """Yeo's block names the core filesystem intents when those pools exist."""
+    registry = asyncio.run(_registry_with_pools("directory", "filesystem", "search"))
+    yeo = _make_yeo(_FakeRuntime(registry))
+
+    block = yeo._conversational_capability_block({"intent": "direct_message"})
+
+    assert "list_directory" in block
+    assert "read_file" in block
+    assert "search_files" in block
+
+
+def test_capability_block_filesystem_no_gap_regex_tokens() -> None:
+    """The filesystem block must not trip the decomposer capability-gap regex."""
+    registry = asyncio.run(_registry_with_pools("directory", "filesystem", "search"))
+    yeo = _make_yeo(_FakeRuntime(registry))
+
+    block = yeo._conversational_capability_block({"intent": "direct_message"})
+
+    assert block
+    assert not _CAPABILITY_GAP_RE.search(block)
+
+
+def test_capability_block_lists_web_and_filesystem_together() -> None:
+    """Both capability families render in one block when all pools are live."""
+    registry = asyncio.run(
+        _registry_with_pools(
+            "web_search", "page_reader", "http", "directory", "filesystem", "search"
+        )
+    )
+    yeo = _make_yeo(_FakeRuntime(registry))
+
+    block = yeo._conversational_capability_block({"intent": "direct_message"})
+
+    for intent in (
+        "web_search",
+        "read_page",
+        "http_fetch",
+        "list_directory",
+        "read_file",
+        "search_files",
+    ):
+        assert intent in block
+    assert not _CAPABILITY_GAP_RE.search(block)

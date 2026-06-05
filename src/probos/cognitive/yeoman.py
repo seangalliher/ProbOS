@@ -260,24 +260,31 @@ class YeomanAgent(CognitiveAgent):
     # ------------------------------------------------------------------
 
     def _conversational_capability_block(self, observation: dict) -> str:
-        """Ground Yeo in the ship's *live* delegable web capabilities.
+        """Ground Yeo in the ship's *live* delegable mesh capabilities.
 
         Renders a positive instruction listing only the mesh intents whose
         pools are actually registered right now, so Yeo delegates web
-        research/page-reading through the mesh instead of confabulating a
-        limitation (BF-599). Honest-degrade: returns "" when no runtime,
-        no registry, or none of the relevant pools are present.
+        research/page-reading (BF-599) and filesystem browsing (BF-601)
+        through the mesh instead of confabulating a limitation. Honest-degrade:
+        returns "" when no runtime, no registry, or none of the relevant pools
+        are present.
         """
         runtime = self._runtime
         if runtime is None or not hasattr(runtime, "registry") or runtime.registry is None:
             return ""
 
         # (pool name, exposed intent name, human description). Only pools with
-        # at least one registered agent become delegable capabilities.
+        # at least one registered agent become delegable capabilities. The
+        # filesystem trio (BF-601) are always-registered core pools, so they
+        # ground Yeo against confabulating "I can't list directories/read
+        # files" the same way the web trio (BF-599) grounds web research.
         _pool_caps: tuple[tuple[str, str, str], ...] = (
             ("web_search", "web_search", "search the web"),
             ("page_reader", "read_page", "read + summarize a URL"),
             ("http", "http_fetch", "fetch a URL"),
+            ("directory", "list_directory", "list a directory"),
+            ("filesystem", "read_file", "read a file"),
+            ("search", "search_files", "find files by pattern"),
         )
 
         caps: list[tuple[str, str]] = []
@@ -287,8 +294,8 @@ class YeomanAgent(CognitiveAgent):
                     caps.append((intent_name, desc))
         except Exception:
             logger.warning(
-                "BF-599: YeomanAgent capability grounding failed reading the "
-                "registry; falling back to no capability block this turn",
+                "BF-599/BF-601: YeomanAgent capability grounding failed reading "
+                "the registry; falling back to no capability block this turn",
                 exc_info=True,
             )
             return ""
@@ -300,8 +307,9 @@ class YeomanAgent(CognitiveAgent):
         return (
             "\n\nShip capabilities you can delegate through the mesh: "
             f"{rendered}. When the Captain asks you to research or read a web "
-            "page, delegate to the right specialist (for Science research, "
-            "@Number One) rather than declining."
+            "page, list a directory, read a file, or find files, delegate to "
+            "the right specialist (for Science research, @Number One) rather "
+            "than declining."
         )
 
     # ------------------------------------------------------------------

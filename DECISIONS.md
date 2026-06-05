@@ -10,6 +10,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-601: Yeo conversational capability grounding — filesystem trio (sibling of BF-599)
+
+**Date:** 2026-06-04
+**Decision:** Extended `YeomanAgent._conversational_capability_block` (the BF-599 base-hook override) to also surface the always-registered core filesystem pools: `directory` → `list_directory`, `filesystem` → `read_file`, `search` → `search_files`, appended to the existing web trio (`web_search` / `read_page` / `http_fetch`). The closing instruction is generalized so Yeo delegates "research or read a web page, list a directory, read a file, or find files" through the mesh rather than declining. Same honest-degrade contract (returns `""` on no runtime / no registry / registry read raises / no relevant pools) and the rendered block remains free of every `_CAPABILITY_GAP_RE` token (asserted by test).
+**Rationale:** Live testing reproduced the BF-599 confabulation for a different capability family — asked "what files are in `D:\ProbOS\src\probos\cognitive`," Yeo replied "I don't have a direct filesystem browsing capability built in. I can't list directory contents on my own," despite the `directory` / `filesystem` / `search` pools being core, always-present agents. The root cause is identical (the DM prompt composes with `hardcoded_instructions=""`, so Yeo's static role rules never reach the conversational turn and the LLM fills the void with a plausible-but-false limitation). BF-599 fixed only the web trio; the filesystem trio was structurally uncovered. Because these are core pools, listing them is always truthful and self-updating from the live registry — no static drift. The fix reuses the existing seam (no new hook, Open/Closed preserved) and adds no direct filesystem-walking code to Yeo: access stays mesh-delegated (Design Principle #10).
+**Status:** Implemented. +3 pytest (`tests/test_bf599_yeo_web_research_delegation.py` — filesystem-pool listing, gap-regex-clean, combined web+filesystem block; 9 total in file), `tests/test_yeoman_agent.py` (25) green — 34 passed. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
 ### BF-599: Yeo conversational capability grounding (overridable base hook)
 
 **Date:** 2026-06-03
