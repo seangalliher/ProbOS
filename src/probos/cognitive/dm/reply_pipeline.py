@@ -27,6 +27,28 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+# AD-869: read-only mesh intents that Yeo may resolve inline in a single
+# synchronous chat turn (Tier-2 "do-and-report"). Each maps to the registry
+# pool that serves it. The allowlist is the safety boundary: writes and
+# ``http_fetch`` are deliberately EXCLUDED. Destructive / consensus-gated
+# intents cannot resolve in one turn (consensus needs a quorum round-trip),
+# so a ~5s synchronous read is structurally incapable of mutation. Anything
+# heavier belongs on the Tier-3 [CREATE_TASK] async path (AD-845).
+_MESH_READ_INTENT_POOLS: dict[str, str] = {
+    "list_directory": "directory",
+    "read_file": "filesystem",
+    "stat_file": "filesystem",
+    "search_files": "search",
+    "web_search": "web_search",
+    "read_page": "page_reader",
+}
+# Single-turn latency ceiling. A read that cannot finish in this window
+# honest-degrades to a brief note rather than blocking the reply.
+_MESH_READ_TTL_SECONDS = 5.0
+# Cap on how much of a read result is inlined into the chat reply.
+_MESH_READ_RENDER_MAX_CHARS = 1500
+
+
 @dataclass
 class DmReplyContext:
     """Mutable context threaded through every pipeline step.
@@ -98,6 +120,7 @@ class DmReplyPipeline:
             self.step_4d_follow_up_parse,  # AD-743
             self.step_4e_action_dispatch,  # AD-745
             self.step_4b_dm_outbound_parse,
+            self.step_4h_mesh_read_parse,  # AD-869
             self.step_4f_extract_artifacts,  # AD-797 (Wave 197)
             self.step_4g_create_task_parse,  # AD-845
             self.step_5_episodic_store,
@@ -729,6 +752,149 @@ class DmReplyPipeline:
                 "in reply (Captain will see them as fallback signal)",
                 self.ctx.agent_id, exc_info=True,
             )
+
+    # --- step 4h: AD-869 synchronous mesh-read (Tier-2 do-and-report) ---
+    async def step_4h_mesh_read_parse(self) -> None:
+        """AD-869: parse a ``[MESH <intent> key=value ...]`` tag, run ONE
+        read-only intent synchronously via the mesh (~5s ceiling), render
+        the result inline, and strip the tag.
+
+        This is Yeo's Tier-2 default: a lightweight lookup the Captain wants
+        answered *this turn* without spinning up a tracked task. Only the
+        read-only intents in :data:`_MESH_READ_INTENT_POOLS` are ever
+        executed — a non-allowlisted intent is stripped and shipped, never
+        run. Resolution is a single targeted ``IntentBus.send`` (NOT a
+        broadcast: broadcasting would fan out to every pool subscriber).
+
+        Tier-2 honest-degrade: a missing sanity gate, missing intent bus, no
+        capable agent, a send failure, or a timeout logs a warning, strips
+        the tag, appends a brief honest note, and ships the reply. NEVER
+        raises (the top-level ``run()`` guard is belt-and-braces).
+        """
+        if not self.ctx.response_text or self.ctx.sanity_gate is None:
+            return
+        gate = self.ctx.sanity_gate
+        parsed = gate.extract_mesh_read(self.ctx.response_text)
+        if parsed is None:
+            return
+        intent_name, params = parsed
+
+        pool_name = _MESH_READ_INTENT_POOLS.get(intent_name)
+        if pool_name is None:
+            # Non-allowlisted intent: strip the tag, ship the reply, do NOT
+            # execute. The allowlist is the Tier-2 safety boundary.
+            logger.warning(
+                "AD-869: [MESH %s] from agent=%s is not a read-only "
+                "allowlisted intent; stripping tag, no execution",
+                intent_name, self.ctx.agent_id,
+            )
+            self.ctx.response_text = gate.strip_mesh_read(self.ctx.response_text)
+            return
+
+        intent_bus = getattr(self.ctx.runtime, "intent_bus", None)
+        if intent_bus is None:
+            logger.warning(
+                "AD-869: [MESH %s] from agent=%s but runtime.intent_bus is "
+                "None; stripping tag and degrading (no read run)",
+                intent_name, self.ctx.agent_id,
+            )
+            self.ctx.response_text = gate.strip_mesh_read(self.ctx.response_text)
+            return
+
+        target_id = self._resolve_mesh_read_agent(pool_name)
+        if target_id is None:
+            logger.warning(
+                "AD-869: [MESH %s] but no live agent in pool %r; degrading",
+                intent_name, pool_name,
+            )
+            self.ctx.response_text = (
+                gate.strip_mesh_read(self.ctx.response_text).rstrip()
+                + f"\n\n(Couldn't reach a {intent_name} handler just now.)"
+            )
+            return
+
+        try:
+            from probos.types import IntentMessage
+            result = await intent_bus.send(
+                IntentMessage(
+                    intent=intent_name,
+                    params=dict(params),
+                    target_agent_id=target_id,
+                    ttl_seconds=_MESH_READ_TTL_SECONDS,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "AD-869: mesh read send failed intent=%s agent=%s; "
+                "stripping tag and degrading",
+                intent_name, self.ctx.agent_id, exc_info=True,
+            )
+            self.ctx.response_text = (
+                gate.strip_mesh_read(self.ctx.response_text).rstrip()
+                + f"\n\n(The {intent_name} lookup didn't finish in time.)"
+            )
+            return
+
+        rendered = self._render_mesh_read_result(intent_name, result)
+        logger.info(
+            "AD-869: agent=%s ran inline read intent=%s (success=%s)",
+            self.ctx.agent_id, intent_name,
+            bool(getattr(result, "success", False)),
+        )
+        self.ctx.response_text = (
+            gate.strip_mesh_read(self.ctx.response_text).rstrip()
+            + "\n\n" + rendered
+        )
+
+    def _resolve_mesh_read_agent(self, pool_name: str) -> str | None:
+        """AD-869: resolve the first live agent in ``pool_name`` to a UUID.
+
+        Reuses the ``registry.get_by_pool`` resolution pattern already used
+        by Yeo's capability block (BF-599). Returns ``None`` when the
+        registry is absent or the pool is empty. Tier-2: never raises.
+        """
+        registry = getattr(self.ctx.runtime, "registry", None)
+        if registry is None:
+            return None
+        try:
+            agents = registry.get_by_pool(pool_name)
+        except Exception:
+            logger.debug(
+                "AD-869: get_by_pool(%r) raised", pool_name, exc_info=True,
+            )
+            return None
+        for agent in agents or []:
+            agent_id = getattr(agent, "id", None)
+            if agent_id:
+                return agent_id
+        return None
+
+    def _render_mesh_read_result(self, intent_name: str, result: Any) -> str:
+        """AD-869: render an :class:`IntentResult` into Captain-visible text.
+
+        Honest-degrades to a brief note on a missing / unsuccessful result.
+        Large payloads are truncated to :data:`_MESH_READ_RENDER_MAX_CHARS`.
+        Note wording avoids the decomposer capability-gap tokens (BF-599)."""
+        if result is None or not getattr(result, "success", False):
+            err = getattr(result, "error", None) if result is not None else None
+            note = f" ({err})" if err else ""
+            return f"(The {intent_name} lookup came back empty{note}.)"
+        text = self._stringify_mesh_payload(getattr(result, "result", None))
+        if len(text) > _MESH_READ_RENDER_MAX_CHARS:
+            text = text[:_MESH_READ_RENDER_MAX_CHARS].rstrip() + "\n… (truncated)"
+        return text
+
+    @staticmethod
+    def _stringify_mesh_payload(payload: Any) -> str:
+        """AD-869: best-effort stringify of a read result payload."""
+        if payload is None:
+            return "(empty result)"
+        if isinstance(payload, str):
+            return payload
+        try:
+            return json.dumps(payload, indent=2, default=str, ensure_ascii=False)
+        except Exception:
+            return str(payload)
 
     # --- step 4f: AD-797 (Wave 197) artifact extractor ---
     async def step_4f_extract_artifacts(self) -> None:

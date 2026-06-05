@@ -57,6 +57,22 @@ _CREATE_TASK_RE = re.compile(
 # into Captain-visible text (mirrors AD-728d / AD-730-3 contract).
 _CREATE_TASK_STRIP_RE = re.compile(r"\[CREATE_TASK\b[^\]\n]*\]?")
 
+# AD-869: synchronous mesh-read tag emitted by Yeo in a 1:1 chat reply.
+# Shape: ``[MESH <intent> key=value key=value]``. ``<intent>`` is a lowercase
+# read-intent name (the read-only allowlist is enforced at EXECUTION time in
+# the reply pipeline, NOT here); the params blob is space-separated
+# ``key=value`` pairs whose values may contain spaces (e.g. a search query).
+# Length ceilings guard against runaway regex backtracking.
+_MESH_READ_RE = re.compile(r"\[MESH\s+([a-z_]{1,40})\s+([^\]\n]{1,500})\]")
+# Lax strip removes well-formed AND malformed variants so no marker leaks
+# into Captain-visible text (mirrors AD-728d / AD-845 contract).
+_MESH_READ_STRIP_RE = re.compile(r"\[MESH\b[^\]\n]*\]?")
+# A param key is a lowercase/underscore token at a token boundary (start of
+# the blob or after whitespace), immediately followed by ``=``. The
+# boundary anchor means a ``=`` inside a value (e.g. a URL query string
+# ``?a=b``) is NOT mistaken for a new key.
+_MESH_PARAM_KEY_RE = re.compile(r"(?:^|\s)([a-z_]+)=")
+
 # AD-728d: self-image-awareness marker. Reason is 1-64 chars of
 # [a-z_-]+ — invalid reasons fall through to silent strip, no dispatch.
 _SELF_CHECK_RE = re.compile(r"\[SELF_CHECK\s+([a-z_-]{1,64})\]")
@@ -267,6 +283,63 @@ class DmSanityGate:
         if not text:
             return text
         return _CREATE_TASK_STRIP_RE.sub("", text).strip()
+
+    @staticmethod
+    def _parse_mesh_params(raw: str) -> dict[str, str]:
+        """AD-869: parse a ``key=value key=value`` blob into a dict.
+
+        Values may contain spaces (so ``query=Nvidia SPARK RTX`` parses to
+        ``{"query": "Nvidia SPARK RTX"}``): each value runs from just after
+        its ``=`` to the start of the next token-boundary key (or end of the
+        blob). A ``=`` embedded inside a value (e.g. a URL query string) is
+        not a key boundary because :data:`_MESH_PARAM_KEY_RE` anchors on a
+        leading start/whitespace. Empty keys or values are dropped.
+        """
+        raw = raw.strip()
+        if not raw:
+            return {}
+        keys = list(_MESH_PARAM_KEY_RE.finditer(raw))
+        if not keys:
+            return {}
+        params: dict[str, str] = {}
+        for i, m in enumerate(keys):
+            key = m.group(1)
+            val_start = m.end()
+            val_end = keys[i + 1].start() if i + 1 < len(keys) else len(raw)
+            value = raw[val_start:val_end].strip()
+            if key and value:
+                params[key] = value
+        return params
+
+    def extract_mesh_read(self, text: str) -> tuple[str, dict[str, str]] | None:
+        """AD-869: extract ``(intent, params)`` from a well-formed
+        ``[MESH <intent> key=value ...]`` tag.
+
+        Returns ``None`` when no well-formed tag is present OR when the
+        params blob yields no usable ``key=value`` pairs (a parameterless
+        read is treated as malformed and only stripped, never dispatched —
+        every allowlisted read intent requires at least one param). The
+        read-only allowlist is enforced by the caller at execution time,
+        not here; this method is intent-agnostic.
+        """
+        if not text:
+            return None
+        m = _MESH_READ_RE.search(text)
+        if not m:
+            return None
+        intent = m.group(1).strip()
+        params = self._parse_mesh_params(m.group(2))
+        if not intent or not params:
+            return None
+        return (intent, params)
+
+    def strip_mesh_read(self, text: str) -> str:
+        """AD-869: remove all ``[MESH ...]`` markers (well-formed and
+        malformed) from Captain-visible text, including the trailing
+        ``.strip()`` (mirrors the AD-845 strip contract)."""
+        if not text:
+            return text
+        return _MESH_READ_STRIP_RE.sub("", text).strip()
 
     def extract_self_check(self, text: str) -> list[str]:
         """AD-728d: return all valid [SELF_CHECK reason] reasons in order.
