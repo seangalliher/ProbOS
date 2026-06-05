@@ -316,35 +316,104 @@ class YeomanAgent(CognitiveAgent):
     # Conversational task-creation protocol (AD-845)
     # ------------------------------------------------------------------
 
+    def _available_mesh_read_intents(self) -> dict[str, str]:
+        """AD-870: return ``{intent: param-hint}`` for the read-only pools
+        that currently have a live agent.
+
+        Only intents whose serving pool is registered are taught, so Yeo is
+        never told to emit a ``[MESH ...]`` tag for a capability the ship
+        cannot back this turn (honest-degrade, BF-599 lesson). The intents +
+        param keys mirror the AD-869 allowlist (``_MESH_READ_INTENT_POOLS``)
+        and the read agents' expected param names. Tier-2: never raises.
+        """
+        registry = getattr(self._runtime, "registry", None)
+        if registry is None:
+            return {}
+        pool_intent_hint = (
+            ("directory", "list_directory", "path=<dir>"),
+            ("filesystem", "read_file", "path=<file>"),
+            ("search", "search_files", "path=<dir> pattern=<glob>"),
+            ("web_search", "web_search", "query=<terms>"),
+            ("page_reader", "read_page", "url=<url>"),
+        )
+        out: dict[str, str] = {}
+        for pool, intent, hint in pool_intent_hint:
+            try:
+                if registry.get_by_pool(pool):
+                    out[intent] = hint
+            except Exception:
+                logger.debug(
+                    "AD-870: get_by_pool(%s) raised during threshold build",
+                    pool, exc_info=True,
+                )
+        return out
+
     def _conversational_task_protocol(self, observation: dict) -> str:
-        """Teach Yeo to spawn a dispatchable task from a 1:1 chat reply.
+        """Teach Yeo the four-tier delegation threshold from a 1:1 chat reply.
+
+        Tier 1 (Answer): reply directly, no tag. Tier 2 (Do-and-report,
+        AD-869): a quick read-only lookup Yeo can finish *this turn* — emit
+        ``[MESH <intent> key=value ...]`` and the DM reply pipeline fetches
+        the result inline. Tier 3 (Write-it-down, AD-845): substantial work
+        or anything that changes state — emit ``[CREATE_TASK title=... |
+        instructions=... | specialist=@Callsign]`` to open a dispatchable
+        tracked task. The specialist callsign is Tier 4 (Get-help).
 
         Yeo's static ``instructions``/``_ROLE_RULES`` never reach the
         conversational prompt (composed with ``hardcoded_instructions=""``),
-        so the task-creation protocol is injected here the same way BF-599's
-        capability block is. The emitted ``[CREATE_TASK ...]`` tag is parsed
-        by the DM reply pipeline, which creates a dispatchable work item that
-        the AD-834/AD-839 engine runs automatically.
+        so this protocol is injected here the same way BF-599's capability
+        block is.
 
-        Honest-degrade: returns "" when no runtime or no work-item store is
-        wired, so Yeo is never told it can open tasks when the substrate to
-        back them is absent. Tag text is gap-regex-safe (BF-599 lesson).
+        Honest-degrade: the ``[MESH]`` guidance is taught only for read
+        pools that are live, and the ``[CREATE_TASK]`` guidance only when a
+        work-item store is wired — Yeo is never told it can use a seam the
+        substrate cannot back. Returns "" when neither seam is available.
+        All tag text is gap-regex-safe (BF-599 lesson).
         """
         runtime = self._runtime
-        if runtime is None or getattr(runtime, "work_item_store", None) is None:
+        if runtime is None:
             return ""
-        return (
-            "\n\nWhen the Captain asks you to research, investigate, or "
-            "produce something that is substantial work — rather than a quick "
-            "reply you give immediately — open a tracked task instead of "
-            "answering inline: emit [CREATE_TASK title=<short title> | "
-            "instructions=<what to do> | specialist=@Callsign] anywhere in "
-            "your reply, and confirm conversationally that you have opened "
-            "the task and will report back when it is done. Choose the "
-            "specialist by department (@Number One for Science research). The "
-            "task runs on the mesh and appears on the Captain's board "
-            "automatically."
+        has_store = getattr(runtime, "work_item_store", None) is not None
+        read_intents = self._available_mesh_read_intents()
+        if not has_store and not read_intents:
+            return ""
+
+        parts: list[str] = [
+            "\n\nDelegation threshold — choose the lightest action that fits "
+            "the request:",
+            "\n- If you already know the answer, just reply. No tag.",
+        ]
+        if read_intents:
+            tags = ", ".join(
+                f"[MESH {intent} {hint}]" for intent, hint in read_intents.items()
+            )
+            parts.append(
+                "\n- If the Captain wants a quick read-only lookup you can "
+                "finish right now — list a directory, read a file, find "
+                "files, search the web, or read a page — do it inline this "
+                "turn: put [MESH <intent> key=value] anywhere in your reply "
+                "and the result is fetched and shown to the Captain. Use only "
+                f"these forms: {tags}. These reads change nothing, so just do "
+                "them — you do not need to ask first."
+            )
+        if has_store:
+            parts.append(
+                "\n- If it is substantial work, would take longer than a "
+                "quick reply, or would change something, open a tracked task "
+                "instead of answering inline: emit [CREATE_TASK title=<short "
+                "title> | instructions=<what to do> | specialist=@Callsign] "
+                "anywhere in your reply, and confirm conversationally that "
+                "you have opened the task and will report back when it is "
+                "done. Choose the specialist by department (@Number One for "
+                "Science research). The task runs on the mesh and appears on "
+                "the Captain's board automatically."
+            )
+        parts.append(
+            "\nRule of thumb: if you can get the answer in the time it takes "
+            "to reply and it changes nothing, just do it; otherwise write it "
+            "down as a task."
         )
+        return "".join(parts)
 
     # ------------------------------------------------------------------
     # Proactive-scan aggregation
