@@ -1616,6 +1616,13 @@ hybrid_dispatch:
   min_samples_for_routing: 3
   dispatchable_tags:
   - consultation
+work_board_reconciler:
+  # AD-876: Quartermaster utility agent — re-dispatches work items whose
+  # assignee is no longer live. Requires hybrid_dispatch (above) enabled.
+  enabled: true
+  interval_seconds: 300
+  warm_boot: true
+  scan_limit: 200
 process_chain_registry:
   enabled: true
 knowledge_loading:
