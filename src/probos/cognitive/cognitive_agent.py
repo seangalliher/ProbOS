@@ -1177,6 +1177,25 @@ class CognitiveAgent(BaseAgent):
 
         store = getattr(runtime, "work_item_store", None) if runtime else None
         if store is not None and work_item_id:
+            # BF-607: This agent is actively working a directly-dispatched item,
+            # but the AD-581a WorkItemRouter only emits the dispatch event — it
+            # never persists the assignment. Without claiming it here the board
+            # shows the item ``in_progress`` with "Unassigned" (observed for the
+            # yeo-delegated task), because ``assigned_to`` was never written.
+            # Claim it for this agent if (and only if) it is currently
+            # unassigned, so the displayed assignee reflects who is actually
+            # doing the work; an item the Captain or crew orchestrator already
+            # assigned is left untouched. Tier-2 log-and-degrade.
+            try:
+                current = await store.get_work_item(work_item_id)
+                if current is not None and not current.assigned_to:
+                    await store.update_work_item(work_item_id, assigned_to=self.id)
+            except Exception:
+                logger.warning(
+                    "BF-607: failed to claim work_item %s for agent %s; "
+                    "it remains unassigned",
+                    work_item_id, self.id, exc_info=True,
+                )
             try:
                 await store.transition_work_item(
                     work_item_id, "in_progress", source=self.id,

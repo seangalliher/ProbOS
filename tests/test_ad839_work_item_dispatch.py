@@ -61,10 +61,28 @@ class _FakeThreadStore:
         )
 
 
+class _FakeWorkItem:
+    def __init__(self, work_item_id: str, assigned_to: str | None = None) -> None:
+        self.id = work_item_id
+        self.assigned_to = assigned_to
+
+
 class _FakeWorkItemStore:
-    def __init__(self) -> None:
+    def __init__(self, assigned_to: str | None = None) -> None:
         self.transitions: list[tuple[str, str, str]] = []
         self.raise_on_transition = False
+        # BF-607: track assignment so the claim path can be exercised.
+        self.updates: list[tuple[str, str | None]] = []
+        self._item = _FakeWorkItem("wi-1", assigned_to=assigned_to)
+
+    async def get_work_item(self, work_item_id: str) -> Any:
+        return self._item
+
+    async def update_work_item(self, work_item_id: str, **updates: Any) -> Any:
+        if "assigned_to" in updates:
+            self._item.assigned_to = updates["assigned_to"]
+            self.updates.append((work_item_id, updates["assigned_to"]))
+        return self._item
 
     async def transition_work_item(
         self, work_item_id: str, new_status: str, source: str = "system"
@@ -218,4 +236,79 @@ async def test_handler_no_thread_store_still_transitions() -> None:
     result = await agent._handle_work_item_dispatch(_dispatch_intent())
 
     assert result.success is True
+    assert work_item_store.transitions == [("wi-1", "in_progress", agent.id)]
+
+
+# ------------------------------------------------------------------ BF-607
+
+@pytest.mark.asyncio
+async def test_handler_claims_unassigned_work_item() -> None:
+    """BF-607: an unassigned dispatched item is claimed for the handling agent.
+
+    The AD-581a router emits the dispatch event but never persists the
+    assignment, so the board showed the item ``in_progress`` with "Unassigned".
+    The handler must write ``assigned_to = self.id`` for an unassigned item.
+    """
+    work_item_store = _FakeWorkItemStore(assigned_to=None)
+    agent = _make_agent(runtime=_make_runtime(None, work_item_store))
+    agent.handle_intent = AsyncMock(
+        return_value=IntentResult(
+            intent_id="dm", agent_id=agent.id, success=True,
+            result="On it.", confidence=0.5,
+        )
+    )
+
+    result = await agent._handle_work_item_dispatch(_dispatch_intent())
+
+    assert result.success is True
+    # claimed for the handling agent
+    assert work_item_store.updates == [("wi-1", agent.id)]
+    assert work_item_store._item.assigned_to == agent.id
+    # still transitioned to in_progress
+    assert work_item_store.transitions == [("wi-1", "in_progress", agent.id)]
+
+
+@pytest.mark.asyncio
+async def test_handler_does_not_reassign_already_assigned_item() -> None:
+    """BF-607: an item already assigned (Captain/crew) is left untouched."""
+    work_item_store = _FakeWorkItemStore(assigned_to="captain-picked-agent")
+    agent = _make_agent(runtime=_make_runtime(None, work_item_store))
+    agent.handle_intent = AsyncMock(
+        return_value=IntentResult(
+            intent_id="dm", agent_id=agent.id, success=True,
+            result="Reply.", confidence=0.5,
+        )
+    )
+
+    result = await agent._handle_work_item_dispatch(_dispatch_intent())
+
+    assert result.success is True
+    # no reassignment — the existing assignee is preserved
+    assert work_item_store.updates == []
+    assert work_item_store._item.assigned_to == "captain-picked-agent"
+    # transition still happens
+    assert work_item_store.transitions == [("wi-1", "in_progress", agent.id)]
+
+
+@pytest.mark.asyncio
+async def test_handler_degrades_when_claim_fails() -> None:
+    """BF-607: a failing claim must not raise; transition + ack still happen."""
+    work_item_store = _FakeWorkItemStore(assigned_to=None)
+
+    async def _boom(work_item_id: str, **updates: Any) -> Any:
+        raise RuntimeError("update down")
+
+    work_item_store.update_work_item = _boom  # type: ignore[assignment]
+    agent = _make_agent(runtime=_make_runtime(None, work_item_store))
+    agent.handle_intent = AsyncMock(
+        return_value=IntentResult(
+            intent_id="dm", agent_id=agent.id, success=True,
+            result="Reply.", confidence=0.5,
+        )
+    )
+
+    result = await agent._handle_work_item_dispatch(_dispatch_intent())
+
+    assert result.success is True
+    # claim failed but the work item still moves to in_progress
     assert work_item_store.transitions == [("wi-1", "in_progress", agent.id)]
