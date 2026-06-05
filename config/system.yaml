@@ -1040,7 +1040,7 @@ avatars:
   blender_path: ''
   blender_render_timeout_s: 180
   dsl_drafts_dir: data/avatars/.drafts
-  renderer_enabled: false
+  renderer_enabled: true
   procedural_base_mesh_fallback: true
   max_proposal_iterations: 3
   baseline_vrms:
@@ -1063,7 +1063,7 @@ avatars:
   render_self_check_active_window_seconds: 600
   affect_drift_default_window: 8
   affect_drift_threshold: 0.7
-  image_gen_enabled: false
+  image_gen_enabled: true
   image_gen_max_prompt_chars: 512
   image_gen_wellness_review_required: true
   image_gen_max_image_bytes: 4194304
@@ -1072,12 +1072,12 @@ avatars:
   peer_observation_decay_seconds: 604800
   peer_observation_max_per_pair_per_thread: 1
   cross_agent_divergence_observation_enabled: false
-  canvas_render_vrm_avatars: false
+  canvas_render_vrm_avatars: true
   canvas_max_concurrent_vrms: 12
   canvas_vrm_lod_distance: 15.0
   animations_dir: data/avatars/animations
-  animations_enabled: false
-  pacing_enabled: false
+  animations_enabled: true
+  pacing_enabled: true
   pacing_max_followups_per_active_conversation: 2
   pacing_max_followups_per_hour_per_agent: 6
   pacing_active_window_seconds: 600
@@ -1814,6 +1814,11 @@ self_distillation:
 spc:
   enabled: true
   sample_window: 100
+agentic_dispatch:
+  enabled: true
+  max_parallel_subtasks: 3
+  max_convergence_rounds: 2
+  orchestrator_enabled: true
 desktop:
   enabled: false
   tray_autostart: true
