@@ -70,6 +70,13 @@ class WardRoomRouter:
         self._round_participants: dict[str, set[str]] = {}  # "thread_id:round" -> set of agent_ids
         self._coalesce_timers: dict[str, asyncio.TimerHandle] = {}  # AD-616: thread_id -> pending timer
         self._coalesce_ms: int = getattr(config.ward_room, 'event_coalesce_ms', 200)
+        # BF-602: Track in-flight coalesced _fire() tasks so their exceptions are
+        # retrieved (not fire-and-forget) and can be cancelled on shutdown.
+        self._coalesce_fire_tasks: set[asyncio.Task[None]] = set()
+        # BF-602: Set during shutdown — suppresses all Ward Room routing so a
+        # coalesce timer firing after the ward_room DB closes can't hit a dead
+        # aiosqlite connection ("no active connection").
+        self._stopping: bool = False
         self._channel_members: dict[str, set[str]] = {}  # AD-621: channel_id -> {agent_ids}
         # BF-198: Track threads each agent has already responded to.
         # Shared between router path and proactive loop to prevent double-response.
@@ -91,6 +98,28 @@ class WardRoomRouter:
         # until Captain's routing to all targets completes
         self._captain_delivery_done: asyncio.Event = asyncio.Event()
         self._captain_delivery_done.set()  # Initially done (no Captain routing in progress)
+
+    # ------------------------------------------------------------------
+    # BF-602: Shutdown teardown
+    # ------------------------------------------------------------------
+
+    def stop(self) -> None:
+        """BF-602: Quiesce Ward Room routing for shutdown.
+
+        Sets the stopping flag (suppresses any further routing), cancels all
+        pending coalesce timers, and cancels in-flight ``_fire()`` tasks. Called
+        early in shutdown (alongside BF-296 Phase A intent-dispatch close) so a
+        coalesce timer scheduled by a dream-cycle post can't fire after the
+        ward_room DB connection is closed and crash with "no active connection".
+        Synchronous and idempotent — safe to call more than once.
+        """
+        self._stopping = True
+        for handle in self._coalesce_timers.values():
+            handle.cancel()
+        self._coalesce_timers.clear()
+        for task in list(self._coalesce_fire_tasks):
+            task.cancel()
+        self._coalesce_fire_tasks.clear()
 
     # ------------------------------------------------------------------
     # BF-198: Responded-thread tracker (prevents router/proactive double-post)
@@ -268,6 +297,11 @@ class WardRoomRouter:
         same thread within the window, the timer resets and only the latest
         event is routed.
         """
+        # BF-602: Stop scheduling Ward Room routing once shutdown has begun — a
+        # timer firing after the ward_room DB closes hits a dead connection.
+        if self._stopping:
+            return
+
         # Thread creation and non-post events: route immediately
         if event_type != "ward_room_post_created" or self._coalesce_ms <= 0:
             await self.route_event(event_type, data)
@@ -288,11 +322,36 @@ class WardRoomRouter:
 
         async def _fire() -> None:
             self._coalesce_timers.pop(thread_id, None)
-            await self.route_event(event_type, data)
+            # BF-602: A coalesce timer can fire during shutdown after the
+            # ward_room DB connection is closed. Guard + log-and-degrade so a
+            # late post can't crash with "no active connection" as an
+            # unretrieved task exception.
+            if self._stopping:
+                return
+            try:
+                await self.route_event(event_type, data)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "BF-602: coalesced Ward Room routing for thread %s failed "
+                    "(likely shutdown race); degrading",
+                    thread_id,
+                    exc_info=True,
+                )
+
+        def _spawn_fire() -> None:
+            # BF-602: Hold a reference to the task so its exception is retrieved
+            # and it can be cancelled by stop(); drop the reference on done.
+            if self._stopping:
+                return
+            task = asyncio.create_task(_fire())
+            self._coalesce_fire_tasks.add(task)
+            task.add_done_callback(self._coalesce_fire_tasks.discard)
 
         handle = loop.call_later(
             self._coalesce_ms / 1000.0,
-            lambda: asyncio.create_task(_fire()),
+            _spawn_fire,
         )
         self._coalesce_timers[thread_id] = handle
 
@@ -304,6 +363,12 @@ class WardRoomRouter:
         once-per-round, cooldown, [NO_RESPONSE]).
         """
         if not self._ward_room:
+            return
+
+        # BF-602: Suppress routing once shutdown has begun — the ward_room DB
+        # connection may already be closed (get_thread/get_channel would raise
+        # "no active connection").
+        if self._stopping:
             return
 
         # BF-198: Periodic eviction of stale responded-thread records

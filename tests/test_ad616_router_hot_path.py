@@ -85,6 +85,7 @@ class TestEventCoalescing:
         router = WardRoomRouter.__new__(WardRoomRouter)
         router._coalesce_timers = {}
         router._coalesce_ms = 200
+        router._stopping = False  # BF-602
 
         router.route_event = AsyncMock()
 

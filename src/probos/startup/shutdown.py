@@ -171,6 +171,26 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             exc_info=True,
         )
 
+    # BF-602: Quiesce Ward Room routing alongside the intent-dispatch close.
+    # The explicit dream_cycle below makes agents post to the Ward Room during
+    # consolidation; each post schedules a coalesce timer (AD-616) that fires
+    # ~200ms later. If the ward_room DB connection is torn down before the timer
+    # fires, route_event() crashes inside aiosqlite ("no active connection") as
+    # an unretrieved fire-and-forget task exception. stop() sets the suppression
+    # flag and cancels all pending coalesce timers + in-flight _fire() tasks.
+    # Honest-degrade: absent on transitional procs started before BF-602.
+    try:
+        _wrr = getattr(runtime, "ward_room_router", None)
+        if _wrr is not None and hasattr(_wrr, "stop"):
+            _wrr.stop()
+            logger.info("BF-602: Ward Room routing quiesced for shutdown")
+    except Exception:
+        logger.warning(
+            "BF-602: failed to quiesce Ward Room routing; "
+            "proceeding (coalesce-timer race hazard)",
+            exc_info=True,
+        )
+
     # AD-825: quiesce the DreamScheduler monitor loop BEFORE the
     # explicit dream_cycle below. Without this, the monitor loop can
     # run its own dream_cycle concurrently with the explicit one, and
