@@ -463,6 +463,8 @@ async def _boot_runtime(
         query_reformulation_enabled=config.memory.query_reformulation_enabled,  # AD-584
         hnsw_sync_threshold=config.memory.hnsw_sync_threshold,  # AD-821
         hnsw_batch_size=config.memory.hnsw_batch_size,  # AD-821
+        recall_rerank_enabled=config.memory.recall_rerank_enabled,  # AD-873
+        recall_rerank_weights=config.memory.recall_rerank_weights,  # AD-873
     )
 
     runtime = ProbOSRuntime(

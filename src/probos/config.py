@@ -980,6 +980,20 @@ class MemoryConfig(BaseModel):
         "anchor": 0.15,
     }
     recall_convergence_bonus: float = 0.10  # AD-584c: bonus for multi-channel hits
+    # AD-873: Composite recall reranking (Ebbinghaus strength × similarity ×
+    # recency × importance). Off + neutral by default: with the flag False the
+    # recall() path is byte-identical to semantic-only, and even when enabled,
+    # all-zero weights reproduce semantic-only ordering (x**0 == 1). Defaults
+    # are sensible non-zero weights so flipping the flag produces useful
+    # behavior; operators tune per workload.
+    recall_rerank_enabled: bool = False
+    recall_rerank_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "strength": 1.0,
+            "recency": 0.5,
+            "importance": 0.5,
+        }
+    )
     recall_temporal_match_weight: float = 0.25       # BF-147→BF-155: bonus for temporal cue match in score_recall()
     recall_temporal_mismatch_penalty: float = 0.15   # BF-155: penalty when query watch differs from episode watch
     # AD-601: TCM Temporal Context Model

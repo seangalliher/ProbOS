@@ -465,6 +465,15 @@ class MemoryRef:
     metadata: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
 
 
+# AD-873: Ebbinghaus memory decay — default stability (decay time-constant, in
+# seconds) for a freshly-encoded episode. Sized so a brand-new memory barely
+# decays over a day: S(t)=e^(-t/stability), so over 86_400s (one day) a fresh
+# memory retains e^(-86400/1_728_000)=e^(-0.05) ~= 0.95 of its strength. Grows
+# on reinforced recall/replay (spaced repetition) so revisited memories decay
+# slower. 1_728_000s = 20 days.
+EBBINGHAUS_DEFAULT_STABILITY_SECONDS: float = 1_728_000.0
+
+
 @dataclass(frozen=True)
 class Episode:
     """A recorded episode from the cognitive pipeline."""
@@ -496,6 +505,9 @@ class Episode:
     confidence: float = 1.0    # store-time belief strength (0.0–1.0); derived from source_type when graded, else caller-authoritative
     verification_count: int = 0  # how many independent corroborations have been observed
     contradicted_by: list[str] = field(default_factory=list)  # episode ids that contradict this record
+    # AD-873: Ebbinghaus memory decay — strength decays over time, stability slows decay.
+    strength: float = 1.0  # current retention strength S(t) in [0,1]; 1.0 = freshly encoded
+    stability: float = EBBINGHAUS_DEFAULT_STABILITY_SECONDS  # decay time-constant (s); grows on reinforced recall/replay
 
 
 # ------------------------------------------------------------------

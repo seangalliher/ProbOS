@@ -752,6 +752,27 @@ class DreamingEngine:
         except Exception as e:
             logger.debug("Step 7f lifecycle maintenance failed: %s", e)
 
+        # Step 7f2: Ebbinghaus episode decay (AD-873)
+        # Idle-time only. Reuses the AD-567d activation signal so replayed
+        # memories accrue stability and decay slower. Honest-degrade: a failure
+        # here must never abort the dream cycle.
+        episodes_decayed = 0
+        episodes_reinforced = 0
+        try:
+            if self.episodic_memory is not None:
+                decay_counts = await self.episodic_memory.sweep_episode_decay(
+                    self._activation_tracker
+                )
+                episodes_decayed = int(decay_counts.get("swept", 0))
+                episodes_reinforced = int(decay_counts.get("reinforced", 0))
+                if episodes_decayed > 0:
+                    logger.debug(
+                        "Step 7f2: Decayed %d episodes (%d reinforced)",
+                        episodes_decayed, episodes_reinforced,
+                    )
+        except Exception as e:
+            logger.debug("Step 7f2 episode decay failed: %s", e)
+
         # Step 7g: Notebook consolidation + cross-agent convergence (AD-551)
         notebook_consolidations = 0
         notebook_entries_archived = 0

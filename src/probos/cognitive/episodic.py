@@ -23,6 +23,7 @@ from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.similarity import jaccard_similarity
 from probos.cognitive.temporal_context import serialize_tcm_vector, deserialize_tcm_vector
 from probos.types import AnchorFrame, Episode, RecallScore, resolve_provenance
+from probos.types import EBBINGHAUS_DEFAULT_STABILITY_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,53 @@ async def _iter_collection_pages(
         if len(ids) < effective:
             return
         offset += effective
+
+
+# ---------------------------------------------------------------------------
+# AD-873: Ebbinghaus episode decay helpers (pure; no I/O)
+# ---------------------------------------------------------------------------
+
+# Each unit of positive ACT-R activation (AD-567d recency+frequency
+# reinforcement signal) grows an episode's stability by this fraction, so
+# frequently/recently recalled memories accrue stability and decay slower
+# (spaced repetition). Conservative so a single recall does not over-cement.
+_STABILITY_REINFORCEMENT_GAIN: float = 0.25
+
+
+def decayed_strength(strength: float, stability: float, delta_seconds: float) -> float:
+    """AD-873: Ebbinghaus retention curve ``S(t) = S0 * e^(-dt/stability)``.
+
+    ``strength`` is the baseline retention ``S0`` (1.0 = freshly encoded),
+    ``stability`` is the decay time-constant in seconds, and ``delta_seconds``
+    is the elapsed time ``dt`` since encoding/last reinforcement. Larger
+    stability => slower decay. Pure (no I/O).
+
+    Guards: a non-positive ``stability`` has no usable decay constant, and a
+    non-positive ``delta_seconds`` means no elapsed time — both return
+    ``strength`` unchanged.
+    """
+    if stability <= 0.0:
+        return strength
+    if delta_seconds <= 0.0:
+        return strength
+    return strength * math.exp(-delta_seconds / stability)
+
+
+def reinforced_stability(stability: float, activation: float) -> float:
+    """AD-873: Grow ``stability`` from the AD-567d reinforcement signal.
+
+    Frequently/recently recalled episodes have higher ACT-R ``activation``
+    (``ln(sum age^-d)``) and accrue stability, so they decay slower (spaced
+    repetition). Monotonic non-decreasing in ``activation``. Never shrinks:
+    a non-finite or non-positive ``activation`` (stale or never-accessed —
+    the tracker returns ``-inf``) returns ``stability`` unchanged. Pure (no
+    I/O).
+    """
+    if stability <= 0.0:
+        return stability
+    if not math.isfinite(activation) or activation <= 0.0:
+        return stability
+    return stability * (1.0 + _STABILITY_REINFORCEMENT_GAIN * activation)
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +853,8 @@ class EpisodicMemory:
         query_reformulation_enabled: bool = True,
         hnsw_sync_threshold: int = 64,
         hnsw_batch_size: int = 32,
+        recall_rerank_enabled: bool = False,
+        recall_rerank_weights: dict[str, float] | None = None,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -819,6 +869,9 @@ class EpisodicMemory:
         # every batch triggers a flush, defeating Chroma's batched-write path).
         self._hnsw_sync_threshold = int(hnsw_sync_threshold)
         self._hnsw_batch_size = max(1, min(int(hnsw_batch_size), self._hnsw_sync_threshold // 2))
+        # AD-873: composite recall reranking (off + neutral by default).
+        self._recall_rerank_enabled = bool(recall_rerank_enabled)
+        self._recall_rerank_weights: dict[str, float] = dict(recall_rerank_weights or {})
         self._client: Any = None
         self._collection: Any = None
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
@@ -1483,6 +1536,89 @@ class EpisodicMemory:
             )
             return False
 
+    async def sweep_episode_decay(
+        self,
+        activation_tracker: Any = None,
+        *,
+        limit: int = 500,
+    ) -> dict[str, int]:
+        """AD-873: Idle-time Ebbinghaus decay pass over a bounded page of episodes.
+
+        Recomputes each episode's ``stability`` and ``strength`` and writes them
+        back to ChromaDB metadata. Stability is recomputed IDEMPOTENTLY from the
+        default baseline reinforced by the AD-567d ACT-R activation signal (so
+        frequently/recently recalled episodes accrue stability and decay slower
+        — spaced repetition), then ``strength = decayed_strength(1.0,
+        stability, age)``. Recomputing from the baseline (rather than
+        compounding the stored stability) means repeated sweeps converge instead
+        of drifting.
+
+        Bounded: only the first ``limit`` episodes are visited per call — never a
+        full-collection rewrite. Honest-degrade: a failure on any single episode
+        is logged and skipped, and a top-level failure returns the partial
+        counts. Decay must NEVER abort the dream cycle.
+
+        Returns ``{"swept": N, "reinforced": M}`` where ``swept`` is the number
+        of episodes successfully written and ``reinforced`` is how many had a
+        positive activation signal that grew their stability.
+        """
+        counts = {"swept": 0, "reinforced": 0}
+        if not self._collection:
+            return counts
+
+        try:
+            page = await asyncio.to_thread(
+                self._collection.get,
+                include=["metadatas"],
+                limit=limit,
+                offset=0,
+            )
+        except Exception:
+            logger.debug("AD-873: episode decay sweep page read failed", exc_info=True)
+            return counts
+
+        ids = (page or {}).get("ids") or []
+        if not ids:
+            return counts
+        metas = page.get("metadatas") or [{} for _ in ids]
+
+        # AD-567d: batch the reinforcement signal so revisited memories decay
+        # slower. Missing tracker / failure => neutral (-inf) activation for all.
+        activations: dict[str, float] = {}
+        if activation_tracker is not None:
+            try:
+                activations = activation_tracker.get_activations_batch(list(ids)) or {}
+            except Exception:
+                logger.debug("AD-873: activation batch query failed", exc_info=True)
+                activations = {}
+
+        now = time.time()
+        for i, ep_id in enumerate(ids):
+            try:
+                meta = metas[i] if i < len(metas) else {}
+                ep = self._metadata_to_episode(ep_id, "", meta or {})
+                activation = activations.get(ep_id, float("-inf"))
+                new_stability = reinforced_stability(
+                    EBBINGHAUS_DEFAULT_STABILITY_SECONDS, activation
+                )
+                age = max(0.0, now - float(ep.timestamp or now))
+                new_strength = decayed_strength(1.0, new_stability, age)
+                ok = await self.update_episode_metadata(
+                    ep_id,
+                    {"strength": float(new_strength), "stability": float(new_stability)},
+                )
+                if ok:
+                    counts["swept"] += 1
+                    if math.isfinite(activation) and activation > 0.0:
+                        counts["reinforced"] += 1
+            except Exception:
+                logger.debug(
+                    "AD-873: episode decay failed for %s; skipping", ep_id, exc_info=True
+                )
+                continue
+
+        return counts
+
     async def update_episode_validity(self, episode_id: str, valid_until: float) -> bool:
         """AD-579c: Update valid_until metadata for an existing episode."""
         if not self._collection:
@@ -1760,8 +1896,53 @@ class EpisodicMemory:
 
     # ---- recall ---------------------------------------------------
 
+    @staticmethod
+    def _composite_recall_score(
+        similarity: float,
+        episode: Episode,
+        weights: dict[str, float],
+        now: float,
+    ) -> float:
+        """AD-873: Multiplicative composite recall score for reranking.
+
+        Combines semantic ``similarity`` with per-episode ``strength``,
+        ``recency`` (Ebbinghaus-style ``exp(-age_hours/168)``), ``importance``
+        (1-10 normalized to [0,1]) and optionally AD-871 ``confidence``, each
+        normalized to [0,1] and raised to its configured weight. A weight of
+        ``0.0`` neutralizes its factor (``x**0 == 1``), so all-zero weights
+        reduce the score to ``similarity`` — reproducing today's semantic-only
+        ordering. Pure (no I/O).
+        """
+        def _clamp01(x: float) -> float:
+            if x < 0.0:
+                return 0.0
+            if x > 1.0:
+                return 1.0
+            return x
+
+        score = _clamp01(similarity)
+        w_s = float(weights.get("strength", 0.0))
+        if w_s:
+            score *= _clamp01(episode.strength) ** w_s
+        w_r = float(weights.get("recency", 0.0))
+        if w_r:
+            age_hours = max(0.0, (now - float(episode.timestamp or now)) / 3600.0)
+            score *= _clamp01(math.exp(-age_hours / 168.0)) ** w_r
+        w_i = float(weights.get("importance", 0.0))
+        if w_i:
+            score *= _clamp01(float(episode.importance) / 10.0) ** w_i
+        w_c = float(weights.get("confidence", 0.0))
+        if w_c:
+            score *= _clamp01(episode.confidence) ** w_c
+        return score
+
     async def recall(self, query: str, k: int = 5) -> list[Episode]:
-        """Semantic search — return top-k episodes by embedding similarity."""
+        """Semantic search — return top-k episodes by embedding similarity.
+
+        AD-873: when composite reranking is enabled the full candidate pool is
+        scored by ``strength * similarity * recency * importance`` and the top-k
+        are returned; otherwise behaviour is unchanged (semantic-only).
+        """
         if not self._collection:
             return []
 
@@ -1772,7 +1953,10 @@ class EpisodicMemory:
         if count == 0:
             return []
 
-        n_results = min(k * 3, count)  # Query more to filter by threshold
+        rerank = self._recall_rerank_enabled
+        # AD-873: widen the candidate pool when reranking so the composite
+        # score has material to reorder; otherwise keep the historical window.
+        n_results = min(k * (10 if rerank else 3), count)
         result = self._collection.query(
             query_texts=[query],
             n_results=n_results,
@@ -1783,6 +1967,8 @@ class EpisodicMemory:
             return []
 
         episodes: list[Episode] = []
+        scored: list[tuple[Episode, float]] = []  # AD-873: (episode, composite)
+        now = time.time()
         for i, doc_id in enumerate(result["ids"][0]):
             # ChromaDB cosine distance: distance = 1 - similarity
             distance = result["distances"][0][i] if result["distances"] else 0.0
@@ -1799,10 +1985,25 @@ class EpisodicMemory:
             if self._security_anomaly_drop(ep, query=query, anchor_query=None):
                 continue
 
+            if rerank:
+                # AD-873: collect the FULL pool (no early break) for reranking.
+                composite = self._composite_recall_score(
+                    similarity, ep, self._recall_rerank_weights, now
+                )
+                scored.append((ep, composite))
+                continue
+
             episodes.append(ep)
 
             if len(episodes) >= k:
                 break
+
+        if rerank:
+            # Stable sort by composite desc. ChromaDB returned candidates in
+            # similarity-desc order, so neutral (all-zero) weights make the
+            # composite equal to similarity and preserve semantic-only order.
+            scored.sort(key=lambda t: t[1], reverse=True)
+            return [ep for ep, _ in scored[:k]]
 
         return episodes
 
@@ -2326,6 +2527,9 @@ class EpisodicMemory:
             "confidence": float(_confidence),
             "verification_count": int(ep.verification_count),
             "contradicted_by_json": json.dumps(ep.contradicted_by or []),
+            # AD-873: Ebbinghaus memory decay (strength derived from age+stability)
+            "strength": float(ep.strength),
+            "stability": float(ep.stability),
         }
         # AD-570: Promote key anchor fields for ChromaDB where-clause filtering
         if ep.anchors:
@@ -2444,6 +2648,15 @@ class EpisodicMemory:
                 contradicted_by = []
         except (json.JSONDecodeError, TypeError):
             contradicted_by = []
+        # AD-873: Ebbinghaus decay fields (pre-AD-873 episodes default cleanly).
+        try:
+            strength = float(metadata.get("strength", 1.0))
+        except (TypeError, ValueError):
+            strength = 1.0
+        try:
+            stability = float(metadata.get("stability", EBBINGHAUS_DEFAULT_STABILITY_SECONDS))
+        except (TypeError, ValueError):
+            stability = EBBINGHAUS_DEFAULT_STABILITY_SECONDS
         return Episode(
             id=doc_id,
             timestamp=round(float(metadata.get("timestamp", 0.0)), 6),
@@ -2466,6 +2679,9 @@ class EpisodicMemory:
             confidence=confidence,
             verification_count=verification_count,
             contradicted_by=contradicted_by,
+            # AD-873: Ebbinghaus memory decay
+            strength=strength,
+            stability=stability,
         )
 
     # ---- AD-567b: Salience-weighted recall pipeline --------------------
