@@ -82,6 +82,7 @@ def _qm(
         work_item_router=router,
         pool="utility",
         agent_id="qm-1",
+        min_item_age_seconds=0,  # AD-878: tests use fresh items; disable boot-grace skip
     )
 
 
@@ -192,6 +193,8 @@ async def test_reconcile_empty_board_all_zero(store: WorkItemStore) -> None:
         "quarantined": 0, "quarantined_skipped": 0, "backoff_skipped": 0,
         # AD-879: starvation-visibility flag always present in the summary
         "truncated": False,
+        # AD-878: boot-race grace-period skip counter always present
+        "too_fresh": 0,
     }
 
 

@@ -4559,6 +4559,9 @@ class WorkBoardReconcilerConfig(BaseModel):
     # quarantine (metadata flag), and a per-item backoff between sweeps.
     max_reconcile_attempts: int = Field(default=3, ge=1, le=20)
     reconcile_backoff_seconds: int = Field(default=600, ge=0, le=86400)
+    # AD-878: boot-race grace period — skip items younger than this age so a
+    # mid-first-dispatch item is not reclaimed by the warm-boot sweep.
+    min_item_age_seconds: int = Field(default=30, ge=0, le=600)
 
 
 class CommunicationsConfig(BaseModel):

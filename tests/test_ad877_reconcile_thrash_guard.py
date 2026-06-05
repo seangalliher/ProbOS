@@ -94,6 +94,7 @@ def _qm(
         agent_id="qm-1",
         max_reconcile_attempts=max_reconcile_attempts,
         reconcile_backoff_seconds=reconcile_backoff_seconds,
+        min_item_age_seconds=0,  # AD-878: tests use fresh items; disable boot-grace skip
     )
 
 

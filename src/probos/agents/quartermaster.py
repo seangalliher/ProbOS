@@ -57,6 +57,7 @@ class QuartermasterAgent(BaseAgent):
         scan_limit: int = 200,
         max_reconcile_attempts: int = 3,
         reconcile_backoff_seconds: int = 600,
+        min_item_age_seconds: int = 30,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -69,6 +70,8 @@ class QuartermasterAgent(BaseAgent):
         # AD-877: thrash guard — bounded re-route attempts + backoff between sweeps
         self._max_reconcile_attempts = max_reconcile_attempts
         self._reconcile_backoff_seconds = reconcile_backoff_seconds
+        # AD-878: boot-race grace period — skip items younger than this age
+        self._min_item_age_seconds = min_item_age_seconds
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -138,6 +141,8 @@ class QuartermasterAgent(BaseAgent):
             "backoff_skipped": 0,
             # AD-879: starvation visibility
             "truncated": False,
+            # AD-878: boot-race grace period skips
+            "too_fresh": 0,
         }
 
         # AD-879: process oldest-first within each priority band. list_work_items
@@ -158,6 +163,14 @@ class QuartermasterAgent(BaseAgent):
                 counts["scanned"] += 1
                 wi = item.to_dict()
                 md_current = wi.get("metadata") or {}
+
+                # AD-878: boot-race grace period — skip items younger than the
+                # grace period before any classify/attempt logic, so a mid-first-
+                # dispatch item is not reclaimed and does not accrue an attempt.
+                if self._min_item_age_seconds > 0:
+                    if wi["created_at"] > time.time() - self._min_item_age_seconds:
+                        counts["too_fresh"] += 1
+                        continue
 
                 # AD-877: quarantined items are terminal — never re-routed (highest precedence).
                 if md_current.get("quarantined"):

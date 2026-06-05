@@ -1920,6 +1920,8 @@ def _wire_board_reconciler(*, runtime: Any, config: "SystemConfig") -> bool:
     # AD-877: thrash guard config (bounded re-route attempts + per-item backoff).
     agent._max_reconcile_attempts = cfg.max_reconcile_attempts
     agent._reconcile_backoff_seconds = cfg.reconcile_backoff_seconds
+    # AD-878: boot-race grace period (skip items younger than this age).
+    agent._min_item_age_seconds = cfg.min_item_age_seconds
 
     ticker = BoardReconcilerTicker(
         agent=agent,

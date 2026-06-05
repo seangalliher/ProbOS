@@ -247,6 +247,7 @@ async def test_ticker_stop_cancels_cleanly() -> None:
 async def test_warm_boot_integration_redispatches_stranded(store: WorkItemStore) -> None:
     cfg = SystemConfig()
     cfg.work_board_reconciler.enabled = True
+    cfg.work_board_reconciler.min_item_age_seconds = 0  # AD-878: fresh stranded item; no boot-grace skip
     reg, qm = await _registry_with_quartermaster()
     # register a live assignee so the open item is re-dispatched (not cleared)
     await reg.register(_LiveAgent(pool="workers", agent_id="slot-live"))
