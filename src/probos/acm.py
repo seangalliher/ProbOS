@@ -339,4 +339,47 @@ class AgentCapitalService:
                 except Exception:
                     logger.debug("Episode count failed", exc_info=True)
 
+        # 7. Cognitive skills (AD-596) — instruction-knowledge the agent has access to.
+        #    AD-885: filtered by the agent's crew identity (department + rank) so the
+        #    lens shows what THIS agent can actually see, not the ship-wide catalogue.
+        if hasattr(runtime, 'cognitive_skill_catalog') and runtime.cognitive_skill_catalog:
+            try:
+                descriptions = runtime.cognitive_skill_catalog.get_descriptions(
+                    department=profile.get("department"),
+                    agent_rank=profile.get("rank"),
+                )
+                profile["cognitive_skills"] = [
+                    {"name": name, "description": description, "skill_id": skill_id}
+                    for (name, description, skill_id) in descriptions
+                ]
+                profile["cognitive_skill_count"] = len(descriptions)
+            except Exception:
+                logger.debug("Cognitive skill fetch failed", exc_info=True)
+
+        # 8. Tool grants (AD-423) — tools this agent is permitted to invoke. Resolved
+        #    through the real permission chain using the agent's true rank/department
+        #    (from block 2 crew identity); falling back to ensign-level would understate
+        #    a senior agent's grants.
+        if hasattr(runtime, 'tool_registry') and runtime.tool_registry:
+            try:
+                from probos.tools.protocol import ToolPermission
+
+                agent_rank = profile.get("rank") or "ensign"
+                agent_department = profile.get("department")
+                granted_tools = [
+                    reg.tool_id
+                    for reg in runtime.tool_registry.list_tools()
+                    if runtime.tool_registry.check_permission(
+                        agent_id,
+                        reg.tool_id,
+                        ToolPermission.READ,
+                        agent_department=agent_department,
+                        agent_rank=agent_rank,
+                    )
+                ]
+                profile["tools"] = granted_tools
+                profile["tool_count"] = len(granted_tools)
+            except Exception:
+                logger.debug("Tool grant fetch failed", exc_info=True)
+
         return profile
