@@ -10,6 +10,22 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-888: Skill→Tool binding — finish the orphaned resolver (Skills & Tools Unification epic, part 4 — #852)
+
+**Context.** `SkillDefinition.preferred_tools: list[ToolPreference]` has existed since AD-423 (with a SQLite migration), but **nothing resolved it** — there was no code path from "this agent exercises skill X" to "invoke the tool(s) that fulfil X." This was Part 4 of the orphaned `docs/development/unified-tool-layer.md` plan: the schema was in place, the binding was never built.
+
+**Decision.** Add a pure, side-effect-free resolver as a standalone substrate module `src/probos/tools/skill_tool_resolver.py` (chosen over a `ToolRegistry` method for Dependency Inversion — the resolver depends on the registry abstraction, not vice-versa): `resolve_tools_for_skill(skill: SkillDefinition, *, agent_id: str, tool_registry: ToolRegistry, hebbian: "HebbianRouter | None" = None) -> list[ToolRegistration]`. Resolution order:
+
+1. **Preferred tools, in priority order.** Iterate `sorted(skill.preferred_tools, key=lambda p: p.priority)` (lower `priority` = higher precedence). For each, look up `tool_registry.get(pref.tool_id)`; skip if missing, disabled, or already seen; keep only if `tool_registry.check_permission(agent_id, tool_id, ToolPermission.READ)` (READ = the minimum an agent needs to use a tool, matching `check_and_invoke`'s default floor). If any preferred tool resolves, return that list.
+2. **Capability-tag fallback.** Only when no preferred tool resolved and the skill declares a concrete `domain` (not the universal `"*"`): iterate `tool_registry.list_tools(tag=skill.domain)`, dedup, permission-filter (READ), debug-log on fallback success.
+3. **Hebbian no-op.** The optional `hebbian` parameter is a **documented no-op** today. The real ranking primitive `HebbianRouter.get_preferred_targets` ranks agent→agent (`REL_AGENT`) compatibility; there are no agent→tool edges in the routing graph yet, so there is nothing to rank tools by. The param is kept with a `# TODO(AD-888)` so this is the activation point once agent→tool edges exist. The resolver works with `hebbian=None`.
+
+**Boundaries.** The resolver only **resolves** — it never invokes a tool, grants a permission, or touches consensus (auto-invocation/granting is AD-889 + the AD-543-549 agentic executor, both unchanged). The `ToolPreference`/`preferred_tools` schema is untouched. An empty result is a clean `[]`, never a raise. Layer discipline: the substrate module imports `SkillDefinition` (foundation) and the tool types (same layer) at runtime, but keeps the `hebbian` annotation behind a `TYPE_CHECKING` guard so the substrate never imports the mesh layer at runtime (`from __future__ import annotations` makes the forward-ref string annotation cost-free).
+
+**Tests.** +6 in `tests/test_ad888_skill_tool_resolver.py` (BF-287 real fixtures — real `ToolRegistry` + real `SkillDefinition`/`ToolPreference` + a minimal `Tool`-protocol stub, no MagicMock at the substrate boundary): preferred tool returned first by priority; permission-denied preferred tool skipped (`restricted_to`); tag-fallback when no preferred tool; tag-fallback respects permission; a provided `hebbian` does not change ordering; empty result is a clean `[]`. AD-423 tool-foundation/permission/context + skill-framework blast-radius suites green (98) serially.
+
+**Consequence.** The skill→tool binding the unified-tool-layer plan promised now exists. AD-889 (the commissioning capstone) hard-depends on this resolver to turn a newly-acquired skill into concrete tool grants.
+
 ### AD-887: Skill Library unification — one query surface for both skill kinds (Skills & Tools Unification epic, part 3 — #851)
 
 **Context.** ProbOS carries two parallel skill stores: the AD-428 `AgentSkillService` holds **developmental** (T3) proficiency-tracked `AgentSkillRecord`s (PCC / role / acquired), and the AD-596 `CognitiveSkillCatalog` holds **cognitive** (T2) instruction-defined `SKILL.md` entries. AD-596c bridged catalog→registry (`SkillBridge`, `src/probos/cognitive/skill_bridge.py`, holding `_catalog` = T2 and `_service` = T3, wired as `runtime.skill_bridge`), but the two stores were still queried separately — so "what skills does this agent have?" had two answers. The developmental `SkillProfile` (`skill_framework.py`) had no cognitive field and `AgentSkillService.get_profile` (T3-only) never consulted the catalog.
