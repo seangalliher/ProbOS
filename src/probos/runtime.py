@@ -1628,6 +1628,15 @@ class ProbOSRuntime:
         for agent in self.registry.get_by_pool(name):
             if self.onboarding:
                 await self.onboarding.wire_agent(agent)
+            # AD-889: commission crew agents at birth — walk Role → Skills → Tools.
+            if self.acm and is_crew_agent(agent, self.ontology):
+                try:
+                    await self.acm.commission(agent.id, agent.agent_type, self)
+                except Exception:
+                    logger.debug(
+                        "AD-889: commission skipped for %s (type=%s)",
+                        agent.id, getattr(agent, "agent_type", "?"), exc_info=True,
+                    )
 
         await self.event_log.log(
             category="system",

@@ -52,11 +52,10 @@ async def skill_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
 
 @router.post("/agents/{agent_id}/commission")
 async def skill_commission(agent_id: str, req: SkillCommissionRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
-    """Commission an agent with initial PCC + role skills."""
-    if not runtime.skill_service:
-        raise HTTPException(503, "Skill service not available")
-    profile = await runtime.skill_service.commission_agent(agent_id, req.agent_type)
-    return profile.to_dict()
+    """Commission an agent — walk Role → Skills → Tools (AD-889 capstone)."""
+    if not runtime.acm:
+        raise HTTPException(503, "Agent capital service not available")
+    return await runtime.acm.commission(agent_id, req.agent_type, runtime)
 
 
 @router.post("/agents/{agent_id}/assess")
