@@ -195,6 +195,8 @@ async def test_reconcile_empty_board_all_zero(store: WorkItemStore) -> None:
         "truncated": False,
         # AD-878: boot-race grace-period skip counter always present
         "too_fresh": 0,
+        # AD-881: live-but-stalled reroute counter always present
+        "stalled": 0,
     }
 
 

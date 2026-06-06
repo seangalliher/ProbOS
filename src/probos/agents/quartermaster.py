@@ -63,6 +63,7 @@ class QuartermasterAgent(BaseAgent):
         max_reconcile_attempts: int = 3,
         reconcile_backoff_seconds: int = 600,
         min_item_age_seconds: int = 30,
+        stall_timeout_seconds: int = 0,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -77,6 +78,8 @@ class QuartermasterAgent(BaseAgent):
         self._reconcile_backoff_seconds = reconcile_backoff_seconds
         # AD-878: boot-race grace period — skip items younger than this age
         self._min_item_age_seconds = min_item_age_seconds
+        # AD-881: live-but-stalled reroute threshold (0 = disabled, default off)
+        self._stall_timeout_seconds = stall_timeout_seconds
         # AD-883: last-sweep summary for observability (None = never run)
         self._last_sweep: dict[str, Any] | None = None
 
@@ -232,6 +235,8 @@ class QuartermasterAgent(BaseAgent):
             "truncated": False,
             # AD-878: boot-race grace period skips
             "too_fresh": 0,
+            # AD-881: live-but-stalled reroutes
+            "stalled": 0,
         }
 
     async def _process_item(self, item: Any, counts: dict[str, Any]) -> None:
@@ -266,12 +271,24 @@ class QuartermasterAgent(BaseAgent):
                     return
 
             is_disp = self._router.is_dispatchable(wi)
-            decision = self._reconciler.classify(wi, is_dispatchable=is_disp)
+            # AD-881: the sweep owns the clock + threshold; the reconciler stays
+            # pure and receives the precomputed staleness signal. updated_at is
+            # last board-mutation (not a heartbeat) — a coarse stall signal.
+            is_stalled = False
+            if self._stall_timeout_seconds > 0 and wi.get("status") == "in_progress":
+                updated_at = wi.get("updated_at") or 0
+                if float(updated_at) < time.time() - self._stall_timeout_seconds:
+                    is_stalled = True
+            decision = self._reconciler.classify(
+                wi, is_dispatchable=is_disp, is_stalled=is_stalled
+            )
 
             if decision.action == "live_redispatch":
                 await self._router.dispatch_work_item(wi)
                 counts["redispatched"] += 1
             elif decision.action == "clear_and_reroute":
+                if decision.reason == "stalled":
+                    counts["stalled"] += 1
                 attempts = int(md_current.get("reconcile_attempts", 0))
                 if attempts + 1 >= self._max_reconcile_attempts:
                     # AD-877: bounded attempts exhausted — quarantine instead of re-route.

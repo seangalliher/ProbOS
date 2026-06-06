@@ -4565,6 +4565,10 @@ class WorkBoardReconcilerConfig(BaseModel):
     # AD-880: reactive reclaim — subscribe to AGENT_REMOVED and reclaim the dead
     # agent's items immediately (additive to the periodic sweep). Default off.
     reactive_reclaim: bool = False  # transitional flag — default False (conv #14)
+    # AD-881: live-but-stalled reroute — an in_progress item whose live assignee
+    # made no board progress within this window is rerouted. updated_at is
+    # last-mutation (not a heartbeat), so this is a coarse signal — default off.
+    stall_timeout_seconds: int = Field(default=0, ge=0, le=86400)  # 0 = disabled
 
 
 class CommunicationsConfig(BaseModel):

@@ -79,8 +79,20 @@ class WorkItemReconciler:
             )
             return None
 
-    def classify(self, wi: dict[str, Any], *, is_dispatchable: bool) -> ReconcileDecision:
-        """Classify a board item into a reconcile action (pure)."""
+    def classify(
+        self,
+        wi: dict[str, Any],
+        *,
+        is_dispatchable: bool,
+        is_stalled: bool = False,
+    ) -> ReconcileDecision:
+        """Classify a board item into a reconcile action (pure).
+
+        ``is_stalled`` (AD-881) is supplied by the sweep, which owns the clock
+        and the configured stall threshold. When True, a live-owned
+        ``in_progress`` item is rerouted (``reason="stalled"``) instead of
+        skipped — liveness alone no longer implies progress.
+        """
         wid = wi.get("id", "")
         status = wi.get("status", "")
         assignee = wi.get("assigned_to") or None
@@ -96,6 +108,12 @@ class WorkItemReconciler:
         if assignee is not None:
             resolved = self.resolve_live_agent(assignee)
             if resolved is not None and status == "in_progress":
+                if is_stalled:
+                    # AD-881: live assignee but no board progress past the
+                    # stall threshold — reroute instead of skip.
+                    return ReconcileDecision(
+                        wid, "clear_and_reroute", assignee, resolved, "stalled"
+                    )
                 return ReconcileDecision(
                     wid, "skip", assignee, resolved, "in_progress_live_owner"
                 )

@@ -1922,6 +1922,8 @@ def _wire_board_reconciler(*, runtime: Any, config: "SystemConfig") -> bool:
     agent._reconcile_backoff_seconds = cfg.reconcile_backoff_seconds
     # AD-878: boot-race grace period (skip items younger than this age).
     agent._min_item_age_seconds = cfg.min_item_age_seconds
+    # AD-881: live-but-stalled reroute threshold (0 = disabled, default off).
+    agent._stall_timeout_seconds = cfg.stall_timeout_seconds
 
     ticker = BoardReconcilerTicker(
         agent=agent,
