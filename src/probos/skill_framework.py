@@ -615,6 +615,12 @@ class SkillProfile:
     pccs: list[AgentSkillRecord] = field(default_factory=list)
     role_skills: list[AgentSkillRecord] = field(default_factory=list)
     acquired_skills: list[AgentSkillRecord] = field(default_factory=list)
+    # AD-887: cognitive (T2, instruction-defined SKILL.md) skills, merged in by
+    # SkillBridge.get_unified_profile. Each entry is a kind-tagged dict; the
+    # developmental skills above remain the T3 proficiency-tracked records.
+    # Kept as plain dicts so this foundation-layer dataclass stays decoupled from
+    # the cognitive-layer CognitiveSkillEntry type.
+    cognitive_skills: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def all_skills(self) -> list[AgentSkillRecord]:

@@ -79,6 +79,58 @@ class SkillBridge:
         )
         return result
 
+    # ── Unified Profile (AD-887) ──────────────────────────────────────
+
+    async def get_unified_profile(
+        self,
+        agent_id: str,
+        *,
+        department: str | None = None,
+        agent_rank: str | None = None,
+    ) -> SkillProfile:
+        """AD-887: single query surface reporting both skill kinds for an agent.
+
+        Developmental (T3) skills come from ``AgentSkillService.get_profile`` —
+        proficiency-tracked ``AgentSkillRecord``s in ``pccs``/``role_skills``/
+        ``acquired_skills``. Cognitive (T2) skills come from the
+        ``CognitiveSkillCatalog`` (instruction-defined ``SKILL.md`` entries),
+        optionally filtered by ``department``/``agent_rank`` (defaults to all
+        visible entries), and are appended to ``SkillProfile.cognitive_skills``
+        each tagged ``kind="cognitive"``.
+
+        The merge happens here in the bridge — ``AgentSkillService`` stays
+        T3-pure and the catalog stays its own store. A catalog failure
+        log-and-degrades to a developmental-only profile (Tier-2): the answer to
+        "what skills does this agent have?" must not raise.
+        """
+        profile = await self._service.get_profile(agent_id)
+        try:
+            entries = self._catalog.list_entries(
+                department=department, min_rank=agent_rank
+            )
+        except Exception:
+            logger.warning(
+                "AD-887: cognitive catalog query failed for agent %s; "
+                "returning developmental-only profile",
+                agent_id, exc_info=True,
+            )
+            return profile
+
+        for entry in entries:
+            profile.cognitive_skills.append(
+                {
+                    "name": entry.name,
+                    "description": entry.description,
+                    "skill_id": entry.skill_id,
+                    "department": entry.department,
+                    "min_proficiency": entry.min_proficiency,
+                    "min_rank": entry.min_rank,
+                    "origin": entry.origin,
+                    "kind": "cognitive",
+                }
+            )
+        return profile
+
     # ── Proficiency Gating ────────────────────────────────────────────
 
     def check_proficiency_gate(
