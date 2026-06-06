@@ -1,3 +1,18 @@
+> **⚠️ SUPERSEDED — do not implement from this document.**
+>
+> This doc titles itself "AD-543," but **AD-543 is a number collision**: AD-543
+> shipped as the Native SWE Harness Tool Execution Abstraction
+> ([`tools/executor.py`](../../src/probos/tools/executor.py)), **not** this
+> skill→tool design. The skill→tool binding described below actually landed as
+> **AD-888** (the `resolve_tools_for_skill` resolver) and was wired end-to-end by
+> the **AD-889** commissioning capstone (Skills & Tools Unification epic,
+> #849-854).
+>
+> **Canonical reference:** see
+> [`skills-and-tools-architecture.md`](skills-and-tools-architecture.md) for the
+> authoritative capability spine (Role → Skills → Tools). This file is retained
+> for historical context only.
+
 # AD-543: Unified Tool Layer — Skill-Tool Binding & Agentic Tool Adapters
 
 *"The crew member is the sovereign constant; everything else is infrastructure."*

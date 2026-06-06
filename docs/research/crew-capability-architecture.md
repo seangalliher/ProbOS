@@ -1,5 +1,7 @@
 # Crew Capability Architecture
 
+> **Canonical:** see [`skills-and-tools-architecture.md`](../development/skills-and-tools-architecture.md) for the authoritative, shipped capability spine (Role → Skills → Tools, AD-885 → AD-890). This document is the originating design analysis.
+
 **Date:** 2026-04-04
 **Author:** Architect (Sean Galliher)
 **Status:** Design Document — connects existing ADs into a unified personnel management model

@@ -10,6 +10,19 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-890: Supersede the stale capability docs (Skills & Tools Unification epic, part 6 — #854)
+
+**Context.** `docs/development/unified-tool-layer.md` titles itself "AD-543: Unified Tool Layer — Skill-Tool Binding & Agentic Tool Adapters," but **AD-543 is a number collision**: the real AD-543 shipped as the Native SWE Harness Tool Execution Abstraction (`src/probos/tools/executor.py`). The doc's skill→tool design was therefore orphaned — and it actually landed, four epic parts later, as **AD-888** (the `resolve_tools_for_skill` resolver) wired end-to-end by the **AD-889** commissioning capstone. Left unmarked, the doc misleads every future reader into thinking AD-543 is the skill→tool binding.
+
+**Decision (docs only — no code).**
+1. **SUPERSEDED banner** prepended to `docs/development/unified-tool-layer.md`: states the AD-543 number collision (AD-543 = Native SWE Harness / `tools/executor.py`), notes the skill→tool design actually shipped as AD-888 + AD-889, and redirects readers to the canonical `docs/development/skills-and-tools-architecture.md`. The original doc body is retained for historical context.
+2. **Canonical pointer** added atop `docs/research/crew-capability-architecture.md`: a one-line note that `skills-and-tools-architecture.md` is the authoritative, shipped capability spine (Role → Skills → Tools, AD-885 → AD-890) and this document is the originating design analysis.
+3. **Verify-only (no edit):** confirmed the AD-543 collision fact is already recorded in the canonical doc — the seam table (#6 row) and the §8 convergence sequence (item 6) both state it. No third edit needed.
+
+**Boundaries.** No source, no test, no other doc touched. Docs-only — the epic's final step ran the full serial gate to confirm AD-885 → AD-889 left the suite green.
+
+**Consequence.** The Skills & Tools Unification epic (#849-854) is closed: AD-885 (ACM single lens) → AD-886 (designed skill reclassified as Tool) → AD-887 (skill-library merge) → AD-888 (skill→tool resolver) → AD-889 (Role→Skills→Tools commissioning capstone) → AD-890 (docs). No future reader is misled by the AD-543 collision; the capability spine has one canonical home.
+
 ### AD-889: Commissioning capstone — walk Role → Skills → Tools at agent birth (Skills & Tools Unification epic, part 5 — #853)
 
 **Context.** The epic's first four parts unified the *query* surfaces: the ACM capability lens (AD-885), the designed-skill→tool reclassification (AD-886), the dual skill-library merge (AD-887), and the orphaned skill→tool resolver (AD-888). But nothing walked the chain end-to-end when a crew agent was *born*. The ingredients existed in isolation — `OntologyService.get_role_template_for_agent` (role → required skills), `AgentSkillService.acquire_skill` (developmental acquisition with prereq math), `resolve_tools_for_skill` (AD-888 skill → tools), and `ToolPermissionStore.issue_grant` (AD-885's grant surface) — but no single call turned "this agent is a science_officer" into "it holds the tactical-debug skill and a READ grant on the scanner tool."
