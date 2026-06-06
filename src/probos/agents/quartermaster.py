@@ -154,21 +154,7 @@ class QuartermasterAgent(BaseAgent):
         for item in (*open_items, *inprog):
             merged[item.id] = item
 
-        counts = {
-            "scanned": 0,
-            "redispatched": 0,
-            "cleared": 0,
-            "skipped": 0,
-            "degraded": False,
-            # AD-877: thrash-guard counters
-            "quarantined": 0,
-            "quarantined_skipped": 0,
-            "backoff_skipped": 0,
-            # AD-879: starvation visibility
-            "truncated": False,
-            # AD-878: boot-race grace period skips
-            "too_fresh": 0,
-        }
+        counts = self._new_counts()
 
         # AD-879: process oldest-first within each priority band. list_work_items
         # returns created_at DESC (newest-first), so an explicit re-sort is required
@@ -184,88 +170,7 @@ class QuartermasterAgent(BaseAgent):
         ordered = sorted(merged.values(), key=lambda i: (i.priority, i.created_at))
 
         for item in ordered:
-            try:
-                counts["scanned"] += 1
-                wi = item.to_dict()
-                md_current = wi.get("metadata") or {}
-
-                # AD-878: boot-race grace period — skip items younger than the
-                # grace period before any classify/attempt logic, so a mid-first-
-                # dispatch item is not reclaimed and does not accrue an attempt.
-                if self._min_item_age_seconds > 0:
-                    if wi["created_at"] > time.time() - self._min_item_age_seconds:
-                        counts["too_fresh"] += 1
-                        continue
-
-                # AD-877: quarantined items are terminal — never re-routed (highest precedence).
-                if md_current.get("quarantined"):
-                    counts["quarantined_skipped"] += 1
-                    continue
-
-                # AD-877: backoff — skip items reconciled within the backoff window.
-                if self._reconcile_backoff_seconds > 0:
-                    last = md_current.get("last_reconcile_at", 0) or 0
-                    if time.time() - float(last) < self._reconcile_backoff_seconds:
-                        counts["backoff_skipped"] += 1
-                        continue
-
-                is_disp = self._router.is_dispatchable(wi)
-                decision = self._reconciler.classify(wi, is_dispatchable=is_disp)
-
-                if decision.action == "live_redispatch":
-                    await self._router.dispatch_work_item(wi)
-                    counts["redispatched"] += 1
-                elif decision.action == "clear_and_reroute":
-                    attempts = int(md_current.get("reconcile_attempts", 0))
-                    if attempts + 1 >= self._max_reconcile_attempts:
-                        # AD-877: bounded attempts exhausted — quarantine instead of re-route.
-                        fresh = await self._store.get_work_item(item.id)
-                        md = dict(fresh.metadata) if fresh else dict(md_current)
-                        md["quarantined"] = True
-                        md["quarantine_reason"] = "max_reconcile_attempts"
-                        md["quarantined_at"] = time.time()
-                        md["reconcile_attempts"] = attempts + 1
-                        await self._store.update_work_item(item.id, metadata=md)
-                        if self._emit is not None:
-                            try:
-                                self._emit(
-                                    EventType.WORK_ITEM_QUARANTINED,
-                                    {
-                                        "work_item_id": item.id,
-                                        "reason": "max_reconcile_attempts",
-                                        "attempts": attempts + 1,
-                                    },
-                                )
-                            except Exception:
-                                logger.warning(
-                                    "AD-877: quarantine emit failed for %s", item.id, exc_info=True
-                                )
-                        counts["quarantined"] += 1
-                        continue
-
-                    # Re-route as today, and persist the attempt counter + timestamp
-                    # via read-modify-write (update_work_item REPLACES metadata).
-                    await self._store.unassign_work_item(
-                        item.id, reason="quartermaster: assignee not live"
-                    )
-                    fresh = await self._store.get_work_item(item.id)
-                    if fresh:
-                        md = dict(fresh.metadata)
-                        md["reconcile_attempts"] = attempts + 1
-                        md["last_reconcile_at"] = time.time()
-                        await self._store.update_work_item(item.id, metadata=md)
-                        refreshed = await self._store.get_work_item(item.id)
-                        await self._router.dispatch_work_item((refreshed or fresh).to_dict())
-                    counts["cleared"] += 1
-                else:
-                    counts["skipped"] += 1
-            except Exception:
-                counts["degraded"] = True
-                logger.warning(
-                    "AD-875: reconcile failed for work item %s; continuing sweep",
-                    getattr(item, "id", "?"),
-                    exc_info=True,
-                )
+            await self._process_item(item, counts)
 
         if self._emit is not None:
             try:
@@ -308,5 +213,179 @@ class QuartermasterAgent(BaseAgent):
             "counts": dict(counts),
             "at": time.time(),
             "trigger": "periodic",
+        }
+        return counts
+
+    def _new_counts(self) -> dict[str, Any]:
+        """Fresh per-sweep counts dict (shared by reconcile + reconcile_for_agent)."""
+        return {
+            "scanned": 0,
+            "redispatched": 0,
+            "cleared": 0,
+            "skipped": 0,
+            "degraded": False,
+            # AD-877: thrash-guard counters
+            "quarantined": 0,
+            "quarantined_skipped": 0,
+            "backoff_skipped": 0,
+            # AD-879: starvation visibility
+            "truncated": False,
+            # AD-878: boot-race grace period skips
+            "too_fresh": 0,
+        }
+
+    async def _process_item(self, item: Any, counts: dict[str, Any]) -> None:
+        """AD-880: per-item reconcile body (DRY — reconcile + reconcile_for_agent).
+
+        Absorbs the AD-878 boot-race grace skip and the AD-877 quarantine/backoff/
+        attempt guards. Per-item failures are Tier-2 log-and-degrade (sweep continues).
+        """
+        try:
+            counts["scanned"] += 1
+            wi = item.to_dict()
+            md_current = wi.get("metadata") or {}
+
+            # AD-878: boot-race grace period — skip items younger than the
+            # grace period before any classify/attempt logic, so a mid-first-
+            # dispatch item is not reclaimed and does not accrue an attempt.
+            if self._min_item_age_seconds > 0:
+                if wi["created_at"] > time.time() - self._min_item_age_seconds:
+                    counts["too_fresh"] += 1
+                    return
+
+            # AD-877: quarantined items are terminal — never re-routed (highest precedence).
+            if md_current.get("quarantined"):
+                counts["quarantined_skipped"] += 1
+                return
+
+            # AD-877: backoff — skip items reconciled within the backoff window.
+            if self._reconcile_backoff_seconds > 0:
+                last = md_current.get("last_reconcile_at", 0) or 0
+                if time.time() - float(last) < self._reconcile_backoff_seconds:
+                    counts["backoff_skipped"] += 1
+                    return
+
+            is_disp = self._router.is_dispatchable(wi)
+            decision = self._reconciler.classify(wi, is_dispatchable=is_disp)
+
+            if decision.action == "live_redispatch":
+                await self._router.dispatch_work_item(wi)
+                counts["redispatched"] += 1
+            elif decision.action == "clear_and_reroute":
+                attempts = int(md_current.get("reconcile_attempts", 0))
+                if attempts + 1 >= self._max_reconcile_attempts:
+                    # AD-877: bounded attempts exhausted — quarantine instead of re-route.
+                    fresh = await self._store.get_work_item(item.id)
+                    md = dict(fresh.metadata) if fresh else dict(md_current)
+                    md["quarantined"] = True
+                    md["quarantine_reason"] = "max_reconcile_attempts"
+                    md["quarantined_at"] = time.time()
+                    md["reconcile_attempts"] = attempts + 1
+                    await self._store.update_work_item(item.id, metadata=md)
+                    if self._emit is not None:
+                        try:
+                            self._emit(
+                                EventType.WORK_ITEM_QUARANTINED,
+                                {
+                                    "work_item_id": item.id,
+                                    "reason": "max_reconcile_attempts",
+                                    "attempts": attempts + 1,
+                                },
+                            )
+                        except Exception:
+                            logger.warning(
+                                "AD-877: quarantine emit failed for %s", item.id, exc_info=True
+                            )
+                    counts["quarantined"] += 1
+                    return
+
+                # Re-route as today, and persist the attempt counter + timestamp
+                # via read-modify-write (update_work_item REPLACES metadata).
+                await self._store.unassign_work_item(
+                    item.id, reason="quartermaster: assignee not live"
+                )
+                fresh = await self._store.get_work_item(item.id)
+                if fresh:
+                    md = dict(fresh.metadata)
+                    md["reconcile_attempts"] = attempts + 1
+                    md["last_reconcile_at"] = time.time()
+                    await self._store.update_work_item(item.id, metadata=md)
+                    refreshed = await self._store.get_work_item(item.id)
+                    await self._router.dispatch_work_item((refreshed or fresh).to_dict())
+                counts["cleared"] += 1
+            else:
+                counts["skipped"] += 1
+        except Exception:
+            counts["degraded"] = True
+            logger.warning(
+                "AD-875: reconcile failed for work item %s; continuing sweep",
+                getattr(item, "id", "?"),
+                exc_info=True,
+            )
+
+    async def reconcile_for_agent(self, agent_id: str) -> dict[str, Any]:
+        """AD-880: reactively reclaim only the named agent's items (honest-degrade).
+
+        Triggered by AGENT_REMOVED; complements the periodic sweep. Reuses the
+        shared classify→act path (AD-877/878/879 guards) over the dead agent's
+        open + in_progress items only.
+        """
+        if self._store is None or self._router is None or self._reconciler is None:
+            logger.info(
+                "AD-880: Quartermaster missing collaborators; reactive reclaim skipped for %s",
+                agent_id,
+            )
+            return {"scanned": 0, "redispatched": 0, "cleared": 0, "skipped": 0, "degraded": True}
+
+        open_items = await self._store.list_work_items(status="open", limit=self._scan_limit)
+        inprog = await self._store.list_work_items(status="in_progress", limit=self._scan_limit)
+        merged: dict[str, Any] = {}
+        for item in (*open_items, *inprog):
+            if item.assigned_to == agent_id:
+                merged[item.id] = item
+
+        counts = self._new_counts()
+        # AD-879: oldest-first within each priority band over the filtered set.
+        ordered = sorted(merged.values(), key=lambda i: (i.priority, i.created_at))
+        for item in ordered:
+            await self._process_item(item, counts)
+
+        if self._emit is not None:
+            try:
+                self._emit(
+                    EventType.WORK_ITEM_RECONCILED,
+                    {**counts, "trigger": "reactive", "agent_id": agent_id},
+                )
+            except Exception:
+                logger.warning("AD-880: reactive reconcile summary emit failed", exc_info=True)
+
+        if self._episodic is not None:
+            try:
+                import time as _time
+
+                from probos.cognitive.episodic import resolve_sovereign_id
+                from probos.types import Episode
+
+                await self._episodic.store(
+                    Episode(
+                        user_input=f"[reconcile_board] reactive reclaim for {agent_id}",
+                        timestamp=_time.time(),
+                        agent_ids=[resolve_sovereign_id(self)],
+                        outcomes=[dict(counts)],
+                        reflection=(
+                            f"Reactive reclaim for {agent_id}: scanned={counts['scanned']} "
+                            f"redispatched={counts['redispatched']} "
+                            f"cleared={counts['cleared']} skipped={counts['skipped']}"
+                        ),
+                    )
+                )
+            except Exception:
+                logger.debug("AD-880: reactive reclaim episode store skipped", exc_info=True)
+
+        # AD-883: record last-sweep summary for the info() observability surface.
+        self._last_sweep = {
+            "counts": dict(counts),
+            "at": time.time(),
+            "trigger": "reactive",
         }
         return counts

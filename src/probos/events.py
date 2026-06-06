@@ -87,6 +87,7 @@ class EventType(str, Enum):
     AGENT_STATE = "agent_state"
     AGENT_WIRED = "agent_wired"  # AD-490
     AGENT_CAPACITY_APPROACHING = "agent_capacity_approaching"
+    AGENT_REMOVED = "agent_removed"  # AD-880: reactive reclaim trigger
     CONDUCT_VIOLATION = "conduct_violation"  # AD-489
 
     # Assignments

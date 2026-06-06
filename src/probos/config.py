@@ -4562,6 +4562,9 @@ class WorkBoardReconcilerConfig(BaseModel):
     # AD-878: boot-race grace period — skip items younger than this age so a
     # mid-first-dispatch item is not reclaimed by the warm-boot sweep.
     min_item_age_seconds: int = Field(default=30, ge=0, le=600)
+    # AD-880: reactive reclaim — subscribe to AGENT_REMOVED and reclaim the dead
+    # agent's items immediately (additive to the periodic sweep). Default off.
+    reactive_reclaim: bool = False  # transitional flag — default False (conv #14)
 
 
 class CommunicationsConfig(BaseModel):

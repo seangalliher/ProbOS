@@ -1931,6 +1931,40 @@ def _wire_board_reconciler(*, runtime: Any, config: "SystemConfig") -> bool:
     runtime.board_reconciler_ticker = ticker  # public attr (Wave 5 conv #1)
     ticker.start()
 
+    # AD-880: reactive reclaim — subscribe the quartermaster to AGENT_REMOVED so a
+    # dead agent's items are reclaimed immediately (additive to the periodic sweep).
+    if getattr(cfg, "reactive_reclaim", False):
+        from probos.events import EventType
+
+        async def _on_agent_removed(event: Any) -> None:
+            try:
+                agent_id = (event.get("data") or {}).get("agent_id")
+                if agent_id:
+                    await agent.reconcile_for_agent(agent_id)
+            except Exception:
+                logger.warning(
+                    "AD-880: reactive reclaim handler failed; periodic sweep "
+                    "remains the safety net",
+                    exc_info=True,
+                )
+
+        add_listener = getattr(runtime, "add_event_listener", None)
+        if add_listener is not None:
+            try:
+                add_listener(_on_agent_removed, event_types=[EventType.AGENT_REMOVED.value])
+                runtime.board_reactive_reclaim_handler = _on_agent_removed  # hold ref
+                logger.info("AD-880: reactive reclaim subscribed to AGENT_REMOVED")
+            except Exception:
+                logger.warning(
+                    "AD-880: add_event_listener failed; reactive reclaim inactive",
+                    exc_info=True,
+                )
+        else:
+            logger.info(
+                "AD-880: add_event_listener unavailable; reactive reclaim skipped "
+                "(periodic sweep unchanged)"
+            )
+
     logger.info(
         "AD-876: BoardReconciler wired "
         "(interval=%ds, warm_boot=%s, scan_limit=%d)",

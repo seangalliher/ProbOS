@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from probos.events import EventType
 from probos.types import AgentID
 
 if TYPE_CHECKING:
@@ -39,6 +40,7 @@ class AgentRegistry:
     async def unregister(self, agent_id: AgentID) -> BaseAgent | None:
         async with self._lock:
             agent = self._agents.pop(agent_id, None)
+            agent_type = agent.agent_type if agent else None
             if agent:
                 self._all_cache = None  # invalidate
                 logger.debug(
@@ -46,7 +48,12 @@ class AgentRegistry:
                     agent.agent_type,
                     agent.id[:8],
                 )
-            return agent
+        # AD-880: emit AGENT_REMOVED outside the lock (re-entrancy safety, BF-598).
+        if agent is not None:
+            emit = getattr(self, "_emit_event_fn", None)
+            if emit is not None:
+                emit(EventType.AGENT_REMOVED, {"agent_id": agent_id, "agent_type": agent_type})
+        return agent
 
     def get(self, agent_id: AgentID) -> BaseAgent | None:
         return self._agents.get(agent_id)
