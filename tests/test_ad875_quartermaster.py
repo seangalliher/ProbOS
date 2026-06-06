@@ -197,6 +197,8 @@ async def test_reconcile_empty_board_all_zero(store: WorkItemStore) -> None:
         "too_fresh": 0,
         # AD-881: live-but-stalled reroute counter always present
         "stalled": 0,
+        # AD-882: remote-owner skip counter always present
+        "remote_owner_skipped": 0,
     }
 
 

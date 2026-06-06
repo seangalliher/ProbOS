@@ -64,6 +64,8 @@ class QuartermasterAgent(BaseAgent):
         reconcile_backoff_seconds: int = 600,
         min_item_age_seconds: int = 30,
         stall_timeout_seconds: int = 0,
+        local_node_id: str = "node-1",
+        federation_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -80,6 +82,9 @@ class QuartermasterAgent(BaseAgent):
         self._min_item_age_seconds = min_item_age_seconds
         # AD-881: live-but-stalled reroute threshold (0 = disabled, default off)
         self._stall_timeout_seconds = stall_timeout_seconds
+        # AD-882: federation node-scope guard (no-op on a single node).
+        self._local_node_id = local_node_id
+        self._federation_enabled = federation_enabled
         # AD-883: last-sweep summary for observability (None = never run)
         self._last_sweep: dict[str, Any] | None = None
 
@@ -237,6 +242,8 @@ class QuartermasterAgent(BaseAgent):
             "too_fresh": 0,
             # AD-881: live-but-stalled reroutes
             "stalled": 0,
+            # AD-882: items skipped because owned by a remote federation node
+            "remote_owner_skipped": 0,
         }
 
     async def _process_item(self, item: Any, counts: dict[str, Any]) -> None:
@@ -287,6 +294,18 @@ class QuartermasterAgent(BaseAgent):
                 await self._router.dispatch_work_item(wi)
                 counts["redispatched"] += 1
             elif decision.action == "clear_and_reroute":
+                # AD-882: federation node-scope guard — an item owned by a remote
+                # node only looks "not live" locally; never reclaim it (and never
+                # accrue a local reconcile attempt). Default-safe no-op when
+                # federation is off or no owner_node marker is present.
+                owner_node = md_current.get("owner_node")
+                if (
+                    self._federation_enabled
+                    and owner_node
+                    and owner_node != self._local_node_id
+                ):
+                    counts["remote_owner_skipped"] += 1
+                    return
                 if decision.reason == "stalled":
                     counts["stalled"] += 1
                 attempts = int(md_current.get("reconcile_attempts", 0))

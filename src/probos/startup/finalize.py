@@ -1924,6 +1924,9 @@ def _wire_board_reconciler(*, runtime: Any, config: "SystemConfig") -> bool:
     agent._min_item_age_seconds = cfg.min_item_age_seconds
     # AD-881: live-but-stalled reroute threshold (0 = disabled, default off).
     agent._stall_timeout_seconds = cfg.stall_timeout_seconds
+    # AD-882: federation node-scope guard — local node id + federation-enabled flag.
+    agent._local_node_id = config.federation.node_id
+    agent._federation_enabled = config.federation.enabled
 
     ticker = BoardReconcilerTicker(
         agent=agent,
