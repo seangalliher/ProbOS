@@ -30,6 +30,9 @@ import pytest
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.dm.reply_pipeline import (
     _MESH_READ_INTENT_POOLS,
+    _MESH_READ_NETWORK_TTL_SECONDS,
+    _MESH_READ_TTL_BY_INTENT,
+    _MESH_READ_TTL_SECONDS,
     DmReplyContext,
     DmReplyPipeline,
 )
@@ -342,6 +345,103 @@ def test_mesh_read_large_payload_truncated() -> None:
         assert len(pipeline.ctx.response_text) < 5000
 
     asyncio.run(_run())
+
+
+# ===========================================================================
+# BF-609: per-intent TTL — network + LLM-bound reads get a larger ceiling
+# ===========================================================================
+
+
+def test_mesh_read_web_search_dispatched_with_network_ttl() -> None:
+    # BF-609: web_search mesh-fetches DuckDuckGo (rate-limited) then runs an
+    # LLM (requires_reflect) — realistically 8-20s. The flat 5s ceiling timed
+    # it out every time. It must dispatch with the larger network ceiling.
+    async def _run() -> None:
+        async def handler(intent: IntentMessage) -> IntentResult:
+            return IntentResult(
+                intent_id=intent.id,
+                agent_id=intent.target_agent_id or "x",
+                success=True,
+                result="top result",
+            )
+
+        runtime, bus, seen = await _make_runtime(
+            intent_name="web_search", pool="web_search", handler=handler,
+        )
+        pipeline = _make_pipeline(
+            runtime=runtime,
+            response_text="Looking that up. [MESH web_search query=Nvidia SPARK]",
+            sanity_gate=DmSanityGate(),
+        )
+        await pipeline.step_4h_mesh_read_parse()
+
+        assert len(seen) == 1
+        assert seen[0].intent == "web_search"
+        assert seen[0].ttl_seconds == _MESH_READ_NETWORK_TTL_SECONDS
+        assert _MESH_READ_NETWORK_TTL_SECONDS > _MESH_READ_TTL_SECONDS
+        assert "[MESH" not in pipeline.ctx.response_text
+
+    asyncio.run(_run())
+
+
+def test_mesh_read_read_page_dispatched_with_network_ttl() -> None:
+    async def _run() -> None:
+        async def handler(intent: IntentMessage) -> IntentResult:
+            return IntentResult(
+                intent_id=intent.id,
+                agent_id=intent.target_agent_id or "x",
+                success=True,
+                result="page summary",
+            )
+
+        runtime, bus, seen = await _make_runtime(
+            intent_name="read_page", pool="page_reader", handler=handler,
+        )
+        pipeline = _make_pipeline(
+            runtime=runtime,
+            response_text="Reading it. [MESH read_page url=https://x.test/p]",
+            sanity_gate=DmSanityGate(),
+        )
+        await pipeline.step_4h_mesh_read_parse()
+
+        assert len(seen) == 1
+        assert seen[0].ttl_seconds == _MESH_READ_NETWORK_TTL_SECONDS
+
+    asyncio.run(_run())
+
+
+def test_mesh_read_local_io_keeps_default_ttl() -> None:
+    # Local-IO reads finish in ms; they must keep the tight default ceiling.
+    async def _run() -> None:
+        async def handler(intent: IntentMessage) -> IntentResult:
+            return IntentResult(
+                intent_id=intent.id,
+                agent_id=intent.target_agent_id or "x",
+                success=True,
+                result={"entries": ["a"]},
+            )
+
+        runtime, bus, seen = await _make_runtime(
+            intent_name="list_directory", pool="directory", handler=handler,
+        )
+        pipeline = _make_pipeline(
+            runtime=runtime,
+            response_text="One sec. [MESH list_directory path=config]",
+            sanity_gate=DmSanityGate(),
+        )
+        await pipeline.step_4h_mesh_read_parse()
+
+        assert len(seen) == 1
+        assert seen[0].ttl_seconds == _MESH_READ_TTL_SECONDS
+
+    asyncio.run(_run())
+
+
+def test_network_ttl_map_covers_exactly_the_network_intents() -> None:
+    # The override map must target only the network + LLM-bound reads.
+    assert set(_MESH_READ_TTL_BY_INTENT) == {"web_search", "read_page"}
+    for intent_name in _MESH_READ_TTL_BY_INTENT:
+        assert intent_name in _MESH_READ_INTENT_POOLS
 
 
 # ===========================================================================

@@ -42,9 +42,26 @@ _MESH_READ_INTENT_POOLS: dict[str, str] = {
     "web_search": "web_search",
     "read_page": "page_reader",
 }
-# Single-turn latency ceiling. A read that cannot finish in this window
-# honest-degrades to a brief note rather than blocking the reply.
+# Single-turn latency ceiling for local-IO reads (filesystem / directory /
+# search). These resolve in milliseconds, so a read that cannot finish in
+# this window honest-degrades to a brief note rather than blocking the reply.
 _MESH_READ_TTL_SECONDS = 5.0
+# BF-609: network + LLM-bound reads (web_search, read_page) need a larger
+# ceiling. WebSearchAgent/PageReaderAgent mesh-fetch through the rate-limited
+# ``http_fetch`` path (>=2s per-domain wait + internet round-trip) and then,
+# because both carry ``requires_reflect=True``, run an LLM call to synthesize
+# the result — realistically 8-20s end to end. The flat 5s ceiling timed
+# these out every time ("Agent did not respond in time."). This is still a
+# read-only, non-consensus intent, so the longer wait does not weaken the
+# Tier-2 safety boundary (the allowlist + "consensus can't resolve in one
+# turn" is what enforces it, not the latency).
+_MESH_READ_NETWORK_TTL_SECONDS = 25.0
+# Per-intent ceiling override. Intents absent from this map use the default
+# local-IO ceiling (``_MESH_READ_TTL_SECONDS``).
+_MESH_READ_TTL_BY_INTENT: dict[str, float] = {
+    "web_search": _MESH_READ_NETWORK_TTL_SECONDS,
+    "read_page": _MESH_READ_NETWORK_TTL_SECONDS,
+}
 # Cap on how much of a read result is inlined into the chat reply.
 _MESH_READ_RENDER_MAX_CHARS = 1500
 
@@ -820,7 +837,9 @@ class DmReplyPipeline:
                     intent=intent_name,
                     params=dict(params),
                     target_agent_id=target_id,
-                    ttl_seconds=_MESH_READ_TTL_SECONDS,
+                    ttl_seconds=_MESH_READ_TTL_BY_INTENT.get(
+                        intent_name, _MESH_READ_TTL_SECONDS
+                    ),
                 )
             )
         except Exception:
