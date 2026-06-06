@@ -75,6 +75,7 @@ class SelfModificationPipeline:
         skill_designer: SkillDesigner | None = None,
         skill_validator: SkillValidator | None = None,
         add_skill_fn: Callable | None = None,
+        register_tool_fn: Callable | None = None,  # AD-886: Skill -> ToolRegistry
         research: Any = None,
         dependency_resolver: DependencyResolver | None = None,
         event_log: EventLog | None = None,
@@ -92,6 +93,7 @@ class SelfModificationPipeline:
         self._skill_designer = skill_designer
         self._skill_validator = skill_validator
         self._add_skill_fn = add_skill_fn
+        self._register_tool_fn = register_tool_fn
         self._research = research
         self._dependency_resolver = dependency_resolver
         self._event_log = event_log
@@ -587,6 +589,22 @@ class SelfModificationPipeline:
         except Exception as e:
             logger.warning("Skill attachment failed for %s: %s", intent_name, e)
             return None
+
+        # 5b. AD-886: also register the designed Skill into the ToolRegistry as a
+        # first-class tool (provider="designed"). Honest-degrade (Tier-2): a
+        # registration failure must NEVER block skill creation — the Skill is
+        # already attached and dispatchable via SkillBasedAgent; ToolRegistry
+        # visibility (persistence-of-record, permission resolution, LOTO) is a
+        # bonus, not a precondition.
+        if self._register_tool_fn is not None:
+            try:
+                self._register_tool_fn(skill)
+            except Exception:
+                logger.warning(
+                    "AD-886: ToolRegistry registration failed for designed skill "
+                    "%s; skill remains attached and dispatchable via SkillBasedAgent",
+                    intent_name, exc_info=True,
+                )
 
         # 6. Record
         record = DesignedAgentRecord(

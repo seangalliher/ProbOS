@@ -10,6 +10,32 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-886: Reclassify the legacy self-mod Skill as a Tool (Skills & Tools Unification epic, part 2 — #850)
+
+**Context.** The self-modification pipeline (`SelfModificationPipeline.handle_add_skill`, `src/probos/cognitive/self_mod.py`) designs new `Skill` objects (async handler + `IntentDescriptor`) and attaches them to the `SkillBasedAgent` dispatch path via the `add_skill_fn` callback. But a designed skill was **invisible to the AD-423 `ToolRegistry`**: the unified capability lens (AD-885 block 8), per-agent tool-grant permission checks, and any tool-aware routing enumerate `tool_registry.list_tools()` — and designed skills never appeared there. The two capability surfaces (skill-dispatch and tool-registry) had diverged.
+
+**Decision.** Register every designed skill into the `ToolRegistry` as a first-class tool, **without coupling the cognitive layer to the substrate `ToolRegistry`** (layer discipline: `cognitive/` must not import `tools/registry`). Use **callback injection** (Dependency Inversion): `SelfModificationPipeline.__init__` gains an optional `register_tool_fn: Callable | None = None` stored as `self._register_tool_fn`; `handle_add_skill` adds a "step 5b" immediately after the existing `await self._add_skill_fn(...)` (step 5) and before the step-6 record:
+
+```python
+if self._register_tool_fn is not None:
+    try:
+        self._register_tool_fn(skill)
+    except Exception:
+        logger.warning(
+            "AD-886: ToolRegistry registration failed for designed skill %s; "
+            "skill remains dispatchable via SkillBasedAgent",
+            intent_name, exc_info=True,
+        )
+```
+
+The callback is **synchronous** (Tier-2 log-and-degrade — a ToolRegistry write failure must never abort skill design, since the skill is already dispatchable). The concrete implementation is the new `ProbOSRuntime._register_designed_tool(self, skill)` (`src/probos/runtime.py`), wired through `startup/cognitive_services.py` `init_cognitive_services` (new keyword-only `register_tool_fn` passed to the pipeline ctor) from `runtime.py` Phase 4.
+
+**Adapter choice — InfraServiceAdapter, not DeterministicFunctionAdapter.** A `Skill.handler` is an **async, bus-dispatched** coroutine, not a pure local function. `_register_designed_tool` builds `InfraServiceAdapter(tool_id=skill.name, name=skill.name, description=<descriptor.description or skill.name>, intent_name=skill.name, intent_bus=self.intent_bus)` and registers it with `provider="designed"`. Invoking the resulting tool re-broadcasts `skill.name` on the intent bus and returns the first successful responder's result as a `ToolResult` — so a designed skill is invocable both as a tool (`reg.tool.invoke(...)`) and via `SkillBasedAgent.handle_intent`. The two paths coexist; neither replaces the other.
+
+**Startup-ordering — closure resolves the seam.** Phase 4 (`init_cognitive_services`) runs **before** Phase 7 (`init_communication`), and `self.tool_registry` is only populated in Phase 7 (`self.tool_registry = comm.tool_registry`). But `_register_designed_tool` is a closure passed into the pipeline; it is only *called* at skill-design time, which is strictly post-startup. So `self.tool_registry` is always populated by the time the callback fires. The method still honest-degrades — `if registry is None: logger.debug(...); return` — for any pre-startup or registry-disabled deployment.
+
+**Tests.** +8 pytest (`tests/test_ad886_selfmod_tool_registration.py`, BF-287 — real `ToolRegistry()`, a `SimpleNamespace` runtime stub holding the real registry and a fake recording intent bus, calling the REAL `ProbOSRuntime._register_designed_tool`; no MagicMock at the substrate boundary): a designed deterministic skill appears in `list_tools()` with `provider="designed"` + `tool_type == ToolType.INFRA_SERVICE`; it is invocable (awaitable) through the adapter (`result.success`, `result.output == "hello"`, the bus saw the `greet_user` intent); a `None` `register_tool_fn` / `None` registry is a clean no-op; the pipeline defaults `_register_tool_fn` to `None` and stores/invokes a provided callback; and `SkillBasedAgent` dispatch still handles its intent after tool registration (class-level `_handled_intents`/`intent_descriptors` snapshotted and restored in a `finally` to avoid test pollution — `add_skill` mutates class state in place). Blast radius `tests/test_self_mod.py` (66) green serially. One commit.
+
 ### AD-885: ACM becomes the true single capability lens — additive cognitive-skill + tool-grant blocks (Skills & Tools Unification epic, part 1 — #849)
 
 **Context.** `AgentCapitalService.get_consolidated_profile` (`src/probos/acm.py:277`) is meant to answer "what can this agent do, and why?" across the whole capability spine. At HEAD it aggregated six blocks — lifecycle, crew profile (AD-376), trust, earned agency (AD-357), AD-428 developmental skills, and episode count — but was **blind** to two shipped subsystems: cognitive skills (AD-596 `CognitiveSkillCatalog`) and tool grants (AD-423 `ToolRegistry`). The lens was incomplete.

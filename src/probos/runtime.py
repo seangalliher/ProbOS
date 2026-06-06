@@ -1821,6 +1821,7 @@ class ProbOSRuntime:
             create_designed_pool_fn=self._create_designed_pool,
             set_probationary_trust_fn=self._set_probationary_trust,
             add_skill_to_agents_fn=self._add_skill_to_agents,
+            register_tool_fn=self._register_designed_tool,  # AD-886
             create_pool_fn=self.create_pool,
             emit_event_fn=self._emit_event,
             ontology=self.ontology,  # BF-118
@@ -4234,6 +4235,53 @@ class ProbOSRuntime:
                 if agent and agent.agent_type not in classes:
                     classes[agent.agent_type] = type(agent)
         return classes
+
+    def _register_designed_tool(self, skill: Any) -> None:
+        """AD-886: register a designed deterministic Skill into the ToolRegistry.
+
+        The self-mod pipeline calls this (via ``register_tool_fn``) right after a
+        Skill is attached to its SkillBasedAgent. The legacy ``Skill`` is a
+        deterministic async handler — a *tool* by AD-441c's identity split — so it
+        belongs in the ToolRegistry alongside built-in tools, gaining
+        persistence-of-record, permission resolution, and LOTO governance.
+
+        ``self.tool_registry`` is wired in Phase 7 (``init_communication``), after
+        the Phase 4 self-mod pipeline is constructed; reading it here (at skill-design
+        time, post-startup) rather than at construction time means the registry is
+        always available when a skill is actually forged. Honest-degrade (Tier-2):
+        if the registry is absent the skill stays attached and dispatchable via
+        SkillBasedAgent — ToolRegistry visibility is a bonus, not a precondition.
+
+        Uses ``InfraServiceAdapter`` (not ``DeterministicFunctionAdapter``): the
+        skill's handler is async and is already bus-dispatched by SkillBasedAgent,
+        so re-broadcasting the same intent through the bus is the correct invocation
+        path. Marked ``provider="designed"`` to distinguish from built-in tools.
+        """
+        registry = self.tool_registry
+        if registry is None:
+            logger.debug(
+                "AD-886: tool_registry unavailable; designed skill %s not registered "
+                "as a tool (still dispatchable via SkillBasedAgent)",
+                getattr(skill, "name", "?"),
+            )
+            return
+        from probos.tools.adapters import InfraServiceAdapter
+
+        descriptor = getattr(skill, "descriptor", None)
+        description = descriptor.description if descriptor is not None else skill.name
+        adapter = InfraServiceAdapter(
+            tool_id=skill.name,
+            name=skill.name,
+            description=description,
+            intent_name=skill.name,
+            intent_bus=self.intent_bus,
+        )
+        registry.register(adapter, provider="designed")
+        logger.info(
+            "AD-886: registered designed skill %s into ToolRegistry as a tool "
+            "(provider=designed)",
+            skill.name,
+        )
 
     async def _add_skill_to_agents(self, skill: Any, target_agent_type: str = "skill_agent") -> None:
         """Add a skill to agents of the target type across all pools.

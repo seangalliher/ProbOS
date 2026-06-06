@@ -125,6 +125,7 @@ async def init_cognitive_services(
     create_designed_pool_fn: Callable[..., Any],
     set_probationary_trust_fn: Callable[..., Any],
     add_skill_to_agents_fn: Callable[..., Any],
+    register_tool_fn: Callable[..., Any] | None = None,  # AD-886: Skill -> ToolRegistry
     create_pool_fn: Callable[..., Any],
     emit_event_fn: Callable[..., Any] | None = None,
     ontology: Any = None,  # BF-118: for OrientationService
@@ -197,6 +198,7 @@ async def init_cognitive_services(
             skill_designer=skill_designer,
             skill_validator=skill_validator,
             add_skill_fn=add_skill_to_agents_fn,
+            register_tool_fn=register_tool_fn,
             research=research,
             dependency_resolver=dependency_resolver,
             event_log=event_log,
