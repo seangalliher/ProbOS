@@ -10,6 +10,18 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-898: Skill Library management view (Crew Personnel Management epic, part 10 — #862)
+
+**Context.** AD-895 gave the skill-definition library (`runtime.skill_registry`) a delete verb and a governed HTTP surface (`GET`/`POST`/`PUT`/`DELETE /api/skills/definitions`) with two Minimal-Authority guards (built-in PCC never deletable, in-active-use never deletable) and validation (duplicate `skill_id`, dangling prerequisite). AD-898 is the Captain-facing admin console over that surface — the place to browse, author, edit, and retire skill definitions from the personnel view rather than the shell. The validation and protection model already lives behind the endpoints; AD-898 surfaces it, it does not re-implement it.
+
+**Decision.** A new `ui/src/components/personnel/SkillLibrary.tsx` that lists the definitions (`GET /api/skills/definitions`, optional `?category=` filter from a `pcc`/`role`/`acquired` select, honest-degrading to an empty list) and exposes four verbs: **create** (a form — `skill_id`, name, category, description, domain, comma-separated prerequisites, decay-rate-days — `POST`), **edit** (same form pre-filled with the `skill_id` locked, `PUT /definitions/{id}`), and **retire** (a two-step `Retire` → `Confirm retire` red affordance, `DELETE /definitions/{id}`). Client-side validation blocks a submit with a missing name (or missing `skill_id` on create) before any request; the AD-895 server-side rejections are surfaced inline (`skill-form-error` for create/edit, `skill-row-error` for retire). The view mounts in the console behind a new header view-switcher (`personnel-view-tabs`, Roster ↔ Skill Library, defaulting to `roster`).
+
+**Governance.** No new consensus gate (Minimal Authority). AD-898 is a thin UI over the AD-895 endpoints; the built-in-PCC and in-active-use delete guards, the duplicate/dangling-prerequisite validation, and the whole protection model live entirely in the backend registry verbs and are not bypassed. The destructive retire action is gated behind a two-step confirm, and the server's protection errors are shown to the Captain rather than swallowed.
+
+**Boundaries.** No backend code is touched — AD-898 consumes the AD-895 skill-definition endpoints only. The AD-896 console shell gains a view-switcher and a `personnel-skills-pane`, but the master-detail body (roster pane + record pane) is preserved and remains the default view, so every AD-896/AD-897 testid and behavior renders unchanged. No skill-assignment (grant/revoke per agent) or tool action is added; the tool certification view is AD-899.
+
+**Consequence.** +5 Vitest (`ui/src/components/personnel/SkillLibrary.test.tsx`). The AD-897 (5) and AD-896 (8) suites remain green; `tsc --noEmit` clean. The Captain can now author and retire skill definitions from the personnel console, with the AD-895 protections surfaced inline.
+
 ### AD-901: Standing Orders & Directives management view (Crew Personnel Management epic, part 9 — #865)
 
 **Context.** AD-900 added the governed HTTP surface over the `DirectiveStore` (issue/approve/revoke/amend a runtime directive), and AD-897 rendered the read-only four standing-order tiers inside the Service Record. AD-901 joins them: the Captain needs to *act on* an agent's standing orders from the personnel console, not just read them. The directive endpoints already enforce the chain-of-command authorization and the approval state machine (Captain `CAPTAIN_ORDER`s land ACTIVE; lower-authority directives stay PENDING_APPROVAL) — AD-901 makes that gate visible and operable, it does not re-implement it.

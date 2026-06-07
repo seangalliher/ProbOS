@@ -18,6 +18,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { Close, Dock, Undock, Maximize, Restore } from '../icons/Glyphs';
 import ServiceRecord from './ServiceRecord';
+import SkillLibrary from './SkillLibrary';
+
+type ConsoleView = 'roster' | 'skills';
 
 interface RosterEntry {
   agent_id: string;
@@ -64,6 +67,7 @@ export default function CrewPersonnelConsole() {
   const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<ConsoleView>('roster');
 
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
@@ -270,7 +274,53 @@ export default function CrewPersonnelConsole() {
         </div>
       </div>
 
-      {/* Master-detail body */}
+      {/* View switcher — Roster (master-detail) vs library/asset admin surfaces. */}
+      <div
+        data-testid="personnel-view-tabs"
+        style={{
+          display: 'flex', gap: 4, padding: '6px 12px',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        {([
+          ['roster', 'Roster'],
+          ['skills', 'Skill Library'],
+        ] as [ConsoleView, string][]).map(([key, label]) => {
+          const active = view === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              data-testid={`personnel-tab-${key}`}
+              onClick={() => setView(key)}
+              style={{
+                fontSize: 10, letterSpacing: 1, fontWeight: 700,
+                fontFamily: "'JetBrains Mono', monospace",
+                textTransform: 'uppercase',
+                color: active ? '#f0b060' : '#8888a0',
+                background: 'transparent',
+                border: 'none',
+                borderBottom: active ? '2px solid #f0b060' : '2px solid transparent',
+                padding: '4px 8px',
+                cursor: 'pointer',
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {view === 'skills' ? (
+        /* Skill Library management surface (AD-898). */
+        <div
+          data-testid="personnel-skills-pane"
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 }}
+        >
+          <SkillLibrary />
+        </div>
+      ) : (
+      /* Master-detail body */
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         {/* Master — roster */}
         <div
@@ -354,6 +404,7 @@ export default function CrewPersonnelConsole() {
           )}
         </div>
       </div>
+      )}
 
       {/* Resize handle (floating only) */}
       {displayMode === 'floating' && (
