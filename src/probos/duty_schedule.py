@@ -208,6 +208,19 @@ class DutyScheduleTracker:
         due.sort(key=lambda d: d.priority, reverse=True)
         return due
 
+    def list_duties_for_agent(self, agent_type: str) -> list[Any]:
+        """AD-891: Return the agent type's configured duties without mutating state.
+
+        Unlike :meth:`get_due_duties` (which evaluates "what is due right now"
+        against execution status), this returns the *configured* schedule — the
+        stable personnel-record view. It never reads or writes execution status.
+
+        Returns duties sorted by priority descending (highest first).
+        """
+        duties = list(self._schedules.get(agent_type, []))
+        duties.sort(key=lambda d: d.priority, reverse=True)
+        return duties
+
     def record_execution(self, agent_type: str, duty_id: str) -> None:
         """Record that a duty was executed."""
         key = self._status_key(agent_type, duty_id)

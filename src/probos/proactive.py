@@ -610,6 +610,18 @@ class ProactiveCognitiveLoop:
         else:
             self._duty_tracker = None
 
+    @property
+    def duty_tracker(self) -> DutyScheduleTracker | None:
+        """AD-891: Public read accessor for the duty schedule tracker.
+
+        The proactive loop owns the tracker for execution scheduling; this is the
+        single public handle other subsystems (e.g. the ACM personnel lens) use to
+        read the configured schedule, so no caller reaches the private
+        ``_duty_tracker`` directly (Law of Demeter). ``None`` when duty scheduling
+        is disabled.
+        """
+        return self._duty_tracker
+
     def get_agent_cooldown(self, agent_id: str) -> float:
         """Get effective cooldown for an agent (override or global default)."""
         return self._agent_cooldowns.get(agent_id, self._cooldown)

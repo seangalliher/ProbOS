@@ -10,6 +10,24 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-891: Duty-schedule lens — public, non-mutating per-agent duty accessor (Crew Personnel Management epic, part 1 — #855)
+
+**Context.** The ACM consolidated profile (AD-885) is the single capability lens, but a crew agent's **configured duty schedule** was absent from its personnel record. AD-885 and AD-889 both explicitly recorded "NO duties step" as a verify-first NO-SEAM: no *public, non-mutating* per-agent duty accessor existed. The proactive cognition loop owned the schedule as a private `_duty_tracker`, and the only read path — `DutyScheduleTracker.get_due_duties` — returns the volatile "due now" subset **and records executions** (it mutates per-duty status). A personnel record needs the stable *configured* view, not the volatile due-now view, and must not have a read side-effect.
+
+**Decision.** Three additive pieces, no protocol or schema change.
+
+1. **Non-mutating list method.** `DutyScheduleTracker.list_duties_for_agent(self, agent_type: str) -> list[DutyDefinition]` (`src/probos/duty_schedule.py`) returns `list(self._schedules.get(agent_type, []))` sorted by `priority` descending. It **never reads or writes** the execution-status map (`self._status`) — explicitly contrasted in its docstring with `get_due_duties` (the "due now" mutating-status view). This is the stable personnel-record projection of the schedule.
+2. **Law-of-Demeter accessor.** A public `ProactiveCognitionLoop.duty_tracker` property (`src/probos/proactive.py`) returns `self._duty_tracker`, so callers read the tracker through a public surface instead of reaching the private attr. It returns `None` when proactive cognition is disabled.
+3. **Runtime wiring.** In `startup/finalize.py`, after the `if config.proactive_cognitive.duty_schedule.enabled: proactive_loop.set_duty_schedule(...)` block, `runtime.duty_schedule_tracker = proactive_loop.duty_tracker` runs at the `if`'s indentation level (unconditionally), so the runtime always carries the handle — `None` when the feature is disabled.
+
+The ACM lens gains **block 9** (`src/probos/acm.py`, after block 8 tool grants, before `return profile`): guarded by `getattr(runtime, 'duty_schedule_tracker', None)`, it resolves `agent_type` via `runtime.registry.get(agent_id)` and, when an `agent_type` is found, sets `profile["duties"]` (list of `{duty_id, description, cron, interval_seconds, priority}`) and `profile["duty_count"]`. The whole block is Tier-2 log-and-degrade (`logger.debug("Duty schedule fetch failed", exc_info=True)`), matching blocks 5-8.
+
+**Governance — no consensus gate.** Block 9 is a **read-only lens projection** — it reads the configured schedule and returns it; it grants no authority, mutates no state, and records no execution. It therefore introduces no destructive intent and requires no consensus gate (Minimal-Authority: the lens reads only what the runtime already holds; no new write surface).
+
+**Boundaries.** No change to `get_due_duties` (the proactive loop's due-now path is untouched), no change to `DutyDefinition`/`DutyScheduleConfig`, no new public attr beyond the `duty_tracker` property and the `runtime.duty_schedule_tracker` handle. Honest-degrade: missing tracker → block omitted; unknown agent (no `agent_type`) → block omitted; unconfigured agent type → empty list, count 0.
+
+**Consequence.** The personnel record now shows what an agent is *scheduled to do*, closing the AD-885/AD-889 duties NO-SEAM and laying the read surface the Crew Service Record (AD-897) renders. First AD of the Crew Personnel Management epic (#855-865).
+
 ### AD-890: Supersede the stale capability docs (Skills & Tools Unification epic, part 6 — #854)
 
 **Context.** `docs/development/unified-tool-layer.md` titles itself "AD-543: Unified Tool Layer — Skill-Tool Binding & Agentic Tool Adapters," but **AD-543 is a number collision**: the real AD-543 shipped as the Native SWE Harness Tool Execution Abstraction (`src/probos/tools/executor.py`). The doc's skill→tool design was therefore orphaned — and it actually landed, four epic parts later, as **AD-888** (the `resolve_tools_for_skill` resolver) wired end-to-end by the **AD-889** commissioning capstone. Left unmarked, the doc misleads every future reader into thinking AD-543 is the skill→tool binding.

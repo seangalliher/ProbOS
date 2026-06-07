@@ -2535,6 +2535,10 @@ async def finalize_startup(
                     )
         if config.proactive_cognitive.duty_schedule.enabled:
             proactive_loop.set_duty_schedule(config.proactive_cognitive.duty_schedule)
+        # AD-891: park the single public duty-schedule accessor on the runtime so
+        # the ACM personnel lens reads the configured schedule without reaching
+        # into proactive_loop._duty_tracker (Law of Demeter). None when disabled.
+        runtime.duty_schedule_tracker = proactive_loop.duty_tracker
         # PATCH(AD-517): Wire knowledge store for cooldown persistence
         if runtime._knowledge_store:
             proactive_loop._knowledge_store = runtime._knowledge_store

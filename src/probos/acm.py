@@ -382,6 +382,32 @@ class AgentCapitalService:
             except Exception:
                 logger.debug("Tool grant fetch failed", exc_info=True)
 
+        # 9. Duties (AD-891) — the configured duty schedule for this agent's type.
+        #    Read through the public runtime.duty_schedule_tracker accessor (no
+        #    Law-of-Demeter reach into proactive_loop._duty_tracker). Shows the
+        #    CONFIGURED duties (stable personnel-record view), not the volatile
+        #    "due now" set.
+        duty_tracker = getattr(runtime, 'duty_schedule_tracker', None)
+        if duty_tracker is not None:
+            try:
+                agent_obj = runtime.registry.get(agent_id) if hasattr(runtime, 'registry') else None
+                agent_type = getattr(agent_obj, 'agent_type', None)
+                if agent_type:
+                    duties = duty_tracker.list_duties_for_agent(agent_type)
+                    profile["duties"] = [
+                        {
+                            "duty_id": d.duty_id,
+                            "description": d.description,
+                            "cron": d.cron,
+                            "interval_seconds": d.interval_seconds,
+                            "priority": d.priority,
+                        }
+                        for d in duties
+                    ]
+                    profile["duty_count"] = len(duties)
+            except Exception:
+                logger.debug("Duty schedule fetch failed", exc_info=True)
+
         return profile
 
     async def commission(
