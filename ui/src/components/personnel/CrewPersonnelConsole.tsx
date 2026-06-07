@@ -17,6 +17,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { Close, Dock, Undock, Maximize, Restore } from '../icons/Glyphs';
+import ServiceRecord from './ServiceRecord';
 
 interface RosterEntry {
   agent_id: string;
@@ -341,23 +342,7 @@ export default function CrewPersonnelConsole() {
           }}
         >
           {selected ? (
-            <div>
-              <div style={{
-                fontSize: 14, fontWeight: 700, color: '#f0b060',
-                letterSpacing: 0.5, marginBottom: 4,
-              }}>
-                {selected.callsign || selected.agent_type || selected.agent_id}
-              </div>
-              <div style={{ fontSize: 11, color: '#8888a0', marginBottom: 16 }}>
-                {selected.post || 'Unbilleted'}
-                {selected.department ? ` · ${selected.department}` : ''}
-              </div>
-              <div style={{
-                fontSize: 11, color: '#666680', lineHeight: 1.6,
-              }}>
-                Service record detail loads here.
-              </div>
-            </div>
+            <ServiceRecord agentId={selected.agent_id} summary={selected} />
           ) : (
             <div style={{
               height: '100%', display: 'flex', flexDirection: 'column',

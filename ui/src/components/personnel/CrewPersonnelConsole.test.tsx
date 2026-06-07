@@ -67,7 +67,8 @@ describe('CrewPersonnelConsole (AD-896)', () => {
     await waitFor(() => {
       expect(pane.textContent).toContain('Operations Officer');
     });
-    expect(pane.textContent).toContain('Service record detail loads here.');
+    // AD-897 fills the placeholder with the ServiceRecord detail view.
+    expect(pane.querySelector('[data-testid="service-record"]')).toBeTruthy();
   });
 
   it('3. defaults to a floating window at the persisted/default rect', () => {
