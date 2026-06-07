@@ -21,6 +21,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import StandingOrders from './StandingOrders';
 
 interface Personality {
   openness?: number;
@@ -114,13 +115,6 @@ interface Props {
   agentId: string;
   summary?: RosterSummary | null;
 }
-
-const TIER_LABELS: Record<string, string> = {
-  federation: 'Federation',
-  ship: 'Ship',
-  department: 'Department',
-  agent: 'Agent',
-};
 
 const BIG_FIVE: Array<[keyof Personality, string]> = [
   ['openness', 'Openness'],
@@ -342,26 +336,10 @@ export default function ServiceRecord({ agentId, summary }: Props) {
         )}
       </div>
 
-      {/* Standing Orders — the four tiers */}
+      {/* Standing Orders — read-only four tiers (AD-893) + governed Directives panel (AD-900/901) */}
       <div data-testid="sr-section-orders">
         <div style={sectionHeader('Standing Orders')}>Standing Orders</div>
-        {tiers.length === 0 ? (
-          <div style={{ fontSize: 11, color: '#666680' }}>No standing orders.</div>
-        ) : (
-          tiers.map(t => (
-            <div key={t.tier} data-testid={`sr-order-tier-${t.tier}`} style={{ margin: '6px 0' }}>
-              <div style={{ fontSize: 10, color: t.present ? '#50b0a0' : '#666680', letterSpacing: 1 }}>
-                {(TIER_LABELS[t.tier] || t.tier).toUpperCase()}
-                {!t.present && ' — none'}
-              </div>
-              {t.present && t.text && (
-                <div style={{ fontSize: 10, color: '#a8a8b8', whiteSpace: 'pre-wrap', marginTop: 2 }}>
-                  {t.text.length > 600 ? `${t.text.slice(0, 600)}\u2026` : t.text}
-                </div>
-              )}
-            </div>
-          ))
-        )}
+        <StandingOrders agentId={agentId} tiers={tiers} />
       </div>
 
       {/* Experience */}
