@@ -118,6 +118,48 @@ def _load_file(path: Path) -> str:
     return ""
 
 
+def get_order_tiers(
+    agent_type: str,
+    *,
+    orders_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Return the four standing-orders tiers for an agent type, separately.
+
+    Unlike ``compose_instructions`` (which merges all tiers + identity/personality
+    into a single system-prompt string), this returns each tier as a discrete
+    record for the personnel record view (AD-893). Reads the four tier files
+    directly via the existing ``_load_file`` reader; runs no LLM composition and
+    injects no personality block.
+
+    Each tier is ``{tier, source_file, present, text}``. A tier whose file is
+    absent (including the department tier when the agent has no department) is
+    reported with ``present: False`` and empty ``text`` rather than omitted, so
+    the manning view shows the full four-tier shape.
+    """
+    d = orders_dir or _DEFAULT_ORDERS_DIR
+    dept = get_department(agent_type)
+
+    specs: list[tuple[str, str | None]] = [
+        ("federation", "federation.md"),
+        ("ship", "ship.md"),
+        ("department", f"{dept}.md" if dept else None),
+        ("agent", f"{agent_type}.md"),
+    ]
+
+    tiers: list[dict[str, Any]] = []
+    for tier_name, filename in specs:
+        text = _load_file(d / filename) if filename else ""
+        tiers.append(
+            {
+                "tier": tier_name,
+                "source_file": filename,
+                "present": bool(text),
+                "text": text,
+            }
+        )
+    return tiers
+
+
 # Trait-to-guidance mapping for Big Five personality dimensions (AD-393)
 _TRAIT_GUIDANCE: dict[str, dict[str, str]] = {
     "openness": {

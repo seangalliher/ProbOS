@@ -22,6 +22,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from probos.cognitive import standing_orders
 from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
 
@@ -228,3 +229,27 @@ async def crew_record(
             )
 
     return profile
+
+
+@router.get("/{agent_id}/standing-orders")
+async def crew_standing_orders(
+    agent_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Read-only four-tier standing orders for a crew agent (AD-893).
+
+    Returns the federation / ship / department / agent tiers separately (the
+    personnel record renders them as distinct sections) rather than the merged
+    system-prompt string ``compose_instructions`` produces. A tier whose file
+    is absent is reported with ``present: False`` rather than omitted. No LLM
+    composition and no personality injection — the orders, not the prompt.
+
+    Raises 404 when the agent is unknown.
+    """
+    registry = getattr(runtime, "registry", None)
+    agent_obj = registry.get(agent_id) if registry is not None else None
+    if agent_obj is None:
+        raise HTTPException(404, f"Agent not found: {agent_id}")
+
+    agent_type = getattr(agent_obj, "agent_type", None) or ""
+    tiers = standing_orders.get_order_tiers(agent_type)
+    return {"agent_id": agent_id, "agent_type": agent_type, "tiers": tiers}

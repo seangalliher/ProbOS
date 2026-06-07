@@ -10,6 +10,19 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-893: Standing-orders read surface — public four-tier reader + HTTP (Crew Personnel Management epic, part 3 — #857)
+
+**Context.** The service record should show the orders an agent operates under, but standing orders were internal system-prompt composition only. `compose_instructions(agent_type, hardcoded_instructions, ...)` returns a single merged string (`## `-prefixed sections + identity/personality injection), not four discrete tiers. The Service Record (AD-897) renders the tiers as distinct sections, so the merged prompt string is the wrong shape — and re-running the full LLM-prompt composition (with personality blocks) for a read view would surface the assembled *prompt*, not the *orders*.
+
+**Decision.** Two additive pieces, no change to composition.
+
+1. **Public tier reader.** `standing_orders.get_order_tiers(agent_type, *, orders_dir=None) -> list[dict]` reads the four tier files (`federation.md`, `ship.md`, `{dept}.md`, `{agent_type}.md`) directly via the existing private `_load_file` reader and `get_department`, returning each as `{tier, source_file, present, text}`. The department tier's `source_file` is `None` when the agent has no department. An absent file yields `present: False` + empty `text` rather than an omitted entry, so the manning view always sees the full four-tier shape. It runs no LLM composition and injects no personality block. The private `_load_file`/`_DEFAULT_ORDERS_DIR` are not widened — one public function consumes them. The `orders_dir` keyword exists for testability (point at a `tmp_path`).
+2. **HTTP endpoint.** `GET /api/crew/{agent_id}/standing-orders` (`routers/crew.py`) resolves `agent_type` via `runtime.registry.get(agent_id)` (404 when unknown), calls `get_order_tiers`, and returns `{agent_id, agent_type, tiers}`.
+
+**Boundaries.** No change to `compose_instructions`, the order `.md` files, or any private helper signature. This is a read surface only — there is no editing path here; the governed write path for standing orders is the directive surface (AD-900). No consensus gate (read-only projection of files the runtime already loads — Minimal-Authority).
+
+**Consequence.** The Service Record (AD-897) can render the four standing-orders tiers as distinct, source-attributed sections. +6 pytest (`tests/test_ad893_standing_orders_api.py`, tier reader against `tmp_path` + endpoint against real `AgentRegistry` per BF-287). Third AD of the Crew Personnel Management epic (#855-865).
+
 ### AD-892: Crew roster + service record HTTP read surface (Crew Personnel Management epic, part 2 — #856)
 
 **Context.** AD-891 closed the duty-schedule seam in the ACM lens, but the consolidated personnel data (AD-885 capability lens + AD-891 duties) had no HTTP surface — the Crew Personnel Console (AD-896) and Service Record (AD-897) UIs need a roster list and a per-agent record endpoint to render. The ontology already exposed the org-chart manifest (`get_crew_manifest`) and the ACM exposed the consolidated profile (`get_consolidated_profile`), but no router joined them into a who-is-aboard roster or a single record document.
