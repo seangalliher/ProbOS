@@ -354,6 +354,29 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 
 **Crew collaboration northstar — one hard goal → decompose → fan out across persistent trusted crew → adversarial-verify until converge → synthesize one completion with per-agent attribution (2026-06-03). Depends on AD-856; reuses `ParallelDispatcher` (AD-594c), `RedTeamAgent` pattern, `compute_shapley_values`. Spec: `prompts/ad-858-crew-collaboration-task-completion.md`. Highest reserved AD at authoring: AD-857.**
 
+**Ad-hoc crew collaboration (group chat → meeting) northstar — start a 1:1, add crew, name the room, share files; crew spin up their own named group chats when collaborating on a task; the Captain sees and joins them; then *transition a chat into a live "meeting"* with per-agent voice and a 3D avatar gallery (a group video call). Microsoft-Teams group-chat-and-meeting semantics, not a Reddit forum (the Ward Room already covers the public/browsable/endorsable surface) (2026-06-07). Conversational counterpart to the Crew-collaboration task spine (AD-858–862) — cross-links via the existing `chat_threads.task_id`. Reuses the `routers/chat.py` @-mention fan-out, content-addressable `AttachmentStore` (AD-720/731, refs-not-blobs), thread-priority (AD-641c), convergence (AD-583), and the @-picker (AD-719c). RULED (Captain, 2026-06-07): substrate is `ChatThreadStore` (AD-791, participants first-class) — DM/huddle-style, NOT the Ward Room forum — advancing the AD-574c-i one-conversation-store direction. Folds in the dormant AD-719a-wire (persist + cross-agent prompt injection) and lifts the AD-719a-2 deferral (agent-to-agent without a Captain seed). Highest committed AD at authoring: AD-912.**
+
+**Phase 1 — group chat (text):**
+
+| AD | Title | Epic | Priority |
+|----|-------|------|----------|
+| AD-913 | Chat-thread participant management — `add_participant`/`remove_participant` on `ChatThreadStore` + `POST/DELETE /api/threads/{id}/participants` (foundation: "add crew to a 1:1" AND "Captain joins") | Ad-hoc group chat | 1 |
+| AD-914 | Group-chat fan-out + cross-agent visibility — a ≥2-agent thread fans a Captain turn to all participants, injects recent thread history into each agent's prompt (so they see each other), persists replies as `chat_thread_messages` (the `ChatThreadStore` form of AD-719a-wire) | Ad-hoc group chat | 1 |
+| AD-915 | Turn-taking facilitator — relevance-ranked speaking order + convergence-gated termination (reuses AD-641c thread-priority + AD-583 convergence) for crew-scale flood control; the shared sequencer for text AND meeting voice | Ad-hoc group chat | 1 |
+| AD-916 | File sharing in chat — attachment refs on `chat_thread_messages` via `AttachmentStore` (AD-731 refs-not-blobs); vision-capable agents receive image refs | Ad-hoc group chat | 2 |
+| AD-917 | UI group-chat experience — rename affordance, add-participant @-picker (reuse AD-719c), participant avatars, file attach/drop (reuse the Ward Room attach surface) | Ad-hoc group chat | 2 |
+| AD-918 | Agent-initiated group chats — a `create_group_chat` intent so crew open + name a chat and add collaborators while working a task (links via `chat_threads.task_id`); tagged `metadata.created_by_agent` (lifts the AD-719a-2 deferral) | Ad-hoc group chat | 2 |
+| AD-919 | Group-chat visibility surface + join — wire the dormant LeftRail (AD-719b) into a live group-chat list of agent-created + Captain chats, with a Join button (→ AD-913 `add_participant(captain)`) | Ad-hoc group chat | 3 |
+
+**Phase 2 — meeting mode (voice + avatars; "transition the chat into a group video call"). A meeting is a live MODE of a Phase-1 group chat — the chat thread is the transcript; "Start Meeting" activates voice + an avatar gallery for the participants. Builds on the mature voice/avatar stack: fleet avatar telemetry already fans out by `agent_id` (AD-722b-4), per-agent voice profiles (AD-718), viseme lip-sync (AD-721b), VRM crew avatars (AD-721), offline STT + VAD (AD-705a). Depends on AD-913/914/915.**
+
+| AD | Title | Epic | Priority |
+|----|-------|------|----------|
+| AD-920 | Meeting mode + avatar gallery — "Start Meeting" promotes a group chat to a live meeting (`metadata.meeting_active`); a gallery view renders all participant VRM avatars at once, bound to the fleet avatar-telemetry stream (AD-722b-4) + `CrewVRM`; the thread remains the transcript | Meeting mode | 2 |
+| AD-921 | Sequenced meeting voice — agent turns spoken via per-agent voice profiles (AD-718) so each sounds distinct, ordered by the AD-915 facilitator (no talk-over), driving viseme lip-sync (AD-721b) on the speaker's avatar | Meeting mode | 2 |
+| AD-922 | Captain voice input to the group — STT (AD-705a) + push-to-talk/VAD captures the Captain's speech and routes it through the AD-914 group fan-out (not the 1:1 `agent_chat` path) | Meeting mode | 2 |
+| AD-923 | Meeting presence + speaking indicator — who's-speaking highlight in the gallery, join/leave, raise-hand/turn signaling (HXI #4 motion = state); meeting end writes a transcript/summary back to the thread | Meeting mode | 3 |
+
 **From the 2026-05-20 Yeo feature-complete decomposition (gap doc + AionUi pattern absorption):**
 
 | AD | Title | Issue | Priority |
