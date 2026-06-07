@@ -366,7 +366,14 @@ export interface HXIState {
   wardRoomDmChannels: { channel: { id: string; name: string; description: string; created_at: number }; latest_thread: any; thread_count: number; target_agent_id: string | null }[];
   // AD-574b: in-flight indicator for synchronous DM chat. null when idle.
   wardRoomDmPending: import('./types').WardRoomDmPending | null;
-  _wardRoomThreadCache: Map<string, { threads: any[]; fetchedAt: number }>;  // Crew Manifest (AD-513)
+  _wardRoomThreadCache: Map<string, { threads: any[]; fetchedAt: number }>;
+  // AD-896: Crew Personnel Console (Ship's Office) — a separate experience,
+  // not another profile tab. Window display mode + floating geometry mirror
+  // the AD-837 Ward Room pattern but persist under their own localStorage keys.
+  personnelConsoleOpen: boolean;
+  personnelDisplayMode: WardRoomDisplayMode;
+  personnelWindowRect: WardRoomWindowRect;
+  // Crew Manifest (AD-513)
   crewManifestOpen: boolean;
   crewManifest: CrewManifestEntry[] | null;
   // AD-523b: Crew Notebooks Browser
@@ -511,6 +518,11 @@ export interface HXIState {
   // AD-837: Ward Room window display-mode controls (frontend-only).
   setWardRoomDisplayMode: (mode: WardRoomDisplayMode) => void;
   setWardRoomWindowRect: (rect: WardRoomWindowRect) => void;
+  // AD-896: Crew Personnel Console controls (frontend-only).
+  openPersonnelConsole: () => void;
+  closePersonnelConsole: () => void;
+  setPersonnelDisplayMode: (mode: WardRoomDisplayMode) => void;
+  setPersonnelWindowRect: (rect: WardRoomWindowRect) => void;
   selectDmChannel: (channelId: string) => void;
   refreshWardRoomDmChannels: () => void;
   // Communications settings (AD-485)
@@ -670,6 +682,61 @@ function persistWardRoomRect(rect: WardRoomWindowRect): void {
   }
 }
 
+// AD-896: Crew Personnel Console layout — independent localStorage keys so the
+// Ship's Office window geometry/mode persists separately from the Ward Room.
+// Reuses the WardRoomDisplayMode / WardRoomWindowRect shapes (same three-mode
+// window system) but defaults to a floating window (the console is its own
+// experience, not a docked sidebar).
+const PERSONNEL_MODE_KEY = 'probos.personnel.mode';
+const PERSONNEL_RECT_KEY = 'probos.personnel.rect';
+const PERSONNEL_DEFAULT_RECT: WardRoomWindowRect = { x: 120, y: 80, w: 880, h: 660 };
+
+export function loadPersonnelLayout(): {
+  mode: WardRoomDisplayMode;
+  rect: WardRoomWindowRect;
+} {
+  let mode: WardRoomDisplayMode = 'floating';
+  let rect: WardRoomWindowRect = { ...PERSONNEL_DEFAULT_RECT };
+  try {
+    const storedMode = localStorage.getItem(PERSONNEL_MODE_KEY);
+    if (storedMode === 'docked' || storedMode === 'floating' || storedMode === 'maximized') {
+      mode = storedMode;
+    }
+    const storedRect = localStorage.getItem(PERSONNEL_RECT_KEY);
+    if (storedRect) {
+      const parsed = JSON.parse(storedRect) as unknown;
+      if (
+        parsed && typeof parsed === 'object' &&
+        typeof (parsed as WardRoomWindowRect).x === 'number' &&
+        typeof (parsed as WardRoomWindowRect).y === 'number' &&
+        typeof (parsed as WardRoomWindowRect).w === 'number' &&
+        typeof (parsed as WardRoomWindowRect).h === 'number'
+      ) {
+        rect = parsed as WardRoomWindowRect;
+      }
+    }
+  } catch {
+    // localStorage unavailable or malformed JSON — fall back to defaults.
+  }
+  return { mode, rect };
+}
+
+function persistPersonnelMode(mode: WardRoomDisplayMode): void {
+  try {
+    localStorage.setItem(PERSONNEL_MODE_KEY, mode);
+  } catch {
+    // honest-degrade — storage may be unavailable in some browsers/tests.
+  }
+}
+
+function persistPersonnelRect(rect: WardRoomWindowRect): void {
+  try {
+    localStorage.setItem(PERSONNEL_RECT_KEY, JSON.stringify(rect));
+  } catch {
+    // honest-degrade — storage may be unavailable in some browsers/tests.
+  }
+}
+
 export const useStore = create<HXIState>((set, get) => ({
   agents: new Map(),
   connections: [],
@@ -753,6 +820,10 @@ export const useStore = create<HXIState>((set, get) => ({
   // AD-837: seed display-mode + window rect from persisted layout.
   wardRoomDisplayMode: loadWardRoomLayout().mode,
   wardRoomWindowRect: loadWardRoomLayout().rect,
+  // AD-896: seed Crew Personnel Console layout from persisted state.
+  personnelConsoleOpen: false,
+  personnelDisplayMode: loadPersonnelLayout().mode,
+  personnelWindowRect: loadPersonnelLayout().rect,
   communicationsSettings: { dm_min_rank: 'ensign', recreation_min_rank: 'ensign' },
   // Crew Manifest (AD-513)
   crewManifestOpen: false,
@@ -1311,6 +1382,17 @@ export const useStore = create<HXIState>((set, get) => ({
   setWardRoomWindowRect: (rect: WardRoomWindowRect) => {
     persistWardRoomRect(rect);
     set({ wardRoomWindowRect: rect });
+  },
+  // AD-896: Crew Personnel Console (Ship's Office) window controls.
+  openPersonnelConsole: () => set({ personnelConsoleOpen: true }),
+  closePersonnelConsole: () => set({ personnelConsoleOpen: false }),
+  setPersonnelDisplayMode: (mode: WardRoomDisplayMode) => {
+    persistPersonnelMode(mode);
+    set({ personnelDisplayMode: mode });
+  },
+  setPersonnelWindowRect: (rect: WardRoomWindowRect) => {
+    persistPersonnelRect(rect);
+    set({ personnelWindowRect: rect });
   },
   selectDmChannel: async (channelId: string) => {
     await get().selectWardRoomChannel(channelId);

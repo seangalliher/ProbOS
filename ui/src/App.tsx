@@ -18,6 +18,7 @@ import { WardRoomPanel } from './components/wardroom';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
 import { GamePanel } from './components/GamePanel';
 import CrewRosterPanel from './components/CrewRosterPanel';
+import CrewPersonnelConsole from './components/personnel/CrewPersonnelConsole';
 import NotebooksPanel from './components/NotebooksPanel';
 import BehavioralMetricsPanel from './components/BehavioralMetricsPanel';
 import CommercialOverlayBadge from './components/CommercialOverlayBadge';
@@ -105,6 +106,9 @@ function TopNav() {
   const crewOpen = useStore(s => s.crewManifestOpen);
   const openCrew = useStore(s => s.openCrewManifest);
 
+  const personnelOpen = useStore(s => s.personnelConsoleOpen);
+  const openPersonnel = useStore(s => s.openPersonnelConsole);
+
   const notebooksOpen = useStore(s => s.notebooksOpen);
   const openNotebooks = useStore(s => s.openNotebooks);
 
@@ -138,6 +142,7 @@ function TopNav() {
       {/* People */}
       <NavButton label="WARD ROOM" active={wardRoomOpen} onOpen={openWardRoom} badge={totalUnread} />
       <NavButton label="CREW" active={crewOpen} onOpen={openCrew} />
+      <NavButton label="PERSONNEL" active={personnelOpen} onOpen={openPersonnel} testId="personnel-toggle" />
       <NavSeparator />
       {/* Knowledge */}
       <NavButton label="NOTEBOOKS" active={notebooksOpen} onOpen={openNotebooks} testId="notebooks-toggle" />
@@ -219,6 +224,7 @@ export default function App() {
       <GamePanel />
       <WardRoomPanel />
       <CrewRosterPanel />
+      <CrewPersonnelConsole />
       <NotebooksPanel />
       <BehavioralMetricsPanel />
       <SpatialExplorerPanel />
