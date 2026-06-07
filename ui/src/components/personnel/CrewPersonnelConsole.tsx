@@ -19,8 +19,9 @@ import { useStore } from '../../store/useStore';
 import { Close, Dock, Undock, Maximize, Restore } from '../icons/Glyphs';
 import ServiceRecord from './ServiceRecord';
 import SkillLibrary from './SkillLibrary';
+import ToolCertifications from './ToolCertifications';
 
-type ConsoleView = 'roster' | 'skills';
+type ConsoleView = 'roster' | 'skills' | 'tools';
 
 interface RosterEntry {
   agent_id: string;
@@ -285,6 +286,7 @@ export default function CrewPersonnelConsole() {
         {([
           ['roster', 'Roster'],
           ['skills', 'Skill Library'],
+          ['tools', 'Tool Certs'],
         ] as [ConsoleView, string][]).map(([key, label]) => {
           const active = view === key;
           return (
@@ -318,6 +320,14 @@ export default function CrewPersonnelConsole() {
           style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 }}
         >
           <SkillLibrary />
+        </div>
+      ) : view === 'tools' ? (
+        /* Tool certification management surface (AD-899). */
+        <div
+          data-testid="personnel-tools-pane"
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 }}
+        >
+          <ToolCertifications />
         </div>
       ) : (
       /* Master-detail body */
