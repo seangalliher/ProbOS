@@ -66,6 +66,13 @@ class AppendMessageRequest(BaseModel):
     metadata: dict | None = None
 
 
+class ParticipantRequest(BaseModel):
+    # AD-913: declared as a plain str with an empty default (NOT
+    # Field(..., min_length=1)) so a missing OR empty agent_id is
+    # caught by the explicit 400 check below — min_length would 422.
+    agent_id: str = ""
+
+
 @router.get("")
 async def list_threads(
     include_archived: bool = False,
@@ -234,6 +241,38 @@ async def append_message(
             exc_info=True,
         )
     return msg.to_dict()
+
+
+# AD-913: chat-thread participant management. Foundation for the
+# ad-hoc group-chat epic — "add crew to a 1:1" (POST) and "the Captain
+# joins an agent-created chat" / "remove a participant" (DELETE).
+@router.post("/{thread_id}/participants")
+async def add_participant(
+    thread_id: str,
+    body: ParticipantRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict:
+    store = _get_store(runtime)
+    agent_id = body.agent_id.strip()
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="agent_id is required")
+    thread = store.add_participant(thread_id, agent_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return thread.to_dict()
+
+
+@router.delete("/{thread_id}/participants/{agent_id}")
+async def remove_participant(
+    thread_id: str,
+    agent_id: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict:
+    store = _get_store(runtime)
+    thread = store.remove_participant(thread_id, agent_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return thread.to_dict()
 
 
 # AD-794: thread auto-naming. v1 heuristic; AD-794a LLM-backed.

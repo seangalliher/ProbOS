@@ -372,6 +372,74 @@ class ChatThreadStore:
         except (json.JSONDecodeError, TypeError, AttributeError):
             return False
 
+    # ---------- AD-913: participant management ----------
+
+    def add_participant(self, thread_id: str, agent_id: str) -> ChatThread | None:
+        """AD-913: add an agent to a thread's participant set (idempotent).
+
+        Returns the updated ``ChatThread``, or ``None`` when the thread row
+        is missing. Adding an agent already present is a no-op (no
+        duplicate, no ``last_active_at`` bump). The read-modify-write of the
+        JSON ``participants`` column runs under ``BEGIN IMMEDIATE`` for race
+        safety, matching the ``set_title(lock=True)`` pattern.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT participants FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    return None
+                current = json.loads(row["participants"]) if row["participants"] else []
+                if agent_id not in current:
+                    current.append(agent_id)
+                    conn.execute(
+                        "UPDATE chat_threads SET participants = ?, last_active_at = ? "
+                        "WHERE id = ?",
+                        (json.dumps(current), self._clock(), thread_id),
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.get_thread(thread_id)
+
+    def remove_participant(self, thread_id: str, agent_id: str) -> ChatThread | None:
+        """AD-913: remove an agent from a thread's participant set (idempotent).
+
+        Returns the updated ``ChatThread``, or ``None`` when the thread row
+        is missing. Removing an agent that is not present is a no-op (no
+        write, no ``last_active_at`` bump). Removes every copy defensively
+        in case a pre-existing duplicate slipped in. ``BEGIN IMMEDIATE``
+        read-modify-write per ``set_title(lock=True)``.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT participants FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    return None
+                current = json.loads(row["participants"]) if row["participants"] else []
+                if agent_id in current:
+                    current = [p for p in current if p != agent_id]
+                    conn.execute(
+                        "UPDATE chat_threads SET participants = ?, last_active_at = ? "
+                        "WHERE id = ?",
+                        (json.dumps(current), self._clock(), thread_id),
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.get_thread(thread_id)
+
     def maybe_auto_name(
         self, thread_id: str, body: str, *, force: bool = False
     ) -> "ChatThread | None":
