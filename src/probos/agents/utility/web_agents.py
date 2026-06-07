@@ -6,6 +6,7 @@ All web-facing agents dispatch ``http_fetch`` through the mesh via
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -65,6 +66,74 @@ async def _mesh_fetch(runtime: Any, url: str) -> str | None:
 
 
 # ------------------------------------------------------------------
+# Helper: parse DuckDuckGo HTML search results
+# ------------------------------------------------------------------
+
+_DDG_TITLE_RE = re.compile(
+    r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+_DDG_SNIPPET_RE = re.compile(
+    r'<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_tags(fragment: str) -> str:
+    """Strip HTML tags and unescape entities from a fragment."""
+    text = re.sub(r"<[^>]+>", " ", fragment)
+    return html.unescape(re.sub(r"\s+", " ", text)).strip()
+
+
+def _decode_ddg_url(href: str) -> str:
+    """Decode a DuckDuckGo redirect href to the underlying target URL.
+
+    DDG HTML results wrap the real URL in a redirect of the form
+    ``//duckduckgo.com/l/?uddg=<url-encoded-target>&rut=...``. Extract the
+    ``uddg`` parameter when present; otherwise return the href unchanged.
+    """
+    href = html.unescape(href).strip()
+    parsed = urllib.parse.urlparse(href)
+    if "uddg" in urllib.parse.parse_qs(parsed.query):
+        return urllib.parse.parse_qs(parsed.query)["uddg"][0]
+    if href.startswith("//"):
+        return "https:" + href
+    return href
+
+
+def _parse_ddg_results(body: str, *, max_results: int = 10) -> list[dict[str, str]]:
+    """Parse DuckDuckGo HTML into a list of ``{title, url, snippet}`` dicts.
+
+    Titles and snippets are emitted by DDG in parallel order (one snippet per
+    result), so they are paired by index; a result missing a snippet gets an
+    empty string rather than being dropped.
+    """
+    titles = _DDG_TITLE_RE.findall(body)
+    snippets = _DDG_SNIPPET_RE.findall(body)
+    out: list[dict[str, str]] = []
+    for i, (href, title_html) in enumerate(titles[:max_results]):
+        title = _strip_tags(title_html)
+        if not title:
+            continue
+        snippet = _strip_tags(snippets[i]) if i < len(snippets) else ""
+        out.append(
+            {"title": title, "url": _decode_ddg_url(href), "snippet": snippet}
+        )
+    return out
+
+
+def _format_ddg_results(results: list[dict[str, str]]) -> str:
+    """Render parsed results as a compact, LLM-friendly block."""
+    blocks = []
+    for i, r in enumerate(results, start=1):
+        lines = [f"Result {i}:", f"Title: {r['title']}", f"URL: {r['url']}"]
+        if r["snippet"]:
+            lines.append(f"Snippet: {r['snippet']}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+# ------------------------------------------------------------------
 # WebSearchAgent
 # ------------------------------------------------------------------
 
@@ -98,7 +167,18 @@ class WebSearchAgent(_BundledMixin, CognitiveAgent):
             url = f"https://html.duckduckgo.com/html/?q={encoded}"
             body = await _mesh_fetch(self._runtime, url)
             if body:
-                obs["fetched_content"] = body[:8000]
+                # BF-611: parse the result blocks (title/url/snippet) BEFORE
+                # truncating. Passing raw HTML to a fixed char budget spent the
+                # budget on page chrome (head/CSS/search form) and cut off the
+                # result <div>s, so the LLM never saw any results.
+                results = _parse_ddg_results(body)
+                if results:
+                    obs["fetched_content"] = _format_ddg_results(results)[:8000]
+                else:
+                    # No parseable results — fall back to tag-stripped text so
+                    # the LLM gets readable context (not raw markup) to explain
+                    # what came back. Never fabricate (enforced by instructions).
+                    obs["fetched_content"] = _strip_tags(body)[:8000]
         return obs
 
     async def act(self, decision: dict) -> dict:

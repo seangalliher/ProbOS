@@ -97,6 +97,113 @@ class TestWebSearchAgent:
 
 
 # ===================================================================
+# BF-611: DuckDuckGo result parsing (parse before truncate)
+# ===================================================================
+
+# Realistic DDG html.duckduckgo.com/html/ result markup, with the page chrome
+# (head/CSS/search form) that previously consumed the truncation budget ahead
+# of the result <div>s.
+_DDG_HTML_FIXTURE = (
+    "<html><head><style>" + ("x" * 9000) + "</style></head><body>"
+    '<form id="search_form">...</form>'
+    '<div class="result results_links results_links_deep web-result">'
+    '<div class="links_main"><h2 class="result__title">'
+    '<a rel="nofollow" class="result__a" '
+    'href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa&amp;rut=abc">'
+    "Example A &amp; Co</a></h2>"
+    '<a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">'
+    "Snippet <b>one</b> body.</a></div></div>"
+    '<div class="result results_links results_links_deep web-result">'
+    '<div class="links_main"><h2 class="result__title">'
+    '<a rel="nofollow" class="result__a" '
+    'href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fb&amp;rut=def">'
+    "Example B</a></h2>"
+    '<a class="result__snippet" href="#">Snippet two body.</a></div></div>'
+    "</body></html>"
+)
+
+
+class TestBF611DdgParsing:
+
+    def test_parse_extracts_title_url_snippet(self):
+        from probos.agents.utility.web_agents import _parse_ddg_results
+
+        results = _parse_ddg_results(_DDG_HTML_FIXTURE)
+        assert len(results) == 2
+        assert results[0]["title"] == "Example A & Co"
+        assert results[0]["url"] == "https://example.com/a"
+        assert results[0]["snippet"] == "Snippet one body."
+        assert results[1]["title"] == "Example B"
+        assert results[1]["url"] == "https://example.org/b"
+
+    def test_decode_ddg_url_extracts_uddg_param(self):
+        from probos.agents.utility.web_agents import _decode_ddg_url
+
+        href = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fx&rut=z"
+        assert _decode_ddg_url(href) == "https://example.com/x"
+
+    def test_decode_ddg_url_passthrough_without_uddg(self):
+        from probos.agents.utility.web_agents import _decode_ddg_url
+
+        assert _decode_ddg_url("//example.com/page") == "https://example.com/page"
+        assert _decode_ddg_url("https://example.com/p") == "https://example.com/p"
+
+    def test_parse_empty_html_returns_empty_list(self):
+        from probos.agents.utility.web_agents import _parse_ddg_results
+
+        assert _parse_ddg_results("<html><body>no results</body></html>") == []
+
+    def test_parse_respects_max_results(self):
+        from probos.agents.utility.web_agents import _parse_ddg_results
+
+        block = (
+            '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fe.co">'
+            "T</a>"
+        )
+        results = _parse_ddg_results(block * 25, max_results=10)
+        assert len(results) == 10
+
+    def test_format_results_renders_compact_block(self):
+        from probos.agents.utility.web_agents import _format_ddg_results
+
+        out = _format_ddg_results(
+            [{"title": "T1", "url": "https://e.co", "snippet": "S1"}]
+        )
+        assert "Result 1:" in out
+        assert "Title: T1" in out
+        assert "URL: https://e.co" in out
+        assert "Snippet: S1" in out
+
+    @pytest.mark.asyncio
+    async def test_perceive_passes_parsed_results_not_raw_html(self):
+        """perceive() must hand the LLM parsed result entries, not raw HTML.
+
+        Regression for BF-611: the result titles must survive even though they
+        sit far past the 8000-char truncation point in the raw page.
+        """
+        from probos.agents.utility import web_agents
+
+        agent = _make_agent(WebSearchAgent)
+
+        async def _fake_fetch(runtime, url):
+            return _DDG_HTML_FIXTURE
+
+        agent._runtime = MagicMock()
+        with patch.object(web_agents, "_mesh_fetch", _fake_fetch):
+            msg = IntentMessage(
+                intent="web_search", params={"query": "example"}
+            )
+            obs = await agent.perceive(msg)
+        content = obs["fetched_content"]
+        assert "Example A & Co" in content
+        assert "https://example.com/a" in content
+        assert "Example B" in content
+        # Raw page chrome must not be present \u2014 parsing stripped it.
+        assert "<style>" not in content
+        assert "search_form" not in content
+
+
+# ===================================================================
 # PageReaderAgent
 # ===================================================================
 
