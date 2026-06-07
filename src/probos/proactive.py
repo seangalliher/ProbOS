@@ -3832,6 +3832,131 @@ class ProactiveCognitiveLoop:
 
         return reply_body, actions
 
+    async def extract_and_execute_notebooks(
+        self, agent: Any, text: str,
+    ) -> tuple[str, list[dict]]:
+        """AD-911: Extract ``[NOTEBOOK slug]...[/NOTEBOOK]`` blocks from an
+        agent reply, persist each to the records store (with the AD-550
+        read-before-write dedup gate), and strip the markers from the text.
+
+        Mirrors :meth:`extract_and_execute_dms` so the DM one-shot pipeline
+        (``reply_pipeline.step_4i_notebook_parse``) can persist a
+        Captain-requested note that the proactive path already handles via
+        :meth:`extract_and_execute_actions`. This is a lean writer for
+        explicit, low-frequency Captain requests; the proactive path keeps
+        its fuller AD-552/553/554/555 anti-flooding telemetry stack (which
+        targets autonomous repetitive writes, not explicit requests).
+
+        Tier-2 honest-degrade: a missing records store leaves the text
+        untouched; a per-block write failure drops that block and continues.
+        Markers are stripped from the Captain-visible reply regardless of
+        write outcome so a raw block never leaks.
+        """
+        actions: list[dict] = []
+        if not text or "[NOTEBOOK" not in text:
+            return text, actions
+        records_store = getattr(self._runtime, "_records_store", None)
+        if records_store is None:
+            return text, actions
+
+        notebook_pattern = r'\[NOTEBOOK\s+([\w-]+)\](.*?)\[/NOTEBOOK\]'
+        for topic_slug, notebook_content in re.findall(
+            notebook_pattern, text, re.DOTALL,
+        ):
+            notebook_content = notebook_content.strip()
+            if not notebook_content:
+                continue
+            try:
+                callsign = getattr(agent, "callsign", "") or agent.agent_type
+                department = ""
+                if getattr(self._runtime, "ontology", None):
+                    dept = self._runtime.ontology.get_agent_department(
+                        agent.agent_type,
+                    )
+                    if dept:
+                        department = (
+                            dept.department_id
+                            if hasattr(dept, "department_id")
+                            else str(dept)
+                        )
+
+                # AD-550: read-before-write dedup gate (best-effort).
+                dedup_enabled = True
+                dedup_threshold = 0.8
+                dedup_staleness = 72.0
+                dedup_max_scan = 20
+                rc = getattr(
+                    getattr(self._runtime, "config", None), "records", None,
+                )
+                if rc is not None:
+                    dedup_enabled = getattr(rc, "notebook_dedup_enabled", True)
+                    dedup_threshold = getattr(
+                        rc, "notebook_similarity_threshold", 0.8,
+                    )
+                    dedup_staleness = getattr(
+                        rc, "notebook_staleness_hours", 72.0,
+                    )
+                    dedup_max_scan = getattr(
+                        rc, "notebook_max_scan_entries", 20,
+                    )
+
+                if dedup_enabled:
+                    try:
+                        dedup_result = await records_store.check_notebook_similarity(
+                            callsign=callsign,
+                            topic_slug=topic_slug,
+                            new_content=notebook_content,
+                            similarity_threshold=dedup_threshold,
+                            staleness_hours=dedup_staleness,
+                            max_scan_entries=dedup_max_scan,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "AD-911: dedup check failed for %s/%s; writing "
+                            "anyway", callsign, topic_slug, exc_info=True,
+                        )
+                        dedup_result = {"action": "write"}
+                    if dedup_result.get("action") == "suppress":
+                        logger.info(
+                            "AD-911: notebook write suppressed for %s/%s (%s)",
+                            callsign, topic_slug,
+                            dedup_result.get("reason", ""),
+                        )
+                        actions.append({
+                            "type": "notebook_suppressed",
+                            "topic": topic_slug,
+                            "callsign": callsign,
+                        })
+                        continue
+
+                await records_store.write_notebook(
+                    callsign=callsign,
+                    topic_slug=topic_slug,
+                    content=notebook_content,
+                    department=department,
+                    tags=[topic_slug],
+                )
+                actions.append({
+                    "type": "notebook_write",
+                    "topic": topic_slug,
+                    "callsign": callsign,
+                })
+                logger.info(
+                    "AD-911: notebook entry written: %s/%s",
+                    callsign, topic_slug,
+                )
+            except Exception:
+                logger.warning(
+                    "AD-911: notebook write failed for topic=%s agent=%s",
+                    topic_slug, getattr(agent, "agent_id", "?"),
+                    exc_info=True,
+                )
+
+        cleaned = re.sub(
+            notebook_pattern, "", text, flags=re.DOTALL,
+        ).strip()
+        return cleaned, actions
+
     async def extract_and_execute_dms(
         self, agent: Any, text: str,
     ) -> tuple[str, list[dict]]:

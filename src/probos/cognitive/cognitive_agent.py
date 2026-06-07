@@ -1873,6 +1873,15 @@ class CognitiveAgent(BaseAgent):
         a 1:1 chat reply spawn a dispatchable work item."""
         return ""
 
+    def _conversational_notebook_protocol(self, observation: dict) -> str:
+        """Overridable hook (AD-911): notebook-save protocol appended to the
+        conversational system prompt. Default returns "" so only opting-in
+        agents (e.g. Yeo, the Captain's record-keeper) learn the
+        ``[NOTEBOOK topic-slug]...[/NOTEBOOK]`` reply tag that durably
+        persists a Captain-requested note to Ship's Records from a 1:1 chat
+        turn. Other agents are byte-unaffected (Open/Closed)."""
+        return ""
+
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
 
@@ -2332,6 +2341,12 @@ class CognitiveAgent(BaseAgent):
             _task_proto = self._conversational_task_protocol(observation)
             if _task_proto:
                 composed += _task_proto
+            # AD-911: notebook-save protocol. Overridable hook; base returns
+            # "" so only opting-in agents (Yeo) learn the [NOTEBOOK ...] reply
+            # tag that persists a Captain-requested note to Ship's Records.
+            _nb_proto = self._conversational_notebook_protocol(observation)
+            if _nb_proto:
+                composed += _nb_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

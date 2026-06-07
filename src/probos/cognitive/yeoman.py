@@ -416,6 +416,47 @@ class YeomanAgent(CognitiveAgent):
         return "".join(parts)
 
     # ------------------------------------------------------------------
+    # Conversational notebook-save protocol (AD-911)
+    # ------------------------------------------------------------------
+
+    def _conversational_notebook_protocol(self, observation: dict) -> str:
+        """Teach Yeo to durably save a Captain-requested note from a 1:1 chat.
+
+        As the Captain's record-keeper, Yeo is the one agent who should be
+        able to persist a note when the Captain says "save this to your
+        notebook." He emits ``[NOTEBOOK topic-slug]...[/NOTEBOOK]`` anywhere
+        in his reply; ``DmReplyPipeline.step_4i_notebook_parse`` writes it to
+        Ship's Records (records store) and strips the block from the
+        Captain-visible reply.
+
+        Yeo's static ``instructions``/``_ROLE_RULES`` never reach the
+        conversational prompt (composed with ``hardcoded_instructions=""``),
+        so this protocol is injected here the same way the BF-599 capability
+        block and the AD-845 task protocol are.
+
+        Honest-degrade: returns "" when the records store is not wired, so
+        Yeo is never told he can save notes the substrate cannot back (the
+        BF-599 / AD-592 confabulation lesson). All tag text is gap-regex-safe.
+        """
+        runtime = self._runtime
+        if runtime is None:
+            return ""
+        if getattr(runtime, "_records_store", None) is None:
+            return ""
+        return (
+            "\n\nSaving notes to your notebook: when the Captain asks you to "
+            "save, record, note, or remember something for later, persist it "
+            "to your notebook in Ship's Records by emitting [NOTEBOOK "
+            "topic-slug]\nYour note text here\n[/NOTEBOOK] anywhere in your "
+            "reply. Use a short hyphenated topic-slug (e.g. "
+            "spacex-ipo-trade-setup). The note is written to durable storage "
+            "and the tag is removed before the Captain sees your reply, so "
+            "confirm conversationally that you have saved it. Only claim a "
+            "note is saved when you actually emit this tag — never say you "
+            "saved something without it."
+        )
+
+    # ------------------------------------------------------------------
     # Proactive-scan aggregation
     # ------------------------------------------------------------------
 
