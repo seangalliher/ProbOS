@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from probos.cognitive import standing_orders
 from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
+from probos.tools.protocol import ToolPermission
 
 logger = logging.getLogger(__name__)
 
@@ -253,3 +254,98 @@ async def crew_standing_orders(
     agent_type = getattr(agent_obj, "agent_type", None) or ""
     tiers = standing_orders.get_order_tiers(agent_type)
     return {"agent_id": agent_id, "agent_type": agent_type, "tiers": tiers}
+
+
+# ----------------------------------------------------------------------
+# Tool certifications (AD-894) — per-agent privilege grants over the audited
+# ToolPermissionStore. The ship-wide tool *catalog* lives in routers/tools.py
+# (GET /api/tools); these crew-scoped endpoints are personnel-record facets.
+# Granting / revoking a tool is a Captain-authority privilege edit, recorded as
+# an auditable ToolAccessGrant. No consensus gate (reversible — Minimal
+# Authority); the grant-record audit trail is NOT bypassed.
+# ----------------------------------------------------------------------
+
+
+@router.get("/{agent_id}/tools")
+async def crew_tool_certifications(
+    agent_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """The agent's active tool certifications (AD-894).
+
+    Each active grant from the ``ToolPermissionStore`` is joined with its
+    registration metadata from the tool registry (when available). Restrictions
+    (``is_restriction``) are included alongside grants so the console can render
+    both elevation and reduction; the flag distinguishes them. Honest-degrades
+    to an empty list when the permission store is unavailable.
+    """
+    perms = getattr(runtime, "tool_permission_store", None)
+    if perms is None:
+        return {"agent_id": agent_id, "certifications": [], "count": 0}
+    registry = getattr(runtime, "tool_registry", None)
+    certs: list[dict[str, Any]] = []
+    for grant in perms.get_active_grants_sync(agent_id):
+        meta = registry.get(grant.tool_id) if registry is not None else None
+        certs.append({
+            "grant_id": grant.id,
+            "tool_id": grant.tool_id,
+            "permission": grant.permission.value,
+            "is_restriction": grant.is_restriction,
+            "reason": grant.reason,
+            "issued_by": grant.issued_by,
+            "issued_at": grant.issued_at,
+            "tool": meta.to_dict() if meta is not None else None,
+        })
+    return {"agent_id": agent_id, "certifications": certs, "count": len(certs)}
+
+
+@router.post("/{agent_id}/tools")
+async def crew_grant_tool(
+    agent_id: str,
+    body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Certify (grant) a tool to a crew agent (AD-894).
+
+    Captain-authorized privilege change, recorded as an auditable
+    ``ToolAccessGrant``. Body: ``{tool_id, permission, reason?}``.
+    """
+    perms = getattr(runtime, "tool_permission_store", None)
+    if perms is None:
+        raise HTTPException(503, "Tool permission store unavailable")
+    tool_id = body.get("tool_id")
+    permission = body.get("permission")
+    if not tool_id or not permission:
+        raise HTTPException(400, "tool_id and permission are required")
+    registry = getattr(runtime, "tool_registry", None)
+    if registry is not None and registry.get(tool_id) is None:
+        raise HTTPException(404, f"Tool not found: {tool_id}")
+    try:
+        perm = ToolPermission(permission)
+    except ValueError:
+        raise HTTPException(400, f"Invalid permission: {permission}") from None
+    grant = await perms.issue_grant(
+        agent_id, tool_id, perm,
+        reason=body.get("reason", ""), issued_by="captain",
+    )
+    return {
+        "grant_id": grant.id,
+        "agent_id": agent_id,
+        "tool_id": grant.tool_id,
+        "permission": grant.permission.value,
+        "reason": grant.reason,
+        "issued_by": grant.issued_by,
+    }
+
+
+@router.delete("/{agent_id}/tools/{grant_id}")
+async def crew_revoke_tool(
+    agent_id: str, grant_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Revoke a tool certification (AD-894). Soft-revoke, retained for audit."""
+    perms = getattr(runtime, "tool_permission_store", None)
+    if perms is None:
+        raise HTTPException(503, "Tool permission store unavailable")
+    revoked = await perms.revoke_grant(grant_id)
+    if not revoked:
+        raise HTTPException(404, f"Grant not found: {grant_id}")
+    return {"revoked": True, "grant_id": grant_id, "agent_id": agent_id}
