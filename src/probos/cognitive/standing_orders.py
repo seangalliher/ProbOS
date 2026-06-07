@@ -71,6 +71,7 @@ _AGENT_DEPARTMENTS: dict[str, str] = {
     "training_officer": "operations",  # AD-628 Tucker
     # Bridge
     "counselor": "bridge",
+    "yeoman": "bridge",  # AD-910 — Captain's Yeoman is a Bridge officer (AD-766)
 }
 
 
