@@ -1089,6 +1089,74 @@ class SkillRegistry:
             for skill in role_skills:
                 await self.register_skill(skill)
 
+    async def update_skill_definition(
+        self, defn: SkillDefinition, *, create: bool = False,
+    ) -> SkillDefinition:
+        """AD-895: validated create/update over ``register_skill``.
+
+        ``register_skill`` is an unconditional ``INSERT OR REPLACE`` (it both
+        creates and updates). This thin wrapper adds the Skill Library's
+        Captain-authority guards before delegating:
+
+        - ``create=True`` rejects a duplicate ``skill_id`` (use ``False`` for an
+          update of an existing definition).
+        - Every prerequisite must reference an already-registered skill — a
+          dangling prerequisite is rejected so the prerequisite DAG never points
+          at a missing node.
+
+        Raises ``ValueError`` on a duplicate (create) or a dangling
+        prerequisite. On success the definition is persisted and returned.
+        """
+        if create and defn.skill_id in self._cache:
+            raise ValueError(f"Skill '{defn.skill_id}' already exists")
+        for prereq_id in defn.prerequisites:
+            if prereq_id == defn.skill_id:
+                raise ValueError(
+                    f"Skill '{defn.skill_id}' cannot be its own prerequisite"
+                )
+            if prereq_id not in self._cache:
+                raise ValueError(
+                    f"Dangling prerequisite '{prereq_id}' for skill "
+                    f"'{defn.skill_id}' — prerequisite is not a registered skill"
+                )
+        return await self.register_skill(defn)
+
+    async def delete_skill_definition(
+        self, skill_id: str, *, skill_service: "AgentSkillService | None" = None,
+    ) -> None:
+        """AD-895: delete a skill definition, with safety guards.
+
+        Two guards protect the library's integrity (Minimal-Authority — the
+        Captain may retire a skill, but not one the ship depends on):
+
+        - A **built-in PCC** (a skill seeded by ``register_builtins`` from
+          ``BUILTIN_PCCS``) is never deletable — every crew member is
+          commissioned with it.
+        - A skill **in active use** by any agent (when a ``skill_service`` is
+          supplied) is not deletable — deleting it would orphan acquired
+          records. The caller must retire the agents' records first.
+
+        Raises ``ValueError`` when a guard rejects the delete. A successful
+        delete removes the definition from the cache and the backing store.
+        """
+        if skill_id in {pcc.skill_id for pcc in BUILTIN_PCCS}:
+            raise ValueError(
+                f"Skill '{skill_id}' is a built-in PCC and cannot be deleted"
+            )
+        if skill_service is not None:
+            in_use = await skill_service.count_agents_with_skill(skill_id)
+            if in_use > 0:
+                raise ValueError(
+                    f"Skill '{skill_id}' is in use by {in_use} agent(s) and "
+                    f"cannot be deleted"
+                )
+        self._cache.pop(skill_id, None)
+        if self._db:
+            await self._db.execute(
+                "DELETE FROM skill_definitions WHERE skill_id = ?", (skill_id,)
+            )
+            await self._db.commit()
+
     def get_skill(self, skill_id: str) -> SkillDefinition | None:
         """Get a skill definition by ID (from cache)."""
         return self._cache.get(skill_id)
@@ -1408,6 +1476,21 @@ class AgentSkillService:
             async for row in cur:
                 records.append(self._row_to_record(row))
         return records
+
+    async def count_agents_with_skill(self, skill_id: str) -> int:
+        """AD-895: count agents that hold an acquired record for ``skill_id``.
+
+        Used by ``SkillRegistry.delete_skill_definition`` to refuse retiring a
+        skill that agents still carry (deleting it would orphan their records).
+        Returns 0 when there is no backing store.
+        """
+        if not self._db:
+            return 0
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM agent_skills WHERE skill_id = ?", (skill_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row[0]) if row else 0
 
     # ------------------------------------------------------------------
     # AD-428b v1: Development goals

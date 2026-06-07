@@ -292,3 +292,123 @@ async def catalog_validate_all(
             "invalid": len(results) - valid_count,
         },
     }
+
+
+# --- AD-895: Skill Library definition CRUD ---
+
+
+def _serialize_definition(s: Any) -> dict[str, Any]:
+    """Serialize a SkillDefinition for the definition-CRUD surface."""
+    return {
+        "skill_id": s.skill_id,
+        "name": s.name,
+        "category": s.category.value,
+        "description": s.description,
+        "domain": s.domain,
+        "prerequisites": s.prerequisites,
+        "decay_rate_days": s.decay_rate_days,
+        "origin": s.origin,
+    }
+
+
+def _definition_from_body(body: dict[str, Any], skill_id: str) -> Any:
+    """Build a SkillDefinition from a request body. Raises ValueError on bad input."""
+    from probos.skill_framework import SkillCategory, SkillDefinition
+
+    name = body.get("name")
+    if not name:
+        raise ValueError("Missing 'name'")
+    category_raw = body.get("category")
+    if not category_raw:
+        raise ValueError("Missing 'category'")
+    try:
+        category = SkillCategory(category_raw)
+    except ValueError:
+        raise ValueError(f"Invalid category: {category_raw}") from None
+    return SkillDefinition(
+        skill_id=skill_id,
+        name=name,
+        category=category,
+        description=body.get("description", ""),
+        domain=body.get("domain", "*"),
+        prerequisites=list(body.get("prerequisites", [])),
+        decay_rate_days=int(body.get("decay_rate_days", 14)),
+        origin=body.get("origin", "designed"),
+    )
+
+
+@router.get("/definitions")
+async def list_skill_definitions(
+    category: str | None = None, domain: str | None = None,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-895: list skill definitions in the writable library."""
+    if not runtime.skill_registry:
+        return {"definitions": [], "count": 0}
+    from probos.skill_framework import SkillCategory
+
+    cat: SkillCategory | None = None
+    if category:
+        try:
+            cat = SkillCategory(category)
+        except ValueError:
+            raise HTTPException(400, f"Invalid category: {category}") from None
+    skills = runtime.skill_registry.list_skills(category=cat, domain=domain)
+    return {
+        "definitions": [_serialize_definition(s) for s in skills],
+        "count": len(skills),
+    }
+
+
+@router.post("/definitions")
+async def create_skill_definition(
+    body: dict[str, Any], runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-895: create a new skill definition (rejects duplicates)."""
+    if not runtime.skill_registry:
+        raise HTTPException(503, "Skill registry not available")
+    skill_id = body.get("skill_id")
+    if not skill_id:
+        raise HTTPException(400, "Missing 'skill_id'")
+    try:
+        defn = _definition_from_body(body, skill_id)
+        result = await runtime.skill_registry.update_skill_definition(defn, create=True)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    return _serialize_definition(result)
+
+
+@router.put("/definitions/{skill_id}")
+async def update_skill_definition(
+    skill_id: str, body: dict[str, Any], runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-895: update an existing skill definition."""
+    if not runtime.skill_registry:
+        raise HTTPException(503, "Skill registry not available")
+    if runtime.skill_registry.get_skill(skill_id) is None:
+        raise HTTPException(404, f"Skill not found: {skill_id}")
+    try:
+        defn = _definition_from_body(body, skill_id)
+        result = await runtime.skill_registry.update_skill_definition(defn, create=False)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    return _serialize_definition(result)
+
+
+@router.delete("/definitions/{skill_id}")
+async def delete_skill_definition(
+    skill_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-895: retire a skill definition (guards built-ins and in-use skills)."""
+    if not runtime.skill_registry:
+        raise HTTPException(503, "Skill registry not available")
+    if runtime.skill_registry.get_skill(skill_id) is None:
+        raise HTTPException(404, f"Skill not found: {skill_id}")
+    try:
+        await runtime.skill_registry.delete_skill_definition(
+            skill_id, skill_service=runtime.skill_service,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    return {"deleted": True, "skill_id": skill_id}
+
