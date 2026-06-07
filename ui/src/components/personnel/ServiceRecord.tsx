@@ -246,13 +246,19 @@ export default function ServiceRecord({ agentId, summary }: Props) {
       {/* Skills & Proficiency */}
       <div data-testid="sr-section-skills">
         <div style={sectionHeader('Skills & Proficiency')}>Skills &amp; Proficiency</div>
-        {labelRow('Skills', String(rec.skill_count ?? 0))}
+        {labelRow('Developmental skills', String(rec.skill_count ?? 0))}
         {typeof rec.avg_proficiency === 'number' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
             <span style={{ width: 130, flexShrink: 0, fontSize: 11, color: '#8888a0' }}>Avg proficiency</span>
             <Bar value={rec.avg_proficiency} />
           </div>
         )}
+        <div
+          data-testid="sr-cognitive-skills-header"
+          style={{ fontSize: 10, color: '#8888a0', letterSpacing: 1, margin: '10px 0 4px' }}
+        >
+          COGNITIVE SKILLS ({rec.cognitive_skill_count ?? cognitiveSkills.length})
+        </div>
         {cognitiveSkills.length === 0 ? (
           <div style={{ fontSize: 11, color: '#666680', padding: '4px 0' }}>No cognitive skills.</div>
         ) : (

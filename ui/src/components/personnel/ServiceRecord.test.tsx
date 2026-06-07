@@ -27,6 +27,7 @@ const RECORD = {
   cognitive_skills: [
     { name: 'Sensor Analysis', description: 'Interpret sensor sweeps', skill_id: 'cs-1' },
   ],
+  cognitive_skill_count: 1,
   tools: ['scanner'],
   tool_count: 1,
   duties: [
@@ -108,9 +109,13 @@ describe('ServiceRecord (AD-897)', () => {
     // Identity & Role
     expect(await screen.findByTestId('sr-section-identity')).toBeTruthy();
     expect(screen.getByText('Data')).toBeTruthy();
-    // Skills
+    // Skills — developmental count and cognitive-skill count are labelled
+    // distinctly so the count never contradicts the visible list (BF: "Skills 0"
+    // shown above a populated cognitive-skill list).
     expect(screen.getByTestId('sr-section-skills')).toBeTruthy();
     expect(await screen.findByText('Sensor Analysis')).toBeTruthy();
+    expect(screen.getByText('Developmental skills')).toBeTruthy();
+    expect(screen.getByTestId('sr-cognitive-skills-header').textContent).toContain('COGNITIVE SKILLS (1)');
     // Qualifications — tool cert + billet missing quals (both homes)
     expect(await screen.findByTestId('sr-tool-cert-scanner')).toBeTruthy();
     expect(await screen.findByTestId('sr-billet-missing')).toBeTruthy();

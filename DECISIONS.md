@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-610: Service Record "Skills 0" contradicted the cognitive-skill list — count and list measured different skill systems
+
+**Context.** The AD-897 Service Record's **Skills & Proficiency** section showed a single unlabeled `Skills` count taken from `rec.skill_count`, then rendered the agent's cognitive-skill list directly beneath it. Looking at Yeoman's record, the Captain saw `Skills 0` sitting above four populated cognitive skills (`communication-discipline`, `leadership-feedback`, `notebook-quality`, `self-image-awareness`) — a self-contradiction that read as a bug.
+
+**Root cause.** The two numbers measure two different skill systems. `rec.skill_count` is the **developmental** (T3, proficiency-tracked) skill count from `AgentSkillService.get_profile().total_skills` (acm.py block 5) — agents acquire these through commissioning/training, and Yeo has none. The listed items are **cognitive** (T2, `SKILL.md` instruction-knowledge) skills from `cognitive_skill_catalog.get_descriptions(department, rank)` (acm.py block 7), gated by the agent's crew identity, with their own `cognitive_skill_count` field. The UI labelled the developmental count simply `Skills` and gave the cognitive list no count header, so the two were visually conflated.
+
+**Decision.** Relabel the developmental count `Developmental skills` and add a `COGNITIVE SKILLS (N)` subheader (`sr-cognitive-skills-header`) above the cognitive list, where `N = rec.cognitive_skill_count ?? cognitiveSkills.length`. Both counts are now honest and each matches what it labels; no contradiction. Pure presentation change — no backend touched; the ACM already supplied both `skill_count` and `cognitive_skill_count`.
+
+**Consequence.** `ui/src/components/personnel/ServiceRecord.tsx` skills section updated; the AD-897 Vitest suite seeds `cognitive_skill_count` and asserts both the `Developmental skills` label and the `COGNITIVE SKILLS (1)` header (5 tests, still green). Surfaces the real gap the Captain also flagged — there is no per-agent skill *management* surface yet (cognitive skills are rank/department-gated, not per-agent; developmental skills are acquired via `AgentSkillService`); that is scoped as the AD-902 proposal, not part of this fix.
+
 ### AD-899: Tool certification management view (Crew Personnel Management epic, part 11 — #863)
 
 **Context.** AD-894 gave each crew agent a tool-certification facet backed by the `ToolPermissionStore` — active grants (and restrictions) joined with the tool registry catalog — and a governed HTTP surface (`GET /api/crew/{id}/tools`, `POST` to grant, `DELETE /{grant_id}` to revoke), with the ship-wide tool catalog at `GET /api/tools`. AD-899 is the Captain-facing admin console over that surface, framed as PQS-style qualification: the asset-management counterpart to the personnel record. The authority model (a grant is a Captain-authority `ToolAccessGrant`, recorded for audit; revoke is a soft, reversible, audit-retained revocation) already lives behind the endpoints; AD-899 surfaces it, it does not re-implement it. This is the final AD of the epic.
