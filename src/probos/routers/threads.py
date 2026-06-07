@@ -15,12 +15,15 @@ working with its implicit per-agent default thread. AD-791a wires it.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from probos.routers.deps import get_runtime
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 
@@ -240,6 +243,30 @@ async def append_message(
             "AD-793: project touch failed for thread=%s", thread_id,
             exc_info=True,
         )
+    # AD-914: group-chat fan-out. A Captain turn into a thread with >= 2
+    # crew-agent participants fans out to all of them in parallel, injects
+    # recent thread history (cross-agent visibility), and persists each
+    # reply. Single-agent / non-Captain posts are byte-identical to before.
+    # Belt-and-braces Tier-2: the entire gate + fan-out is guarded so any
+    # failure (incl. a minimal runtime without a registry) degrades to the
+    # already-persisted Captain message rather than 500-ing the append.
+    if body.role == "captain":
+        try:
+            from probos.routers.thread_fanout import (
+                crew_agent_participants,
+                group_chat_fanout,
+            )
+            thread = store.get_thread(thread_id)
+            if thread is not None and len(crew_agent_participants(runtime, thread.participants)) >= 2:
+                per_agent_replies = await group_chat_fanout(
+                    runtime, thread_id, captain_body=body.body, captain_msg=msg,
+                )
+                return {**msg.to_dict(), "per_agent_replies": per_agent_replies}
+        except Exception:
+            logger.warning(
+                "AD-914: group fan-out failed for thread=%s; returning appended message only",
+                thread_id, exc_info=True,
+            )
     return msg.to_dict()
 
 

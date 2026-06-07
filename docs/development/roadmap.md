@@ -361,7 +361,7 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD | Title | Epic | Priority |
 |----|-------|------|----------|
 | AD-913 | Chat-thread participant management — `add_participant`/`remove_participant` on `ChatThreadStore` + `POST/DELETE /api/threads/{id}/participants` (foundation: "add crew to a 1:1" AND "Captain joins") | Ad-hoc group chat | 1 |
-| AD-914 | Group-chat fan-out + cross-agent visibility — a ≥2-agent thread fans a Captain turn to all participants, injects recent thread history into each agent's prompt (so they see each other), persists replies as `chat_thread_messages` (the `ChatThreadStore` form of AD-719a-wire) | Ad-hoc group chat | 1 |
+| AD-914 | Group-chat fan-out + cross-agent visibility — a ≥2-agent thread fans a Captain turn to all participants, injects recent thread history into each agent's prompt (so they see each other), persists replies as `chat_thread_messages` (the `ChatThreadStore` form of AD-719a-wire) — SHIPPED 2026-06-07 gate-verified | Ad-hoc group chat | 1 |
 | AD-915 | Turn-taking facilitator — relevance-ranked speaking order + convergence-gated termination (reuses AD-641c thread-priority + AD-583 convergence) for crew-scale flood control; the shared sequencer for text AND meeting voice | Ad-hoc group chat | 1 |
 | AD-916 | File sharing in chat — attachment refs on `chat_thread_messages` via `AttachmentStore` (AD-731 refs-not-blobs); vision-capable agents receive image refs | Ad-hoc group chat | 2 |
 | AD-917 | UI group-chat experience — rename affordance, add-participant @-picker (reuse AD-719c), participant avatars, file attach/drop (reuse the Ward Room attach surface) | Ad-hoc group chat | 2 |
