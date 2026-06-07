@@ -137,29 +137,13 @@ class OpenAICompatibleClient(BaseLLMClient):
         self._clients: dict[str, httpx.AsyncClient] = {}  # base_url → client
         self._tier_status: dict[str, bool] = {}
         for tier in _LLM_TIERS:
-            tc = self._tier_configs[tier]
-            url = tc["base_url"]
-            api_format = tc.get("api_format", "openai")
-
-            # For Ollama native format, use the base URL directly (no /v1/ suffix).
-            # For OpenAI format, ensure trailing slash so relative paths resolve.
-            if api_format == "ollama":
-                normalized = url.rstrip("/") + "/"
-            else:
-                normalized = url.rstrip("/") + "/"
-
             # Deduplicate clients by (url, format) — same Ollama server could
-            # be used for both native and OpenAI endpoints, needing separate clients.
-            client_key = f"{url}|{api_format}"
+            # be used for both native and OpenAI endpoints, needing separate
+            # clients. BF-612: construction is centralised in ``_build_client``
+            # so ``_refresh_client`` can rebuild a tier's pool identically.
+            client_key = self._client_key(tier)
             if client_key not in self._clients:
-                headers = {"Content-Type": "application/json"}
-                if tc["api_key"]:
-                    headers["Authorization"] = f"Bearer {tc['api_key']}"
-                self._clients[client_key] = httpx.AsyncClient(
-                    base_url=normalized,
-                    headers=headers,
-                    timeout=tc["timeout"],
-                )
+                self._clients[client_key] = self._build_client(tier)
 
         # Simple response cache keyed by (tier, prompt_hash)
         self._cache: OrderedDict[str, LLMResponse] = OrderedDict()  # AD-617: LRU eviction
@@ -232,6 +216,53 @@ class OpenAICompatibleClient(BaseLLMClient):
         """Return the client lookup key for a tier."""
         tc = self._tier_configs[tier]
         return f"{tc['base_url']}|{tc.get('api_format', 'openai')}"
+
+    def _build_client(self, tier: str) -> httpx.AsyncClient:
+        """Construct a fresh httpx client for a tier's base_url|format pool.
+
+        Single source of truth for client construction, shared by ``__init__``
+        and ``_refresh_client`` (BF-612). Both the Ollama-native and OpenAI
+        paths normalise the base URL to a trailing slash so relative request
+        paths (``chat/completions``) resolve correctly.
+        """
+        tc = self._tier_configs[tier]
+        normalized = tc["base_url"].rstrip("/") + "/"
+        headers = {"Content-Type": "application/json"}
+        if tc["api_key"]:
+            headers["Authorization"] = f"Bearer {tc['api_key']}"
+        return httpx.AsyncClient(
+            base_url=normalized,
+            headers=headers,
+            timeout=tc["timeout"],
+        )
+
+    async def _refresh_client(self, tier: str) -> None:
+        """BF-612: recycle a tier's httpx connection pool on a fresh socket.
+
+        An HTTP 200 with empty content from the upstream proxy is a transient
+        failure: the pooled keep-alive socket is healthy at the HTTP layer
+        (``raise_for_status`` passes) but is bound to a rotated-out upstream
+        session inside the proxy. Under continuous proactive load the socket
+        never idles past the keep-alive expiry, so it is reused indefinitely
+        and every call on it returns empty — the symptom a proxy restart
+        "fixes" by force-closing all sockets. Closing and rebuilding the
+        client achieves the same effect without restarting the proxy or the
+        runtime. Tiers sharing a ``base_url|format`` share one client, so they
+        recover together. Tier-2 log-and-degrade: a close failure is logged
+        and a fresh client is installed regardless. NEVER raises.
+        """
+        client_key = self._client_key(tier)
+        old = self._clients.get(client_key)
+        if old is not None:
+            try:
+                await old.aclose()
+            except Exception:
+                logger.warning(
+                    "BF-612: aclose of stale LLM client for %s raised; "
+                    "installing a fresh client anyway",
+                    client_key, exc_info=True,
+                )
+        self._clients[client_key] = self._build_client(tier)
 
     def _resolve_model_for_tier(self, tier: str) -> str | None:
         """AD-463: consult ModelRouter if wired, else None (existing path).
@@ -569,6 +600,10 @@ class OpenAICompatibleClient(BaseLLMClient):
             fallback_tiers = [tier] + [t for t in _TIER_ORDER if t != tier]
 
         last_error = ""
+        # BF-612: tiers whose connection pool was already recycled this call.
+        # Bounds the empty-content socket-refresh retry to one per tier so a
+        # genuinely empty upstream can't spin.
+        _refreshed_tiers: set[str] = set()
         for attempt_tier in fallback_tiers:
             tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
             client = self._clients[self._client_key(attempt_tier)]
@@ -620,6 +655,47 @@ class OpenAICompatibleClient(BaseLLMClient):
                         effective_max_tokens=effective_max_tokens,
                         effective_system_suffix=effective_system_suffix,
                     )
+                    # BF-612: empty-content 200 → recycle the socket and retry
+                    # once on this tier. A degraded keep-alive connection to the
+                    # proxy returns HTTP 200 with empty content (no error, so the
+                    # transport raises nothing). The pooled socket is bound to a
+                    # rotated-out upstream session and never self-heals under
+                    # continuous load — the failure a proxy restart "fixes". A
+                    # fresh socket reproduces that fix in-process. Guarded to one
+                    # refresh per tier per call so a genuinely empty upstream
+                    # (or a tool-only / multimodal response that legitimately has
+                    # no text) does not spin: tool-call replies carry
+                    # ``content_blocks`` and are never treated as empty here.
+                    if (
+                        not response.content
+                        and not response.content_blocks
+                        and not response.error
+                        and api_format != "ollama"
+                        and attempt_tier not in _refreshed_tiers
+                    ):
+                        _refreshed_tiers.add(attempt_tier)
+                        logger.warning(
+                            "BF-612: empty content from tier=%s (model=%s, "
+                            "prompt_tokens=%d) — recycling connection pool and "
+                            "retrying once on a fresh socket",
+                            attempt_tier, model, response.prompt_tokens,
+                        )
+                        await self._refresh_client(attempt_tier)
+                        client = self._clients[self._client_key(attempt_tier)]
+                        response = await self._call_api(
+                            request, model, client, api_format=api_format,
+                            timeout=tier_timeout,
+                            effective_temp=effective_temp,
+                            effective_top_p=effective_top_p,
+                            effective_max_tokens=effective_max_tokens,
+                            effective_system_suffix=effective_system_suffix,
+                        )
+                        if response.content:
+                            logger.info(
+                                "BF-612: tier=%s recovered after connection "
+                                "pool recycle (model=%s)",
+                                attempt_tier, model,
+                            )
                     # Cache successful non-empty responses (keyed by original
                     # tier + prompt). BF-272 (2026-05-12): empty content is
                     # never cached — it poisons all future calls with the same
