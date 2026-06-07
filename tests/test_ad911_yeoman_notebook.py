@@ -11,7 +11,9 @@ nothing was written. AD-911:
    ``[NOTEBOOK ...]`` reply tag — honest-degrade: "" when no records store.
 2. Adds ``ProactiveLoop.extract_and_execute_notebooks`` (lean writer reusing
    the AD-550 dedup gate) and a ``DmReplyPipeline.step_4i_notebook_parse``
-   that persists for the Yeoman and unwraps stray markers for anyone else.
+   that persists a Captain-requested note. (AD-912 later generalized the
+   pipeline step + the base hook from Yeoman-only to all crew agents; see
+   ``test_ad912_crew_notebook_generalization.py``.)
 
 Real ``RecordsStore`` (tmp_path) + real ``ProactiveCognitiveLoop`` + real
 ``DmReplyContext`` — no MagicMock at the substrate boundary (BF-287).
@@ -239,7 +241,9 @@ def test_step_persists_for_yeoman(tmp_path) -> None:
     asyncio.run(_run())
 
 
-def test_step_unwraps_but_does_not_persist_for_non_yeoman(tmp_path) -> None:
+def test_step_persists_for_non_yeoman_crew_agent(tmp_path) -> None:
+    # AD-912: generalized from Yeoman-only — a non-Yeoman crew agent's
+    # Captain-requested note is now persisted too (was unwrap-only in AD-911).
     async def _run() -> None:
         store = await _make_records_store(tmp_path)
         loop = _make_loop(store)
@@ -252,13 +256,14 @@ def test_step_unwraps_but_does_not_persist_for_non_yeoman(tmp_path) -> None:
             runtime=runtime, agent=agent, response_text=text,
         )
         await pipeline.step_4i_notebook_parse()
-        # Markers unwrapped (inner text kept), but NOT persisted.
+        # Block removed from the Captain-visible reply (content -> notebook);
+        # the surrounding confirmation text remains.
         assert "[NOTEBOOK" not in pipeline.ctx.response_text
-        assert "The crew is tired." in pipeline.ctx.response_text
-        assert not (store.repo_path / "notebooks" / "feelings").exists()
-        # No counselor notebook written anywhere.
-        counselor_dir = store.repo_path / "notebooks" / "Counselor"
-        assert not counselor_dir.exists()
+        assert "Noted." in pipeline.ctx.response_text
+        # Durably persisted under the counselor's callsign.
+        nb = store.repo_path / "notebooks" / "Counselor" / "feelings.md"
+        assert nb.is_file()
+        assert "The crew is tired." in nb.read_text(encoding="utf-8")
 
     asyncio.run(_run())
 

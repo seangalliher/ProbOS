@@ -773,60 +773,60 @@ class DmReplyPipeline:
 
     # --- step 4i: AD-911 notebook persistence (Yeoman record-keeping) ---
     async def step_4i_notebook_parse(self) -> None:
-        """AD-911: Persist ``[NOTEBOOK slug]...[/NOTEBOOK]`` blocks the Yeoman
-        emits when the Captain asks him to save a note in 1:1 chat.
+        """AD-911 / AD-912: Persist ``[NOTEBOOK slug]...[/NOTEBOOK]`` blocks an
+        agent emits when the Captain asks it to save a note in 1:1 chat.
 
-        Scoped to the Yeoman — the Captain's record-keeper — so other agents'
-        DM replies are unaffected. Reuses
+        AD-911 added this for the Yeoman; AD-912 generalized it to any crew
+        agent — notebooks are a universal agent capability on the proactive /
+        Ward-Room path, and this brings the 1:1 path to parity. Reuses
         ``ProactiveLoop.extract_and_execute_notebooks``, which writes to the
-        records store (AD-550 dedup) and strips the markers from the
-        Captain-visible reply. Runs after the [DM] outbound parse and before
-        episodic store so the recorded episode shows the cleaned text.
+        agent's notebook in the records store (AD-550 dedup, callsign-keyed)
+        and strips the markers from the Captain-visible reply. Runs after the
+        [DM] outbound parse and before episodic store so the recorded episode
+        shows the cleaned text.
 
-        Tier-2 honest-degrade: for any other agent, or when the proactive
-        loop is not wired, stray notebook tags are unwrapped (inner text
-        kept, markers removed) so the Captain never sees a raw block, but
-        nothing is persisted. NEVER raises.
+        Tier-2 honest-degrade: when the proactive loop is not wired (or a
+        write fails), nothing is persisted. A final safety-net unwrap strips
+        any markers that survived (no store, write failure) so the Captain
+        never sees a raw block. NEVER raises.
         """
         if not self.ctx.response_text:
             return
         if "[NOTEBOOK" not in self.ctx.response_text:
             return  # fast path: no marker present
 
-        agent_type = getattr(self.ctx.agent, "agent_type", "")
         proactive = getattr(self.ctx.runtime, "proactive_loop", None)
-        if (
-            agent_type != "yeoman"
-            or proactive is None
-            or not hasattr(proactive, "extract_and_execute_notebooks")
+        if proactive is not None and hasattr(
+            proactive, "extract_and_execute_notebooks"
         ):
-            # Not the Yeoman (or persistence unavailable): unwrap stray
-            # markers so the Captain never sees a raw block; do not persist.
+            try:
+                cleaned, actions = await proactive.extract_and_execute_notebooks(
+                    self.ctx.agent, self.ctx.response_text,
+                )
+                self.ctx.response_text = cleaned
+                if actions:
+                    logger.info(
+                        "AD-912: persisted %d notebook action(s) from DM "
+                        "reply for agent=%s",
+                        len(actions), self.ctx.agent_id,
+                    )
+            except Exception:
+                logger.warning(
+                    "AD-911: notebook extraction failed for agent=%s; will "
+                    "unwrap stray markers",
+                    self.ctx.agent_id, exc_info=True,
+                )
+
+        # Safety net: strip any markers that survived (no store wired, a
+        # write failure, or the proactive loop unavailable) so the Captain
+        # never sees a raw notebook block.
+        if "[NOTEBOOK" in self.ctx.response_text:
             self.ctx.response_text = re.sub(
                 r'\[NOTEBOOK\s+[\w-]+\](.*?)\[/NOTEBOOK\]',
                 r'\1',
                 self.ctx.response_text,
                 flags=re.DOTALL,
             ).strip()
-            return
-
-        try:
-            cleaned, actions = await proactive.extract_and_execute_notebooks(
-                self.ctx.agent, self.ctx.response_text,
-            )
-            self.ctx.response_text = cleaned
-            if actions:
-                logger.info(
-                    "AD-911: persisted %d notebook action(s) from Yeoman "
-                    "DM reply for agent=%s",
-                    len(actions), self.ctx.agent_id,
-                )
-        except Exception:
-            logger.warning(
-                "AD-911: notebook extraction failed for agent=%s; leaving "
-                "reply text unchanged",
-                self.ctx.agent_id, exc_info=True,
-            )
 
     # --- step 4h: AD-869 synchronous mesh-read (Tier-2 do-and-report) ---
     async def step_4h_mesh_read_parse(self) -> None:

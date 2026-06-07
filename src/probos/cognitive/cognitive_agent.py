@@ -1874,13 +1874,40 @@ class CognitiveAgent(BaseAgent):
         return ""
 
     def _conversational_notebook_protocol(self, observation: dict) -> str:
-        """Overridable hook (AD-911): notebook-save protocol appended to the
-        conversational system prompt. Default returns "" so only opting-in
-        agents (e.g. Yeo, the Captain's record-keeper) learn the
-        ``[NOTEBOOK topic-slug]...[/NOTEBOOK]`` reply tag that durably
-        persists a Captain-requested note to Ship's Records from a 1:1 chat
-        turn. Other agents are byte-unaffected (Open/Closed)."""
-        return ""
+        """Notebook-save protocol appended to the conversational system
+        prompt (AD-911, generalized to all crew agents in AD-912).
+
+        Any crew agent — not just the Yeoman — should be able to durably
+        save a note when the Captain asks for it in a 1:1 chat, the same way
+        notebooks are a universal agent capability on the proactive /
+        Ward-Room path. The agent emits ``[NOTEBOOK topic-slug]...
+        [/NOTEBOOK]`` anywhere in its reply and
+        ``DmReplyPipeline.step_4i_notebook_parse`` writes it to that agent's
+        notebook in Ship's Records (AD-550 dedup) and strips the block from
+        the Captain-visible reply.
+
+        Honest-degrade: returns "" when no records store is wired, so an
+        agent is never told it can save notes the substrate cannot back (the
+        BF-599 / AD-592 confabulation lesson). All tag text is gap-regex-safe.
+        Overridable so an agent can tailor the framing (Open/Closed).
+        """
+        runtime = getattr(self, "_runtime", None)
+        if runtime is None:
+            return ""
+        if getattr(runtime, "_records_store", None) is None:
+            return ""
+        return (
+            "\n\nSaving notes to your notebook: when the Captain asks you to "
+            "save, record, note, or remember something for later, persist it "
+            "to your notebook in Ship's Records by emitting [NOTEBOOK "
+            "topic-slug]\nYour note text here\n[/NOTEBOOK] anywhere in your "
+            "reply. Use a short hyphenated topic-slug (e.g. "
+            "spacex-ipo-trade-setup). The note is written to durable storage "
+            "and the tag is removed before the Captain sees your reply, so "
+            "confirm conversationally that you have saved it. Only claim a "
+            "note is saved when you actually emit this tag — never say you "
+            "saved something without it."
+        )
 
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
