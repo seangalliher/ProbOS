@@ -1492,6 +1492,28 @@ class AgentSkillService:
             row = await cur.fetchone()
             return int(row[0]) if row else 0
 
+    async def suspend_skill(
+        self, agent_id: str, skill_id: str, suspended: bool = True,
+    ) -> AgentSkillRecord | None:
+        """AD-902: soft-suspend (or reinstate) an agent's skill record.
+
+        A reversible toggle over the already-modeled ``suspended`` column. A
+        suspended skill is excluded from decay sweeps and from
+        ``SkillProfile.proficiency_of``/``breadth`` (see the ``not s.suspended``
+        guards) but its proficiency and ``assessment_history`` are preserved, so
+        reinstating with ``suspended=False`` restores the prior standing. There
+        is no hard delete — Reversibility Preference holds.
+
+        Returns the updated record, or ``None`` when the agent holds no record
+        for ``skill_id`` (the caller maps this to 404).
+        """
+        record = await self._get_record(agent_id, skill_id)
+        if not record:
+            return None
+        record.suspended = bool(suspended)
+        await self._upsert_record(record)
+        return record
+
     # ------------------------------------------------------------------
     # AD-428b v1: Development goals
     # ------------------------------------------------------------------

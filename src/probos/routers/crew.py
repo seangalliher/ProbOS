@@ -524,3 +524,135 @@ async def crew_amend_directive(
         raise HTTPException(404, f"Directive not found or not amendable: {directive_id}")
     standing_orders.clear_cache()
     return _serialize_directive(amended)
+
+
+# ----------------------------------------------------------------------
+# Developmental (T3) skill management (AD-902) — a Captain-facing write
+# surface over AgentSkillService (AD-428). Co-located on /api/crew so the
+# console fetches one prefix. update_proficiency here is the SAME method the
+# /api/skills/.../assess endpoint (AD-428) calls — no logic is duplicated.
+# All mutations are reversible (idempotent upsert / two-way level moves /
+# soft suspend), so no consensus gate (Minimal Authority).
+# ----------------------------------------------------------------------
+
+
+def _serialize_skill_record(record: Any, defn: Any) -> dict[str, Any]:
+    """Project an AgentSkillRecord (+ its definition) to the console shape."""
+    data = record.to_dict()
+    data["name"] = defn.name if defn is not None else record.skill_id
+    data["category"] = defn.category.value if defn is not None else "acquired"
+    return data
+
+
+@router.get("/{agent_id}/skills")
+async def crew_developmental_skills(
+    agent_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """The agent's developmental (T3) skill records (AD-902).
+
+    Every record — including ``suspended`` ones, so the console can offer
+    reinstatement — joined with its registry definition for name + category.
+    Honest-degrades to an empty list when the skill service is unavailable.
+    """
+    skill_service = getattr(runtime, "skill_service", None)
+    if skill_service is None:
+        return {"agent_id": agent_id, "skills": [], "count": 0}
+    registry = getattr(runtime, "skill_registry", None)
+    records = await skill_service.get_all_records(agent_id)
+    skills = [
+        _serialize_skill_record(
+            r, registry.get_skill(r.skill_id) if registry is not None else None,
+        )
+        for r in records
+    ]
+    return {"agent_id": agent_id, "skills": skills, "count": len(skills)}
+
+
+@router.post("/{agent_id}/skills")
+async def crew_acquire_skill(
+    agent_id: str, body: dict[str, Any], runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Give a crew agent a developmental skill (AD-902).
+
+    Body: ``{skill_id, proficiency?, source?}``. ``proficiency`` is the 1-7
+    level integer (defaults to FOLLOW=1). Unmet prerequisites raise a 400 with
+    the service's explanatory message.
+    """
+    skill_service = getattr(runtime, "skill_service", None)
+    if skill_service is None:
+        raise HTTPException(503, "Skill service not available")
+    skill_id = body.get("skill_id")
+    if not skill_id:
+        raise HTTPException(400, "skill_id is required")
+    registry = getattr(runtime, "skill_registry", None)
+    if registry is not None and registry.get_skill(skill_id) is None:
+        raise HTTPException(404, f"Skill not found: {skill_id}")
+    from probos.skill_framework import ProficiencyLevel
+    level = ProficiencyLevel.FOLLOW
+    if "proficiency" in body and body["proficiency"] is not None:
+        try:
+            level = ProficiencyLevel(int(body["proficiency"]))
+        except (ValueError, TypeError):
+            raise HTTPException(400, f"Invalid proficiency: {body.get('proficiency')}") from None
+    try:
+        record = await skill_service.acquire_skill(
+            agent_id, skill_id, source=body.get("source", "captain"), proficiency=level,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    defn = registry.get_skill(skill_id) if registry is not None else None
+    return _serialize_skill_record(record, defn)
+
+
+@router.patch("/{agent_id}/skills/{skill_id}")
+async def crew_update_skill(
+    agent_id: str, skill_id: str, body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Re-level and/or suspend-toggle an agent's skill (AD-902).
+
+    Body may carry ``proficiency`` (1-7 int → ``update_proficiency``) and/or
+    ``suspended`` (bool → ``suspend_skill``). Reinstatement is ``{suspended:
+    false}``. 404 when the agent holds no record for ``skill_id``.
+    """
+    skill_service = getattr(runtime, "skill_service", None)
+    if skill_service is None:
+        raise HTTPException(503, "Skill service not available")
+    if "proficiency" not in body and "suspended" not in body:
+        raise HTTPException(400, "proficiency or suspended is required")
+    from probos.skill_framework import ProficiencyLevel
+    record = None
+    if "proficiency" in body and body["proficiency"] is not None:
+        try:
+            level = ProficiencyLevel(int(body["proficiency"]))
+        except (ValueError, TypeError):
+            raise HTTPException(400, f"Invalid proficiency: {body.get('proficiency')}") from None
+        record = await skill_service.update_proficiency(
+            agent_id, skill_id, level, source="captain",
+            notes=body.get("notes", ""),
+        )
+        if record is None:
+            raise HTTPException(404, f"Agent {agent_id} does not have skill {skill_id}")
+    if "suspended" in body and body["suspended"] is not None:
+        record = await skill_service.suspend_skill(
+            agent_id, skill_id, suspended=bool(body["suspended"]),
+        )
+        if record is None:
+            raise HTTPException(404, f"Agent {agent_id} does not have skill {skill_id}")
+    registry = getattr(runtime, "skill_registry", None)
+    defn = registry.get_skill(skill_id) if registry is not None else None
+    return _serialize_skill_record(record, defn)
+
+
+@router.delete("/{agent_id}/skills/{skill_id}")
+async def crew_suspend_skill(
+    agent_id: str, skill_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Suspend a skill (AD-902). Soft, reversible — reinstate via PATCH."""
+    skill_service = getattr(runtime, "skill_service", None)
+    if skill_service is None:
+        raise HTTPException(503, "Skill service not available")
+    record = await skill_service.suspend_skill(agent_id, skill_id, suspended=True)
+    if record is None:
+        raise HTTPException(404, f"Agent {agent_id} does not have skill {skill_id}")
+    return {"suspended": True, "agent_id": agent_id, "skill_id": skill_id}

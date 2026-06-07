@@ -22,6 +22,7 @@
 
 import { useState, useEffect } from 'react';
 import StandingOrders from './StandingOrders';
+import SkillManagement from './SkillManagement';
 
 interface Personality {
   openness?: number;
@@ -269,6 +270,9 @@ export default function ServiceRecord({ agentId, summary }: Props) {
             </div>
           ))
         )}
+        <div style={{ marginTop: 12 }}>
+          <SkillManagement agentId={agentId} />
+        </div>
       </div>
 
       {/* Qualifications — both homes: tool certs (AD-894) + billet quals (AD-595d) */}
