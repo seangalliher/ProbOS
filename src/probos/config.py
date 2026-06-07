@@ -3744,6 +3744,25 @@ class NativeSWEHarnessConfig(BaseModel):
     )
 
 
+class GroupChatConfig(BaseModel):
+    """AD-915: ad-hoc group-chat turn-taking facilitator.
+
+    Defaults preserve AD-914 (all crew reply, once): the truncation cap is
+    OFF (0) and the convergence gate cannot fire until a real exchange has
+    accumulated (>= convergence_min_messages from >= convergence_min_agents).
+    """
+
+    max_speakers_per_turn: int = 0          # 0 = off (AD-914 all-at-once). >0 caps NON-mentioned speakers.
+    convergence_enabled: bool = True
+    convergence_similarity_threshold: float = 0.6   # AD-614 Jaccard precedent
+    convergence_min_messages: int = 4       # min recent agent msgs before the gate can fire
+    convergence_min_agents: int = 2         # min distinct agents in the recent window
+    weight_mention: float = 0.40            # also a hard-include (see facilitator)
+    weight_recency: float = 0.25            # anti-domination / fairness
+    weight_department: float = 0.25
+    weight_trust: float = 0.10
+
+
 class WardRoomConfig(BaseModel):
     """Ward Room communication fabric configuration (AD-407)."""
 
@@ -5145,6 +5164,7 @@ class SystemConfig(BaseModel):
         description="AD-549: Native SWE agentic harness configuration.",
     )
     ward_room: WardRoomConfig = WardRoomConfig()
+    group_chat: GroupChatConfig = GroupChatConfig()  # AD-915
     visiting_officers: VisitingOfficersConfig = VisitingOfficersConfig()  # AD-701
     workflow_cron: WorkflowCronTriggerConfig = WorkflowCronTriggerConfig()  # AD-707
     query_planner: QueryPlannerConfig = QueryPlannerConfig()  # Memvid pattern 1
