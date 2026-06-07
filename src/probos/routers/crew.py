@@ -349,3 +349,178 @@ async def crew_revoke_tool(
     if not revoked:
         raise HTTPException(404, f"Grant not found: {grant_id}")
     return {"revoked": True, "grant_id": grant_id, "agent_id": agent_id}
+
+
+# ----------------------------------------------------------------------
+# Standing-order directives (AD-900) — a thin HTTP surface over the existing
+# governed write path (``DirectiveStore``, AD-386). The runtime overlay that
+# ``compose_instructions`` merges on top of the immutable four-tier ``.md``
+# files. Issuing/approving/revoking is a governed state change; the
+# authorization + approval model lives in ``authorize_directive`` /
+# ``create_directive`` and is NOT bypassed here. Captain ``CAPTAIN_ORDER``s land
+# ACTIVE immediately (existing Minimal-Authority decision); lower-authority
+# directives stay PENDING_APPROVAL until ``approve``. No new consensus gate. As
+# the ``/order`` CLI does, every mutation calls ``standing_orders.clear_cache()``
+# to invalidate the composed-instruction cache.
+# ----------------------------------------------------------------------
+
+
+def _serialize_directive(d: Any) -> dict[str, Any]:
+    """Project a :class:`RuntimeDirective` to the personnel-record shape."""
+    return {
+        "id": d.id,
+        "directive_type": d.directive_type.value,
+        "content": d.content,
+        "status": d.status.value,
+        "priority": d.priority,
+        "issued_by": d.issued_by,
+        "target_department": d.target_department,
+    }
+
+
+@router.get("/{agent_id}/directives")
+async def crew_directives(
+    agent_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Active + pending-approval directives applicable to a crew agent (AD-900).
+
+    Resolves the agent's ``agent_type`` from the registry, then returns every
+    non-inactive directive that targets that type or the ``"*"`` broadcast.
+    Includes ``PENDING_APPROVAL`` items so the Captain sees the approval queue.
+    Honest-degrades to an empty list when the directive store is unavailable.
+
+    Raises 404 when the agent is unknown.
+    """
+    registry = getattr(runtime, "registry", None)
+    agent_obj = registry.get(agent_id) if registry is not None else None
+    if agent_obj is None:
+        raise HTTPException(404, f"Agent not found: {agent_id}")
+    agent_type = getattr(agent_obj, "agent_type", None) or ""
+
+    store = getattr(runtime, "directive_store", None)
+    if store is None:
+        return {"agent_id": agent_id, "agent_type": agent_type, "directives": [], "count": 0}
+
+    applicable = [
+        d for d in store.all_directives(include_inactive=False)
+        if d.target_agent_type == agent_type or d.target_agent_type == "*"
+    ]
+    directives = [_serialize_directive(d) for d in applicable]
+    return {
+        "agent_id": agent_id,
+        "agent_type": agent_type,
+        "directives": directives,
+        "count": len(directives),
+    }
+
+
+@router.post("/{agent_id}/directives")
+async def crew_issue_directive(
+    agent_id: str,
+    body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Issue a Captain's order to a crew agent's type (AD-900).
+
+    Body: ``{content, priority?}``. Mirrors the ``/order`` CLI: a
+    ``CAPTAIN_ORDER`` issued at ``Rank.SENIOR`` (Captain authority) lands ACTIVE
+    immediately. On success the standing-orders cache is invalidated. Returns
+    the authorization ``reason`` as a 400 on failure (e.g. a duplicate order).
+    """
+    from probos.directive_store import DirectiveType
+    from probos.crew_profile import Rank
+
+    store = getattr(runtime, "directive_store", None)
+    if store is None:
+        raise HTTPException(503, "Directive store unavailable")
+    registry = getattr(runtime, "registry", None)
+    agent_obj = registry.get(agent_id) if registry is not None else None
+    if agent_obj is None:
+        raise HTTPException(404, f"Agent not found: {agent_id}")
+    agent_type = getattr(agent_obj, "agent_type", None) or ""
+
+    content = body.get("content")
+    if not content:
+        raise HTTPException(400, "content is required")
+    priority = body.get("priority", 5)
+
+    ont = getattr(runtime, "ontology", None)
+    department = (
+        (ont.get_agent_department(agent_type) if ont is not None else None)
+        or standing_orders.get_department(agent_type)
+    )
+
+    directive, reason = store.create_directive(
+        issuer_type="captain",
+        issuer_department=None,
+        issuer_rank=Rank.SENIOR,
+        target_agent_type=agent_type,
+        target_department=department,
+        directive_type=DirectiveType.CAPTAIN_ORDER,
+        content=content,
+        authority=1.0,
+        priority=priority,
+    )
+    if directive is None:
+        raise HTTPException(400, reason)
+    standing_orders.clear_cache()
+    return _serialize_directive(directive)
+
+
+@router.post("/directives/{directive_id}/approve")
+async def crew_approve_directive(
+    directive_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Approve a PENDING_APPROVAL directive (AD-900).
+
+    The governed approval gate made visible: promotes a pending lower-authority
+    directive to ACTIVE, then invalidates the standing-orders cache. 404 when the
+    directive is unknown or not pending.
+    """
+    store = getattr(runtime, "directive_store", None)
+    if store is None:
+        raise HTTPException(503, "Directive store unavailable")
+    approved = store.approve(directive_id)
+    if not approved:
+        raise HTTPException(404, f"Directive not found or not pending: {directive_id}")
+    standing_orders.clear_cache()
+    return {"approved": True, "directive_id": directive_id}
+
+
+@router.delete("/directives/{directive_id}")
+async def crew_revoke_directive(
+    directive_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Revoke a directive (AD-900). Soft-revoke, then invalidate the cache."""
+    store = getattr(runtime, "directive_store", None)
+    if store is None:
+        raise HTTPException(503, "Directive store unavailable")
+    revoked = store.revoke(directive_id, revoked_by="captain")
+    if not revoked:
+        raise HTTPException(404, f"Directive not found: {directive_id}")
+    standing_orders.clear_cache()
+    return {"revoked": True, "directive_id": directive_id}
+
+
+@router.patch("/directives/{directive_id}")
+async def crew_amend_directive(
+    directive_id: str,
+    body: dict[str, Any],
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Amend (FRAGO) a directive's content in place (AD-900), then clear cache.
+
+    Body: ``{content}``. 404 when the directive is unknown or not amendable
+    (already revoked/expired).
+    """
+    store = getattr(runtime, "directive_store", None)
+    if store is None:
+        raise HTTPException(503, "Directive store unavailable")
+    content = body.get("content")
+    if not content:
+        raise HTTPException(400, "content is required")
+    amended = store.amend(directive_id, content, amended_by="captain")
+    if amended is None:
+        raise HTTPException(404, f"Directive not found or not amendable: {directive_id}")
+    standing_orders.clear_cache()
+    return _serialize_directive(amended)

@@ -10,6 +10,26 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-900: Governed directive authoring surface (Crew Personnel Management epic, part 6 — #864)
+
+**Context.** The personnel console needs to issue, approve, revoke, and amend standing-order directives. The `DirectiveStore` (AD-386, `runtime.directive_store`) is the evolvable runtime overlay that `compose_instructions` merges as tier 6 on top of the immutable four-tier `.md` standing-order files. It was already writable, but only through the `/order` and `/directives` shell CLI — there was no HTTP surface, so a Captain could not author or manage a directive from the manning view. The chain-of-command authorization model (`authorize_directive`) and the approval state machine (`create_directive`: Captain `CAPTAIN_ORDER`→ACTIVE, lower-authority→PENDING_APPROVAL until `approve`) already exist and are the governance gate.
+
+**Decision.** A thin HTTP surface over the **existing** governed write path — six endpoints on `routers/crew.py` (prefix `/api/crew`), plus a `_serialize_directive` helper that projects `RuntimeDirective` to the personnel-record shape `{id, directive_type, content, status, priority, issued_by, target_department}`.
+
+1. **`GET /{agent_id}/directives`** — resolves `agent_type` via the registry (404 unknown), returns every non-inactive directive (`store.all_directives(include_inactive=False)`) targeting that type or the `"*"` broadcast, including PENDING_APPROVAL items so the approval queue is visible; honest-degrades to `{directives: [], count: 0}` when the store is absent.
+2. **`POST /{agent_id}/directives`** (`{content, priority?}`) — issues a `CAPTAIN_ORDER` at `Rank.SENIOR`, resolving the target department via `runtime.ontology.get_agent_department` with a `standing_orders.get_department` fallback. 503 no store, 404 unknown agent, 400 missing content, 400 with the authorization `reason` (e.g. a duplicate) when `create_directive` returns `None`.
+3. **`POST /directives/{id}/approve`** — promotes a PENDING_APPROVAL directive to ACTIVE (`store.approve`); 404 unknown/not-pending.
+4. **`DELETE /directives/{id}`** — soft-revoke (`store.revoke(revoked_by="captain")`); 404 unknown.
+5. **`PATCH /directives/{id}`** (`{content}`) — FRAGO amend-in-place (`store.amend`); 400 missing content, 404 unknown/not-amendable.
+
+Mirroring the `/order` CLI, every mutation calls `standing_orders.clear_cache()` to invalidate the composed-instruction cache.
+
+**Governance.** No new consensus gate is introduced, by deliberate Minimal-Authority design. The directive write path is *already* governed: `authorize_directive` (unchanged) is the chain-of-command gate, and `create_directive` enforces the approval state machine — a Captain `CAPTAIN_ORDER` lands ACTIVE immediately (the existing AD-386 policy: the Captain has top authority), while every lower-authority directive stays PENDING_APPROVAL until explicit `approve`. Re-gating an already-governed, single-actor (Captain) authoring action behind agent consensus would invert the chain of command. Every mutation is **reversible** (revoke/amend) and **audited** (the store records `issued_by`/`revoked_by`/`revoked_at`), satisfying the Reversibility-Preference and Minimal-Authority axioms without a quorum vote.
+
+**Boundaries.** `directive_store.py` (including `authorize_directive`, `create_directive`, `approve`, `revoke`, `amend`, `all_directives`), `standing_orders.py`, and the order `.md` files are untouched — the endpoints only call the existing public API. The endpoints are async but the store is synchronous `sqlite3`; tests drive the app via `httpx.ASGITransport`/`AsyncClient` so the store and endpoints share one thread (BF-287: real tmp-file store, no MagicMock at the substrate boundary).
+
+**Consequence.** +18 pytest (`tests/test_ad900_directive_api.py`). The Captain can now author and manage the runtime directive overlay from the personnel console (AD-901 builds the UI), with the chain-of-command governance preserved and unmodified.
+
 ### AD-895: Skill library CRUD — delete verb, validated authoring, HTTP surface (Crew Personnel Management epic, part 5 — #859)
 
 **Context.** The personnel console needs to browse, author, and retire skill *definitions*. The skill-definition library is `runtime.skill_registry` (`SkillRegistry`, SQLite-backed, cloud-ready via an injected `connection_factory`). It was already writable through `register_skill`, but it had two gaps: there was **no delete verb** (a skill, once registered, could never be retired) and **no HTTP read/write surface** (the library was invisible and unauthorable from the UI). The ontology role-template path (`config/ontology/skills.yaml` via `ontology/loader.py::_load_skills_schema`, AD-429b) is a *different* subsystem and is deliberately left untouched — AD-895 does not seed from it or build a parallel persisted store.
