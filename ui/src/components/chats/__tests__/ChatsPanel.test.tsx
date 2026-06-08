@@ -1,10 +1,11 @@
-// AD-919: tests for the Group Chats visibility panel. Mocks the threadApi
-// list/participant wrappers and seeds the REAL store (agents + the
-// groupChatListOpen flag) so the group-vs-1:1 filter, agent-created badge,
-// avatars, Join (addParticipant 'captain'), and the per-host open-on-click
-// (setThreadForAgent + openAgentProfile) are exercised end-to-end through the
-// store — BF-287 real-fixture style, no MagicMock at the store boundary.
-// Includes the HXI no-emoji guard.
+// AD-931: tests for the unified CHATS panel (supersedes the AD-919
+// GroupChatListPanel test). Mocks the threadApi list/participant wrappers and
+// seeds the REAL store (agents + the chatsOpen flag) so the isChat filter
+// (1:1 + group, task rooms excluded), agent-created badge, avatars, Join
+// (addParticipant 'captain'), and the per-host open-on-click (setThreadForAgent
+// + openAgentProfile) are exercised end-to-end through the store — BF-287
+// real-fixture style, no MagicMock at the store boundary. Includes the HXI
+// no-emoji guard. Test #1 FLIPS the AD-919 contract: 1:1s are now INCLUDED.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, type RenderResult } from '@testing-library/react';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
@@ -13,10 +14,11 @@ import type { Agent } from '../../../store/types';
 vi.mock('../../sidebar/threadApi', () => ({
   listThreads: vi.fn(),
   addParticipant: vi.fn(),
+  createThread: vi.fn(),
 }));
 
 import { listThreads, addParticipant } from '../../sidebar/threadApi';
-import GroupChatListPanel from '../GroupChatListPanel';
+import ChatsPanel from '../ChatsPanel';
 
 function mkAgent(p: { id: string; callsign: string; isCrew?: boolean; department?: string }): Agent {
   return {
@@ -59,7 +61,7 @@ const G2 = mkThread({
   participants: ['mccoy', 'scotty', 'captain'],
   metadata: { created_by_agent: 'mccoy' },
 });
-// g3 — single crew, no created_by_agent -> 1:1, excluded.
+// g3 — single crew, no created_by_agent -> 1:1, now INCLUDED (AD-931).
 const G3 = mkThread({ id: 'g3', title: 'Sickbay 1:1', participants: ['mccoy'] });
 // g4 — agent-created, NOT joined by the Captain.
 const G4 = mkThread({
@@ -68,7 +70,9 @@ const G4 = mkThread({
   participants: ['scotty', 'mccoy'],
   metadata: { created_by_agent: 'scotty' },
 });
-const ALL = [G1, G2, G3, G4];
+// t1 — AD-925 task room (task_id set) -> EXCLUDED from the chats list.
+const T1 = mkThread({ id: 't1', title: 'Task Room', participants: ['mccoy', 'scotty'], task_id: 'task-1' });
+const ALL = [G1, G2, G3, G4, T1];
 
 function seedAgents(list: Agent[]): Map<string, Agent> {
   const am = new Map<string, Agent>();
@@ -80,13 +84,13 @@ async function renderOpen(threads: AD791aChatThreadView[] = ALL, agents: Agent[]
   vi.mocked(listThreads).mockResolvedValue(threads);
   useStore.setState({
     agents: seedAgents(agents),
-    groupChatListOpen: true,
+    chatsOpen: true,
     threadIdByAgent: new Map(),
     activeProfileAgent: null,
   });
-  const r = render(<GroupChatListPanel />);
-  // Wait for the on-open fetch to populate the list (g1 is always a group chat).
-  await screen.findByTestId('group-chat-row-g1');
+  const r = render(<ChatsPanel />);
+  // Wait for the on-open fetch to populate the list (g1 is always a chat).
+  await screen.findByTestId('chat-row-g1');
   return r;
 }
 
@@ -94,43 +98,53 @@ afterEach(() => {
   cleanup();
   useStore.setState({
     agents: new Map(),
-    groupChatListOpen: false,
+    chatsOpen: false,
     threadIdByAgent: new Map(),
     activeProfileAgent: null,
   });
   vi.clearAllMocks();
 });
 
-describe('AD-919 GroupChatListPanel', () => {
-  it('renders only group chats (1:1 default thread excluded)', async () => {
+describe('AD-931 ChatsPanel', () => {
+  it('lists BOTH 1:1 and group chats; excludes task rooms', async () => {
     await renderOpen();
-    expect(screen.getByTestId('group-chat-row-g1')).toBeTruthy();
-    expect(screen.getByTestId('group-chat-row-g2')).toBeTruthy();
-    expect(screen.getByTestId('group-chat-row-g4')).toBeTruthy();
-    // g3 is a single-crew 1:1 thread -> not a group chat.
-    expect(screen.queryByTestId('group-chat-row-g3')).toBeNull();
+    expect(screen.getByTestId('chat-row-g1')).toBeTruthy();
+    expect(screen.getByTestId('chat-row-g2')).toBeTruthy();
+    // g3 (1:1) is now INCLUDED — the AD-919 exclusion contract flips.
+    expect(screen.getByTestId('chat-row-g3')).toBeTruthy();
+    expect(screen.getByTestId('chat-row-g4')).toBeTruthy();
+    // t1 carries task_id -> excluded from the Chats list (AD-925 task room).
+    expect(screen.queryByTestId('chat-row-t1')).toBeNull();
   });
 
   it('badges agent-created chats only', async () => {
     await renderOpen();
-    const g1row = screen.getByTestId('group-chat-row-g1');
-    const g2row = screen.getByTestId('group-chat-row-g2');
-    const g4row = screen.getByTestId('group-chat-row-g4');
-    expect(g1row.querySelector('[data-testid="group-chat-agent-badge"]')).toBeNull();
-    expect(g2row.querySelector('[data-testid="group-chat-agent-badge"]')).not.toBeNull();
-    expect(g4row.querySelector('[data-testid="group-chat-agent-badge"]')).not.toBeNull();
+    const g1row = screen.getByTestId('chat-row-g1');
+    const g2row = screen.getByTestId('chat-row-g2');
+    const g3row = screen.getByTestId('chat-row-g3');
+    const g4row = screen.getByTestId('chat-row-g4');
+    expect(g1row.querySelector('[data-testid="chat-agent-badge"]')).toBeNull();
+    expect(g3row.querySelector('[data-testid="chat-agent-badge"]')).toBeNull();
+    expect(g2row.querySelector('[data-testid="chat-agent-badge"]')).not.toBeNull();
+    expect(g4row.querySelector('[data-testid="chat-agent-badge"]')).not.toBeNull();
   });
 
-  it('renders a participant avatar for each crew member', async () => {
+  it('renders a participant avatar for each crew member (group row)', async () => {
     await renderOpen();
-    const g1row = screen.getByTestId('group-chat-row-g1');
+    const g1row = screen.getByTestId('chat-row-g1');
     expect(g1row.querySelectorAll('[data-testid="agent-avatar-badge"]')).toHaveLength(2);
+  });
+
+  it('1:1 row shows no Join control', async () => {
+    await renderOpen();
+    expect(screen.queryByTestId('chat-join-g3')).toBeNull();
+    expect(screen.queryByTestId('chat-joined-g3')).toBeNull();
   });
 
   it('Join calls addParticipant(threadId, "captain") once', async () => {
     vi.mocked(addParticipant).mockResolvedValue(null);
     await renderOpen();
-    fireEvent.click(screen.getByTestId('group-chat-join-g4'));
+    fireEvent.click(screen.getByTestId('chat-join-g4'));
     await waitFor(() => expect(addParticipant).toHaveBeenCalledWith('g4', 'captain'));
     expect(addParticipant).toHaveBeenCalledTimes(1);
   });
@@ -146,54 +160,44 @@ describe('AD-919 GroupChatListPanel', () => {
       }),
     );
     await renderOpen();
-    expect(screen.getByTestId('group-chat-join-g4')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('group-chat-join-g4'));
-    await waitFor(() => expect(screen.queryByTestId('group-chat-joined-g4')).not.toBeNull());
-    expect(screen.queryByTestId('group-chat-join-g4')).toBeNull();
+    expect(screen.getByTestId('chat-join-g4')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('chat-join-g4'));
+    await waitFor(() => expect(screen.queryByTestId('chat-joined-g4')).not.toBeNull());
+    expect(screen.queryByTestId('chat-join-g4')).toBeNull();
   });
 
-  it('clicking a row opens the group chat in the first crew host', async () => {
+  it('clicking a group row opens the chat in the first crew host', async () => {
     await renderOpen();
-    fireEvent.click(screen.getByTestId('group-chat-row-g1'));
-    // Open-on-click routes via threadIdByAgent + activeProfileAgent (Decision D),
+    fireEvent.click(screen.getByTestId('chat-row-g1'));
+    // Open-on-click routes via threadIdByAgent + activeProfileAgent (AD-917),
     // NOT the store top-level activeThreadId. Host = first crew participant.
     expect(useStore.getState().threadIdByAgent.get('mccoy')).toBe('g1');
     expect(useStore.getState().activeProfileAgent).toBe('mccoy');
   });
 
-  it('Join also opens the chat in the host crew agent', async () => {
-    vi.mocked(addParticipant).mockResolvedValue(
-      mkThread({
-        id: 'g4',
-        title: 'Warp Core',
-        participants: ['scotty', 'mccoy', 'captain'],
-        metadata: { created_by_agent: 'scotty' },
-      }),
-    );
+  it('clicking a 1:1 row opens the chat in its single crew host', async () => {
     await renderOpen();
-    fireEvent.click(screen.getByTestId('group-chat-join-g4'));
-    await waitFor(() => expect(useStore.getState().activeProfileAgent).not.toBeNull());
-    const host = useStore.getState().activeProfileAgent;
-    expect(['scotty', 'mccoy']).toContain(host);
-    expect(useStore.getState().threadIdByAgent.get(host as string)).toBe('g4');
+    fireEvent.click(screen.getByTestId('chat-row-g3'));
+    expect(useStore.getState().threadIdByAgent.get('mccoy')).toBe('g3');
+    expect(useStore.getState().activeProfileAgent).toBe('mccoy');
   });
 
   it('sorts un-joined agent-created chats to the top (HXI #9)', async () => {
     await renderOpen();
-    const rows = screen.getAllByTestId(/^group-chat-row-/);
+    const rows = screen.getAllByTestId(/^chat-row-/);
     const ids = rows.map((el) => el.getAttribute('data-testid'));
-    const i4 = ids.indexOf('group-chat-row-g4');
-    const i1 = ids.indexOf('group-chat-row-g1');
-    const i2 = ids.indexOf('group-chat-row-g2');
+    const i4 = ids.indexOf('chat-row-g4');
+    const i1 = ids.indexOf('chat-row-g1');
+    const i2 = ids.indexOf('chat-row-g2');
     expect(i4).toBeGreaterThanOrEqual(0);
     expect(i4).toBeLessThan(i1);
     expect(i4).toBeLessThan(i2);
   });
 
   it('self-gates: renders nothing when closed', () => {
-    useStore.setState({ agents: seedAgents(AGENTS), groupChatListOpen: false });
-    const { container } = render(<GroupChatListPanel />);
-    expect(screen.queryByTestId('group-chat-list-panel')).toBeNull();
+    useStore.setState({ agents: seedAgents(AGENTS), chatsOpen: false });
+    const { container } = render(<ChatsPanel />);
+    expect(screen.queryByTestId('chats-panel')).toBeNull();
     expect(container.innerHTML).toBe('');
   });
 

@@ -389,8 +389,8 @@ export interface HXIState {
   notebooksSearchQuery: string;
   notebooksSearchResults: NotebookSearchResult[] | null;  // null = not in search mode
   notebooksLoading: boolean;
-  // AD-919: Group Chats visibility panel (focused panel, NotebooksPanel precedent).
-  groupChatListOpen: boolean;
+  // AD-919/AD-931: unified Chats panel (focused panel, NotebooksPanel precedent).
+  chatsOpen: boolean;
   // AD-569g: Behavioral Metrics Dashboard
   behavioralMetricsOpen: boolean;
   behavioralMetricsLoading: boolean;
@@ -495,9 +495,9 @@ export interface HXIState {
   setNotebookSearchQuery: (q: string) => void;
   runNotebookSearch: () => Promise<void>;
   clearNotebookSearch: () => void;
-  // AD-919: Group Chats panel open/close (synchronous; the panel fetches on mount).
-  openGroupChatList: () => void;
-  closeGroupChatList: () => void;
+  // AD-919/AD-931: Chats panel open/close (synchronous; the panel fetches on mount).
+  openChats: () => void;
+  closeChats: () => void;
   // AD-569g
   openBehavioralMetrics: () => Promise<void>;
   closeBehavioralMetrics: () => void;
@@ -850,8 +850,8 @@ export const useStore = create<HXIState>((set, get) => ({
   notebooksSearchQuery: '',
   notebooksSearchResults: null,
   notebooksLoading: false,
-  // AD-919: Group Chats visibility panel
-  groupChatListOpen: false,
+  // AD-919/AD-931: unified Chats panel
+  chatsOpen: false,
   // AD-569g: Behavioral Metrics Dashboard
   behavioralMetricsOpen: false,
   behavioralMetricsLoading: false,
@@ -1035,9 +1035,9 @@ export const useStore = create<HXIState>((set, get) => ({
     notebooksSearchQuery: '',
     notebooksSearchResults: null,
   }),
-  // AD-919: Group Chats panel open/close (synchronous; the panel fetches on mount).
-  openGroupChatList: () => set({ groupChatListOpen: true }),
-  closeGroupChatList: () => set({ groupChatListOpen: false }),
+  // AD-919/AD-931: Chats panel open/close (synchronous; the panel fetches on mount).
+  openChats: () => set({ chatsOpen: true }),
+  closeChats: () => set({ chatsOpen: false }),
   selectNotebookAuthor: async (callsign: string) => {
     set({
       notebooksSelectedAuthor: callsign,

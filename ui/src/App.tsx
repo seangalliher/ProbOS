@@ -20,7 +20,7 @@ import { GamePanel } from './components/GamePanel';
 import CrewRosterPanel from './components/CrewRosterPanel';
 import CrewPersonnelConsole from './components/personnel/CrewPersonnelConsole';
 import NotebooksPanel from './components/NotebooksPanel';
-import GroupChatListPanel from './components/groupchat/GroupChatListPanel';
+import ChatsPanel from './components/chats/ChatsPanel';
 import BehavioralMetricsPanel from './components/BehavioralMetricsPanel';
 import CommercialOverlayBadge from './components/CommercialOverlayBadge';
 import SpatialExplorerPanel from './components/SpatialExplorerPanel';
@@ -113,8 +113,8 @@ function TopNav() {
   const notebooksOpen = useStore(s => s.notebooksOpen);
   const openNotebooks = useStore(s => s.openNotebooks);
 
-  const groupChatListOpen = useStore(s => s.groupChatListOpen);
-  const openGroupChatList = useStore(s => s.openGroupChatList);
+  const chatsOpen = useStore(s => s.chatsOpen);
+  const openChats = useStore(s => s.openChats);
 
   const recordsOpen = useStore(s => s.knowledgeBrowserOpen);
   const openRecords = useStore(s => s.openKnowledgeBrowser);
@@ -147,7 +147,7 @@ function TopNav() {
       <NavButton label="WARD ROOM" active={wardRoomOpen} onOpen={openWardRoom} badge={totalUnread} />
       <NavButton label="CREW" active={crewOpen} onOpen={openCrew} />
       <NavButton label="PERSONNEL" active={personnelOpen} onOpen={openPersonnel} testId="personnel-toggle" />
-      <NavButton label="GROUP CHATS" active={groupChatListOpen} onOpen={openGroupChatList} testId="group-chats-toggle" />
+      <NavButton label="CHATS" active={chatsOpen} onOpen={openChats} testId="chats-toggle" />
       <NavSeparator />
       {/* Knowledge */}
       <NavButton label="NOTEBOOKS" active={notebooksOpen} onOpen={openNotebooks} testId="notebooks-toggle" />
@@ -231,7 +231,7 @@ export default function App() {
       <CrewRosterPanel />
       <CrewPersonnelConsole />
       <NotebooksPanel />
-      <GroupChatListPanel />
+      <ChatsPanel />
       <BehavioralMetricsPanel />
       <SpatialExplorerPanel />
       <KnowledgeBrowserPanel />
