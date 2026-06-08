@@ -1826,6 +1826,11 @@ agentic_dispatch:
   max_parallel_subtasks: 3
   max_convergence_rounds: 2
   orchestrator_enabled: true
+group_chat:
+  # AD-925: operator opt-in. With the crew orchestrator enabled (above), when
+  # CrewTaskExecutor fans a parent task out to >=2 distinct crew it auto-creates
+  # ONE task-linked workspace room (idempotent; AD-918 cooldown/cap apply).
+  auto_task_room_enabled: true
 desktop:
   enabled: false
   tray_autostart: true
