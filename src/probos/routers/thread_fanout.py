@@ -144,6 +144,66 @@ def _assemble_speaker_signals(
     return signals
 
 
+async def resolve_attachment_refs(
+    store: Any, attachment_ids: list[str]
+) -> list[dict[str, str]]:
+    """AD-916: resolve already-uploaded SHA-256 ``attachment_ids`` to persisted
+    ref records ``{"content_hash", "mime"}``. An id absent from the store
+    (``mime_for`` returns None) is skipped with a warning — never raises,
+    never fabricates a mime. Order-preserving.
+    """
+    refs: list[dict[str, str]] = []
+    for aid in attachment_ids:
+        try:
+            mime = await store.mime_for(aid)
+        except Exception:
+            logger.warning(
+                "AD-916: mime lookup failed for attachment %s; skipping", aid, exc_info=True
+            )
+            continue
+        if not mime:
+            logger.warning("AD-916: attachment %s not found in store; skipping ref", aid)
+            continue
+        refs.append({"content_hash": aid, "mime": mime})
+    return refs
+
+
+async def build_chat_vision_messages(
+    store: Any, cfg_attach: Any, prompt: str, attachments: list[dict[str, Any]]
+) -> list[dict[str, Any]] | None:
+    """AD-916: build the AD-730/731 ``vision_messages`` array from the IMAGE
+    subset of persisted attachment refs. Returns None when there are no image
+    refs (so the caller falls back to the AD-914 text-only fan-out). Reuses
+    ``build_multimodal_messages`` → the emitted blocks are the exact AD-731
+    ``attachment_ref`` shape the LLM client resolves. Tier-2: any failure
+    returns None (text-only).
+    """
+    image_shas = [
+        a["content_hash"] for a in attachments
+        if str(a.get("mime", "")).startswith("image/") and a.get("content_hash")
+    ]
+    if not image_shas:
+        return None
+    try:
+        from probos.cognitive.vision_dispatch import build_multimodal_messages
+
+        async def _mime_lookup(content_hash: str) -> str | None:
+            return await store.mime_for(content_hash)
+
+        messages, image_ids, _ = await build_multimodal_messages(
+            prompt=prompt,
+            attachment_ids=image_shas,
+            store=store,
+            mime_lookup=_mime_lookup,
+            text_extraction_max_bytes=cfg_attach.text_extraction_max_bytes,
+            pdf_extraction_enabled=cfg_attach.pdf_extraction_enabled,
+        )
+    except Exception:
+        logger.warning("AD-916: vision_messages build failed; text-only fan-out", exc_info=True)
+        return None
+    return messages if image_ids else None
+
+
 async def group_chat_fanout(
     runtime: Any,
     thread_id: str,
@@ -188,22 +248,55 @@ async def group_chat_fanout(
         )
         speaking_order = list(agent_ids)
 
+    # AD-916: build the group vision array once from the Captain message's
+    # persisted attachment refs. None => no image refs => AD-914 text-only.
+    vision_messages: list[dict[str, Any]] | None = None
+    try:
+        _attachments = (getattr(captain_msg, "metadata", None) or {}).get("attachments") or []
+        _cfg_attach = getattr(getattr(runtime, "config", None), "attachments", None)
+        if _attachments and _cfg_attach is not None and getattr(_cfg_attach, "enabled", False):
+            from probos.routers.chat import _get_attachment_store
+            vision_messages = await build_chat_vision_messages(
+                _get_attachment_store(runtime), _cfg_attach, captain_body, _attachments
+            )
+    except Exception:
+        logger.warning(
+            "AD-916: group vision build failed for thread=%s; text-only fan-out",
+            thread_id, exc_info=True,
+        )
+        vision_messages = None
+
     async def _send_one(agent_id: str) -> dict[str, str]:
         callsign = ""
+        agent: Any = None
         try:
             agent = runtime.registry.get(agent_id)
             if agent is not None and hasattr(runtime, "callsign_registry"):
                 callsign = runtime.callsign_registry.get_callsign(agent.agent_type) or ""
         except Exception:
             logger.debug("AD-914: callsign resolve failed for %s", agent_id, exc_info=True)
+        params: dict[str, Any] = {
+            "text": captain_body,
+            "from": "hxi_profile",
+            "session": bool(session_history),
+            "session_history": session_history,
+        }
+        # AD-916: only vision-capable participants receive image refs. The
+        # ``agent`` above was already resolved for the callsign — reuse it.
+        if vision_messages is not None:
+            try:
+                prof = (
+                    runtime.callsign_registry.get_profile(agent.agent_type)
+                    if (agent is not None and hasattr(runtime, "callsign_registry"))
+                    else None
+                )
+                if (prof or {}).get("vision_capable", False):
+                    params["vision_messages"] = vision_messages
+            except Exception:
+                logger.debug("AD-916: vision_capable gate failed for %s", agent_id, exc_info=True)
         intent = IntentMessage(
             intent="direct_message",
-            params={
-                "text": captain_body,
-                "from": "hxi_profile",
-                "session": bool(session_history),
-                "session_history": session_history,
-            },
+            params=params,
             target_agent_id=agent_id,
             ttl_seconds=60.0,
             thread_id=thread_id,

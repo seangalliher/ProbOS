@@ -67,6 +67,9 @@ class AppendMessageRequest(BaseModel):
     role: str = Field(..., pattern="^(captain|agent|system)$")
     body: str = Field(..., min_length=1)
     metadata: dict | None = None
+    # AD-916: SHA-256 refs of attachments already uploaded via
+    # POST /api/chat/attachments. Resolved to metadata.attachments on append.
+    attachment_ids: list[str] = Field(default_factory=list)
 
 
 class ParticipantRequest(BaseModel):
@@ -216,12 +219,35 @@ async def append_message(
     runtime: Any = Depends(get_runtime),
 ) -> dict:
     store = _get_store(runtime)
+    # AD-916: resolve already-uploaded attachment SHAs to persisted refs
+    # ({content_hash, mime}) and fold them into metadata.attachments before
+    # the append. Tier-2 honest-degrade: an unknown SHA is skipped,
+    # attachments-disabled is a no-op, and any failure degrades to the plain
+    # message (the bytes were already stored once by the upload endpoint).
+    _meta = dict(body.metadata or {})
+    if body.attachment_ids:
+        try:
+            cfg_attach = getattr(runtime.config, "attachments", None)
+            if cfg_attach is not None and getattr(cfg_attach, "enabled", False):
+                from probos.routers.chat import _get_attachment_store
+                from probos.routers.thread_fanout import resolve_attachment_refs
+                refs = await resolve_attachment_refs(
+                    _get_attachment_store(runtime), body.attachment_ids
+                )
+                if refs:
+                    _meta["attachments"] = refs
+        except Exception:
+            logger.warning(
+                "AD-916: attachment ref resolution failed for thread=%s; "
+                "persisting message without attachment refs",
+                thread_id, exc_info=True,
+            )
     msg = store.append_message(
         thread_id,
         author_id=body.author_id,
         role=body.role,
         body=body.body,
-        metadata=body.metadata,
+        metadata=_meta,
     )
     if msg is None:
         raise HTTPException(status_code=404, detail="Thread not found")
