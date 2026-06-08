@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../audio/voice';
+import { useMeetingVoice } from '../../audio/useMeetingVoice';
+import type { PerAgentReply } from '../../audio/meetingVoice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
 import { ArtifactCard } from '../artifacts/ArtifactCard';
 import { parseArtifactStub } from '../artifacts/artifactApi';
@@ -481,6 +483,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const meetingActive = useStore((s) =>
     !!(activeThreadId && (s.chatThreads.get(activeThreadId)?.metadata as Record<string, unknown> | undefined)?.meeting_active),
   );
+  // AD-921: sequenced meeting voice. speakReplies self-gates on
+  // meetingActive && voiceEnabled; speakingAgentId is the AD-923 seam.
+  const { speakReplies: speakMeetingReplies } = useMeetingVoice({ meetingActive });
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -626,6 +631,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             const prefix = typeof r?.callsign === 'string' && r.callsign ? `${r.callsign}: ` : '';
             useStore.getState().addAgentMessage(agentId, 'agent', `${prefix}${replyText}`);
           }
+          // AD-921: when the meeting is live, ALSO speak the replies in
+          // facilitator order (one at a time, per-agent voice). The text
+          // render above is unchanged; voice is additive and self-gates on
+          // meeting_active + voiceEnabled, so non-meeting sends stay silent.
+          speakMeetingReplies(replies as PerAgentReply[]);
         } catch {
           useStore.getState().addAgentMessage(agentId, 'agent', '(communication error)');
         } finally {
@@ -706,7 +716,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, threadId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments]);
+  }, [agentId, threadId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments, speakMeetingReplies]);
 
   // BF-292: thin shim for the textarea Enter-key + send-button paths. Reads
   // current ``input`` at call time and forwards to sendText. The Enter-key

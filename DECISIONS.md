@@ -10,6 +10,22 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-921: Sequenced meeting voice — `onSpeechEvent('end')` await wrap over the fire-and-forget `speakResponse`, per-agent voice resolver, generation-token no-talk-over
+
+**Second Phase-2 AD of the ad-hoc crew-collaboration epic.** When a meeting is active, the AD-914 `per_agent_replies` (in AD-915 facilitator order) are SPOKEN one at a time, each in its per-agent voice (AD-718), with the speaker's avatar lip-syncing (AD-721b). Purely-additive FRONTEND — NO backend change, NO new pytest. Zero change to `voice.ts`/`useLipSyncCapture.ts`/`CrewVRM.tsx`/`MeetingView.tsx`.
+
+**Decision A — sequence by WRAPPING `speakResponse`, do NOT add a resolve-on-end return.** `speakResponse` is fire-and-forget (`void`, AD-738) and fires a matching `onSpeechEvent('end')` on both the browser `onend` and the server `<audio>` `ended`/`error` paths. The new pure `_speakAndWait` subscribes to `onSpeechEvent('end')` (filtered on `agent_id`, the BF-290 subscribe-before-speak one-shot) BEFORE calling `speak`, and resolves on the matching `'end'`. The only path with no `'end'` is `speakResponse`'s `(!speechSynthesis && !Audio)` early return (TTS unavailable) — a ~20s per-utterance safety timeout covers it so the queue DRAINS (avatars + transcript still render) rather than deadlocking. This keeps `speakResponse`'s signature/contract untouched.
+
+**Decision B — the speaking→lip-sync binding already exists; AD-921 builds no lip-sync.** Passing the speaking `agent_id` to `speakResponse` fires `onSpeechEvent({agent_id})`; `CrewVRM` mounts `useLipSyncCapture({agentId})` and short-circuits on `if (e.agent_id !== agentId) return` (`CrewVRM.tsx:459`), building its viseme track from the event. One speaker at a time → exactly one gallery avatar animates. `speakResponse` cancels in-flight audio at its top, so a strictly one-at-a-time queue is both REQUIRED (two utterances would cancel each other) and SUFFICIENT (each `agent_id`-tagged utterance routes to one avatar).
+
+**Decision C — per-agent `VoiceProfile` resolver over the existing endpoint, cached, Tier-2.** `ProfileChatTab` only fetched the HOST agent's `voiceProfile`; a meeting has many speakers. `createVoiceProfileResolver` resolves each speaking `agent_id`'s profile over the SAME `GET /api/agent/{id}/profile` endpoint (caches per `agent_id`; any failure → `undefined` = the global default voice, still emotion-modulated by `agent_id` inside `speakResponse` — distinct-voice degrades to same-voice, NEVER to silence). No new endpoint.
+
+**Decision D — meeting gate is `meetingActive && voiceEnabled`; the per-agent localStorage TTS override is intentionally NOT applied.** The 1:1 conversation path keys TTS on a per-agent localStorage flag, but a meeting has many speakers and a single per-agent key doesn't map cleanly — the meeting-level global `voiceEnabled` governs. The hook reads both gates live via `useStore.getState()` at call time (BF-292 stale-closure discipline), keeping `speakReplies` reference-stable.
+
+**Decision E — generation-token supersession (no talk-over across re-sends).** Each `speakReplies` batch takes a generation number; `shouldContinue` (checked before each utterance) and the `onSpeakingChange` setter both gate on `genRef.current === myGen`, so a newer Captain send supersedes the older batch and a stale `onSpeakingChange` from a superseded batch can't clobber `speakingAgentId`. `speakingAgentId` is exposed as the AD-923 presence-indicator seam but renders NOTHING in AD-921.
+
+Gate: focused vitest 18 (`meetingVoice.test.ts` 12 + `useMeetingVoice.test.tsx` 6); full UI 1177 passed / 1 skipped (+18); `npm run build` green. Non-goals (explicit): NO Captain STT/voice-input (AD-922), NO presence/raise-hand/transcript writeback (AD-923), NO text-fanout change, NO new TTS/lip-sync engine, NO `speakResponse` signature change.
+
 ### AD-920: Meeting mode + avatar gallery — scoped `set_meeting_active` writer + `MeetingView` gallery bound to the fleet telemetry stream
 
 **First Phase-2 AD of the ad-hoc crew-collaboration epic.** A *meeting* is a live MODE of a Phase-1 group chat — "Start Meeting" flips a persisted flag and renders every crew participant's VRM avatar at once; the chat thread stays the transcript. NO voice/STT/presence (AD-921/922/923).

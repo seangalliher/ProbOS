@@ -373,7 +373,7 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD | Title | Epic | Priority |
 |----|-------|------|----------|
 | AD-920 | Meeting mode + avatar gallery — "Start Meeting" promotes a group chat to a live meeting (`metadata.meeting_active`); a gallery view renders all participant VRM avatars at once, bound to the fleet avatar-telemetry stream (AD-722b-4) + `CrewVRM`; the thread remains the transcript — SHIPPED 2026-06-07 gate-verified | Meeting mode | 2 |
-| AD-921 | Sequenced meeting voice — agent turns spoken via per-agent voice profiles (AD-718) so each sounds distinct, ordered by the AD-915 facilitator (no talk-over), driving viseme lip-sync (AD-721b) on the speaker's avatar | Meeting mode | 2 |
+| AD-921 | Sequenced meeting voice — agent turns spoken via per-agent voice profiles (AD-718) so each sounds distinct, ordered by the AD-915 facilitator (no talk-over), driving viseme lip-sync (AD-721b) on the speaker's avatar — SHIPPED 2026-06-07 gate-verified | Meeting mode | 2 |
 | AD-922 | Captain voice input to the group — STT (AD-705a) + push-to-talk/VAD captures the Captain's speech and routes it through the AD-914 group fan-out (not the 1:1 `agent_chat` path) | Meeting mode | 2 |
 | AD-923 | Meeting presence + speaking indicator — who's-speaking highlight in the gallery, join/leave, raise-hand/turn signaling (HXI #4 motion = state); meeting end writes a transcript/summary back to the thread | Meeting mode | 3 |
 
