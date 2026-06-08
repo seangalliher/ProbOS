@@ -99,3 +99,15 @@ data/avatar-assets/_hair/
 data/avatar-assets/_outfits/
 data/avatar-assets/_materials/
 data/avatar-assets/ATTRIBUTION.txt
+
+# Throwaway test-gate / build logs written to the repo root during dev gating
+# (pytest blast-radius, vitest, npm build captures). Regenerable; never committed.
+/*_gate.txt
+/*_blast.txt
+/*_build.txt
+/*_vitest.txt
+/*_baseline.txt
+/*_serial.txt
+
+# Playwright MCP browser-tool session artifacts
+.playwright-mcp/
