@@ -457,6 +457,27 @@ class ProbOSRuntime:
             db_path=self._data_dir / "chat_threads.db",
         )
 
+        # AD-918: agent-initiated group-chat creation. Bare-callable handler
+        # subscribed under a synthetic id (yeoman.py:242 pattern) — no pool,
+        # no registry entry. ontology read lazily (set later at startup).
+        from probos.threads.agent_group_chat import (
+            AgentGroupChatService,
+            CREATE_GROUP_CHAT,
+            GROUP_CHAT_COORDINATOR_ID,
+        )
+        self.agent_group_chat = AgentGroupChatService(
+            store=self.chat_thread_store,
+            registry=self.registry,
+            callsign_registry=self.callsign_registry,
+            config=self.config.group_chat,
+            ontology_provider=lambda: self.ontology,
+        )
+        self.intent_bus.subscribe(
+            GROUP_CHAT_COORDINATOR_ID,
+            self.agent_group_chat.handle_intent,
+            intent_names=[CREATE_GROUP_CHAT],
+        )
+
         # AD-797 (Wave 195): artifact metadata store. Bytes live in the
         # existing AttachmentStore; this is the named/versioned layer.
         from probos.artifacts import ArtifactStore

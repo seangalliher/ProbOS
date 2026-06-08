@@ -3761,6 +3761,13 @@ class GroupChatConfig(BaseModel):
     weight_recency: float = 0.25            # anti-domination / fairness
     weight_department: float = 0.25
     weight_trust: float = 0.10
+    # AD-918: per-agent rate limit on agent-initiated group-chat creation.
+    # Conservative defaults prevent a create-storm without blocking
+    # legitimate ad-hoc collaboration. Reuses the BF-163 (60s DM cooldown)
+    # + BF-257 (sliding-window budget) shape.
+    agent_create_cooldown_seconds: float = 60.0   # min seconds between two creates by one agent
+    agent_create_max_per_window: int = 5          # max creates per agent per window
+    agent_create_window_seconds: float = 3600.0   # sliding window (1 hour)
 
 
 class WardRoomConfig(BaseModel):

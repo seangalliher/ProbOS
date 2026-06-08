@@ -190,15 +190,20 @@ class ChatThreadStore:
         task_id: str | None = None,
         personality_override: str | None = None,
         workspace_root: str | None = None,
+        metadata: dict | None = None,
     ) -> ChatThread:
         thread_id = self._id_factory()
         now = self._clock()
         parts = list(participants)
+        # AD-918: optional creation metadata (e.g. {"created_by_agent": <id>}).
+        # None preserves the pre-AD-918 read shape — NULL and "{}" both
+        # decode to {} via _row_to_thread, so existing callers are unaffected.
+        meta = dict(metadata or {})
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO chat_threads (id, title, participants, project_id, task_id, "
                 "pinned, archived, personality_override, workspace_root, "
-                "created_at, last_active_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "created_at, last_active_at, metadata) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     thread_id,
                     title,
@@ -211,6 +216,7 @@ class ChatThreadStore:
                     workspace_root,
                     now,
                     now,
+                    json.dumps(meta),
                 ),
             )
         return ChatThread(
@@ -225,6 +231,7 @@ class ChatThreadStore:
             workspace_root=workspace_root,
             created_at=now,
             last_active_at=now,
+            metadata=meta,
         )
 
     def get_thread(self, thread_id: str) -> ChatThread | None:
