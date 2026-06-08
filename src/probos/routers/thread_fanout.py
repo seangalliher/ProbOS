@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Any
 
 from probos.cognitive.chat_facilitator import ChatFacilitator, SpeakerSignals
@@ -220,6 +221,8 @@ async def group_chat_fanout(
     participants. Per-agent dispatch is Tier-2 log-and-degrade: one agent's
     failure never blocks the others.
     """
+    # AD-933a: bound the episode duration measured across the fan-out.
+    t_start = time.monotonic()
     store = runtime.chat_thread_store
     thread = store.get_thread(thread_id)
     if thread is None:
@@ -362,4 +365,64 @@ async def group_chat_fanout(
     # one runtime gate rather than re-reading it per agent.
     sanity_gate = getattr(runtime, "dm_sanity_gate", None)
     replies = await asyncio.gather(*[_send_one(a) for a in speaking_order])
+    t_end = time.monotonic()
+
+    # AD-933a: group-anchored episodic write — one episode per crew reply.
+    # The fan-out sends direct_message with params["from"]="hxi_profile", which
+    # the agent safety-net (_store_action_episode) skips (it defers to the
+    # pipeline's step_5), and AD-933 excluded step_5 from the group subset
+    # (step_5 hardcodes session_type:"1:1"/channel:"dm", which would mislabel a
+    # multi-agent turn). Net: neither path writes a group episode — agents
+    # wouldn't remember the room (no episodic recall, no dreaming, no wellness
+    # analysis). Mirrors the AD-719 @-mention fan-out (routers/chat.py) but with
+    # group anchors. Tier-2 honest-degrade: every store failure logs and
+    # continues; the fan-out still returns all replies.
+    episodic_memory = getattr(runtime, "episodic_memory", None)
+    if episodic_memory is not None:
+        from probos.types import AnchorFrame, Episode
+        participants = ["captain"] + [(r["callsign"] or r["agent_id"]) for r in replies]
+        episode_input = f"[group chat] Captain: {captain_body[:200]}"
+        _sentinels = {"(no response)", "(delivery failed)", ""}
+        for reply in replies:
+            if not reply["agent_id"] or reply["text"] in _sentinels:
+                continue
+            try:
+                # AD-933a: ALWAYS construct the group-anchored Episode directly.
+                # NOT dream_adapter.build_episode — that helper derives
+                # outcomes/agent_ids/dag_summary from an ``execution_result["dag"]``
+                # (a chat fan-out has none) and never sets ``anchors``, so it
+                # would silently drop the group anchor + agent_id and emit a
+                # dag-shaped episode in production while the no-dream_adapter
+                # test path looked correct. Direct construction is the only way
+                # the group anchoring actually reaches storage.
+                episode = Episode(
+                    timestamp=time.time(),
+                    user_input=episode_input,
+                    dag_summary={},
+                    outcomes=[{
+                        "intent": "direct_message",
+                        "success": True,
+                        "response": reply["text"][:500],
+                        "session_type": "group",
+                        "callsign": reply["callsign"],
+                        "source": "group_chat_fanout",
+                    }],
+                    agent_ids=[reply["agent_id"]],
+                    duration_ms=(t_end - t_start) * 1000,
+                    source="group_chat_fanout",  # AD-933a distinct tag
+                    anchors=AnchorFrame(
+                        channel="chat",
+                        trigger_type="group_fanout",
+                        participants=participants,
+                        chat_thread_id=thread_id,
+                    ),
+                )
+                await episodic_memory.store(episode)
+            except Exception as e:
+                logger.warning(
+                    "AD-933a: group episode store failed for %s: %s: %s; "
+                    "continuing — episodic gap accepted, replies still returned",
+                    reply["callsign"] or reply["agent_id"], type(e).__name__, e,
+                )
+
     return list(replies)

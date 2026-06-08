@@ -271,12 +271,19 @@ async def test_group_path_writes_no_1to1_episode(tmp_path):
 
     await group_chat_fanout(runtime, t.id, captain_body="report", captain_msg=cap)
 
-    # step_5_episodic_store is EXCLUDED from the escalation subset, so the
-    # fan-out path writes no episode at all — and certainly no 1:1-labelled one.
-    assert recorder.stored == []
-    for ep in recorder.stored:  # vacuous, documents the 1:1-exclusion intent
+    # AD-933a: the fan-out now writes a GROUP-anchored episode per crew reply
+    # (channel="chat", trigger_type="group_fanout", session_type="group") via a
+    # dedicated write — but step_5_episodic_store (the only 1:1-labelled writer,
+    # which hardcodes session_type:"1:1"/channel:"dm") stays EXCLUDED from the
+    # escalation subset. So episodes ARE recorded now (was [] pre-AD-933a), and
+    # NONE of them are 1:1-labelled.
+    assert len(recorder.stored) == 2  # one group episode per crew reply (AD-933a)
+    for ep in recorder.stored:  # documents the 1:1-exclusion intent (still holds)
         for outcome in getattr(ep, "outcomes", []) or []:
             assert outcome.get("session_type") != "1:1"
+        anchors = getattr(ep, "anchors", None)
+        if anchors is not None:
+            assert anchors.channel != "dm"
 
 
 # ---------------- 5. AD-869 mesh-read marker resolves or honest-degrades ------
