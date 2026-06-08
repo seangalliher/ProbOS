@@ -9,7 +9,7 @@ import { useStore } from '../../store/useStore';
 import type { Agent } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { UserPlus, Close } from '../icons/Glyphs';
-import { patchThread, addParticipant, removeParticipant, setMeetingActive } from '../sidebar/threadApi';
+import { patchThread, addParticipant, removeParticipant, setMeetingActive, appendMessage } from '../sidebar/threadApi';
 import { AddParticipantPopover } from './AddParticipantPopover';
 
 interface GroupChatHeaderProps {
@@ -68,7 +68,26 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
 
   // AD-920: start/end meeting mode. Flips the persisted flag and reflects
   // the returned thread back into the store so the gallery mounts/unmounts.
+  // AD-923: ending a meeting writes a deterministic end-of-meeting marker into
+  // the thread transcript (the thread IS the transcript) BEFORE the flag is
+  // cleared. The marker is client-side + deterministic (no LLM, no backend
+  // change): role:'system' reuses the existing append endpoint and skips the
+  // AD-914 role=="captain" fan-out gate. Honest-degrade: appendMessage -> null
+  // never blocks End.
   async function handleToggleMeeting() {
+    if (meetingActive) {
+      const n = crewParticipants.length;
+      const names = crewParticipants.map((p) => p.agent.callsign).join(', ');
+      const marker = names
+        ? `Meeting ended — ${n} participant${n === 1 ? '' : 's'}: ${names}.`
+        : `Meeting ended — ${n} participants.`;
+      await appendMessage(threadId, {
+        author_id: 'system',
+        role: 'system',
+        body: marker,
+        metadata: { meeting_end: true, participant_count: n },
+      });
+    }
     const updated = await setMeetingActive(threadId, !meetingActive);
     if (updated) setChatThread(updated);
   }

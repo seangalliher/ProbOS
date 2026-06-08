@@ -822,8 +822,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       {activeThreadId && <GroupChatHeader threadId={activeThreadId} />}
       {/* AD-920: meeting-mode avatar gallery — mounted below the controls when
           the thread is in a meeting (metadata.meeting_active). The thread
-          remains the transcript below. */}
-      {activeThreadId && meetingActive && <MeetingView threadId={activeThreadId} />}
+          remains the transcript below. AD-923: speakingAgentId lights the
+          active speaker's avatar (already in scope from useMeetingVoice). */}
+      {activeThreadId && meetingActive && <MeetingView threadId={activeThreadId} speakingAgentId={speakingAgentId} />}
       {/* AD-922: Captain push-to-talk. Part of the meeting surface — only
           rendered in a meeting and when voice input is possible at all
           (honest-degrade: otherwise the Captain types). Feeds sendText, which

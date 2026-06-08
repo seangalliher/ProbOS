@@ -13,6 +13,9 @@ vi.mock('../../sidebar/threadApi', () => ({
   addParticipant: vi.fn(),
   removeParticipant: vi.fn(),
   setMeetingActive: vi.fn(),
+  // AD-923: the End path now also calls appendMessage (transcript marker);
+  // stub it so the module mock resolves it on the End-branch click.
+  appendMessage: vi.fn(),
 }));
 
 import { setMeetingActive } from '../../sidebar/threadApi';

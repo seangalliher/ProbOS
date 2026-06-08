@@ -178,3 +178,36 @@ export async function removeParticipant(
     return null;
   }
 }
+
+export interface AppendMessageBody {
+  author_id: string;
+  role: 'captain' | 'agent' | 'system';
+  body: string;
+  metadata?: Record<string, unknown>;
+  attachment_ids?: string[];
+}
+
+/**
+ * AD-923: append a message to a thread.
+ * POST /api/threads/{id}/messages -> appended message dict (or null on failure).
+ * Tier-2 honest-degrade: a network/!ok failure returns null so callers can
+ * continue (e.g. still end the meeting even if the marker append failed).
+ * A ``role:'system'`` append skips the AD-914 ``role=="captain"`` fan-out gate
+ * (no agent dispatch) — exactly what an end-of-meeting transcript marker wants.
+ */
+export async function appendMessage(
+  threadId: string,
+  body: AppendMessageBody,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
