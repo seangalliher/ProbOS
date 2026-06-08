@@ -4612,6 +4612,10 @@ class CommunicationsConfig(BaseModel):
     artifact_min_rank: str = "lieutenant"  # min rank to write an artifact into a task room: ensign|lieutenant|commander|senior
     artifact_max_per_turn: int = 3         # anti-flood: honor at most this many [ARTIFACT] tags per proactive turn
     artifact_max_bytes: int = 262144       # anti-flood: reject artifact bodies larger than 256 KiB (oversized -> honest-degrade)
+    # AD-928: agent-authored [STATUS] -> task-room "show your work" activity.
+    status_min_rank: str = "lieutenant"  # min rank to post a status into a task room: ensign|lieutenant|commander|senior
+    status_max_per_turn: int = 3         # anti-flood: honor at most this many [STATUS] tags per proactive turn
+    status_max_bytes: int = 4096         # anti-flood: reject status bodies larger than 4 KiB (oversized -> honest-degrade)
 
 
 class WorkforceConfig(BaseModel):

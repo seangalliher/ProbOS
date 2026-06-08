@@ -81,6 +81,18 @@ _ARTIFACT_PATTERN = re.compile(
 )
 
 
+# AD-928: agent-facing "show your work" status protocol. Matches a progress
+# narration [STATUS]...[/STATUS] or a final result [STATUS final]...[/STATUS]
+# posted into the agent's task room (AD-925). group(1)=" final" marker or None,
+# group(2)=body (the status / final-result text).
+_STATUS_PATTERN = re.compile(
+    r'\[STATUS(\s+final)?\s*\]'  # 1=optional " final" marker
+    r'(.*?)'                     # 2=body
+    r'\[/STATUS\]',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
 def _parse_hhmm(value: str) -> tuple[int, int]:
     """Parse HH:MM into (hour, minute) for schedule threshold checks."""
     parts = value.split(":", 1)
@@ -2803,6 +2815,15 @@ class ProactiveCognitiveLoop:
             text, art_actions = await self._extract_and_execute_artifacts(agent, text)
             actions_executed.extend(art_actions)
 
+        # --- Show your work: status updates (Lieutenant+) --- AD-928
+        status_min_rank_str = "lieutenant"
+        if hasattr(rt, 'config') and hasattr(rt.config, 'communications'):
+            status_min_rank_str = getattr(rt.config.communications, 'status_min_rank', 'lieutenant')
+        status_min_rank = Rank[status_min_rank_str.upper()] if status_min_rank_str.upper() in Rank.__members__ else Rank.LIEUTENANT
+        if _RANK_ORDER_DM.index(rank) >= _RANK_ORDER_DM.index(status_min_rank):
+            text, status_actions = await self._extract_and_execute_statuses(agent, text)
+            actions_executed.extend(status_actions)
+
         # --- Notebook writes (AD-434) ---
         notebook_pattern = r'\[NOTEBOOK\s+([\w-]+)\](.*?)\[/NOTEBOOK\]'
         notebook_matches = re.findall(notebook_pattern, text, re.DOTALL)
@@ -4167,6 +4188,89 @@ class ProactiveCognitiveLoop:
             )
 
         text = _ARTIFACT_PATTERN.sub("", text)
+        return text, actions
+
+    async def _extract_and_execute_statuses(
+        self, agent: Any, text: str,
+    ) -> tuple[str, list[dict]]:
+        """AD-928: Extract [STATUS]...[/STATUS] (and [STATUS final]...) blocks and
+        post each as a status message into the agent's task room (AD-925).
+
+        Mirrors the AD-927 artifact extractor: rank-gated by the caller, returns
+        (cleaned_text, actions), strips the tag regardless of outcome. Each block
+        is posted to the room thread via ChatThreadStore.append_message with
+        metadata.kind="status" (and metadata.status_final=True for the final
+        result), so the room transcript can render it as activity. Honest-degrade
+        (suppressed, no crash) when there is no resolvable task room, the body is
+        empty/oversized, the per-turn cap is hit, the store is unavailable, or the
+        post fails. v1 is MESSAGE-ONLY: the work item is NOT transitioned (AD-928a).
+        """
+        rt = self._runtime
+        store = getattr(rt, "chat_thread_store", None)
+        actions: list[dict] = []
+        if store is None:
+            return text, actions  # misconfigured runtime — leave text untouched (mirror GROUP_CHAT svc-None)
+
+        # Anti-flood config (Tier-2 defaults if config absent).
+        max_per_turn = 3
+        max_bytes = 4096
+        comms = getattr(getattr(rt, "config", None), "communications", None)
+        if comms is not None:
+            max_per_turn = getattr(comms, "status_max_per_turn", 3)
+            max_bytes = getattr(comms, "status_max_bytes", 4096)
+
+        room = self._resolve_agent_task_room(agent.id)
+        produced = 0
+        for m in _STATUS_PATTERN.finditer(text):
+            is_final = bool(m.group(1))
+            body = (m.group(2) or "").strip()
+            if not body:
+                actions.append({"type": "status_suppressed", "reason": "empty"})
+                continue
+            if room is None:
+                actions.append({"type": "status_suppressed", "reason": "no_task_room"})
+                continue
+            if len(body.encode("utf-8")) > max_bytes:
+                actions.append({"type": "status_suppressed", "reason": "too_large", "final": is_final})
+                continue
+            if produced >= max_per_turn:
+                actions.append({"type": "status_suppressed", "reason": "rate_limited", "final": is_final})
+                continue
+            metadata: dict = {"kind": "status"}
+            if is_final:
+                metadata["status_final"] = True
+            try:
+                msg = store.append_message(
+                    room.id,
+                    author_id=agent.id,
+                    role="agent",
+                    body=body,
+                    metadata=metadata,
+                )
+            except Exception:
+                logger.warning(
+                    "AD-928: status post failed for %s (final=%s)",
+                    getattr(agent, "id", "?"), is_final, exc_info=True,
+                )
+                actions.append({"type": "status_suppressed", "reason": "post_failed", "final": is_final})
+                continue
+            if msg is None:
+                actions.append({"type": "status_suppressed", "reason": "post_failed", "final": is_final})
+                continue
+            produced += 1
+            actions.append({
+                "type": "status",
+                "thread_id": room.id,
+                "final": is_final,
+                "message_id": msg.id,
+            })
+            logger.info(
+                "AD-928: %s posted %sstatus into task room %s",
+                getattr(agent, "callsign", None) or agent.agent_type,
+                "FINAL " if is_final else "", room.id,
+            )
+
+        text = _STATUS_PATTERN.sub("", text)
         return text, actions
 
     async def extract_and_execute_dms(

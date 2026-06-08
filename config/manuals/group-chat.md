@@ -65,3 +65,29 @@ A room can be promoted to a live meeting. In a meeting:
   continue in the existing one.
 - Silence is professionalism. If the work does not need a room, do not create
   one. Rooms left empty or duplicated waste everyone's attention.
+
+## Showing Your Work
+
+When you are working a task inside a task room, narrate your progress so the room
+reads like a live activity feed -- the same feel as a team channel where people
+post "started X", "draft ready", "done -- result attached". A status is a short
+activity-feed update posted into the task room you are working in, not a document
+and not a DM.
+
+Post a status from your proactive output with the STATUS tag:
+
+    [STATUS]A short note on a meaningful milestone.[/STATUS]
+    [STATUS final]The task is complete. Here is the result.[/STATUS]
+
+- Use plain `[STATUS]` for progress along the way; use `[STATUS final]` for the
+  single closing message that reports the outcome.
+- Narrate MEANINGFUL milestones -- you started the task, a draft is ready, a
+  blocker cleared, the result is attached -- not every micro-step. A flood of
+  "still working" lines is noise; silence between milestones is fine.
+- Post exactly one `[STATUS final]` when the work is done, saying what the result
+  is or where to find it.
+- Status posts go into the task room you are working in. If you are not in a task
+  room, there is nothing to narrate -- stay quiet.
+- Status narration is a Lieutenant-and-above capability and is rate limited, so
+  the room cannot be flooded; an over-limit status is quietly suppressed.
+
