@@ -34,6 +34,8 @@ import { subscribePcm } from '../../audio/voiceActivity';
 import type { ChatAttachment } from '../../store/types';
 import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
+// AD-932: discoverable "+ Add people" on a fresh/empty 1:1 (no thread yet).
+import { EmptyChatAddPeople } from './EmptyChatAddPeople';
 import { MeetingView } from './MeetingView';
 import { useMeetingMic } from '../../audio/useMeetingMic';
 import { MeetingMicButton } from './MeetingMicButton';
@@ -832,6 +834,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       {/* AD-917: in-chat group controls (rename / participants / add). Renders
           nothing until a thread exists. Mounted above the message list. */}
       {activeThreadId && <GroupChatHeader threadId={activeThreadId} />}
+      {/* AD-932: discoverable "+ Add people" on a fresh/empty 1:1 (no thread
+          yet). Mutually exclusive with GroupChatHeader; materializes the thread
+          so the header (+ its picker) takes over on the next render. */}
+      {!activeThreadId && <EmptyChatAddPeople agentId={agentId} />}
       {/* AD-920: meeting-mode avatar gallery — mounted below the controls when
           the thread is in a meeting (metadata.meeting_active). The thread
           remains the transcript below. AD-923: speakingAgentId lights the
