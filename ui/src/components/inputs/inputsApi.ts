@@ -27,3 +27,31 @@ export async function fetchThreadInputs(threadId: string): Promise<TaskInput[]> 
 export function attachmentUrl(contentHash: string): string {
   return `/api/chat/attachments/${encodeURIComponent(contentHash)}`;
 }
+
+/**
+ * AD-926a: attach one or more context-input files to a work item (task).
+ *
+ * Posts a single multipart request (all files under the `files` field) to
+ * POST /api/work-items/{work_item_id}/inputs. The server validates + stores
+ * each file once (content-addressable, sha256), appends refs to the work
+ * item's input_attachments, and returns the updated task-level input list.
+ * Honest-degrade: a non-ok response throws so the caller can show a toast.
+ */
+export async function attachTaskInputs(
+  workItemId: string,
+  files: File[],
+): Promise<TaskInput[]> {
+  const fd = new FormData();
+  for (const f of files) {
+    fd.append('files', f, f.name);
+  }
+  const res = await fetch(
+    `/api/work-items/${encodeURIComponent(workItemId)}/inputs`,
+    { method: 'POST', body: fd },
+  );
+  if (!res.ok) {
+    throw new Error(`attachTaskInputs: ${res.status}`);
+  }
+  const body = await res.json();
+  return Array.isArray(body.inputs) ? body.inputs : [];
+}

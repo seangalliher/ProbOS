@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from probos.routers.deps import get_runtime, get_ws_broadcast
 
@@ -243,6 +243,115 @@ async def delete_work_item(
         raise HTTPException(404, "Work item not found")
     broadcast({"type": "work_item_deleted", "data": {"work_item_id": work_item_id}})
     return {"deleted": True}
+
+
+@router.post("/work-items/{work_item_id}/inputs")
+async def attach_work_item_inputs(
+    work_item_id: str,
+    files: list[UploadFile] = File(...),
+    runtime: Any = Depends(get_runtime),
+    broadcast: Callable = Depends(get_ws_broadcast),
+) -> dict[str, Any]:
+    """AD-926a: attach one or more context-input files to a work item (task).
+
+    The WRITE/population path for the AD-926 ``input_attachments`` convention.
+    Each file is validated + stored once in the content-addressable
+    ``AttachmentStore`` (sha256) via the SHARED chat uploader
+    (``_validate_and_store_attachment`` — same defense-in-depth gate, default
+    ``origin="chat_attachment"`` = operator intent, never age-reaped), then a
+    ref ``{content_hash, mime, filename}`` is appended to the parent
+    ``WorkItem.metadata["input_attachments"]``. The files then surface as the
+    task room's Inputs via the existing ``GET /api/threads/{id}/inputs``.
+
+    Operator/Captain action: reversible, additive, low-risk — no consensus
+    gate (Safety Budget axiom), mirroring the other work-item mutation routes
+    (PATCH / transition / assign / delete have no per-caller authority check).
+
+    Honest-degrade per file: a rejected file (oversize / mime mismatch /
+    disallowed) is collected into ``skipped`` rather than failing the request.
+    A single read-merge-write per request (all files stored first, then one
+    metadata merge) preserves every other ``metadata`` key plus any existing
+    inputs and dedupes by ``content_hash``.
+    """
+    if not runtime.work_item_store:
+        raise HTTPException(503, "Workforce engine not enabled")
+    wi = await runtime.work_item_store.get_work_item(work_item_id)
+    if not wi:
+        raise HTTPException(404, "Work item not found")
+
+    from probos.routers.chat import _validate_and_store_attachment
+
+    new_refs: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for f in files:
+        blob = await f.read()
+        ok, result = await _validate_and_store_attachment(
+            runtime,
+            blob,
+            f.content_type or "application/octet-stream",
+            declared_filename=f.filename,
+            declared_hash_or_None=None,
+        )
+        if not ok:
+            skipped.append({
+                "filename": f.filename,
+                "error": (result.get("body") or {}).get("error", "rejected"),
+            })
+            continue
+        new_refs.append({
+            "content_hash": result["sha256"],
+            "mime": result["mime"],
+            "filename": f.filename,
+        })
+
+    # Single read-merge-write: preserve all other metadata keys + existing
+    # inputs; dedupe by content_hash (idempotent re-upload). update_work_item
+    # replaces the metadata column wholesale, so the merge MUST happen here.
+    if new_refs:
+        meta = dict(getattr(wi, "metadata", {}) or {})
+        existing = list(meta.get("input_attachments", []) or [])
+        seen = {
+            r.get("content_hash")
+            for r in existing
+            if isinstance(r, dict)
+        }
+        for ref in new_refs:
+            if ref["content_hash"] not in seen:
+                existing.append(ref)
+                seen.add(ref["content_hash"])
+        meta["input_attachments"] = existing
+        updated = await runtime.work_item_store.update_work_item(
+            work_item_id, metadata=meta,
+        )
+        wi = updated or wi
+        broadcast({
+            "type": "work_item_updated",
+            "data": {"work_item": wi.to_dict()},
+        })
+
+    # Return the task-level input list (mirrors the AD-926 read shape,
+    # source="task"). size is best-effort from the content-addressable store.
+    attachment_store = getattr(runtime, "attachment_store", None)
+    inputs: list[dict[str, Any]] = []
+    for ref in (getattr(wi, "metadata", {}) or {}).get("input_attachments", []) or []:
+        if not isinstance(ref, dict):
+            continue
+        ch = ref.get("content_hash")
+        size: int | None = None
+        if attachment_store is not None and ch:
+            try:
+                size = await attachment_store.size(ch)
+            except Exception:  # pragma: no cover - defensive, Tier-2
+                size = None
+        inputs.append({
+            "content_hash": ch,
+            "mime": ref.get("mime") or "application/octet-stream",
+            "filename": ref.get("filename"),
+            "size": size,
+            "source": "task",
+        })
+
+    return {"work_item_id": work_item_id, "inputs": inputs, "skipped": skipped}
 
 
 # -- Bookings --

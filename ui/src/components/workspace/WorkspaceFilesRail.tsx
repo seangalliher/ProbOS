@@ -25,7 +25,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { InputsList } from '../inputs/InputsList';
-import { fetchThreadInputs, type TaskInput } from '../inputs/inputsApi';
+import { fetchThreadInputs, attachTaskInputs, type TaskInput } from '../inputs/inputsApi';
 import { ArtifactList } from '../artifacts/ArtifactList';
 import { fetchThreadArtifacts } from '../artifacts/artifactApi';
 import type { ArtifactView } from '../../store/useStore';
@@ -55,10 +55,15 @@ function persistCollapsed(collapsed: boolean): void {
 
 export interface WorkspaceFilesRailProps {
   threadId: string;
+  /** AD-926a: the room's work item id (thread.task_id). When set, the
+   *  Inputs section shows a multi-file "+ Attach" affordance. A workspace
+   *  room without a bound work item (>=2 crew, no task_id) has no place to
+   *  hold inputs, so the button is hidden. */
+  taskId?: string | null;
 }
 
 export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
-  const { threadId } = props;
+  const { threadId, taskId } = props;
   const [inputs, setInputs] = useState<TaskInput[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -109,6 +114,19 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       'noopener',
     );
   }, []);
+
+  // AD-926a: attach one or more files to the room's work item (task). One
+  // multipart request for all files (mirrors ProfileChatTab.uploadAttachment).
+  // On success the rail's local inputs state is replaced by the returned list.
+  const handleAttach = useCallback(async (picked: File[]) => {
+    if (!taskId || picked.length === 0) return;
+    try {
+      const updated = await attachTaskInputs(taskId, picked);
+      setInputs(updated);
+    } catch {
+      // honest-degrade — the attach failed; the rail keeps its current list.
+    }
+  }, [taskId]);
 
   const totalCount = inputs.length + artifacts.length;
 
@@ -209,11 +227,40 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
         <div
           data-testid="workspace-files-inputs-label"
           style={{
+            display: 'flex', alignItems: 'center', gap: 6,
             fontSize: 10, letterSpacing: 1.5, color: DIM,
             padding: '8px 10px 4px',
           }}
         >
-          INPUTS
+          <span style={{ flex: '1 1 auto' }}>INPUTS</span>
+          {taskId && (
+            <label
+              data-testid="workspace-files-attach"
+              title="Attach files to this task"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+                color: AMBER, cursor: 'pointer', fontSize: 10,
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth={1.5}
+                strokeLinecap="round" strokeLinejoin="round" aria-label="attach">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Attach
+              <input
+                type="file"
+                multiple
+                data-testid="workspace-files-attach-input"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files ?? []);
+                  void handleAttach(picked);
+                  if (e.target) e.target.value = '';
+                }}
+              />
+            </label>
+          )}
         </div>
         <InputsList inputs={inputs} />
       </div>

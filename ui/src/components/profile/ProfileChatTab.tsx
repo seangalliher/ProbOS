@@ -1603,7 +1603,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       `}</style>
       </div>
       {/* AD-929: Files rail (Inputs + Outputs) — only for workspace rooms. */}
-      {showWorkspaceFiles && activeThreadId && <WorkspaceFilesRail threadId={activeThreadId} />}
+      {showWorkspaceFiles && activeThreadId && (
+        <WorkspaceFilesRail
+          threadId={activeThreadId}
+          taskId={workspaceThread?.task_id ?? null}
+        />
+      )}
     </div>
   );
 }
