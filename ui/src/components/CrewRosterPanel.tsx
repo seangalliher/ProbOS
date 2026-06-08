@@ -7,7 +7,8 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useStore } from '../store/useStore';
-import type { CrewManifestEntry } from '../store/types';
+import type { CrewManifestEntry, PresenceState } from '../store/types';
+import { PresenceDot } from './presence/PresenceDot';
 
 const DEPT_COLORS: Record<string, string> = {
   engineering: '#b0a050',
@@ -46,6 +47,16 @@ export default function CrewRosterPanel() {
   const manifest = useStore(s => s.crewManifest);
   const close = useStore(s => s.closeCrewManifest);
   const openProfile = useStore(s => s.openAgentProfile);
+  // AD-930: ambient presence map, polled every 10s while the roster is open.
+  const presence = useStore(s => s.presence);
+  const fetchPresence = useStore(s => s.fetchPresence);
+
+  useEffect(() => {
+    if (!open) return;
+    fetchPresence();
+    const id = window.setInterval(fetchPresence, 10000);
+    return () => window.clearInterval(id);
+  }, [open, fetchPresence]);
 
   const [filter, setFilter] = useState<string | null>(null);
   const [pos, setPos] = useState({ x: 60, y: 60 });
@@ -190,6 +201,7 @@ export default function CrewRosterPanel() {
               <CrewRow
                 key={entry.agentType}
                 entry={entry}
+                presenceState={presence[entry.agentId] ?? 'offline'}
                 onClickProfile={() => {
                   if (entry.agentId) openProfile(entry.agentId);
                 }}
@@ -227,8 +239,9 @@ function FilterChip({ label, active, onClick, color }: {
   );
 }
 
-function CrewRow({ entry, onClickProfile }: {
+function CrewRow({ entry, presenceState, onClickProfile }: {
   entry: CrewManifestEntry;
+  presenceState: PresenceState;
   onClickProfile: () => void;
 }) {
   const dept = entry.department || 'unassigned';
@@ -261,7 +274,8 @@ function CrewRow({ entry, onClickProfile }: {
 
       {/* Name + post */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: '#e0dcd4' }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: '#e0dcd4', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <PresenceDot state={presenceState} size={7} />
           {entry.callsign}
         </div>
         <div style={{

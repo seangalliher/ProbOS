@@ -4616,6 +4616,11 @@ class CommunicationsConfig(BaseModel):
     status_min_rank: str = "lieutenant"  # min rank to post a status into a task room: ensign|lieutenant|commander|senior
     status_max_per_turn: int = 3         # anti-flood: honor at most this many [STATUS] tags per proactive turn
     status_max_bytes: int = 4096         # anti-flood: reject status bodies larger than 4 KiB (oversized -> honest-degrade)
+    # AD-930: presence "working" = an operation completed within this many
+    # seconds (recent-activity proxy via AgentMeta.last_active; there is no
+    # true in-flight signal at HEAD — AD-930a). Read-only/computed, so this
+    # ships ON by default (not a transitional behavioral flag).
+    presence_working_window_seconds: float = 90.0
 
 
 class WorkforceConfig(BaseModel):

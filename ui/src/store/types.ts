@@ -619,6 +619,10 @@ export interface CrewManifestEntry {
   agentId: string;
 }
 
+// AD-930: crew presence layer
+export type PresenceState = 'offline' | 'online' | 'working' | 'in_meeting';
+export type CrewPresenceMap = Record<string, PresenceState>;
+
 // AD-618d: Bill System types
 
 export interface BillDefinitionView {

@@ -17,6 +17,7 @@ import type {
   ConsensusEvent, SystemModeEvent, AgentStateEvent, WSEvent,
   GameState,  // AD-526b
   CrewManifestEntry,  // AD-513
+  CrewPresenceMap,    // AD-930
   NotebookEntry,      // AD-523b
   NotebookAuthor,     // AD-523b
   NotebookDetail,     // AD-523b
@@ -376,6 +377,9 @@ export interface HXIState {
   // Crew Manifest (AD-513)
   crewManifestOpen: boolean;
   crewManifest: CrewManifestEntry[] | null;
+  // AD-930: crew presence layer — ambient {agent_id: state} map, polled
+  // (not a panel) while the roster is open.
+  presence: CrewPresenceMap;
   // AD-523b: Crew Notebooks Browser
   notebooksOpen: boolean;
   notebooksAuthors: NotebookAuthor[];
@@ -481,6 +485,8 @@ export interface HXIState {
   // Crew Manifest actions (AD-513)
   openCrewManifest: () => void;
   closeCrewManifest: () => void;
+  // AD-930: presence is ambient data (no open/close) — fetch the latest map.
+  fetchPresence: () => Promise<void>;
   // AD-523b
   openNotebooks: () => Promise<void>;
   closeNotebooks: () => void;
@@ -833,6 +839,8 @@ export const useStore = create<HXIState>((set, get) => ({
   // Crew Manifest (AD-513)
   crewManifestOpen: false,
   crewManifest: null,
+  // AD-930: presence map starts empty; the roster poll hydrates it.
+  presence: {},
   // AD-523b
   notebooksOpen: false,
   notebooksAuthors: [],
@@ -969,6 +977,17 @@ export const useStore = create<HXIState>((set, get) => ({
     } catch { /* non-critical */ }
   },
   closeCrewManifest: () => set({ crewManifestOpen: false }),
+  // AD-930: fetch the crew presence map (mirrors openCrewManifest's
+  // fetch+set idiom, minus the open/close — presence is ambient data).
+  fetchPresence: async () => {
+    try {
+      const res = await fetch('/api/crew/presence');
+      if (res.ok) {
+        const data = await res.json();
+        set({ presence: (data.presence ?? {}) as CrewPresenceMap });
+      }
+    } catch { /* non-critical */ }
+  },
   // AD-523b: Crew Notebooks Browser
   openNotebooks: async () => {
     set({ notebooksOpen: true, notebooksLoading: true });

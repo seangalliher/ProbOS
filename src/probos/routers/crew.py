@@ -18,6 +18,7 @@ surface reports its own source of truth.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -142,6 +143,75 @@ async def crew_roster(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
 
     entries.sort(key=lambda e: (e["department"] or "~", e["agent_type"]))
     return {"crew": entries, "count": len(entries)}
+
+
+@router.get("/presence")
+async def crew_presence(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """Teams-style per-crew presence — ``offline | online | working | in_meeting``.
+
+    AD-930 aggregates existing signals; it invents no new telemetry:
+      - liveness   -> ``agent.is_alive`` (registry ``AgentState`` ACTIVE/DEGRADED)
+      - in_meeting -> the agent is a participant of a non-archived chat thread
+                      whose ``metadata.meeting_active`` is set (AD-920)
+      - working    -> ``agent.meta.last_active`` within
+                      ``communications.presence_working_window_seconds`` — an
+                      honest *recent-activity* proxy (last completed operation),
+                      NOT a true in-flight flag (none exists at HEAD; AD-930a)
+
+    Liveness is the floor: a not-alive agent is ``offline`` regardless of
+    thread membership. Among alive agents: ``in_meeting > working > online``.
+    Returns ``{"presence": {agent_id: state}, "count": N}`` for crew only.
+    """
+    registry = getattr(runtime, "registry", None)
+    if registry is None:
+        return {"presence": {}, "count": 0}
+
+    ontology = getattr(runtime, "ontology", None)
+    crew_agents = [a for a in registry.all() if is_crew_agent(a, ontology)]
+
+    # Recency window — comms-config tunable, sensible default, Tier-2 degrade.
+    window = 90.0
+    try:
+        window = float(runtime.config.communications.presence_working_window_seconds)
+    except Exception:
+        logger.debug("crew_presence: window config unavailable; default 90s", exc_info=True)
+
+    # Meeting participants — Tier-2 degrade: a store failure means no
+    # in_meeting is computed and agents simply fall through to working/online.
+    meeting_ids: set[str] = set()
+    store = getattr(runtime, "chat_thread_store", None)
+    if store is not None:
+        try:
+            for thread in store.list_threads(include_archived=False):
+                if (getattr(thread, "metadata", None) or {}).get("meeting_active"):
+                    meeting_ids.update(getattr(thread, "participants", None) or [])
+        except Exception:
+            logger.debug("crew_presence: meeting scan failed; in_meeting skipped", exc_info=True)
+
+    now = datetime.now(timezone.utc)
+    presence: dict[str, str] = {}
+    for agent in crew_agents:
+        agent_id = getattr(agent, "id", "") or ""
+        if not agent_id:
+            continue
+        if not getattr(agent, "is_alive", False):
+            presence[agent_id] = "offline"
+            continue
+        if agent_id in meeting_ids:
+            presence[agent_id] = "in_meeting"
+            continue
+        state = "online"
+        meta = getattr(agent, "meta", None)
+        last_active = getattr(meta, "last_active", None)
+        if last_active is not None:
+            try:
+                if (now - last_active).total_seconds() < window:
+                    state = "working"
+            except Exception:
+                logger.debug("crew_presence: last_active compare failed for %s", agent_id, exc_info=True)
+        presence[agent_id] = state
+
+    return {"presence": presence, "count": len(presence)}
 
 
 @router.get("/{agent_id}/record")

@@ -6,6 +6,8 @@
 // AgentProfilePanel.tsx's inline 8x8 dot to use this — that's scope creep.
 
 import type { CSSProperties } from 'react';
+import type { PresenceState } from '../store/types';
+import { PresenceDot } from './presence/PresenceDot';
 
 const DEPT_COLORS: Record<string, string> = {
   engineering: '#b0a050',
@@ -20,9 +22,10 @@ interface Props {
   callsign: string;
   department?: string;
   size?: 24 | 32;
+  presence?: PresenceState; // AD-930: optional Teams-style status overlay
 }
 
-export function AgentAvatarBadge({ agentId: _agentId, callsign, department = '', size = 24 }: Props) {
+export function AgentAvatarBadge({ agentId: _agentId, callsign, department = '', size = 24, presence }: Props) {
   const color = DEPT_COLORS[department.toLowerCase()] ?? '#666';
   const initial = (callsign.charAt(0) || '?').toUpperCase();
   const style: CSSProperties = {
@@ -38,9 +41,19 @@ export function AgentAvatarBadge({ agentId: _agentId, callsign, department = '',
     fontSize: size * 0.5,
     flexShrink: 0,
   };
-  return (
+  const badge = (
     <span style={style} aria-label={`Agent ${callsign}`} data-testid="agent-avatar-badge">
       {initial}
+    </span>
+  );
+  // AD-930: omitted presence prop -> byte-identical original badge (backward compat).
+  if (!presence) return badge;
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+      {badge}
+      <span style={{ position: 'absolute', right: -1, bottom: -1, borderRadius: '50%', padding: 1, background: '#0a0a12' }}>
+        <PresenceDot state={presence} size={Math.max(6, Math.round(size * 0.34))} />
+      </span>
     </span>
   );
 }
