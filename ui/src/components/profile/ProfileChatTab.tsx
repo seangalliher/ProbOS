@@ -32,6 +32,7 @@ import { subscribePcm } from '../../audio/voiceActivity';
 import type { ChatAttachment } from '../../store/types';
 import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
+import { MeetingView } from './MeetingView';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
 import { useScreenStore } from '../../store/useScreenStore';
@@ -474,6 +475,13 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // per-agent default in threadIdByAgent).
   const activeThreadId = useStore((s) => threadId ?? s.threadIdByAgent.get(agentId));
 
+  // AD-920: meeting-mode flag (persisted on the shared thread). When set, the
+  // avatar gallery mounts below the group-controls header. Reactive so the
+  // gallery appears/disappears as the Start/End Meeting toggle flips it.
+  const meetingActive = useStore((s) =>
+    !!(activeThreadId && (s.chatThreads.get(activeThreadId)?.metadata as Record<string, unknown> | undefined)?.meeting_active),
+  );
+
   // Auto-scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -788,6 +796,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       {/* AD-917: in-chat group controls (rename / participants / add). Renders
           nothing until a thread exists. Mounted above the message list. */}
       {activeThreadId && <GroupChatHeader threadId={activeThreadId} />}
+      {/* AD-920: meeting-mode avatar gallery — mounted below the controls when
+          the thread is in a meeting (metadata.meeting_active). The thread
+          remains the transcript below. */}
+      {activeThreadId && meetingActive && <MeetingView threadId={activeThreadId} />}
       {/* Message list */}
       <div style={{
         flex: 1,

@@ -88,6 +88,9 @@ export interface PatchThreadBody {
   // existing PATCH endpoint (the server already supports project_id
   // per AD-791a).
   project_id?: string | null;
+  // AD-920: meeting-mode flag — routes server-side through
+  // store.set_meeting_active (a scoped metadata RMW).
+  meeting_active?: boolean;
 }
 
 export async function patchThread(
@@ -106,6 +109,19 @@ export async function patchThread(
   } catch {
     return null;
   }
+}
+
+/**
+ * AD-920: start/end meeting mode on a group thread.
+ * PATCH /api/threads/{id}  body {meeting_active}  -> updated thread.to_dict()
+ * (404 honest-degrades to null). The returned thread carries
+ * metadata.meeting_active so the caller can setChatThread(updated).
+ */
+export async function setMeetingActive(
+  threadId: string,
+  active: boolean,
+): Promise<AD791aChatThreadView | null> {
+  return patchThread(threadId, { meeting_active: active });
 }
 
 export async function deleteThread(threadId: string): Promise<boolean> {

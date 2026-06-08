@@ -360,6 +360,53 @@ class ChatThreadStore:
                 conn.execute("ROLLBACK")
                 raise
 
+    def set_meeting_active(
+        self, thread_id: str, active: bool
+    ) -> "ChatThread | None":
+        """AD-920: set/clear ``metadata.meeting_active`` on a thread.
+
+        A meeting is a live MODE of a group chat — the thread stays the
+        transcript; this flag is what the UI gallery and (future) voice
+        path read to know the meeting is open. Scoped writer (NOT a
+        generic metadata PATCH) so callers cannot clobber sibling keys
+        such as ``created_by_agent`` (AD-918) or ``title_locked``
+        (AD-794). ``active=True`` sets the flag; ``active=False`` removes
+        the key entirely (clean "not in a meeting"). The read-modify-
+        write of the JSON ``metadata`` column uses ``BEGIN IMMEDIATE``
+        for race safety, matching ``set_title(lock=True)``.
+
+        Returns the updated thread, or ``None`` when the row is missing.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT metadata FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    conn.execute("ROLLBACK")
+                    return None
+                existing: dict = {}
+                if row["metadata"]:
+                    try:
+                        existing = json.loads(row["metadata"]) or {}
+                    except (json.JSONDecodeError, TypeError):
+                        existing = {}
+                if active:
+                    existing["meeting_active"] = True
+                else:
+                    existing.pop("meeting_active", None)
+                conn.execute(
+                    "UPDATE chat_threads SET metadata = ? WHERE id = ?",
+                    (json.dumps(existing), thread_id),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.get_thread(thread_id)
+
     def is_title_locked(self, thread_id: str) -> bool:
         """AD-794: True when ``metadata.title_locked`` is set.
 

@@ -60,6 +60,10 @@ class UpdateThreadRequest(BaseModel):
     # turn auto-name path bypasses the API and calls
     # ``set_title(lock=False)`` directly.
     title_locked: bool | None = None
+    # AD-920: meeting-mode flag. When non-None, routes through
+    # ``store.set_meeting_active`` (a scoped metadata RMW, NOT a generic
+    # metadata write). The UI sends this field on its own.
+    meeting_active: bool | None = None
 
 
 class AppendMessageRequest(BaseModel):
@@ -146,6 +150,14 @@ async def update_thread(
     runtime: Any = Depends(get_runtime),
 ) -> dict:
     store = _get_store(runtime)
+    # AD-920: meeting-mode flag is an independent, scoped metadata write
+    # (RMW merge; mirrors set_title(lock=True)). The UI sends meeting_active
+    # on its own, so handle it first and return the updated thread.
+    if body.meeting_active is not None:
+        thread = store.set_meeting_active(thread_id, body.meeting_active)
+        if thread is None:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        return thread.to_dict()
     # AD-794: when an operator-initiated rename arrives with
     # ``title_locked=True``, route the title update through
     # ``set_title(lock=True)`` so the metadata flag is written

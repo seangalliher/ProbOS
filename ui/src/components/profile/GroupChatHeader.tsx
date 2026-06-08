@@ -9,7 +9,7 @@ import { useStore } from '../../store/useStore';
 import type { Agent } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { UserPlus, Close } from '../icons/Glyphs';
-import { patchThread, addParticipant, removeParticipant } from '../sidebar/threadApi';
+import { patchThread, addParticipant, removeParticipant, setMeetingActive } from '../sidebar/threadApi';
 import { AddParticipantPopover } from './AddParticipantPopover';
 
 interface GroupChatHeaderProps {
@@ -38,6 +38,10 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
     .map((id) => ({ id, agent: agents.get(id) }))
     .filter((p): p is { id: string; agent: Agent } => !!p.agent && p.agent.isCrew);
 
+  // AD-920: meeting-mode flag (persisted on the shared thread). The toggle
+  // flips metadata.meeting_active via the scoped set_meeting_active writer.
+  const meetingActive = !!(thread.metadata as Record<string, unknown> | undefined)?.meeting_active;
+
   async function commitTitle() {
     const next = titleDraft.trim();
     setEditing(false);
@@ -59,6 +63,13 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
 
   async function handleRemove(agentId: string) {
     const updated = await removeParticipant(threadId, agentId);
+    if (updated) setChatThread(updated);
+  }
+
+  // AD-920: start/end meeting mode. Flips the persisted flag and reflects
+  // the returned thread back into the store so the gallery mounts/unmounts.
+  async function handleToggleMeeting() {
+    const updated = await setMeetingActive(threadId, !meetingActive);
     if (updated) setChatThread(updated);
   }
 
@@ -165,6 +176,34 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
           );
         })}
       </div>
+
+      {/* AD-920: Start/End Meeting toggle. Promotes the group chat to a live
+          meeting (metadata.meeting_active) so ProfileChatTab mounts the avatar
+          gallery. Local inline video glyph (HXI #3 — no emoji, no Glyphs.tsx
+          export so the Glyphs.test.tsx count is untouched). Shown when there is
+          at least one crew participant. */}
+      {crewParticipants.length >= 1 && (
+        <button
+          type="button"
+          data-testid="meeting-toggle"
+          aria-label={meetingActive ? 'End meeting' : 'Start meeting'}
+          aria-pressed={meetingActive}
+          title={meetingActive ? 'End meeting' : 'Start meeting'}
+          onClick={() => { void handleToggleMeeting(); }}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: meetingActive ? '#f0b060' : '#666680',
+            display: 'inline-flex', alignItems: 'center', padding: 2,
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+               stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+               strokeLinejoin="round">
+            <rect x="1.5" y="4" width="9" height="8" rx="1.5" />
+            <path d="M10.5 7 L14.5 5 V11 L10.5 9 Z" />
+          </svg>
+        </button>
+      )}
 
       {/* Add participant (UserPlus button toggles the crew popover) */}
       <div style={{ position: 'relative' }}>
