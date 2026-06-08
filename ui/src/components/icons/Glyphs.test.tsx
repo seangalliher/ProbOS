@@ -44,6 +44,7 @@ it('exports the expected number of glyph components', () => {
   const count = Object.keys(Glyphs).filter(
     k => typeof (Glyphs as any)[k] === 'function'
   ).length;
-  // 29 glyph components currently exported (was 25 at BF-041; +4 added since)
-  expect(count).toBe(29);
+  // 30 glyph components currently exported (was 25 at BF-041; +5 added since,
+  // incl. AD-917 UserPlus).
+  expect(count).toBe(30);
 });

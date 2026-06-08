@@ -73,6 +73,15 @@ export const Close: React.FC<GlyphProps> = ({ size = 12, className, style }) => 
   </svg>
 );
 
+// AD-917: add-participant affordance for the group-chat header (HXI #3 — stroke-SVG, no fill).
+export const UserPlus: React.FC<GlyphProps> = ({ size = 12, className, style }) => (
+  <svg {...defaultProps} width={size} height={size} viewBox="0 0 16 16" className={className} style={{ ...baseStyle, ...style }}>
+    <circle cx="6" cy="5" r="2.5" />
+    <path d="M2 13 a4 4 0 0 1 8 0" />
+    <path d="M12 5 V9 M10 7 H14" />
+  </svg>
+);
+
 // AD-837: Ward Room window controls (HXI Principle #3 — stroke-SVG, no emoji).
 // Undock — detach docked sidebar into a floating window (arrow leaving a frame).
 export const Undock: React.FC<GlyphProps> = ({ size = 12, className, style }) => (

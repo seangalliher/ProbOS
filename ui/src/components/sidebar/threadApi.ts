@@ -118,3 +118,47 @@ export async function deleteThread(threadId: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * AD-917: add a crew agent to a thread.
+ * POST /api/threads/{id}/participants  body {agent_id}  -> updated thread.to_dict()
+ * (404 if thread missing, 400 if agent_id empty — both honest-degrade to null.)
+ */
+export async function addParticipant(
+  threadId: string,
+  agentId: string,
+): Promise<AD791aChatThreadView | null> {
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/participants`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_id: agentId }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as AD791aChatThreadView;
+    return data && typeof data.id === 'string' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * AD-917: remove a participant.
+ * DELETE /api/threads/{id}/participants/{agent_id}  -> updated thread.to_dict()
+ */
+export async function removeParticipant(
+  threadId: string,
+  agentId: string,
+): Promise<AD791aChatThreadView | null> {
+  try {
+    const res = await fetch(
+      `/api/threads/${encodeURIComponent(threadId)}/participants/${encodeURIComponent(agentId)}`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as AD791aChatThreadView;
+    return data && typeof data.id === 'string' ? data : null;
+  } catch {
+    return null;
+  }
+}

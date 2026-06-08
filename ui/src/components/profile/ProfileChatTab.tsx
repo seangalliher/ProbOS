@@ -31,6 +31,7 @@ import { MicIndicator } from './MicIndicator';
 import { subscribePcm } from '../../audio/voiceActivity';
 import type { ChatAttachment } from '../../store/types';
 import { ModulationIndicator } from './ModulationIndicator';
+import { GroupChatHeader } from './GroupChatHeader';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
 import { useScreenStore } from '../../store/useScreenStore';
@@ -467,6 +468,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
 
   const messages = conversation?.messages ?? [];
 
+  // AD-917: active thread id for the in-chat group-controls header. Reactive
+  // (selector) so the header appears as soon as the server creates/returns a
+  // thread. Mirrors the send-path precedence (props.threadId wins over the
+  // per-agent default in threadIdByAgent).
+  const activeThreadId = useStore((s) => threadId ?? s.threadIdByAgent.get(agentId));
+
   // Auto-scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -574,6 +581,51 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
 
     const attachmentIds = pendingAttachments.map(a => a.attachment_id);
     setPendingAttachments([]);
+
+    // AD-917: route Captain sends to the group fan-out path once the active
+    // thread has >=2 crew participants. AD-914 fan-out fires ONLY on
+    // POST /api/threads/{id}/messages with role=="captain"; the 1:1
+    // /api/agent/{id}/chat path below stays byte-identical for solo threads.
+    const groupThreadId = threadId ?? useStore.getState().threadIdByAgent.get(agentId);
+    if (groupThreadId) {
+      const _thread = useStore.getState().chatThreads.get(groupThreadId);
+      const _agents = useStore.getState().agents;
+      const crewParticipantCount = (_thread?.participants ?? []).filter(
+        (id) => id !== 'captain' && _agents.get(id)?.isCrew,
+      ).length;
+      if (_thread && crewParticipantCount >= 2) {
+        try {
+          // ``body`` has min_length=1 on AppendMessageRequest, so attach-only
+          // sends MUST carry the '(attachment)' placeholder or the POST 422s.
+          const res = await fetch(`/api/threads/${groupThreadId}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              author_id: 'captain',
+              role: 'captain',
+              body: text || '(attachment)',
+              attachment_ids: attachmentIds,
+            }),
+          });
+          const data = await res.json();
+          // AD-914 returns {**msg.to_dict(), per_agent_replies: [{agent_id,
+          // callsign, text}]}. Render each reply as an agent message; v1
+          // attribution is a callsign prefix on the shared conversation.
+          const replies = Array.isArray(data?.per_agent_replies) ? data.per_agent_replies : [];
+          for (const r of replies) {
+            const replyText = typeof r?.text === 'string' ? r.text : '';
+            if (!replyText) continue;
+            const prefix = typeof r?.callsign === 'string' && r.callsign ? `${r.callsign}: ` : '';
+            useStore.getState().addAgentMessage(agentId, 'agent', `${prefix}${replyText}`);
+          }
+        } catch {
+          useStore.getState().addAgentMessage(agentId, 'agent', '(communication error)');
+        } finally {
+          setSending(false);
+        }
+        return;
+      }
+    }
 
     try {
       // AD-791a: round-trip the chat-thread ID so subsequent turns route
@@ -733,6 +785,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* AD-917: in-chat group controls (rename / participants / add). Renders
+          nothing until a thread exists. Mounted above the message list. */}
+      {activeThreadId && <GroupChatHeader threadId={activeThreadId} />}
       {/* Message list */}
       <div style={{
         flex: 1,
