@@ -4608,6 +4608,10 @@ class CommunicationsConfig(BaseModel):
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
     recreation_min_rank: str = "ensign"  # Minimum rank for game challenges: ensign|lieutenant|commander|senior
     group_chat_min_rank: str = "commander"  # AD-924: min rank to open an ad-hoc group chat: ensign|lieutenant|commander|senior
+    # AD-927: agent-authored [ARTIFACT] -> task-room Output pane.
+    artifact_min_rank: str = "lieutenant"  # min rank to write an artifact into a task room: ensign|lieutenant|commander|senior
+    artifact_max_per_turn: int = 3         # anti-flood: honor at most this many [ARTIFACT] tags per proactive turn
+    artifact_max_bytes: int = 262144       # anti-flood: reject artifact bodies larger than 256 KiB (oversized -> honest-degrade)
 
 
 class WorkforceConfig(BaseModel):

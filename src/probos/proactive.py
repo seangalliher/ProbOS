@@ -70,6 +70,17 @@ _GROUP_CHAT_PATTERN = re.compile(
 )
 
 
+# AD-927: agent-facing trigger to deposit a versioned artifact into the
+# agent's task room (AD-925). Matches [ARTIFACT name="Final report"] body [/ARTIFACT].
+# group(1)=name, group(2)=body (text/markdown written inline).
+_ARTIFACT_PATTERN = re.compile(
+    r'\[ARTIFACT\s+name="([^"]+)"\s*\]'  # 1=name
+    r'(.*?)'                              # 2=body
+    r'\[/ARTIFACT\]',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
 def _parse_hhmm(value: str) -> tuple[int, int]:
     """Parse HH:MM into (hour, minute) for schedule threshold checks."""
     parts = value.split(":", 1)
@@ -2783,6 +2794,15 @@ class ProactiveCognitiveLoop:
             text, gc_actions = await self._extract_and_execute_group_chats(agent, text)
             actions_executed.extend(gc_actions)
 
+        # --- Artifact output (Lieutenant+) --- AD-927
+        art_min_rank_str = "lieutenant"
+        if hasattr(rt, 'config') and hasattr(rt.config, 'communications'):
+            art_min_rank_str = getattr(rt.config.communications, 'artifact_min_rank', 'lieutenant')
+        art_min_rank = Rank[art_min_rank_str.upper()] if art_min_rank_str.upper() in Rank.__members__ else Rank.LIEUTENANT
+        if _RANK_ORDER_DM.index(rank) >= _RANK_ORDER_DM.index(art_min_rank):
+            text, art_actions = await self._extract_and_execute_artifacts(agent, text)
+            actions_executed.extend(art_actions)
+
         # --- Notebook writes (AD-434) ---
         notebook_pattern = r'\[NOTEBOOK\s+([\w-]+)\](.*?)\[/NOTEBOOK\]'
         notebook_matches = re.findall(notebook_pattern, text, re.DOTALL)
@@ -4030,6 +4050,123 @@ class ProactiveCognitiveLoop:
                     getattr(agent, "id", "?"), result.error,
                 )
         text = _GROUP_CHAT_PATTERN.sub("", text)
+        return text, actions
+
+    def _resolve_agent_task_room(self, agent_id: str):
+        """AD-927: resolve the task room this agent should write an artifact into.
+
+        A proactive turn carries no inherent thread. The faithful, minimal
+        binding (builds on AD-925) is participation-based: the most-recently
+        active non-archived thread that (a) has a ``task_id`` and (b) lists
+        this agent as a participant. ``list_threads`` is already ordered
+        ``last_active_at DESC``, so the first match is the right room.
+
+        Returns the ``ChatThread`` or ``None`` (no resolvable task room ->
+        the caller honest-degrades). AD-927a is the forward marker for a
+        richer binding off the agent's current in-flight work item, which is
+        not cleanly available in the proactive context today.
+        """
+        store = getattr(self._runtime, "chat_thread_store", None)
+        if store is None:
+            return None
+        try:
+            threads = store.list_threads(include_archived=False, limit=50)
+        except Exception:
+            logger.warning(
+                "AD-927: list_threads failed resolving task room for %s",
+                agent_id, exc_info=True,
+            )
+            return None
+        for t in threads:
+            if t.task_id is not None and agent_id in t.participants:
+                return t
+        return None
+
+    async def _extract_and_execute_artifacts(
+        self, agent: Any, text: str,
+    ) -> tuple[str, list[dict]]:
+        """AD-927: Extract [ARTIFACT name="..."]body[/ARTIFACT] blocks and write
+        each as a versioned artifact into the agent's task room (AD-925).
+
+        Mirrors the AD-924 group-chat extractor: rank-gated by the caller,
+        returns (cleaned_text, actions), strips the tag regardless of outcome.
+        The body is text/markdown written to the content-addressable
+        AttachmentStore (origin="agent_artifact", AD-797) then registered in
+        ArtifactStore keyed to the room's thread_id, so it surfaces in the
+        existing ArtifactDrawer. Honest-degrade (suppressed, no crash) when
+        there is no resolvable task room, the body is empty/oversized, the
+        per-turn cap is hit, or a store is unavailable.
+        """
+        import hashlib
+
+        rt = self._runtime
+        artifact_store = getattr(rt, "artifact_store", None)
+        attachment_store = getattr(rt, "attachment_store", None)
+        actions: list[dict] = []
+        if artifact_store is None or attachment_store is None:
+            return text, actions  # misconfigured runtime — leave text untouched (mirror GROUP_CHAT svc-None)
+
+        # Anti-flood config (Tier-2 defaults if config absent).
+        max_per_turn = 3
+        max_bytes = 262144
+        comms = getattr(getattr(rt, "config", None), "communications", None)
+        if comms is not None:
+            max_per_turn = getattr(comms, "artifact_max_per_turn", 3)
+            max_bytes = getattr(comms, "artifact_max_bytes", 262144)
+
+        room = self._resolve_agent_task_room(agent.id)
+        produced = 0
+        for m in _ARTIFACT_PATTERN.finditer(text):
+            name = (m.group(1) or "").strip()
+            body = (m.group(2) or "").strip()
+            if not name or not body:
+                actions.append({"type": "artifact_suppressed", "reason": "empty"})
+                continue
+            if room is None:
+                actions.append({"type": "artifact_suppressed", "reason": "no_task_room"})
+                continue
+            blob = body.encode("utf-8")
+            if len(blob) > max_bytes:
+                actions.append({"type": "artifact_suppressed", "reason": "too_large", "name": name})
+                continue
+            if produced >= max_per_turn:
+                actions.append({"type": "artifact_suppressed", "reason": "rate_limited", "name": name})
+                continue
+            content_hash = hashlib.sha256(blob).hexdigest()
+            try:
+                await attachment_store.write(
+                    content_hash, blob, "text/markdown", origin="agent_artifact",
+                )
+                artifact = artifact_store.add_version(
+                    thread_id=room.id,
+                    name=name,
+                    content_hash=content_hash,
+                    mime="text/markdown",
+                    size_bytes=len(blob),
+                    created_by=agent.id,
+                )
+            except Exception:
+                logger.warning(
+                    "AD-927: artifact write failed for %s (name=%r)",
+                    getattr(agent, "id", "?"), name, exc_info=True,
+                )
+                actions.append({"type": "artifact_suppressed", "reason": "write_failed", "name": name})
+                continue
+            produced += 1
+            actions.append({
+                "type": "artifact",
+                "thread_id": room.id,
+                "name": name,
+                "version": artifact.version,
+                "artifact_id": artifact.id,
+            })
+            logger.info(
+                "AD-927: %s wrote artifact %r v%d into task room %s",
+                getattr(agent, "callsign", None) or agent.agent_type,
+                name, artifact.version, room.id,
+            )
+
+        text = _ARTIFACT_PATTERN.sub("", text)
         return text, actions
 
     async def extract_and_execute_dms(
