@@ -246,6 +246,7 @@ class ChatThreadStore:
         *,
         include_archived: bool = False,
         project_id: str | None = None,
+        task_id: str | None = None,
         limit: int = 100,
     ) -> list[ChatThread]:
         clauses: list[str] = []
@@ -255,6 +256,9 @@ class ChatThreadStore:
         if project_id is not None:
             clauses.append("project_id = ?")
             params.append(project_id)
+        if task_id is not None:  # AD-925: idempotency lookup for the task room
+            clauses.append("task_id = ?")
+            params.append(task_id)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         with self._connect() as conn:
             rows = conn.execute(

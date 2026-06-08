@@ -3768,6 +3768,12 @@ class GroupChatConfig(BaseModel):
     agent_create_cooldown_seconds: float = 60.0   # min seconds between two creates by one agent
     agent_create_max_per_window: int = 5          # max creates per agent per window
     agent_create_window_seconds: float = 3600.0   # sliding window (1 hour)
+    # AD-925: auto-create ONE task-linked workspace room when CrewTaskExecutor
+    # fans a parent out to >=2 distinct crew. Transitional flag (wave-10 #14) —
+    # ships OFF; the Captain flips it on after reviewing AD-925..927. Note the
+    # crew pipeline that drives the executor (agentic_dispatch.orchestrator_enabled)
+    # also ships OFF, so a zero-config boot creates no task rooms.
+    auto_task_room_enabled: bool = False
 
 
 class WardRoomConfig(BaseModel):

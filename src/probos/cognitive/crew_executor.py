@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
+from probos.crew_utils import is_crew_agent
 from probos.events import EventType
 
 if TYPE_CHECKING:
@@ -96,6 +97,11 @@ class CrewTaskExecutor:
         )
         if not children:
             return []
+
+        # AD-925: open the ONE task-linked workspace room before the children
+        # work, so the collaborators share it while executing. Honest-degrade —
+        # never blocks or aborts the fan-out.
+        await self._maybe_open_task_room(parent_id, children)
 
         by_id: dict[str, WorkItem] = {c.id: c for c in children}
         results: dict[str, SubtaskResult] = {}
@@ -244,6 +250,88 @@ class CrewTaskExecutor:
             started_at=started_at,
             finished_at=time.time(),
         )
+
+    def _is_crew_assignee(self, agent_id: str) -> bool:
+        """True iff ``agent_id`` resolves to a live crew agent.
+
+        Mirrors ``AgentGroupChatService._is_crew`` via the shared public
+        ``is_crew_agent`` predicate (ontology=None — the legacy crew-type path,
+        AD-918 test precedent), None-guarding an unresolvable id.
+        """
+        agent = self._registry.get(agent_id)
+        return bool(agent) and is_crew_agent(agent, None)
+
+    async def _maybe_open_task_room(
+        self, parent_id: str, children: list[WorkItem]
+    ) -> None:
+        """AD-925: open ONE task-linked group chat for a >=2-crew fan-out.
+
+        Reuses the AD-918 ``AgentGroupChatService.create_group_chat`` path so
+        the cooldown / sliding-window cap + crew participant resolution all
+        apply — no parallel thread-creation path. Every branch that cannot
+        proceed returns without raising (Tier-2 honest-degrade) so a disabled
+        flag / missing collaborator never breaks the fan-out.
+        """
+        runtime = self._runtime
+        group_chat_cfg = getattr(getattr(runtime, "config", None), "group_chat", None)
+        if not getattr(group_chat_cfg, "auto_task_room_enabled", False):
+            return
+        service = getattr(runtime, "agent_group_chat", None)
+        store = getattr(runtime, "chat_thread_store", None)
+        if service is None or store is None:
+            logger.debug(
+                "AD-925: group-chat substrate not wired on runtime; skipping "
+                "task room for parent %s.",
+                parent_id,
+            )
+            return
+
+        # >=2 DISTINCT crew assignees (a single-agent task needs no room).
+        crew_assignees = sorted(
+            {
+                c.assigned_to
+                for c in children
+                if c.assigned_to and self._is_crew_assignee(c.assigned_to)
+            }
+        )
+        if len(crew_assignees) < 2:
+            return
+
+        # Idempotency: exactly one room per task (AD-791a task_id + the AD-925
+        # list_threads(task_id=) filter). A retry / re-run finds it and stops.
+        if store.list_threads(task_id=parent_id, include_archived=True, limit=1):
+            return
+
+        parent = await self._store.get_work_item(parent_id)
+        title = (
+            f"Task: {parent.title}"
+            if parent and parent.title
+            else f"Task {parent_id}"
+        )
+        # The first crew assignee is the creator: it passes the service's
+        # _is_crew gate and is auto-added as a participant, so the final
+        # participants are exactly the crew child-assignees.
+        creator_id = crew_assignees[0]
+        result = service.create_group_chat(
+            creator_id=creator_id,
+            title=title,
+            participants=crew_assignees[1:],
+            task_id=parent_id,
+        )
+        if result.ok and result.thread is not None:
+            logger.info(
+                "AD-925: opened task room %s for parent %s (%d crew, creator=%s).",
+                result.thread.id,
+                parent_id,
+                len(crew_assignees),
+                creator_id,
+            )
+        else:
+            logger.info(
+                "AD-925: task room not opened for parent %s (%s); fan-out continues.",
+                parent_id,
+                result.error or "unknown",
+            )
 
     def _emit(self, event_type: EventType, data: dict[str, Any]) -> None:
         """Publish a lifecycle event, honest-degrading when no emit fn is wired."""
