@@ -59,6 +59,17 @@ _CHAIN_TRACE_RECENT_LIMIT = 5
 _BREAKER_RECENT_LIMIT = 5
 
 
+# AD-924: agent-facing trigger for ad-hoc group chats. Matches
+# [GROUP_CHAT title="Short room name" @cs,@cs] optional first message [/GROUP_CHAT]
+# group(1)=title, group(2)=participant blob (>=1 named ref required), group(3)=body.
+_GROUP_CHAT_PATTERN = re.compile(
+    r'\[GROUP_CHAT\s+title="([^"]+)"\s+([^\]]+?)\]'  # 1=title, 2=participant blob
+    r'\s*(.*?)'                                       # 3=optional first message
+    r'\[/GROUP_CHAT\]',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
 def _parse_hhmm(value: str) -> tuple[int, int]:
     """Parse HH:MM into (hour, minute) for schedule threshold checks."""
     parts = value.split(":", 1)
@@ -2763,6 +2774,15 @@ class ProactiveCognitiveLoop:
             text, dm_actions = await self.extract_and_execute_dms(agent, text)
             actions_executed.extend(dm_actions)
 
+        # --- Group Chat (Commander+) --- AD-924
+        gc_min_rank_str = "commander"
+        if hasattr(rt, 'config') and hasattr(rt.config, 'communications'):
+            gc_min_rank_str = getattr(rt.config.communications, 'group_chat_min_rank', 'commander')
+        gc_min_rank = Rank[gc_min_rank_str.upper()] if gc_min_rank_str.upper() in Rank.__members__ else Rank.COMMANDER
+        if _RANK_ORDER_DM.index(rank) >= _RANK_ORDER_DM.index(gc_min_rank):
+            text, gc_actions = await self._extract_and_execute_group_chats(agent, text)
+            actions_executed.extend(gc_actions)
+
         # --- Notebook writes (AD-434) ---
         notebook_pattern = r'\[NOTEBOOK\s+([\w-]+)\](.*?)\[/NOTEBOOK\]'
         notebook_matches = re.findall(notebook_pattern, text, re.DOTALL)
@@ -3956,6 +3976,61 @@ class ProactiveCognitiveLoop:
             notebook_pattern, "", text, flags=re.DOTALL,
         ).strip()
         return cleaned, actions
+
+    async def _extract_and_execute_group_chats(
+        self, agent: Any, text: str,
+    ) -> tuple[str, list[dict]]:
+        """AD-924: Extract [GROUP_CHAT ...] blocks and open ad-hoc group chats.
+
+        Dispatches to the already-wired AgentGroupChatService (AD-918). The
+        service owns the per-agent cooldown + sliding-window cap, so the
+        create-storm guard applies here unchanged. Rank-gating (Commander+) is
+        applied by the caller, mirroring the DM gate. The matched tag is
+        stripped from the returned text regardless of outcome.
+        """
+        rt = self._runtime
+        svc = getattr(rt, "agent_group_chat", None)
+        actions: list[dict] = []
+        if svc is None:
+            return text, actions
+        for m in _GROUP_CHAT_PATTERN.finditer(text):
+            title = (m.group(1) or "").strip()
+            raw_parts = m.group(2) or ""
+            body = (m.group(3) or "").strip()
+            parts = [p.lstrip("@").strip() for p in re.split(r"[,\s]+", raw_parts) if p.strip()]
+            try:
+                result = svc.create_group_chat(
+                    creator_id=agent.id,
+                    title=title,
+                    participants=parts,
+                    first_message=body or None,
+                )
+            except Exception:
+                logger.warning(
+                    "AD-924: group chat create raised for %s",
+                    getattr(agent, "id", "?"), exc_info=True,
+                )
+                continue
+            if result.ok and result.thread is not None:
+                actions.append({
+                    "type": "group_chat",
+                    "thread_id": result.thread.id,
+                    "title": title,
+                    "participants": result.participants_added,
+                })
+                logger.info(
+                    "AD-924: %s opened group chat %s (%d participants)",
+                    getattr(agent, "callsign", None) or agent.agent_type,
+                    result.thread.id, len(result.participants_added),
+                )
+            else:
+                actions.append({"type": "group_chat_suppressed", "reason": result.error})
+                logger.debug(
+                    "AD-924: group chat suppressed for %s: %s",
+                    getattr(agent, "id", "?"), result.error,
+                )
+        text = _GROUP_CHAT_PATTERN.sub("", text)
+        return text, actions
 
     async def extract_and_execute_dms(
         self, agent: Any, text: str,

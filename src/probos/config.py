@@ -4601,6 +4601,7 @@ class CommunicationsConfig(BaseModel):
     """Communications settings (AD-485)."""
     dm_min_rank: str = "ensign"  # Minimum rank to send DMs: ensign|lieutenant|commander|senior
     recreation_min_rank: str = "ensign"  # Minimum rank for game challenges: ensign|lieutenant|commander|senior
+    group_chat_min_rank: str = "commander"  # AD-924: min rank to open an ad-hoc group chat: ensign|lieutenant|commander|senior
 
 
 class WorkforceConfig(BaseModel):
