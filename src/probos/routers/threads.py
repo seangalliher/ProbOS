@@ -35,6 +35,84 @@ def _get_store(runtime: Any):
     return store
 
 
+async def _collect_task_inputs(runtime: Any, thread: Any) -> list[dict]:
+    """AD-926: assemble the read-only Input list for a task room.
+
+    Two sources, both scoped to a room whose ``thread.task_id`` is set:
+
+      1. Authoritative task-level inputs — the additive convention
+         ``WorkItem.metadata["input_attachments"] = [{content_hash, mime,
+         filename}]`` (``source="task"``). Population is deferred (AD-926
+         defines the contract; a future task-seed flow writes it).
+      2. Real-today — AD-916 message attachments carried on the room's
+         messages, ``metadata["attachments"] = [{content_hash, mime}]``
+         (``source="message"``).
+
+    Merged and de-duplicated by ``content_hash`` (task-level wins, then
+    message arrival order). ``size`` is best-effort from the
+    ``AttachmentStore``; a missing blob or absent store degrades to
+    ``size=None`` (Tier-2 log-and-degrade) and never raises.
+    """
+    task_id = getattr(thread, "task_id", None)
+    if not task_id:
+        return []  # not a task room — no inputs
+
+    ordered: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(ref: dict, source: str) -> None:
+        ch = (ref or {}).get("content_hash")
+        if not ch or ch in seen:
+            return
+        seen.add(ch)
+        ordered.append({
+            "content_hash": ch,
+            "mime": ref.get("mime") or "application/octet-stream",
+            "filename": ref.get("filename"),  # None for AD-916 message refs
+            "size": None,
+            "source": source,
+        })
+
+    # (1) authoritative task-level inputs
+    work_item_store = getattr(runtime, "work_item_store", None)
+    if work_item_store is not None:
+        try:
+            wi = await work_item_store.get_work_item(task_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.warning(
+                "AD-926: get_work_item(%s) failed; surfacing message "
+                "attachments only", task_id, exc_info=True,
+            )
+            wi = None
+        if wi is not None:
+            for ref in (getattr(wi, "metadata", {}) or {}).get("input_attachments", []) or []:
+                if isinstance(ref, dict):
+                    _add(ref, "task")
+
+    # (2) real-today: AD-916 message attachments in the room
+    store = _get_store(runtime)
+    for msg in store.list_messages(thread.id, limit=500):
+        for ref in (getattr(msg, "metadata", {}) or {}).get("attachments", []) or []:
+            if isinstance(ref, dict):
+                _add(ref, "message")
+
+    # best-effort size enrichment via the content-addressable store
+    attachment_store = getattr(runtime, "attachment_store", None)
+    if attachment_store is not None:
+        for entry in ordered:
+            try:
+                entry["size"] = await attachment_store.size(entry["content_hash"])
+            except FileNotFoundError:
+                entry["size"] = None  # ref present, bytes not stored yet
+            except Exception:  # pragma: no cover - defensive
+                logger.warning(
+                    "AD-926: size(%s) failed; leaving size=None",
+                    entry["content_hash"], exc_info=True,
+                )
+                entry["size"] = None
+    return ordered
+
+
 class CreateThreadRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     participants: list[str] = Field(default_factory=list)
@@ -306,6 +384,30 @@ async def append_message(
                 thread_id, exc_info=True,
             )
     return msg.to_dict()
+
+
+@router.get("/{thread_id}/inputs")
+async def list_thread_inputs(
+    thread_id: str, runtime: Any = Depends(get_runtime)
+) -> dict:
+    """AD-926: read-only Input folder for a task workspace room.
+
+    Returns the files attached to the room's task (the AD-916 message
+    attachments + the ``WorkItem.metadata["input_attachments"]``
+    convention), de-duplicated by ``content_hash``. A thread that is not
+    a task room (``task_id`` unset) returns an empty list. Bytes are
+    fetched via the existing ``GET /api/chat/attachments/{content_hash}``.
+    """
+    store = _get_store(runtime)
+    thread = store.get_thread(thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    inputs = await _collect_task_inputs(runtime, thread)
+    return {
+        "thread_id": thread_id,
+        "task_id": getattr(thread, "task_id", None),
+        "inputs": inputs,
+    }
 
 
 # AD-913: chat-thread participant management. Foundation for the

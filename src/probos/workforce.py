@@ -603,6 +603,11 @@ class WorkItem:
     required_capabilities: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # AD-926 convention (additive, no schema change): a task room's read-only
+    # Input folder reads ``metadata["input_attachments"] = [{content_hash,
+    # mime, filename}]`` via GET /api/threads/{thread_id}/inputs. Population is
+    # deferred (a future task-seed flow writes it — AD-926a); the key is absent
+    # by default and ``to_dict`` already serializes ``metadata`` verbatim.
     steps: list[dict[str, Any]] = field(default_factory=list)
     verification: dict[str, Any] = field(default_factory=dict)
     schedule: dict[str, Any] = field(default_factory=dict)
