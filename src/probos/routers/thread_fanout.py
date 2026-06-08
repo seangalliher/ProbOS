@@ -22,6 +22,7 @@ import re
 from typing import Any
 
 from probos.cognitive.chat_facilitator import ChatFacilitator, SpeakerSignals
+from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
 from probos.crew_profile import extract_all_leading_callsign_mentions
 from probos.crew_utils import is_crew_agent
@@ -310,6 +311,40 @@ async def group_chat_fanout(
             )
             return {"agent_id": agent_id, "callsign": callsign, "text": "(delivery failed)"}
         reply_text = str(result.result) if (result and result.result) else "(no response)"
+        # AD-933: run the channel-agnostic escalation subset on the raw reply
+        # so a group-chat turn can resolve an inline mesh read (AD-869),
+        # dispatch an [ACTION] (AD-745), parse a notebook (AD-911), extract
+        # artifacts (AD-797), or open a [CREATE_TASK] (AD-845) — the same
+        # post-LLM ladder the 1:1 path runs (AD-726), minus the 1:1-scoped
+        # steps (episodic/working-memory/divergence/emotion/games/avatar) that
+        # would mislabel a multi-agent turn. Only when a real reply came back
+        # AND the agent resolved (no agent -> can't escalate). Tier-2
+        # honest-degrade: any failure ships the raw reply_text unchanged.
+        if result and result.result and agent is not None:
+            try:
+                pipeline = DmReplyPipeline(DmReplyContext(
+                    runtime=runtime,
+                    agent=agent,
+                    agent_id=agent_id,
+                    callsign=callsign,
+                    req_message=captain_body,
+                    response_text=reply_text,
+                    has_image_attachment=bool(vision_messages),
+                    per_attachment=[],
+                    sanity_gate=sanity_gate,
+                    params=params,
+                    message_text=captain_body,
+                    sampling_state=None,
+                    avatar_event_bus=None,
+                    chat_thread_id=thread_id,
+                ))
+                await pipeline.run_escalation_only()
+                reply_text = pipeline.ctx.response_text or reply_text
+            except Exception:
+                logger.warning(
+                    "AD-933: escalation subset failed for thread=%s agent=%s; "
+                    "shipping raw reply", thread_id, agent_id, exc_info=True,
+                )
         try:
             store.append_message(
                 thread_id, author_id=agent_id, role="agent",
@@ -322,5 +357,9 @@ async def group_chat_fanout(
             )
         return {"agent_id": agent_id, "callsign": callsign, "text": reply_text}
 
+    # AD-933: resolve the DM sanity gate ONCE (DRY) before fan-out — step_4g
+    # ([CREATE_TASK]) early-returns without it, so every speaker shares the
+    # one runtime gate rather than re-reading it per agent.
+    sanity_gate = getattr(runtime, "dm_sanity_gate", None)
     replies = await asyncio.gather(*[_send_one(a) for a in speaking_order])
     return list(replies)

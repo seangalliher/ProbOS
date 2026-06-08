@@ -17,12 +17,17 @@ import inspect
 
 def test_bf296_step_4b_present_in_pipeline_tuple() -> None:
     """The new sub-step must be wired into the run() iteration tuple
-    between step_4_self_check_parse and step_5_episodic_store."""
+    between step_4_self_check_parse and step_5_episodic_store.
+
+    AD-933 extracted the 17-step tuple out of ``run()`` into
+    ``_full_steps()`` (the single source of truth ``run()`` now executes), so
+    the tuple — and this structural guard — live in ``_full_steps``.
+    """
     from probos.cognitive.dm import reply_pipeline as rp
 
-    src = inspect.getsource(rp.DmReplyPipeline.run)
+    src = inspect.getsource(rp.DmReplyPipeline._full_steps)
     assert "self.step_4b_dm_outbound_parse," in src, (
-        "BF-296: step_4b_dm_outbound_parse must appear in the run() tuple."
+        "BF-296: step_4b_dm_outbound_parse must appear in the _full_steps() tuple."
     )
     # Ordering: must come after self_check_parse and before episodic_store.
     sc_idx = src.find("self.step_4_self_check_parse,")

@@ -21,6 +21,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -128,7 +129,15 @@ class DmReplyPipeline:
         reply. Per-step guards inside the methods are preserved verbatim
         from the prior inline code; the top-level guard is belt-and-braces.
         """
-        for step in (
+        await self._run_steps(self._full_steps())
+
+    def _full_steps(self) -> tuple[Callable, ...]:
+        """AD-933: the full 17-step DM one-shot chain in load-bearing order,
+        the single source of truth executed by :meth:`run`. Ordering is
+        invariant (sanity gate before challenge/move parsers, self-check
+        before episodic store, divergence before ``mark_reply_emitted``,
+        emotion after divergence) and MUST stay byte-identical."""
+        return (
             self.step_1_sanity_gate_retry,
             self.step_2_challenge_parse,
             self.step_3_move_parse,
@@ -146,7 +155,42 @@ class DmReplyPipeline:
             self.step_7_divergence_check,
             self.step_8_mark_emitted,
             self.step_9_emotion_resolve,
-        ):
+        )
+
+    def _escalation_steps(self) -> tuple[Callable, ...]:
+        """AD-933: the channel-agnostic escalation subset reused by the
+        group-chat fan-out (``routers/thread_fanout.py:group_chat_fanout``).
+        Each step is a strict no-op for any reply lacking its marker, and the
+        markers are emitted only by specifically-taught agents, so the subset
+        is inherently bounded and safe outside the 1:1 path. Relative order is
+        preserved from :meth:`_full_steps` (4e -> 4i -> 4h -> 4f -> 4g).
+
+        Included: ``step_4e_action_dispatch`` (AD-745 ``[ACTION]``),
+        ``step_4i_notebook_parse`` (AD-911), ``step_4h_mesh_read_parse``
+        (AD-869 read-only mesh), ``step_4f_extract_artifacts`` (AD-797),
+        ``step_4g_create_task_parse`` (AD-845 ``[CREATE_TASK]``).
+
+        Excluded (1:1 semantics / mislabel risk): sanity-gate retry (1),
+        games (2/3), self-check (4), image-gen (4c), follow-up (4d),
+        outbound-DM (4b), episodic store (5 — hardcodes ``session_type:"1:1"``,
+        so firing it on a multi-agent group reply writes mislabeled episodes),
+        working memory (6 — records ``"Captain DM"``), divergence (7),
+        mark-emitted/avatar (8), emotion (9). Forward markers: AD-933a
+        (group-anchored episodic write), AD-933b (richer subset)."""
+        return (
+            self.step_4e_action_dispatch,
+            self.step_4i_notebook_parse,
+            self.step_4h_mesh_read_parse,
+            self.step_4f_extract_artifacts,
+            self.step_4g_create_task_parse,
+        )
+
+    async def _run_steps(self, steps: tuple[Callable, ...]) -> None:
+        """AD-933: run an ordered tuple of pipeline steps under the verbatim
+        AD-726 per-step Tier-2 guard — a runaway step is logged but never
+        blocks the reply. Shared by :meth:`run` (full chain) and
+        :meth:`run_escalation_only` (escalation subset)."""
+        for step in steps:
             try:
                 await step()
             except Exception:
@@ -154,6 +198,17 @@ class DmReplyPipeline:
                     "AD-726: pipeline step %s raised for agent=%s; continuing",
                     step.__name__, self.ctx.agent_id, exc_info=True,
                 )
+
+    async def run_escalation_only(self) -> None:
+        """AD-933: run ONLY the channel-agnostic escalation subset
+        (:meth:`_escalation_steps`) under the same per-step Tier-2 guard as
+        :meth:`run`. Reused by the group-chat fan-out so a group reply can
+        fire the escalation ladder ([ACTION] / notebook / mesh-read /
+        artifacts / [CREATE_TASK]) without the 1:1-scoped steps (episodic,
+        working memory, divergence, emotion, games, avatar) that would
+        mislabel a multi-agent turn. See :meth:`_escalation_steps` for the
+        full include/exclude rationale."""
+        await self._run_steps(self._escalation_steps())
 
     # --- step 1: DM sanity gate one-shot retry (AD-724-1) ---
     async def step_1_sanity_gate_retry(self) -> None:
