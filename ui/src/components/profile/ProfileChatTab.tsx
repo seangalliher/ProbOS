@@ -40,6 +40,9 @@ import { MeetingMicButton } from './MeetingMicButton';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
 import { useScreenStore } from '../../store/useScreenStore';
+// AD-929: unified workspace "Files" rail (Inputs + Outputs), gated to rooms.
+import { WorkspaceFilesRail } from '../workspace/WorkspaceFilesRail';
+import { isWorkspaceRoom } from '../workspace/isWorkspaceRoom';
 
 interface Props {
   agentId: string;
@@ -485,6 +488,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const meetingActive = useStore((s) =>
     !!(activeThreadId && (s.chatThreads.get(activeThreadId)?.metadata as Record<string, unknown> | undefined)?.meeting_active),
   );
+  // AD-929: workspace-room gate for the right-hand Files rail. Pure function
+  // over store data (task_id set OR >=2 crew participants) — no fetch. A 1:1
+  // DM shows no rail.
+  const workspaceThread = useStore((s) => (activeThreadId ? s.chatThreads.get(activeThreadId) : undefined));
+  const agentsMap = useStore((s) => s.agents);
+  const showWorkspaceFiles = !!activeThreadId && isWorkspaceRoom(workspaceThread, agentsMap);
   // AD-921: sequenced meeting voice. speakReplies self-gates on
   // meetingActive && voiceEnabled; speakingAgentId is the AD-923 seam and the
   // AD-922 echo gate (the meeting mic refuses to arm while it is non-null).
@@ -816,7 +825,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'row', height: '100%' }}>
+      {/* AD-929: chat column (primary). Wraps all existing children so the
+          conversation behavior is byte-identical; the Files rail is a sibling. */}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, height: '100%' }}>
       {/* AD-917: in-chat group controls (rename / participants / add). Renders
           nothing until a thread exists. Mounted above the message list. */}
       {activeThreadId && <GroupChatHeader threadId={activeThreadId} />}
@@ -1589,6 +1601,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           100% { transform: rotate(360deg); opacity: 0.55; }
         }
       `}</style>
+      </div>
+      {/* AD-929: Files rail (Inputs + Outputs) — only for workspace rooms. */}
+      {showWorkspaceFiles && activeThreadId && <WorkspaceFilesRail threadId={activeThreadId} />}
     </div>
   );
 }
