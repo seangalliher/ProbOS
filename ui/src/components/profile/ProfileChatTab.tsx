@@ -35,6 +35,8 @@ import type { ChatAttachment } from '../../store/types';
 import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
 import { MeetingView } from './MeetingView';
+import { useMeetingMic } from '../../audio/useMeetingMic';
+import { MeetingMicButton } from './MeetingMicButton';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
 import { useScreenStore } from '../../store/useScreenStore';
@@ -484,8 +486,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     !!(activeThreadId && (s.chatThreads.get(activeThreadId)?.metadata as Record<string, unknown> | undefined)?.meeting_active),
   );
   // AD-921: sequenced meeting voice. speakReplies self-gates on
-  // meetingActive && voiceEnabled; speakingAgentId is the AD-923 seam.
-  const { speakReplies: speakMeetingReplies } = useMeetingVoice({ meetingActive });
+  // meetingActive && voiceEnabled; speakingAgentId is the AD-923 seam and the
+  // AD-922 echo gate (the meeting mic refuses to arm while it is non-null).
+  const { speakReplies: speakMeetingReplies, speakingAgentId } = useMeetingVoice({ meetingActive });
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -718,6 +721,17 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     }
   }, [agentId, threadId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments, speakMeetingReplies]);
 
+  // AD-922: Captain push-to-talk for the meeting. Captures one VAD-bounded
+  // utterance via the existing offline STT and feeds the transcript to
+  // ``sendText`` -- which self-routes to the AD-914 group fan-out when the
+  // thread has >=2 crew (AD-917), so the voice path needs no new dispatch
+  // branch. Echo-gated off while any agent speaks (``speakingAgentId``).
+  const meetingMic = useMeetingMic({
+    meetingActive,
+    speaking: speakingAgentId != null,
+    submit: sendText,
+  });
+
   // BF-292: thin shim for the textarea Enter-key + send-button paths. Reads
   // current ``input`` at call time and forwards to sendText. The Enter-key
   // and form-submit handlers are synchronous reactions to user keystrokes
@@ -810,6 +824,20 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           the thread is in a meeting (metadata.meeting_active). The thread
           remains the transcript below. */}
       {activeThreadId && meetingActive && <MeetingView threadId={activeThreadId} />}
+      {/* AD-922: Captain push-to-talk. Part of the meeting surface — only
+          rendered in a meeting and when voice input is possible at all
+          (honest-degrade: otherwise the Captain types). Feeds sendText, which
+          self-routes to the group fan-out. */}
+      {activeThreadId && meetingActive && meetingMic.supported && (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0' }}>
+          <MeetingMicButton
+            capturing={meetingMic.capturing}
+            blocked={meetingMic.blocked}
+            speaking={speakingAgentId != null}
+            onToggle={meetingMic.toggleCapture}
+          />
+        </div>
+      )}
       {/* Message list */}
       <div style={{
         flex: 1,
