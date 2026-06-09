@@ -92,6 +92,16 @@ describe('AD-943 buildBridgeStations factory', () => {
     }
   });
 
+  it('AD-946: operations/engineering carry an onExpandLabel; the others are undefined', () => {
+    const stations = buildBridgeStations({ dmChannelCount: 0, kanbanCount: 0, totalUnread: 0 });
+    const byId = (id: string) => stations.find(s => s.id === id)!;
+    expect(byId('operations').onExpandLabel).toBe('Work Board');
+    expect(byId('engineering').onExpandLabel).toBe('System');
+    for (const id of ['communications', 'personnel', 'science', 'command'] as const) {
+      expect(byId(id).onExpandLabel).toBeUndefined();
+    }
+  });
+
   it('the descriptor can HOLD a future launch (AD-944 shape) and invoke it', () => {
     const stations = buildBridgeStations({ dmChannelCount: 0, kanbanCount: 0, totalUnread: 0 });
     const personnel = stations.find(s => s.id === 'personnel')!;

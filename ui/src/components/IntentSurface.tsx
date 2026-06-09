@@ -1,6 +1,6 @@
 /* Intent Surface — Conversation Anchor: "The Process Is Everything" */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import { useStore } from '../store/useStore';
@@ -22,6 +22,9 @@ import {
 import { WakeWordIndicator } from './WakeWordIndicator';
 import { soundEngine } from '../audio/soundEngine';
 import { BridgePanel } from './BridgePanel';
+import { buildBridgeStations } from './bridge/stations';
+import { buildPaletteCommands, matchPaletteCommands, type PaletteCommand } from './bridge/paletteCommands';
+import { CommandPalette } from './CommandPalette';
 import { ViewSwitcher } from './ViewSwitcher';
 import { deriveBridgeState } from './glass/ContextRibbon';
 import { Diamond, Check, XMark, StatusPending, DiamondOpen, Bullseye, ChevronDown, ChevronRight, Warning, Sparkle } from './icons/Glyphs';
@@ -66,6 +69,10 @@ export function IntentSurface() {
   const [pickerIndex, setPickerIndex] = useState(0);
   const agentsMap = useStore((s) => s.agents);
 
+  // AD-946: command palette (leading '>') state. Local to the host, like the @-picker.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteIndex, setPaletteIndex] = useState(0);
+
   // AD-720: image-paste attachments pending for the next send.
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [paperclipTooltipOpen, setPaperclipTooltipOpen] = useState(false);
@@ -100,6 +107,20 @@ export function IntentSurface() {
   const needsAttentionCount = agentTasks?.filter(t => t.requires_action).length ?? 0;
   const unreadCount = notifications?.filter(n => !n.acknowledged).length ?? 0;
   const badgeCount = needsAttentionCount + unreadCount;
+
+  // AD-946: the command palette derives its launches from the SAME station
+  // registry the Bridge renders (one source of truth, no hand-duplicated list).
+  const wardRoomDmChannels = useStore((s) => s.wardRoomDmChannels);
+  const missionControlTasks = useStore((s) => s.missionControlTasks);
+  const wardRoomUnread = useStore((s) => s.wardRoomUnread);
+  const paletteCommands = useMemo<PaletteCommand[]>(() => {
+    const totalUnread = Object.values(wardRoomUnread ?? {}).reduce((sum, n) => sum + n, 0);
+    return buildPaletteCommands(buildBridgeStations({
+      dmChannelCount: (wardRoomDmChannels ?? []).length,
+      kanbanCount: (missionControlTasks ?? []).length,
+      totalUnread,
+    }));
+  }, [wardRoomDmChannels, missionControlTasks, wardRoomUnread]);
 
   /* ── consume pending char from global keydown ── */
   useEffect(() => {
@@ -141,6 +162,9 @@ export function IntentSurface() {
       // the IntentSurface.
       const popover = document.querySelector('[data-testid="at-picker-popover"]');
       if (popover && popover.contains(target)) return;
+      // AD-946: clicks inside the command palette must not collapse the shell.
+      const palette = document.querySelector('[data-testid="command-palette"]');
+      if (palette && palette.contains(target)) return;
       setActive(false);
       setInput('');
     }
@@ -296,6 +320,16 @@ export function IntentSurface() {
     const text = input.trim();
     if (!text) return;
 
+    // AD-946: '>' = command palette. Run the best match (or no-op); never submit as chat.
+    if (text.startsWith('>')) {
+      const cmds = matchPaletteCommands(text.slice(1), paletteCommands);
+      if (cmds.length > 0) (cmds[paletteIndex] ?? cmds[0]).run();   // honor the highlighted row
+      setInput('');
+      setPaletteOpen(false);
+      setPaletteIndex(0);
+      return;
+    }
+
     // AD-720b: in-chat tool capability grant.
     // Format: `/grant <agent_id> <tool_id> <permission> [hours]`. Parsed client-side
     // and routed to /api/chat/tool-grant; the command is NOT sent as a chat message.
@@ -429,6 +463,16 @@ export function IntentSurface() {
     }
   }, [pickerOpen, pickerIndex]);
 
+  // AD-946: scroll the highlighted command palette row into view (HXI #4).
+  // jsdom lacks scrollIntoView, so guard the call (mirror the @-picker effect).
+  useEffect(() => {
+    if (!paletteOpen) return;
+    const el = document.querySelector(`[data-cmd-index="${paletteIndex}"]`);
+    if (el && typeof (el as HTMLElement).scrollIntoView === 'function') {
+      (el as HTMLElement).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [paletteOpen, paletteIndex]);
+
   /* ── Escape key ── */
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -440,6 +484,11 @@ export function IntentSurface() {
         _cancelCurrentCapture();
         return;
       }
+      // AD-946: Esc closes the command palette first (before collapsing).
+      if (paletteOpen) {
+        setPaletteOpen(false);
+        return;
+      }
       // AD-719: Esc on the input also closes the @-picker. Full keyboard
       // state machine (↑/↓/Tab/Enter/Esc) shipped in AD-719c below.
       if (pickerOpen) {
@@ -449,6 +498,13 @@ export function IntentSurface() {
       setActive(false);
       setInput('');
       inputRef.current?.blur();
+    }
+    // AD-946: command palette keyboard nav (leading '>'). Mirrors the @-picker
+    // and returns before the @-picker branch (the two modes are exclusive).
+    if (paletteOpen && paletteMatches.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setPaletteIndex((i) => (i + 1) % paletteMatches.length); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setPaletteIndex((i) => (i - 1 + paletteMatches.length) % paletteMatches.length); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); runPaletteCommand(paletteMatches[paletteIndex] ?? paletteMatches[0]); return; }
     }
     // AD-719c: Arrow keys cycle through picker matches; Tab confirms.
     if (pickerOpen && pickerMatches.length > 0) {
@@ -508,9 +564,22 @@ export function IntentSurface() {
       }).slice(0, 8)
     : [];
 
+  // AD-946: command palette matches (the '>' prefix is stripped before matching).
+  const paletteMatches: PaletteCommand[] = paletteOpen
+    ? matchPaletteCommands(input.slice(1), paletteCommands)
+    : [];
+
   // Detect "@<prefix>" at the caret tail (no whitespace in the prefix).
   function handleInputChange(value: string) {
     setInput(value);
+    // AD-946: a leading '>' enters command mode (exclusive with the @-picker).
+    if (value.startsWith('>')) {
+      setPaletteOpen(true);
+      setPaletteIndex(0);
+      setPickerOpen(false);
+      return;
+    }
+    if (paletteOpen) setPaletteOpen(false);
     const tail = value.split(/\s+/).pop() ?? '';
     if (tail.startsWith('@') && !/\s/.test(tail.slice(1))) {
       setPickerOpen(true);
@@ -536,6 +605,16 @@ export function IntentSurface() {
     setPickerOpen(false);
     setPickerPrefix('');
     setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  // AD-946: run a command palette launch (the registry's action.onInvoke or
+  // station.onExpand) and reset the palette. No-op on an undefined match.
+  function runPaletteCommand(cmd: PaletteCommand | undefined) {
+    if (!cmd) return;
+    cmd.run();
+    setInput('');
+    setPaletteOpen(false);
+    setPaletteIndex(0);
   }
 
   // Derive selected mentions from the leading @callsign run in the input.
@@ -2091,6 +2170,25 @@ export function IntentSurface() {
                 })(),
                 document.body,
               )}
+              {/* AD-946: command palette (leading '>') — portal-anchored above the
+                  input the same way as the @-picker, so it escapes the conversation
+                  container's overflow:hidden. */}
+              {paletteOpen && inputRef.current && createPortal(
+                (() => {
+                  const rect = inputRef.current!.getBoundingClientRect();
+                  return (
+                    <div style={{ position: 'fixed', bottom: window.innerHeight - rect.top + 4, left: rect.left, width: rect.width, zIndex: 1000 }}>
+                      <CommandPalette
+                        matches={paletteMatches}
+                        activeIndex={paletteIndex}
+                        onHover={setPaletteIndex}
+                        onRun={runPaletteCommand}
+                      />
+                    </div>
+                  );
+                })(),
+                document.body,
+              )}
               {/* AD-720: image-paste preview thumbnails */}
               {pendingAttachments.length > 0 && (
                 <div data-testid="attachment-preview-strip" style={{
@@ -2175,7 +2273,7 @@ export function IntentSurface() {
                 onChange={(e) => handleInputChange(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                onBlur={() => { setTimeout(() => setPickerOpen(false), 150); }}
+                onBlur={() => { setTimeout(() => { setPickerOpen(false); setPaletteOpen(false); }, 150); }}
                 placeholder="Ask ProbOS..."
                 style={{
                   flex: 1,

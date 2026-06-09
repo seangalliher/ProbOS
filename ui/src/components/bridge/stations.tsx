@@ -40,6 +40,7 @@ export interface CommandStation {
   defaultOpen: boolean;
   count?: number;            // live header count (e.g. dmChannels.length)
   onExpand?: () => void;     // primary launch (the section Expand affordance)
+  onExpandLabel?: string;    // AD-946: palette label for the onExpand launch (e.g. "Work Board")
   body?: () => ReactNode;    // inline body (migrated System/Comms/Work bodies)
   actions: StationAction[];  // discrete launches (empty until AD-944)
   config: StationConfig[];   // inline config surfaces
@@ -131,6 +132,7 @@ export function buildBridgeStations(ctx: {
       defaultOpen: false,
       count: ctx.kanbanCount,
       onExpand: () => useStore.setState({ mainViewer: 'work' }),
+      onExpandLabel: 'Work Board',
       body: () => <BridgeKanban />,
       actions: [],
       config: [],
@@ -142,6 +144,7 @@ export function buildBridgeStations(ctx: {
       defaultOpen: false,
       count: 0,
       onExpand: () => useStore.setState({ mainViewer: 'system' }),
+      onExpandLabel: 'System',
       body: () => <BridgeSystem />,
       actions: [],
       // AD-945: the four bottom-right environment toggles (sound / voice / wake-word /
