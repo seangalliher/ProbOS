@@ -308,7 +308,7 @@ async def test_group_mesh_read_marker_runs_without_crash(tmp_path):
     assert "Let me check." in rows["yeo1"]
 
 
-# ---------------- 6. run_escalation_only() runs ONLY the 5-step subset --------
+# ---------------- 6. run_escalation_only() runs ONLY the 6-step subset --------
 
 
 _ALL_STEPS = (
@@ -332,6 +332,9 @@ _ALL_STEPS = (
 )
 
 _ESCALATION_SUBSET = (
+    # AD-933b: step_4c_image_gen_parse added to the channel-agnostic subset
+    # (run()-order: 4c precedes 4e), so the group fan-out can generate an image.
+    "step_4c_image_gen_parse",
     "step_4e_action_dispatch",
     "step_4i_notebook_parse",
     "step_4h_mesh_read_parse",
@@ -385,7 +388,7 @@ async def test_run_escalation_only_invokes_only_the_subset():
 
     await pipeline.run_escalation_only()
 
-    # Exactly the 5-step subset, in run()-order; none of the other 12 fired.
+    # AD-933b: exactly the 6-step subset, in run()-order; none of the other 11 fired.
     assert recorded == list(_ESCALATION_SUBSET)
     excluded = set(_ALL_STEPS) - set(_ESCALATION_SUBSET)
     assert excluded.isdisjoint(recorded)

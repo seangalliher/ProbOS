@@ -163,21 +163,24 @@ class DmReplyPipeline:
         Each step is a strict no-op for any reply lacking its marker, and the
         markers are emitted only by specifically-taught agents, so the subset
         is inherently bounded and safe outside the 1:1 path. Relative order is
-        preserved from :meth:`_full_steps` (4e -> 4i -> 4h -> 4f -> 4g).
+        preserved from :meth:`_full_steps` (4c -> 4e -> 4i -> 4h -> 4f -> 4g).
 
-        Included: ``step_4e_action_dispatch`` (AD-745 ``[ACTION]``),
+        Included: ``step_4c_image_gen_parse`` (AD-730-3 ``[GEN_IMAGE]``, added
+        AD-933b), ``step_4e_action_dispatch`` (AD-745 ``[ACTION]``),
         ``step_4i_notebook_parse`` (AD-911), ``step_4h_mesh_read_parse``
         (AD-869 read-only mesh), ``step_4f_extract_artifacts`` (AD-797),
         ``step_4g_create_task_parse`` (AD-845 ``[CREATE_TASK]``).
 
         Excluded (1:1 semantics / mislabel risk): sanity-gate retry (1),
-        games (2/3), self-check (4), image-gen (4c), follow-up (4d),
-        outbound-DM (4b), episodic store (5 — hardcodes ``session_type:"1:1"``,
-        so firing it on a multi-agent group reply writes mislabeled episodes),
-        working memory (6 — records ``"Captain DM"``), divergence (7),
-        mark-emitted/avatar (8), emotion (9). Forward markers: AD-933a
-        (group-anchored episodic write), AD-933b (richer subset)."""
+        games (2/3), self-check (4), follow-up (4d), outbound-DM (4b),
+        episodic store (5 — hardcodes ``session_type:"1:1"``, so firing it on a
+        multi-agent group reply writes mislabeled episodes), working memory
+        (6 — records ``"Captain DM"``), divergence (7), mark-emitted/avatar
+        (8), emotion (9). Forward marker: AD-933b-2 (``step_4d_follow_up``,
+        whose ``conversation_pacing_scheduler`` re-injects a synthesized
+        user-turn — an ambiguous target in a multi-agent room)."""
         return (
+            self.step_4c_image_gen_parse,  # AD-933b (AD-730-3 [GEN_IMAGE])
             self.step_4e_action_dispatch,
             self.step_4i_notebook_parse,
             self.step_4h_mesh_read_parse,

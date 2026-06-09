@@ -314,6 +314,10 @@ async def group_chat_fanout(
             )
             return {"agent_id": agent_id, "callsign": callsign, "text": "(delivery failed)"}
         reply_text = str(result.result) if (result and result.result) else "(no response)"
+        # AD-933b: SHA refs of any image step_4c generates below. Initialized
+        # here so it is always defined for the persist block even when the
+        # escalation subset is skipped (no reply / no agent) or raises.
+        generated_ids: list[str] = []
         # AD-933: run the channel-agnostic escalation subset on the raw reply
         # so a group-chat turn can resolve an inline mesh read (AD-869),
         # dispatch an [ACTION] (AD-745), parse a notebook (AD-911), extract
@@ -343,15 +347,27 @@ async def group_chat_fanout(
                 ))
                 await pipeline.run_escalation_only()
                 reply_text = pipeline.ctx.response_text or reply_text
+                # AD-933b: surface SHA refs of any [GEN_IMAGE] image the
+                # escalation subset (step_4c, AD-730-3) generated for this
+                # group turn, read from the SAME ctx the escalation just ran.
+                # [] when no image was generated; persisted below (AD-916 ref
+                # carriage) only when non-empty.
+                generated_ids = list(pipeline.ctx.generated_attachment_ids or [])
             except Exception:
                 logger.warning(
                     "AD-933: escalation subset failed for thread=%s agent=%s; "
                     "shipping raw reply", thread_id, agent_id, exc_info=True,
                 )
         try:
+            # AD-933b: attach the generated-image refs only when the
+            # escalation produced any; an empty/failed escalation leaves the
+            # metadata byte-identical to the AD-914 baseline.
+            metadata: dict[str, Any] = {"intent_id": intent.id, "fanout": "ad914"}
+            if generated_ids:
+                metadata["generated_attachment_ids"] = generated_ids
             store.append_message(
                 thread_id, author_id=agent_id, role="agent",
-                body=reply_text, metadata={"intent_id": intent.id, "fanout": "ad914"},
+                body=reply_text, metadata=metadata,
             )
         except Exception:
             logger.warning(
