@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight, Expand, Close } from './icons/Glyphs';
 import { TaskCard } from './bridge/BridgeCards';
 import { NotificationCard } from './bridge/BridgeNotifications';
 import { BridgeShutdown } from './bridge/BridgeSystem';
-import { buildBridgeStations, isPopulated, type StationId } from './bridge/stations';
+import { buildBridgeStations, isPopulated, type StationId, type StationAction } from './bridge/stations';
 
 /* ── Collapsible Section ── */
 function BridgeSection({
@@ -64,12 +64,51 @@ function BridgeSection({
   );
 }
 
+/* ── Station launch row (AD-944) — a discrete "open destination" item migrated
+   from the retired top toolbar. Stroke-SVG glyph, uppercase mono, optional amber
+   unread pill; NO emoji (HXI #3). data-testid mirrors the old toolbar testIds so
+   existing specs keep resolving. ── */
+function StationActionRow({ action, accent }: { action: StationAction; accent: string }) {
+  return (
+    <div
+      data-testid={action.id}
+      onClick={action.onInvoke}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '5px 6px',
+        cursor: 'pointer',
+        userSelect: 'none' as const,
+        borderRadius: 4,
+      }}
+    >
+      <span style={{ color: '#666' }}><ChevronRight size={8} /></span>
+      <span style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: 1.5,
+        textTransform: 'uppercase' as const, color: accent,
+      }}>
+        {action.label}
+      </span>
+      {typeof action.count === 'number' && action.count > 0 && (
+        <span style={{
+          marginLeft: 'auto',
+          background: '#f0b060', color: '#0a0a12',
+          borderRadius: 8, padding: '1px 6px', fontSize: 9, fontWeight: 700,
+        }}>{action.count}</span>
+      )}
+    </div>
+  );
+}
+
 export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const agentTasks = useStore(s => s.agentTasks);
   const notifications = useStore(s => s.notifications);
   const missionControlTasks = useStore(s => s.missionControlTasks);
   const dmChannels = useStore(s => s.wardRoomDmChannels);
   const refreshDms = useStore(s => s.refreshWardRoomDmChannels);
+  const wardRoomUnread = useStore(s => s.wardRoomUnread);
+  const totalUnread = Object.values(wardRoomUnread ?? {}).reduce((sum, n) => sum + n, 0);
 
   useEffect(() => { refreshDms(); }, [refreshDms]);
 
@@ -178,6 +217,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
         {buildBridgeStations({
           dmChannelCount: dmChannels.length,
           kanbanCount: kanbanTasks.length,
+          totalUnread,
         })
           .filter(isPopulated)
           .map(st => (
@@ -190,6 +230,9 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
               accentColor={st.accent}
               onExpand={st.onExpand}
             >
+              {st.actions.map(a => (
+                <StationActionRow key={a.id} action={a} accent={st.accent} />
+              ))}
               {st.body?.()}
               {st.config.map(c => (
                 <div key={c.id}>{c.render()}</div>

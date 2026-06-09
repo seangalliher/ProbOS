@@ -4,7 +4,7 @@
 // boundary), mirroring ChatsPanel.drag.test.tsx, and stubs global.fetch to a
 // resolved empty JSON so the on-mount refreshDms honest-degrades in jsdom.
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import {
   STATION_ORDER,
   STATION_META,
@@ -26,6 +26,8 @@ afterEach(() => {
     missionControlTasks: null,
     agentTasks: null,
     notifications: null,
+    wardRoomUnread: {},
+    chatsOpen: false,
   });
   vi.unstubAllGlobals();
 });
@@ -49,7 +51,7 @@ describe('AD-943 station taxonomy (STATION_ORDER / STATION_META)', () => {
 
 describe('AD-943 buildBridgeStations factory', () => {
   it('returns the 6 stations in canonical order with the migrated bodies/config', () => {
-    const stations = buildBridgeStations({ dmChannelCount: 4, kanbanCount: 7 });
+    const stations = buildBridgeStations({ dmChannelCount: 4, kanbanCount: 7, totalUnread: 3 });
     expect(stations.map(s => s.id)).toEqual(STATION_ORDER);
 
     const comms = stations.find(s => s.id === 'communications')!;
@@ -57,6 +59,10 @@ describe('AD-943 buildBridgeStations factory', () => {
     expect(typeof comms.onExpand).toBe('function');
     expect(comms.body).toBeTruthy();
     expect(comms.config.map(c => c.id)).toContain('comms-admin');
+    // AD-944: the two migrated communications launches; Ward Room carries totalUnread.
+    expect(comms.actions.map(a => a.id)).toEqual(['ward-room-action', 'chats-toggle']);
+    const wardRoom = comms.actions.find(a => a.id === 'ward-room-action')!;
+    expect(wardRoom.count).toBe(3);
 
     const operations = stations.find(s => s.id === 'operations')!;
     expect(operations.count).toBe(7);
@@ -74,19 +80,20 @@ describe('AD-943 buildBridgeStations factory', () => {
     }
   });
 
-  it('personnel/science/command are empty modelled placeholders (not populated)', () => {
-    const stations = buildBridgeStations({ dmChannelCount: 0, kanbanCount: 0 });
+  it('AD-944: personnel/science/command are now populated with the migrated launches', () => {
+    const stations = buildBridgeStations({ dmChannelCount: 0, kanbanCount: 0, totalUnread: 0 });
+    const ids = (id: string) =>
+      stations.find(s => s.id === id)!.actions.map(a => a.id);
+    expect(ids('personnel')).toEqual(['crew-action', 'personnel-toggle', 'behavioral-metrics-toggle']);
+    expect(ids('science')).toEqual(['notebooks-toggle', 'knowledge-browser-toggle', 'spatial-explorer-toggle']);
+    expect(ids('command')).toEqual(['topnav-settings']);
     for (const id of ['personnel', 'science', 'command'] as const) {
-      const st = stations.find(s => s.id === id)!;
-      expect(st.actions).toEqual([]);
-      expect(st.config).toEqual([]);
-      expect(st.body).toBeUndefined();
-      expect(isPopulated(st)).toBe(false);
+      expect(isPopulated(stations.find(s => s.id === id)!)).toBe(true);
     }
   });
 
   it('the descriptor can HOLD a future launch (AD-944 shape) and invoke it', () => {
-    const stations = buildBridgeStations({ dmChannelCount: 0, kanbanCount: 0 });
+    const stations = buildBridgeStations({ dmChannelCount: 0, kanbanCount: 0, totalUnread: 0 });
     const personnel = stations.find(s => s.id === 'personnel')!;
     let fired = false;
     const action: StationAction = {
@@ -94,10 +101,10 @@ describe('AD-943 buildBridgeStations factory', () => {
       label: 'Crew Manifest',
       onInvoke: () => { fired = true; },
     };
+    const before = personnel.actions.length;
     personnel.actions.push(action);
-    // an action makes the placeholder populated, and the slot is callable
     expect(isPopulated(personnel)).toBe(true);
-    personnel.actions[0].onInvoke();
+    personnel.actions[before].onInvoke();   // invoke the pushed action, not the migrated crew launch
     expect(fired).toBe(true);
   });
 });
@@ -143,6 +150,50 @@ describe('AD-943 BridgePanel renders stations + activity feed (real store, BF-28
 
     // the Shutdown footer survives the migration
     expect(screen.getByText(/SHUTDOWN/i)).toBeTruthy();
+
+    // HXI #3 — no emoji anywhere in the rendered surface
+    expect(document.body.textContent || '').not.toMatch(EMOJI);
+  });
+});
+
+describe('AD-944 BridgePanel renders the migrated toolbar launches as station rows (real store, BF-287)', () => {
+  it('renders personnel/science/command stations, resolves the migrated launch testIds, flips a sync flag, no emoji', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => [] }));
+    useStore.setState({
+      wardRoomDmChannels: [],
+      missionControlTasks: [],
+      agentTasks: [],
+      notifications: [],
+      wardRoomUnread: {},
+      chatsOpen: false,
+    });
+
+    const { container } = render(<BridgePanel open={true} onClose={() => {}} />);
+    // Flush the on-mount refreshDms fetch (resolves to []) within act.
+    await screen.findByText(/SHUTDOWN/i);
+
+    // the three placeholders AD-943 hid are now populated → they render
+    expect(screen.getByText(/Personnel/i)).toBeTruthy();
+    expect(screen.getByText(/Science/i)).toBeTruthy();
+    expect(screen.getByText(/Command/i)).toBeTruthy();
+    expect(container.querySelector('[data-station="personnel"]')).toBeTruthy();
+
+    // BridgeSection renders children only when expanded — click each header first,
+    // then the migrated launch testIds resolve on the station rows.
+    fireEvent.click(screen.getByText(/Personnel/i));
+    expect(screen.getByTestId('behavioral-metrics-toggle')).toBeTruthy();
+
+    fireEvent.click(screen.getByText(/Science/i));
+    expect(screen.getByTestId('spatial-explorer-toggle')).toBeTruthy();
+
+    fireEvent.click(screen.getByText(/Command/i));
+    expect(screen.getByTestId('topnav-settings')).toBeTruthy();
+
+    // invoking a SYNC launch flips its store flag deterministically (no await)
+    fireEvent.click(screen.getByText(/Communications/i));
+    expect(screen.getByTestId('chats-toggle')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('chats-toggle'));
+    expect(useStore.getState().chatsOpen).toBe(true);
 
     // HXI #3 — no emoji anywhere in the rendered surface
     expect(document.body.textContent || '').not.toMatch(EMOJI);

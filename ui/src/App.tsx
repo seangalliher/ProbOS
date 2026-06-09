@@ -32,136 +32,9 @@ import CameraPreviewPanel from './components/perception/CameraPreviewPanel';
 import { stopCameraStream } from './hooks/useCameraStream';
 import { startVoiceActivity, stopVoiceActivity } from './audio/voiceActivity';
 
-// ── Top navigation ───────────────────────────────────────────────
-// One flex container instead of 6 abs-positioned toggles. Items
-// self-arrange so labels can grow without colliding. Visual hairline
-// separators group items by purpose (people / knowledge / metrics).
-
-interface NavButtonProps {
-  label: string;
-  active: boolean;
-  onOpen: () => void;
-  badge?: number;
-  testId?: string;
-}
-
-function NavButton({ label, active, onOpen, badge, testId }: NavButtonProps) {
-  if (active) return null;
-  return (
-    <div
-      onClick={onOpen}
-      data-testid={testId}
-      style={{
-        padding: '6px 12px',
-        background: 'rgba(10, 10, 18, 0.75)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
-        border: '1px solid rgba(240, 176, 96, 0.15)',
-        borderRadius: 6,
-        cursor: 'pointer',
-        fontSize: 10,
-        fontWeight: 700,
-        letterSpacing: 1.5,
-        fontFamily: "'JetBrains Mono', monospace",
-        color: '#8888a0',
-        userSelect: 'none' as const,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        whiteSpace: 'nowrap' as const,
-      }}
-    >
-      {label}
-      {typeof badge === 'number' && badge > 0 && (
-        <span style={{
-          background: '#f0b060',
-          color: '#0a0a12',
-          borderRadius: 8,
-          padding: '1px 6px',
-          fontSize: 9,
-          fontWeight: 700,
-        }}>{badge}</span>
-      )}
-    </div>
-  );
-}
-
-function NavSeparator() {
-  return (
-    <div style={{
-      width: 1,
-      height: 20,
-      background: 'rgba(240, 176, 96, 0.12)',
-      margin: '0 2px',
-      alignSelf: 'center',
-    }} />
-  );
-}
-
-function TopNav() {
-  const wardRoomOpen = useStore(s => s.wardRoomOpen);
-  const openWardRoom = useStore(s => s.openWardRoom);
-  const wardRoomUnread = useStore(s => s.wardRoomUnread);
-  const totalUnread = Object.values(wardRoomUnread).reduce((sum, n) => sum + n, 0);
-
-  const crewOpen = useStore(s => s.crewManifestOpen);
-  const openCrew = useStore(s => s.openCrewManifest);
-
-  const personnelOpen = useStore(s => s.personnelConsoleOpen);
-  const openPersonnel = useStore(s => s.openPersonnelConsole);
-
-  const notebooksOpen = useStore(s => s.notebooksOpen);
-  const openNotebooks = useStore(s => s.openNotebooks);
-
-  const chatsOpen = useStore(s => s.chatsOpen);
-  const openChats = useStore(s => s.openChats);
-
-  const recordsOpen = useStore(s => s.knowledgeBrowserOpen);
-  const openRecords = useStore(s => s.openKnowledgeBrowser);
-
-  const explorerOpen = useStore(s => s.spatialExplorerOpen);
-  const openExplorer = useStore(s => s.openSpatialExplorer);
-
-  const metricsOpen = useStore(s => s.behavioralMetricsOpen);
-  const openMetrics = useStore(s => s.openBehavioralMetrics);
-
-  const settingsOpen = useSettingsStore(s => s.open);
-  const openSettings = useSettingsStore(s => s.openSettings);
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 12,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: 25,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-      }}
-      role="toolbar"
-      aria-label="HXI panels"
-    >
-      {/* People */}
-      <NavButton label="WARD ROOM" active={wardRoomOpen} onOpen={openWardRoom} badge={totalUnread} />
-      <NavButton label="CREW" active={crewOpen} onOpen={openCrew} />
-      <NavButton label="PERSONNEL" active={personnelOpen} onOpen={openPersonnel} testId="personnel-toggle" />
-      <NavButton label="CHATS" active={chatsOpen} onOpen={openChats} testId="chats-toggle" />
-      <NavSeparator />
-      {/* Knowledge */}
-      <NavButton label="NOTEBOOKS" active={notebooksOpen} onOpen={openNotebooks} testId="notebooks-toggle" />
-      <NavButton label="RECORDS" active={recordsOpen} onOpen={() => { void openRecords(); }} testId="knowledge-browser-toggle" />
-      <NavButton label="EXPLORER" active={explorerOpen} onOpen={openExplorer} testId="spatial-explorer-toggle" />
-      <NavSeparator />
-      {/* Diagnostics */}
-      <NavButton label="METRICS" active={metricsOpen} onOpen={openMetrics} testId="behavioral-metrics-toggle" />
-      <NavButton label="SETTINGS" active={settingsOpen} onOpen={() => { void openSettings(); }} testId="topnav-settings" />
-      {/* AD-697-1: commercial overlay badge — invisible when no overlay loaded */}
-      <CommercialOverlayBadge />
-    </div>
-  );
-}
+// AD-944: the top-center "HXI panels" toolbar was retired — its nine launches
+// now live in the Bridge command stations (communications / personnel / science /
+// command). See ui/src/components/bridge/stations.tsx.
 
 export default function App() {
   useWebSocket();
@@ -238,7 +111,12 @@ export default function App() {
       <SettingsPanel />
       <CameraLiveIndicator />
       <CameraPreviewPanel />
-      <TopNav />
+      {/* AD-944: the commercial-overlay status badge outlived the retired toolbar.
+          It is invisible in the default OSS build (renders null when no overlay is
+          loaded) but must stay mounted. Re-homed to the vacated top-left band. */}
+      <div style={{ position: 'fixed', top: 12, left: 12, zIndex: 25 }}>
+        <CommercialOverlayBadge />
+      </div>
       <WelcomeOverlay />
     </div>
   );

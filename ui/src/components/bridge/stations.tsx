@@ -5,6 +5,7 @@
  * wave fills. NOT an agent surface (AD-398). Deep visual pass = AD-943a. */
 import type { ReactNode } from 'react';
 import { useStore } from '../../store/useStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
 import { BridgeSystem, BridgeThreads } from './BridgeSystem';
 import { BridgeKanban } from './BridgeKanban';
 import { BridgeCommunications } from './BridgeCommunications';
@@ -66,6 +67,7 @@ export const STATION_ORDER: StationId[] = [
 export function buildBridgeStations(ctx: {
   dmChannelCount: number;
   kanbanCount: number;
+  totalUnread: number;
 }): CommandStation[] {
   const m = STATION_META;
   return [
@@ -82,7 +84,13 @@ export function buildBridgeStations(ctx: {
           <BridgeThreads />
         </div>
       ),
-      actions: [],
+      actions: [
+        // The Ward Room launch carries the live unread badge the header Expand cannot.
+        { id: 'ward-room-action', label: 'Ward Room', count: ctx.totalUnread,
+          onInvoke: () => { void useStore.getState().openWardRoom(); } },
+        { id: 'chats-toggle', label: 'Chats',
+          onInvoke: () => useStore.getState().openChats() },
+      ],
       config: [
         { id: 'comms-admin', label: 'Communications', render: () => <BridgeCommunications /> },
       ],
@@ -90,12 +98,30 @@ export function buildBridgeStations(ctx: {
     {
       id: 'personnel',
       title: m.personnel.title, accent: m.personnel.accent,
-      defaultOpen: false, actions: [], config: [],
+      defaultOpen: false,
+      actions: [
+        { id: 'crew-action', label: 'Crew',
+          onInvoke: () => { void useStore.getState().openCrewManifest(); } },
+        { id: 'personnel-toggle', label: 'Personnel',
+          onInvoke: () => useStore.getState().openPersonnelConsole() },
+        { id: 'behavioral-metrics-toggle', label: 'Metrics',
+          onInvoke: () => { void useStore.getState().openBehavioralMetrics(); } },
+      ],
+      config: [],
     },
     {
       id: 'science',
       title: m.science.title, accent: m.science.accent,
-      defaultOpen: false, actions: [], config: [],
+      defaultOpen: false,
+      actions: [
+        { id: 'notebooks-toggle', label: 'Notebooks',
+          onInvoke: () => { void useStore.getState().openNotebooks(); } },
+        { id: 'knowledge-browser-toggle', label: 'Records',
+          onInvoke: () => { void useStore.getState().openKnowledgeBrowser(); } },
+        { id: 'spatial-explorer-toggle', label: 'Explorer',
+          onInvoke: () => useStore.getState().openSpatialExplorer() },
+      ],
+      config: [],
     },
     {
       id: 'operations',
@@ -122,7 +148,12 @@ export function buildBridgeStations(ctx: {
     {
       id: 'command',
       title: m.command.title, accent: m.command.accent,
-      defaultOpen: false, actions: [], config: [],
+      defaultOpen: false,
+      actions: [
+        { id: 'topnav-settings', label: 'Settings',
+          onInvoke: () => { void useSettingsStore.getState().openSettings(); } },
+      ],
+      config: [],
     },
   ];
 }
