@@ -60,6 +60,10 @@ data/attachments/*
 node_modules/
 ui/dist/
 ui/coverage/
+# AD-941: Playwright e2e artifacts (browser binaries live under node_modules).
+ui/test-results/
+ui/playwright-report/
+ui/.playwright/
 
 # Desktop (AD-759 Electron host build artifacts)
 desktop/out/
