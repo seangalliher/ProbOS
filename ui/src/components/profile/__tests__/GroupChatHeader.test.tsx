@@ -13,6 +13,8 @@ vi.mock('../../sidebar/threadApi', () => ({
   patchThread: vi.fn(),
   addParticipant: vi.fn(),
   removeParticipant: vi.fn(),
+  // AD-937: NewChatModal (opened by the 1:1 add control) imports createThread.
+  createThread: vi.fn(),
 }));
 
 import { patchThread, addParticipant, removeParticipant } from '../../sidebar/threadApi';
@@ -108,30 +110,47 @@ describe('AD-917 GroupChatHeader', () => {
     expect(patchThread).not.toHaveBeenCalled();
   });
 
-  it('add-participant: opening the popover and selecting an agent POSTs and updates the strip', async () => {
+  it('add-participant on a GROUP (>=2 crew): popover -> addParticipant + updates the strip', async () => {
     seed(
-      mkThread({ id: 't1', participants: ['captain', 'a1'] }),
-      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Lume' })],
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'] }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Lume' }), mkAgent({ id: 'a3', callsign: 'Rix' })],
     );
-    const updated = mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], last_active_at: 1 });
+    const updated = mkThread({ id: 't1', participants: ['captain', 'a1', 'a2', 'a3'], last_active_at: 1 });
     vi.mocked(addParticipant).mockResolvedValue(updated);
     render(<GroupChatHeader threadId="t1" />);
 
     expect(
       screen.getByTestId('participant-strip').querySelectorAll('[data-testid="agent-avatar-badge"]'),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
 
     fireEvent.click(screen.getByTestId('add-participant-button'));
     const rows = screen.getAllByTestId('add-participant-row');
-    expect(rows).toHaveLength(1); // a1 already a participant -> only a2 offered
+    expect(rows).toHaveLength(1); // a1,a2 already participants -> only a3 offered
     fireEvent.click(rows[0]);
 
-    await waitFor(() => expect(addParticipant).toHaveBeenCalledWith('t1', 'a2'));
+    await waitFor(() => expect(addParticipant).toHaveBeenCalledWith('t1', 'a3'));
     await waitFor(() =>
       expect(
         screen.getByTestId('participant-strip').querySelectorAll('[data-testid="agent-avatar-badge"]'),
-      ).toHaveLength(2),
+      ).toHaveLength(3),
     );
+  });
+
+  it('AD-937: add-participant on a 1:1 (<=1 crew) opens the SEEDED picker, does NOT mutate', () => {
+    seed(
+      mkThread({ id: 't1', participants: ['captain', 'a1'] }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Lume' })],
+    );
+    render(<GroupChatHeader threadId="t1" />);
+    // 1 crew -> the add control opens the NewChatModal seeded with the host,
+    // NOT the inline add-participant @-popover (which would mutate the 1:1).
+    expect(screen.queryByTestId('new-chat-modal')).toBeNull();
+    fireEvent.click(screen.getByTestId('add-participant-button'));
+    // The seeded NewChatModal opens (it contains its own multi-select picker);
+    // the inline mutate path (addParticipant) is never taken.
+    expect(screen.getByTestId('new-chat-modal')).toBeTruthy();
+    expect(screen.getByTestId('new-chat-seed-a1')).toBeTruthy();
+    expect(addParticipant).not.toHaveBeenCalled();
   });
 
   it('remove-participant: hovering reveals the remove control and clicking it DELETEs + updates the strip', async () => {

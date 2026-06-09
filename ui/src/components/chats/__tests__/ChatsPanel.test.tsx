@@ -2,8 +2,8 @@
 // GroupChatListPanel test). Mocks the threadApi list/participant wrappers and
 // seeds the REAL store (agents + the chatsOpen flag) so the isChat filter
 // (1:1 + group, task rooms excluded), agent-created badge, avatars, Join
-// (addParticipant 'captain'), and the per-host open-on-click (setThreadForAgent
-// + openAgentProfile) are exercised end-to-end through the store — BF-287
+// (addParticipant 'captain'), and the per-host open-on-click (AD-937
+// openGroupChatThread override) are exercised end-to-end through the store — BF-287
 // real-fixture style, no MagicMock at the store boundary. Includes the HXI
 // no-emoji guard. Test #1 FLIPS the AD-919 contract: 1:1s are now INCLUDED.
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -87,6 +87,7 @@ async function renderOpen(threads: AD791aChatThreadView[] = ALL, agents: Agent[]
     chatsOpen: true,
     threadIdByAgent: new Map(),
     activeProfileAgent: null,
+    activeProfileThreadId: null,
   });
   const r = render(<ChatsPanel />);
   // Wait for the on-open fetch to populate the list (g1 is always a chat).
@@ -101,6 +102,7 @@ afterEach(() => {
     chatsOpen: false,
     threadIdByAgent: new Map(),
     activeProfileAgent: null,
+    activeProfileThreadId: null,
   });
   vi.clearAllMocks();
 });
@@ -166,20 +168,34 @@ describe('AD-931 ChatsPanel', () => {
     expect(screen.queryByTestId('chat-join-g4')).toBeNull();
   });
 
-  it('clicking a group row opens the chat in the first crew host', async () => {
+  it('clicking a group row opens the chat in the first crew host via the AD-937 override', async () => {
     await renderOpen();
     fireEvent.click(screen.getByTestId('chat-row-g1'));
-    // Open-on-click routes via threadIdByAgent + activeProfileAgent (AD-917),
-    // NOT the store top-level activeThreadId. Host = first crew participant.
-    expect(useStore.getState().threadIdByAgent.get('mccoy')).toBe('g1');
+    // AD-937: open-on-click addresses the chat via the group override
+    // (activeProfileThreadId), NOT the host's single threadIdByAgent 1:1 slot.
+    expect(useStore.getState().activeProfileThreadId).toBe('g1');
     expect(useStore.getState().activeProfileAgent).toBe('mccoy');
+    expect(useStore.getState().threadIdByAgent.get('mccoy')).toBeUndefined();
   });
 
-  it('clicking a 1:1 row opens the chat in its single crew host', async () => {
+  it('clicking a 1:1 row opens the chat in its single crew host via the AD-937 override', async () => {
     await renderOpen();
     fireEvent.click(screen.getByTestId('chat-row-g3'));
-    expect(useStore.getState().threadIdByAgent.get('mccoy')).toBe('g3');
+    expect(useStore.getState().activeProfileThreadId).toBe('g3');
     expect(useStore.getState().activeProfileAgent).toBe('mccoy');
+    expect(useStore.getState().threadIdByAgent.get('mccoy')).toBeUndefined();
+  });
+
+  it('AD-937: after opening a group, reopening the host profile clears the override (1:1 reachable)', async () => {
+    await renderOpen();
+    // Bind mccoy's 1:1 default first (simulating a prior 1:1 send round-trip).
+    useStore.getState().setThreadForAgent('mccoy', 'mccoy-1to1');
+    fireEvent.click(screen.getByTestId('chat-row-g1')); // open the group g1
+    expect(useStore.getState().activeProfileThreadId).toBe('g1');
+    // Reopen mccoy from the roster -> the override clears, the 1:1 slot intact.
+    useStore.getState().openAgentProfile('mccoy');
+    expect(useStore.getState().activeProfileThreadId).toBeNull();
+    expect(useStore.getState().threadIdByAgent.get('mccoy')).toBe('mccoy-1to1');
   });
 
   it('sorts un-joined agent-created chats to the top (HXI #9)', async () => {

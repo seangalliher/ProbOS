@@ -63,8 +63,9 @@ export default function ChatsPanel() {
   const open = useStore((s) => s.chatsOpen);
   const close = useStore((s) => s.closeChats);
   const agents = useStore((s) => s.agents);
-  const setThreadForAgent = useStore((s) => s.setThreadForAgent);
-  const openAgentProfile = useStore((s) => s.openAgentProfile);
+  // AD-937: open a chat row via the group override so a group never clobbers
+  // the host's single threadIdByAgent 1:1 slot (the 1:1 stays reachable).
+  const openGroupChatThread = useStore((s) => s.openGroupChatThread);
 
   const [threads, setThreads] = useState<AD791aChatThreadView[]>([]);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -96,13 +97,14 @@ export default function ChatsPanel() {
     });
 
   function handleOpen(thread: AD791aChatThreadView): void {
-    // Open-on-click is per-host (AD-917): the chat is hosted in the first crew
-    // participant's profile chat tab via threadIdByAgent, NOT the store's
-    // top-level activeThreadId.
+    // AD-917/AD-937: open-on-click is per-host (the chat renders in the first
+    // crew participant's profile chat tab). AD-937 addresses it via the group
+    // override (activeProfileThreadId) instead of binding it into the host's
+    // single threadIdByAgent 1:1 slot — so opening a group never makes the
+    // host's 1:1 unreachable.
     const host = hostAgentId(thread, agents);
     if (!host) return; // Tier-2 honest-degrade: agents not hydrated -> no-op
-    setThreadForAgent(host, thread.id);
-    openAgentProfile(host);
+    openGroupChatThread(host, thread.id);
   }
 
   async function handleJoin(thread: AD791aChatThreadView): Promise<void> {

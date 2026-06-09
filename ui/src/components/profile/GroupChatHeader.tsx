@@ -11,6 +11,9 @@ import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { UserPlus, Close } from '../icons/Glyphs';
 import { patchThread, addParticipant, removeParticipant, setMeetingActive, appendMessage } from '../sidebar/threadApi';
 import { AddParticipantPopover } from './AddParticipantPopover';
+// AD-937: on a 1:1 (<=1 crew) the add control opens the seeded picker instead
+// of the inline mutate path, so converting a 1:1 mints a SEPARATE group thread.
+import { NewChatModal } from '../chats/NewChatModal';
 
 interface GroupChatHeaderProps {
   threadId: string;
@@ -24,6 +27,8 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
+  // AD-937: seeded-picker overlay for the 1:1 -> group non-destructive convert.
+  const [convertOpen, setConvertOpen] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   // Empty/cold-start: no thread yet -> render nothing (HXI: the control bar
@@ -224,13 +229,20 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
         </button>
       )}
 
-      {/* Add participant (UserPlus button toggles the crew popover) */}
+      {/* AD-937: Add control branches on the thread shape. On a GROUP (>=2 crew)
+          it toggles the inline @-picker -> addParticipant (mutation is correct
+          there — matches Teams). On a 1:1 (<=1 crew) it opens the AD-931
+          NewChatModal SEEDED with the host, so confirming with 2+ mints a
+          SEPARATE group thread and the 1:1 row is never mutated. */}
       <div style={{ position: 'relative' }}>
         <button
           type="button"
           data-testid="add-participant-button"
           aria-label="add participant"
-          onClick={() => setPickerOpen((o) => !o)}
+          onClick={() => {
+            if (crewParticipants.length >= 2) setPickerOpen((o) => !o);
+            else setConvertOpen(true);
+          }}
           style={{
             background: 'transparent',
             border: 'none',
@@ -243,7 +255,7 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
         >
           <UserPlus size={14} />
         </button>
-        {pickerOpen && (
+        {crewParticipants.length >= 2 && pickerOpen && (
           <div style={{ position: 'absolute', top: '100%', right: 0 }}>
             <AddParticipantPopover
               existingParticipantIds={participants}
@@ -253,6 +265,13 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
           </div>
         )}
       </div>
+      {/* AD-937: non-destructive 1:1 -> group convert (seeded picker overlay). */}
+      {crewParticipants.length <= 1 && convertOpen && (
+        <NewChatModal
+          seedParticipantId={crewParticipants[0]?.id}
+          onClose={() => setConvertOpen(false)}
+        />
+      )}
     </div>
   );
 }

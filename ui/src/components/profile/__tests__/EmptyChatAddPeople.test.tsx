@@ -1,12 +1,13 @@
-// AD-932: tests for the EmptyChatAddPeople empty-state affordance. Seeds the
-// REAL zustand store (BF-287 real-fixture style, no MagicMock) and mocks only
-// threadApi.createThread, so the materialize-then-handoff flow (createThread ->
-// setChatThread + setThreadForAgent) is driven end-to-end through the real
-// store. Covers the isCrew self-gate, the unknown-agent gate, the create+wire
-// success path, honest-degrade on null, clickability, and the HXI no-emoji guard.
+// AD-932 / AD-937: tests for the EmptyChatAddPeople empty-state affordance.
+// Seeds the REAL zustand store (BF-287 real-fixture style, no MagicMock) and
+// mocks only threadApi.createThread. AD-937 made the flow NON-DESTRUCTIVE: the
+// button now opens the AD-931 NewChatModal seeded with the host (the locked
+// first participant) instead of materializing+mutating the 1:1. Covers the
+// isCrew self-gate, the unknown-agent gate, the seeded-modal open (no mutation),
+// the locked host chip, modal close, clickability, and the HXI no-emoji guard.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { useStore } from '../../../store/useStore';
 import type { Agent } from '../../../store/types';
 
 vi.mock('../../sidebar/threadApi', () => ({
@@ -41,23 +42,13 @@ function seedAgents(list: Agent[]): void {
   useStore.setState({ agents: m, chatThreads: new Map(), threadIdByAgent: new Map() });
 }
 
-function mkThread(over: Partial<AD791aChatThreadView> & { id: string }): AD791aChatThreadView {
-  return {
-    id: over.id,
-    title: over.title ?? 'Room',
-    participants: over.participants ?? [],
-    created_at: over.created_at ?? 0,
-    last_active_at: over.last_active_at ?? 0,
-  };
-}
-
 afterEach(() => {
   cleanup();
   useStore.setState({ agents: new Map(), chatThreads: new Map(), threadIdByAgent: new Map() });
   vi.clearAllMocks();
 });
 
-describe('AD-932 EmptyChatAddPeople', () => {
+describe('AD-932/AD-937 EmptyChatAddPeople', () => {
   it('renders the add-people affordance for a crew agent', () => {
     seedAgents([mkAgent({ id: 'a1', callsign: 'Vex' })]);
     render(<EmptyChatAddPeople agentId="a1" />);
@@ -77,41 +68,39 @@ describe('AD-932 EmptyChatAddPeople', () => {
     expect(screen.queryByTestId('empty-chat-add-people')).toBeNull();
   });
 
-  it('click materializes the thread: createThread called once with {title: callsign, participants: [agentId]}', async () => {
-    seedAgents([mkAgent({ id: 'a1', callsign: 'Vex' })]);
-    mockedCreateThread.mockResolvedValue(mkThread({ id: 't1', title: 'Vex', participants: ['a1'] }));
+  it('AD-937: clicking opens the SEEDED NewChatModal (host locked), does NOT materialize/mutate', () => {
+    seedAgents([mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Lume' })]);
     render(<EmptyChatAddPeople agentId="a1" />);
+    expect(screen.queryByTestId('new-chat-modal')).toBeNull();
 
     fireEvent.click(screen.getByTestId('empty-chat-add-people'));
 
-    await waitFor(() => expect(mockedCreateThread).toHaveBeenCalledTimes(1));
-    expect(mockedCreateThread).toHaveBeenCalledWith({ title: 'Vex', participants: ['a1'] });
-  });
-
-  it('on success writes setChatThread (chatThreads) and setThreadForAgent (threadIdByAgent)', async () => {
-    seedAgents([mkAgent({ id: 'a1', callsign: 'Vex' })]);
-    mockedCreateThread.mockResolvedValue(mkThread({ id: 't1', title: 'Vex', participants: ['a1'] }));
-    render(<EmptyChatAddPeople agentId="a1" />);
-
-    fireEvent.click(screen.getByTestId('empty-chat-add-people'));
-
-    await waitFor(() => {
-      expect(useStore.getState().chatThreads.get('t1')).toBeTruthy();
-      expect(useStore.getState().threadIdByAgent.get('a1')).toBe('t1');
-    });
-  });
-
-  it('honest-degrade: createThread resolves null -> no store write, button stays', async () => {
-    seedAgents([mkAgent({ id: 'a1', callsign: 'Vex' })]);
-    mockedCreateThread.mockResolvedValue(null);
-    render(<EmptyChatAddPeople agentId="a1" />);
-
-    fireEvent.click(screen.getByTestId('empty-chat-add-people'));
-
-    await waitFor(() => expect(mockedCreateThread).toHaveBeenCalledTimes(1));
-    expect(useStore.getState().threadIdByAgent.size).toBe(0);
+    // The AD-931 picker opens, pre-seeded with a1 as the locked host.
+    expect(screen.getByTestId('new-chat-modal')).toBeTruthy();
+    expect(screen.getByTestId('new-chat-seed-a1')).toBeTruthy();
+    // Non-destructive: nothing is created or written on open (the old AD-932
+    // materialize-then-mutate flow is gone).
+    expect(mockedCreateThread).not.toHaveBeenCalled();
     expect(useStore.getState().chatThreads.size).toBe(0);
-    expect(screen.getByTestId('empty-chat-add-people')).toBeTruthy();
+    expect(useStore.getState().threadIdByAgent.size).toBe(0);
+  });
+
+  it('AD-937: the seeded host chip is non-removable in the opened modal', () => {
+    seedAgents([mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Lume' })]);
+    render(<EmptyChatAddPeople agentId="a1" />);
+    fireEvent.click(screen.getByTestId('empty-chat-add-people'));
+    expect(screen.getByTestId('new-chat-seed-a1')).toBeTruthy();
+    // The removable-chip variant is NOT used for the locked seed host.
+    expect(screen.queryByTestId('new-chat-selected-a1')).toBeNull();
+  });
+
+  it('AD-937: the seeded modal closes via its cancel control (onClose)', () => {
+    seedAgents([mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Lume' })]);
+    render(<EmptyChatAddPeople agentId="a1" />);
+    fireEvent.click(screen.getByTestId('empty-chat-add-people'));
+    expect(screen.getByTestId('new-chat-modal')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('new-chat-cancel'));
+    expect(screen.queryByTestId('new-chat-modal')).toBeNull();
   });
 
   it('the button is clickable (not disabled)', () => {

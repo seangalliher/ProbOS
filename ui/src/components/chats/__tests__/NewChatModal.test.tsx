@@ -56,6 +56,7 @@ function seedStore(): void {
     chatsOpen: true,
     threadIdByAgent: new Map(),
     activeProfileAgent: null,
+    activeProfileThreadId: null,
   });
 }
 
@@ -66,6 +67,7 @@ afterEach(() => {
     chatsOpen: false,
     threadIdByAgent: new Map(),
     activeProfileAgent: null,
+    activeProfileThreadId: null,
   });
   vi.clearAllMocks();
 });
@@ -102,7 +104,7 @@ describe('AD-931 NewChatModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('2 selected -> createThread(participants,title) then setThreadForAgent + openAgentProfile host', async () => {
+  it('2 selected -> createThread(participants,title) then opens via the AD-937 override (NOT threadIdByAgent)', async () => {
     vi.mocked(createThread).mockResolvedValue(
       mkThread({ id: 'new-1', title: 'Bones, Scott', participants: ['mccoy', 'scotty'] }),
     );
@@ -116,8 +118,46 @@ describe('AD-931 NewChatModal', () => {
         expect.objectContaining({ participants: ['mccoy', 'scotty'], title: 'Bones, Scott' }),
       ),
     );
-    await vi.waitFor(() => expect(useStore.getState().threadIdByAgent.get('mccoy')).toBe('new-1'));
+    // AD-937: the new group is addressed by the override, NOT the host's 1:1 slot.
+    await vi.waitFor(() => expect(useStore.getState().activeProfileThreadId).toBe('new-1'));
     expect(useStore.getState().activeProfileAgent).toBe('mccoy');
+    expect(useStore.getState().threadIdByAgent.get('mccoy')).toBeUndefined();
+  });
+
+  it('AD-937: seedParticipantId pre-populates selected and renders a non-removable host chip', () => {
+    seedStore();
+    render(<NewChatModal onClose={vi.fn()} seedParticipantId="mccoy" />);
+    // The seed host renders as a locked chip (distinct testid), NOT the
+    // removable variant, and Start is enabled (>=1 selected).
+    expect(screen.getByTestId('new-chat-seed-mccoy')).toBeTruthy();
+    expect(screen.queryByTestId('new-chat-selected-mccoy')).toBeNull();
+    expect((screen.getByTestId('new-chat-start') as HTMLButtonElement).disabled).toBe(false);
+    // The seed is excluded from the picker (already selected) -> only Scott offered.
+    expect(screen.getAllByTestId('add-participant-row')).toHaveLength(1);
+  });
+
+  it('AD-937: seed + 1 pick -> createThread(both) and opens the new group via the override', async () => {
+    vi.mocked(createThread).mockResolvedValue(
+      mkThread({ id: 'grp-1', title: 'Bones, Scott', participants: ['mccoy', 'scotty'] }),
+    );
+    seedStore();
+    render(<NewChatModal onClose={vi.fn()} seedParticipantId="mccoy" />);
+    fireEvent.click(screen.getAllByTestId('add-participant-row')[0]); // Scott (scotty); mccoy is the locked seed
+    fireEvent.click(screen.getByTestId('new-chat-start'));
+    await vi.waitFor(() =>
+      expect(createThread).toHaveBeenCalledWith(
+        expect.objectContaining({ participants: ['mccoy', 'scotty'] }),
+      ),
+    );
+    await vi.waitFor(() => expect(useStore.getState().activeProfileThreadId).toBe('grp-1'));
+    expect(useStore.getState().activeProfileAgent).toBe('mccoy');
+    expect(useStore.getState().threadIdByAgent.get('mccoy')).toBeUndefined();
+  });
+
+  it('AD-937: seeded modal contains no emoji (HXI #3 stroke-SVG only)', () => {
+    seedStore();
+    const { container } = render(<NewChatModal onClose={vi.fn()} seedParticipantId="mccoy" />);
+    expect(container.innerHTML).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 
   it('a picked agent is removable via its chip and drops back into the picker', () => {

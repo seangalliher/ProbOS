@@ -325,6 +325,12 @@ export interface HXIState {
   avatarTelemetry: Map<string, Record<string, unknown>>;
   // Agent Profile Panel (AD-406)
   activeProfileAgent: string | null;
+  // AD-937: transient group-chat addressing override. When a group is opened
+  // in an agent's profile, the group id lives HERE (not in the single-slot
+  // ``threadIdByAgent``), so a group never hijacks the agent's reserved 1:1
+  // binding. ``openAgentProfile`` (a roster/1:1 open) clears it back to null,
+  // re-resolving the profile to the agent's 1:1 default.
+  activeProfileThreadId: string | null;
   profilePanelPos: { x: number; y: number };
   agentConversations: Map<string, AgentConversation>;
   // AD-791a: chat-thread provenance round-trip. ``threadIdByAgent`` maps
@@ -463,6 +469,9 @@ export interface HXIState {
   ) => void;
   // Agent Profile Panel actions (AD-406)
   openAgentProfile: (agentId: string) => void;
+  // AD-937: open a group chat in the host's profile via the
+  // ``activeProfileThreadId`` override (does NOT touch ``threadIdByAgent``).
+  openGroupChatThread: (hostId: string, threadId: string) => void;
   closeAgentProfile: () => void;
   minimizeAgentProfile: () => void;
   // AD-936: optional 4th param carries per-message author identity for group
@@ -804,6 +813,8 @@ export const useStore = create<HXIState>((set, get) => ({
   avatarTelemetry: new Map(),
   // Agent Profile Panel (AD-406)
   activeProfileAgent: null,
+  // AD-937: no group override at boot; set only by openGroupChatThread.
+  activeProfileThreadId: null,
   profilePanelPos: { x: 100, y: 100 },
   agentConversations: new Map(),
   // AD-791a: empty maps at boot; ProfileChatTab + hydrateChatThreads
@@ -960,7 +971,18 @@ export const useStore = create<HXIState>((set, get) => ({
   // Agent Profile Panel actions (AD-406)
   openAgentProfile: (agentId) => set({
     activeProfileAgent: agentId,
+    // AD-937: a roster/1:1 open clears any group override so the profile
+    // re-resolves to the agent's 1:1 default (the unreachable-1:1 fix).
+    activeProfileThreadId: null,
     pinnedAgent: null,  // dismiss tooltip when profile opens
+  }),
+  // AD-937: open a group thread in the host's profile via the override so the
+  // group is addressable WITHOUT clobbering the host's single ``threadIdByAgent``
+  // 1:1 slot. Mirrors openAgentProfile's body otherwise (dismiss tooltip).
+  openGroupChatThread: (hostId, threadId) => set({
+    activeProfileAgent: hostId,
+    activeProfileThreadId: threadId,
+    pinnedAgent: null,
   }),
   closeAgentProfile: () => set({ activeProfileAgent: null }),
   // AD-513: Crew Manifest actions

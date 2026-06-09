@@ -36,6 +36,8 @@ import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
 // AD-932: discoverable "+ Add people" on a fresh/empty 1:1 (no thread yet).
 import { EmptyChatAddPeople } from './EmptyChatAddPeople';
+// AD-937: 3-way thread resolver (prop > group override > per-agent 1:1).
+import { resolveProfileThreadId } from './profileThreadResolution';
 import { MeetingView } from './MeetingView';
 import { useMeetingMic } from '../../audio/useMeetingMic';
 // AD-936: per-message avatar + timestamp row (extracted; keeps the heavy
@@ -487,7 +489,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // (selector) so the header appears as soon as the server creates/returns a
   // thread. Mirrors the send-path precedence (props.threadId wins over the
   // per-agent default in threadIdByAgent).
-  const activeThreadId = useStore((s) => threadId ?? s.threadIdByAgent.get(agentId));
+  // AD-937: 3-way precedence — prop > group override > per-agent 1:1 — so a
+  // group opened via the override is addressed without touching threadIdByAgent.
+  const activeThreadId = useStore((s) =>
+    resolveProfileThreadId(threadId, s.activeProfileThreadId, s.threadIdByAgent, agentId),
+  );
 
   // AD-920: meeting-mode flag (persisted on the shared thread). When set, the
   // avatar gallery mounts below the group-controls header. Reactive so the
@@ -618,7 +624,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     // thread has >=2 crew participants. AD-914 fan-out fires ONLY on
     // POST /api/threads/{id}/messages with role=="captain"; the 1:1
     // /api/agent/{id}/chat path below stays byte-identical for solo threads.
-    const groupThreadId = threadId ?? useStore.getState().threadIdByAgent.get(agentId);
+    // AD-937: resolve via the same 3-way precedence as the reactive selector
+    // so a group opened via the override routes the send to the group, not the
+    // host's 1:1 (the override no longer lives in threadIdByAgent).
+    const _groupState = useStore.getState();
+    const groupThreadId = resolveProfileThreadId(threadId, _groupState.activeProfileThreadId, _groupState.threadIdByAgent, agentId);
     if (groupThreadId) {
       const _thread = useStore.getState().chatThreads.get(groupThreadId);
       const _agents = useStore.getState().agents;
@@ -677,7 +687,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       // AD-792 (Wave 195): explicit ``threadId`` prop wins over the
       // per-agent default in ``threadIdByAgent``. When the prop is
       // unset, behavior is unchanged from AD-791a.
-      const knownThreadId = threadId ?? useStore.getState().threadIdByAgent.get(agentId);
+      // AD-937: include the group override in the precedence (prop > override
+      // > per-agent 1:1) so a send while viewing a group routes correctly.
+      const _knownState = useStore.getState();
+      const knownThreadId = resolveProfileThreadId(threadId, _knownState.activeProfileThreadId, _knownState.threadIdByAgent, agentId);
       const requestBody: Record<string, unknown> = {
         message: text || '(attachment)',
         history: fullHistory,
