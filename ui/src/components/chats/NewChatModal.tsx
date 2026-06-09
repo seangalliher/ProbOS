@@ -27,6 +27,9 @@ export function NewChatModal({ onClose, seedParticipantId }: { onClose: () => vo
   // AD-937: open a created group via the override (does NOT bind it into the
   // host's single threadIdByAgent 1:1 slot) so the host's 1:1 stays reachable.
   const openGroupChatThread = useStore((s) => s.openGroupChatThread);
+  // AD-938: hydrate the created group into chatThreads so its header /
+  // participants / meeting toggle show immediately and its transcript loads.
+  const setChatThread = useStore((s) => s.setChatThread);
   const closeChats = useStore((s) => s.closeChats);
 
   // AD-937: when seeded (the host of a 1:1 being converted to a group), the
@@ -54,6 +57,9 @@ export function NewChatModal({ onClose, seedParticipantId }: { onClose: () => vo
     const title = callsigns.join(', ') || 'New group chat';
     const thread = await createThread({ title, participants: selected });
     if (!thread) return; // Tier-2 honest-degrade: keep the modal open, no throw
+    // AD-938: hydrate the new group first so GroupChatHeader / MeetingView and
+    // the thread-keyed transcript resolve the moment the host opens.
+    setChatThread(thread);
     // AD-937: open the NEW group via the override so it does NOT clobber the
     // host's threadIdByAgent 1:1 slot — the original 1:1 stays reachable.
     openGroupChatThread(selected[0], thread.id);

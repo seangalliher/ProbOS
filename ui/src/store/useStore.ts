@@ -341,6 +341,11 @@ export interface HXIState {
   // existing selectors depend on these, so adding them is additive.
   threadIdByAgent: Map<string, string>;
   chatThreads: Map<string, AD791aChatThreadView>;
+  // AD-938: thread-keyed display transcript. When a thread is active the
+  // profile chat tab renders these (the thread's real messages) instead of the
+  // per-agent ``agentConversations`` buffer; loaded on open + reconciled on
+  // send. Additive — no existing selector depends on it.
+  threadMessages: Map<string, AgentProfileMessage[]>;
   activeThreadId: string | null;
   // AD-793 (Wave 196): projects slice. ThreadSidebar hydrates this on
   // mount and consumes it for the Projects section. Mirrors the
@@ -488,6 +493,11 @@ export interface HXIState {
   // the response.thread_id field here; AD-792 sidebar consumes the hydrated map.
   setThreadForAgent: (agentId: string, threadId: string) => void;
   setChatThread: (thread: AD791aChatThreadView) => void;
+  // AD-938: thread-keyed display transcript actions (mirror the chatThreads Map
+  // pattern). ``setThreadMessages`` replaces a thread's list (load-on-open);
+  // ``appendThreadMessage`` adds one message (send-reconcile), capped to 200.
+  setThreadMessages: (threadId: string, msgs: AgentProfileMessage[]) => void;
+  appendThreadMessage: (threadId: string, msg: AgentProfileMessage) => void;
   setActiveThread: (threadId: string | null) => void;
   hydrateChatThreads: (threads: AD791aChatThreadView[]) => void;
   // AD-793 (Wave 196): project state actions.
@@ -821,6 +831,8 @@ export const useStore = create<HXIState>((set, get) => ({
   // populate them as turns and /api/threads responses land.
   threadIdByAgent: new Map(),
   chatThreads: new Map(),
+  // AD-938: empty at boot; ProfileChatTab populates per active thread.
+  threadMessages: new Map(),
   activeThreadId: null,
   // AD-793 (Wave 196): empty Map at boot; ThreadSidebar mounts
   // hydrateProjects from /api/projects.
@@ -1312,6 +1324,20 @@ export const useStore = create<HXIState>((set, get) => ({
     const next = new Map(get().chatThreads);
     next.set(thread.id, thread);
     set({ chatThreads: next });
+  },
+  // AD-938: replace a thread's display transcript (load-on-open).
+  setThreadMessages: (threadId, msgs) => {
+    const next = new Map(get().threadMessages);
+    next.set(threadId, msgs);
+    set({ threadMessages: next });
+  },
+  // AD-938: append one message to a thread's display transcript (send-reconcile),
+  // capped to the last 200 (mirrors addAgentMessage's slice idiom, larger window).
+  appendThreadMessage: (threadId, msg) => {
+    const next = new Map(get().threadMessages);
+    const existing = next.get(threadId) ?? [];
+    next.set(threadId, [...existing.slice(-199), msg]);
+    set({ threadMessages: next });
   },
   setActiveThread: (threadId) => set({ activeThreadId: threadId }),
   hydrateChatThreads: (threads) => {

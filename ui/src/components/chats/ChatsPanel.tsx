@@ -66,6 +66,10 @@ export default function ChatsPanel() {
   // AD-937: open a chat row via the group override so a group never clobbers
   // the host's single threadIdByAgent 1:1 slot (the 1:1 stays reachable).
   const openGroupChatThread = useStore((s) => s.openGroupChatThread);
+  // AD-938: hydrate the opened thread into chatThreads so GroupChatHeader /
+  // MeetingView / the meetingActive selector (all read chatThreads.get(id))
+  // resolve, and the thread-keyed transcript can load on open.
+  const setChatThread = useStore((s) => s.setChatThread);
 
   const [threads, setThreads] = useState<AD791aChatThreadView[]>([]);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -104,6 +108,9 @@ export default function ChatsPanel() {
     // host's 1:1 unreachable.
     const host = hostAgentId(thread, agents);
     if (!host) return; // Tier-2 honest-degrade: agents not hydrated -> no-op
+    // AD-938: hydrate the thread first so its header/participants/meeting flag
+    // resolve and ProfileChatTab can load the real transcript for this thread.
+    setChatThread(thread);
     openGroupChatThread(host, thread.id);
   }
 

@@ -32,6 +32,9 @@ import {
 import { MicIndicator } from './MicIndicator';
 import { subscribePcm } from '../../audio/voiceActivity';
 import type { ChatAttachment } from '../../store/types';
+// AD-938: thread-keyed transcript helpers (extracted for testability — the
+// AD-936 ChatMessageRow precedent; keeps the heavy audio deps out of the test).
+import { selectTranscriptMessages, loadThreadMessages } from './profileTranscript';
 import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
 // AD-932: discoverable "+ Add people" on a fresh/empty 1:1 (no thread yet).
@@ -481,8 +484,6 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     }
   }, [agentId, screenActive, screenMode]);
 
-  const messages = conversation?.messages ?? [];
-
   // AD-936: host callsign for 1:1 / legacy messages that carry no per-message
   // author identity — ChatMessageRow falls back to this for the avatar label.
   const hostCallsign = useStore((s) => s.agents.get(agentId)?.callsign ?? '');
@@ -494,6 +495,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const activeThreadId = useStore((s) =>
     resolveProfileThreadId(threadId, s.activeProfileThreadId, s.threadIdByAgent, agentId),
   );
+
+  // AD-938: the displayed transcript. In a thread context (group or warm 1:1)
+  // render the thread's real messages (loaded on open below); with no thread (a
+  // cold 1:1 before its first send) fall back to the per-agent buffer.
+  const threadMsgs = useStore((s) => (activeThreadId ? s.threadMessages.get(activeThreadId) : undefined));
+  const messages = selectTranscriptMessages(activeThreadId, threadMsgs, conversation?.messages);
 
   // AD-920: meeting-mode flag (persisted on the shared thread). When set, the
   // avatar gallery mounts below the group-controls header. Reactive so the
@@ -537,6 +544,22 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         .then(data => setSeedMemories(data.memories || []))
         .catch(() => {});  // Non-critical
   }, [agentId]);
+
+  // AD-938: load the thread's real transcript when a thread becomes active (a
+  // group opened from CHATS, or a warm 1:1 with a server-confirmed thread), and
+  // re-load when the active thread changes. listMessages already Tier-2
+  // degrades to []; the ``active`` guard drops a stale write if the thread
+  // changes or the tab unmounts before the fetch resolves.
+  useEffect(() => {
+    if (!activeThreadId) return;
+    let active = true;
+    void loadThreadMessages(
+      activeThreadId,
+      useStore.getState().agents,
+      (id, msgs) => { if (active) useStore.getState().setThreadMessages(id, msgs); },
+    );
+    return () => { active = false; };
+  }, [activeThreadId]);
 
   // AD-795: Hydrate the input from a pending chat draft (set by the
   // Compact-mode starter chips). Subscribes via a selector so the effect
@@ -616,6 +639,17 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
 
     // Add user message immediately (after capturing history)
     useStore.getState().addAgentMessage(agentId, 'user', displayText);
+    // AD-938: in a thread context, mirror the optimistic Captain message into
+    // the thread-keyed transcript (the displayed source). The per-agent buffer
+    // append above stays for the no-thread cold-1:1 path + cross-session seed.
+    if (activeThreadId) {
+      useStore.getState().appendThreadMessage(activeThreadId, {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'user',
+        text: displayText,
+        timestamp: Date.now() / 1000,
+      });
+    }
 
     const attachmentIds = pendingAttachments.map(a => a.attachment_id);
     setPendingAttachments([]);
@@ -664,6 +698,19 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
               authorId: typeof r?.agent_id === 'string' ? r.agent_id : undefined,
               callsign: typeof r?.callsign === 'string' ? r.callsign : undefined,
             });
+            // AD-938: mirror each fan-out reply into the thread transcript with
+            // its author identity (avatar + name label); no 'callsign:' text
+            // prefix — the AD-936 ChatMessageRow header shows the author.
+            if (activeThreadId) {
+              useStore.getState().appendThreadMessage(activeThreadId, {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                role: 'agent',
+                text: replyText,
+                timestamp: Date.now() / 1000,
+                authorId: typeof r?.agent_id === 'string' ? r.agent_id : undefined,
+                callsign: typeof r?.callsign === 'string' ? r.callsign : undefined,
+              });
+            }
           }
           // AD-921: when the meeting is live, ALSO speak the replies in
           // facilitator order (one at a time, per-agent voice). The text
@@ -737,6 +784,18 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       }
       const reply = data.response || '(no response)';
       useStore.getState().addAgentMessage(agentId, 'agent', reply);
+      // AD-938: mirror the 1:1 reply into the thread transcript (a warm 1:1 with
+      // a server thread). authorId=agentId so ChatMessageRow shows the agent's
+      // avatar; the callsign falls back to hostCallsign in the row.
+      if (activeThreadId) {
+        useStore.getState().appendThreadMessage(activeThreadId, {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: 'agent',
+          text: reply,
+          timestamp: Date.now() / 1000,
+          authorId: agentId,
+        });
+      }
       // AD-718: TTS playback for agent reply only (skip system error placeholders).
       if (ttsEnabled && reply && !reply.startsWith('(')) {
         // AD-738e-1: forward parsed emotion (v1 name) so the TTS endpoint
@@ -753,7 +812,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, threadId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments, speakMeetingReplies]);
+  }, [agentId, threadId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId]);
 
   // AD-922: Captain push-to-talk for the meeting. Captures one VAD-bounded
   // utterance via the existing offline STT and feeds the transcript to

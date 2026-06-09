@@ -211,3 +211,35 @@ export async function appendMessage(
     return null;
   }
 }
+
+/**
+ * AD-938: a single thread message as returned by GET /api/threads/{id}/messages.
+ * Verified shape (ChatThreadMessage.to_dict, ``threads/__init__.py:140``):
+ * ``{id, thread_id, author_id, role, body, created_at, metadata}``.
+ */
+export interface ThreadMessageDTO {
+  id: string;
+  thread_id: string;
+  author_id: string;
+  role: string;
+  body: string;
+  created_at: number;
+  metadata?: Record<string, unknown> | null;
+}
+
+/**
+ * AD-938: list a thread's persisted messages.
+ * GET /api/threads/{id}/messages?limit=N -> {thread_id, messages: [...]} (verified
+ * ``routers/threads.py:302``). Tier-2 honest-degrade: returns ``[]`` on a
+ * network/!ok/parse failure so the transcript keeps rendering its current state.
+ */
+export async function listMessages(threadId: string, limit = 200): Promise<ThreadMessageDTO[]> {
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/messages?limit=${limit}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { messages?: ThreadMessageDTO[] };
+    return Array.isArray(data?.messages) ? data.messages : [];
+  } catch {
+    return [];
+  }
+}
