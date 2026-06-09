@@ -38,6 +38,9 @@ import { GroupChatHeader } from './GroupChatHeader';
 import { EmptyChatAddPeople } from './EmptyChatAddPeople';
 import { MeetingView } from './MeetingView';
 import { useMeetingMic } from '../../audio/useMeetingMic';
+// AD-936: per-message avatar + timestamp row (extracted; keeps the heavy
+// bubble JSX out of this audio-dep-laden module and independently testable).
+import { ChatMessageRow } from './ChatMessageRow';
 import { MeetingMicButton } from './MeetingMicButton';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
@@ -478,7 +481,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
 
   const messages = conversation?.messages ?? [];
 
-  // AD-917: active thread id for the in-chat group-controls header. Reactive
+  // AD-936: host callsign for 1:1 / legacy messages that carry no per-message
+  // author identity — ChatMessageRow falls back to this for the avatar label.
+  const hostCallsign = useStore((s) => s.agents.get(agentId)?.callsign ?? '');
   // (selector) so the header appears as soon as the server creates/returns a
   // thread. Mirrors the send-path precedence (props.threadId wins over the
   // per-agent default in threadIdByAgent).
@@ -642,8 +647,13 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           for (const r of replies) {
             const replyText = typeof r?.text === 'string' ? r.text : '';
             if (!replyText) continue;
-            const prefix = typeof r?.callsign === 'string' && r.callsign ? `${r.callsign}: ` : '';
-            useStore.getState().addAgentMessage(agentId, 'agent', `${prefix}${replyText}`);
+            // AD-936: thread the real author's agent_id + callsign onto the
+            // message so the bubble shows a per-author avatar + name label;
+            // the old `${callsign}: ` text prefix is replaced by that header.
+            useStore.getState().addAgentMessage(agentId, 'agent', replyText, {
+              authorId: typeof r?.agent_id === 'string' ? r.agent_id : undefined,
+              callsign: typeof r?.callsign === 'string' ? r.callsign : undefined,
+            });
           }
           // AD-921: when the meeting is live, ALSO speak the replies in
           // facilitator order (one at a time, per-agent voice). The text
@@ -869,38 +879,13 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           </div>
         )}
         {messages.map(msg => (
-          <div
+          <ChatMessageRow
             key={msg.id}
-            style={{
-              marginBottom: 8,
-              textAlign: msg.role === 'user' ? 'right' : (msg.role === 'system' ? 'center' : 'left'),
-            }}
-          >
-            <div style={{
-              display: 'inline-block',
-              maxWidth: '85%',
-              padding: '6px 10px',
-              borderRadius: 8,
-              fontSize: 12,
-              lineHeight: 1.5,
-              background: msg.role === 'user'
-                ? 'rgba(240, 176, 96, 0.15)'
-                : (msg.role === 'system'
-                  ? 'rgba(255, 255, 255, 0.02)'
-                  : 'rgba(255, 255, 255, 0.05)'),
-              border: msg.role === 'user'
-                ? '1px solid rgba(240, 176, 96, 0.2)'
-                : (msg.role === 'system'
-                  ? '1px dashed rgba(255, 255, 255, 0.12)'
-                  : '1px solid rgba(255, 255, 255, 0.06)'),
-              color: msg.role === 'system' ? '#9a9a9a' : '#e0dcd4',
-              fontStyle: msg.role === 'system' ? 'italic' : 'normal',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}>
-              {renderMessageBodyWithArtifacts(msg.text, threadId)}
-            </div>
-          </div>
+            msg={msg}
+            hostAgentId={agentId}
+            hostCallsign={hostCallsign}
+            body={renderMessageBodyWithArtifacts(msg.text, threadId)}
+          />
         ))}
         <div ref={messagesEndRef} />
       </div>

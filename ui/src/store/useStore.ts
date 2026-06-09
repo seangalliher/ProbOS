@@ -465,7 +465,14 @@ export interface HXIState {
   openAgentProfile: (agentId: string) => void;
   closeAgentProfile: () => void;
   minimizeAgentProfile: () => void;
-  addAgentMessage: (agentId: string, role: 'user' | 'agent' | 'system', text: string) => void;
+  // AD-936: optional 4th param carries per-message author identity for group
+  // replies (avatar + name label). Existing call sites pass three args.
+  addAgentMessage: (
+    agentId: string,
+    role: 'user' | 'agent' | 'system',
+    text: string,
+    opts?: { authorId?: string; callsign?: string },
+  ) => void;
   markAgentRead: (agentId: string) => void;
   setProfilePanelPos: (pos: { x: number; y: number }) => void;
   // AD-791a: chat-thread state setters. ProfileChatTab + CompactApp round-trip
@@ -1234,7 +1241,7 @@ export const useStore = create<HXIState>((set, get) => ({
     }
     set({ activeProfileAgent: null, agentConversations: convs });
   },
-  addAgentMessage: (agentId, role, text) => {
+  addAgentMessage: (agentId, role, text, opts) => {
     const convs = new Map(get().agentConversations);
     const existing = convs.get(agentId) || {
       agentId,
@@ -1247,6 +1254,10 @@ export const useStore = create<HXIState>((set, get) => ({
       role,
       text,
       timestamp: Date.now() / 1000,
+      // AD-936: fold optional author identity (group replies) into the
+      // message; omitted keys keep legacy/1:1 messages byte-identical.
+      ...(opts?.authorId ? { authorId: opts.authorId } : {}),
+      ...(opts?.callsign ? { callsign: opts.callsign } : {}),
     };
     const isOpen = get().activeProfileAgent === agentId;
     convs.set(agentId, {

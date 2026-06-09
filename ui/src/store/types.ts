@@ -325,6 +325,8 @@ export interface AgentProfileMessage {
   role: 'user' | 'agent' | 'system';
   text: string;
   timestamp: number;
+  authorId?: string;   // AD-936: per-message author (group replies); absent => host/1:1
+  callsign?: string;   // AD-936: author callsign for the avatar + name label
 }
 
 export interface AgentConversation {
