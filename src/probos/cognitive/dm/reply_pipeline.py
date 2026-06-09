@@ -132,11 +132,15 @@ class DmReplyPipeline:
         await self._run_steps(self._full_steps())
 
     def _full_steps(self) -> tuple[Callable, ...]:
-        """AD-933: the full 17-step DM one-shot chain in load-bearing order,
-        the single source of truth executed by :meth:`run`. Ordering is
-        invariant (sanity gate before challenge/move parsers, self-check
-        before episodic store, divergence before ``mark_reply_emitted``,
-        emotion after divergence) and MUST stay byte-identical."""
+        """AD-933: the full DM one-shot chain in load-bearing order, the single
+        source of truth executed by :meth:`run`. 18 steps after AD-934 inserted
+        ``step_4j_deliberate_parse`` between ``step_4g_create_task_parse`` and
+        ``step_5_episodic_store`` (so the deep-tier re-rolled reply is what gets
+        stored / divergence-checked / emitted). Ordering is invariant (sanity
+        gate before challenge/move parsers, self-check before episodic store,
+        deliberate re-roll before episodic store, divergence before
+        ``mark_reply_emitted``, emotion after divergence) and MUST stay
+        byte-identical apart from the AD-934 4j insertion."""
         return (
             self.step_1_sanity_gate_retry,
             self.step_2_challenge_parse,
@@ -150,6 +154,7 @@ class DmReplyPipeline:
             self.step_4h_mesh_read_parse,  # AD-869
             self.step_4f_extract_artifacts,  # AD-797 (Wave 197)
             self.step_4g_create_task_parse,  # AD-845
+            self.step_4j_deliberate_parse,  # AD-934
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
             self.step_7_divergence_check,
@@ -163,13 +168,16 @@ class DmReplyPipeline:
         Each step is a strict no-op for any reply lacking its marker, and the
         markers are emitted only by specifically-taught agents, so the subset
         is inherently bounded and safe outside the 1:1 path. Relative order is
-        preserved from :meth:`_full_steps` (4c -> 4e -> 4i -> 4h -> 4f -> 4g).
+        preserved from :meth:`_full_steps` (4c -> 4e -> 4i -> 4h -> 4f -> 4g ->
+        4j).
 
         Included: ``step_4c_image_gen_parse`` (AD-730-3 ``[GEN_IMAGE]``, added
         AD-933b), ``step_4e_action_dispatch`` (AD-745 ``[ACTION]``),
         ``step_4i_notebook_parse`` (AD-911), ``step_4h_mesh_read_parse``
         (AD-869 read-only mesh), ``step_4f_extract_artifacts`` (AD-797),
-        ``step_4g_create_task_parse`` (AD-845 ``[CREATE_TASK]``).
+        ``step_4g_create_task_parse`` (AD-845 ``[CREATE_TASK]``),
+        ``step_4j_deliberate_parse`` (AD-934 ``[THINK]``/``[DELIBERATE]``
+        deep-tier re-roll, flag-gated, appended last).
 
         Excluded (1:1 semantics / mislabel risk): sanity-gate retry (1),
         games (2/3), self-check (4), follow-up (4d), outbound-DM (4b),
@@ -186,6 +194,7 @@ class DmReplyPipeline:
             self.step_4h_mesh_read_parse,
             self.step_4f_extract_artifacts,
             self.step_4g_create_task_parse,
+            self.step_4j_deliberate_parse,  # AD-934
         )
 
     async def _run_steps(self, steps: tuple[Callable, ...]) -> None:
@@ -1219,6 +1228,60 @@ class DmReplyPipeline:
         if fallback_callsign:
             return _lookup(fallback_callsign)
         return None
+
+    async def step_4j_deliberate_parse(self) -> None:
+        """AD-934 (Option C): on a [THINK]/[DELIBERATE] marker, make ONE deep-tier
+        LLM pass that reconsiders + improves the agent's draft reply, replacing the
+        reply text. Flag-gated (config.dm_deliberate.enabled, default OFF). The
+        marker is ALWAYS stripped (even when disabled) so it never leaks. Tier-2
+        honest-degrade: a missing client / disabled tier / empty or raised response
+        keeps the draft unchanged. NEVER raises."""
+        if not self.ctx.response_text or self.ctx.sanity_gate is None:
+            return
+        cfg = getattr(getattr(self.ctx.runtime, "config", None), "dm_deliberate", None)
+        enabled = bool(getattr(cfg, "enabled", False))
+        # Always strip the marker first so it never leaks, even disabled.
+        has_marker = self.ctx.sanity_gate.extract_deliberate(self.ctx.response_text)
+        if not enabled or not has_marker:
+            if has_marker:
+                self.ctx.response_text = self.ctx.sanity_gate.strip_deliberate(self.ctx.response_text)
+            return
+        draft = self.ctx.sanity_gate.strip_deliberate(self.ctx.response_text)
+        client = getattr(self.ctx.runtime, "llm_client", None)
+        if client is None:
+            self.ctx.response_text = draft
+            return
+        try:
+            from probos.cognitive.llm_client import LLMRequest
+            callsign = self.ctx.callsign or self.ctx.agent_id
+            question = (self.ctx.req_message or self.ctx.message_text or "").strip()
+            resp = await client.complete(LLMRequest(
+                prompt=(
+                    f"The message you are replying to:\n{question}\n\n"
+                    f"Your draft reply:\n{draft}\n\n"
+                    "Reconsider your draft carefully and produce a more thorough, "
+                    "well-reasoned version. Output ONLY the improved reply text — "
+                    "no tags, no preamble, no meta-commentary."
+                ),
+                system_prompt=(
+                    f"You are {callsign}. You flagged this turn for deeper "
+                    "deliberation. Improve your own draft reply: tighten the "
+                    "reasoning, fill gaps, and keep your natural voice. Output only "
+                    "the final reply."
+                ),
+                tier=str(getattr(cfg, "tier", "deep")),
+                max_tokens=int(getattr(cfg, "max_tokens", 800)),
+            ))
+            refined = (resp.content or "").strip() if resp else ""
+            # Strip any stray marker the re-roll might echo, then adopt or degrade.
+            refined = self.ctx.sanity_gate.strip_deliberate(refined)
+            self.ctx.response_text = refined or draft
+        except Exception:
+            logger.warning(
+                "AD-934: deliberate re-roll failed for agent=%s; keeping draft",
+                self.ctx.agent_id, exc_info=True,
+            )
+            self.ctx.response_text = draft
 
     # --- step 5: AD-430b HXI 1:1 episodic store ---
     async def step_5_episodic_store(self) -> None:

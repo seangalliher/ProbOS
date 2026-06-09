@@ -1909,6 +1909,25 @@ class CognitiveAgent(BaseAgent):
             "saved something without it."
         )
 
+    def _conversational_deliberate_protocol(self, observation: dict) -> str:
+        """AD-934 (Option C): teach the [THINK] reply marker to all crew agents
+        WHEN config.dm_deliberate.enabled is True (default OFF -> ""). The agent
+        emits [THINK] anywhere in its reply when a turn warrants deeper reasoning;
+        DmReplyPipeline.step_4j_deliberate_parse then makes one deep-tier pass to
+        improve the draft. Honest-degrade: returns "" when the flag is off or no
+        runtime/config is wired. Overridable (Open/Closed)."""
+        runtime = getattr(self, "_runtime", None)
+        cfg = getattr(getattr(runtime, "config", None), "dm_deliberate", None)
+        if not getattr(cfg, "enabled", False):
+            return ""
+        return (
+            "\n\nDeeper reasoning: when a question genuinely warrants more careful "
+            "thought than a quick reply, place the marker [THINK] anywhere in your "
+            "response. The system will take one extra pass to sharpen your reply "
+            "before it is sent. Use it sparingly — only for hard or high-stakes "
+            "turns, not routine chat."
+        )
+
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
 
@@ -2374,6 +2393,12 @@ class CognitiveAgent(BaseAgent):
             _nb_proto = self._conversational_notebook_protocol(observation)
             if _nb_proto:
                 composed += _nb_proto
+            # AD-934 (Option C): deliberate re-roll protocol. Overridable hook;
+            # base returns "" unless config.dm_deliberate.enabled (default OFF),
+            # so the [THINK] marker is taught only when the flag is on.
+            _delib_proto = self._conversational_deliberate_protocol(observation)
+            if _delib_proto:
+                composed += _delib_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

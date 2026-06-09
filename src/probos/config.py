@@ -4984,6 +4984,15 @@ class DmTargetedLookupConfig(BaseModel):  # AD-725 (Wave 159)
         return v
 
 
+class DmDeliberateConfig(BaseModel):  # AD-934
+    """AD-934 (Option C): flag-gated [THINK]/[DELIBERATE] deep-tier re-roll.
+    Default OFF — opt-in because the re-roll adds a full deep-tier LLM pass
+    (latency + cost) per marker-bearing reply."""
+    enabled: bool = False
+    tier: str = "deep"
+    max_tokens: int = 800
+
+
 class WakeWordConfig(BaseModel):
     """AD-705c (Wave 179) — custom wake-word training pipeline config.
 
@@ -5242,6 +5251,7 @@ class SystemConfig(BaseModel):
     avatar_telemetry: AvatarTelemetryConfig = Field(default_factory=AvatarTelemetryConfig)  # AD-722
     dm_sanity_gate: DmSanityGateConfig = Field(default_factory=DmSanityGateConfig)  # AD-724
     dm_targeted_lookup: DmTargetedLookupConfig = Field(default_factory=DmTargetedLookupConfig)  # AD-725 (Wave 159)
+    dm_deliberate: DmDeliberateConfig = Field(default_factory=DmDeliberateConfig)  # AD-934
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     cloud_pickers: CloudPickersConfig = Field(default_factory=CloudPickersConfig)  # AD-720c
     lipsync: LipSyncConfig = Field(default_factory=LipSyncConfig)  # AD-721b-1 (Wave 155)

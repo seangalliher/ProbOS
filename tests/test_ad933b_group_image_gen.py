@@ -42,7 +42,7 @@ from probos.types import IntentMessage, IntentResult
 
 # ---------------- pipeline-level step inventory ----------------
 
-# The full 17-step chain in load-bearing order (mirrors ``_full_steps``).
+# The full 18-step chain in load-bearing order (mirrors ``_full_steps``).
 _ALL_STEPS = (
     "step_1_sanity_gate_retry",
     "step_2_challenge_parse",
@@ -56,6 +56,7 @@ _ALL_STEPS = (
     "step_4h_mesh_read_parse",
     "step_4f_extract_artifacts",
     "step_4g_create_task_parse",
+    "step_4j_deliberate_parse",
     "step_5_episodic_store",
     "step_6_working_memory_record",
     "step_7_divergence_check",
@@ -63,7 +64,8 @@ _ALL_STEPS = (
     "step_9_emotion_resolve",
 )
 # The escalation subset reused by the group fan-out, in run()-order
-# (4c added by AD-933b, first because it precedes 4e in ``_full_steps``).
+# (4c added by AD-933b, first because it precedes 4e in ``_full_steps``;
+# 4j added by AD-934, appended last after 4g).
 _ESCALATION_STEPS = (
     "step_4c_image_gen_parse",
     "step_4e_action_dispatch",
@@ -71,6 +73,7 @@ _ESCALATION_STEPS = (
     "step_4h_mesh_read_parse",
     "step_4f_extract_artifacts",
     "step_4g_create_task_parse",
+    "step_4j_deliberate_parse",
 )
 
 
@@ -234,7 +237,8 @@ async def test_run_escalation_only_runs_six_steps_including_4c():
 
     await pipeline.run_escalation_only()
 
-    # Exactly the six escalation steps, in run()-order (4c first), nothing else.
+    # Exactly the seven escalation steps, in run()-order (4c first, 4j last),
+    # nothing else.
     assert tuple(recorder) == _ESCALATION_STEPS
     assert set(recorder) == set(_ESCALATION_STEPS)
     # The other eleven steps were NOT invoked.
@@ -253,20 +257,20 @@ async def test_run_escalation_only_runs_six_steps_including_4c():
     }
 
 
-# ---------------- 2. run() still 17 steps, byte-identical order ----------------
+# ---------------- 2. run() still 18 steps, byte-identical order ----------------
 
 
-async def test_run_still_seventeen_steps_in_order():
+async def test_run_still_eighteen_steps_in_order():
     recorder: list[str] = []
     pipeline = DmReplyPipeline(_minimal_ctx())
     _spy_all_steps(pipeline, recorder)
 
     await pipeline.run()
 
-    # Regression guard: the full chain is unchanged (4c remains where AD-730-3
-    # put it; adding 4c to the escalation subset did not touch _full_steps).
+    # Regression guard: the full chain is unchanged except the AD-934 4j
+    # insertion between 4g and 5 (4c remains where AD-730-3 put it).
     assert tuple(recorder) == _ALL_STEPS
-    assert len(recorder) == 17
+    assert len(recorder) == 18
 
 
 # ---------------- 3. group [GEN_IMAGE] surfaces the SHA ref ----------------

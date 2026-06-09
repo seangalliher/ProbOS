@@ -57,6 +57,14 @@ _CREATE_TASK_RE = re.compile(
 # into Captain-visible text (mirrors AD-728d / AD-730-3 contract).
 _CREATE_TASK_STRIP_RE = re.compile(r"\[CREATE_TASK\b[^\]\n]*\]?")
 
+# AD-934 (Option C): deep-tier re-roll marker. [THINK] or [DELIBERATE], with an
+# optional trailing focus hint (e.g. [THINK be rigorous]) reserved for AD-934a.
+# The well-formed regex requires the closing bracket; the lax strip removes
+# malformed variants too so no marker leaks into Captain-visible text
+# (mirrors the AD-845 / AD-730-3 strip contract).
+_DELIBERATE_RE = re.compile(r"\[(?:THINK|DELIBERATE)\b[^\]\n]*\]")
+_DELIBERATE_STRIP_RE = re.compile(r"\[(?:THINK|DELIBERATE)\b[^\]\n]*\]?")
+
 # AD-869: synchronous mesh-read tag emitted by Yeo in a 1:1 chat reply.
 # Shape: ``[MESH <intent> key=value key=value]``. ``<intent>`` is a lowercase
 # read-intent name (the read-only allowlist is enforced at EXECUTION time in
@@ -283,6 +291,18 @@ class DmSanityGate:
         if not text:
             return text
         return _CREATE_TASK_STRIP_RE.sub("", text).strip()
+
+    def extract_deliberate(self, text: str) -> bool:
+        """AD-934: True iff a well-formed [THINK]/[DELIBERATE] marker is present."""
+        return bool(text) and _DELIBERATE_RE.search(text) is not None
+
+    def strip_deliberate(self, text: str) -> str:
+        """AD-934: remove all [THINK]/[DELIBERATE] markers (well-formed +
+        malformed) from Captain-visible text, including the trailing
+        ``.strip()`` (AD-572/AD-845 contract)."""
+        if not text:
+            return text
+        return _DELIBERATE_STRIP_RE.sub("", text).strip()
 
     @staticmethod
     def _parse_mesh_params(raw: str) -> dict[str, str]:

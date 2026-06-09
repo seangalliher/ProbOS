@@ -308,7 +308,7 @@ async def test_group_mesh_read_marker_runs_without_crash(tmp_path):
     assert "Let me check." in rows["yeo1"]
 
 
-# ---------------- 6. run_escalation_only() runs ONLY the 6-step subset --------
+# ---------------- 6. run_escalation_only() runs ONLY the 7-step subset --------
 
 
 _ALL_STEPS = (
@@ -324,6 +324,7 @@ _ALL_STEPS = (
     "step_4h_mesh_read_parse",
     "step_4f_extract_artifacts",
     "step_4g_create_task_parse",
+    "step_4j_deliberate_parse",  # AD-934
     "step_5_episodic_store",
     "step_6_working_memory_record",
     "step_7_divergence_check",
@@ -340,6 +341,7 @@ _ESCALATION_SUBSET = (
     "step_4h_mesh_read_parse",
     "step_4f_extract_artifacts",
     "step_4g_create_task_parse",
+    "step_4j_deliberate_parse",  # AD-934 (appended last, after 4g)
 )
 
 
@@ -363,7 +365,7 @@ def _bare_pipeline() -> DmReplyPipeline:
 
 
 def _install_step_spies(pipeline: DmReplyPipeline) -> list[str]:
-    """Replace all 17 step methods on the instance with recording spies.
+    """Replace all 18 step methods on the instance with recording spies.
 
     ``_full_steps``/``_escalation_steps`` read ``self.step_X`` at call time, so
     instance-attribute spies shadow the real methods — the dispatched tuple is
@@ -388,22 +390,23 @@ async def test_run_escalation_only_invokes_only_the_subset():
 
     await pipeline.run_escalation_only()
 
-    # AD-933b: exactly the 6-step subset, in run()-order; none of the other 11 fired.
+    # AD-934: exactly the 7-step subset, in run()-order; none of the other 11 fired.
     assert recorded == list(_ESCALATION_SUBSET)
     excluded = set(_ALL_STEPS) - set(_ESCALATION_SUBSET)
     assert excluded.isdisjoint(recorded)
 
 
-# ---------------- 7. run() still invokes all 17 steps in order ----------------
+# ---------------- 7. run() still invokes all 18 steps in order ----------------
 
 
-async def test_run_invokes_all_seventeen_steps_in_order():
+async def test_run_invokes_all_eighteen_steps_in_order():
     pipeline = _bare_pipeline()
     recorded = _install_step_spies(pipeline)
 
     await pipeline.run()
 
-    # Regression guard for the AD-933 refactor: run() behaviour is byte-identical.
+    # Regression guard for the AD-933 refactor + AD-934 4j insertion: run()
+    # invokes every step in _full_steps() order (4g -> 4j -> 5).
     assert recorded == list(_ALL_STEPS)
 
 
