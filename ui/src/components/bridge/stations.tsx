@@ -9,6 +9,7 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { BridgeSystem, BridgeThreads } from './BridgeSystem';
 import { BridgeKanban } from './BridgeKanban';
 import { BridgeCommunications } from './BridgeCommunications';
+import { BridgeEnvironment } from './BridgeEnvironment';
 
 export type StationId =
   | 'communications' | 'personnel' | 'science'
@@ -143,7 +144,11 @@ export function buildBridgeStations(ctx: {
       onExpand: () => useStore.setState({ mainViewer: 'system' }),
       body: () => <BridgeSystem />,
       actions: [],
-      config: [],
+      // AD-945: the four bottom-right environment toggles (sound / voice / wake-word /
+      // legend), relocated from DecisionSurface into the Ship's-Computer command layer.
+      config: [
+        { id: 'environment', label: 'Environment', render: () => <BridgeEnvironment /> },
+      ],
     },
     {
       id: 'command',
