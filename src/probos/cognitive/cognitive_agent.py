@@ -1928,6 +1928,22 @@ class CognitiveAgent(BaseAgent):
             "turns, not routine chat."
         )
 
+    def _conversational_group_chat_protocol(self, observation: dict) -> str:
+        """AD-935: in a group chat, teach the agent that responding is OPTIONAL —
+        reply only with something substantive to add, else decline. Gated on the
+        group fan-out param ``is_group_chat`` so 1:1 DMs are unaffected. Universal
+        (all crew), like the AD-912 notebook capability. Overridable (Open/Closed).
+        Gap-regex-safe (no can't/cannot/don't have/unable to/not able to)."""
+        params = observation.get("params") or {}
+        if not params.get("is_group_chat"):
+            return ""
+        return (
+            "\n\nYou are in a group chat with other crew. Reply ONLY when you have "
+            "something substantive to add, build on, answer, or correct. If a "
+            "fellow crew member directs a question to you, answer it. When you have "
+            "nothing to add, respond with exactly [NO_RESPONSE] and nothing else."
+        )
+
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
 
@@ -2399,6 +2415,12 @@ class CognitiveAgent(BaseAgent):
             _delib_proto = self._conversational_deliberate_protocol(observation)
             if _delib_proto:
                 composed += _delib_proto
+            # AD-935: group-chat decline protocol. Overridable hook; base returns
+            # "" unless the fan-out passed params["is_group_chat"], so the
+            # [NO_RESPONSE] decline option is taught only inside a group chat.
+            _group_proto = self._conversational_group_chat_protocol(observation)
+            if _group_proto:
+                composed += _group_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

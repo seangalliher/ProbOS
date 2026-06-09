@@ -3774,6 +3774,13 @@ class GroupChatConfig(BaseModel):
     # crew pipeline that drives the executor (agentic_dispatch.orchestrator_enabled)
     # also ships OFF, so a zero-config boot creates no task rooms.
     auto_task_room_enabled: bool = False
+    # AD-935: bounded synchronous agent-to-agent reactivity. When enabled, an
+    # agent reply in a group chat fans to the OTHER crew for up to
+    # ``max_agent_rounds`` extra rounds, gated by the AD-915 convergence gate
+    # + [NO_RESPONSE]. Transitional flag (#14) — ships OFF; system.yaml flips it
+    # on. Synchronous within the Captain turn (no live-refresh exists yet).
+    agent_reactivity_enabled: bool = False
+    max_agent_rounds: int = 2   # extra agent-only rounds after the Captain round (0 = AD-914 single round)
 
 
 class WardRoomConfig(BaseModel):

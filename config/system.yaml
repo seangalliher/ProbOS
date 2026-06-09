@@ -1831,6 +1831,11 @@ group_chat:
   # CrewTaskExecutor fans a parent task out to >=2 distinct crew it auto-creates
   # ONE task-linked workspace room (idempotent; AD-918 cooldown/cap apply).
   auto_task_room_enabled: true
+  # AD-935: bounded synchronous agent-to-agent reactivity. After the Captain
+  # round, an agent reply fans to the OTHER crew for up to max_agent_rounds
+  # extra rounds (AD-915 convergence gate + [NO_RESPONSE] + round cap bound it).
+  agent_reactivity_enabled: true
+  max_agent_rounds: 2
 desktop:
   enabled: false
   tray_autostart: true

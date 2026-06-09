@@ -206,40 +206,50 @@ async def build_chat_vision_messages(
     return messages if image_ids else None
 
 
-async def group_chat_fanout(
+async def _fan_one_round(
     runtime: Any,
+    store: Any,
     thread_id: str,
     *,
-    captain_body: str,
-    captain_msg: Any,
+    trigger_body: str,
+    candidate_ids: list[str],
+    exclude_ids: set[str],
+    vision_messages: list[dict[str, Any]] | None,
+    sanity_gate: Any,
+    t_start: float,
+    before: float | None = None,
 ) -> list[dict[str, str]]:
-    """Fan the Captain turn out to all crew-agent participants in parallel.
+    """One reactivity round (AD-935): facilitate over ``candidate_ids`` (minus
+    ``exclude_ids``) using ``trigger_body`` for mention/relevance, dispatch the
+    chosen speakers in parallel, persist each non-[NO_RESPONSE] reply, write
+    AD-933a group episodes, and return the new ``{"agent_id", "callsign",
+    "text"}`` replies. Returns ``[]`` when there are no candidates, the
+    facilitator suppresses everyone (converged / empty), or every speaker
+    declines.
 
-    Returns a list of ``{"agent_id", "callsign", "text"}`` dicts (one per
-    dispatched agent). Persists each reply as a role="agent" message.
-    Assumes the caller already verified ``role == "captain"`` AND >= 2 crew
-    participants. Per-agent dispatch is Tier-2 log-and-degrade: one agent's
+    ``before`` bounds the rebuilt prior window: round 0 passes the Captain
+    message timestamp so the just-appended Captain turn is excluded from history
+    (AD-914 byte-identical); a cascade round passes ``None`` so the window
+    INCLUDES the just-persisted prior-round replies (each speaker sees the full
+    transcript). Per-agent dispatch is Tier-2 log-and-degrade: one agent's
     failure never blocks the others.
     """
-    # AD-933a: bound the episode duration measured across the fan-out.
-    t_start = time.monotonic()
-    store = runtime.chat_thread_store
-    thread = store.get_thread(thread_id)
-    if thread is None:
+    candidate_pool = [a for a in candidate_ids if a not in exclude_ids]
+    if not candidate_pool:
         return []
-    agent_ids = crew_agent_participants(runtime, thread.participants)
     # AD-915: single-read DRY — fetch the prior window once and reuse it for
-    # history injection, recency, and the convergence gate.
-    prior = store.list_messages(thread_id, limit=1000, before=captain_msg.created_at)
+    # history injection, recency, and the convergence gate. ``before`` is None
+    # on cascade rounds so the window includes the just-persisted replies.
+    prior = store.list_messages(thread_id, limit=1000, before=before)
     session_history = _build_session_history(
-        runtime, store, thread_id, captain_msg.created_at, prior=prior
+        runtime, store, thread_id, before, prior=prior
     )
-    # AD-915: facilitator decides WHO/ORDER; AD-914's _send_one still does the
+    # AD-915: facilitator decides WHO/ORDER; _send_one still does the
     # dispatch+persist (DRY). Tier-2: any facilitation failure degrades to the
     # AD-914 all-at-once order so a facilitator bug never silences the crew.
     try:
         facilitator = ChatFacilitator.from_config(getattr(runtime, "config", None))
-        signals = _assemble_speaker_signals(runtime, captain_body, agent_ids, prior)
+        signals = _assemble_speaker_signals(runtime, trigger_body, candidate_pool, prior)
         recent_agent_msgs = [
             (m.author_id, m.body) for m in prior[-_CONVERGENCE_WINDOW:] if m.role == "agent"
         ]
@@ -250,25 +260,7 @@ async def group_chat_fanout(
             "AD-915: facilitation failed for thread=%s; falling back to AD-914 order",
             thread_id, exc_info=True,
         )
-        speaking_order = list(agent_ids)
-
-    # AD-916: build the group vision array once from the Captain message's
-    # persisted attachment refs. None => no image refs => AD-914 text-only.
-    vision_messages: list[dict[str, Any]] | None = None
-    try:
-        _attachments = (getattr(captain_msg, "metadata", None) or {}).get("attachments") or []
-        _cfg_attach = getattr(getattr(runtime, "config", None), "attachments", None)
-        if _attachments and _cfg_attach is not None and getattr(_cfg_attach, "enabled", False):
-            from probos.routers.chat import _get_attachment_store
-            vision_messages = await build_chat_vision_messages(
-                _get_attachment_store(runtime), _cfg_attach, captain_body, _attachments
-            )
-    except Exception:
-        logger.warning(
-            "AD-916: group vision build failed for thread=%s; text-only fan-out",
-            thread_id, exc_info=True,
-        )
-        vision_messages = None
+        speaking_order = list(candidate_pool)
 
     async def _send_one(agent_id: str) -> dict[str, str]:
         callsign = ""
@@ -280,10 +272,13 @@ async def group_chat_fanout(
         except Exception:
             logger.debug("AD-914: callsign resolve failed for %s", agent_id, exc_info=True)
         params: dict[str, Any] = {
-            "text": captain_body,
+            "text": trigger_body,
             "from": "hxi_profile",
             "session": bool(session_history),
             "session_history": session_history,
+            # AD-935: teach the [NO_RESPONSE] decline option (group-only — the
+            # cognitive_agent hook gates the teaching string on this param).
+            "is_group_chat": True,
         }
         # AD-916: only vision-capable participants receive image refs. The
         # ``agent`` above was already resolved for the callsign — reuse it.
@@ -334,13 +329,13 @@ async def group_chat_fanout(
                     agent=agent,
                     agent_id=agent_id,
                     callsign=callsign,
-                    req_message=captain_body,
+                    req_message=trigger_body,
                     response_text=reply_text,
                     has_image_attachment=bool(vision_messages),
                     per_attachment=[],
                     sanity_gate=sanity_gate,
                     params=params,
-                    message_text=captain_body,
+                    message_text=trigger_body,
                     sampling_state=None,
                     avatar_event_bus=None,
                     chat_thread_id=thread_id,
@@ -358,6 +353,15 @@ async def group_chat_fanout(
                     "AD-933: escalation subset failed for thread=%s agent=%s; "
                     "shipping raw reply", thread_id, agent_id, exc_info=True,
                 )
+        # AD-935: an agent may decline to respond in a group turn. A
+        # [NO_RESPONSE] (case-insensitive, after strip + bracket removal) or an
+        # empty reply is NOT persisted and NOT returned — the round collector
+        # filters _declined entries before persist-visibility, the episode
+        # write, and per_agent_replies, so a decline neither shows in the
+        # transcript nor propagates the cascade. (Also fixes round 0: a literal
+        # [NO_RESPONSE] reply would previously have been persisted + shown.)
+        if reply_text.strip().upper().replace("[", "").replace("]", "") == "NO_RESPONSE" or not reply_text.strip():
+            return {"agent_id": agent_id, "callsign": callsign, "text": "", "_declined": True}
         try:
             # AD-933b: attach the generated-image refs only when the
             # escalation produced any; an empty/failed escalation leaves the
@@ -376,11 +380,11 @@ async def group_chat_fanout(
             )
         return {"agent_id": agent_id, "callsign": callsign, "text": reply_text}
 
-    # AD-933: resolve the DM sanity gate ONCE (DRY) before fan-out — step_4g
-    # ([CREATE_TASK]) early-returns without it, so every speaker shares the
-    # one runtime gate rather than re-reading it per agent.
-    sanity_gate = getattr(runtime, "dm_sanity_gate", None)
-    replies = await asyncio.gather(*[_send_one(a) for a in speaking_order])
+    raw = await asyncio.gather(*[_send_one(a) for a in speaking_order])
+    # AD-935: drop [NO_RESPONSE]/empty declines BEFORE the episode write and
+    # the returned per_agent_replies list. (_send_one already early-returns a
+    # decline before its own append, so a decline never reaches append_message.)
+    replies = [r for r in raw if not r.get("_declined")]
     t_end = time.monotonic()
 
     # AD-933a: group-anchored episodic write — one episode per crew reply.
@@ -392,12 +396,14 @@ async def group_chat_fanout(
     # wouldn't remember the room (no episodic recall, no dreaming, no wellness
     # analysis). Mirrors the AD-719 @-mention fan-out (routers/chat.py) but with
     # group anchors. Tier-2 honest-degrade: every store failure logs and
-    # continues; the fan-out still returns all replies.
+    # continues; the round still returns all replies.
     episodic_memory = getattr(runtime, "episodic_memory", None)
     if episodic_memory is not None:
         from probos.types import AnchorFrame, Episode
         participants = ["captain"] + [(r["callsign"] or r["agent_id"]) for r in replies]
-        episode_input = f"[group chat] Captain: {captain_body[:200]}"
+        # AD-935: the trigger is the Captain turn (round 0) or the prior round's
+        # joined agent messages (cascade rounds) — record whichever drove this round.
+        episode_input = f"[group chat] {trigger_body[:200]}"
         _sentinels = {"(no response)", "(delivery failed)", ""}
         for reply in replies:
             if not reply["agent_id"] or reply["text"] in _sentinels:
@@ -441,4 +447,109 @@ async def group_chat_fanout(
                     reply["callsign"] or reply["agent_id"], type(e).__name__, e,
                 )
 
-    return list(replies)
+    return replies
+
+
+async def group_chat_fanout(
+    runtime: Any,
+    thread_id: str,
+    *,
+    captain_body: str,
+    captain_msg: Any,
+) -> list[dict[str, str]]:
+    """Fan the Captain turn out to all crew-agent participants, then (when
+    ``group_chat.agent_reactivity_enabled`` is True) run a BOUNDED SYNCHRONOUS
+    agent-to-agent cascade for up to ``max_agent_rounds`` extra rounds (AD-935).
+
+    Returns a flat list of ``{"agent_id", "callsign", "text"}`` dicts across ALL
+    rounds, in order (the UI renders ``per_agent_replies`` directly). With
+    reactivity OFF the result is byte-identical to the AD-914 single round.
+    Each round persists its replies as role="agent" messages and writes AD-933a
+    group episodes. Assumes the caller already verified ``role == "captain"``
+    AND >= 2 crew participants.
+
+    SYNCHRONOUS (awaited, NOT fire-and-forget) because the chat transcript has
+    no live-refresh — every cascade reply must be returned in this POST's
+    ``per_agent_replies``. The cascade is bounded by the round cap, the AD-915
+    convergence gate (empty ``speaking_order`` once the exchange converges),
+    exclude-prior-speakers, and all-decline. Each cascade round degrades Tier-2:
+    a round failure returns the replies gathered so far. (Async/streaming
+    reactivity once a live-refresh exists is forward marker AD-935a.)
+    """
+    # AD-933a: bound the episode duration measured across the whole fan-out.
+    t_start = time.monotonic()
+    store = runtime.chat_thread_store
+    thread = store.get_thread(thread_id)
+    if thread is None:
+        return []
+    agent_ids = crew_agent_participants(runtime, thread.participants)
+    # AD-933: resolve the DM sanity gate ONCE (DRY) before any round — step_4g
+    # ([CREATE_TASK]) early-returns without it, so every speaker across every
+    # round shares the one runtime gate rather than re-reading it per agent.
+    sanity_gate = getattr(runtime, "dm_sanity_gate", None)
+
+    # AD-916: build the group vision array once from the Captain message's
+    # persisted attachment refs. Round 0 ONLY (agent rounds carry no Captain
+    # attachments). None => no image refs => AD-914 text-only.
+    vision_messages: list[dict[str, Any]] | None = None
+    try:
+        _attachments = (getattr(captain_msg, "metadata", None) or {}).get("attachments") or []
+        _cfg_attach = getattr(getattr(runtime, "config", None), "attachments", None)
+        if _attachments and _cfg_attach is not None and getattr(_cfg_attach, "enabled", False):
+            from probos.routers.chat import _get_attachment_store
+            vision_messages = await build_chat_vision_messages(
+                _get_attachment_store(runtime), _cfg_attach, captain_body, _attachments
+            )
+    except Exception:
+        logger.warning(
+            "AD-916: group vision build failed for thread=%s; text-only fan-out",
+            thread_id, exc_info=True,
+        )
+        vision_messages = None
+
+    # AD-914 round 0: the Captain turn. before=captain_msg.created_at keeps the
+    # just-appended Captain message out of each agent's history (byte-identical).
+    all_replies: list[dict[str, str]] = []
+    round0 = await _fan_one_round(
+        runtime, store, thread_id,
+        trigger_body=captain_body, candidate_ids=agent_ids, exclude_ids=set(),
+        vision_messages=vision_messages, sanity_gate=sanity_gate, t_start=t_start,
+        before=captain_msg.created_at,
+    )
+    all_replies.extend(round0)
+
+    # AD-935: bounded synchronous agent-to-agent cascade. Each extra round fans
+    # the PREVIOUS round's new agent messages to the OTHER crew (excluding that
+    # round's speakers — an agent never reacts to its own message), gated by the
+    # AD-915 convergence gate, [NO_RESPONSE] declines, and the round cap. The
+    # cap is the hard backstop; the convergence gate is the semantic terminator
+    # (it returns an empty speaking_order once the exchange converges). Default
+    # OFF -> the loop is skipped -> round 0 is byte-identical to AD-914.
+    cfg = getattr(getattr(runtime, "config", None), "group_chat", None)
+    if getattr(cfg, "agent_reactivity_enabled", False):
+        max_rounds = int(getattr(cfg, "max_agent_rounds", 2))
+        last = round0
+        for _ in range(max(0, max_rounds)):
+            spoke_ids = {r["agent_id"] for r in last if r.get("agent_id")}
+            if not spoke_ids:
+                break  # nothing new to react to
+            trigger = "\n".join(
+                f"{r['callsign'] or r['agent_id']}: {r['text']}" for r in last
+            )
+            try:
+                nxt = await _fan_one_round(
+                    runtime, store, thread_id,
+                    trigger_body=trigger, candidate_ids=agent_ids, exclude_ids=spoke_ids,
+                    vision_messages=None, sanity_gate=sanity_gate, t_start=t_start,
+                )
+            except Exception:
+                logger.warning(
+                    "AD-935: reactivity round failed for thread=%s; returning "
+                    "replies gathered so far", thread_id, exc_info=True,
+                )
+                break
+            if not nxt:
+                break  # facilitator converged / suppressed everyone / all declined
+            all_replies.extend(nxt)
+            last = nxt
+    return all_replies
