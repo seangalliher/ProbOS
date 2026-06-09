@@ -35,13 +35,15 @@ export function buildPaletteCommands(stations: CommandStation[]): PaletteCommand
 }
 
 /** Case-insensitive token-AND substring match over `${station} ${label}`.
- *  Empty/whitespace query → [] (no command mode until the Captain types). */
+ *  Empty/whitespace query → ALL commands, so a bare '>' lists every launch
+ *  (AD-946b). Command mode is gated by the leading '>' at the call site, not by
+ *  the query content, so returning the full list here is safe. */
 export function matchPaletteCommands(
   query: string,
   commands: PaletteCommand[],
 ): PaletteCommand[] {
   const q = query.trim().toLowerCase();
-  if (!q) return [];
+  if (!q) return commands.slice();
   const terms = q.split(/\s+/);
   return commands.filter((c) => {
     const hay = `${c.station} ${c.label}`.toLowerCase();

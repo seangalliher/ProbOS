@@ -74,9 +74,11 @@ describe('AD-946 matchPaletteCommands — case-insensitive token-AND substring',
     expect(matchPaletteCommands('science records', cmds).map((c) => c.label)).toEqual(['Records']);
   });
 
-  it('empty / whitespace-only query yields no command mode', () => {
-    expect(matchPaletteCommands('', cmds)).toEqual([]);
-    expect(matchPaletteCommands('   ', cmds)).toEqual([]);
+  it('AD-946b: empty / whitespace-only query lists ALL commands (a bare ">" shows everything)', () => {
+    expect(matchPaletteCommands('', cmds)).toEqual(cmds);
+    expect(matchPaletteCommands('   ', cmds)).toEqual(cmds);
+    // a fresh array, never the caller's own reference
+    expect(matchPaletteCommands('', cmds)).not.toBe(cmds);
   });
 
   it('a non-matching query returns []', () => {
