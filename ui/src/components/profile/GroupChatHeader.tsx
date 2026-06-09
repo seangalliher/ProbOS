@@ -11,6 +11,7 @@ import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { UserPlus, Close } from '../icons/Glyphs';
 import { patchThread, addParticipant, removeParticipant, setMeetingActive, appendMessage } from '../sidebar/threadApi';
 import { AddParticipantPopover } from './AddParticipantPopover';
+import { chatDisplayName } from '../chats/chatFilters';
 // AD-937: on a 1:1 (<=1 crew) the add control opens the seeded picker instead
 // of the inline mutate path, so converting a 1:1 mints a SEPARATE group thread.
 import { NewChatModal } from '../chats/NewChatModal';
@@ -135,7 +136,7 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
       ) : (
         <span
           data-testid="group-chat-title"
-          onClick={() => { setTitleDraft(thread.title); setEditing(true); }}
+          onClick={() => { setTitleDraft(chatDisplayName(thread, agents)); setEditing(true); }}
           title="Rename room"
           style={{
             flex: 1,
@@ -149,7 +150,7 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
             whiteSpace: 'nowrap',
           }}
         >
-          {thread.title}
+          {chatDisplayName(thread, agents)}
         </span>
       )}
 

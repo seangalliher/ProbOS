@@ -62,3 +62,26 @@ export function captainJoined(thread: AD791aChatThreadView): boolean {
 export function hostAgentId(thread: AD791aChatThreadView, agents: AgentMap): string | null {
   return crewParticipantIds(thread, agents)[0] ?? null;
 }
+
+/**
+ * AD-942: the canonical display name for a chat row / header.
+ *
+ * Teams/Slack convention: a DM or group chat is named by its PARTICIPANTS, not
+ * by message content. Agent-initiated chats (AD-918/AD-924) can land a
+ * conversational phrase in ``thread.title`` (e.g. "Hello Yeo", "Thanks, let me
+ * know if anything changes"), which read as noise in the list. So the display
+ * name is the crew callsigns joined by ", " — UNLESS the Captain explicitly
+ * renamed the room (``metadata.title_locked`` via the AD-917 GroupChatHeader
+ * rename / AD-794 set_title(lock=True)), in which case the deliberate title
+ * wins. Honest-degrade: when no crew resolves (agents not hydrated) fall back
+ * to the stored title, then a neutral "Chat".
+ */
+export function chatDisplayName(thread: AD791aChatThreadView, agents: AgentMap): string {
+  const locked = !!(thread.metadata as { title_locked?: unknown } | undefined)?.title_locked;
+  if (locked && thread.title.trim()) return thread.title;
+  const names = crewParticipantIds(thread, agents)
+    .map((id) => agents.get(id)?.callsign)
+    .filter((c): c is string => !!c);
+  if (names.length > 0) return names.join(', ');
+  return thread.title.trim() || 'Chat';
+}

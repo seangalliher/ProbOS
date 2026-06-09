@@ -29,6 +29,7 @@ import {
   CAPTAIN_PARTICIPANT_ID,
   COLOR_ACTIVE,
   COLOR_INACTIVE,
+  chatDisplayName,
   crewParticipantIds,
   isAgentCreated,
   isChat,
@@ -268,7 +269,7 @@ export default function ChatsPanel() {
                     size={24}
                   />
                   <span style={{ fontSize: 13, fontWeight: 600, color: COLOR_ACTIVE }}>
-                    {thread.title}
+                    {chatDisplayName(thread, agents)}
                   </span>
                 </div>
               );
@@ -297,7 +298,7 @@ export default function ChatsPanel() {
                 {/* Title line + agent-created badge */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: COLOR_ACTIVE }}>
-                    {thread.title}
+                    {chatDisplayName(thread, agents)}
                   </span>
                   {agentCreated && (
                     <span

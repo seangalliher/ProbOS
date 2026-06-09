@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AD791aChatThreadView } from '../../../store/useStore';
 import type { Agent } from '../../../store/types';
-import { isChat, isGroupChat, hostAgentId, captainJoined } from '../chatFilters';
+import { isChat, isGroupChat, hostAgentId, captainJoined, chatDisplayName } from '../chatFilters';
 
 function mkAgent(p: { id: string; callsign: string; isCrew?: boolean }): Agent {
   return {
@@ -71,6 +71,35 @@ describe('AD-931 chatFilters.isChat', () => {
     const empty = mkThread({ id: 'empty', participants: [] });
     expect(isChat(captainOnly, AGENTS)).toBe(false);
     expect(isChat(empty, AGENTS)).toBe(false);
+  });
+});
+
+describe('AD-942 chatDisplayName', () => {
+  it('names a 1:1 by its single crew callsign (ignores message-content title)', () => {
+    const t = mkThread({ id: 'd1', participants: ['mccoy'], title: 'Hello there, just checking in' });
+    expect(chatDisplayName(t, AGENTS)).toBe('Bones');
+  });
+
+  it('names a group by its crew callsigns joined (ignores message-content title)', () => {
+    const t = mkThread({ id: 'g1', participants: ['mccoy', 'scotty'], title: 'Thanks, will look into this' });
+    expect(chatDisplayName(t, AGENTS)).toBe('Bones, Scott');
+  });
+
+  it('honors an explicit Captain rename (metadata.title_locked wins)', () => {
+    const t = mkThread({ id: 'lk', participants: ['mccoy', 'scotty'], title: 'Launch Planning', metadata: { title_locked: true } });
+    expect(chatDisplayName(t, AGENTS)).toBe('Launch Planning');
+  });
+
+  it('a locked-but-empty title still falls back to participant names', () => {
+    const t = mkThread({ id: 'le', participants: ['mccoy'], title: '   ', metadata: { title_locked: true } });
+    expect(chatDisplayName(t, AGENTS)).toBe('Bones');
+  });
+
+  it('honest-degrades to the stored title, then "Chat", when no crew resolves', () => {
+    const titled = mkThread({ id: 'nt', participants: ['captain'], title: 'Standup' });
+    expect(chatDisplayName(titled, AGENTS)).toBe('Standup');
+    const untitled = mkThread({ id: 'nu', participants: ['captain'], title: '' });
+    expect(chatDisplayName(untitled, AGENTS)).toBe('Chat');
   });
 });
 
