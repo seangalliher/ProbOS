@@ -18,7 +18,7 @@
  * amber `#f0b060`, dim `#666680`. Per HXI Design Principle #9: agent-created
  * chats the Captain has not yet joined float to the top (alert-driven ordering).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useStore, type AD791aChatThreadView } from '../../store/useStore';
 import type { Agent } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
@@ -70,6 +70,10 @@ export default function ChatsPanel() {
   // MeetingView / the meetingActive selector (all read chatThreads.get(id))
   // resolve, and the thread-keyed transcript can load on open.
   const setChatThread = useStore((s) => s.setChatThread);
+  // AD-940: the panel's drag position + setter (GamePanel / profilePanelPos
+  // pattern). Lets the Captain move CHATS out of the way of an open chat window.
+  const pos = useStore((s) => s.chatsPanelPos);
+  const setPos = useStore((s) => s.setChatsPanelPos);
 
   const [threads, setThreads] = useState<AD791aChatThreadView[]>([]);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -86,6 +90,28 @@ export default function ChatsPanel() {
       active = false;
     };
   }, [open]);
+
+  // AD-940: header drag (GamePanel.startDrag pattern) — capture the offset on
+  // mousedown, track window mousemove, and tear the listeners down on mouseup.
+  // The New-chat / Close controls stopPropagation so a click never starts a drag.
+  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      setPos({
+        x: dragRef.current.origX + (ev.clientX - dragRef.current.startX),
+        y: dragRef.current.origY + (ev.clientY - dragRef.current.startY),
+      });
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [pos, setPos]);
 
   if (!open) return null;
 
@@ -127,10 +153,13 @@ export default function ChatsPanel() {
       data-testid="chats-panel"
       style={{
         position: 'fixed',
-        top: 60,
-        left: 60,
+        left: pos.x,
+        top: pos.y,
         width: 440,
-        bottom: 60,
+        // AD-940: drag replaces the old top/bottom:60 vertical pin. A maxHeight
+        // keeps the list bounded (the flex:1 body still scrolls) while the panel
+        // moves freely; 120 = the prior 60 top + 60 bottom margins.
+        maxHeight: 'calc(100vh - 120px)',
         zIndex: 30,
         background: 'rgba(10, 10, 18, 0.95)',
         backdropFilter: 'blur(12px)',
@@ -143,14 +172,18 @@ export default function ChatsPanel() {
         color: '#c0bab0',
       }}
     >
-      {/* Header */}
+      {/* Header — AD-940 drag handle */}
       <div
+        data-testid="chats-drag-handle"
+        onMouseDown={onHeaderMouseDown}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 8,
           padding: '12px 14px',
           borderBottom: '1px solid rgba(240, 176, 96, 0.15)',
+          cursor: 'move',
+          userSelect: 'none',
         }}
       >
         <GlyphGroup color={COLOR_ACTIVE} />
@@ -161,6 +194,7 @@ export default function ChatsPanel() {
         <button
           data-testid="new-chat-button"
           onClick={() => setNewChatOpen(true)}
+          onMouseDown={(e) => e.stopPropagation()}
           aria-label="New chat"
           style={{
             display: 'inline-flex',
@@ -184,6 +218,7 @@ export default function ChatsPanel() {
         <div
           data-testid="chats-close"
           onClick={close}
+          onMouseDown={(e) => e.stopPropagation()}
           style={{ cursor: 'pointer', color: COLOR_INACTIVE, display: 'inline-flex' }}
           aria-label="Close chats"
         >

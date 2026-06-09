@@ -7,7 +7,7 @@
 // the who's-speaking highlight (amber ring + pulse on the active speaker, the
 // others dim — HXI #4 motion = state) and a presence header. HXI #3 — inline
 // SVG/CSS only, amber palette, no emoji.
-import { useState, type CSSProperties } from 'react';
+import { useState, useRef, useEffect, type CSSProperties } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useStore } from '../../store/useStore';
 import type { Agent, AgentProfileData } from '../../store/types';
@@ -15,6 +15,10 @@ import { CrewVRM } from './CrewVRM';
 import { deriveAgentSignals } from './avatarSignals';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { useFleetAvatarTelemetry } from '../../avatars/useFleetAvatarTelemetry';
+import { useCameraStore } from '../../store/useCameraStore';
+import { useScreenStore } from '../../store/useScreenStore';
+import { getCameraStream } from '../../hooks/useCameraStream';
+import { getScreenStream } from '../../hooks/useScreenStream';
 
 const CAPTAIN_PARTICIPANT_ID = 'captain';
 
@@ -105,6 +109,80 @@ function AvatarSlot({
   );
 }
 
+/**
+ * AD-939: the Captain's gallery slot. The Captain is the meeting host and is
+ * always present; this slot renders their LIVE video when a camera or screen
+ * is shared (camera preferred — the AD-733 / AD-733-2 streams, read-only),
+ * else an amber stroke-SVG person glyph (HXI #3 — no emoji). It is the first
+ * cell in the gallery, ahead of the crew AvatarSlots. No new capture is
+ * started here: the existing MediaStream is mirrored into a muted <video>.
+ */
+function CaptainSlot() {
+  const cameraActive = useCameraStore((s) => s.active);
+  const screenActive = useScreenStore((s) => s.active);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Prefer the camera stream, else the screen stream. Attach the live
+  // MediaStream to the muted <video>; detach on teardown / source change.
+  useEffect(() => {
+    const stream = cameraActive ? getCameraStream() : screenActive ? getScreenStream() : null;
+    const el = videoRef.current;
+    if (el && stream) {
+      el.srcObject = stream;
+      el.play?.().catch(() => {});
+    }
+    return () => {
+      if (el) el.srcObject = null;
+    };
+  }, [cameraActive, screenActive]);
+  const hasVideo = cameraActive || screenActive;
+  return (
+    <div
+      data-testid="captain-slot"
+      style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+        width: 120, height: 160,
+      }}
+    >
+      <div
+        style={{
+          width: 112, height: 132, position: 'relative', borderRadius: 8,
+          overflow: 'hidden', background: 'rgba(255,255,255,0.04)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        {hasVideo ? (
+          <video
+            data-testid="captain-video"
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        ) : (
+          <div
+            data-testid="captain-icon"
+            style={{
+              width: 64, height: 64, borderRadius: '50%',
+              background: 'rgba(240,176,96,0.12)', border: '1px solid rgba(240,176,96,0.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <svg
+              width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f0b060"
+              strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+            >
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" />
+            </svg>
+          </div>
+        )}
+      </div>
+      <span style={{ color: '#f0b060', fontSize: 11, fontWeight: 600 }}>You (Captain)</span>
+    </div>
+  );
+}
+
 export function MeetingView({
   threadId,
   speakingAgentId = null,
@@ -181,6 +259,10 @@ export function MeetingView({
 
       {/* Avatar gallery */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
+        {/* AD-939: the Captain (meeting host) is always present and renders
+            first — live camera/screen video when shared, else an amber person
+            icon. The crew AvatarSlots follow (they now hydrate after AD-938). */}
+        <CaptainSlot />
         {crewIds.length === 0 ? (
           <span style={{ color: '#666680', fontSize: 12 }}>No crew in this meeting yet.</span>
         ) : (

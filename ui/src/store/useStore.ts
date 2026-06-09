@@ -332,6 +332,9 @@ export interface HXIState {
   // re-resolving the profile to the agent's 1:1 default.
   activeProfileThreadId: string | null;
   profilePanelPos: { x: number; y: number };
+  // AD-940: the floating CHATS panel's drag position (GamePanel / profilePanelPos
+  // pattern). Init matches its prior fixed on-screen origin so nothing jumps.
+  chatsPanelPos: { x: number; y: number };
   agentConversations: Map<string, AgentConversation>;
   // AD-791a: chat-thread provenance round-trip. ``threadIdByAgent`` maps
   // an agent's ID to the chat-thread the next /api/agent/{id}/chat
@@ -489,6 +492,7 @@ export interface HXIState {
   ) => void;
   markAgentRead: (agentId: string) => void;
   setProfilePanelPos: (pos: { x: number; y: number }) => void;
+  setChatsPanelPos: (pos: { x: number; y: number }) => void;
   // AD-791a: chat-thread state setters. ProfileChatTab + CompactApp round-trip
   // the response.thread_id field here; AD-792 sidebar consumes the hydrated map.
   setThreadForAgent: (agentId: string, threadId: string) => void;
@@ -826,6 +830,9 @@ export const useStore = create<HXIState>((set, get) => ({
   // AD-937: no group override at boot; set only by openGroupChatThread.
   activeProfileThreadId: null,
   profilePanelPos: { x: 100, y: 100 },
+  // AD-940: match the CHATS panel's prior fixed origin (left:60 / top:60) so
+  // enabling drag does not visually move it on first render.
+  chatsPanelPos: { x: 60, y: 60 },
   agentConversations: new Map(),
   // AD-791a: empty maps at boot; ProfileChatTab + hydrateChatThreads
   // populate them as turns and /api/threads responses land.
@@ -1311,6 +1318,7 @@ export const useStore = create<HXIState>((set, get) => ({
     }
   },
   setProfilePanelPos: (pos) => set({ profilePanelPos: pos }),
+  setChatsPanelPos: (pos) => set({ chatsPanelPos: pos }),
   // AD-791a: chat-thread state actions. ``setThreadForAgent`` is invoked
   // by ProfileChatTab + the inline-callsign handler in CompactApp when a
   // server response carries thread_id. ``hydrateChatThreads`` is called
