@@ -5,16 +5,16 @@ import { useStore } from '../store/useStore';
 import { ChevronDown, ChevronRight, Expand, Close } from './icons/Glyphs';
 import { TaskCard } from './bridge/BridgeCards';
 import { NotificationCard } from './bridge/BridgeNotifications';
-import { BridgeKanban } from './bridge/BridgeKanban';
-import { BridgeSystem, BridgeThreads, BridgeShutdown } from './bridge/BridgeSystem';
-import { BridgeCommunications } from './bridge/BridgeCommunications';
+import { BridgeShutdown } from './bridge/BridgeSystem';
+import { buildBridgeStations, isPopulated, type StationId } from './bridge/stations';
 
 /* ── Collapsible Section ── */
 function BridgeSection({
-  title, count, defaultOpen, accentColor, onExpand, children,
+  title, count, defaultOpen, accentColor, onExpand, stationId, children,
 }: {
   title: string; count: number; defaultOpen: boolean;
   accentColor?: string; onExpand?: () => void;
+  stationId?: StationId;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -23,6 +23,7 @@ function BridgeSection({
   return (
     <div>
       <div
+        data-station={stationId}
         onClick={() => setOpen(o => !o)}
         style={{
           padding: '8px 12px',
@@ -32,6 +33,10 @@ function BridgeSection({
           alignItems: 'center',
           gap: 6,
           borderBottom: '1px solid rgba(255,255,255,0.06)',
+          // AD-943: the command-station layer carries its accent edge; the
+          // activity-feed sections (no stationId) do not — a glanceable
+          // distinction (HXI #6), reusing the accent token (no new color).
+          borderLeft: stationId ? `2px solid ${color}` : undefined,
         }}
       >
         <span style={{ color: '#666' }}>{open ? <ChevronDown size={8} /> : <ChevronRight size={8} />}</span>
@@ -166,22 +171,34 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
 
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-        {/* SYSTEM — services only */}
-        <BridgeSection title="System" count={0} defaultOpen={false} accentColor="#70a0d0"
-          onExpand={() => useStore.setState({ mainViewer: 'system' })}>
-          <BridgeSystem />
-        </BridgeSection>
+        {/* ── COMMAND STATIONS — the Ship's-Computer command layer (AD-943).
+            Driven by the typed registry; the 3 existing sections migrate here.
+            personnel/science/command are modelled placeholders (no body yet),
+            hidden by isPopulated until AD-944/945/946 fill them. ── */}
+        {buildBridgeStations({
+          dmChannelCount: dmChannels.length,
+          kanbanCount: kanbanTasks.length,
+        })
+          .filter(isPopulated)
+          .map(st => (
+            <BridgeSection
+              key={st.id}
+              stationId={st.id}
+              title={st.title}
+              count={st.count ?? 0}
+              defaultOpen={st.defaultOpen}
+              accentColor={st.accent}
+              onExpand={st.onExpand}
+            >
+              {st.body?.()}
+              {st.config.map(c => (
+                <div key={c.id}>{c.render()}</div>
+              ))}
+            </BridgeSection>
+          ))}
 
-        {/* COMMUNICATIONS — threads + DMs */}
-        <BridgeSection title="Communications" count={dmChannels.length} defaultOpen={false} accentColor="#b080d0"
-          onExpand={() => useStore.setState({ wardRoomOpen: true, wardRoomView: 'channels' })}>
-          <div style={{ marginBottom: 8 }}>
-            <div style={{ fontSize: 9, color: '#666', marginBottom: 4, fontWeight: 600 }}>THREADS</div>
-            <BridgeThreads />
-          </div>
-          <BridgeCommunications />
-        </BridgeSection>
-
+        {/* ── ACTIVITY FEED — alert-driven, NOT stations (HXI #9). These rise
+            and recede with system state; they carry no stationId. ── */}
         {/* ATTENTION */}
         {attentionCount > 0 && (
           <BridgeSection title="Attention" count={attentionCount} defaultOpen={true} accentColor="#f0b060">
@@ -209,17 +226,6 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
           </BridgeSection>
         )}
 
-        {/* WORK BOARD — always visible */}
-        <BridgeSection
-          title="Work Board"
-          count={kanbanTasks.length}
-          defaultOpen={false}
-          accentColor="#d0a030"
-          onExpand={() => useStore.setState({ mainViewer: 'work' })}
-        >
-          <BridgeKanban />
-        </BridgeSection>
-
         {/* RECENT */}
         {recentTasks.length > 0 && (
           <BridgeSection title="Recent" count={recentTasks.length} defaultOpen={false} accentColor="#666">
@@ -227,9 +233,9 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
           </BridgeSection>
         )}
 
-        {/* Empty state */}
+        {/* Empty state — the activity feed is empty (stations always render). */}
         {attentionCount === 0 && activeTasks.length === 0 && infoNotifs.length === 0 &&
-         kanbanTasks.length === 0 && recentTasks.length === 0 && (
+         recentTasks.length === 0 && (
           <div style={{
             fontSize: 10, color: '#555', fontStyle: 'italic',
             textAlign: 'center', padding: '32px 0',

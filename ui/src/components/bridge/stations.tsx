@@ -1,0 +1,134 @@
+/* AD-943: Command-Station model + registry — the Bridge's Ship's-Computer
+ * command layer. A station = a menu group for one area of the ship, holding
+ * launch ACTIONS and inline CONFIG. The 3 existing Bridge sections are migrated
+ * here; personnel/science/command are modelled placeholders the AD-944/945/946
+ * wave fills. NOT an agent surface (AD-398). Deep visual pass = AD-943a. */
+import type { ReactNode } from 'react';
+import { useStore } from '../../store/useStore';
+import { BridgeSystem, BridgeThreads } from './BridgeSystem';
+import { BridgeKanban } from './BridgeKanban';
+import { BridgeCommunications } from './BridgeCommunications';
+
+export type StationId =
+  | 'communications' | 'personnel' | 'science'
+  | 'operations' | 'engineering' | 'command';
+
+/** A discrete "open / launch" item a station offers. AD-944 fills these with
+ *  store actions (openWardRoom, openCrewManifest, …). Empty in AD-943. */
+export interface StationAction {
+  id: string;
+  label: string;
+  onInvoke: () => void;
+  count?: number;
+}
+
+/** An inline configuration surface embedded in a station (e.g. the
+ *  Communications DM-rank settings). AD-945 folds the bottom-right toggles in. */
+export interface StationConfig {
+  id: string;
+  label: string;
+  render: () => ReactNode;
+}
+
+/** A command station = a menu group for one area of the ship. */
+export interface CommandStation {
+  id: StationId;
+  title: string;
+  accent: string;            // reuses an existing per-section color token
+  defaultOpen: boolean;
+  count?: number;            // live header count (e.g. dmChannels.length)
+  onExpand?: () => void;     // primary launch (the section Expand affordance)
+  body?: () => ReactNode;    // inline body (migrated System/Comms/Work bodies)
+  actions: StationAction[];  // discrete launches (empty until AD-944)
+  config: StationConfig[];   // inline config surfaces
+}
+
+/** Canonical 6-station taxonomy — pure, presentation-free metadata. All accents
+ *  reuse existing tokens (no new colors). */
+export const STATION_META: Record<StationId, { title: string; accent: string }> = {
+  communications: { title: 'Communications', accent: '#b080d0' },
+  personnel:      { title: 'Personnel',      accent: '#50b0a0' },
+  science:        { title: 'Science',        accent: '#5090d0' },
+  operations:     { title: 'Operations',     accent: '#d0a030' },
+  engineering:    { title: 'Engineering',    accent: '#70a0d0' },
+  command:        { title: 'Command',        accent: '#f0b060' },
+};
+
+/** The Bridge render order for the stations layer. */
+export const STATION_ORDER: StationId[] = [
+  'communications', 'personnel', 'science', 'operations', 'engineering', 'command',
+];
+
+/** Build the typed station list. The 3 existing Bridge sections are migrated
+ *  here (Communications, Work Board→operations, System→engineering);
+ *  personnel/science/command are MODELLED placeholders (empty actions/config,
+ *  no body) that AD-944/945/946 fill. */
+export function buildBridgeStations(ctx: {
+  dmChannelCount: number;
+  kanbanCount: number;
+}): CommandStation[] {
+  const m = STATION_META;
+  return [
+    {
+      id: 'communications',
+      title: m.communications.title,
+      accent: m.communications.accent,
+      defaultOpen: false,
+      count: ctx.dmChannelCount,
+      onExpand: () => useStore.setState({ wardRoomOpen: true, wardRoomView: 'channels' }),
+      body: () => (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 9, color: '#666', marginBottom: 4, fontWeight: 600 }}>THREADS</div>
+          <BridgeThreads />
+        </div>
+      ),
+      actions: [],
+      config: [
+        { id: 'comms-admin', label: 'Communications', render: () => <BridgeCommunications /> },
+      ],
+    },
+    {
+      id: 'personnel',
+      title: m.personnel.title, accent: m.personnel.accent,
+      defaultOpen: false, actions: [], config: [],
+    },
+    {
+      id: 'science',
+      title: m.science.title, accent: m.science.accent,
+      defaultOpen: false, actions: [], config: [],
+    },
+    {
+      id: 'operations',
+      title: m.operations.title,
+      accent: m.operations.accent,
+      defaultOpen: false,
+      count: ctx.kanbanCount,
+      onExpand: () => useStore.setState({ mainViewer: 'work' }),
+      body: () => <BridgeKanban />,
+      actions: [],
+      config: [],
+    },
+    {
+      id: 'engineering',
+      title: m.engineering.title,
+      accent: m.engineering.accent,
+      defaultOpen: false,
+      count: 0,
+      onExpand: () => useStore.setState({ mainViewer: 'system' }),
+      body: () => <BridgeSystem />,
+      actions: [],
+      config: [],
+    },
+    {
+      id: 'command',
+      title: m.command.title, accent: m.command.accent,
+      defaultOpen: false, actions: [], config: [],
+    },
+  ];
+}
+
+/** A station renders in AD-943 iff it has a body, an action, or a config item.
+ *  Placeholders are modelled but NOT shown until later ADs fill them. */
+export function isPopulated(st: CommandStation): boolean {
+  return !!st.body || st.actions.length > 0 || st.config.length > 0;
+}
