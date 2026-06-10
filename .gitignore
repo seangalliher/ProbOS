@@ -108,10 +108,19 @@ data/avatar-assets/ATTRIBUTION.txt
 # (pytest blast-radius, vitest, npm build captures). Regenerable; never committed.
 /*_gate.txt
 /*_blast.txt
+/*_blast2.txt
 /*_build.txt
 /*_vitest.txt
 /*_baseline.txt
 /*_serial.txt
+/*_iso.txt
+/*_iso2.txt
+/*_e2e.txt
+/*_pytest.txt
+/*_targeted.txt
+/*_focus.txt
+/*_devserver.txt
+/*_row.txt
 
 # Playwright MCP browser-tool session artifacts
 .playwright-mcp/
