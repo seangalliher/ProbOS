@@ -46,6 +46,8 @@ import { useMeetingMic } from '../../audio/useMeetingMic';
 // AD-936: per-message avatar + timestamp row (extracted; keeps the heavy
 // bubble JSX out of this audio-dep-laden module and independently testable).
 import { ChatMessageRow } from './ChatMessageRow';
+import { TypingIndicator } from './TypingIndicator';
+import { revealRepliesProgressively, type StaggerReply } from '../../chat/staggerReplies';
 import { MeetingMicButton } from './MeetingMicButton';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
@@ -518,6 +520,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // meetingActive && voiceEnabled; speakingAgentId is the AD-923 seam and the
   // AD-922 echo gate (the meeting mic refuses to arm while it is non-null).
   const { speakReplies: speakMeetingReplies, speakingAgentId } = useMeetingVoice({ meetingActive });
+  // AD-952: the agent currently "typing" a group reply (progressive reveal).
+  // Drives the TypingIndicator bubble; threadId-guarded so it only shows in the
+  // thread it belongs to.
+  const typingAgent = useStore((s) => s.typingAgent);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -688,16 +694,18 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           // callsign, text}]}. Render each reply as an agent message; v1
           // attribution is a callsign prefix on the shared conversation.
           const replies = Array.isArray(data?.per_agent_replies) ? data.per_agent_replies : [];
-          for (const r of replies) {
+          // AD-936/938: commit ONE reply to both the per-agent buffer and the
+          // thread-keyed transcript with its author identity. Extracted so the
+          // instant (meeting) path and the AD-952 progressive (text) path share
+          // it (DRY).
+          const appendReply = (r: StaggerReply): void => {
             const replyText = typeof r?.text === 'string' ? r.text : '';
-            if (!replyText) continue;
+            if (!replyText) return;
+            const authorId = typeof r?.agent_id === 'string' ? r.agent_id : undefined;
+            const callsign = typeof r?.callsign === 'string' ? r.callsign : undefined;
             // AD-936: thread the real author's agent_id + callsign onto the
-            // message so the bubble shows a per-author avatar + name label;
-            // the old `${callsign}: ` text prefix is replaced by that header.
-            useStore.getState().addAgentMessage(agentId, 'agent', replyText, {
-              authorId: typeof r?.agent_id === 'string' ? r.agent_id : undefined,
-              callsign: typeof r?.callsign === 'string' ? r.callsign : undefined,
-            });
+            // message so the bubble shows a per-author avatar + name label.
+            useStore.getState().addAgentMessage(agentId, 'agent', replyText, { authorId, callsign });
             // AD-938: mirror each fan-out reply into the thread transcript with
             // its author identity (avatar + name label); no 'callsign:' text
             // prefix — the AD-936 ChatMessageRow header shows the author.
@@ -707,10 +715,26 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
                 role: 'agent',
                 text: replyText,
                 timestamp: Date.now() / 1000,
-                authorId: typeof r?.agent_id === 'string' ? r.agent_id : undefined,
-                callsign: typeof r?.callsign === 'string' ? r.callsign : undefined,
+                authorId,
+                callsign,
               });
             }
+          };
+          // AD-952: human response dynamics. In a LIVE MEETING the AD-921 voice
+          // sequencer + AD-923 speaking indicator already pace the crew one at a
+          // time, so render the text instantly there. In TEXT chat, reveal the
+          // replies one at a time behind a "{callsign} is typing" beat — the
+          // synchronous all-at-once dump is the clearest group-chat bot tell.
+          if (meetingActive) {
+            for (const r of replies) appendReply(r as StaggerReply);
+          } else {
+            await revealRepliesProgressively(replies as StaggerReply[], {
+              setTyping: (tt) => useStore.getState().setTypingAgent(
+                tt ? { threadId: activeThreadId ?? null, agentId: tt.agentId, callsign: tt.callsign } : null,
+              ),
+              appendReply,
+              sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+            });
           }
           // AD-921: when the meeting is live, ALSO speak the replies in
           // facilitator order (one at a time, per-agent voice). The text
@@ -959,6 +983,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             body={renderMessageBodyWithArtifacts(msg.text, threadId)}
           />
         ))}
+        {/* AD-952: typing beat for the agent composing the next group reply.
+            threadId-guarded so it only shows in the thread it belongs to. */}
+        {typingAgent && typingAgent.threadId === (activeThreadId ?? null) && (
+          <TypingIndicator callsign={typingAgent.callsign} />
+        )}
         <div ref={messagesEndRef} />
       </div>
 

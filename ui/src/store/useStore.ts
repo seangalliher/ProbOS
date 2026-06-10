@@ -457,6 +457,10 @@ export interface HXIState {
   // in-call mute control (GroupChatHeader) flips it. Session-scoped (no
   // localStorage in v1 — persistence is AD-949a).
   callAudioEnabled: boolean;
+  // AD-952: human response dynamics — the agent currently "typing" a group
+  // reply (progressive reveal). null = nobody typing. Session-scoped; drives
+  // the TypingIndicator bubble in the active thread transcript.
+  typingAgent: { threadId: string | null; agentId: string; callsign: string } | null;
   // AD-705: always-on wake-word voice loop opt-in. Default OFF — the
   // Captain explicitly opts in. Persisted in localStorage.
   wakeWordEnabled: boolean;
@@ -593,6 +597,8 @@ export interface HXIState {
   setVoiceEnabled: (v: boolean) => void;
   // AD-949: call-scoped meeting/group audio mute.
   setCallAudioEnabled: (v: boolean) => void;
+  // AD-952: set/clear the agent currently "typing" a group reply.
+  setTypingAgent: (t: { threadId: string | null; agentId: string; callsign: string } | null) => void;
   // AD-705: opt-in toggle for the always-on wake-word voice loop.
   setWakeWordEnabled: (v: boolean) => void;
   setScanLinesEnabled: (v: boolean) => void;
@@ -939,6 +945,8 @@ export const useStore = create<HXIState>((set, get) => ({
   // self-gate, a freshly started call is audible without enabling the
   // Ship's-Computer voice.
   callAudioEnabled: true,
+  // AD-952: no agent typing on boot. Session-scoped, no localStorage.
+  typingAgent: null,
   // AD-705: hydrate wake-word toggle from localStorage; default OFF.
   wakeWordEnabled: (() => {
     try {
@@ -1654,6 +1662,10 @@ export const useStore = create<HXIState>((set, get) => ({
   // value makes a fresh call audible; persisting the preference is AD-949a.
   setCallAudioEnabled: (v) => {
     set({ callAudioEnabled: v });
+  },
+  // AD-952: set/clear the typing agent (progressive group-reply reveal).
+  setTypingAgent: (t) => {
+    set({ typingAgent: t });
   },
   setWakeWordEnabled: (v) => {
     set({ wakeWordEnabled: v });
