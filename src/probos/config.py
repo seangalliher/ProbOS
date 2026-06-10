@@ -3789,6 +3789,16 @@ class GroupChatConfig(BaseModel):
     # floor to a named peer" mechanical. Transitional flag (#14) — ships OFF;
     # system.yaml flips it on. Off => the AD-935 cascade is byte-identical.
     agent_next_speaker_selection_enabled: bool = False
+    # AD-961: cascade-extend-on-address. A directed address ("Ezri, ...") in the
+    # LAST normal cascade round (round == max_agent_rounds) would otherwise be
+    # dropped — the addressed peer never gets a turn. When next-speaker selection
+    # is on, allow up to this many EXTRA rounds PAST max_agent_rounds, each
+    # consumed only by an unanswered directed address, so a hand-off is always
+    # answered. Bounded so a chain of mutual hand-offs (Ezri->Yeo->Ezri...) can't
+    # ping-pong forever. Only takes effect when agent_next_speaker_selection_enabled
+    # is on (which is itself an operator opt-in), so the default of 1 never
+    # changes a zero-config boot. 0 = disable the extension (pre-AD-961 behavior).
+    max_address_extensions: int = 1
 
 
 class WardRoomConfig(BaseModel):

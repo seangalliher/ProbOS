@@ -638,18 +638,31 @@ async def group_chat_fanout(
     if getattr(cfg, "agent_reactivity_enabled", False):
         max_rounds = int(getattr(cfg, "max_agent_rounds", 2))
         next_speaker_sel = getattr(cfg, "agent_next_speaker_selection_enabled", False)
+        # AD-961: cascade-extend-on-address. Past the normal max_rounds cap, an
+        # unanswered directed address ("Ezri, ...") earns up to this many EXTRA
+        # rounds so a hand-off is always answered — bounded so mutual hand-offs
+        # can't ping-pong forever. Only meaningful with next-speaker selection on.
+        max_addr_ext = int(getattr(cfg, "max_address_extensions", 1)) if next_speaker_sel else 0
+        # AD-961: lower-cased callsign -> agent_id, so the extension decision can
+        # tell a REAL directed address (to a participant who can answer) from a
+        # false vocative opener ("Agreed," / "Well,") that extract_directed_callsign
+        # also matches. Built once; Tier-2 empty => no extension ever fires.
+        _callsign_to_agent: dict[str, str] = {}
+        if max_addr_ext > 0:
+            for _aid, _cs in _resolve_callsigns(runtime, agent_ids).items():
+                if _cs:
+                    _callsign_to_agent[_cs.lower()] = _aid
         last = round0
-        for _ in range(max(0, max_rounds)):
+        rounds_done = 0
+        addr_ext_used = 0
+        while True:
             spoke_ids = {r["agent_id"] for r in last if r.get("agent_id")}
             if not spoke_ids:
                 break  # nothing new to react to
-            trigger = "\n".join(
-                f"{r['callsign'] or r['agent_id']}: {r['text']}" for r in last
-            )
             # AD-951: turn-allocation rule 1a — when a prior-round speaker
             # DIRECTLY ADDRESSES a peer by callsign ("@yeo ..." or "Yeo, ..."),
             # select that peer to speak next (hard-included past the per-turn cap
-            # + convergence, still bounded by max_agent_rounds). Scan each reply's
+            # + convergence, still bounded by the round budget). Scan each reply's
             # CLEAN text (AD-948 already stripped the <intent> tag); a speaker
             # never selects itself. Honest-degrade: a non-participant callsign
             # matches no candidate downstream. Gated (ships OFF; yaml flips on).
@@ -659,6 +672,23 @@ async def group_chat_fanout(
                     cs = extract_directed_callsign(r.get("text") or "")
                     if cs and cs != (r.get("callsign") or "").lower():
                         addressed.add(cs)
+            # AD-961: budget gate. Within the normal cap, always continue (AD-935
+            # byte-identical). PAST the cap, continue ONLY for an address to a
+            # REAL participant who hasn't just spoken (a peer who can take the
+            # turn) — never a false vocative opener — and only while extension
+            # budget remains. Each such round consumes one extension.
+            if rounds_done >= max_rounds:
+                _answerable = any(
+                    _callsign_to_agent.get(cs) is not None
+                    and _callsign_to_agent.get(cs) not in spoke_ids
+                    for cs in addressed
+                )
+                if not (_answerable and addr_ext_used < max_addr_ext):
+                    break
+                addr_ext_used += 1
+            trigger = "\n".join(
+                f"{r['callsign'] or r['agent_id']}: {r['text']}" for r in last
+            )
             try:
                 nxt = await _fan_one_round(
                     runtime, store, thread_id,
@@ -676,4 +706,5 @@ async def group_chat_fanout(
                 break  # facilitator converged / suppressed everyone / all declined
             all_replies.extend(nxt)
             last = nxt
+            rounds_done += 1
     return all_replies
