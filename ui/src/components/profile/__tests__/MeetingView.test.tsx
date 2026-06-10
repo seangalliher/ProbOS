@@ -5,7 +5,7 @@
 // (BF-287). Covers crew-only iteration (captain + non-crew excluded), VRM vs
 // badge selection, the onLoadError fallback, the empty state, the caption, the
 // missing-thread null path, and the HXI no-emoji guard.
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within, act, cleanup } from '@testing-library/react';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
 import type { Agent } from '../../../store/types';
@@ -14,6 +14,11 @@ const crewVrmMock = vi.hoisted(() => ({
   renderedAgentIds: [] as string[],
   lastOnLoadError: null as null | (() => void),
 }));
+
+// BF-613: the crew VRM is hydrated from GET /api/agent/{id}/profile (NOT the
+// base store Agent, which never carries appearance). Drive it through a fetch
+// stub keyed by agent id; an unkeyed agent returns no appearance -> badge.
+const profileMock = vi.hoisted(() => ({ vrmByAgent: {} as Record<string, string> }));
 
 vi.mock('@react-three/fiber', () => ({
   Canvas: ({ children }: any) => <div data-testid="canvas">{children}</div>,
@@ -34,7 +39,7 @@ vi.mock('../CrewVRM', () => ({
 
 import { MeetingView } from '../MeetingView';
 
-function mkAgent(p: { id: string; callsign: string; isCrew?: boolean; vrmUrl?: string }): Agent {
+function mkAgent(p: { id: string; callsign: string; isCrew?: boolean }): Agent {
   const base: Record<string, unknown> = {
     id: p.id,
     agentType: 'crew',
@@ -49,9 +54,6 @@ function mkAgent(p: { id: string; callsign: string; isCrew?: boolean; vrmUrl?: s
     position: [0, 0, 0],
     department: 'science',
   };
-  if (p.vrmUrl) {
-    base.appearance = { vrm_url: p.vrmUrl, expression_overrides: {}, color_palette_hint: '' };
-  }
   return base as unknown as Agent;
 }
 
@@ -79,7 +81,26 @@ afterEach(() => {
   useStore.setState({ agents: new Map(), chatThreads: new Map() });
   crewVrmMock.renderedAgentIds = [];
   crewVrmMock.lastOnLoadError = null;
+  profileMock.vrmByAgent = {};
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+});
+
+beforeEach(() => {
+  // BF-613: stub the per-agent profile fetch the AvatarSlot now uses to hydrate
+  // the VRM. Returns appearance only for agents registered in profileMock.
+  vi.stubGlobal('fetch', vi.fn((url: string) => {
+    const m = /\/api\/agent\/([^/]+)\/profile/.exec(String(url));
+    const vrm = m ? profileMock.vrmByAgent[m[1]] : undefined;
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(
+        vrm
+          ? { appearance: { vrm_url: vrm, expression_overrides: {}, color_palette_hint: '' } }
+          : {},
+      ),
+    } as Response);
+  }));
 });
 
 describe('AD-920 MeetingView gallery', () => {
@@ -102,12 +123,13 @@ describe('AD-920 MeetingView gallery', () => {
     expect(screen.queryByTestId('avatar-slot-ext')).toBeNull();
   });
 
-  it('renders CrewVRM when the agent has appearance.vrm_url', () => {
+  it('renders CrewVRM when the agent profile has appearance.vrm_url (BF-613: hydrated via /profile)', async () => {
+    profileMock.vrmByAgent.echo = '/avatars/echo.vrm';
     seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
-      mkAgent({ id: 'echo', callsign: 'Echo', vrmUrl: '/avatars/echo.vrm' }),
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
     ]);
     render(<MeetingView threadId="t1" />);
-    expect(screen.getByTestId('crew-vrm-echo')).toBeTruthy();
+    expect(await screen.findByTestId('crew-vrm-echo')).toBeTruthy();
   });
 
   it('renders AgentAvatarBadge when appearance is absent', () => {
@@ -120,12 +142,13 @@ describe('AD-920 MeetingView gallery', () => {
     expect(screen.queryByTestId('crew-vrm-bones')).toBeNull();
   });
 
-  it('falls back to badge when CrewVRM onLoadError fires', () => {
+  it('falls back to badge when CrewVRM onLoadError fires', async () => {
+    profileMock.vrmByAgent.echo = '/avatars/echo.vrm';
     seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
-      mkAgent({ id: 'echo', callsign: 'Echo', vrmUrl: '/avatars/echo.vrm' }),
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
     ]);
     render(<MeetingView threadId="t1" />);
-    expect(screen.getByTestId('crew-vrm-echo')).toBeTruthy();
+    expect(await screen.findByTestId('crew-vrm-echo')).toBeTruthy();
 
     act(() => {
       crewVrmMock.lastOnLoadError?.();
@@ -158,12 +181,14 @@ describe('AD-920 MeetingView gallery', () => {
     expect(screen.queryByTestId('meeting-view')).toBeNull();
   });
 
-  it('no-emoji guard', () => {
+  it('no-emoji guard', async () => {
+    profileMock.vrmByAgent.echo = '/avatars/echo.vrm';
     seed(mkThread({ id: 't1', participants: ['captain', 'echo', 'bones'] }), [
-      mkAgent({ id: 'echo', callsign: 'Echo', vrmUrl: '/avatars/echo.vrm' }),
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
       mkAgent({ id: 'bones', callsign: 'Bones' }),
     ]);
     const { container } = render(<MeetingView threadId="t1" />);
+    await screen.findByTestId('crew-vrm-echo');
     expect(container.innerHTML).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 });

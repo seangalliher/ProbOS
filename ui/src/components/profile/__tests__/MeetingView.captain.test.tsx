@@ -6,8 +6,8 @@
 // stores are the REAL zustand stores toggled via setState (BF-287). Covers:
 // the slot always renders, camera>screen>icon selection, the play()/srcObject
 // attach attempt, crew slots rendering alongside, and the HXI no-emoji guard.
-import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
 import { useCameraStore } from '../../../store/useCameraStore';
 import { useScreenStore } from '../../../store/useScreenStore';
@@ -15,6 +15,11 @@ import type { Agent } from '../../../store/types';
 
 const camMock = vi.hoisted(() => ({ stream: null as MediaStream | null }));
 const scrMock = vi.hoisted(() => ({ stream: null as MediaStream | null }));
+// BF-613: the in-meeting camera toggle drives the global camera lifecycle.
+const camFns = vi.hoisted(() => ({
+  start: vi.fn().mockResolvedValue(undefined),
+  stop: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('@react-three/fiber', () => ({
   Canvas: ({ children }: any) => <div data-testid="canvas">{children}</div>,
@@ -31,6 +36,8 @@ vi.mock('../CrewVRM', () => ({
 
 vi.mock('../../../hooks/useCameraStream', () => ({
   getCameraStream: () => camMock.stream,
+  startCameraStream: camFns.start,
+  stopCameraStream: camFns.stop,
 }));
 
 vi.mock('../../../hooks/useScreenStream', () => ({
@@ -103,6 +110,16 @@ afterEach(() => {
   camMock.stream = null;
   scrMock.stream = null;
   playMock.mockClear();
+  camFns.start.mockClear();
+  camFns.stop.mockClear();
+  vi.unstubAllGlobals();
+});
+
+beforeEach(() => {
+  // BF-613: AvatarSlot now fetches /api/agent/{id}/profile for the crew VRM;
+  // stub it to return no appearance so crew slots deterministically show the
+  // badge (these tests assert the Captain slot, not the crew VRM).
+  vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response)));
 });
 
 describe('AD-939 MeetingView Captain slot', () => {
@@ -174,5 +191,40 @@ describe('AD-939 MeetingView Captain slot', () => {
     ]);
     const { container } = render(<MeetingView threadId="t1" />);
     expect(container.innerHTML).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  it('BF-613: the camera toggle is present and labelled for turning the camera on', () => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
+    ]);
+    render(<MeetingView threadId="t1" />);
+    const btn = screen.getByTestId('captain-camera-toggle');
+    expect(btn).toBeTruthy();
+    expect(btn.getAttribute('aria-label')).toBe('Turn camera on');
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('BF-613: clicking the toggle starts the camera when it is off', () => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
+    ]);
+    render(<MeetingView threadId="t1" />);
+    fireEvent.click(screen.getByTestId('captain-camera-toggle'));
+    expect(camFns.start).toHaveBeenCalledTimes(1);
+    expect(camFns.stop).not.toHaveBeenCalled();
+  });
+
+  it('BF-613: clicking the toggle stops the camera when it is on', () => {
+    useCameraStore.setState({ active: true });
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
+    ]);
+    render(<MeetingView threadId="t1" />);
+    const btn = screen.getByTestId('captain-camera-toggle');
+    expect(btn.getAttribute('aria-label')).toBe('Turn camera off');
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(btn);
+    expect(camFns.stop).toHaveBeenCalledTimes(1);
+    expect(camFns.start).not.toHaveBeenCalled();
   });
 });

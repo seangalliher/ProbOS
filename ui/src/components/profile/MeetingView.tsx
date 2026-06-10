@@ -17,7 +17,7 @@ import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { useFleetAvatarTelemetry } from '../../avatars/useFleetAvatarTelemetry';
 import { useCameraStore } from '../../store/useCameraStore';
 import { useScreenStore } from '../../store/useScreenStore';
-import { getCameraStream } from '../../hooks/useCameraStream';
+import { getCameraStream, startCameraStream, stopCameraStream } from '../../hooks/useCameraStream';
 import { getScreenStream } from '../../hooks/useScreenStream';
 
 const CAPTAIN_PARTICIPANT_ID = 'captain';
@@ -34,15 +34,27 @@ function AvatarSlot({
 }) {
   const agent = useStore((s) => s.agents.get(agentId)) as Agent | undefined;
   const [loadFailed, setLoadFailed] = useState(false);
-  // The store's base Agent type carries neither appearance nor department
-  // (both are AgentProfileData fields, hydrated per-agent). Read them via a
-  // narrow cast — the same runtime-field pattern GroupChatHeader uses for
-  // department. Absent appearance (the CI/dev default — zero .vrm assets)
-  // degrades the slot to an AgentAvatarBadge.
-  const extra = agent as
-    | (Agent & { appearance?: AgentProfileData['appearance']; department?: string })
-    | undefined;
-  const appearance = extra?.appearance;
+  // BF-613: the crew VRM lives on the per-agent profile
+  // (AgentProfileData.appearance), which is NOT carried on the store's base
+  // Agent. The prior code read `appearance` off a cast of the base Agent, so it
+  // was ALWAYS undefined in production and every crew slot fell back to the
+  // badge even when a .vrm existed (the avatar rendered only in the separate
+  // CrewAvatarPopout, which hydrates from GET /api/agent/{id}/profile). Hydrate
+  // the same way here; honest-degrade to the badge on any fetch failure (the
+  // CI/dev default with zero .vrm assets, and the no-backend case).
+  const [appearance, setAppearance] = useState<AgentProfileData['appearance'] | null>(null);
+  useEffect(() => {
+    if (!agentId || typeof fetch !== 'function') return;
+    let cancelled = false;
+    fetch(`/api/agent/${agentId}/profile`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (!cancelled && data?.appearance) setAppearance(data.appearance); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [agentId]);
+  // Department (badge color) still comes off the store Agent via a narrow cast
+  // — the same runtime-field pattern GroupChatHeader uses; it degrades to ''.
+  const extra = agent as (Agent & { department?: string }) | undefined;
   const vrmUrl = appearance?.vrm_url;
   const showVRM = !!vrmUrl && !loadFailed;
   const dept = extra?.department ?? '';
@@ -179,6 +191,31 @@ function CaptainSlot() {
         )}
       </div>
       <span style={{ color: '#f0b060', fontSize: 11, fontWeight: 600 }}>You (Captain)</span>
+      {/* BF-613: turn the Captain's camera on/off from inside the meeting to
+          share it with the crew. Drives the SAME global camera the rest of the
+          HXI uses (startCameraStream is idempotent); the slot above reflects
+          the live stream once active. Stroke-SVG only, amber when on (HXI #3). */}
+      <button
+        data-testid="captain-camera-toggle"
+        onClick={() => { if (cameraActive) { void stopCameraStream(); } else { void startCameraStream(); } }}
+        aria-label={cameraActive ? 'Turn camera off' : 'Turn camera on'}
+        aria-pressed={cameraActive}
+        title={cameraActive ? 'Turn camera off' : 'Turn camera on'}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px',
+          color: cameraActive ? '#f0b060' : '#888', fontSize: 10, fontWeight: 600,
+        }}
+      >
+        <svg
+          width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+        >
+          <path d="M23 7l-7 5 7 5V7z" />
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+        </svg>
+        {cameraActive ? 'Camera on' : 'Camera off'}
+      </button>
     </div>
   );
 }
