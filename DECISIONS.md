@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-965: Neutral, nameable group surface — a group is a room, not the host agent's profile (Natural Conversation epic, #882/#898)
+
+**Problem (Captain group-chat test, 2026-06-10).** Starting a group with Ezri + Yeo opened *Ezri's* `AgentProfilePanel` — the title bar read "Ezri (Counselor)" with her department dot, and the 6 agent-scoped tabs (Chat / Work / Memory / Profile / Health / Self-image) framed the room as one participant's profile with a second person bolted on. A group should be a neutral, nameable surface like a Microsoft Teams group chat.
+
+**What already existed (AD-917).** The `GroupChatHeader` (rendered inside `ProfileChatTab`) already shipped the editable room title (click-to-rename → `patchThread` → `set_title(lock=True)`), the participant avatar strip, add/remove participant, the meeting toggle, and the AD-949 in-call mute. The `ChatThread.title` field + `PATCH /api/threads/{id}` endpoint already exist, and `chatDisplayName` already derives the Teams-style "callsign, callsign" name (honoring a Captain-locked custom title). So AD-965 is the **surfacing** layer, not new plumbing.
+
+**Decision (frontend only, `AgentProfilePanel.tsx`).** Detect the group context: when `activeProfileThreadId` resolves to a thread that `isGroupChat` (≥2 crew), the panel is a ROOM. (1) **Identity** — the title bar shows the group title (`chatDisplayName`, Teams-style or the Captain's locked name) with a neutral dot, instead of the host agent's name + department framing. (2) **Tabs** — `visibleTabs` collapses to Chat-only (the work/profile/health/memory/self_image tabs are agent-scoped and meaningless for a room); `effectiveTab` falls back to `chat` in group mode. The `GroupChatHeader` inside the chat tab still owns the participant strip + rename + meeting controls (no duplication). A 1:1 (no group thread) is byte-identical — the agent identity and full tab set are unchanged.
+
+**Tests + gates.** `tests/AgentProfilePanel.groupSurface.test.tsx` — 4 render tests (R3F/voice mocked per the AD-721d pattern): group title shows the participant-derived name (not the host agent); a Captain-locked custom title ("Bridge Sync") wins; the tab bar collapses to Chat-only on a group; a 1:1 keeps the agent identity + full tab set. Full UI suite **1415 passed / 1 skipped** (+4 over the 1411 baseline, zero regressions), `npm run build` clean. No backend change. COMMITTED LOCAL ONLY — NOT pushed.
+
 ### AD-962: Typing indicator during backend generation — fill the dead air before the first reply (Natural Conversation epic, #882/#896)
 
 **Problem.** AD-960 paces the *reveal* of crew replies at human speed, but the backend group cascade (`group_chat_fanout`) takes ~10–30s of real LLM time to produce ANY reply, and the `POST /api/threads/{id}/messages` call is fully synchronous — so from the instant the Captain sends until the first reply lands there is NO on-screen signal at all. That silent window is the most "is it broken?" moment in the experience; the AD-960 pacing improvement is undercut by it.

@@ -8,6 +8,7 @@ import { ProfileMemoryTab } from './ProfileMemoryTab';
 import { SelfImageTab } from './SelfImageTab';
 import { CrewAvatarPopout } from './CrewAvatarPopout';
 import { deriveAgentSignals } from './avatarSignals';
+import { isGroupChat, chatDisplayName } from '../chats/chatFilters';
 import type { AgentProfileData, AvatarDSLDict } from '../../store/types';
 
 type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory' | 'self_image';
@@ -34,6 +35,10 @@ export function AgentProfilePanel() {
   const agents = useStore((s) => s.agents);
   const pos = useStore((s) => s.profilePanelPos);
   const poolToGroup = useStore((s) => s.poolToGroup);
+  // AD-965: the active chat thread (if any) + the thread map, so the panel can
+  // tell when it is hosting a GROUP and present a neutral room identity.
+  const activeProfileThreadId = useStore((s) => s.activeProfileThreadId);
+  const chatThreads = useStore((s) => s.chatThreads);
 
   const [activeTab, setActiveTab] = useState<ProfileTab>('chat');
   const [profileData, setProfileData] = useState<AgentProfileData | null>(null);
@@ -163,13 +168,33 @@ export function AgentProfilePanel() {
   const deptColor = DEPT_COLORS[department?.toLowerCase()] || '#666';
   const isCrew = profileData?.isCrew ?? true;  // BF-017: default true until profile loads
 
-  // BF-017: Filter tabs — non-crew agents don't get Chat tab
-  const visibleTabs = isCrew
-    ? TAB_LABELS
-    : TAB_LABELS.filter(t => t.key !== 'chat' && t.key !== 'memory' && t.key !== 'self_image');
+  // AD-965: neutral, nameable group surface. When the active chat thread is a
+  // GROUP (>=2 crew), the panel is a ROOM, not the host agent's profile — so
+  // its identity is the group title (Teams-style, via chatDisplayName) and a
+  // neutral dot, and the agent-scoped tabs (work/profile/health/memory/
+  // self_image) are meaningless and collapse to Chat-only. The group lives in
+  // the chat tab; GroupChatHeader (inside ProfileChatTab) still owns the
+  // participant strip + rename + meeting controls. A 1:1 is byte-identical.
+  const activeGroupThread = (() => {
+    const tid = activeProfileThreadId;
+    if (!tid) return null;
+    const t = chatThreads.get(tid);
+    if (t && isGroupChat(t, agents)) return t;
+    return null;
+  })();
+  const isGroupSurface = activeGroupThread !== null;
+  const groupTitle = activeGroupThread ? chatDisplayName(activeGroupThread, agents) : '';
+
+  // BF-017: Filter tabs — non-crew agents don't get Chat tab.
+  // AD-965: a group surface is Chat-only (the other tabs are agent-scoped).
+  const visibleTabs = isGroupSurface
+    ? TAB_LABELS.filter(t => t.key === 'chat')
+    : isCrew
+      ? TAB_LABELS
+      : TAB_LABELS.filter(t => t.key !== 'chat' && t.key !== 'memory' && t.key !== 'self_image');
 
   // If current tab is hidden for non-crew, switch to profile
-  const effectiveTab = visibleTabs.some(t => t.key === activeTab) ? activeTab : 'profile';
+  const effectiveTab = visibleTabs.some(t => t.key === activeTab) ? activeTab : (isGroupSurface ? 'chat' : 'profile');
 
   return (
     <div
@@ -209,15 +234,26 @@ export function AgentProfilePanel() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{
             width: 8, height: 8, borderRadius: '50%',
-            background: deptColor,
+            background: isGroupSurface ? '#8888a0' : deptColor,
           }} />
-          <span style={{ fontWeight: 600, fontSize: 14 }}>
-            {displayName}
-          </span>
-          {callsign && agent.displayName && (
-            <span style={{ color: '#8888a0', fontSize: 12 }}>
-              ({agent.displayName})
+          {isGroupSurface ? (
+            // AD-965: the room's own identity — the group title, not the host
+            // agent. The participant cluster + rename live in GroupChatHeader
+            // (inside the chat tab below).
+            <span data-testid="group-surface-title" style={{ fontWeight: 600, fontSize: 14 }}>
+              {groupTitle}
             </span>
+          ) : (
+            <>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>
+                {displayName}
+              </span>
+              {callsign && agent.displayName && (
+                <span style={{ color: '#8888a0', fontSize: 12 }}>
+                  ({agent.displayName})
+                </span>
+              )}
+            </>
           )}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
