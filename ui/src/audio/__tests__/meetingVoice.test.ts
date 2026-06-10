@@ -6,6 +6,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   speakRepliesSequentially,
   createVoiceProfileResolver,
+  computeUtteranceTimeout,
+  UTTERANCE_TIMEOUT_FLOOR_MS,
+  UTTERANCE_MS_PER_WORD,
   type MeetingVoiceDeps,
   type PerAgentReply,
 } from '../meetingVoice';
@@ -231,5 +234,32 @@ describe('createVoiceProfileResolver', () => {
 describe('meetingVoice source hygiene', () => {
   it('source module contains no emoji (HXI #3)', () => {
     expect(meetingVoiceSource).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+});
+
+describe('BF-615 computeUtteranceTimeout', () => {
+  it('floors a short reply at the 20s safety net', () => {
+    expect(computeUtteranceTimeout('Aye.')).toBe(UTTERANCE_TIMEOUT_FLOOR_MS);
+    expect(computeUtteranceTimeout('')).toBe(UTTERANCE_TIMEOUT_FLOOR_MS);
+  });
+
+  it('scales above the floor for a long reply (the cutoff bug)', () => {
+    // ~180 words: at the old fixed 20s the timer fired mid-speech and the next
+    // utterance cancelled it. The proportional cap must comfortably exceed 20s.
+    const long = Array.from({ length: 180 }, () => 'word').join(' ');
+    const t = computeUtteranceTimeout(long);
+    expect(t).toBeGreaterThan(UTTERANCE_TIMEOUT_FLOOR_MS);
+    // 180 * 460 * 1.5 = 124200ms.
+    expect(t).toBe(Math.round(180 * UTTERANCE_MS_PER_WORD * 1.5));
+  });
+
+  it('grows monotonically with word count', () => {
+    const short = computeUtteranceTimeout(Array.from({ length: 60 }, () => 'w').join(' '));
+    const long = computeUtteranceTimeout(Array.from({ length: 120 }, () => 'w').join(' '));
+    expect(long).toBeGreaterThan(short);
+  });
+
+  it('honors option overrides', () => {
+    expect(computeUtteranceTimeout('a b c', { floorMs: 0, msPerWord: 100, headroom: 1 })).toBe(300);
   });
 });

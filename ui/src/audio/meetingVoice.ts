@@ -42,11 +42,45 @@ export interface MeetingVoiceDeps {
    *  supersede an in-flight one (no talk-over across Captain re-sends). */
   shouldContinue?: () => boolean;
   /** Safety cap (ms) for the case where ``'end'`` never fires (TTS
-   *  unavailable). Default 20000. ``0`` disables the timeout (tests). */
+   *  unavailable). When omitted, a LENGTH-PROPORTIONAL cap is computed from
+   *  the reply text (BF-615) so a long reply is never cut off mid-utterance.
+   *  ``0`` disables the timeout (tests). */
   utteranceTimeoutMs?: number;
 }
 
-const _DEFAULT_UTTERANCE_TIMEOUT_MS = 20000;
+// BF-615: the per-utterance safety timeout is the fallback for when the TTS
+// ``'end'`` event never fires (engine unavailable). It was a FIXED 20s, but a
+// long crew reply takes well over 20s to speak — so the timer fired mid-speech,
+// advanced the queue, and the NEXT ``speakResponse`` called
+// ``speechSynthesis.cancel()``, truncating the still-speaking prior utterance
+// (the Captain heard every reply cut off except the last, which had no
+// successor to cancel it). The fix: scale the cap with the reply length at a
+// conservative (slow) speech rate plus generous headroom, floored at the old
+// 20s. Real speech still resolves early via the ``'end'`` event; the cap only
+// ever fires when ``'end'`` genuinely never arrives.
+export const UTTERANCE_TIMEOUT_FLOOR_MS = 20000; // floor (short replies / TTS-unavailable)
+export const UTTERANCE_MS_PER_WORD = 460;        // ~130 wpm — conservative SLOW TTS rate
+export const UTTERANCE_HEADROOM = 1.5;           // safety multiple over estimated speech time
+
+export interface UtteranceTimeoutOptions {
+  floorMs?: number;
+  msPerWord?: number;
+  headroom?: number;
+}
+
+/** BF-615: length-proportional per-utterance safety timeout (ms). Estimates
+ *  speech duration from the word count at a conservative slow TTS rate, applies
+ *  headroom, and floors at ``UTTERANCE_TIMEOUT_FLOOR_MS`` so short replies keep
+ *  the original 20s net. Pure; empty / non-string text yields the floor. */
+export function computeUtteranceTimeout(text: string, opts: UtteranceTimeoutOptions = {}): number {
+  const floor = opts.floorMs ?? UTTERANCE_TIMEOUT_FLOOR_MS;
+  const perWord = opts.msPerWord ?? UTTERANCE_MS_PER_WORD;
+  const headroom = opts.headroom ?? UTTERANCE_HEADROOM;
+  const words = typeof text === 'string'
+    ? text.trim().split(/\s+/).filter(Boolean).length
+    : 0;
+  return Math.max(floor, Math.round(words * perWord * headroom));
+}
 
 /** Speak ONE reply and resolve when its matching ``'end'`` fires (or the
  *  safety timeout elapses). Subscribe BEFORE speaking so we never race the
@@ -73,7 +107,7 @@ function _speakAndWait(
       if (e.agent_id && e.agent_id !== reply.agent_id) return;
       finish();
     });
-    const timeoutMs = deps.utteranceTimeoutMs ?? _DEFAULT_UTTERANCE_TIMEOUT_MS;
+    const timeoutMs = deps.utteranceTimeoutMs ?? computeUtteranceTimeout(reply.text);
     if (timeoutMs > 0) timer = setTimeout(finish, timeoutMs);
     const text = deps.strip ? deps.strip(reply.text) : reply.text;
     try {

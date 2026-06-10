@@ -278,6 +278,56 @@ async def test_no_response_not_persisted_or_propagated(tmp_path):
     assert "[NO_RESPONSE]" not in agent_bodies
 
 
+# ---------------- 5b. BF-616: prose + [NO_RESPONSE] is a decline ----------------
+
+
+async def test_no_response_with_trailing_prose_is_suppressed(tmp_path):
+    # BF-616: a model often EXPLAINS its decline in prose and then appends the
+    # marker instead of emitting the bare [NO_RESPONSE] the prompt asks for.
+    # The old EQUALITY check let that through, leaking the marker (and the
+    # decline-meta prose) into the visible transcript. The substring check
+    # suppresses the WHOLE reply — the agent who declines says nothing.
+    store, runtime, _ = _build_env(
+        tmp_path,
+        agents={"a1": "scout", "b1": "diagnostician"},
+        callsigns=_CALLSIGNS,
+        scripts={
+            "a1": ["real reply from A"],
+            "b1": [
+                "That's the Captain's question to answer, not mine to fill in "
+                "for. I'll let it breathe rather than pile on.\n\n[NO_RESPONSE]"
+            ],
+        },
+        gc=GroupChatConfig(agent_reactivity_enabled=True, max_agent_rounds=2),
+    )
+    t = store.create_thread(title="room", participants=["a1", "b1"])
+    cap = store.append_message(t.id, author_id="captain", role="captain", body="report")
+    replies = await group_chat_fanout(runtime, t.id, captain_body="report", captain_msg=cap)
+    # B's prose-plus-marker reply is fully suppressed; only A remains.
+    assert [r["agent_id"] for r in replies] == ["a1"]
+    agent_bodies = [m.body for m in store.list_messages(t.id, limit=1000) if m.role == "agent"]
+    assert agent_bodies == ["real reply from A"]
+    # Neither the marker NOR the decline-meta prose reaches the transcript.
+    assert "[NO_RESPONSE]" not in agent_bodies
+    assert all("let it breathe" not in b for b in agent_bodies)
+
+
+async def test_no_response_case_insensitive_marker_is_suppressed(tmp_path):
+    # BF-616: the marker match is case-insensitive (a lowercased model echo).
+    store, runtime, _ = _build_env(
+        tmp_path,
+        agents={"a1": "scout", "b1": "diagnostician"},
+        callsigns=_CALLSIGNS,
+        scripts={"a1": ["real reply from A"], "b1": ["nothing to add [no_response]"]},
+        gc=GroupChatConfig(agent_reactivity_enabled=True, max_agent_rounds=2),
+    )
+    t = store.create_thread(title="room", participants=["a1", "b1"])
+    cap = store.append_message(t.id, author_id="captain", role="captain", body="report")
+    replies = await group_chat_fanout(runtime, t.id, captain_body="report", captain_msg=cap)
+    assert [r["agent_id"] for r in replies] == ["a1"]
+    agent_bodies = [m.body for m in store.list_messages(t.id, limit=1000) if m.role == "agent"]
+    assert agent_bodies == ["real reply from A"]
+
 # ---------------- 6. [NO_RESPONSE] round-0 fix (flag OFF) ----------------
 
 

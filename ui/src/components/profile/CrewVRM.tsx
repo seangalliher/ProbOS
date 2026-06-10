@@ -77,6 +77,11 @@ interface Props {
   // Lip-sync (morphTargetInfluences) is orthogonal to body bones and
   // continues regardless of the active body clip.
   bodyState?: 'idle' | 'talking' | 'listening' | 'thinking';
+  // AD-964: report the measured crown (top-of-head) world-Y once the VRM has
+  // loaded, so a gallery slot can aim its camera relative to THIS avatar's
+  // head height instead of a fixed face height (crew have different heights).
+  // Called at most once per load; absent => no measurement (prior behavior).
+  onHeadY?: (crownY: number) => void;
 }
 
 // AD-721d: DSL resting-expression names → ordered list of VRM morph candidates.
@@ -202,7 +207,7 @@ function _sampleRhubarbFrames(
   };
 }
 
-export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError, restingExpression, bodyState }: Props) {
+export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError, restingExpression, bodyState, onHeadY }: Props) {
   const vrmRef = useRef<VRM | null>(null);
   // BF: also keep VRM in state so React mounts <primitive> after load.
   // Updating a ref alone does not trigger a re-render, which previously
@@ -352,6 +357,20 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         }
         vrmRef.current = vrm;
         setVrmReady(vrm);
+        // AD-964: measure the crown (top-of-head) height once, AFTER the
+        // A-pose + VRM0 rotation are applied, so a gallery slot can center the
+        // head per-avatar regardless of stature. The bounding box of the posed
+        // scene gives the true top-of-head (hair included); each slot renders
+        // the avatar at the origin, so local-Y == world-Y. Tier-2: any failure
+        // simply skips the callback and the slot keeps its default framing.
+        if (onHeadY) {
+          try {
+            const box = new THREE.Box3().setFromObject(vrm.scene);
+            if (Number.isFinite(box.max.y) && box.max.y > 0) onHeadY(box.max.y);
+          } catch {
+            /* skip — slot falls back to its default face height */
+          }
+        }
       },
       undefined,
       (err: unknown) => {

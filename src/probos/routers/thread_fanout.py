@@ -46,6 +46,13 @@ _FANOUT_HISTORY_LIMIT = 20
 # AD-915: recent agent turns inspected by the convergence gate.
 _CONVERGENCE_WINDOW = 12
 
+# BF-616: a group-turn decline marker. Matched ANYWHERE in the reply
+# (case-insensitive), mirroring the proactive.py ``"[NO_RESPONSE]" in ...``
+# contract — a model that explains its decline in prose and trails the marker
+# is still a decline, and the whole reply is suppressed (never persisted, never
+# shown, never propagated to the cascade).
+_NO_RESPONSE_RE = re.compile(r"\[NO_RESPONSE\]", re.IGNORECASE)
+
 
 def crew_agent_participants(runtime: Any, participants: list[str]) -> list[str]:
     """Participant agent_ids that resolve to crew agents (Captain/non-crew excluded)."""
@@ -453,7 +460,16 @@ async def _fan_one_round(
         # write, and per_agent_replies, so a decline neither shows in the
         # transcript nor propagates the cascade. (Also fixes round 0: a literal
         # [NO_RESPONSE] reply would previously have been persisted + shown.)
-        if reply_text.strip().upper().replace("[", "").replace("]", "") == "NO_RESPONSE" or not reply_text.strip():
+        # BF-616: detect the [NO_RESPONSE] token ANYWHERE (case-insensitive),
+        # not just when the reply is EXACTLY the marker. Models frequently
+        # explain their decline in prose and then append [NO_RESPONSE] instead
+        # of emitting the bare marker the prompt asks for; the old equality
+        # check let "prose + [NO_RESPONSE]" through, leaking the marker into the
+        # visible transcript. Matching the established proactive.py contract
+        # (``"[NO_RESPONSE]" in response_text``), any decline marker suppresses
+        # the whole reply — a human who decides not to respond says nothing.
+        _declined = bool(_NO_RESPONSE_RE.search(reply_text)) or not reply_text.strip()
+        if _declined:
             return {"agent_id": agent_id, "callsign": callsign, "text": "", "_declined": True}
         try:
             # AD-933b: attach the generated-image refs only when the

@@ -22,19 +22,27 @@ import { getScreenStream } from '../../hooks/useScreenStream';
 
 const CAPTAIN_PARTICIPANT_ID = 'captain';
 
-// AD-947: face-frame the gallery camera. A bare <Canvas camera={{position}}>
+// AD-947 / AD-964: face-frame the gallery camera. A bare <Canvas camera={{position}}>
 // has no lookAt, so react-three-fiber points the camera at the origin
 // [0,0,0] (the floor) — the avatar rendered showing only its FEET. The
 // CrewAvatarPopout avoids this with OrbitControls target={[0,1.42,0]}; the
-// non-interactive gallery slots have no controls, so aim the camera at face
-// height (~1.42m, matching the popout target) once on mount. Pure side-effect,
-// renders nothing.
-function FaceFraming() {
+// non-interactive gallery slots have no controls, so aim the camera at the
+// avatar's head. AD-964: the target is now PER-AVATAR — ``targetY`` is the
+// face-center height (the measured crown minus a fixed head-center drop), so a
+// tall and a short crew member each show a centered head instead of a fixed
+// 1.42 crop. Until the crown is measured it defaults to ~1.42 (prior framing).
+// The camera is moved level with the target (preserving the original gentle
+// downward tilt and viewing distance) AND aimed at it. Pure side-effect.
+const _HEAD_CENTER_DROP = 0.12; // crown → head/face center (≈ half a head)
+const _DEFAULT_FACE_Y = 1.42;   // fallback face height before measurement (AD-947)
+
+function FaceFraming({ targetY }: { targetY: number }) {
   const camera = useThree((s) => s.camera);
   useEffect(() => {
-    camera.lookAt(0, 1.42, 0);
+    camera.position.set(0, targetY + 0.03, 0.85);
+    camera.lookAt(0, targetY, 0);
     camera.updateProjectionMatrix();
-  }, [camera]);
+  }, [camera, targetY]);
   return null;
 }
 
@@ -50,6 +58,9 @@ function AvatarSlot({
 }) {
   const agent = useStore((s) => s.agents.get(agentId)) as Agent | undefined;
   const [loadFailed, setLoadFailed] = useState(false);
+  // AD-964: the avatar's measured crown (top-of-head) world-Y, reported by
+  // CrewVRM after load. null until measured → default face framing.
+  const [headTopY, setHeadTopY] = useState<number | null>(null);
   // BF-613: the crew VRM lives on the per-agent profile
   // (AgentProfileData.appearance), which is NOT carried on the store's base
   // Agent. The prior code read `appearance` off a cast of the base Agent, so it
@@ -109,7 +120,7 @@ function AvatarSlot({
       <div data-dim={dim ? 'true' : 'false'} style={innerStyle}>
         {showVRM ? (
           <Canvas camera={{ position: [0, 1.45, 0.85], fov: 28 }} flat frameloop="always">
-            <FaceFraming />
+            <FaceFraming targetY={headTopY != null ? headTopY - _HEAD_CENTER_DROP : _DEFAULT_FACE_Y} />
             <ambientLight intensity={0.4} />
             <directionalLight position={[1, 2, 2]} intensity={0.6} />
             <CrewVRM
@@ -118,6 +129,7 @@ function AvatarSlot({
               expressionOverrides={appearance?.expression_overrides ?? {}}
               signals={deriveAgentSignals(agentId, useStore.getState() as unknown as Parameters<typeof deriveAgentSignals>[1])}
               onLoadError={() => setLoadFailed(true)}
+              onHeadY={setHeadTopY}
               restingExpression={appearance?.dsl?.expression_resting ?? null}
             />
           </Canvas>
