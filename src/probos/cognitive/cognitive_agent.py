@@ -1998,6 +1998,48 @@ class CognitiveAgent(BaseAgent):
             )
         return guidance
 
+    def _conversational_memory_protocol(self, observation: dict) -> str:
+        """AD-953 (Natural Conversation epic, #889): teach conversational MEMORY &
+        CALLBACKS. On the 1:1/group ``direct_message`` reply path, append guidance
+        to draw on what the agent GENUINELY recalls — the episodic memories +
+        session history already injected into the reply context
+        (AD-573/AD-723a-1) — and make natural callbacks ("you mentioned …", "last
+        time we …", "building on what we discussed …") so the exchange feels
+        continuous instead of amnesiac, with recipient design (tailor to the
+        shared history with THIS person). Hard AD-592 honesty bound: reference
+        only what is actually present in the recalled material; never fabricate a
+        shared memory, a prior statement, or a callback — an invented "as you said
+        last week" is worse than none. Gated to the live conversational path
+        (intent == "direct_message"); default ON via
+        ``CommunicationsConfig.conversational_memory_enabled`` (a tuning knob);
+        honest-degrade returns "" when the flag is off. Overridable (Open/Closed).
+        Gap-regex-safe (no can't/cannot/don't have/unable to/lack/not
+        available)."""
+        if observation.get("intent") != "direct_message":
+            return ""
+        runtime = getattr(self, "_runtime", None)
+        comm_cfg = getattr(getattr(runtime, "config", None), "communications", None)
+        if not getattr(comm_cfg, "conversational_memory_enabled", True):
+            return ""
+        return (
+            "\n\nConversational memory: you are a continuing presence with a shared "
+            "history, not a fresh stranger each turn. Draw on what you genuinely "
+            "remember — the recalled memories and the running conversation in your "
+            "context — and weave it in naturally: pick up a thread from earlier, "
+            "call back to something the other person told you before (\"you "
+            "mentioned the variance last time\", \"building on what we settled "
+            "yesterday\"), and let your shared history shape how you speak to THIS "
+            "person. This is what makes a conversation feel continuous rather than "
+            "amnesiac. One hard rule, above all else: reference ONLY what you "
+            "actually find in your recalled memory or the conversation in front of "
+            "you. If you are uncertain whether something happened, treat it as if "
+            "it did not, and simply do not bring it up. Never manufacture a shared "
+            "memory, a prior promise, or a detail you do not truly recall — an "
+            "invented callback (\"as you told me last week …\" when they did not) "
+            "breaks trust far worse than having no callback at all. When you have "
+            "nothing genuine to recall, just speak to the present moment."
+        )
+
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
 
@@ -2486,6 +2528,16 @@ class CognitiveAgent(BaseAgent):
             _proactive_proto = self._conversational_proactivity_protocol(observation)
             if _proactive_proto:
                 composed += _proactive_proto
+            # AD-953: conversational memory & callbacks. Overridable hook; base
+            # returns "" unless on the live 1:1/group direct_message path AND
+            # CommunicationsConfig.conversational_memory_enabled (default ON).
+            # Teaches natural callbacks to GENUINELY recalled material (the
+            # episodic memories + session history already in context) with a hard
+            # AD-592 honesty bound (never fabricate a shared memory). Composes
+            # with the AD-950 proactivity hook above.
+            _memory_proto = self._conversational_memory_protocol(observation)
+            if _memory_proto:
+                composed += _memory_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

@@ -4644,6 +4644,16 @@ class CommunicationsConfig(BaseModel):
     # richness the North Star demands; this is the Captain's tuning knob /
     # off-switch if the proactivity ever reads as over-eager.
     proactive_conversation_enabled: bool = True
+    # AD-953: conversational memory & callbacks on the live 1:1/group
+    # direct_message reply path — teach agents to draw on what they GENUINELY
+    # recall (the episodic memories + session history already injected into the
+    # reply context, AD-573/AD-723a-1) and make natural callbacks ("you mentioned
+    # …", "last time we …") so a conversation feels continuous instead of
+    # amnesiac, with a hard AD-592 honesty bound: reference only what is actually
+    # recalled, never fabricate a shared memory. Pure prompt text (no extra LLM
+    # pass, no cost), so it ships ON for the richness the North Star demands;
+    # the Captain's tuning knob / off-switch if callbacks ever read as forced.
+    conversational_memory_enabled: bool = True
 
 
 class WorkforceConfig(BaseModel):
