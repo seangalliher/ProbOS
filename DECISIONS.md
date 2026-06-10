@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-962: Typing indicator during backend generation — fill the dead air before the first reply (Natural Conversation epic, #882/#896)
+
+**Problem.** AD-960 paces the *reveal* of crew replies at human speed, but the backend group cascade (`group_chat_fanout`) takes ~10–30s of real LLM time to produce ANY reply, and the `POST /api/threads/{id}/messages` call is fully synchronous — so from the instant the Captain sends until the first reply lands there is NO on-screen signal at all. That silent window is the most "is it broken?" moment in the experience; the AD-960 pacing improvement is undercut by it.
+
+**Decision (frontend only, additive — extends AD-952).** Reuse the AD-952 `typingAgent` store slice + `TypingIndicator` component for a generic pre-reply beat. (1) `TypingIndicator` gains an optional `verb: 'typing' | 'thinking'` (default `'typing'`) so the label reads honestly — the crew is being *asked*, no reply exists yet, so it's *thinking*, not typing. (2) The `typingAgent` slice gains an optional `verb` field (still session-scoped, no localStorage). (3) `ProfileChatTab.sendText` group branch sets `setTypingAgent({threadId, agentId:'', callsign:'The crew', verb:'thinking'})` the instant it enters the ≥2-crew path, BEFORE the fetch — so "The crew is thinking…" shows within a frame of send. It is cleared the moment the first reply arrives (right after the AD-960 `setSending(false)`), at which point the text path's `revealRepliesProgressively` immediately re-sets a per-agent "{callsign} is typing" beat (the AD-960 reveal), and the meeting path leaves it cleared (AD-921 voice + AD-923 speaking indicator pace the crew there). The error path also clears it so it never sticks after a failed send.
+
+**Scope.** v1 is a generic whole-crew "thinking" beat (we don't know who will respond first until the backend runs the facilitator). Naming the likely first responder via a pre-flight facilitator rank is a v2 forward marker (AD-962a), and true streaming reply delivery remains AD-935a. The indicator's render site (threadId-guarded, after the message list) is unchanged from AD-952.
+
+**Tests + gates.** `TypingIndicator.test.tsx` +2 (default verb "typing"; "thinking" verb renders + aria-label), `useStore.typingAgent.test.ts` +1 (the verb round-trips through the slice). Full UI suite **1411 passed / 1 skipped** (+3 over the 1408 baseline, zero regressions), `npm run build` clean. No backend change → no pytest. COMMITTED LOCAL ONLY — NOT pushed.
+
 ### AD-961: Cascade-extend-on-address — a directed peer hand-off is always answered (Natural Conversation epic, #882/#895)
 
 **Problem (Captain group-chat test, 2026-06-10).** AD-951 routes a directed address ("Ezri, …" / "@ezri …") to that peer as the next cascade speaker, but only WITHIN `group_chat.max_agent_rounds` (default 2). When the address landed in the LAST normal cascade round, the addressed peer never got a turn — the Captain had to manually re-prompt ("Ezri, can you respond to Yeo?"). A hand-off that goes unanswered is the opposite of natural: a human who is directly asked a question answers it.

@@ -29,4 +29,11 @@ describe('AD-952 typingAgent store slice', () => {
     const keys = Object.keys(localStorage).filter((k) => k.toLowerCase().includes('typing'));
     expect(keys).toEqual([]);
   });
+
+  // AD-962: the optional verb carries the generation-phase ("thinking") vs
+  // compose-phase ("typing") distinction.
+  it('carries the AD-962 "thinking" verb when set', () => {
+    useStore.getState().setTypingAgent({ threadId: 't1', agentId: '', callsign: 'The crew', verb: 'thinking' });
+    expect(useStore.getState().typingAgent).toEqual({ threadId: 't1', agentId: '', callsign: 'The crew', verb: 'thinking' });
+  });
 });

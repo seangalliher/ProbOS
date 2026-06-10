@@ -11,11 +11,15 @@
 
 interface TypingIndicatorProps {
   callsign: string;
+  /** AD-962: the verb shown after the name. "typing" (default) for the AD-952
+   *  per-agent compose beat; "thinking" for the AD-962 pre-reply generation
+   *  phase (the crew is being asked, no reply exists yet). */
+  verb?: 'typing' | 'thinking';
 }
 
 const _AMBER = '#f0b060';
 
-export function TypingIndicator({ callsign }: TypingIndicatorProps) {
+export function TypingIndicator({ callsign, verb = 'typing' }: TypingIndicatorProps) {
   const who = callsign && callsign.trim() ? callsign.trim() : 'Someone';
   const dotStyle = (delay: string): React.CSSProperties => ({
     width: 5,
@@ -30,7 +34,7 @@ export function TypingIndicator({ callsign }: TypingIndicatorProps) {
     <div
       data-testid="typing-indicator"
       aria-live="polite"
-      aria-label={`${who} is typing`}
+      aria-label={`${who} is ${verb}`}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -45,7 +49,7 @@ export function TypingIndicator({ callsign }: TypingIndicatorProps) {
         '@keyframes hxi-typing-blink{0%,80%,100%{opacity:0.25}40%{opacity:1}}'
       }</style>
       <span style={{ color: _AMBER }}>{who}</span>
-      <span style={{ color: '#666680' }}>is typing</span>
+      <span style={{ color: '#666680' }}>is {verb}</span>
       <span style={{ display: 'inline-flex', gap: 3, marginLeft: 2 }}>
         <span style={dotStyle('0s')} />
         <span style={dotStyle('0.18s')} />

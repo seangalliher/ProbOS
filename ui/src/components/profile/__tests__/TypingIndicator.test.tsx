@@ -44,4 +44,21 @@ describe('AD-952 TypingIndicator', () => {
     // The self-contained keyframe drives the dots.
     expect(el.innerHTML).toContain('hxi-typing-blink');
   });
+
+  // AD-962: the verb distinguishes the pre-reply generation beat from the
+  // per-agent compose beat.
+  it('defaults the verb to "typing"', () => {
+    render(<TypingIndicator callsign="Scout" />);
+    const el = screen.getByTestId('typing-indicator');
+    expect(el.textContent).toContain('is typing');
+    expect(el.getAttribute('aria-label')).toBe('Scout is typing');
+  });
+
+  it('renders the "thinking" verb for the AD-962 generation phase', () => {
+    render(<TypingIndicator callsign="The crew" verb="thinking" />);
+    const el = screen.getByTestId('typing-indicator');
+    expect(el.textContent).toContain('The crew');
+    expect(el.textContent).toContain('is thinking');
+    expect(el.getAttribute('aria-label')).toBe('The crew is thinking');
+  });
 });

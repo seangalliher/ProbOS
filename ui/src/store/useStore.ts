@@ -460,7 +460,10 @@ export interface HXIState {
   // AD-952: human response dynamics — the agent currently "typing" a group
   // reply (progressive reveal). null = nobody typing. Session-scoped; drives
   // the TypingIndicator bubble in the active thread transcript.
-  typingAgent: { threadId: string | null; agentId: string; callsign: string } | null;
+  // AD-962: optional ``verb`` distinguishes the AD-952 per-agent compose beat
+  // ("typing", default) from the pre-reply generation phase ("thinking", shown
+  // for the whole-crew dead-air window before any reply exists).
+  typingAgent: { threadId: string | null; agentId: string; callsign: string; verb?: 'typing' | 'thinking' } | null;
   // AD-705: always-on wake-word voice loop opt-in. Default OFF — the
   // Captain explicitly opts in. Persisted in localStorage.
   wakeWordEnabled: boolean;
@@ -598,7 +601,7 @@ export interface HXIState {
   // AD-949: call-scoped meeting/group audio mute.
   setCallAudioEnabled: (v: boolean) => void;
   // AD-952: set/clear the agent currently "typing" a group reply.
-  setTypingAgent: (t: { threadId: string | null; agentId: string; callsign: string } | null) => void;
+  setTypingAgent: (t: { threadId: string | null; agentId: string; callsign: string; verb?: 'typing' | 'thinking' } | null) => void;
   // AD-705: opt-in toggle for the always-on wake-word voice loop.
   setWakeWordEnabled: (v: boolean) => void;
   setScanLinesEnabled: (v: boolean) => void;

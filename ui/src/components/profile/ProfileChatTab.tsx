@@ -676,6 +676,15 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         (id) => id !== 'captain' && _agents.get(id)?.isCrew,
       ).length;
       if (_thread && crewParticipantCount >= 2) {
+        // AD-962: fill the dead air. The group fan-out takes ~10-30s of real
+        // LLM time before ANY reply lands; show a generic "the crew is
+        // thinking" beat the instant the Captain sends, cleared the moment the
+        // first reply arrives (AD-960 setSending below) or on error. Reuses the
+        // AD-952 typingAgent slice + TypingIndicator; the generic callsign and
+        // the "thinking" verb distinguish it from the per-agent compose beat.
+        useStore.getState().setTypingAgent({
+          threadId: activeThreadId ?? null, agentId: '', callsign: 'The crew', verb: 'thinking',
+        });
         try {
           // ``body`` has min_length=1 on AppendMessageRequest, so attach-only
           // sends MUST carry the '(attachment)' placeholder or the POST 422s.
@@ -703,6 +712,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           // no longer gated on it. The `finally` setSending(false) remains a
           // harmless idempotent safety for the error path.
           setSending(false);
+          // AD-962: the first reply has arrived — clear the generic "the crew
+          // is thinking" beat. The text path's revealRepliesProgressively below
+          // immediately re-sets a per-agent "{callsign} is typing" beat; the
+          // meeting path leaves it cleared (AD-921 voice + AD-923 speaking
+          // indicator pace the crew there).
+          useStore.getState().setTypingAgent(null);
           // AD-936/938: commit ONE reply to both the per-agent buffer and the
           // thread-keyed transcript with its author identity. Extracted so the
           // instant (meeting) path and the AD-952 progressive (text) path share
@@ -751,6 +766,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           // meeting_active + voiceEnabled, so non-meeting sends stay silent.
           speakMeetingReplies(replies as PerAgentReply[]);
         } catch {
+          // AD-962: clear the thinking/typing indicator on the error path so it
+          // never sticks after a failed send.
+          useStore.getState().setTypingAgent(null);
           useStore.getState().addAgentMessage(agentId, 'agent', '(communication error)');
         } finally {
           setSending(false);
@@ -993,9 +1011,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           />
         ))}
         {/* AD-952: typing beat for the agent composing the next group reply.
-            threadId-guarded so it only shows in the thread it belongs to. */}
+            AD-962: also the generic "the crew is thinking" beat during the
+            pre-reply generation window. threadId-guarded so it only shows in
+            the thread it belongs to. */}
         {typingAgent && typingAgent.threadId === (activeThreadId ?? null) && (
-          <TypingIndicator callsign={typingAgent.callsign} />
+          <TypingIndicator callsign={typingAgent.callsign} verb={typingAgent.verb} />
         )}
         <div ref={messagesEndRef} />
       </div>
