@@ -1,6 +1,6 @@
 /** AD-921: thin React wrapper over the meetingVoice sequencer. Injects the
  *  real ``speakResponse`` / ``onSpeechEvent`` / ``stripMarkdownForSpeech``,
- *  gates on the meeting being active AND voice being enabled, exposes
+ *  gates on the meeting being active AND call audio being enabled, exposes
  *  ``speakingAgentId`` (the AD-923 indicator seam), and supersedes an
  *  in-flight batch when the Captain sends again (generation token -- no
  *  talk-over across re-sends). */
@@ -21,7 +21,7 @@ export interface UseMeetingVoiceOptions {
 
 export interface UseMeetingVoiceResult {
   /** Speak the AD-914 ``per_agent_replies`` in facilitator (array) order,
-   *  one at a time. Self-gates on ``meetingActive && voiceEnabled``;
+   *  one at a time. Self-gates on ``meetingActive && callAudioEnabled``;
    *  no-ops otherwise. Reference-stable. */
   speakReplies: (replies: PerAgentReply[]) => void;
   /** The agent currently speaking (``null`` between utterances / when idle).
@@ -47,7 +47,10 @@ export function useMeetingVoice(opts: UseMeetingVoiceOptions): UseMeetingVoiceRe
 
   const speakReplies = useCallback((replies: PerAgentReply[]): void => {
     if (!meetingActiveRef.current) return;
-    if (!useStore.getState().voiceEnabled) return;
+    // AD-949: gate on the call-scoped ``callAudioEnabled`` (default ON) instead
+    // of the Ship's-Computer ``voiceEnabled`` — group/meeting voice is now
+    // audible by default in a live call and muted only via the in-call control.
+    if (!useStore.getState().callAudioEnabled) return;
     if (!Array.isArray(replies) || replies.length === 0) return;
     const myGen = ++genRef.current;
     void speakRepliesSequentially(replies, {

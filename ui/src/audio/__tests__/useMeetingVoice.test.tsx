@@ -27,21 +27,21 @@ import useMeetingVoiceSource from '../useMeetingVoice?raw';
 
 beforeEach(() => {
   mocks.speakRepliesSequentially.mockReset();
-  useStore.setState({ voiceEnabled: false });
+  useStore.setState({ callAudioEnabled: false });
 });
 
 const reply = (id: string): PerAgentReply => ({ agent_id: id, text: `text-${id}` });
 
 describe('useMeetingVoice', () => {
   it('test_no_speak_when_meeting_inactive', () => {
-    useStore.setState({ voiceEnabled: true });
+    useStore.setState({ callAudioEnabled: true });
     const { result } = renderHook(() => useMeetingVoice({ meetingActive: false }));
     act(() => { result.current.speakReplies([reply('a')]); });
     expect(mocks.speakRepliesSequentially).not.toHaveBeenCalled();
   });
 
-  it('test_speaks_when_meeting_active_and_voice_enabled', () => {
-    useStore.setState({ voiceEnabled: true });
+  it('test_speaks_when_meeting_active_and_call_audio_enabled', () => {
+    useStore.setState({ callAudioEnabled: true });
     const { result } = renderHook(() => useMeetingVoice({ meetingActive: true }));
     const replies = [reply('a'), reply('b')];
     act(() => { result.current.speakReplies(replies); });
@@ -49,15 +49,15 @@ describe('useMeetingVoice', () => {
     expect(mocks.speakRepliesSequentially.mock.calls[0][0]).toBe(replies);
   });
 
-  it('test_no_speak_when_voice_disabled', () => {
-    useStore.setState({ voiceEnabled: false });
+  it('test_no_speak_when_call_audio_disabled', () => {
+    useStore.setState({ callAudioEnabled: false });
     const { result } = renderHook(() => useMeetingVoice({ meetingActive: true }));
     act(() => { result.current.speakReplies([reply('a')]); });
     expect(mocks.speakRepliesSequentially).not.toHaveBeenCalled();
   });
 
   it('test_speaking_agent_id_reflects_sequencer', () => {
-    useStore.setState({ voiceEnabled: true });
+    useStore.setState({ callAudioEnabled: true });
     const { result } = renderHook(() => useMeetingVoice({ meetingActive: true }));
     act(() => { result.current.speakReplies([reply('bones')]); });
     const deps = mocks.speakRepliesSequentially.mock.calls[0][1];
@@ -68,7 +68,7 @@ describe('useMeetingVoice', () => {
   });
 
   it('test_second_batch_supersedes_first', () => {
-    useStore.setState({ voiceEnabled: true });
+    useStore.setState({ callAudioEnabled: true });
     const { result } = renderHook(() => useMeetingVoice({ meetingActive: true }));
     act(() => { result.current.speakReplies([reply('a')]); });
     const deps1 = mocks.speakRepliesSequentially.mock.calls[0][1];

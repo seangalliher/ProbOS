@@ -452,6 +452,11 @@ export interface HXIState {
   // Audio state
   soundEnabled: boolean;
   voiceEnabled: boolean;
+  // AD-949: call-scoped audio gate for group/meeting voice, decoupled from the
+  // Ship's-Computer ``voiceEnabled``. Default ON so a live call is audible; the
+  // in-call mute control (GroupChatHeader) flips it. Session-scoped (no
+  // localStorage in v1 — persistence is AD-949a).
+  callAudioEnabled: boolean;
   // AD-705: always-on wake-word voice loop opt-in. Default OFF — the
   // Captain explicitly opts in. Persisted in localStorage.
   wakeWordEnabled: boolean;
@@ -586,6 +591,8 @@ export interface HXIState {
   consumeChatDraft: (agentId: string) => string;
   setSoundEnabled: (v: boolean) => void;
   setVoiceEnabled: (v: boolean) => void;
+  // AD-949: call-scoped meeting/group audio mute.
+  setCallAudioEnabled: (v: boolean) => void;
   // AD-705: opt-in toggle for the always-on wake-word voice loop.
   setWakeWordEnabled: (v: boolean) => void;
   setScanLinesEnabled: (v: boolean) => void;
@@ -928,6 +935,10 @@ export const useStore = create<HXIState>((set, get) => ({
   chatDrafts: {},
   soundEnabled: false,
   voiceEnabled: false,
+  // AD-949: call audio ON by default — combined with the hook's meetingActive
+  // self-gate, a freshly started call is audible without enabling the
+  // Ship's-Computer voice.
+  callAudioEnabled: true,
   // AD-705: hydrate wake-word toggle from localStorage; default OFF.
   wakeWordEnabled: (() => {
     try {
@@ -1638,6 +1649,11 @@ export const useStore = create<HXIState>((set, get) => ({
   setVoiceEnabled: (v) => {
     set({ voiceEnabled: v });
     localStorage.setItem('hxi_voice_enabled', v ? '1' : '0');
+  },
+  // AD-949: call-scoped mute. No localStorage in v1 — the default-ON store
+  // value makes a fresh call audible; persisting the preference is AD-949a.
+  setCallAudioEnabled: (v) => {
+    set({ callAudioEnabled: v });
   },
   setWakeWordEnabled: (v) => {
     set({ wakeWordEnabled: v });

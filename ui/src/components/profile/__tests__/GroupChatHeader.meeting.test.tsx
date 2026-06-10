@@ -59,7 +59,7 @@ function seed(thread: AD791aChatThreadView, agentsList: Agent[]): void {
 
 afterEach(() => {
   cleanup();
-  useStore.setState({ agents: new Map(), chatThreads: new Map() });
+  useStore.setState({ agents: new Map(), chatThreads: new Map(), callAudioEnabled: true });
   vi.clearAllMocks();
 });
 
@@ -125,5 +125,38 @@ describe('AD-920 GroupChatHeader meeting toggle', () => {
     );
     const { container } = render(<GroupChatHeader threadId="t1" />);
     expect(container.innerHTML).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+});
+
+describe('AD-949 GroupChatHeader call-audio toggle', () => {
+  it('call-audio toggle hidden when no meeting is active', () => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'a1'] }), [mkAgent({ id: 'a1', callsign: 'Vex' })]);
+    render(<GroupChatHeader threadId="t1" />);
+    expect(screen.queryByTestId('call-audio-toggle')).toBeNull();
+  });
+
+  it('call-audio toggle shown and audible (aria-pressed=true) by default in a meeting', () => {
+    seed(
+      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' })],
+    );
+    useStore.setState({ callAudioEnabled: true });
+    render(<GroupChatHeader threadId="t1" />);
+    const btn = screen.getByTestId('call-audio-toggle');
+    expect(btn).toBeTruthy();
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('clicking the call-audio toggle mutes the call (callAudioEnabled -> false, aria-pressed -> false)', () => {
+    seed(
+      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' })],
+    );
+    useStore.setState({ callAudioEnabled: true });
+    render(<GroupChatHeader threadId="t1" />);
+    const btn = screen.getByTestId('call-audio-toggle');
+    fireEvent.click(btn);
+    expect(useStore.getState().callAudioEnabled).toBe(false);
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
   });
 });
