@@ -1851,6 +1851,14 @@ group_chat:
   # max_agent_rounds). Makes AD-950's "hand the floor to a named peer" mechanical.
   # The Pydantic default stays False (zero-config boot = AD-935 relevance-ranked).
   agent_next_speaker_selection_enabled: true
+  # AD-958a: exploration / anti-rich-get-richer term. A domain-relevant but
+  # unproven (low-trust) agent gets a deterministic UCB-style bonus
+  # (weight_exploration * department_relevance * (1 - trust)) so it is surfaced
+  # to EARN trust instead of high-trust agents monopolising the room (Minimal
+  # Authority axiom). 0.15 keeps it meaningful (comparable to department/recency
+  # 0.25) but BELOW the mention weight 0.40, so a direct address always wins.
+  # Pydantic default 0.0 (off); this enables it for the live system.
+  weight_exploration: 0.15
 desktop:
   enabled: false
   tray_autostart: true

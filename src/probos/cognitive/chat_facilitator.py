@@ -116,6 +116,7 @@ class ChatFacilitator:
         weight_recency: float = 0.25,
         weight_department: float = 0.25,
         weight_trust: float = 0.10,
+        weight_exploration: float = 0.0,
     ) -> None:
         self._max_speakers = max(0, int(max_speakers_per_turn))
         self._conv_enabled = bool(convergence_enabled)
@@ -126,6 +127,8 @@ class ChatFacilitator:
         self._w_recency = float(weight_recency)
         self._w_department = float(weight_department)
         self._w_trust = float(weight_trust)
+        # AD-958a: exploration / anti-rich-get-richer (default 0.0 == off).
+        self._w_exploration = max(0.0, float(weight_exploration))
 
     @classmethod
     def from_config(cls, config: object | None) -> "ChatFacilitator":
@@ -144,6 +147,7 @@ class ChatFacilitator:
             weight_recency=getattr(gc, "weight_recency", 0.25),
             weight_department=getattr(gc, "weight_department", 0.25),
             weight_trust=getattr(gc, "weight_trust", 0.10),
+            weight_exploration=getattr(gc, "weight_exploration", 0.0),
         )
 
     # ---- pure scoring ----
@@ -175,6 +179,20 @@ class ChatFacilitator:
             if tr > 0.0:
                 factors["trust"] = tr
                 total += tr
+            # AD-958a: exploration / anti-rich-get-richer. A domain-relevant but
+            # UNPROVEN agent gets a bonus inversely proportional to its trust, so
+            # it is surfaced to EARN trust (Minimal Authority axiom). Gated on
+            # department_relevance so an irrelevant agent is never boosted; a
+            # high-trust agent (already carried by the trust term) gets ~0.
+            # Deterministic (no RNG) — the facilitator stays pure. Off when
+            # weight_exploration == 0.0 (default).
+            if self._w_exploration > 0.0:
+                dep_rel = max(0.0, min(1.0, s.department_relevance))
+                tr_norm = max(0.0, min(1.0, s.trust))
+                expl = self._w_exploration * dep_rel * (1.0 - tr_norm)
+                if expl > 0.0:
+                    factors["exploration"] = expl
+                    total += expl
             scored.append(SpeakerScore(
                 agent_id=s.agent_id, score=total, mentioned=s.mentioned, factors=factors,
             ))

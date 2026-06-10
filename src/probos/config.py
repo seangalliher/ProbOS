@@ -3761,6 +3761,20 @@ class GroupChatConfig(BaseModel):
     weight_recency: float = 0.25            # anti-domination / fairness
     weight_department: float = 0.25
     weight_trust: float = 0.10
+    # AD-958a: exploration / anti-rich-get-richer term (Minimal Authority axiom —
+    # earned trust, everyone has a path). A trust-weighted facilitator risks
+    # rich-get-richer: a high-trust agent keeps being surfaced and a low-trust
+    # but domain-relevant agent never gets a chance to EARN trust. The
+    # exploration bonus is a deterministic "optimism under uncertainty" (UCB-
+    # style) term: ``weight_exploration * department_relevance * (1 - trust)`` —
+    # the more relevant AND the LESS proven an agent is, the bigger the boost,
+    # so a domain-relevant newcomer is surfaced to earn trust while a high-trust
+    # agent (already carried by the trust term) gets ~0 extra. Bounded below the
+    # mention weight so a direct address always still wins; NO randomness (the
+    # facilitator stays pure + deterministic). Transitional flag (#14) — Pydantic
+    # default 0.0 (OFF, ranking byte-identical to pre-AD-958a); system.yaml sets
+    # the live value.
+    weight_exploration: float = 0.0
     # AD-918: per-agent rate limit on agent-initiated group-chat creation.
     # Conservative defaults prevent a create-storm without blocking
     # legitimate ad-hoc collaboration. Reuses the BF-163 (60s DM cooldown)
