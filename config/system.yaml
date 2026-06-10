@@ -1845,6 +1845,12 @@ group_chat:
   # free to respond in the next round (Ezri -> Yeo -> Ezri turn-taking). The
   # Pydantic default stays 0 (zero-config boot = AD-914 all-at-once).
   max_speakers_per_turn: 1
+  # AD-951: turn-allocation rule 1a - an agent that directly addresses a peer by
+  # callsign ("@yeo ..." or "Yeo, ...") selects that peer to speak next (hard-
+  # included past the per-turn cap + convergence, still bounded by
+  # max_agent_rounds). Makes AD-950's "hand the floor to a named peer" mechanical.
+  # The Pydantic default stays False (zero-config boot = AD-935 relevance-ranked).
+  agent_next_speaker_selection_enabled: true
 desktop:
   enabled: false
   tray_autostart: true

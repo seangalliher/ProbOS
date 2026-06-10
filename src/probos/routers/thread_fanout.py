@@ -26,7 +26,10 @@ from probos.cognitive.chat_facilitator import ChatFacilitator, SpeakerSignals
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
 from probos.avatars.divergence_detector import strip_intent_self_tag
-from probos.crew_profile import extract_all_leading_callsign_mentions
+from probos.crew_profile import (
+    extract_all_leading_callsign_mentions,
+    extract_directed_callsign,
+)
 from probos.crew_utils import is_crew_agent
 from probos.types import IntentMessage
 
@@ -85,11 +88,17 @@ def _build_session_history(
 
 
 def _assemble_speaker_signals(
-    runtime: Any, captain_body: str, agent_ids: list[str], prior: list[Any]
+    runtime: Any, captain_body: str, agent_ids: list[str], prior: list[Any],
+    addressed_callsigns: set[str] | None = None,
 ) -> list[SpeakerSignals]:
     """Build per-speaker SpeakerSignals snapshots from the runtime. Every
     lookup is Tier-2 log-and-degrade (mirrors group_chat_fanout): a missing
     registry/callsign/ontology/trust never blocks facilitation.
+
+    AD-951: ``addressed_callsigns`` (lower-cased) are peers a prior-round speaker
+    DIRECTLY ADDRESSED (turn-allocation rule 1a); a candidate whose callsign is
+    in that set is hard-included (``mentioned=True``) exactly like a Captain
+    @-mention. A non-participant callsign matches no candidate and is ignored.
     """
     # @-mentions in the Captain turn -> hard-include set (lower-cased callsigns).
     mention_callsigns: set[str] = set()
@@ -124,7 +133,11 @@ def _assemble_speaker_signals(
                     callsign = runtime.callsign_registry.get_callsign(agent_type) or ""
         except Exception:
             logger.debug("AD-915: identity resolve failed for %s", aid, exc_info=True)
-        mentioned = bool(callsign) and callsign.lower() in mention_callsigns
+        cl = callsign.lower() if callsign else ""
+        mentioned = bool(callsign) and (
+            cl in mention_callsigns
+            or (addressed_callsigns is not None and cl in addressed_callsigns)
+        )
         turns_since = (n_prior - last_idx[aid]) if aid in last_idx else 9_999
         dept = ""
         try:
@@ -219,6 +232,7 @@ async def _fan_one_round(
     sanity_gate: Any,
     t_start: float,
     before: float | None = None,
+    addressed_callsigns: set[str] | None = None,
 ) -> list[dict[str, str]]:
     """One reactivity round (AD-935): facilitate over ``candidate_ids`` (minus
     ``exclude_ids``) using ``trigger_body`` for mention/relevance, dispatch the
@@ -250,7 +264,9 @@ async def _fan_one_round(
     # AD-914 all-at-once order so a facilitator bug never silences the crew.
     try:
         facilitator = ChatFacilitator.from_config(getattr(runtime, "config", None))
-        signals = _assemble_speaker_signals(runtime, trigger_body, candidate_pool, prior)
+        signals = _assemble_speaker_signals(
+            runtime, trigger_body, candidate_pool, prior, addressed_callsigns
+        )
         recent_agent_msgs = [
             (m.author_id, m.body) for m in prior[-_CONVERGENCE_WINDOW:] if m.role == "agent"
         ]
@@ -537,6 +553,7 @@ async def group_chat_fanout(
     cfg = getattr(getattr(runtime, "config", None), "group_chat", None)
     if getattr(cfg, "agent_reactivity_enabled", False):
         max_rounds = int(getattr(cfg, "max_agent_rounds", 2))
+        next_speaker_sel = getattr(cfg, "agent_next_speaker_selection_enabled", False)
         last = round0
         for _ in range(max(0, max_rounds)):
             spoke_ids = {r["agent_id"] for r in last if r.get("agent_id")}
@@ -545,11 +562,25 @@ async def group_chat_fanout(
             trigger = "\n".join(
                 f"{r['callsign'] or r['agent_id']}: {r['text']}" for r in last
             )
+            # AD-951: turn-allocation rule 1a — when a prior-round speaker
+            # DIRECTLY ADDRESSES a peer by callsign ("@yeo ..." or "Yeo, ..."),
+            # select that peer to speak next (hard-included past the per-turn cap
+            # + convergence, still bounded by max_agent_rounds). Scan each reply's
+            # CLEAN text (AD-948 already stripped the <intent> tag); a speaker
+            # never selects itself. Honest-degrade: a non-participant callsign
+            # matches no candidate downstream. Gated (ships OFF; yaml flips on).
+            addressed: set[str] = set()
+            if next_speaker_sel:
+                for r in last:
+                    cs = extract_directed_callsign(r.get("text") or "")
+                    if cs and cs != (r.get("callsign") or "").lower():
+                        addressed.add(cs)
             try:
                 nxt = await _fan_one_round(
                     runtime, store, thread_id,
                     trigger_body=trigger, candidate_ids=agent_ids, exclude_ids=spoke_ids,
                     vision_messages=None, sanity_gate=sanity_gate, t_start=t_start,
+                    addressed_callsigns=addressed or None,
                 )
             except Exception:
                 logger.warning(

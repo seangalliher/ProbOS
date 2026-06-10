@@ -3781,6 +3781,14 @@ class GroupChatConfig(BaseModel):
     # on. Synchronous within the Captain turn (no live-refresh exists yet).
     agent_reactivity_enabled: bool = False
     max_agent_rounds: int = 2   # extra agent-only rounds after the Captain round (0 = AD-914 single round)
+    # AD-951: turn-allocation rule 1a ("current speaker selects next"). When
+    # enabled (and reactivity is on), an agent that DIRECTLY ADDRESSES a peer by
+    # callsign in a group reply ("@yeo ..." or "Yeo, ...") hard-includes that peer
+    # as a speaker in the next cascade round (overriding the per-turn cap +
+    # convergence, still bounded by max_agent_rounds). Makes AD-950's "hand the
+    # floor to a named peer" mechanical. Transitional flag (#14) — ships OFF;
+    # system.yaml flips it on. Off => the AD-935 cascade is byte-identical.
+    agent_next_speaker_selection_enabled: bool = False
 
 
 class WardRoomConfig(BaseModel):

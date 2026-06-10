@@ -888,3 +888,38 @@ def extract_all_leading_callsign_mentions(text: str) -> tuple[list[str], str]:
         remaining = remaining[m.end():]
     return (callsigns, remaining.strip())
 
+
+def extract_directed_callsign(text: str) -> str | None:
+    r"""AD-951: the callsign a message is DIRECTED TO at its start, or None.
+
+    Captures Conversation-Analysis turn-allocation rule 1a ("current speaker
+    selects next") for agent-to-agent hand-offs in a group chat: when an agent
+    ADDRESSES a peer by callsign, that peer is selected to speak next. Matches a
+    LEADING address only — mirroring is_directed_mention / BF #467, so a message
+    ABOUT a peer ("I agree with Yeo's read") is NOT treated as a hand-off, only a
+    message TO them:
+
+      * "@yeo ..."   -> "yeo"   (chat-native @ form)
+      * "Yeo, ..."   -> "yeo"   (vocative comma — natural speech / AD-921 voice)
+      * "Yeo: ..."   -> "yeo"   (vocative colon)
+
+    Returns the lower-cased callsign (matching CallsignRegistry.resolve) or None.
+    A bare leading word with no @, comma, or colon ("Data shows ...") is NOT an
+    address. Resolution to an actual thread participant happens at the call site,
+    so a non-participant word (a common opener like "Well," or a non-member name)
+    is harmlessly ignored there. Reuses the same @(\w+) word primitive as the
+    other parsers in this module.
+    """
+    if not text:
+        return None
+    stripped = text.lstrip()
+    # @ form first (directed-mention discipline: a LEADING @callsign).
+    m = re.match(r'@(\w+)\b', stripped)
+    if m:
+        return m.group(1).lower()
+    # Vocative form: a leading word immediately followed by ',' or ':'.
+    m = re.match(r'(\w+)\s*[,:]', stripped)
+    if m:
+        return m.group(1).lower()
+    return None
+
