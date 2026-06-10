@@ -22,7 +22,11 @@ import re
 import time
 from typing import Any
 
-from probos.cognitive.chat_facilitator import ChatFacilitator, SpeakerSignals
+from probos.cognitive.chat_facilitator import (
+    ChatFacilitator,
+    SpeakerSignals,
+    build_room_signal,
+)
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
 from probos.avatars.divergence_detector import strip_intent_self_tag
@@ -220,6 +224,27 @@ async def build_chat_vision_messages(
     return messages if image_ids else None
 
 
+def _resolve_callsigns(runtime: Any, agent_ids: list[str]) -> dict[str, str]:
+    """AD-955: agent_id -> callsign for the given agents (Tier-2; a missing
+    registry/callsign is omitted, never raised). Used to name the peer the room
+    would value hearing in the advisory room-awareness signal."""
+    out: dict[str, str] = {}
+    reg = getattr(runtime, "callsign_registry", None)
+    registry = getattr(runtime, "registry", None)
+    if reg is None or registry is None:
+        return out
+    for aid in agent_ids:
+        try:
+            agent = registry.get(aid)
+            if agent is not None:
+                cs = reg.get_callsign(getattr(agent, "agent_type", "")) or ""
+                if cs:
+                    out[aid] = cs
+        except Exception:
+            logger.debug("AD-955: callsign resolve failed for %s", aid, exc_info=True)
+    return out
+
+
 async def _fan_one_round(
     runtime: Any,
     store: Any,
@@ -262,6 +287,8 @@ async def _fan_one_round(
     # AD-915: facilitator decides WHO/ORDER; _send_one still does the
     # dispatch+persist (DRY). Tier-2: any facilitation failure degrades to the
     # AD-914 all-at-once order so a facilitator bug never silences the crew.
+    signals: list[SpeakerSignals] = []
+    _room_scores: list[Any] = []
     try:
         facilitator = ChatFacilitator.from_config(getattr(runtime, "config", None))
         signals = _assemble_speaker_signals(
@@ -272,12 +299,47 @@ async def _fan_one_round(
         ]
         result = facilitator.facilitate(signals, recent_agent_msgs)
         speaking_order = result.speaking_order
+        _room_scores = list(result.scores)
     except Exception:
         logger.warning(
             "AD-915: facilitation failed for thread=%s; falling back to AD-914 order",
             thread_id, exc_info=True,
         )
         speaking_order = list(candidate_pool)
+
+    # AD-955: per-dispatched-agent ROOM AWARENESS (advisory — the agent reasons
+    # over it; NO dispatch change, the cap/convergence backstops are untouched).
+    # The facilitator already ranks the room every round (recency + department +
+    # trust + mention); AD-955 surfaces that ranking to the speaker so a
+    # dominating agent can hold back or hand off, and an agent can defer to a
+    # better-placed peer BY NAME (an AD-951 hand-off). Default ON; group-only
+    # (this function runs only inside group_chat_fanout). Tier-2: any failure
+    # yields no signal (the agent simply replies without room sense).
+    room_signals: dict[str, dict[str, Any]] = {}
+    try:
+        _comm_cfg = getattr(getattr(runtime, "config", None), "communications", None)
+        if getattr(_comm_cfg, "room_awareness_enabled", True) and _room_scores:
+            _callsign_by_agent = _resolve_callsigns(runtime, candidate_pool)
+            _signal_by_agent = {s.agent_id: s for s in signals}
+            _recent_authors = [
+                m.author_id for m in prior if getattr(m, "role", "") == "agent"
+            ]
+            for _aid in speaking_order:
+                _sig = _signal_by_agent.get(_aid)
+                _rs = build_room_signal(
+                    agent_id=_aid,
+                    department_relevance=(_sig.department_relevance if _sig else 0.0),
+                    recent_authors=_recent_authors,
+                    scores=_room_scores,
+                    callsign_by_agent=_callsign_by_agent,
+                )
+                if _rs:
+                    room_signals[_aid] = _rs
+    except Exception:
+        logger.debug(
+            "AD-955: room signal build failed for thread=%s; replies proceed "
+            "without room sense", thread_id, exc_info=True,
+        )
 
     async def _send_one(agent_id: str) -> dict[str, str]:
         callsign = ""
@@ -297,6 +359,12 @@ async def _fan_one_round(
             # cognitive_agent hook gates the teaching string on this param).
             "is_group_chat": True,
         }
+        # AD-955: advisory room-awareness signal for this speaker (when one is
+        # salient). The cognitive_agent hook renders it; it never changes
+        # dispatch. Rides the same params dict as is_group_chat (small struct).
+        _room_sig = room_signals.get(agent_id)
+        if _room_sig:
+            params["room_signal"] = _room_sig
         # AD-916: only vision-capable participants receive image refs. The
         # ``agent`` above was already resolved for the callsign — reuse it.
         if vision_messages is not None:

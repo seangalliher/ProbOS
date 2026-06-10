@@ -52,6 +52,55 @@ class FacilitationResult:
     scores: list[SpeakerScore] = field(default_factory=list)  # full ranking (diagnostics)
 
 
+def build_room_signal(
+    *,
+    agent_id: str,
+    department_relevance: float,
+    recent_authors: list[str],
+    scores: list[SpeakerScore],
+    callsign_by_agent: dict[str, str],
+    recent_window: int = 6,
+    domain_threshold: float = 0.15,
+) -> dict | None:
+    """AD-955: build ONE speaker's advisory ROOM-AWARENESS signal from the
+    facilitator's ranking, or ``None`` when nothing salient surfaces.
+
+    Pure (no I/O). ``recent_authors`` is the author_id of recent agent turns
+    (oldest->newest); ``scores`` is the facilitator's descending ranking;
+    ``callsign_by_agent`` resolves the peer the room would most value hearing.
+    The signal is ADVISORY — the cognitive_agent hook renders it and the agent
+    reasons over it; it NEVER changes who is dispatched (the cap/convergence
+    backstops own that). Returns a plain dict (rides ``IntentMessage.params``).
+
+    Fields: ``recent_share`` (this agent's turns in the recent window),
+    ``recent_window`` (the window actually considered), ``this_is_your_area``
+    (department relevance >= threshold), ``room_would_value`` (callsign of the
+    highest-ranked OTHER candidate — a defer/hand-off target — or None).
+    """
+    recent = recent_authors[-recent_window:] if recent_window > 0 else []
+    considered = len(recent)
+    recent_share = sum(1 for a in recent if a == agent_id)
+    domain_relevant = department_relevance >= domain_threshold
+    # The peer the room would most value hearing next: the highest-ranked
+    # candidate other than this speaker that has a resolvable callsign.
+    room_would_value: str | None = None
+    for s in scores:
+        if s.agent_id == agent_id:
+            continue
+        cs = callsign_by_agent.get(s.agent_id, "")
+        if cs:
+            room_would_value = cs
+            break
+    if considered == 0 and room_would_value is None and not domain_relevant:
+        return None
+    return {
+        "recent_share": recent_share,
+        "recent_window": considered,
+        "this_is_your_area": domain_relevant,
+        "room_would_value": room_would_value,
+    }
+
+
 class ChatFacilitator:
     """Pure facilitator. No I/O, no LLM, no runtime."""
 

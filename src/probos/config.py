@@ -4654,6 +4654,16 @@ class CommunicationsConfig(BaseModel):
     # pass, no cost), so it ships ON for the richness the North Star demands;
     # the Captain's tuning knob / off-switch if callbacks ever read as forced.
     conversational_memory_enabled: bool = True
+    # AD-955: advisory room awareness on the group direct_message reply path —
+    # surface the facilitator's per-speaker ranking (how much you've contributed
+    # recently, whether the topic is your area, which peer the room would value
+    # hearing) to the speaker so a dominating agent can hold back or hand off and
+    # an agent can defer to a better-placed peer BY NAME (an AD-951 hand-off).
+    # ADVISORY ONLY — it never changes who is dispatched; the cap/convergence
+    # backstops are untouched. Pure prompt text (no cost), ships ON so the
+    # Captain can observe self-selection emerge; the off-switch if the room ever
+    # reads as over-deferential.
+    room_awareness_enabled: bool = True
 
 
 class WorkforceConfig(BaseModel):

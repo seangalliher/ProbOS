@@ -2040,6 +2040,73 @@ class CognitiveAgent(BaseAgent):
             "nothing genuine to recall, just speak to the present moment."
         )
 
+    def _conversational_room_awareness_protocol(self, observation: dict) -> str:
+        """AD-955 (Natural Conversation epic, weighted-trust room sense): surface
+        the facilitator's per-speaker ranking to the speaker so the room can
+        SELF-REGULATE without a director. On the GROUP ``direct_message`` reply
+        path, when the fan-out attached a ``room_signal`` (how much you've
+        contributed recently, whether the topic is your area, which peer the room
+        would most value hearing), append framing that ties each fact to a move:
+        a speaker who has been carrying the conversation may take a lighter touch
+        or HAND OFF; a speaker may DEFER to a better-placed peer BY NAME (an
+        AD-951 hand-off) — reframed as collaboration, not a shortfall, to dissolve
+        the ego problem. ADVISORY: this never changes who is dispatched (the
+        cap/convergence backstops own that) — it gives the agent the AGENCY to
+        hold back or defer, which a hard cap cannot. Gated to the live group path
+        (intent == "direct_message" AND params["is_group_chat"] AND a present
+        room_signal); default ON via ``CommunicationsConfig.room_awareness_enabled``.
+        Overridable (Open/Closed). Gap-regex-safe (no can't/cannot/unable to/don't
+        have/lack/not available)."""
+        if observation.get("intent") != "direct_message":
+            return ""
+        runtime = getattr(self, "_runtime", None)
+        comm_cfg = getattr(getattr(runtime, "config", None), "communications", None)
+        if not getattr(comm_cfg, "room_awareness_enabled", True):
+            return ""
+        params = observation.get("params") or {}
+        if not params.get("is_group_chat"):
+            return ""
+        rs = params.get("room_signal")
+        if not isinstance(rs, dict):
+            return ""
+        share = rs.get("recent_share", 0)
+        window = rs.get("recent_window", 0)
+        your_area = bool(rs.get("this_is_your_area"))
+        peer = rs.get("room_would_value")
+        peer = peer if (isinstance(peer, str) and peer) else None
+        parts = ["\n\nRoom sense — for your judgment, not a directive:"]
+        if window:
+            parts.append(
+                f" of the last {window} contributions in this room, {share} were yours."
+            )
+        if your_area:
+            parts.append(" This topic sits squarely in your area of expertise.")
+        if peer:
+            parts.append(
+                f" Weighing everything said so far, the room would likely value "
+                f"hearing {peer} on this."
+            )
+        parts.append(
+            " Most turns, simply contribute as yourself. But read the moment: if "
+            "you have been carrying the conversation, a lighter touch — or handing "
+            "the floor to a colleague — serves the room better than another long "
+            "turn from you."
+        )
+        if peer:
+            parts.append(
+                f" And if {peer} is genuinely better placed here than you are, it "
+                f"is good collaboration to defer to them — address them by name so "
+                f"they can pick up the thread. Yielding the floor to the stronger "
+                f"voice on a topic is teamwork, the mark of a confident colleague, "
+                f"never a shortfall."
+            )
+        else:
+            parts.append(
+                " Drawing a colleague in by name when their expertise fits the "
+                "moment is teamwork, the mark of a confident colleague."
+            )
+        return "".join(parts)
+
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
 
@@ -2538,6 +2605,16 @@ class CognitiveAgent(BaseAgent):
             _memory_proto = self._conversational_memory_protocol(observation)
             if _memory_proto:
                 composed += _memory_proto
+            # AD-955: advisory ROOM AWARENESS. Overridable hook; base returns ""
+            # unless on the live GROUP direct_message path AND the fan-out
+            # attached a room_signal AND CommunicationsConfig.room_awareness_enabled
+            # (default ON). Surfaces the facilitator's per-speaker ranking so a
+            # dominating agent can hold back / hand off and an agent can defer to a
+            # better-placed peer by name (an AD-951 hand-off). ADVISORY — it never
+            # changes who is dispatched. Composes with the AD-950/953 hooks above.
+            _room_proto = self._conversational_room_awareness_protocol(observation)
+            if _room_proto:
+                composed += _room_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),
