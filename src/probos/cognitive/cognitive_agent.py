@@ -1944,6 +1944,60 @@ class CognitiveAgent(BaseAgent):
             "nothing to add, respond with exactly [NO_RESPONSE] and nothing else."
         )
 
+    def _conversational_proactivity_protocol(self, observation: dict) -> str:
+        """AD-950 (Natural Conversation epic, #886): teach the discourse OBLIGATION
+        to ADVANCE a live conversation. On the 1:1/group ``direct_message`` reply
+        path, append calibrated guidance to end an ENGAGED turn with ONE forward
+        move — a genuine follow-up question, or a proposal/offer that gives the
+        other party an easy opening to respond — using recipient design (react to
+        specifics, address by name). NOT every turn: calibrated to engagement and
+        the agent's personality so it reads as conversation, not interrogation. In
+        a group chat (the fan-out param ``is_group_chat``) it additionally permits
+        handing the floor to a peer by name (sets up AD-951's next-speaker
+        selection). Gated to the live conversational path (intent ==
+        "direct_message") so ward-room / proactive posts — which already carry
+        their own conversation-advancing guidance — are unaffected. Default ON via
+        ``CommunicationsConfig.proactive_conversation_enabled`` (a tuning knob, not
+        a kill switch); honest-degrade returns "" when the flag is off. Overridable
+        (Open/Closed). Gap-regex-safe (no can't/cannot/don't have/unable to/not
+        able to)."""
+        if observation.get("intent") != "direct_message":
+            return ""
+        runtime = getattr(self, "_runtime", None)
+        comm_cfg = getattr(getattr(runtime, "config", None), "communications", None)
+        if not getattr(comm_cfg, "proactive_conversation_enabled", True):
+            return ""
+        guidance = (
+            "\n\nKeeping the conversation alive: you are a participant in a real "
+            "conversation, not a question-answering service. When the exchange is "
+            "engaged and a natural next step exists, end your turn with ONE forward "
+            "move — a genuine follow-up question, an observation that invites a "
+            "reply, or a concrete proposal or offer that gives the other person an "
+            "easy opening to respond. Do this when it fits the moment, NOT on every "
+            "turn: read the Captain's engagement and your own personality, and let "
+            "a turn rest when that is the natural thing (a simple acknowledgement, a "
+            "closing thought, or a beat the Captain plainly wants to end). React to "
+            "the SPECIFIC thing that was said — name it and build on it — rather "
+            "than replying in the abstract. Match your length to the move: a brief "
+            "reaction when that is enough, a fuller contribution when the topic "
+            "earns it. Honest, respectful disagreement is welcome when your "
+            "expertise points a different direction — reflexive agreement reads as "
+            "hollow. Ground every follow-up in what was actually said; never invent "
+            "a question or proposal about something that did not occur."
+        )
+        params = observation.get("params") or {}
+        if params.get("is_group_chat"):
+            guidance += (
+                "\n\nBecause this is a group chat, you may also hand the floor to a "
+                "specific crew member when their expertise fits the moment: address "
+                "them directly by name (their callsign) and put the question or "
+                "proposal to them, the way colleagues pull a teammate into a "
+                "discussion. Use this to keep the conversation moving across the "
+                "crew — one clear hand-off to the right person, not a prompt aimed "
+                "at everyone at once."
+            )
+        return guidance
+
     async def decide(self, observation: dict) -> dict:
         """Consult the LLM with instructions + observation.
 
@@ -2421,6 +2475,17 @@ class CognitiveAgent(BaseAgent):
             _group_proto = self._conversational_group_chat_protocol(observation)
             if _group_proto:
                 composed += _group_proto
+            # AD-950: conversation-advancing (proactivity) protocol. Overridable
+            # hook; base returns "" unless on the live 1:1/group direct_message
+            # path AND CommunicationsConfig.proactive_conversation_enabled (default
+            # ON). Teaches ending an engaged turn with ONE forward move; the
+            # group-only peer-address part gates on params["is_group_chat"], so 1:1
+            # gets the universal guidance only. Composes with the AD-935 decline
+            # protocol above (reply only when substantive) — AD-950 shapes the
+            # turns the agent DOES take.
+            _proactive_proto = self._conversational_proactivity_protocol(observation)
+            if _proactive_proto:
+                composed += _proactive_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

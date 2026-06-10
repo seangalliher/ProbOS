@@ -4628,6 +4628,14 @@ class CommunicationsConfig(BaseModel):
     # true in-flight signal at HEAD — AD-930a). Read-only/computed, so this
     # ships ON by default (not a transitional behavioral flag).
     presence_working_window_seconds: float = 90.0
+    # AD-950: conversation-advancing ("proactivity") guidance on the live
+    # 1:1/group direct_message reply path — teach agents to end an engaged turn
+    # with ONE forward move (a follow-up question or proposal) so a conversation
+    # has momentum instead of dying between Captain turns. Pure prompt text (no
+    # extra LLM pass, no cost, no structural change), so it ships ON for the
+    # richness the North Star demands; this is the Captain's tuning knob /
+    # off-switch if the proactivity ever reads as over-eager.
+    proactive_conversation_enabled: bool = True
 
 
 class WorkforceConfig(BaseModel):
