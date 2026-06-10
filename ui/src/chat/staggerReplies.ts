@@ -27,31 +27,53 @@ export interface StaggerReply {
   text: string;
 }
 
-/** Tunable timing constants for the typing beat. Exported so the values are a
- *  single source of truth (and trivially adjustable) rather than scattered
- *  magic numbers. */
-export const TYPING_BASE_MS = 480;       // floor: even one word reads as a beat
-export const TYPING_PER_CHAR_MS = 14;    // ~ a brisk composing cadence
-export const TYPING_MAX_MS = 2400;       // cap so a long reply never stalls the room
-export const TYPING_MIN_MS = 360;        // hard minimum (very short replies)
+/** AD-960: natural-pacing timing model. Exported as the single source of truth
+ *  so the cadence is trivially tunable. Each crew reply is revealed after a
+ *  "{callsign} is typing" beat lasting ``PROCESSING + TYPING`` ms:
+ *    PROCESSING = think-time (reading the message, deciding to respond)
+ *    TYPING     = composing time at ~60 wpm, proportional to the reply length
+ *  The indicator is shown for the WHOLE window (no dead air), then clears as the
+ *  message lands. The FIRST reply uses the full processing beat (the crew
+ *  reading the Captain's message); later cascade reactions use a shorter
+ *  inter-turn beat (they were already engaged) so an active back-and-forth
+ *  doesn't feel laggy. */
+export const PROCESSING_FIRST_MS = 5000;    // first reply: think-time on the Captain's message (~5s)
+export const PROCESSING_CASCADE_MS = 2500;  // later reactions in an active exchange
+export const TYPING_MS_PER_WORD = 1000;     // 60 wpm = 1 word / 1000ms
+export const TYPING_MIN_MS = 800;           // floor so even a one-word reply shows a brief compose beat
+export const TYPING_MAX_MS = 9000;          // cap so a long paragraph never makes the room wait minutes
 
 export interface TypingDelayOptions {
-  baseMs?: number;
-  perCharMs?: number;
+  msPerWord?: number;
   maxMs?: number;
   minMs?: number;
 }
 
-/** Length-proportional typing delay (ms), clamped to ``[minMs, maxMs]``. Pure.
- *  A non-finite / empty text yields the minimum. */
+/** Word-count-proportional typing delay (ms) at ~60 wpm, clamped to
+ *  ``[minMs, maxMs]``. Pure. Empty / non-string text yields the minimum. */
 export function computeTypingDelay(text: string, opts: TypingDelayOptions = {}): number {
-  const base = opts.baseMs ?? TYPING_BASE_MS;
-  const perChar = opts.perCharMs ?? TYPING_PER_CHAR_MS;
+  const perWord = opts.msPerWord ?? TYPING_MS_PER_WORD;
   const max = opts.maxMs ?? TYPING_MAX_MS;
   const min = opts.minMs ?? TYPING_MIN_MS;
-  const len = typeof text === 'string' ? text.trim().length : 0;
-  const raw = base + perChar * len;
+  const words = typeof text === 'string'
+    ? text.trim().split(/\s+/).filter(Boolean).length
+    : 0;
+  const raw = words * perWord;
   return Math.max(min, Math.min(max, raw));
+}
+
+export interface ProcessingDelayOptions {
+  firstMs?: number;
+  cascadeMs?: number;
+}
+
+/** Think-time (ms) before a reply's typing beat. The first revealed reply
+ *  (``index <= 0``) gets the full beat — the crew reading the Captain's
+ *  message; later cascade replies get the shorter inter-turn beat. Pure. */
+export function computeProcessingDelay(index: number, opts: ProcessingDelayOptions = {}): number {
+  const first = opts.firstMs ?? PROCESSING_FIRST_MS;
+  const cascade = opts.cascadeMs ?? PROCESSING_CASCADE_MS;
+  return index <= 0 ? first : cascade;
 }
 
 /** Dependency-injected so the sequencer is unit-testable without React/timers. */
@@ -65,8 +87,11 @@ export interface RevealDeps {
   /** Abort check evaluated before each reply — lets a thread switch / unmount
    *  stop an in-flight reveal (no replies leak into the wrong transcript). */
   shouldContinue?: () => boolean;
-  /** Override the per-reply delay (tests). Default: ``computeTypingDelay``. */
+  /** Override the per-reply typing delay (tests). Default: ``computeTypingDelay``. */
   delayFor?: (reply: StaggerReply) => number;
+  /** Override the per-reply processing (think-time) delay by revealed-index
+   *  (tests). Default: ``computeProcessingDelay``. */
+  processingFor?: (index: number) => number;
 }
 
 /** Reveal ``replies`` one at a time, in array order (AD-915 facilitator order),
@@ -78,25 +103,34 @@ export async function revealRepliesProgressively(
   deps: RevealDeps,
 ): Promise<void> {
   const cont = deps.shouldContinue ?? (() => true);
-  const delayFor = deps.delayFor ?? ((r: StaggerReply) => computeTypingDelay(r.text));
+  const typingFor = deps.delayFor ?? ((r: StaggerReply) => computeTypingDelay(r.text));
+  const processingFor = deps.processingFor ?? ((i: number) => computeProcessingDelay(i));
+  // Index among the NON-empty replies actually revealed, so an empty leading
+  // reply doesn't consume the (longer) first-reply processing beat.
+  let shown = 0;
   try {
     for (const reply of replies) {
       if (!cont()) return;
       const text = typeof reply?.text === 'string' ? reply.text : '';
       if (!text) continue;
       const callsign = typeof reply?.callsign === 'string' ? reply.callsign : '';
+      // The "{callsign} is typing" beat covers BOTH the think-time and the
+      // composing time, so the indicator is visible for the whole wait (no
+      // dead air) and clears the instant the message lands.
+      const delay = processingFor(shown) + typingFor(reply);
+      shown += 1;
       try {
         deps.setTyping({ agentId: reply.agent_id, callsign });
-        await deps.sleep(delayFor(reply));
+        await deps.sleep(delay);
       } catch {
         // Tier-2: a sleep/indicator failure must not drop the reply.
       }
       if (!cont()) return;
-      try {
-        deps.appendReply(reply);
-      } catch {
-        // Tier-2: one reply's render failure must not break the queue.
-      }
+      // Clear the indicator the instant the message lands, then commit the
+      // reply. Two independent guards so a throwing setTyping can't drop the
+      // append.
+      try { deps.setTyping(null); } catch { /* Tier-2 */ }
+      try { deps.appendReply(reply); } catch { /* Tier-2: one render failure must not break the queue */ }
     }
   } finally {
     // The indicator must never be left stuck on after the queue drains/aborts.

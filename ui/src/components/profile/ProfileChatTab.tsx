@@ -694,6 +694,15 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           // callsign, text}]}. Render each reply as an agent message; v1
           // attribution is a callsign prefix on the shared conversation.
           const replies = Array.isArray(data?.per_agent_replies) ? data.per_agent_replies : [];
+          // AD-960: the replies are in — release the composer NOW so the
+          // Captain can read at a comfortable pace (and reply) WHILE the
+          // AD-952 progressive reveal paces the crew responses in the
+          // background, rather than locking the input for the whole
+          // (now human-speed) reveal. The reveal below is still awaited so
+          // the meeting-voice call keeps its ordering; the input is simply
+          // no longer gated on it. The `finally` setSending(false) remains a
+          // harmless idempotent safety for the error path.
+          setSending(false);
           // AD-936/938: commit ONE reply to both the per-agent buffer and the
           // thread-keyed transcript with its author identity. Extracted so the
           // instant (meeting) path and the AD-952 progressive (text) path share
