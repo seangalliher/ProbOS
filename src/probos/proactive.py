@@ -4064,6 +4064,16 @@ class ProactiveCognitiveLoop:
                     getattr(agent, "callsign", None) or agent.agent_type,
                     result.thread.id, len(result.participants_added),
                 )
+                # AD-970: agent-initiated kickoff. When the agent opened the room
+                # WITH a first message, fan that opening out to the other
+                # participants so they can respond — the agent-initiated analogue
+                # of a Captain turn (the opening is role="agent", so the AD-914
+                # role=="captain" fan-out never fires). Bounded by the SAME AD-935
+                # backstops (cap / convergence / [NO_RESPONSE] / max_agent_rounds).
+                # Gated OFF by default (agent_initiated_kickoff_enabled). Tier-2:
+                # any failure logs and leaves the room as a quiet AD-918 create.
+                if body:
+                    await self._kickoff_group_chat(result.thread.id, agent.id, body)
             else:
                 actions.append({"type": "group_chat_suppressed", "reason": result.error})
                 logger.debug(
@@ -4072,6 +4082,46 @@ class ProactiveCognitiveLoop:
                 )
         text = _GROUP_CHAT_PATTERN.sub("", text)
         return text, actions
+
+    async def _kickoff_group_chat(
+        self, thread_id: str, opener_id: str, opening_body: str,
+    ) -> None:
+        """AD-970: fan an agent's opening message out to the other participants of
+        a freshly-created group chat, so an agent-initiated room starts a real
+        conversation instead of sitting silent until the Captain posts.
+
+        Reuses ``group_chat_fanout`` (roster + history + bounded cascade +
+        persistence + episodes) with ``opener_id`` so the opener is excluded from
+        round 0 (it just spoke). Gated on
+        ``config.group_chat.agent_initiated_kickoff_enabled`` (ships OFF). Tier-2
+        honest-degrade: a missing flag/store/opening-message or any fan-out
+        failure leaves the room as a quiet AD-918 create (never raises into the
+        proactive turn)."""
+        rt = self._runtime
+        cfg = getattr(getattr(rt, "config", None), "group_chat", None)
+        if not getattr(cfg, "agent_initiated_kickoff_enabled", False):
+            return
+        try:
+            store = getattr(rt, "chat_thread_store", None)
+            if store is None:
+                return
+            # The opening message was just persisted by create_group_chat;
+            # list_messages is ASC so the oldest (limit-tail) is the opening.
+            msgs = store.list_messages(thread_id, limit=1000)
+            opening = msgs[-1] if msgs else None
+            if opening is None:
+                return
+            from probos.routers.thread_fanout import group_chat_fanout
+            await group_chat_fanout(
+                rt, thread_id,
+                captain_body=opening_body, captain_msg=opening,
+                opener_id=opener_id,
+            )
+        except Exception:
+            logger.warning(
+                "AD-970: kickoff fan-out failed for thread=%s opener=%s; room "
+                "stays a quiet create", thread_id, opener_id, exc_info=True,
+            )
 
     def _resolve_agent_task_room(self, agent_id: str):
         """AD-927: resolve the task room this agent should write an artifact into.

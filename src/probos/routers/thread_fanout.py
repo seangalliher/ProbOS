@@ -265,6 +265,7 @@ async def _fan_one_round(
     t_start: float,
     before: float | None = None,
     addressed_callsigns: set[str] | None = None,
+    room_roster: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """One reactivity round (AD-935): facilitate over ``candidate_ids`` (minus
     ``exclude_ids``) using ``trigger_body`` for mention/relevance, dispatch the
@@ -366,6 +367,12 @@ async def _fan_one_round(
             # cognitive_agent hook gates the teaching string on this param).
             "is_group_chat": True,
         }
+        # AD-967: present-participant roster so the dispatched agent knows WHO is
+        # in the room (the cognitive_agent group hook renders it). Fixes agents
+        # addressing a peer who was never invited (the Sentinel/Vance bug). Rides
+        # the same params dict as is_group_chat; omitted when empty.
+        if room_roster:
+            params["room_roster"] = room_roster
         # AD-955: advisory room-awareness signal for this speaker (when one is
         # salient). The cognitive_agent hook renders it; it never changes
         # dispatch. Rides the same params dict as is_group_chat (small struct).
@@ -565,6 +572,7 @@ async def group_chat_fanout(
     *,
     captain_body: str,
     captain_msg: Any,
+    opener_id: str | None = None,
 ) -> list[dict[str, str]]:
     """Fan the Captain turn out to all crew-agent participants, then (when
     ``group_chat.agent_reactivity_enabled`` is True) run a BOUNDED SYNCHRONOUS
@@ -592,6 +600,15 @@ async def group_chat_fanout(
     if thread is None:
         return []
     agent_ids = crew_agent_participants(runtime, thread.participants)
+    # AD-967: build the present-participant roster ONCE (stable across rounds):
+    # crew callsigns + "the Captain" when the Captain has joined. Each dispatched
+    # agent receives it so it addresses only present members and asks the Captain
+    # to add anyone else (fixes the absent-peer address bug). Tier-2: a missing
+    # callsign falls back to the agent_id.
+    _roster_callsigns = _resolve_callsigns(runtime, agent_ids)
+    room_roster = [_roster_callsigns.get(a) or a for a in agent_ids]
+    if "captain" in (thread.participants or []):
+        room_roster.append("the Captain")
     # AD-933: resolve the DM sanity gate ONCE (DRY) before any round — step_4g
     # ([CREATE_TASK]) early-returns without it, so every speaker across every
     # round shares the one runtime gate rather than re-reading it per agent.
@@ -618,12 +635,16 @@ async def group_chat_fanout(
 
     # AD-914 round 0: the Captain turn. before=captain_msg.created_at keeps the
     # just-appended Captain message out of each agent's history (byte-identical).
+    # AD-970: an agent-initiated kickoff passes opener_id so the opener is
+    # excluded from round 0 (it just spoke); a Captain turn excludes nobody.
     all_replies: list[dict[str, str]] = []
     round0 = await _fan_one_round(
         runtime, store, thread_id,
-        trigger_body=captain_body, candidate_ids=agent_ids, exclude_ids=set(),
+        trigger_body=captain_body, candidate_ids=agent_ids,
+        exclude_ids=({opener_id} if opener_id else set()),
         vision_messages=vision_messages, sanity_gate=sanity_gate, t_start=t_start,
         before=captain_msg.created_at,
+        room_roster=room_roster,
     )
     all_replies.extend(round0)
 
@@ -695,6 +716,7 @@ async def group_chat_fanout(
                     trigger_body=trigger, candidate_ids=agent_ids, exclude_ids=spoke_ids,
                     vision_messages=None, sanity_gate=sanity_gate, t_start=t_start,
                     addressed_callsigns=addressed or None,
+                    room_roster=room_roster,
                 )
             except Exception:
                 logger.warning(

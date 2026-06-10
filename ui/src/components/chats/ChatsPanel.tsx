@@ -23,7 +23,7 @@ import { useStore, type AD791aChatThreadView } from '../../store/useStore';
 import type { Agent } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { UserPlus, Close } from '../icons/Glyphs';
-import { listThreads, addParticipant } from '../sidebar/threadApi';
+import { listThreads, addParticipant, getThread } from '../sidebar/threadApi';
 import { NewChatModal } from './NewChatModal';
 import {
   CAPTAIN_PARTICIPANT_ID,
@@ -71,6 +71,12 @@ export default function ChatsPanel() {
   // MeetingView / the meetingActive selector (all read chatThreads.get(id))
   // resolve, and the thread-keyed transcript can load on open.
   const setChatThread = useStore((s) => s.setChatThread);
+  // AD-971: the live chatThreads store. A participant added from the
+  // GroupChatHeader writes the updated thread here (setChatThread) and bumps
+  // last_active_at, but ChatsPanel keeps its own listThreads() snapshot. Reading
+  // the store lets a row reflect a live add (the "chats form did not update" bug)
+  // by preferring whichever version is fresher (see the merge in `chats`).
+  const storeChatThreads = useStore((s) => s.chatThreads);
   // AD-940: the panel's drag position + setter (GamePanel / profilePanelPos
   // pattern). Lets the Captain move CHATS out of the way of an open chat window.
   const pos = useStore((s) => s.chatsPanelPos);
@@ -118,7 +124,15 @@ export default function ChatsPanel() {
 
   // 1:1 + group chats (task rooms excluded), with un-joined agent-created chats
   // floated to the top (HXI #9), stable secondary order by recency.
+  // AD-971: prefer whichever thread version is fresher (greater last_active_at)
+  // between the listThreads() snapshot and the live chatThreads store, so a
+  // participant added from the open chat's header reflects in the row instead of
+  // staying stale. Strict `>` keeps the canonical fetch winning on ties.
   const chats = threads
+    .map((t) => {
+      const s = storeChatThreads.get(t.id);
+      return s && (s.last_active_at ?? 0) > (t.last_active_at ?? 0) ? s : t;
+    })
     .filter((t) => isChat(t, agents))
     .sort((a, b) => {
       const aAlert = isAgentCreated(a) && !captainJoined(a) ? 1 : 0;
@@ -127,18 +141,29 @@ export default function ChatsPanel() {
       return (b.last_active_at ?? 0) - (a.last_active_at ?? 0);
     });
 
-  function handleOpen(thread: AD791aChatThreadView): void {
+  async function handleOpen(thread: AD791aChatThreadView): Promise<void> {
     // AD-917/AD-937: open-on-click is per-host (the chat renders in the first
     // crew participant's profile chat tab). AD-937 addresses it via the group
     // override (activeProfileThreadId) instead of binding it into the host's
     // single threadIdByAgent 1:1 slot — so opening a group never makes the
     // host's 1:1 unreachable.
-    const host = hostAgentId(thread, agents);
+    // AD-971: re-fetch the thread's CURRENT persisted state before hydrating.
+    // Participants added from the GroupChatHeader are persisted on the backend
+    // but the ChatsPanel list snapshot is stale; opening with that stale object
+    // (the old setChatThread(thread)) CLOBBERED the freshly-added participants in
+    // the store, so they vanished on reopen. Fetching fresh (authoritative, and
+    // robust across a full page reload) fixes the data loss. Tier-2: a !ok/
+    // network failure falls back to the passed thread (prior behavior).
+    const fresh = (await getThread(thread.id)) ?? thread;
+    if (fresh !== thread) {
+      setThreads((prev) => prev.map((t) => (t.id === fresh.id ? fresh : t)));
+    }
+    const host = hostAgentId(fresh, agents);
     if (!host) return; // Tier-2 honest-degrade: agents not hydrated -> no-op
     // AD-938: hydrate the thread first so its header/participants/meeting flag
     // resolve and ProfileChatTab can load the real transcript for this thread.
-    setChatThread(thread);
-    openGroupChatThread(host, thread.id);
+    setChatThread(fresh);
+    openGroupChatThread(host, fresh.id);
   }
 
   async function handleJoin(thread: AD791aChatThreadView): Promise<void> {
@@ -146,7 +171,7 @@ export default function ChatsPanel() {
     if (updated) {
       setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
     }
-    handleOpen(updated ?? thread);
+    void handleOpen(updated ?? thread);
   }
 
   return (
@@ -249,7 +274,7 @@ export default function ChatsPanel() {
                 <div
                   key={thread.id}
                   data-testid={`chat-row-${thread.id}`}
-                  onClick={() => handleOpen(thread)}
+                  onClick={() => void handleOpen(thread)}
                   style={{
                     cursor: 'pointer',
                     padding: '10px 12px',
@@ -285,7 +310,7 @@ export default function ChatsPanel() {
               <div
                 key={thread.id}
                 data-testid={`chat-row-${thread.id}`}
-                onClick={() => handleOpen(thread)}
+                onClick={() => void handleOpen(thread)}
                 style={{
                   cursor: 'pointer',
                   padding: '10px 12px',

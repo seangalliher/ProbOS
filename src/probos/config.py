@@ -3813,6 +3813,17 @@ class GroupChatConfig(BaseModel):
     # is on (which is itself an operator opt-in), so the default of 1 never
     # changes a zero-config boot. 0 = disable the extension (pre-AD-961 behavior).
     max_address_extensions: int = 1
+    # AD-970: agent-initiated kickoff. When an agent OPENS a group chat with a
+    # first message (the AD-924 [GROUP_CHAT] tag), fan that opening out to the
+    # OTHER participants so they can respond — the agent-initiated analogue of a
+    # Captain turn, bounded by the SAME AD-935 backstops (cap / convergence /
+    # [NO_RESPONSE] / max_agent_rounds). Fixes the Captain-reported bug where an
+    # agent opened a room and addressed a peer who never responded (the opening
+    # was role="agent" and AD-914 fan-out gates on role=="captain"). Lifts the
+    # deliberate AD-918 "no auto-reply on create" boundary, now that the bounded
+    # cascade exists. Transitional flag (#14) — ships OFF (zero-config boot keeps
+    # the AD-918 quiet-create behavior); system.yaml flips it on.
+    agent_initiated_kickoff_enabled: bool = False
 
 
 class WardRoomConfig(BaseModel):

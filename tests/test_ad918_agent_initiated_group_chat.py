@@ -94,10 +94,15 @@ def _make_service(
 
 
 def test_create_named_chat_persisted_and_tagged(tmp_path):
-    svc, store, _ = _make_service(
-        tmp_path, agents={"forge-1": _FakeAgent("forge-1", "builder")}
+    # AD-966: a group chat needs >= 2 participants, so seed a crew peer.
+    agents = {
+        "forge-1": _FakeAgent("forge-1", "builder"),
+        "bones-1": _FakeAgent("bones-1", "diagnostician"),
+    }
+    svc, store, _ = _make_service(tmp_path, agents=agents)
+    res = svc.create_group_chat(
+        creator_id="forge-1", title="Coord", participants=["bones-1"]
     )
-    res = svc.create_group_chat(creator_id="forge-1", title="Coord")
     assert res.ok
     assert res.thread is not None
     persisted = store.get_thread(res.thread.id)
@@ -107,13 +112,19 @@ def test_create_named_chat_persisted_and_tagged(tmp_path):
     assert "forge-1" in persisted.participants
 
 
-def test_creator_auto_added_when_participants_empty(tmp_path):
-    svc, _, _ = _make_service(
-        tmp_path, agents={"forge-1": _FakeAgent("forge-1", "builder")}
+def test_creator_included_and_deduped(tmp_path):
+    # AD-966: the creator is always included (and deduped) in the final set,
+    # alongside the >= 1 resolved peer required by the participant floor.
+    agents = {
+        "forge-1": _FakeAgent("forge-1", "builder"),
+        "bones-1": _FakeAgent("bones-1", "diagnostician"),
+    }
+    svc, _, _ = _make_service(tmp_path, agents=agents)
+    res = svc.create_group_chat(
+        creator_id="forge-1", title="Pair", participants=["forge-1", "bones-1"]
     )
-    res = svc.create_group_chat(creator_id="forge-1", title="Solo", participants=None)
     assert res.ok
-    assert res.participants_added == ["forge-1"]
+    assert res.participants_added == ["forge-1", "bones-1"]
 
 
 # ---------------- 2. participant resolution ----------------
@@ -165,37 +176,48 @@ def test_add_participant_by_callsign(tmp_path):
 
 
 def test_non_crew_participant_filtered(tmp_path):
+    # A non-crew ref is dropped; a crew peer keeps the room above the AD-966
+    # floor so the room is still created with just the crew members.
     agents = {
         "forge-1": _FakeAgent("forge-1", "builder"),
+        "bones-1": _FakeAgent("bones-1", "diagnostician"),
         "civ-1": _FakeAgent("civ-1", "captain"),  # not in _WARD_ROOM_CREW
     }
     svc, store, _ = _make_service(tmp_path, agents=agents)
     res = svc.create_group_chat(
-        creator_id="forge-1", title="Mixed", participants=["civ-1"]
+        creator_id="forge-1", title="Mixed", participants=["civ-1", "bones-1"]
     )
     assert res.ok
     persisted = store.get_thread(res.thread.id)
-    assert persisted.participants == ["forge-1"]
+    assert persisted.participants == ["forge-1", "bones-1"]
 
 
 # ---------------- 3. task_id linkage ----------------
 
 
 def test_task_id_linkage_when_provided(tmp_path):
-    svc, store, _ = _make_service(
-        tmp_path, agents={"forge-1": _FakeAgent("forge-1", "builder")}
+    agents = {
+        "forge-1": _FakeAgent("forge-1", "builder"),
+        "bones-1": _FakeAgent("bones-1", "diagnostician"),
+    }
+    svc, store, _ = _make_service(tmp_path, agents=agents)
+    res = svc.create_group_chat(
+        creator_id="forge-1", title="Linked", participants=["bones-1"], task_id="wi-123"
     )
-    res = svc.create_group_chat(creator_id="forge-1", title="Linked", task_id="wi-123")
     assert res.ok
     persisted = store.get_thread(res.thread.id)
     assert persisted.task_id == "wi-123"
 
 
 def test_task_id_none_default(tmp_path):
-    svc, store, _ = _make_service(
-        tmp_path, agents={"forge-1": _FakeAgent("forge-1", "builder")}
+    agents = {
+        "forge-1": _FakeAgent("forge-1", "builder"),
+        "bones-1": _FakeAgent("bones-1", "diagnostician"),
+    }
+    svc, store, _ = _make_service(tmp_path, agents=agents)
+    res = svc.create_group_chat(
+        creator_id="forge-1", title="Unlinked", participants=["bones-1"]
     )
-    res = svc.create_group_chat(creator_id="forge-1", title="Unlinked")
     assert res.ok
     persisted = store.get_thread(res.thread.id)
     assert persisted.task_id is None
@@ -205,11 +227,14 @@ def test_task_id_none_default(tmp_path):
 
 
 def test_first_message_posted_when_provided(tmp_path):
-    svc, store, _ = _make_service(
-        tmp_path, agents={"forge-1": _FakeAgent("forge-1", "builder")}
-    )
+    agents = {
+        "forge-1": _FakeAgent("forge-1", "builder"),
+        "bones-1": _FakeAgent("bones-1", "diagnostician"),
+    }
+    svc, store, _ = _make_service(tmp_path, agents=agents)
     res = svc.create_group_chat(
-        creator_id="forge-1", title="Kickoff", first_message="kick off"
+        creator_id="forge-1", title="Kickoff", participants=["bones-1"],
+        first_message="kick off",
     )
     assert res.ok
     msgs = store.list_messages(res.thread.id)
@@ -220,10 +245,14 @@ def test_first_message_posted_when_provided(tmp_path):
 
 
 def test_no_first_message_when_omitted(tmp_path):
-    svc, store, _ = _make_service(
-        tmp_path, agents={"forge-1": _FakeAgent("forge-1", "builder")}
+    agents = {
+        "forge-1": _FakeAgent("forge-1", "builder"),
+        "bones-1": _FakeAgent("bones-1", "diagnostician"),
+    }
+    svc, store, _ = _make_service(tmp_path, agents=agents)
+    res = svc.create_group_chat(
+        creator_id="forge-1", title="Quiet", participants=["bones-1"]
     )
-    res = svc.create_group_chat(creator_id="forge-1", title="Quiet")
     assert res.ok
     assert store.list_messages(res.thread.id) == []
 
@@ -240,14 +269,21 @@ def test_cooldown_blocks_rapid_second_create(tmp_path):
     )
     svc, store, _ = _make_service(
         tmp_path,
-        agents={"forge-1": _FakeAgent("forge-1", "builder")},
+        agents={
+            "forge-1": _FakeAgent("forge-1", "builder"),
+            "bones-1": _FakeAgent("bones-1", "diagnostician"),
+        },
         config=cfg,
         clock=clock,
     )
-    first = svc.create_group_chat(creator_id="forge-1", title="One")
+    first = svc.create_group_chat(
+        creator_id="forge-1", title="One", participants=["bones-1"]
+    )
     assert first.ok
     clock.advance(10.0)  # < cooldown
-    second = svc.create_group_chat(creator_id="forge-1", title="Two")
+    second = svc.create_group_chat(
+        creator_id="forge-1", title="Two", participants=["bones-1"]
+    )
     assert second.ok is False
     assert second.error == "rate_limited"
     assert second.thread is None
@@ -263,15 +299,22 @@ def test_window_cap_blocks_after_max(tmp_path):
     )
     svc, store, _ = _make_service(
         tmp_path,
-        agents={"forge-1": _FakeAgent("forge-1", "builder")},
+        agents={
+            "forge-1": _FakeAgent("forge-1", "builder"),
+            "bones-1": _FakeAgent("bones-1", "diagnostician"),
+        },
         config=cfg,
         clock=clock,
     )
     for i in range(3):  # three allowed, each past cooldown
-        res = svc.create_group_chat(creator_id="forge-1", title=f"Room{i}")
+        res = svc.create_group_chat(
+            creator_id="forge-1", title=f"Room{i}", participants=["bones-1"]
+        )
         assert res.ok
         clock.advance(61.0)
-    blocked = svc.create_group_chat(creator_id="forge-1", title="Overflow")
+    blocked = svc.create_group_chat(
+        creator_id="forge-1", title="Overflow", participants=["bones-1"]
+    )
     assert blocked.ok is False
     assert blocked.error == "rate_limited"
     assert len(store.list_threads()) == 3
@@ -286,14 +329,21 @@ def test_rate_resets_after_window(tmp_path):
     )
     svc, _, _ = _make_service(
         tmp_path,
-        agents={"forge-1": _FakeAgent("forge-1", "builder")},
+        agents={
+            "forge-1": _FakeAgent("forge-1", "builder"),
+            "bones-1": _FakeAgent("bones-1", "diagnostician"),
+        },
         config=cfg,
         clock=clock,
     )
-    first = svc.create_group_chat(creator_id="forge-1", title="One")
+    first = svc.create_group_chat(
+        creator_id="forge-1", title="One", participants=["bones-1"]
+    )
     assert first.ok
     clock.advance(200.0)  # past the window -> old timestamp pruned
-    again = svc.create_group_chat(creator_id="forge-1", title="Two")
+    again = svc.create_group_chat(
+        creator_id="forge-1", title="Two", participants=["bones-1"]
+    )
     assert again.ok
 
 

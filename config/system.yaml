@@ -1859,6 +1859,14 @@ group_chat:
   # 0.25) but BELOW the mention weight 0.40, so a direct address always wins.
   # Pydantic default 0.0 (off); this enables it for the live system.
   weight_exploration: 0.15
+  # AD-970: agent-initiated kickoff. When a crew agent OPENS a group chat with a
+  # first message (the AD-924 [GROUP_CHAT] tag), fan that opening out to the
+  # other participants so they respond — the agent-initiated analogue of a
+  # Captain turn, bounded by the SAME backstops above (cap / convergence /
+  # [NO_RESPONSE] / max_agent_rounds). The Pydantic default stays False (a
+  # zero-config boot keeps the AD-918 quiet-create behavior); this enables it
+  # for the live system so an agent-started room actually starts talking.
+  agent_initiated_kickoff_enabled: true
 desktop:
   enabled: false
   tray_autostart: true

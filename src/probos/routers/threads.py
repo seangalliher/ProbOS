@@ -373,11 +373,28 @@ async def append_message(
                 group_chat_fanout,
             )
             thread = store.get_thread(thread_id)
-            if thread is not None and len(crew_agent_participants(runtime, thread.participants)) >= 2:
-                per_agent_replies = await group_chat_fanout(
-                    runtime, thread_id, captain_body=body.body, captain_msg=msg,
+            if thread is not None:
+                # AD-968: the Captain becomes a participant of any GROUP (>= 2
+                # crew) or agent-created room they post into, so the sidebar stops
+                # showing "Join" on a room the Captain is already conversing in
+                # (the Captain-reported "some say Join but they are chats I've been
+                # part of already"). Scoped to group / agent-created rooms — the
+                # 1:1 default thread keeps its single-participant invariant that
+                # the task-promote (assigned_to inference) and auto-name paths rely
+                # on. Idempotent: a no-op when the Captain is already a participant.
+                is_group = (
+                    len(crew_agent_participants(runtime, thread.participants)) >= 2
                 )
-                return {**msg.to_dict(), "per_agent_replies": per_agent_replies}
+                is_agent_room = bool((thread.metadata or {}).get("created_by_agent"))
+                if (is_group or is_agent_room) and "captain" not in thread.participants:
+                    updated = store.add_participant(thread_id, "captain")
+                    if updated is not None:
+                        thread = updated
+                if len(crew_agent_participants(runtime, thread.participants)) >= 2:
+                    per_agent_replies = await group_chat_fanout(
+                        runtime, thread_id, captain_body=body.body, captain_msg=msg,
+                    )
+                    return {**msg.to_dict(), "per_agent_replies": per_agent_replies}
         except Exception:
             logger.warning(
                 "AD-914: group fan-out failed for thread=%s; returning appended message only",

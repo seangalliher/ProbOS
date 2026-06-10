@@ -52,6 +52,7 @@ function mkThread(over: Partial<AD791aChatThreadView> & { id: string }): AD791aC
     participants: over.participants ?? [],
     created_at: over.created_at ?? 0,
     last_active_at: over.last_active_at ?? 0,
+    metadata: over.metadata,
   };
 }
 
@@ -136,14 +137,15 @@ describe('AD-917 GroupChatHeader', () => {
     );
   });
 
-  it('AD-937: add-participant on a 1:1 (<=1 crew) opens the SEEDED picker, does NOT mutate', () => {
+  it('AD-937/AD-969: add-participant on the Captain 1:1 HOME DM (is_default) opens the SEEDED picker, does NOT mutate', () => {
     seed(
-      mkThread({ id: 't1', participants: ['captain', 'a1'] }),
+      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { is_default: true } }),
       [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Lume' })],
     );
     render(<GroupChatHeader threadId="t1" />);
-    // 1 crew -> the add control opens the NewChatModal seeded with the host,
-    // NOT the inline add-participant @-popover (which would mutate the 1:1).
+    // is_default 1:1 -> the add control opens the NewChatModal seeded with the
+    // host, NOT the inline add-participant @-popover (which would mutate the
+    // pristine 1:1 home DM).
     expect(screen.queryByTestId('new-chat-modal')).toBeNull();
     fireEvent.click(screen.getByTestId('add-participant-button'));
     // The seeded NewChatModal opens (it contains its own multi-select picker);
@@ -151,6 +153,33 @@ describe('AD-917 GroupChatHeader', () => {
     expect(screen.getByTestId('new-chat-modal')).toBeTruthy();
     expect(screen.getByTestId('new-chat-seed-a1')).toBeTruthy();
     expect(addParticipant).not.toHaveBeenCalled();
+  });
+
+  it('AD-969: add-participant on an AGENT-CREATED room (1 crew, not is_default) adds IN PLACE, no new chat', async () => {
+    seed(
+      mkThread({ id: 't1', participants: ['a1'], metadata: { created_by_agent: 'a1' } }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Lume' })],
+    );
+    const updated = mkThread({
+      id: 't1', participants: ['a1', 'a2'], metadata: { created_by_agent: 'a1' }, last_active_at: 1,
+    });
+    vi.mocked(addParticipant).mockResolvedValue(updated);
+    render(<GroupChatHeader threadId="t1" />);
+
+    // The add control opens the inline @-popover (NOT the new-chat modal) — the
+    // Captain-reported bug was that this minted a brand-new chat instead.
+    fireEvent.click(screen.getByTestId('add-participant-button'));
+    expect(screen.queryByTestId('new-chat-modal')).toBeNull();
+    const rows = screen.getAllByTestId('add-participant-row');
+    expect(rows).toHaveLength(1); // a1 already in -> only a2 offered
+    fireEvent.click(rows[0]);
+
+    await waitFor(() => expect(addParticipant).toHaveBeenCalledWith('t1', 'a2'));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('participant-strip').querySelectorAll('[data-testid="agent-avatar-badge"]'),
+      ).toHaveLength(2),
+    );
   });
 
   it('remove-participant: hovering reveals the remove control and clicking it DELETEs + updates the strip', async () => {

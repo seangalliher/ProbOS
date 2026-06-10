@@ -4,13 +4,14 @@
 // the AD-937 override. Mirrors ChatsPanel.test.tsx: mock threadApi, seed the
 // REAL store (BF-287 style), assert end-to-end store state after the click.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
 import type { Agent } from '../../../store/types';
 
 vi.mock('../../sidebar/threadApi', () => ({
   listThreads: vi.fn(),
   addParticipant: vi.fn(),
+  getThread: vi.fn(),
   createThread: vi.fn(),
 }));
 
@@ -73,7 +74,10 @@ describe('AD-938 ChatsPanel hydrate-on-open', () => {
     fireEvent.click(await screen.findByTestId('chat-row-g1'));
 
     // AD-938: the thread is now hydrated so GroupChatHeader/meetingActive resolve.
-    expect(useStore.getState().chatThreads.get('g1')).toMatchObject({ id: 'g1', title: 'Bridge Sync' });
+    // AD-971: handleOpen is async (re-fetches the thread) -> await the hydrate.
+    await waitFor(() =>
+      expect(useStore.getState().chatThreads.get('g1')).toMatchObject({ id: 'g1', title: 'Bridge Sync' }),
+    );
     // AD-937: opened via the override (NOT the host's threadIdByAgent 1:1 slot).
     expect(useStore.getState().activeProfileThreadId).toBe('g1');
     expect(useStore.getState().activeProfileAgent).toBe('mccoy');

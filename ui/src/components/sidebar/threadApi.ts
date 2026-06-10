@@ -112,6 +112,25 @@ export async function patchThread(
 }
 
 /**
+ * AD-971: fetch a single thread's CURRENT persisted state.
+ * GET /api/threads/{id}  -> thread.to_dict() (404/parse/!ok honest-degrade to
+ * null). Used to re-hydrate a thread on open so newly-added participants (which
+ * the backend persisted) are never clobbered by a stale in-memory list object.
+ */
+export async function getThread(
+  threadId: string,
+): Promise<AD791aChatThreadView | null> {
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as AD791aChatThreadView;
+    return data && typeof data.id === 'string' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * AD-920: start/end meeting mode on a group thread.
  * PATCH /api/threads/{id}  body {meeting_active}  -> updated thread.to_dict()
  * (404 honest-degrades to null). The returned thread carries

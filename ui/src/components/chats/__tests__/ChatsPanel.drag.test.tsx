@@ -11,6 +11,7 @@ import { useStore } from '../../../store/useStore';
 vi.mock('../../sidebar/threadApi', () => ({
   listThreads: vi.fn(),
   addParticipant: vi.fn(),
+  getThread: vi.fn(),
   createThread: vi.fn(),
 }));
 

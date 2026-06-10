@@ -14,6 +14,7 @@ import type { Agent } from '../../../store/types';
 vi.mock('../../sidebar/threadApi', () => ({
   listThreads: vi.fn(),
   addParticipant: vi.fn(),
+  getThread: vi.fn(),
   createThread: vi.fn(),
 }));
 
@@ -173,7 +174,8 @@ describe('AD-931 ChatsPanel', () => {
     fireEvent.click(screen.getByTestId('chat-row-g1'));
     // AD-937: open-on-click addresses the chat via the group override
     // (activeProfileThreadId), NOT the host's single threadIdByAgent 1:1 slot.
-    expect(useStore.getState().activeProfileThreadId).toBe('g1');
+    // AD-971: handleOpen is async (re-fetches the thread) -> await the result.
+    await waitFor(() => expect(useStore.getState().activeProfileThreadId).toBe('g1'));
     expect(useStore.getState().activeProfileAgent).toBe('mccoy');
     expect(useStore.getState().threadIdByAgent.get('mccoy')).toBeUndefined();
   });
@@ -181,7 +183,7 @@ describe('AD-931 ChatsPanel', () => {
   it('clicking a 1:1 row opens the chat in its single crew host via the AD-937 override', async () => {
     await renderOpen();
     fireEvent.click(screen.getByTestId('chat-row-g3'));
-    expect(useStore.getState().activeProfileThreadId).toBe('g3');
+    await waitFor(() => expect(useStore.getState().activeProfileThreadId).toBe('g3'));
     expect(useStore.getState().activeProfileAgent).toBe('mccoy');
     expect(useStore.getState().threadIdByAgent.get('mccoy')).toBeUndefined();
   });
@@ -191,7 +193,7 @@ describe('AD-931 ChatsPanel', () => {
     // Bind mccoy's 1:1 default first (simulating a prior 1:1 send round-trip).
     useStore.getState().setThreadForAgent('mccoy', 'mccoy-1to1');
     fireEvent.click(screen.getByTestId('chat-row-g1')); // open the group g1
-    expect(useStore.getState().activeProfileThreadId).toBe('g1');
+    await waitFor(() => expect(useStore.getState().activeProfileThreadId).toBe('g1'));
     // Reopen mccoy from the roster -> the override clears, the 1:1 slot intact.
     useStore.getState().openAgentProfile('mccoy');
     expect(useStore.getState().activeProfileThreadId).toBeNull();

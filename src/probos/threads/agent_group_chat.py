@@ -166,6 +166,26 @@ class AgentGroupChatService:
             if aid and aid not in final:
                 final.append(aid)
 
+        # AD-966: ≥2-participant floor. A "group chat" with only the creator is
+        # incoherent — it happens when every named ref fails to resolve to a
+        # crew peer (a peer addressed only in prose, or a hallucinated/unknown
+        # callsign). Minting such a room produced the Captain-reported bug where
+        # an agent "started a chat with another crew member but didn't invite
+        # them" (a 1-avatar room talking to an absent peer). Suppress instead of
+        # creating the absent-peer monologue. This is the right chokepoint — it
+        # guards all three callers (proactive AD-924, crew_executor AD-925 task
+        # rooms, and the bus handle_intent), and the AD-925 task-room path always
+        # passes ≥2 crew so it is unaffected. The proactive path already records a
+        # ``group_chat_suppressed`` action for this result.
+        if len(final) < 2:
+            logger.info(
+                "AD-966: group chat by %s suppressed — no named participant "
+                "resolved to a crew peer (title=%r, refs=%r); not minting a "
+                "1-participant room",
+                creator_id, title, list(participants or []),
+            )
+            return GroupChatCreateResult(ok=False, error="no_participant_resolved")
+
         thread = self._store.create_thread(
             title=title,
             participants=final,

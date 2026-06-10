@@ -52,6 +52,15 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
   // flips metadata.meeting_active via the scoped set_meeting_active writer.
   const meetingActive = !!(thread.metadata as Record<string, unknown> | undefined)?.meeting_active;
 
+  // AD-969: the add-control's branch key. ONLY the Captain's 1:1 home DM
+  // (metadata.is_default) mints a SEPARATE group thread when adding a peer (the
+  // AD-937 non-destructive convert that keeps the pristine 1:1). EVERY other
+  // room — a group OR an agent-created room — adds the participant IN PLACE
+  // (the Teams behavior). Keying on is_default (not crew count) fixes the
+  // Captain-reported bug where adding a member to an agent-created room minted
+  // a brand-new chat instead of joining the existing one.
+  const isDefaultOneOnOne = !!(thread.metadata as { is_default?: unknown } | undefined)?.is_default;
+
   async function commitTitle() {
     const next = titleDraft.trim();
     setEditing(false);
@@ -271,19 +280,20 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
         </button>
       )}
 
-      {/* AD-937: Add control branches on the thread shape. On a GROUP (>=2 crew)
-          it toggles the inline @-picker -> addParticipant (mutation is correct
-          there — matches Teams). On a 1:1 (<=1 crew) it opens the AD-931
-          NewChatModal SEEDED with the host, so confirming with 2+ mints a
-          SEPARATE group thread and the 1:1 row is never mutated. */}
+      {/* AD-937/AD-969: Add control branches on whether this is the Captain's
+          1:1 HOME DM (metadata.is_default). On the 1:1 home DM it opens the
+          AD-931 NewChatModal SEEDED with the host, so confirming with 2+ mints a
+          SEPARATE group thread and the pristine 1:1 is never mutated. On EVERY
+          other room — a group OR an agent-created room — it toggles the inline
+          @-picker -> addParticipant (in-place mutation, matches Teams). */}
       <div style={{ position: 'relative' }}>
         <button
           type="button"
           data-testid="add-participant-button"
           aria-label="add participant"
           onClick={() => {
-            if (crewParticipants.length >= 2) setPickerOpen((o) => !o);
-            else setConvertOpen(true);
+            if (isDefaultOneOnOne) setConvertOpen(true);
+            else setPickerOpen((o) => !o);
           }}
           style={{
             background: 'transparent',
@@ -297,7 +307,7 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
         >
           <UserPlus size={14} />
         </button>
-        {crewParticipants.length >= 2 && pickerOpen && (
+        {!isDefaultOneOnOne && pickerOpen && (
           <div style={{ position: 'absolute', top: '100%', right: 0 }}>
             <AddParticipantPopover
               existingParticipantIds={participants}
@@ -307,8 +317,9 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
           </div>
         )}
       </div>
-      {/* AD-937: non-destructive 1:1 -> group convert (seeded picker overlay). */}
-      {crewParticipants.length <= 1 && convertOpen && (
+      {/* AD-937: non-destructive 1:1 -> group convert (seeded picker overlay).
+          Only the Captain's 1:1 home DM reaches this path (AD-969). */}
+      {isDefaultOneOnOne && convertOpen && (
         <NewChatModal
           seedParticipantId={crewParticipants[0]?.id}
           onClose={() => setConvertOpen(false)}

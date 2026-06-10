@@ -1929,16 +1929,47 @@ class CognitiveAgent(BaseAgent):
         )
 
     def _conversational_group_chat_protocol(self, observation: dict) -> str:
-        """AD-935: in a group chat, teach the agent that responding is OPTIONAL —
-        reply only with something substantive to add, else decline. Gated on the
-        group fan-out param ``is_group_chat`` so 1:1 DMs are unaffected. Universal
-        (all crew), like the AD-912 notebook capability. Overridable (Open/Closed).
-        Gap-regex-safe (no can't/cannot/don't have/unable to/not able to)."""
+        """AD-935 / AD-967: in a group chat, teach (1) WHO is present in the room
+        — the AD-967 roster — and (2) that responding is OPTIONAL (reply only with
+        something substantive to add, else decline).
+
+        The roster is the fix for the Captain-reported bug where agents kept
+        addressing a peer who was never invited (e.g. asking "Sentinel" a
+        question in a room Sentinel is not in), and assumed a peer they named in
+        prose had been added. Knowing who is actually present, an agent addresses
+        only present members and asks the Captain to add anyone else instead of
+        talking to an absent peer.
+
+        Gated on the group fan-out param ``is_group_chat`` so 1:1 DMs are
+        unaffected. The roster rides the fan-out param ``room_roster`` (present
+        participant labels); when it is absent the decline guidance is
+        byte-identical to pre-AD-967. Universal (all crew), like the AD-912
+        notebook capability. Overridable (Open/Closed). Gap-regex-safe (no
+        can't/cannot/don't have/unable to/not able to/lack/not available)."""
         params = observation.get("params") or {}
         if not params.get("is_group_chat"):
             return ""
+        roster_line = ""
+        roster = params.get("room_roster")
+        if isinstance(roster, list):
+            names = [str(r).strip() for r in roster if str(r).strip()]
+            if names:
+                if len(names) == 1:
+                    who = names[0]
+                elif len(names) == 2:
+                    who = f"{names[0]} and {names[1]}"
+                else:
+                    who = ", ".join(names[:-1]) + f", and {names[-1]}"
+                roster_line = (
+                    f"\n\nPresent in this room: {who}. These are the only members "
+                    "here right now. Address a person by name only when they are "
+                    "present in the room above. To bring in a colleague who is not "
+                    "yet here, ask the Captain to add them to the room rather than "
+                    "speaking to them as though they were already in it."
+                )
         return (
-            "\n\nYou are in a group chat with other crew. Reply ONLY when you have "
+            roster_line
+            + "\n\nYou are in a group chat with other crew. Reply ONLY when you have "
             "something substantive to add, build on, answer, or correct. If a "
             "fellow crew member directs a question to you, answer it. When you have "
             "nothing to add, respond with exactly [NO_RESPONSE] and nothing else."
