@@ -21,11 +21,12 @@ test.describe('AD-941 Issue 2 — group opens with its real transcript', () => {
     // The panel lists the group row (from the mocked GET /api/threads); open it.
     await page.getByTestId('chat-row-g1').click();
 
-    // Group header: the room title + BOTH participant avatars + Start meeting.
+    // Group header: the room title + BOTH participant avatars + Start call.
     await expect(page.getByTestId('group-chat-title')).toHaveText('Ezri, Yeo');
     await expect(page.getByTestId('group-chat-header').getByLabel('Agent Ezri')).toBeVisible();
     await expect(page.getByTestId('group-chat-header').getByLabel('Agent Yeo')).toBeVisible();
-    await expect(page.getByTestId('meeting-toggle')).toHaveAttribute('aria-label', 'Start meeting');
+    // AD-954: the meeting toggle is framed as "Start call" (Teams mental model).
+    await expect(page.getByTestId('meeting-toggle')).toHaveAttribute('aria-label', 'Start call');
 
     // The real thread transcript renders (NOT an empty host 1:1): both mocked
     // messages appear, with two AD-936 per-author metadata rows.

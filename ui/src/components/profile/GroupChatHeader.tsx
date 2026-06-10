@@ -206,18 +206,19 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
         })}
       </div>
 
-      {/* AD-920: Start/End Meeting toggle. Promotes the group chat to a live
-          meeting (metadata.meeting_active) so ProfileChatTab mounts the avatar
-          gallery. Local inline video glyph (HXI #3 — no emoji, no Glyphs.tsx
-          export so the Glyphs.test.tsx count is untouched). Shown when there is
-          at least one crew participant. */}
+      {/* AD-920 / AD-954: Start/End Call toggle. Promotes the group chat to a
+          live video call (metadata.meeting_active) so ProfileChatTab mounts the
+          AD-947 face-framed avatar gallery + AD-949 call audio — the Teams-style
+          "turn the chat into a call" step. Local inline video glyph (HXI #3 —
+          no emoji, no Glyphs.tsx export so the Glyphs.test.tsx count is
+          untouched). Shown when there is at least one crew participant. */}
       {crewParticipants.length >= 1 && (
         <button
           type="button"
           data-testid="meeting-toggle"
-          aria-label={meetingActive ? 'End meeting' : 'Start meeting'}
+          aria-label={meetingActive ? 'End call' : 'Start call'}
           aria-pressed={meetingActive}
-          title={meetingActive ? 'End meeting' : 'Start meeting'}
+          title={meetingActive ? 'End call' : 'Start call'}
           onClick={() => { void handleToggleMeeting(); }}
           style={{
             background: 'none', border: 'none', cursor: 'pointer',

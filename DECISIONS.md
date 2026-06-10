@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-954: "Start call" reframing — the meeting toggle is a call (Teams mental model) (Natural Conversation epic, #882/#890)
+
+**Context.** #890 asks for a first-class group/call surface: a dedicated thread-keyed window + a "Start call" step that turns the chat into a video call. AD-965 already delivered the dedicated-room *identity* (neutral group title + Chat-only surface, decoupled from the host agent's profile chrome), and AD-920/921/947/949 already shipped the live "meeting" (avatar gallery + per-agent call voice + face framing + call audio). The remaining naming gap: the control was labelled "Start/End meeting," which doesn't match the Captain's Teams mental model ("turn this chat into a call").
+
+**Decision (frontend only, `GroupChatHeader.tsx`).** Reframe the existing meeting toggle (already a video-camera glyph, already wired to `set_meeting_active` → the AD-947 gallery + AD-949 call audio) from "Start/End meeting" to **"Start/End call"** (`aria-label` + `title`). The `data-testid="meeting-toggle"`, the persisted `metadata.meeting_active` flag, the AD-923 end-of-meeting transcript marker, and all wiring are byte-identical — this is a label change that aligns the surface with the call mental model. The underlying "meeting" terminology stays in the backend flag/marker (no migration).
+
+**Scope note (the larger AD-954 piece remains).** A fully separate group window keyed by `thread.id` and decoupled from `activeProfileAgent` (so a group needs no host agent set at all) is a larger architectural refactor that #890 itself says to sequence last. AD-965 already achieves the first-class *visual* surface (the panel presents as a neutral room, not a host profile), so the user-visible Teams feel is delivered; the host-agent *binding* refactor is tracked as the remaining #890 sub-task (forward marker AD-954a). This AD closes the "Start call" + dedicated-identity portion.
+
+**Tests + gates.** `GroupChatHeader.meeting.test.tsx` +1 (the toggle reads "Start call" inactive / "End call" active); the AD-941 `group-chat-open.spec.ts` e2e updated to assert `aria-label="Start call"`. Full UI suite **1416 passed / 1 skipped**, `npm run build` clean, all **4 Playwright e2e passed**. No backend change. COMMITTED LOCAL ONLY — NOT pushed.
+
 ### AD-965: Neutral, nameable group surface — a group is a room, not the host agent's profile (Natural Conversation epic, #882/#898)
 
 **Problem (Captain group-chat test, 2026-06-10).** Starting a group with Ezri + Yeo opened *Ezri's* `AgentProfilePanel` — the title bar read "Ezri (Counselor)" with her department dot, and the 6 agent-scoped tabs (Chat / Work / Memory / Profile / Health / Self-image) framed the room as one participant's profile with a second person bolted on. A group should be a neutral, nameable surface like a Microsoft Teams group chat.

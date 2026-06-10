@@ -96,6 +96,20 @@ describe('AD-920 GroupChatHeader meeting toggle', () => {
     await waitFor(() => expect(setMeetingActive).toHaveBeenCalledWith('t1', false));
   });
 
+  it('AD-954: the toggle is framed as "Start call" / "End call" (Teams mental model)', () => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'a1'] }), [mkAgent({ id: 'a1', callsign: 'Vex' })]);
+    const { rerender } = render(<GroupChatHeader threadId="t1" />);
+    // Inactive -> "Start call".
+    expect(screen.getByTestId('meeting-toggle').getAttribute('aria-label')).toBe('Start call');
+    expect(screen.getByTestId('meeting-toggle').getAttribute('title')).toBe('Start call');
+    // Active -> "End call".
+    useStore.getState().setChatThread(
+      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
+    );
+    rerender(<GroupChatHeader threadId="t1" />);
+    expect(screen.getByTestId('meeting-toggle').getAttribute('aria-label')).toBe('End call');
+  });
+
   it('aria-pressed reflects metadata.meeting_active (true when active, false when inactive)', () => {
     seed(
       mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
