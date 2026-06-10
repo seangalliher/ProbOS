@@ -8,7 +8,7 @@
 // others dim — HXI #4 motion = state) and a presence header. HXI #3 — inline
 // SVG/CSS only, amber palette, no emoji.
 import { useState, useRef, useEffect, type CSSProperties } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { useStore } from '../../store/useStore';
 import type { Agent, AgentProfileData } from '../../store/types';
 import { CrewVRM } from './CrewVRM';
@@ -21,6 +21,22 @@ import { getCameraStream, startCameraStream, stopCameraStream } from '../../hook
 import { getScreenStream } from '../../hooks/useScreenStream';
 
 const CAPTAIN_PARTICIPANT_ID = 'captain';
+
+// AD-947: face-frame the gallery camera. A bare <Canvas camera={{position}}>
+// has no lookAt, so react-three-fiber points the camera at the origin
+// [0,0,0] (the floor) — the avatar rendered showing only its FEET. The
+// CrewAvatarPopout avoids this with OrbitControls target={[0,1.42,0]}; the
+// non-interactive gallery slots have no controls, so aim the camera at face
+// height (~1.42m, matching the popout target) once on mount. Pure side-effect,
+// renders nothing.
+function FaceFraming() {
+  const camera = useThree((s) => s.camera);
+  useEffect(() => {
+    camera.lookAt(0, 1.42, 0);
+    camera.updateProjectionMatrix();
+  }, [camera]);
+  return null;
+}
 
 /** One gallery cell: a live VRM when the agent has one, else a badge. */
 function AvatarSlot({
@@ -93,6 +109,7 @@ function AvatarSlot({
       <div data-dim={dim ? 'true' : 'false'} style={innerStyle}>
         {showVRM ? (
           <Canvas camera={{ position: [0, 1.45, 0.85], fov: 28 }} flat frameloop="always">
+            <FaceFraming />
             <ambientLight intensity={0.4} />
             <directionalLight position={[1, 2, 2]} intensity={0.6} />
             <CrewVRM

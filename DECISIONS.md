@@ -10,6 +10,18 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-947: Avatar camera framing — focus on faces, not feet (Natural Conversation epic, #882/#883)
+
+**Bug.** In the meeting avatar gallery (`MeetingView` `AvatarSlot`), the crew VRM rendered showing only the **feet**. Root cause: the gallery `<Canvas camera={{ position: [0, 1.45, 0.85], fov: 28 }}>` sets the camera POSITION but no lookAt, so react-three-fiber points the camera at the default origin `[0,0,0]` (floor) — the avatar's feet. The `CrewAvatarPopout` does not have this bug because it mounts `OrbitControls target={[0, 1.42, 0]}` (face height); the non-interactive gallery slots have no controls, so nothing aimed the camera.
+
+**Fix (frontend only, `MeetingView.tsx`).** A tiny in-Canvas `FaceFraming` helper (`useThree((s) => s.camera)` → `camera.lookAt(0, 1.42, 0)` + `updateProjectionMatrix()` once on mount, renders `null`), mounted as the first child of the gallery Canvas. Face height `1.42` matches the popout's `OrbitControls` target. `CrewAvatarPopout` and `CrewVRM` are untouched. The three MeetingView test mocks of `@react-three/fiber` gain a `useThree` stub (the mock replaces the whole module). Full UI suite **1373 passed / 1 skipped** (the 3 MeetingView files green with the new mock; net +0 tests — the R3F Canvas is mocked so the lookAt is a code-level + live-verified guard); `npm run build` clean. No backend/REST/pytest. COMMITTED LOCAL ONLY — NOT pushed.
+
+### AD-948: Group-chat hygiene — strip the internal `<intent …>` self-tag from fan-out replies (Natural Conversation epic, #882/#884)
+
+**Bug.** In a group chat, agent replies leaked the AD-722a divergence self-tag (e.g. `<intent emotion="warm">`) into the visible transcript (Captain's screenshot). The AD-722a tag is parsed + **unconditionally stripped** only on the 1:1 path (`apply_divergence_check` at `routers/agents.py:agent_chat`); the group fan-out (`routers/thread_fanout.py` `_send_one`) took the raw LLM reply and persisted/returned it **without** that strip. Internal markup reaching the human is an instant "this is AI" tell.
+
+**Fix (backend only, `thread_fanout.py`).** `_send_one` now calls the single-source `strip_intent_self_tag` (from `avatars/divergence_detector.py`, BF-603 hardened — leading/inline/trailing, optional-quote tolerant, prose-safe) on the resolved reply text **before** the NO_RESPONSE decline check / persist / return. The strip is **unconditional** (even when divergence detection is OFF — defense-in-depth, the tag must never reach the Captain), and placed before the decline check so a decline trailing a tag is still detected. Reuse only — the regex / 1:1 call site / `apply_divergence_check` are untouched. +2 pytest (`tests/test_ad948_group_intent_tag_strip.py`, BF-287 real `ChatThreadStore`+`IntentBus`+fan-out): a quoted + unquoted tag-bearing reply is stripped in BOTH `per_agent_replies` and the persisted message rows; prose containing the word "intent" is preserved verbatim. Blast-radius `-k "thread or chat or fanout or divergence"` **607 passed**, zero regressions. No UI change. COMMITTED LOCAL ONLY — NOT pushed.
+
 ### BF-614: Group chat — crew replied all-at-once and never to each other; an added member showed a "?" avatar
 
 **Context.** A Captain-reported cluster of group-chat problems from an Ezri+Yeo room: (a) both agents replied to EVERY Captain message at the same time (an unnatural wall of simultaneous replies), (b) the agents never responded to EACH OTHER — only when the Captain sent, and (c) Yeo (added to the room after it was created) rendered a grey "?" avatar instead of his badge/initial.

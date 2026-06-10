@@ -25,6 +25,7 @@ from typing import Any
 from probos.cognitive.chat_facilitator import ChatFacilitator, SpeakerSignals
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
+from probos.avatars.divergence_detector import strip_intent_self_tag
 from probos.crew_profile import extract_all_leading_callsign_mentions
 from probos.crew_utils import is_crew_agent
 from probos.types import IntentMessage
@@ -353,6 +354,14 @@ async def _fan_one_round(
                     "AD-933: escalation subset failed for thread=%s agent=%s; "
                     "shipping raw reply", thread_id, agent_id, exc_info=True,
                 )
+        # AD-948: strip the AD-722a intent self-tag (<intent emotion=...>)
+        # UNCONDITIONALLY before the decline check / persist / return. The 1:1
+        # path strips it via apply_divergence_check (routers/agents.py); the
+        # group fan-out never did, so the internal tag leaked into the visible
+        # transcript. Reuse the single-source-of-truth strip (BF-603 hardened);
+        # placed BEFORE the NO_RESPONSE check so a decline that trails a tag is
+        # still detected. The tag MUST NEVER reach the Captain.
+        reply_text = strip_intent_self_tag(reply_text)
         # AD-935: an agent may decline to respond in a group turn. A
         # [NO_RESPONSE] (case-insensitive, after strip + bracket removal) or an
         # empty reply is NOT persisted and NOT returned — the round collector

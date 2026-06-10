@@ -13,6 +13,8 @@ import type { Agent } from '../../../store/types';
 vi.mock('@react-three/fiber', () => ({
   Canvas: ({ children }: any) => <div data-testid="canvas">{children}</div>,
   useFrame: () => {},
+  // AD-947: FaceFraming calls useThree((s) => s.camera).lookAt(...).
+  useThree: (sel: any) => sel({ camera: { lookAt: () => {}, updateProjectionMatrix: () => {} } }),
 }));
 
 vi.mock('../../../avatars/useFleetAvatarTelemetry', () => ({
