@@ -3,7 +3,8 @@
 Verifies that startup/shutdown.shutdown() calls
 ``intent_bus.close_to_new_dispatches()`` BEFORE
 ``dream_scheduler.stop_gracefully()`` and BEFORE the explicit
-``dream_cycle()`` consolidation call.
+``consolidate_for_shutdown()`` consolidation call (AD-959 — the lean
+shutdown consolidation that replaced the full ``dream_cycle()``).
 
 See prompts/bf-296/bf-296-shutdown-phase-a.md and #771.
 """
@@ -53,10 +54,10 @@ async def test_phase_a_runs_before_stop_gracefully(tmp_path: Any) -> None:
 
     dream_sched.stop_gracefully = _stop_gracefully
 
-    # engine.dream_cycle records call order
+    # engine.consolidate_for_shutdown records call order (AD-959 lean path)
     engine = MagicMock()
 
-    async def _dream_cycle() -> Any:
+    async def _consolidate_for_shutdown() -> Any:
         call_order.append("dream_cycle")
         report = MagicMock()
         report.episodes_replayed = 0
@@ -64,7 +65,7 @@ async def test_phase_a_runs_before_stop_gracefully(tmp_path: Any) -> None:
         report.weights_pruned = 0
         return report
 
-    engine.dream_cycle = _dream_cycle
+    engine.consolidate_for_shutdown = _consolidate_for_shutdown
     dream_sched.engine = engine
     runtime.dream_scheduler = dream_sched
 

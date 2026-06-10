@@ -289,6 +289,97 @@ class DreamingEngine:
             logger.debug("AD-598: Failed to load importance map", exc_info=True)
             return {}
 
+    async def consolidate_for_shutdown(self) -> DreamReport:
+        """AD-959: Lean consolidation for the shutdown path only.
+
+        Runs ONLY the cheap, in-memory learning-weight updates the shutdown
+        path actually needs — micro-dream Hebbian replay of the most-recent
+        episodes, weight pruning, and trust consolidation — and SKIPS every
+        LLM-bound and Chroma-writing idle-time step that ``dream_cycle``
+        performs (episode clustering, procedure extraction/evolution,
+        failure distillation, observational learning, spaced-retrieval
+        therapy, emergence/behavioral metrics).
+
+        Why this exists: the shutdown handler used to run the FULL
+        ``dream_cycle`` under a hard 30s budget. At real episode volume its
+        per-cluster LLM calls through the model proxy overran the budget, so
+        consolidation was cancelled mid-flight — which AD-820 stamps as a
+        ``partial`` integrity marker (refusing the next boot until
+        ``--force-unclean``) and which historically tore ChromaDB's HNSW
+        index when the cancelled writes left it half-written (#750). Those
+        idle-time steps are pure optimization that re-runs on the next dream
+        cycle, so deferring them at shutdown loses nothing.
+
+        The episodes themselves are already persisted at creation time
+        (BF-207); this method performs no episodic-collection writes, so it
+        completes in well under a second and lets the subsequent
+        ``episodic_memory.stop()`` close the index cleanly. Honest-degrade
+        throughout: a failure in any one step is logged and the remaining
+        steps still run, because a clean ``DreamReport`` return is what lets
+        the shutdown handler stamp a ``full`` (clean) marker.
+        """
+        t_start = time.monotonic()
+
+        # Step 0: micro-dream — Hebbian replay of the most-recent episodes.
+        # In-memory router updates only; makes no episodic-collection writes.
+        try:
+            micro_report = await self.micro_dream()
+        except Exception:
+            logger.warning(
+                "AD-959: micro-dream replay skipped during shutdown "
+                "(non-fatal; consolidation continues)",
+                exc_info=True,
+            )
+            micro_report = {"episodes_replayed": 0, "weights_strengthened": 0}
+
+        # Step 2: prune Hebbian weights (in-memory router decay + threshold cull).
+        try:
+            weights_pruned = self._prune_weights()
+        except Exception:
+            logger.warning(
+                "AD-959: weight pruning skipped during shutdown "
+                "(non-fatal; consolidation continues)",
+                exc_info=True,
+            )
+            weights_pruned = 0
+
+        # Step 3: trust consolidation from recent track records (in-memory
+        # Beta updates). Reads — never writes — the episodic collection.
+        trust_adjustments = 0
+        try:
+            episodes = (
+                await self.episodic_memory.recent(k=self.config.replay_episode_count)
+                if self.episodic_memory
+                else []
+            )
+            if episodes:
+                trust_adjustments = self._consolidate_trust(episodes)
+        except Exception:
+            logger.warning(
+                "AD-959: trust consolidation skipped during shutdown "
+                "(non-fatal; learning re-runs on the next dream cycle)",
+                exc_info=True,
+            )
+
+        duration_ms = (time.monotonic() - t_start) * 1000
+        logger.info(
+            "AD-959: shutdown consolidation complete in %.0fms "
+            "(replayed=%d strengthened=%d pruned=%d trust_adj=%d) — "
+            "idle-time LLM steps deferred to next dream cycle",
+            duration_ms,
+            micro_report.get("episodes_replayed", 0),
+            micro_report.get("weights_strengthened", 0),
+            weights_pruned,
+            trust_adjustments,
+        )
+        return DreamReport(
+            episodes_replayed=micro_report.get("episodes_replayed", 0),
+            weights_strengthened=micro_report.get("weights_strengthened", 0),
+            weights_pruned=weights_pruned,
+            trust_adjustments=trust_adjustments,
+            duration_ms=duration_ms,
+        )
+
     async def dream_cycle(self) -> DreamReport:
         """Execute one full dream pass.
 

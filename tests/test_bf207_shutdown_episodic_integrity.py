@@ -262,16 +262,20 @@ class TestShutdownOrdering:
         from probos.startup import shutdown as shutdown_mod
         source = inspect.getsource(shutdown_mod.shutdown)
 
-        dream_pos = source.find("runtime.dream_scheduler.engine.dream_cycle()")
+        # AD-959: the shutdown path calls the LEAN consolidate_for_shutdown()
+        # (not the full dream_cycle, whose per-cluster LLM calls overran the
+        # budget and left an AD-820 partial marker). Ordering invariant is
+        # unchanged: consolidation must still run before episodic close.
+        dream_pos = source.find("runtime.dream_scheduler.engine.consolidate_for_shutdown()")
         episodic_stop_pos = source.find("await runtime.episodic_memory.stop()")
 
-        assert dream_pos != -1, "dream_cycle() must exist in shutdown"
+        assert dream_pos != -1, "consolidate_for_shutdown() must exist in shutdown"
         assert episodic_stop_pos != -1, "episodic_memory.stop() must exist"
         assert dream_pos < episodic_stop_pos, \
-            "dream_cycle() must run before episodic_memory.stop()"
+            "consolidate_for_shutdown() must run before episodic_memory.stop()"
         # Pin uniqueness — catch stale duplicates from incomplete cut-paste
-        assert source.count("runtime.dream_scheduler.engine.dream_cycle()") == 1, \
-            "dream_cycle() must appear exactly once (no duplicates)"
+        assert source.count("runtime.dream_scheduler.engine.consolidate_for_shutdown()") == 1, \
+            "consolidate_for_shutdown() must appear exactly once (no duplicates)"
         assert source.count("await _eviction_audit.stop()") == 1, \
             "_eviction_audit.stop() must appear exactly once (no duplicates)"
 

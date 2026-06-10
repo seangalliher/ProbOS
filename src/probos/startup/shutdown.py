@@ -224,25 +224,33 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             )
 
     # Tier 3: Shutdown consolidation — flush remaining episodes (AD-288)
-    # Must run BEFORE pools stop (dream_cycle may trigger Ward Room notifications)
-    # and BEFORE LLM client is closed (dream_cycle makes LLM calls).
+    # Must run BEFORE pools stop (consolidation may trigger Ward Room
+    # notifications) and BEFORE the LLM client is closed.
+    # AD-959: call the LEAN ``consolidate_for_shutdown`` path, NOT the full
+    # ``dream_cycle``. The full cycle's per-cluster LLM calls (procedure
+    # extraction, spaced-retrieval therapy, …) routinely overran the 30s
+    # budget at real episode volume, leaving an AD-820 ``partial`` marker
+    # that refuses the next boot (and historically tore the HNSW index,
+    # #750). The lean path runs only the cheap in-memory learning-weight
+    # updates (micro-dream Hebbian replay + prune + trust) and makes no
+    # episodic-collection writes, so it finishes well under budget; the
+    # deferred idle-time steps re-run on the next dream cycle.
     if runtime.dream_scheduler and runtime.episodic_memory:
         logger.info(
-            "Consolidating session memories (budget=%.0fs)...",
+            "Consolidating session memories (lean, budget=%.0fs)...",
             _shutdown_consolidation_timeout,
         )
         try:
             # BF-303: shutdown() is typically awaited from a task that's
             # already in cancelled state (operator Ctrl+C cancels the outer
             # server task; the `finally:` block then awaits us). Every await
-            # in a cancelled task re-raises CancelledError, which kills
-            # dream_cycle's in-flight SQLite writes (activation_tracker,
-            # quality_router, etc.). Spawn dream_cycle in a FRESH task and
-            # shield the await so the consolidation runs to completion
-            # independent of the outer cancel state. The wait_for still
-            # bounds total time via the 30s budget.
+            # in a cancelled task re-raises CancelledError, which kills the
+            # consolidation's in-flight writes. Spawn it in a FRESH task and
+            # shield the await so it runs to completion independent of the
+            # outer cancel state. The wait_for still bounds total time via
+            # the configured budget (now a safety net the lean path won't hit).
             _dream_task = asyncio.create_task(
-                runtime.dream_scheduler.engine.dream_cycle(),
+                runtime.dream_scheduler.engine.consolidate_for_shutdown(),
                 name="shutdown-dream-cycle",
             )
             try:
@@ -251,13 +259,13 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                     timeout=_shutdown_consolidation_timeout,
                 )
             except asyncio.CancelledError:
-                # Outer task cancelled us; let dream_cycle finish (shield
+                # Outer task cancelled us; let consolidation finish (shield
                 # gave us this chance). Wait for it to complete, but bound
-                # by the same budget so a stuck dream_cycle doesn't hang
+                # by the same budget so a stuck consolidation doesn't hang
                 # shutdown indefinitely.
                 logger.info(
                     "BF-303: shutdown task cancelled mid-consolidation; "
-                    "awaiting dream_cycle completion under the same %.0fs budget",
+                    "awaiting consolidation completion under the same %.0fs budget",
                     _shutdown_consolidation_timeout,
                 )
                 try:
@@ -282,7 +290,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             )
             _consolidation_result = "partial"
         except (asyncio.CancelledError, Exception) as e:
-            # BF-302: include exc_info so we can see WHAT inside dream_cycle
+            # BF-302: include exc_info so we can see WHAT inside consolidation
             # actually fails. Previously this swallowed the traceback and
             # only logged the exception's str(), which is empty for many
             # exception types (KeyError, AssertionError without msg, etc.).
