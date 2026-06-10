@@ -6,7 +6,7 @@
 // badge selection, the onLoadError fallback, the empty state, the caption, the
 // missing-thread null path, and the HXI no-emoji guard.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, within, act, cleanup } from '@testing-library/react';
+import { render, screen, within, act, cleanup, fireEvent } from '@testing-library/react';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
 import type { Agent } from '../../../store/types';
 
@@ -193,5 +193,62 @@ describe('AD-920 MeetingView gallery', () => {
     const { container } = render(<MeetingView threadId="t1" />);
     await screen.findByTestId('crew-vrm-echo');
     expect(container.innerHTML).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+});
+
+describe('AD-974 MeetingView drag-to-resize', () => {
+  function slotWidth(id: string): number {
+    const el = screen.getByTestId(`avatar-slot-${id}`) as HTMLElement;
+    return parseInt(el.style.width, 10);
+  }
+
+  it('renders the resize handle', () => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
+    ]);
+    render(<MeetingView threadId="t1" />);
+    expect(screen.getByTestId('meeting-resize-handle')).toBeTruthy();
+  });
+
+  it('dragging the handle DOWN enlarges the slots and persists the scale', () => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
+    ]);
+    render(<MeetingView threadId="t1" />);
+    expect(slotWidth('echo')).toBe(120); // scale 1 (default)
+    const handle = screen.getByTestId('meeting-resize-handle');
+    // Drag down 220px == +1.0 scale -> width 240.
+    fireEvent.mouseDown(handle, { clientY: 100 });
+    act(() => { window.dispatchEvent(new MouseEvent('mousemove', { clientY: 320 })); });
+    expect(slotWidth('echo')).toBe(240);
+    act(() => { window.dispatchEvent(new MouseEvent('mouseup')); });
+    // Persisted for reopen.
+    expect(localStorage.getItem('hxi_meeting_gallery_scale')).toBe('2');
+  });
+
+  it('clamps the scale to the [1,3] range', () => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
+    ]);
+    render(<MeetingView threadId="t1" />);
+    const handle = screen.getByTestId('meeting-resize-handle');
+    // Drag down far past the max (220px/unit, so 1000px -> +4.5, clamped to 3).
+    fireEvent.mouseDown(handle, { clientY: 0 });
+    act(() => { window.dispatchEvent(new MouseEvent('mousemove', { clientY: 1000 })); });
+    expect(slotWidth('echo')).toBe(360); // 120 * 3 (clamped max)
+    // Drag up below the min -> clamped to 1 (width 120).
+    act(() => { window.dispatchEvent(new MouseEvent('mousemove', { clientY: -1000 })); });
+    expect(slotWidth('echo')).toBe(120);
+    act(() => { window.dispatchEvent(new MouseEvent('mouseup')); });
+  });
+
+  it('restores the persisted scale on mount', () => {
+    localStorage.setItem('hxi_meeting_gallery_scale', '2');
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
+    ]);
+    render(<MeetingView threadId="t1" />);
+    expect(slotWidth('echo')).toBe(240); // 120 * 2 restored
+    localStorage.removeItem('hxi_meeting_gallery_scale');
   });
 });

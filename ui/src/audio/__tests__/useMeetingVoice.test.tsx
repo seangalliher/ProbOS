@@ -18,12 +18,15 @@ vi.mock('../voice', () => ({
   speakResponse: vi.fn(),
   onSpeechEvent: vi.fn(() => () => {}),
   stripMarkdownForSpeech: (s: string) => s,
+  prewarmTts: vi.fn(),
 }));
 
 import { useMeetingVoice } from '../useMeetingVoice';
 import { useStore } from '../../store/useStore';
 import type { PerAgentReply } from '../meetingVoice';
 import useMeetingVoiceSource from '../useMeetingVoice?raw';
+import { prewarmTts } from '../voice';
+import { createVoiceProfileResolver } from '../meetingVoice';
 
 beforeEach(() => {
   mocks.speakRepliesSequentially.mockReset();
@@ -83,6 +86,31 @@ describe('useMeetingVoice', () => {
     // The generation token also tells the old batch to stop.
     expect(deps1.shouldContinue()).toBe(false);
     expect(deps2.shouldContinue()).toBe(true);
+  });
+
+  // AD-972: prewarm the TTS probe + the room's voice profiles on meeting open
+  // so the first reply's TTS is not gated on a cold profile/status round-trip.
+  it('test_prewarms_tts_and_profiles_when_meeting_opens', () => {
+    useStore.setState({ callAudioEnabled: true });
+    const resolver = vi.fn(async () => undefined);
+    vi.mocked(createVoiceProfileResolver).mockReturnValueOnce(resolver);
+    renderHook(() =>
+      useMeetingVoice({ meetingActive: true, participantAgentIds: ['scout1', 'bones1'] }),
+    );
+    expect(prewarmTts).toHaveBeenCalled();
+    expect(resolver).toHaveBeenCalledWith('scout1');
+    expect(resolver).toHaveBeenCalledWith('bones1');
+  });
+
+  it('test_no_prewarm_when_meeting_inactive', () => {
+    vi.mocked(prewarmTts).mockClear();
+    const resolver = vi.fn(async () => undefined);
+    vi.mocked(createVoiceProfileResolver).mockReturnValueOnce(resolver);
+    renderHook(() =>
+      useMeetingVoice({ meetingActive: false, participantAgentIds: ['scout1'] }),
+    );
+    expect(prewarmTts).not.toHaveBeenCalled();
+    expect(resolver).not.toHaveBeenCalled();
   });
 });
 

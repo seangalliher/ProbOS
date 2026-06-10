@@ -153,20 +153,27 @@ export async function speakRepliesSequentially(
 export function createVoiceProfileResolver(
   fetchImpl: typeof fetch = (typeof fetch === 'function' ? fetch : (async () => { throw new Error('no fetch'); }) as unknown as typeof fetch),
 ): (agentId: string) => Promise<VoiceProfile | undefined> {
-  const cache = new Map<string, VoiceProfile | undefined>();
-  return async (agentId: string): Promise<VoiceProfile | undefined> => {
-    if (cache.has(agentId)) return cache.get(agentId);
-    let profile: VoiceProfile | undefined;
-    try {
-      const resp = await fetchImpl(`/api/agent/${agentId}/profile`, { method: 'GET' });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data && data.voiceProfile) profile = data.voiceProfile as VoiceProfile;
+  // AD-972: cache the in-flight PROMISE (not just the resolved value) so a
+  // prewarm at meeting-open and the per-utterance resolve dedupe to ONE fetch
+  // even when they race. A resolved entry stays cached (no re-fetch); a failed
+  // fetch resolves to ``undefined`` and is cached as the default-voice degrade.
+  const cache = new Map<string, Promise<VoiceProfile | undefined>>();
+  return (agentId: string): Promise<VoiceProfile | undefined> => {
+    const cached = cache.get(agentId);
+    if (cached) return cached;
+    const pending = (async (): Promise<VoiceProfile | undefined> => {
+      try {
+        const resp = await fetchImpl(`/api/agent/${agentId}/profile`, { method: 'GET' });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && data.voiceProfile) return data.voiceProfile as VoiceProfile;
+        }
+      } catch {
+        // Tier-2: any failure -> default voice.
       }
-    } catch {
-      profile = undefined;
-    }
-    cache.set(agentId, profile);
-    return profile;
+      return undefined;
+    })();
+    cache.set(agentId, pending);
+    return pending;
   };
 }

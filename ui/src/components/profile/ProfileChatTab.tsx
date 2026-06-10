@@ -42,13 +42,11 @@ import { EmptyChatAddPeople } from './EmptyChatAddPeople';
 // AD-937: 3-way thread resolver (prop > group override > per-agent 1:1).
 import { resolveProfileThreadId } from './profileThreadResolution';
 import { MeetingView } from './MeetingView';
-import { useMeetingMic } from '../../audio/useMeetingMic';
 // AD-936: per-message avatar + timestamp row (extracted; keeps the heavy
 // bubble JSX out of this audio-dep-laden module and independently testable).
 import { ChatMessageRow } from './ChatMessageRow';
 import { TypingIndicator } from './TypingIndicator';
 import { revealRepliesProgressively, type StaggerReply } from '../../chat/staggerReplies';
-import { MeetingMicButton } from './MeetingMicButton';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
 import { useScreenStore } from '../../store/useScreenStore';
@@ -519,7 +517,16 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // AD-921: sequenced meeting voice. speakReplies self-gates on
   // meetingActive && voiceEnabled; speakingAgentId is the AD-923 seam and the
   // AD-922 echo gate (the meeting mic refuses to arm while it is non-null).
-  const { speakReplies: speakMeetingReplies, speakingAgentId } = useMeetingVoice({ meetingActive });
+  // AD-972: pass the room's crew participant ids so their voice profiles are
+  // prewarmed when the meeting opens — the first reply then speaks without a
+  // cold profile fetch on the critical path (cuts the seen-message → TTS gap).
+  const meetingParticipantIds = (workspaceThread?.participants ?? []).filter(
+    (id) => id !== 'captain' && agentsMap.get(id)?.isCrew,
+  );
+  const { speakReplies: speakMeetingReplies, speakingAgentId } = useMeetingVoice({
+    meetingActive,
+    participantAgentIds: meetingParticipantIds,
+  });
   // AD-952: the agent currently "typing" a group reply (progressive reveal).
   // Drives the TypingIndicator bubble; threadId-guarded so it only shows in the
   // thread it belongs to.
@@ -865,16 +872,13 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     }
   }, [agentId, threadId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId]);
 
-  // AD-922: Captain push-to-talk for the meeting. Captures one VAD-bounded
-  // utterance via the existing offline STT and feeds the transcript to
-  // ``sendText`` -- which self-routes to the AD-914 group fan-out when the
-  // thread has >=2 crew (AD-917), so the voice path needs no new dispatch
-  // branch. Echo-gated off while any agent speaks (``speakingAgentId``).
-  const meetingMic = useMeetingMic({
-    meetingActive,
-    speaking: speakingAgentId != null,
-    submit: sendText,
-  });
+  // AD-973: the single mic is the composer mic next to Send (the MicIndicator
+  // button below). It already captures one VAD-bounded utterance via the
+  // offline/whisper STT and auto-submits via ``sendText`` (which self-routes to
+  // the AD-914 group fan-out), and has its own BF-300 echo guard. The separate
+  // centered meeting push-to-talk (AD-922 MeetingMicButton + useMeetingMic) was
+  // a SECOND mic affordance that did the same thing — removed so a meeting shows
+  // exactly one mic, the one next to Send.
 
   // BF-292: thin shim for the textarea Enter-key + send-button paths. Reads
   // current ``input`` at call time and forwards to sendText. The Enter-key
@@ -976,20 +980,6 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           remains the transcript below. AD-923: speakingAgentId lights the
           active speaker's avatar (already in scope from useMeetingVoice). */}
       {activeThreadId && meetingActive && <MeetingView threadId={activeThreadId} speakingAgentId={speakingAgentId} />}
-      {/* AD-922: Captain push-to-talk. Part of the meeting surface — only
-          rendered in a meeting and when voice input is possible at all
-          (honest-degrade: otherwise the Captain types). Feeds sendText, which
-          self-routes to the group fan-out. */}
-      {activeThreadId && meetingActive && meetingMic.supported && (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0' }}>
-          <MeetingMicButton
-            capturing={meetingMic.capturing}
-            blocked={meetingMic.blocked}
-            speaking={speakingAgentId != null}
-            onToggle={meetingMic.toggleCapture}
-          />
-        </div>
-      )}
       {/* Message list */}
       <div style={{
         flex: 1,

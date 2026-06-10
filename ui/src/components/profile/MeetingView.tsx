@@ -7,7 +7,7 @@
 // the who's-speaking highlight (amber ring + pulse on the active speaker, the
 // others dim — HXI #4 motion = state) and a presence header. HXI #3 — inline
 // SVG/CSS only, amber palette, no emoji.
-import { useState, useRef, useEffect, type CSSProperties } from 'react';
+import { useState, useRef, useEffect, useCallback, type CSSProperties } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { useStore } from '../../store/useStore';
 import type { Agent, AgentProfileData } from '../../store/types';
@@ -21,6 +21,28 @@ import { getCameraStream, startCameraStream, stopCameraStream } from '../../hook
 import { getScreenStream } from '../../hooks/useScreenStream';
 
 const CAPTAIN_PARTICIPANT_ID = 'captain';
+
+// AD-974: drag-to-resize the meeting gallery. The Captain drags the handle at
+// the bottom of the gallery DOWN to enlarge the video portraits (UP to shrink).
+// The scale is clamped and persisted to localStorage so it survives reopen.
+const _GALLERY_SCALE_KEY = 'hxi_meeting_gallery_scale';
+const _GALLERY_SCALE_MIN = 1;
+const _GALLERY_SCALE_MAX = 3;
+const _GALLERY_SCALE_PX_PER_UNIT = 220; // vertical drag px per +1.0 scale
+
+export function clampGalleryScale(v: number): number {
+  if (!Number.isFinite(v)) return _GALLERY_SCALE_MIN;
+  return Math.min(_GALLERY_SCALE_MAX, Math.max(_GALLERY_SCALE_MIN, v));
+}
+
+function _loadGalleryScale(): number {
+  try {
+    const raw = localStorage.getItem(_GALLERY_SCALE_KEY);
+    return raw != null ? clampGalleryScale(parseFloat(raw)) : _GALLERY_SCALE_MIN;
+  } catch {
+    return _GALLERY_SCALE_MIN;
+  }
+}
 
 // AD-947 / AD-964: face-frame the gallery camera. A bare <Canvas camera={{position}}>
 // has no lookAt, so react-three-fiber points the camera at the origin
@@ -51,10 +73,13 @@ function AvatarSlot({
   agentId,
   speaking = false,
   someoneSpeaking = false,
+  scale = 1,
 }: {
   agentId: string;
   speaking?: boolean;
   someoneSpeaking?: boolean;
+  /** AD-974: gallery size multiplier (drag-to-resize). 1 = the original size. */
+  scale?: number;
 }) {
   const agent = useStore((s) => s.agents.get(agentId)) as Agent | undefined;
   const [loadFailed, setLoadFailed] = useState(false);
@@ -93,9 +118,13 @@ function AvatarSlot({
   //   dim (someone else)  -> opacity 0.5, no ring/animation
   //   idle (nobody)       -> neutral, full opacity
   const dim = !speaking && someoneSpeaking;
+  // AD-974: scale the portrait box (and wrapper/caption below) so the gallery
+  // can be dragged larger. Original dims: inner 112x132, wrapper 120x160.
+  const innerW = Math.round(112 * scale);
+  const innerH = Math.round(132 * scale);
   const innerStyle: CSSProperties = {
-    width: 112,
-    height: 132,
+    width: innerW,
+    height: innerH,
     position: 'relative',
     borderRadius: 8,
     opacity: dim ? 0.5 : 1,
@@ -114,7 +143,7 @@ function AvatarSlot({
       data-speaking={speaking ? 'true' : 'false'}
       style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-        width: 120, height: 160,
+        width: Math.round(120 * scale), height: Math.round(160 * scale),
       }}
     >
       <div data-dim={dim ? 'true' : 'false'} style={innerStyle}>
@@ -141,7 +170,7 @@ function AvatarSlot({
       </div>
       <span
         data-testid={`avatar-caption-${agentId}`}
-        style={{ color: '#e0dcd4', fontSize: 11, fontWeight: 600, maxWidth: 112,
+        style={{ color: '#e0dcd4', fontSize: 11, fontWeight: 600, maxWidth: innerW,
                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
       >
         {callsign}
@@ -158,7 +187,7 @@ function AvatarSlot({
  * cell in the gallery, ahead of the crew AvatarSlots. No new capture is
  * started here: the existing MediaStream is mirrored into a muted <video>.
  */
-function CaptainSlot() {
+function CaptainSlot({ scale = 1 }: { scale?: number }) {
   const cameraActive = useCameraStore((s) => s.active);
   const screenActive = useScreenStore((s) => s.active);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -181,12 +210,13 @@ function CaptainSlot() {
       data-testid="captain-slot"
       style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-        width: 120, height: 160,
+        width: Math.round(120 * scale), height: Math.round(160 * scale),
       }}
     >
       <div
         style={{
-          width: 112, height: 132, position: 'relative', borderRadius: 8,
+          width: Math.round(112 * scale), height: Math.round(132 * scale),
+          position: 'relative', borderRadius: 8,
           overflow: 'hidden', background: 'rgba(255,255,255,0.04)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}
@@ -269,6 +299,34 @@ export function MeetingView({
     onFrame: (frame) => setAvatarTelemetryFrame(frame.agent_id, frame.type, frame.payload),
   });
 
+  // AD-974: persisted gallery scale + the drag-to-resize handle. The Captain
+  // drags the handle at the bottom of the gallery DOWN to enlarge the portraits
+  // (UP to shrink); the value is clamped [1,3] and saved on mouse-up so it
+  // survives reopen. The ref mirrors the latest scale so the mouse-up persist
+  // writes the final value (not the stale closure value from mousedown).
+  const [galleryScale, setGalleryScale] = useState<number>(_loadGalleryScale);
+  const galleryScaleRef = useRef(galleryScale);
+  useEffect(() => { galleryScaleRef.current = galleryScale; }, [galleryScale]);
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startScale = galleryScaleRef.current;
+    const onMove = (ev: MouseEvent) => {
+      const next = clampGalleryScale(
+        startScale + (ev.clientY - startY) / _GALLERY_SCALE_PX_PER_UNIT,
+      );
+      galleryScaleRef.current = next;
+      setGalleryScale(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      try { localStorage.setItem(_GALLERY_SCALE_KEY, String(galleryScaleRef.current)); } catch { /* Tier-2 */ }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
+
   if (!thread) return null;
 
   const crewIds = (thread.participants ?? [])
@@ -328,7 +386,7 @@ export function MeetingView({
         {/* AD-939: the Captain (meeting host) is always present and renders
             first — live camera/screen video when shared, else an amber person
             icon. The crew AvatarSlots follow (they now hydrate after AD-938). */}
-        <CaptainSlot />
+        <CaptainSlot scale={galleryScale} />
         {crewIds.length === 0 ? (
           <span style={{ color: '#666680', fontSize: 12 }}>No crew in this meeting yet.</span>
         ) : (
@@ -338,9 +396,29 @@ export function MeetingView({
               agentId={id}
               speaking={id === speakingAgentId}
               someoneSpeaking={someoneSpeaking}
+              scale={galleryScale}
             />
           ))
         )}
+      </div>
+
+      {/* AD-974: drag-to-resize handle. Drag DOWN to enlarge the video
+          portraits, UP to shrink (cursor: ns-resize). Lives BELOW the gallery
+          so the screen-pixel drag math is unaffected by the scaled content.
+          Stroke/amber grip, no emoji (HXI #3). */}
+      <div
+        data-testid="meeting-resize-handle"
+        onMouseDown={onResizeMouseDown}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize meeting video"
+        title="Drag to resize the video"
+        style={{
+          height: 12, cursor: 'ns-resize', flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        <div style={{ width: 48, height: 3, borderRadius: 2, background: 'rgba(240,176,96,0.4)' }} />
       </div>
     </div>
   );

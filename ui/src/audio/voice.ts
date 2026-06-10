@@ -166,6 +166,15 @@ async function _fetchTtsStatus(): Promise<TtsStatus | null> {
  *  config change (browser → piper or vice versa) is picked up without refresh. */
 function _invalidateTtsStatus(): void { _ttsStatus = null; }
 
+/** AD-972: prewarm the one-time TTS backend probe so the FIRST meeting
+ *  utterance is not gated on the ``/api/avatars/tts/status`` round-trip. The
+ *  probe is cached (and inflight-deduped) by ``_fetchTtsStatus``, so this is
+ *  idempotent and safe to call whenever a meeting opens. Fire-and-forget;
+ *  never throws. */
+export function prewarmTts(): void {
+  try { void _fetchTtsStatus(); } catch { /* Tier-2: prewarm is best-effort */ }
+}
+
 /** AD-738: TEST-ONLY hook to reset the module-level probe cache between tests.
  *  AD-738a (Wave 158): gated behind ``import.meta.env.MODE === 'test'``.
  *  Vitest sets MODE='test' at module load. Production builds (``vite build``)
