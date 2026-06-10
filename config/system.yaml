@@ -1836,6 +1836,15 @@ group_chat:
   # extra rounds (AD-915 convergence gate + [NO_RESPONSE] + round cap bound it).
   agent_reactivity_enabled: true
   max_agent_rounds: 2
+  # BF-614: cap NON-mentioned speakers to one per turn (AD-915 facilitator).
+  # Two linked effects: (1) the crew no longer ALL reply at once to every
+  # Captain turn - only the most-relevant agent does (an @-mentioned agent is
+  # always included); (2) it UNBLOCKS agent-to-agent reactivity - the cascade
+  # excludes a round's own speakers, so with everyone speaking in round 0 a
+  # 2-agent room had nobody left to react; capping to 1 leaves the other agent
+  # free to respond in the next round (Ezri -> Yeo -> Ezri turn-taking). The
+  # Pydantic default stays 0 (zero-config boot = AD-914 all-at-once).
+  max_speakers_per_turn: 1
 desktop:
   enabled: false
   tray_autostart: true

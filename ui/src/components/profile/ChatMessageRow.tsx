@@ -47,8 +47,19 @@ export function ChatMessageRow({ msg, hostAgentId, hostCallsign, body }: Props) 
   // AD-936: per-message author falls back to the host agent for 1:1 / legacy
   // messages that predate the authorId/callsign fields.
   const authorId = msg.authorId ?? hostAgentId;
-  const authorCallsign = msg.callsign ?? hostCallsign;
-  const dept = deptOf(agents.get(authorId));
+  const authorAgent = agents.get(authorId);
+  // BF-614: a group fan-out reply can arrive with a BLANK callsign (the
+  // backend couldn't resolve it for an added participant) - and `?? hostCallsign`
+  // does NOT catch '' (only null/undefined), so the badge fell to the empty
+  // initial '?'. Resolve from the agents map by the real authorId first; only a
+  // legacy/1:1 message with NO explicit author falls back to the host callsign
+  // (a group reply whose author we genuinely can't resolve keeps '' -> the
+  // honest '?' badge, never a wrong host attribution).
+  const authorCallsign =
+    (msg.callsign && msg.callsign.trim())
+    || authorAgent?.callsign
+    || (msg.authorId != null ? '' : hostCallsign);
+  const dept = deptOf(authorAgent);
   const time = formatChatTime(msg.timestamp);
 
   const dimColor = '#666680';
