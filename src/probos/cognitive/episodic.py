@@ -14,6 +14,7 @@ import heapq
 import json
 import logging
 import math
+import re
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -85,6 +86,122 @@ def classify_recall_confidence(
     if best_similarity >= weak_floor:
         return "weak"
     return "none"
+
+
+_FTS_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def fts_or_query(query: str, *, min_token_len: int = 2) -> str:
+    """AD-979c: turn a natural query into a FTS5 OR-of-keywords MATCH string.
+
+    The dense (cosine) axis misses a memory when it was encoded under different
+    vocabulary than the query (the vocabulary-mismatch gap). The sparse axis
+    should surface it by ANY shared keyword, so a natural query is lowercased,
+    split into alphanumeric tokens, deduped (order-preserving), and joined with
+    ``OR`` (each token quoted so FTS5 treats it as a literal term, never an
+    operator). Returns ``""`` when no usable token remains (the caller then
+    skips the sparse axis). Pure (no I/O); independently unit-tested.
+    """
+    tokens = _FTS_TOKEN_RE.findall(query.lower())
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for t in tokens:
+        if len(t) >= min_token_len and t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    if not uniq:
+        return ""
+    return " OR ".join(f'"{t}"' for t in uniq)
+
+
+def reciprocal_rank_fusion(
+    rankings: list[list[str]], *, k: int = 60
+) -> list[tuple[str, float]]:
+    """AD-979c: Reciprocal Rank Fusion of several ranked id lists.
+
+    ``score(d) = sum over rankings r of 1 / (k + rank_r(d))`` with 1-based
+    ranks. Rank-based (not score-based), so it fuses a cosine ranking and a
+    BM25/FTS ranking without any score-scale calibration. Returns
+    ``[(id, score), ...]`` sorted by score descending, ties broken by
+    first-appearance order (stable). With a SINGLE ranking the output preserves
+    that ranking's order exactly (``1/(k+1) > 1/(k+2) > ...``), so a disabled or
+    empty sparse axis leaves the dense order byte-identical. Pure (no I/O).
+    """
+    scores: dict[str, float] = {}
+    first_seen: dict[str, int] = {}
+    seq = 0
+    for ranking in rankings:
+        for rank, item in enumerate(ranking, start=1):
+            scores[item] = scores.get(item, 0.0) + 1.0 / (k + rank)
+            if item not in first_seen:
+                first_seen[item] = seq
+                seq += 1
+    return sorted(scores.items(), key=lambda kv: (-kv[1], first_seen[kv[0]]))
+
+
+def decide_recall_control(band: str) -> str:
+    """AD-979b: pure metacognitive control policy (Nelson & Narens 1990).
+
+    The monitor signal (the AD-979a Feeling-of-Knowing ``band``) drives a
+    control action:
+
+      * ``"strong"`` -> ``"accept"``  — confident recall, use it as-is.
+      * ``"weak"``   -> ``"expand"``  — the invisible miss; something relevant
+        is likely present but the query phrasing under-retrieved it, so
+        re-query with reformulated/expanded variants before settling.
+      * ``"none"``   -> ``"abstain"`` — genuine absence (or candidates too
+        distant); expansion would only manufacture noise, so abstain honestly.
+
+    Only ``weak`` triggers work, so the control loop adds zero cost on the happy
+    path (``strong``) and on genuine absence (``none``). Pure; unit-tested.
+    """
+    if band == "strong":
+        return "accept"
+    if band == "weak":
+        return "expand"
+    return "abstain"
+
+
+def recall_expansion_variants(query: str, *, max_n: int = 2) -> list[str]:
+    """AD-979b: bounded query-expansion variants for the ``expand`` control move.
+
+    Two complementary, cheap reformulations that bridge a query-side vocabulary
+    gap (AD-979c bridges the stored side), highest-value first:
+      1. a content-word "soup" — the query stripped of scaffolding/stopwords to
+         its alphanumeric content tokens, which often embeds closer to a terse
+         stored episode than a verbose question does, and
+      2. the AD-584 question->declarative reformulation (helps Q->A recall).
+    The AD-584 ``reformulate_query`` also yields a punctuation-stripped copy of
+    the original; that is near-identical to the query (low expansion value), so
+    only its genuinely-reformulated variant is used here. Order-preserving,
+    deduped, excludes the original query, capped at ``max_n``. Pure (no I/O);
+    unit-tested.
+    """
+    variants: list[str] = []
+    original_norm = query.strip().lower()
+
+    def _add(candidate: str) -> None:
+        cand = candidate.strip()
+        if cand and cand.lower() != original_norm and cand not in variants:
+            variants.append(cand)
+
+    # 1. content-word soup (lowercased, scaffolding removed) — most distinct.
+    tokens = _FTS_TOKEN_RE.findall(query.lower())
+    soup = " ".join(t for t in tokens if len(t) >= 2)
+    _add(soup)
+
+    # 2. the question->declarative reformulation, when it differs. reformulate_
+    #    query returns [stripped] or [stripped, reformulated]; the last element
+    #    is the genuine reformulation (the first is just the de-punctuated query).
+    try:
+        from probos.knowledge.embeddings import reformulate_query
+        rq = reformulate_query(query)
+        if len(rq) >= 2:
+            _add(rq[-1])
+    except Exception:
+        logger.debug("AD-979b: reformulate_query unavailable for expansion", exc_info=True)
+
+    return variants[:max_n]
 
 
 def _episode_validity_check(episode: Episode, at_time: float) -> bool:
@@ -915,6 +1032,8 @@ class EpisodicMemory:
         recall_rerank_enabled: bool = False,
         recall_rerank_weights: dict[str, float] | None = None,
         recall_confidence_weak_floor: float = 0.45,
+        hybrid_recall_enabled: bool = False,
+        hybrid_rrf_k: int = 60,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -924,6 +1043,12 @@ class EpisodicMemory:
         # miss* (relevant-ish but under the confident-recall bar); below it is
         # "none". Default 0.45 (above the AD-655 contrastive band's 0.4 floor).
         self._recall_confidence_weak_floor = float(recall_confidence_weak_floor)
+        # AD-979c: hybrid dense+sparse retrieval (off by default -> byte-identical).
+        # When enabled, recall fuses the cosine ranking with the FTS5 keyword
+        # ranking via Reciprocal Rank Fusion so a vocabulary-mismatched episode
+        # (below the cosine threshold but keyword-present) is still surfaced.
+        self._hybrid_recall_enabled = bool(hybrid_recall_enabled)
+        self._hybrid_rrf_k = max(1, int(hybrid_rrf_k))
         self._verify_on_recall = verify_content_hash
         self._eviction_audit = eviction_audit
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
@@ -2116,9 +2241,98 @@ class EpisodicMemory:
             # similarity-desc order, so neutral (all-zero) weights make the
             # composite equal to similarity and preserve semantic-only order.
             scored.sort(key=lambda t: t[1], reverse=True)
-            return [ep for ep, _ in scored[:k]], confidence
+            dense_episodes = [ep for ep, _ in scored[:k]]
+        else:
+            dense_episodes = episodes
 
-        return episodes, confidence
+        # AD-979c: optional hybrid fusion with the FTS5 sparse axis. Off by
+        # default and a no-op when the sparse axis returns nothing, so the
+        # dense order is byte-identical unless a keyword hit actually adds/raises
+        # an episode. The confidence signal above is intentionally left as the
+        # DENSE Feeling-of-Knowing (AD-979a) — hybrid changes WHICH episodes are
+        # returned, not how confident the cosine recall was.
+        if self._hybrid_recall_enabled and self._fts_db is not None:
+            dense_episodes = await self._fuse_dense_sparse(query, dense_episodes, k)
+
+        return dense_episodes, confidence
+
+    async def _fuse_dense_sparse(
+        self, query: str, dense_episodes: list[Episode], k: int
+    ) -> list[Episode]:
+        """AD-979c: fuse the dense episode ranking with the FTS5 keyword ranking.
+
+        The dense list (already threshold-filtered + ordered) is the cosine
+        ranking; ``keyword_search`` over an OR-of-keywords query is the sparse
+        ranking. :func:`reciprocal_rank_fusion` unions them so a
+        vocabulary-mismatched episode present only in the sparse ranking is
+        surfaced, while a confident dense hit not matched by keyword is retained.
+        Sparse-only ids are hydrated via ``get_by_ids``. Tier-2 honest-degrade:
+        an empty/failed sparse axis returns the dense list unchanged
+        (byte-identical to AD-979a recall).
+        """
+        try:
+            match_query = fts_or_query(query)
+            if not match_query:
+                return dense_episodes
+            sparse_hits = await self.keyword_search(match_query, k=k * 3)
+            sparse_ids = [eid for eid, _rank in sparse_hits]
+            if not sparse_ids:
+                return dense_episodes
+            dense_ids = [e.id for e in dense_episodes]
+            fused = reciprocal_rank_fusion(
+                [dense_ids, sparse_ids], k=self._hybrid_rrf_k
+            )
+            fused_ids = [eid for eid, _score in fused][:k]
+            # Reuse the dense Episodes we already have; hydrate sparse-only ids.
+            have: dict[str, Episode] = {e.id: e for e in dense_episodes}
+            missing = [eid for eid in fused_ids if eid not in have]
+            if missing:
+                for ep in await self.get_by_ids(missing):
+                    have[ep.id] = ep
+            return [have[eid] for eid in fused_ids if eid in have]
+        except Exception:
+            logger.debug(
+                "AD-979c: hybrid fusion failed; returning dense recall", exc_info=True,
+            )
+            return dense_episodes
+
+    async def recall_with_control(
+        self, query: str, k: int = 5, *, max_expansions: int = 1,
+    ) -> tuple[list[Episode], RecallConfidence, list[str]]:
+        """AD-979b: recall with a bounded metacognitive control loop.
+
+        Nelson & Narens (1990): the monitor signal drives a control action.
+        First a normal :meth:`recall_with_confidence` (the monitor). Then
+        :func:`decide_recall_control` maps the band to an action:
+
+          * ``accept`` (strong) / ``abstain`` (none) -> return immediately, NO
+            extra work — zero cost on the happy path and on genuine absence.
+          * ``expand`` (weak — the invisible miss) -> issue at most
+            ``max_expansions`` reformulated/expanded re-queries
+            (:func:`recall_expansion_variants`); adopt a variant's result only
+            when it is strictly MORE accessible (higher best similarity), and
+            stop early once a variant reaches ``strong``.
+
+        Returns ``(episodes, confidence, actions)`` where ``actions`` is the
+        audit trail (e.g. ``["expand", "requery:weak", "requery:strong"]``) so
+        the caller can report honestly (AD-592): a still-``weak``/``none`` final
+        band means "I looked, expanded, and remain uncertain" — never a
+        fabricated answer. The returned confidence is the BEST one found.
+        """
+        episodes, confidence = await self.recall_with_confidence(query, k)
+        action = decide_recall_control(confidence.band)
+        actions: list[str] = [action]
+        if action != "expand" or max_expansions <= 0:
+            return episodes, confidence, actions
+
+        for variant in recall_expansion_variants(query, max_n=max_expansions):
+            v_eps, v_conf = await self.recall_with_confidence(variant, k)
+            actions.append(f"requery:{v_conf.band}")
+            if v_conf.best_similarity > confidence.best_similarity:
+                episodes, confidence = v_eps, v_conf
+            if confidence.band == "strong":
+                break
+        return episodes, confidence, actions
 
     async def retrieve_contrastive_episodes(
         self, query: str, k: int = 2,

@@ -466,6 +466,8 @@ async def _boot_runtime(
         recall_rerank_enabled=config.memory.recall_rerank_enabled,  # AD-873
         recall_rerank_weights=config.memory.recall_rerank_weights,  # AD-873
         recall_confidence_weak_floor=config.memory.recall_confidence_weak_floor,  # AD-979a
+        hybrid_recall_enabled=config.memory.hybrid_recall_enabled,  # AD-979c
+        hybrid_rrf_k=config.memory.hybrid_rrf_k,  # AD-979c
     )
 
     runtime = ProbOSRuntime(

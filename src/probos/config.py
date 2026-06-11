@@ -1000,6 +1000,12 @@ class MemoryConfig(BaseModel):
     # similarity in [weak_floor, relevance_threshold) is the invisible miss
     # (relevant-ish but below the confident-recall bar); below it is "none".
     recall_confidence_weak_floor: float = 0.45
+    # AD-979c: hybrid dense+sparse retrieval. When enabled, recall fuses the
+    # cosine ranking with the FTS5 keyword ranking via Reciprocal Rank Fusion so
+    # a vocabulary-mismatched episode (below the cosine threshold but
+    # keyword-present) is still surfaced. Default OFF -> byte-identical recall.
+    hybrid_recall_enabled: bool = False
+    hybrid_rrf_k: int = 60
     # AD-601: TCM Temporal Context Model
     tcm_enabled: bool = True
     tcm_dimension: int = 16
