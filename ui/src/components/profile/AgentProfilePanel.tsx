@@ -416,6 +416,58 @@ export function AgentProfilePanel() {
               </svg>
             </button>
           )}
+          {/* AD-982a: ambient vision toggle (crew only). Grants/revokes the
+              agent's permanent access to the perception camera/screen stream;
+              persists across restart (data-dir override). Eye glyph = on,
+              eye-off = off. */}
+          {isCrew && (
+            <button
+              onClick={async () => {
+                const next = !profileData?.visionCapable;
+                try {
+                  await fetch(`/api/agent/${agentId}/vision-capability/set`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      enabled: next,
+                      reason: next ? 'Captain granted ambient vision' : 'Captain revoked ambient vision',
+                    }),
+                  });
+                  // Optimistic local update + authoritative re-fetch.
+                  setProfileData(p => (p ? { ...p, visionCapable: next } : p));
+                  fetch(`/api/agent/${agentId}/profile`)
+                    .then(r => r.json())
+                    .then(d => { if (d) setProfileData(d); })
+                    .catch(() => { /* keep optimistic value */ });
+                } catch { /* Tier-2: leave prior state */ }
+              }}
+              aria-label={profileData?.visionCapable ? 'Disable ambient vision' : 'Enable ambient vision'}
+              title={profileData?.visionCapable
+                ? 'Ambient vision ON — click to revoke camera/screen access'
+                : 'Ambient vision OFF — click to grant camera/screen access'}
+              data-testid="vision-toggle"
+              style={{
+                background: 'none', border: 'none',
+                color: profileData?.visionCapable ? '#f0b060' : '#8888a0',
+                cursor: 'pointer', padding: '0 4px',
+              }}
+            >
+              {profileData?.visionCapable ? (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                     stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" />
+                  <circle cx="8" cy="8" r="2" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                     stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 8s2.5-5 7-5c1 0 1.9.25 2.7.64M14.5 9.5c.3-.5.5-1 .5-1.5 0 0-2.5-5-7-5" opacity="0.6" />
+                  <path d="M6.5 6.6a2 2 0 002.9 2.8" />
+                  <path d="M2 2l12 12" />
+                </svg>
+              )}
+            </button>
+          )}
           <button
             onClick={() => useStore.getState().minimizeAgentProfile()}
             style={{

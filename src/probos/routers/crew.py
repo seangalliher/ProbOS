@@ -139,6 +139,20 @@ async def crew_roster(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
                     agent_id, exc_info=True,
                 )
 
+        # AD-982a: surface the LIVE vision-capability gate so the personnel
+        # ServiceRecord can render + toggle it. Reads the registry profile
+        # (reflects boot-applied persistent overrides), not the seed YAML.
+        callsign_registry = getattr(runtime, "callsign_registry", None)
+        if callsign_registry is not None and agent_type:
+            try:
+                _vprof = callsign_registry._type_to_profile.get(agent_type, {})
+                entry["vision_capable"] = bool(_vprof.get("vision_capable", False))
+            except Exception:
+                logger.debug(
+                    "crew_roster: vision_capable fetch failed for %s; omitting field",
+                    agent_id, exc_info=True,
+                )
+
         entries.append(entry)
 
     entries.sort(key=lambda e: (e["department"] or "~", e["agent_type"]))
@@ -296,6 +310,19 @@ async def crew_record(
         except Exception:
             logger.debug(
                 "crew_record: billet fetch failed for %s; billet block omitted",
+                agent_id, exc_info=True,
+            )
+
+    # AD-982a: surface the live vision-capability gate so the personnel
+    # ServiceRecord can render + toggle it (reflects boot-applied overrides).
+    callsign_registry = getattr(runtime, "callsign_registry", None)
+    if callsign_registry is not None and agent_type:
+        try:
+            _vprof = callsign_registry._type_to_profile.get(agent_type, {})
+            profile["vision_capable"] = bool(_vprof.get("vision_capable", False))
+        except Exception:
+            logger.debug(
+                "crew_record: vision_capable fetch failed for %s; omitting field",
                 agent_id, exc_info=True,
             )
 

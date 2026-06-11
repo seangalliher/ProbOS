@@ -616,6 +616,21 @@ class ProbOSRuntime:
                 exc_info=True,
             )
 
+        # AD-982a: persistent Captain-set vision-capability overrides. Bind the
+        # data-dir sidecar and re-apply any persisted grants/revokes onto the
+        # callsign registry (loaded from YAML at line ~412) so a Captain grant
+        # survives restart without mutating the tracked crew-profile YAML.
+        try:
+            from probos.perception import vision_overrides as _vov
+            _vov.configure(self._data_dir / "vision_overrides.json")
+            _vov.apply(self.callsign_registry)
+        except Exception:
+            logger.warning(
+                "AD-982a: vision_overrides configure/apply failed; YAML "
+                "defaults stand",
+                exc_info=True,
+            )
+
         # Red team agents are stored separately — not on the intent bus
         self.red_team_agents: list[RedTeamAgent] = []
 

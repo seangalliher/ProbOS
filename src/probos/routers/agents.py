@@ -23,6 +23,7 @@ from probos.api_models import (
     ProposeVoiceProfileResponse,
     SetAppearanceRequest,
     SetCooldownRequest,
+    SetVisionCapability,
     SetVoiceProfileRequest,
     VisionCapabilityProposalResponse,
 )
@@ -242,6 +243,18 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
         "isCrew": is_crew,
         "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if is_crew and hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else None,
     }
+
+    # AD-982a: surface the LIVE vision-capability gate (registry profile, which
+    # reflects boot-applied persistent overrides) so the profile-card toggle can
+    # render current state. Read from the live registry, not the seed YAML.
+    vision_capable = False
+    try:
+        if hasattr(runtime, "callsign_registry"):
+            _vprof = runtime.callsign_registry._type_to_profile.get(agent.agent_type, {})
+            vision_capable = bool(_vprof.get("vision_capable", False))
+    except Exception:
+        logger.debug("AD-982a: vision_capable lookup failed for %s", agent.id, exc_info=True)
+    profile_data["visionCapable"] = vision_capable
 
     # AD-497: Include workforce data
     if runtime.work_item_store:
@@ -970,6 +983,65 @@ async def vision_capability_history(
     return {
         "agent_id": agent_id,
         "entries": [asdict(e) for e in entries],
+    }
+
+
+@router.post("/{agent_id}/vision-capability/set")
+async def set_vision_capability(
+    agent_id: str,
+    req: SetVisionCapability,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-982a: Captain directly grants or revokes an agent's vision capability.
+
+    Flips the live registry AND records a persistent data-dir override (keyed by
+    agent_type, matching the gate) so the grant survives restart without
+    mutating the tracked crew-profile YAML. Distinct from the agent-initiated
+    propose/approve flow (AD-720d-2.1), which remains for agent-requested grants.
+    Audit-logged via VISION_CAPABILITY_RESOLVED.
+    """
+    from probos.events import EventType
+    from probos.perception import vision_overrides as _vov
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    agent_type = getattr(agent, "agent_type", "") or ""
+
+    # 1) live flip (in-memory registry gate).
+    ok = runtime.callsign_registry.set_vision_capable(
+        agent_id, req.enabled, reason=req.reason or "captain_set",
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent {agent_id} not found in registry",
+        )
+    # 2) persist the override (survives restart; re-applied at boot).
+    _vov.set_override(agent_type, req.enabled)
+
+    try:
+        runtime.emit_event(
+            EventType.VISION_CAPABILITY_RESOLVED,
+            {
+                "agent_id": agent_id,
+                "agent_type": agent_type,
+                "resolution": "captain_granted" if req.enabled else "captain_revoked",
+                "reason": req.reason,
+                "source": "captain_set",
+            },
+        )
+    except Exception:
+        logger.warning(
+            "AD-982a: emit_event(VISION_CAPABILITY_RESOLVED) failed for %s; "
+            "grant applied but audit lost", agent_id, exc_info=True,
+        )
+
+    return {
+        "agent_id": agent_id,
+        "agent_type": agent_type,
+        "vision_capable": req.enabled,
+        "persisted": True,
     }
 
 

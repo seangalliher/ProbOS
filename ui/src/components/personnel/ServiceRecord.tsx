@@ -83,6 +83,7 @@ interface CrewRecord {
   duty_count?: number;
   active_assignments?: Assignment[];
   billet?: Billet;
+  vision_capable?: boolean;  // AD-982a: ambient perception access gate
 }
 
 interface OrderTier {
@@ -110,6 +111,7 @@ interface RosterSummary {
   post?: string | null;
   department?: string | null;
   rank?: string | null;
+  vision_capable?: boolean;  // AD-982a
 }
 
 interface Props {
@@ -152,6 +154,9 @@ export default function ServiceRecord({ agentId, summary }: Props) {
   const [tiers, setTiers] = useState<OrderTier[]>([]);
   const [certs, setCerts] = useState<ToolCert[]>([]);
   const [loading, setLoading] = useState(false);
+  // AD-982a: local vision-capability state (synced from record/summary on load,
+  // optimistically updated on toggle). null = unknown until first load.
+  const [visionCapable, setVisionCapable] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!agentId) return;
@@ -179,6 +184,12 @@ export default function ServiceRecord({ agentId, summary }: Props) {
       // honest-degrade: the record endpoint can return roster-shaped or null
       // data; only accept an object that carries an agent_id facet.
       setRecord(rec && typeof rec === 'object' && 'agent_id' in rec ? rec : null);
+      // AD-982a: seed the vision toggle from the record (authoritative) or the
+      // roster summary fallback.
+      const vc = (rec && typeof rec === 'object' && 'vision_capable' in rec)
+        ? Boolean(rec.vision_capable)
+        : (typeof summary?.vision_capable === 'boolean' ? summary.vision_capable : null);
+      setVisionCapable(vc);
       setTiers(Array.isArray(orders?.tiers) ? orders.tiers : []);
       setCerts(Array.isArray(tools?.certifications) ? tools.certifications : []);
       setLoading(false);
@@ -227,6 +238,44 @@ export default function ServiceRecord({ agentId, summary }: Props) {
           {labelRow('Department', department || '\u2014')}
           {labelRow('Post / Billet', post || 'Unbilleted')}
           {rec.lifecycle_state && labelRow('Lifecycle', rec.lifecycle_state)}
+          {/* AD-982a: ambient vision-capability grant/revoke. Permanent
+              (persists across restart). Renders only once state is known. */}
+          {visionCapable !== null && (
+            <div style={{ display: 'flex', gap: 12, fontSize: 11, padding: '6px 0', alignItems: 'center' }}>
+              <span style={{ width: 130, flexShrink: 0, color: '#8888a0' }}>Ambient vision</span>
+              <button
+                data-testid="sr-vision-toggle"
+                onClick={async () => {
+                  const next = !visionCapable;
+                  setVisionCapable(next);  // optimistic
+                  try {
+                    const resp = await fetch(`/api/agent/${agentId}/vision-capability/set`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        enabled: next,
+                        reason: next ? 'Captain granted ambient vision' : 'Captain revoked ambient vision',
+                      }),
+                    });
+                    if (!resp.ok) setVisionCapable(!next);  // revert on failure
+                  } catch {
+                    setVisionCapable(!next);  // revert on error
+                  }
+                }}
+                style={{
+                  background: visionCapable ? 'rgba(240,176,96,0.15)' : 'rgba(255,255,255,0.05)',
+                  border: `1px solid ${visionCapable ? 'rgba(240,176,96,0.5)' : 'rgba(255,255,255,0.15)'}`,
+                  borderRadius: 4, padding: '2px 10px', cursor: 'pointer',
+                  color: visionCapable ? '#f0b060' : '#8888a0', fontSize: 11,
+                }}
+                title={visionCapable
+                  ? 'Ambient vision ON (camera/screen) — click to revoke. Persists across restart.'
+                  : 'Ambient vision OFF — click to grant camera/screen access. Persists across restart.'}
+              >
+                {visionCapable ? 'Granted' : 'Off'}
+              </button>
+            </div>
+          )}
         </div>
         {Object.keys(personality).length > 0 && (
           <div style={{ marginTop: 12 }} data-testid="sr-personality">

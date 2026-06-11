@@ -803,6 +803,21 @@ class CallsignRegistry:
         )
         return True
 
+    def set_vision_capable_by_type(self, agent_type: str, value: bool) -> bool:
+        """AD-982a: flip ``vision_capable`` directly by ``agent_type`` (no
+        agent_id resolution).
+
+        Used by the persistent-override boot apply (which knows the agent_type
+        directly) and reusable by any caller that has the type rather than a
+        live agent_id. Returns True when the type's profile exists and was set,
+        False when the agent_type is unknown. Idempotent.
+        """
+        profile = self._type_to_profile.get(agent_type)
+        if profile is None:
+            return False
+        profile["vision_capable"] = bool(value)
+        return True
+
 
 def load_seed_profile(agent_type: str, profiles_dir: str = "") -> dict[str, Any]:
     """Load seed personality and identity from crew_profiles/ YAML.

@@ -357,6 +357,7 @@ export interface AgentProfileData {
   uptime: number;
   proactiveCooldown: number | null;  // Phase 28b: per-agent proactive think cooldown (seconds), null for non-crew (BF-017)
   isCrew: boolean;  // BF-017: true for crew agents, false for utility/infrastructure
+  visionCapable?: boolean;  // AD-982a: live vision-capability gate (ambient perception access)
   voiceProfile?: {
     voice_name: string;
     pitch: number;

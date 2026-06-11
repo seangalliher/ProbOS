@@ -383,6 +383,15 @@ class ApproveVisionCapability(BaseModel):
     reason: str = Field(default="", max_length=280)
 
 
+class SetVisionCapability(BaseModel):
+    """AD-982a: Captain directly grants (``enabled=True``) or revokes
+    (``enabled=False``) an agent's vision capability. Persists across restart
+    (data-dir override). Distinct from the agent-initiated propose/approve flow.
+    """
+    enabled: bool
+    reason: str = Field(default="", max_length=280)
+
+
 class MediateAppearanceRevision(BaseModel):
     """AD-721d-2: Captain-initiated request to route a revision hint through
     a mediator (typically the Counselor).
