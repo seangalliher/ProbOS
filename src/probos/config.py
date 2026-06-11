@@ -996,6 +996,10 @@ class MemoryConfig(BaseModel):
     )
     recall_temporal_match_weight: float = 0.25       # BF-147→BF-155: bonus for temporal cue match in score_recall()
     recall_temporal_mismatch_penalty: float = 0.15   # BF-155: penalty when query watch differs from episode watch
+    # AD-979a: lower bound of the "weak" Feeling-of-Knowing band. A best recall
+    # similarity in [weak_floor, relevance_threshold) is the invisible miss
+    # (relevant-ish but below the confident-recall bar); below it is "none".
+    recall_confidence_weak_floor: float = 0.45
     # AD-601: TCM Temporal Context Model
     tcm_enabled: bool = True
     tcm_dimension: int = 16

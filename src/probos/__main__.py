@@ -465,6 +465,7 @@ async def _boot_runtime(
         hnsw_batch_size=config.memory.hnsw_batch_size,  # AD-821
         recall_rerank_enabled=config.memory.recall_rerank_enabled,  # AD-873
         recall_rerank_weights=config.memory.recall_rerank_weights,  # AD-873
+        recall_confidence_weak_floor=config.memory.recall_confidence_weak_floor,  # AD-979a
     )
 
     runtime = ProbOSRuntime(

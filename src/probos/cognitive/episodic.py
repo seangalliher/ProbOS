@@ -28,6 +28,65 @@ from probos.types import EBBINGHAUS_DEFAULT_STABILITY_SECONDS
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass(frozen=True)
+class RecallConfidence:
+    """AD-979a: a Feeling-of-Knowing signal derived from the recall query.
+
+    The cognitive-science framing (Hart 1965; Koriat's accessibility
+    hypothesis 1993): a Feeling-of-Knowing is *computed from the accessibility*
+    of partial retrieved information — not self-reported. ``recall()`` already
+    computes ``similarity = 1.0 - distance`` for every candidate and then throws
+    it away (a silent ``continue`` below ``relevance_threshold``). This carries
+    that distribution out so a "0 returned" can be distinguished from "the best
+    match was 0.65, just under the bar" (the *invisible miss*).
+
+    Fields:
+      * ``band`` — ``"strong"`` (confident recall, == what ``recall()`` returns),
+        ``"weak"`` (something relevant is present but below the confident-recall
+        bar — the invisible miss), or ``"none"`` (nothing usefully near).
+      * ``best_similarity`` — max cosine similarity over the returned candidates
+        (0.0 when none). The accessibility quantity the band is derived from.
+      * ``candidate_count`` — how many candidates the vector store returned.
+        ``0`` is *fast-absence* ("I have nothing on this"); ``> 0`` with a
+        sub-threshold ``best_similarity`` is a *slow-gap* (a possible
+        vocabulary-mismatch miss — the AD-979c hybrid-retrieval case).
+      * ``query`` — the (truncated) query text, for logging/telemetry.
+    """
+
+    band: str
+    best_similarity: float
+    candidate_count: int
+    query: str
+
+
+def classify_recall_confidence(
+    best_similarity: float,
+    candidate_count: int,
+    *,
+    relevance_threshold: float,
+    weak_floor: float,
+) -> str:
+    """AD-979a: pure band classifier for the recall-confidence signal.
+
+    Accessibility-derived (Koriat) — the band is a function of the actual
+    similarity distribution the store returned, never a self-report:
+
+      * ``candidate_count <= 0``           -> ``"none"`` (fast-absence)
+      * ``best_similarity >= relevance``   -> ``"strong"`` (confident recall)
+      * ``best_similarity >= weak_floor``  -> ``"weak"`` (the invisible miss)
+      * otherwise                          -> ``"none"`` (candidates too distant)
+
+    Pure (no I/O); independently unit-tested.
+    """
+    if candidate_count <= 0:
+        return "none"
+    if best_similarity >= relevance_threshold:
+        return "strong"
+    if best_similarity >= weak_floor:
+        return "weak"
+    return "none"
+
+
 def _episode_validity_check(episode: Episode, at_time: float) -> bool:
     """AD-579b: Check if an episode is temporally valid at a given time."""
     if episode.valid_until > 0 and episode.valid_until < at_time:
@@ -855,10 +914,16 @@ class EpisodicMemory:
         hnsw_batch_size: int = 32,
         recall_rerank_enabled: bool = False,
         recall_rerank_weights: dict[str, float] | None = None,
+        recall_confidence_weak_floor: float = 0.45,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
         self.relevance_threshold = relevance_threshold
+        # AD-979a: lower bound of the "weak" Feeling-of-Knowing band. A best
+        # similarity in [weak_floor, relevance_threshold) is the *invisible
+        # miss* (relevant-ish but under the confident-recall bar); below it is
+        # "none". Default 0.45 (above the AD-655 contrastive band's 0.4 floor).
+        self._recall_confidence_weak_floor = float(recall_confidence_weak_floor)
         self._verify_on_recall = verify_content_hash
         self._eviction_audit = eviction_audit
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
@@ -1942,16 +2007,44 @@ class EpisodicMemory:
         AD-873: when composite reranking is enabled the full candidate pool is
         scored by ``strength * similarity * recency * importance`` and the top-k
         are returned; otherwise behaviour is unchanged (semantic-only).
+
+        AD-979a: thin shim over :meth:`recall_with_confidence` (which is the
+        single source of truth for the query+filter+rerank path). Callers that
+        want the Feeling-of-Knowing signal call ``recall_with_confidence``
+        directly; ``recall`` stays a drop-in returning just the episodes.
         """
+        episodes, _confidence = await self.recall_with_confidence(query, k)
+        return episodes
+
+    async def recall_with_confidence(
+        self, query: str, k: int = 5
+    ) -> tuple[list[Episode], RecallConfidence]:
+        """AD-979a: semantic recall PLUS a Feeling-of-Knowing confidence signal.
+
+        Same query/filter/rerank path as the historical ``recall()`` (which now
+        delegates here), but it also surfaces the similarity distribution
+        ``recall()`` used to discard: the best candidate similarity and the
+        candidate count, classified into a ``strong``/``weak``/``none`` band
+        (see :class:`RecallConfidence`). The episode list returned is exactly
+        what ``recall()`` returns (byte-identical) — the only addition is the
+        signal, so the *invisible miss* (best match just under the bar) becomes
+        visible to the caller (AD-979b acts on it).
+
+        The vector store returns candidates in similarity-descending order, so
+        the best similarity is the first candidate's — no extra scan needed.
+        """
+        _none = RecallConfidence(
+            band="none", best_similarity=0.0, candidate_count=0, query=query[:200],
+        )
         if not self._collection:
-            return []
+            return [], _none
 
         if not query.strip():
-            return []
+            return [], _none
 
         count = self._collection.count()
         if count == 0:
-            return []
+            return [], _none
 
         rerank = self._recall_rerank_enabled
         # AD-873: widen the candidate pool when reranking so the composite
@@ -1964,7 +2057,27 @@ class EpisodicMemory:
         )
 
         if not result or not result["ids"] or not result["ids"][0]:
-            return []
+            return [], _none
+
+        # AD-979a: the FoK signal is derived from the raw similarity
+        # distribution (Koriat accessibility), BEFORE the relevance-threshold /
+        # security filters below. Candidates come back similarity-descending, so
+        # the first is the most accessible; candidate_count distinguishes
+        # fast-absence (0) from a slow-gap (candidates present, best < bar).
+        distances0 = result["distances"][0] if result["distances"] else []
+        candidate_count = len(result["ids"][0])
+        best_similarity = (1.0 - distances0[0]) if distances0 else 0.0
+        confidence = RecallConfidence(
+            band=classify_recall_confidence(
+                best_similarity,
+                candidate_count,
+                relevance_threshold=self.relevance_threshold,
+                weak_floor=self._recall_confidence_weak_floor,
+            ),
+            best_similarity=best_similarity,
+            candidate_count=candidate_count,
+            query=query[:200],
+        )
 
         episodes: list[Episode] = []
         scored: list[tuple[Episode, float]] = []  # AD-873: (episode, composite)
@@ -2003,9 +2116,9 @@ class EpisodicMemory:
             # similarity-desc order, so neutral (all-zero) weights make the
             # composite equal to similarity and preserve semantic-only order.
             scored.sort(key=lambda t: t[1], reverse=True)
-            return [ep for ep, _ in scored[:k]]
+            return [ep for ep, _ in scored[:k]], confidence
 
-        return episodes
+        return episodes, confidence
 
     async def retrieve_contrastive_episodes(
         self, query: str, k: int = 2,
