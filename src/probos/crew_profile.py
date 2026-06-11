@@ -923,3 +923,51 @@ def extract_directed_callsign(text: str) -> str | None:
         return m.group(1).lower()
     return None
 
+
+def extract_handoff_callsign(text: str) -> str | None:
+    r"""BF-619: the callsign an agent hands the turn to, at the START or END
+    of its message, or None.
+
+    AD-951's ``extract_directed_callsign`` only matches a LEADING address, but
+    in natural conversation a hand-off usually comes at the END of a turn:
+    "Looking at the data ... Yeo, anything on your end?" or "What do you think,
+    Yeo?". Those were missed, so the addressed peer never got pulled into the
+    cascade (the Captain saw an agent ask a question that went unanswered).
+
+    Checks, in order:
+      1. a LEADING vocative (delegates to ``extract_directed_callsign``):
+         "Yeo, ..." / "@yeo ..." / "Yeo: ...".
+      2. the FINAL sentence STARTING with a vocative: "... . Yeo, your read?".
+      3. a TRAILING comma-vocative before terminal punctuation:
+         "..., Yeo?" / "what do you think, Yeo".
+
+    The comma/colon (cases 1-2) and the preceding comma (case 3) are the
+    discriminator that keeps a referential mention ("I agree with Yeo.", "I
+    told Yeo") from being read as a hand-off — only a message TO a peer counts,
+    never one ABOUT them (the BF #467 / is_directed_mention discipline). Returns
+    the lower-cased callsign or None; resolution to an actual participant
+    happens at the call site, so a false vocative ("Well,", "So,") is harmlessly
+    ignored there.
+    """
+    if not text:
+        return None
+    # 1. leading address (the AD-951 strict form).
+    leading = extract_directed_callsign(text)
+    if leading:
+        return leading
+    # Split into sentences on terminal punctuation; inspect the LAST non-empty.
+    sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
+    if not sentences:
+        return None
+    last = sentences[-1]
+    # 2. final sentence opening with a vocative ("Yeo, ..." / "@yeo ..." / "Yeo: ...").
+    m = re.match(r'@?(\w+)\s*[,:]', last)
+    if m:
+        return m.group(1).lower()
+    # 3. trailing comma-vocative ("..., Yeo"): a callsign as the LAST token,
+    #    preceded by a comma (the comma rules out "with Yeo" / "told Yeo").
+    m = re.search(r',\s*@?(\w+)\s*$', last)
+    if m:
+        return m.group(1).lower()
+    return None
+

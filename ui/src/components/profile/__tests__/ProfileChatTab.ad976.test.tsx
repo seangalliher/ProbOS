@@ -1,111 +1,87 @@
-// AD-976: meeting-mode text follows the voice. In an audio-on meeting the
-// Captain should not see a reply's TEXT until its agent begins SPEAKING. The
-// full ProfileChatTab is too heavy to render (audio/screen deps) — same
-// rationale as ProfileChatTab.groupsend.test.tsx — so the AD-976 reveal logic
-// is exercised through a FAITHFUL MIRROR of the production branch in
-// ProfileChatTab.sendText + the speakingAgentId effect. If that production
-// logic changes, update this mirror.
+// AD-976 / BF-618: meeting-mode text reveal. The Captain reported text still
+// dumped all at once in a live meeting: the original AD-976 coupled the text
+// reveal to TTS ``speakingAgentId`` events, which burst to all-at-once when
+// speech fired fast or didn't pace. BF-618 replaces that with the SAME
+// timer-paced progressive reveal text chat uses (built-in inter-reply spacing,
+// cannot burst), with voice kicked off concurrently. The full ProfileChatTab is
+// too heavy to render (audio/screen deps) — same rationale as
+// ProfileChatTab.groupsend.test.tsx — so the BF-618 ordering + reveal contract
+// is exercised through a FAITHFUL MIRROR of the production send-handler branch.
 import { describe, it, expect } from 'vitest';
 
-type Reply = { agent_id?: unknown; callsign?: string; text?: string };
+type Reply = { agent_id?: string; callsign?: string; text?: string };
 
-// --- Mirror 1: the reveal-mode decision (ProfileChatTab.sendText group branch).
-// audio-on meeting -> speech-synced staging; text chat OR muted meeting ->
-// the AD-960 progressive reveal.
-function decideRevealMode(meetingActive: boolean, callAudioEnabled: boolean): 'speech-synced' | 'progressive' {
-  return meetingActive && callAudioEnabled ? 'speech-synced' : 'progressive';
+// --- Mirror of the BF-618 send-handler reveal sequence. Voice is dispatched
+// FIRST (non-blocking) so it runs concurrently with the awaited progressive
+// reveal; there is NO meeting/audio special-case that dumps text instantly.
+async function runRevealSequence(
+  replies: Reply[],
+  hooks: {
+    speakMeetingReplies: (r: Reply[]) => void;
+    revealRepliesProgressively: (
+      r: Reply[],
+      deps: { appendReply: (x: Reply) => void; sleep: (ms: number) => Promise<void> },
+    ) => Promise<void>;
+    appendReply: (x: Reply) => void;
+  },
+): Promise<void> {
+  // BF-618: voice first (concurrent), then the awaited progressive reveal.
+  hooks.speakMeetingReplies(replies);
+  await hooks.revealRepliesProgressively(replies, {
+    appendReply: hooks.appendReply,
+    sleep: () => Promise.resolve(),
+  });
 }
 
-// --- Mirror 2: staging (pendingMeetingRepliesRef). Keyed by agent_id; entries
-// with a non-string/empty agent_id are dropped.
-function stageReplies(replies: Reply[]): Map<string, Reply> {
-  return new Map(
-    replies
-      .filter((r) => typeof r?.agent_id === 'string' && r.agent_id)
-      .map((r) => [r.agent_id as string, r]),
-  );
-}
-
-// --- Mirror 3: the speakingAgentId effect. Reveal each agent's staged reply
-// exactly once, when (and only when) that agent starts speaking.
-function makeSpeakReveal(staged: Map<string, Reply>) {
-  const revealed = new Set<string>();
-  const appended: Reply[] = [];
-  function onSpeaking(agentId: string | null): void {
-    if (!agentId) return;
-    const reply = staged.get(agentId);
-    if (!reply) return;
-    if (revealed.has(agentId)) return;
-    revealed.add(agentId);
-    appended.push(reply);
-  }
-  return { onSpeaking, appended };
-}
-
-describe('AD-976 meeting-mode reveal mode decision', () => {
-  it('audio-on meeting -> speech-synced reveal', () => {
-    expect(decideRevealMode(true, true)).toBe('speech-synced');
-  });
-  it('muted meeting -> progressive reveal (fallback)', () => {
-    expect(decideRevealMode(true, false)).toBe('progressive');
-  });
-  it('text chat (not a meeting) -> progressive reveal', () => {
-    expect(decideRevealMode(false, true)).toBe('progressive');
-    expect(decideRevealMode(false, false)).toBe('progressive');
-  });
-});
-
-describe('AD-976 staging', () => {
-  it('keys staged replies by agent_id', () => {
-    const staged = stageReplies([
-      { agent_id: 'a1', text: 'one' },
-      { agent_id: 'a2', text: 'two' },
-    ]);
-    expect(staged.size).toBe(2);
-    expect(staged.get('a1')?.text).toBe('one');
-  });
-  it('drops replies with a missing/blank agent_id', () => {
-    const staged = stageReplies([
-      { agent_id: '', text: 'blank' },
-      { agent_id: 42 as unknown, text: 'num' },
-      { agent_id: 'a1', text: 'ok' },
-    ]);
-    expect(staged.size).toBe(1);
-    expect(staged.get('a1')?.text).toBe('ok');
-  });
-});
-
-describe('AD-976 speech-synced reveal', () => {
-  it('reveals each reply only as its agent starts speaking, in speaking order', () => {
-    const staged = stageReplies([
-      { agent_id: 'a1', text: 'first' },
-      { agent_id: 'a2', text: 'second' },
-    ]);
-    const { onSpeaking, appended } = makeSpeakReveal(staged);
-    // Nothing revealed before anyone speaks (the bug: text dumped up front).
-    expect(appended).toEqual([]);
-    // a2 speaks first (facilitator order) -> a2's text appears first.
-    onSpeaking('a2');
-    expect(appended.map((r) => r.text)).toEqual(['second']);
-    onSpeaking(null); // gap between utterances reveals nothing
-    expect(appended.map((r) => r.text)).toEqual(['second']);
-    onSpeaking('a1');
-    expect(appended.map((r) => r.text)).toEqual(['second', 'first']);
+describe('BF-618 meeting text reveal ordering', () => {
+  it('dispatches voice BEFORE awaiting the progressive reveal (concurrent)', async () => {
+    const order: string[] = [];
+    await runRevealSequence(
+      [{ agent_id: 'a1', text: 'one' }, { agent_id: 'a2', text: 'two' }],
+      {
+        speakMeetingReplies: () => order.push('voice'),
+        revealRepliesProgressively: async (r, deps) => {
+          order.push('reveal-start');
+          for (const x of r) deps.appendReply(x);
+        },
+        appendReply: () => order.push('append'),
+      },
+    );
+    // Voice is kicked off first, then the reveal runs.
+    expect(order[0]).toBe('voice');
+    expect(order[1]).toBe('reveal-start');
   });
 
-  it('reveals each agent exactly once even if speakingAgentId repeats', () => {
-    const staged = stageReplies([{ agent_id: 'a1', text: 'hi' }]);
-    const { onSpeaking, appended } = makeSpeakReveal(staged);
-    onSpeaking('a1');
-    onSpeaking(null);
-    onSpeaking('a1'); // re-entry must not double-append
-    expect(appended).toHaveLength(1);
+  it('reveals every reply through the progressive path (no instant dump)', async () => {
+    const appended: Reply[] = [];
+    let usedProgressive = false;
+    await runRevealSequence(
+      [{ agent_id: 'a1', text: 'one' }, { agent_id: 'a2', text: 'two' }, { agent_id: 'a3', text: 'three' }],
+      {
+        speakMeetingReplies: () => { /* noop */ },
+        revealRepliesProgressively: async (r, deps) => {
+          usedProgressive = true;
+          for (const x of r) deps.appendReply(x);
+        },
+        appendReply: (x) => appended.push(x),
+      },
+    );
+    expect(usedProgressive).toBe(true);
+    expect(appended.map((r) => r.text)).toEqual(['one', 'two', 'three']);
   });
 
-  it('a speaking agent with no staged reply reveals nothing', () => {
-    const staged = stageReplies([{ agent_id: 'a1', text: 'hi' }]);
-    const { onSpeaking, appended } = makeSpeakReveal(staged);
-    onSpeaking('ghost');
-    expect(appended).toEqual([]);
+  it('does not depend on meeting/audio state (always progressive)', async () => {
+    // The reveal sequence is identical regardless of meetingActive/callAudio —
+    // there is no longer a branch that dumps text when audio is on. We assert
+    // the single code path runs for any inputs.
+    for (const replies of [[], [{ agent_id: 'a1', text: 'x' }]]) {
+      let revealed = false;
+      await runRevealSequence(replies, {
+        speakMeetingReplies: () => { /* noop */ },
+        revealRepliesProgressively: async () => { revealed = true; },
+        appendReply: () => { /* noop */ },
+      });
+      expect(revealed).toBe(true);
+    }
   });
 });

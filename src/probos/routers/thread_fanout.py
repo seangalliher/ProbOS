@@ -33,6 +33,7 @@ from probos.avatars.divergence_detector import strip_intent_self_tag
 from probos.crew_profile import (
     extract_all_leading_callsign_mentions,
     extract_directed_callsign,
+    extract_handoff_callsign,
 )
 from probos.crew_utils import is_crew_agent
 from probos.types import IntentMessage
@@ -344,6 +345,25 @@ def _render_agent_scene_block(runtime: Any, agent_id: str) -> str:
                 )
         from probos.perception.consumer import get_or_create_working_memory
         _wm = get_or_create_working_memory(agent_id)
+        # BF-617: a shared-camera meeting has ONE feed, but only registered
+        # ambient observers (vision_capable crew, e.g. the counselor) get frames
+        # fanned into their ring. A present participant who is NOT an observer
+        # (e.g. the yeoman) would otherwise render the BF-294 "camera not active"
+        # sentinel and say it can't see the Captain — even though the feed is
+        # live. When this agent's own ring is empty, share the consumer's latest
+        # observation into it so everyone in the room sees the same camera. This
+        # is meeting-scoped (only on this render path) and does NOT enroll the
+        # agent in ambient perception (no register_observer), so there is no
+        # added ambient cost or proactive-emit behavior change.
+        if not _wm.entries():
+            _consumer = getattr(runtime, "vision_consumer", None)
+            _shared = (
+                _consumer.latest_shared_observation()
+                if _consumer is not None and hasattr(_consumer, "latest_shared_observation")
+                else None
+            )
+            if _shared is not None:
+                _wm.append(_shared)
         return _wm.render_for_prompt() or ""
     except Exception:
         logger.debug("AD-978: scene render failed for %s", agent_id, exc_info=True)
@@ -823,17 +843,22 @@ async def group_chat_fanout(
             spoke_ids = {r["agent_id"] for r in last if r.get("agent_id")}
             if not spoke_ids:
                 break  # nothing new to react to
-            # AD-951: turn-allocation rule 1a — when a prior-round speaker
-            # DIRECTLY ADDRESSES a peer by callsign ("@yeo ..." or "Yeo, ..."),
-            # select that peer to speak next (hard-included past the per-turn cap
-            # + convergence, still bounded by the round budget). Scan each reply's
-            # CLEAN text (AD-948 already stripped the <intent> tag); a speaker
-            # never selects itself. Honest-degrade: a non-participant callsign
-            # matches no candidate downstream. Gated (ships OFF; yaml flips on).
+            # AD-951 + BF-619: turn-allocation rule 1a — when a prior-round
+            # speaker ADDRESSES a peer by callsign, select that peer to speak
+            # next (hard-included past the per-turn cap + convergence, still
+            # bounded by the round budget). BF-619: use extract_handoff_callsign
+            # so an END-of-turn hand-off ("... Yeo, your read?" / "what do you
+            # think, Yeo?") is detected, not just a LEADING address — natural
+            # conversation hands off at the end of a turn, and the leading-only
+            # AD-951 matcher missed it (an agent's question went unanswered).
+            # Scan each reply's CLEAN text (AD-948 already stripped the <intent>
+            # tag); a speaker never selects itself. Honest-degrade: a
+            # non-participant callsign matches no candidate downstream. Gated
+            # (ships OFF; yaml flips on).
             addressed: set[str] = set()
             if next_speaker_sel:
                 for r in last:
-                    cs = extract_directed_callsign(r.get("text") or "")
+                    cs = extract_handoff_callsign(r.get("text") or "")
                     if cs and cs != (r.get("callsign") or "").lower():
                         addressed.add(cs)
             # AD-961: budget gate. Within the normal cap, always continue (AD-935

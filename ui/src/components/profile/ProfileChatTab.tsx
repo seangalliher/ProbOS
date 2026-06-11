@@ -532,27 +532,6 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // thread it belongs to.
   const typingAgent = useStore((s) => s.typingAgent);
 
-  // AD-976: in a LIVE (audio-on) meeting, a reply's TEXT should land only as
-  // that agent STARTS speaking — the Captain "shouldn't see the text until the
-  // words are said". The send handler stages the round's replies here (keyed by
-  // agent_id) instead of dumping them; the effect below reveals each as the
-  // useMeetingVoice ``speakingAgentId`` seam lights up. ``appendMeetingReplyRef``
-  // bridges the handler-scope appendReply closure to this render-scope effect
-  // (the file's stale-closure ref discipline). Muted meetings + text chat use
-  // the AD-960 progressive reveal instead (this stays empty there).
-  const callAudioEnabled = useStore((s) => s.callAudioEnabled);
-  const pendingMeetingRepliesRef = useRef<Map<string, StaggerReply>>(new Map());
-  const revealedSpeakingRef = useRef<Set<string>>(new Set());
-  const appendMeetingReplyRef = useRef<((r: StaggerReply) => void) | null>(null);
-  useEffect(() => {
-    if (!speakingAgentId) return;
-    const reply = pendingMeetingRepliesRef.current.get(speakingAgentId);
-    if (!reply) return;
-    if (revealedSpeakingRef.current.has(speakingAgentId)) return;
-    revealedSpeakingRef.current.add(speakingAgentId);
-    appendMeetingReplyRef.current?.(reply);
-  }, [speakingAgentId]);
-
   // Auto-scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -772,40 +751,32 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
               });
             }
           };
-          // AD-952: human response dynamics. In a LIVE MEETING the AD-921 voice
-          // sequencer + AD-923 speaking indicator already pace the crew one at a
-          // time, so render the text instantly there. In TEXT chat, reveal the
+          // AD-952 + AD-976 (BF-618): human response dynamics. Reveal the
           // replies one at a time behind a "{callsign} is typing" beat — the
           // synchronous all-at-once dump is the clearest group-chat bot tell.
-          // AD-976: bridge the handler-scope appendReply to the speaking-seam
-          // effect so the audio-on meeting path can reveal text per spoken turn.
-          appendMeetingReplyRef.current = appendReply;
-          if (meetingActive && useStore.getState().callAudioEnabled) {
-            // AD-976: audio-on meeting — DON'T dump the text. Stage the round's
-            // replies; the speakingAgentId effect reveals each one as its agent
-            // begins to speak (text follows the voice, no reading ahead).
-            pendingMeetingRepliesRef.current = new Map(
-              (replies as StaggerReply[])
-                .filter((r) => typeof r?.agent_id === 'string' && r.agent_id)
-                .map((r) => [r.agent_id as string, r]),
-            );
-            revealedSpeakingRef.current = new Set();
-          } else {
-            // Text chat OR a muted meeting (no voice to pace the reveal) — fall
-            // back to the AD-960 progressive reveal behind a typing beat.
-            await revealRepliesProgressively(replies as StaggerReply[], {
-              setTyping: (tt) => useStore.getState().setTypingAgent(
-                tt ? { threadId: activeThreadId ?? null, agentId: tt.agentId, callsign: tt.callsign } : null,
-              ),
-              appendReply,
-              sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
-            });
-          }
-          // AD-921: when the meeting is live, ALSO speak the replies in
-          // facilitator order (one at a time, per-agent voice). The text
-          // render above is unchanged; voice is additive and self-gates on
-          // meeting_active + voiceEnabled, so non-meeting sends stay silent.
+          // BF-618: meetings use this SAME progressive (timer-paced) reveal as
+          // text chat. The earlier AD-976 attempt coupled the text reveal to the
+          // TTS ``speakingAgentId`` events; when speech fired fast or didn't
+          // pace (cold Piper / muted / autoplay-blocked), the reveals burst to
+          // all-at-once — exactly the Captain-reported regression. Timer-paced
+          // progressive reveal has built-in inter-reply spacing and CANNOT
+          // burst, so the text is always paced whether or not voice is audible.
+          // Voice (below) is kicked off FIRST so it runs concurrently with the
+          // text instead of after it; both pace one-at-a-time, roughly aligned.
+          // Exact word-level karaoke sync remains forward marker AD-976a (needs
+          // Piper streaming timing metadata).
+          // AD-921: when the meeting is live, speak the replies in facilitator
+          // order (one at a time, per-agent voice). Non-blocking + self-gates on
+          // meeting_active + call audio, so non-meeting sends stay silent. Kicked
+          // off before the awaited reveal so voice + text run together.
           speakMeetingReplies(replies as PerAgentReply[]);
+          await revealRepliesProgressively(replies as StaggerReply[], {
+            setTyping: (tt) => useStore.getState().setTypingAgent(
+              tt ? { threadId: activeThreadId ?? null, agentId: tt.agentId, callsign: tt.callsign } : null,
+            ),
+            appendReply,
+            sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+          });
         } catch {
           // AD-962: clear the thinking/typing indicator on the error path so it
           // never sticks after a failed send.

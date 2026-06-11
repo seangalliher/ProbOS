@@ -161,11 +161,29 @@ class VisionConsumer:
         # ``reset_working_memories_for_tests``.
         self._latest_frame_by_session: dict[str, tuple[str, float]] = {}
         self._latest_frame_global: tuple[str, float] | None = None
+        # BF-617: the most-recent VisionObservation produced by ``_process``,
+        # regardless of which observers it fanned out to. A shared-camera
+        # meeting has ONE feed; a present crew member who is not a registered
+        # ambient observer (vision_capable=False, e.g. the yeoman) still needs
+        # to see it. ``_render_agent_scene_block`` falls back to this shared
+        # observation when an agent's own ring is empty, so everyone in the room
+        # sees the one camera without enrolling them in ambient perception.
+        self._last_observation: Any = None
 
     @property
     def observer_agent_ids(self) -> set[str]:
         """Public view for tests + diagnostics; copy on read."""
         return set(self._observer_agent_ids)
+
+    def latest_shared_observation(self) -> Any:
+        """BF-617: the most-recent VisionObservation produced, or None.
+
+        The shared-camera view for a meeting: any present participant whose own
+        working-memory ring is empty (not a registered ambient observer) renders
+        this so they see the same feed everyone else does. Read-only; ``None``
+        until the first frame is described in this session.
+        """
+        return self._last_observation
 
     def register_observer(self, agent_id: str) -> None:
         self._observer_agent_ids.add(agent_id)
@@ -444,6 +462,10 @@ class VisionConsumer:
             subject_identity=subject_identity,
             session_id=session_id,
         )
+        # BF-617: record the latest observation for the shared-meeting fallback
+        # (see ``latest_shared_observation``). Set before fan-out so a frame is
+        # shareable even when the fan-out target set is empty.
+        self._last_observation = obs
         # AD-742c: when the uploader bound the frame to specific agents,
         # restrict fan-out to that set (intersected with registered
         # observers). When the params key is absent, fall back to legacy
