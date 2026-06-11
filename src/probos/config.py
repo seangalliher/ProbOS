@@ -3824,6 +3824,17 @@ class GroupChatConfig(BaseModel):
     # cascade exists. Transitional flag (#14) — ships OFF (zero-config boot keeps
     # the AD-918 quiet-create behavior); system.yaml flips it on.
     agent_initiated_kickoff_enabled: bool = False
+    # AD-963a: broadcast turn-mode terminator. The AD-935 cascade stops at
+    # ``max_agent_rounds`` or the convergence gate — right for a DISCUSSION
+    # ("hash this out"), but wrong for a BROADCAST ("what do you ALL think?")
+    # where the Captain wants EACH relevant crew member to answer ONCE, not
+    # "until convergence" and not capped at two rounds. When enabled, a Captain
+    # turn classified as a broadcast (a plural ask to the whole room) round-robins
+    # every crew participant exactly once (relevance-ordered, each seeing prior
+    # answers), naturally bounded by the participant count. A non-broadcast turn
+    # (the default classification) is byte-identical to AD-935/961. Transitional
+    # flag (#14) — ships OFF; system.yaml flips it on.
+    broadcast_terminator_enabled: bool = False
 
 
 class WardRoomConfig(BaseModel):

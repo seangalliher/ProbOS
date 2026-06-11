@@ -1867,6 +1867,14 @@ group_chat:
   # zero-config boot keeps the AD-918 quiet-create behavior); this enables it
   # for the live system so an agent-started room actually starts talking.
   agent_initiated_kickoff_enabled: true
+  # AD-963a: broadcast turn-mode terminator. A Captain turn that is a plural ask
+  # to the whole room ("what do you all think?", "everyone, weigh in") lets EACH
+  # crew participant answer once (round-robin, relevance-ordered, each seeing
+  # prior answers) instead of stopping at max_agent_rounds — so a broadcast is
+  # answered completely. A non-broadcast turn (the default classification) is
+  # byte-identical to the AD-935/961 discussion cascade. Pydantic default False;
+  # enabled here for the live system.
+  broadcast_terminator_enabled: true
 desktop:
   enabled: false
   tray_autostart: true

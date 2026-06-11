@@ -1929,9 +1929,10 @@ class CognitiveAgent(BaseAgent):
         )
 
     def _conversational_group_chat_protocol(self, observation: dict) -> str:
-        """AD-935 / AD-967: in a group chat, teach (1) WHO is present in the room
-        — the AD-967 roster — and (2) that responding is OPTIONAL (reply only with
-        something substantive to add, else decline).
+        """AD-935 / AD-967 / AD-975: in a group chat, teach (1) WHO is present in
+        the room — the AD-967 roster — (2) that responding is OPTIONAL (reply only
+        with something substantive to add, else decline), and (3) HOW the room's
+        turn-taking actually works (AD-975).
 
         The roster is the fix for the Captain-reported bug where agents kept
         addressing a peer who was never invited (e.g. asking "Sentinel" a
@@ -1939,6 +1940,17 @@ class CognitiveAgent(BaseAgent):
         prose had been added. Knowing who is actually present, an agent addresses
         only present members and asks the Captain to add anyone else instead of
         talking to an absent peer.
+
+        AD-975 (turn-taking self-knowledge): in a live test the crew reasoned
+        ACCURATELY about reading the floor but assumed possible SIMULTANEITY
+        ("two of us could respond before either sees the other's reply"). In
+        reality the fan-out is sequential + synchronous: one speaker per turn,
+        and each later speaker receives every prior reply in full before its own
+        turn — so two crew never answer the same point at once. Teaching the real
+        mechanism makes the agent's self-model correct: it can build on what was
+        already said without fear of a collision, and it should not wait for a
+        live "typing" cue from a peer (there is none — a turn simply arrives when
+        the peer has finished).
 
         Gated on the group fan-out param ``is_group_chat`` so 1:1 DMs are
         unaffected. The roster rides the fan-out param ``room_roster`` (present
@@ -1973,6 +1985,16 @@ class CognitiveAgent(BaseAgent):
             "something substantive to add, build on, answer, or correct. If a "
             "fellow crew member directs a question to you, answer it. When you have "
             "nothing to add, respond with exactly [NO_RESPONSE] and nothing else."
+            "\n\nHow turn-taking works here: the crew speak one at a time, in "
+            "sequence. You receive each colleague's COMPLETED reply before it is "
+            "your turn — never at the same instant — so you can read what has "
+            "already been said and build on it rather than repeating it. Because "
+            "the floor is handed to one speaker at a time, two of you will never "
+            "answer the same point at once, so respond with confidence that you "
+            "have the full picture of the turns before yours. There is no live "
+            "\"typing\" cue from a colleague; their turn simply arrives when they "
+            "have finished. When you want a specific colleague to take the next "
+            "turn, address them by name and they will be invited to respond."
         )
 
     def _conversational_proactivity_protocol(self, observation: dict) -> str:

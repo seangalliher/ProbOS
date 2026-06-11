@@ -54,6 +54,30 @@ _CONVERGENCE_WINDOW = 12
 _NO_RESPONSE_RE = re.compile(r"\[NO_RESPONSE\]", re.IGNORECASE)
 
 
+# AD-963a: broadcast-cue detector for turn-mode classification. A BROADCAST is a
+# plural ask aimed at the whole room ("what do you all think?", "everyone, weigh
+# in") — distinct from a DISCUSSION (the default) and from a DIRECTED address (a
+# leading callsign, already handled by AD-951's next-speaker selection).
+# Conservative by design: only clear plural-address cues match, so anything
+# ambiguous stays DISCUSSION (today's behavior).
+_BROADCAST_CUE_RE = re.compile(
+    r"\b(?:you all|y'all|everyone|everybody|each of you|all of you|both of you|"
+    r"whole (?:room|team|crew))\b",
+    re.IGNORECASE,
+)
+
+
+def classify_broadcast(text: str) -> bool:
+    """AD-963a: True when the Captain turn is a BROADCAST (a plural ask to the
+    whole room). In broadcast mode the cascade terminator becomes
+    "every crew participant answers once" instead of the discussion cap +
+    convergence gate. Conservative + pure: ambiguous text is DISCUSSION (False),
+    so the default cascade stays byte-identical."""
+    if not text or not isinstance(text, str):
+        return False
+    return bool(_BROADCAST_CUE_RE.search(text))
+
+
 def crew_agent_participants(runtime: Any, participants: list[str]) -> list[str]:
     """Participant agent_ids that resolve to crew agents (Captain/non-crew excluded)."""
     out: list[str] = []
@@ -673,6 +697,22 @@ async def group_chat_fanout(
             for _aid, _cs in _resolve_callsigns(runtime, agent_ids).items():
                 if _cs:
                     _callsign_to_agent[_cs.lower()] = _aid
+        # AD-963a: broadcast turn-mode. A plural ask to the whole room ("what do
+        # you all think?") round-robins every crew participant ONCE instead of the
+        # discussion cap + convergence terminator. Gated (ships OFF; yaml flips
+        # on); a non-broadcast turn (the default classification) is byte-identical
+        # to AD-935/961.
+        broadcast_mode = (
+            getattr(cfg, "broadcast_terminator_enabled", False)
+            and classify_broadcast(captain_body)
+        )
+        # AD-963a: cumulative set of EVERY agent who has spoken. Broadcast mode
+        # excludes them ALL each round so each speaks exactly once; discussion
+        # mode excludes only the last round's speakers (preserving the AD-935
+        # back-and-forth). Seeded with round 0's speakers.
+        broadcast_spoke: set[str] = (
+            {r["agent_id"] for r in round0 if r.get("agent_id")} if broadcast_mode else set()
+        )
         last = round0
         rounds_done = 0
         addr_ext_used = 0
@@ -698,7 +738,14 @@ async def group_chat_fanout(
             # REAL participant who hasn't just spoken (a peer who can take the
             # turn) — never a false vocative opener — and only while extension
             # budget remains. Each such round consumes one extension.
-            if rounds_done >= max_rounds:
+            # AD-963a: broadcast mode round-robins every crew participant once,
+            # bounded by the participant count (naturally finite) — it bypasses
+            # the discussion cap + the AD-961 address-extension budget. Discussion
+            # mode is unchanged.
+            if broadcast_mode:
+                if len(broadcast_spoke) >= len(agent_ids):
+                    break  # every crew participant has spoken once
+            elif rounds_done >= max_rounds:
                 _answerable = any(
                     _callsign_to_agent.get(cs) is not None
                     and _callsign_to_agent.get(cs) not in spoke_ids
@@ -710,10 +757,13 @@ async def group_chat_fanout(
             trigger = "\n".join(
                 f"{r['callsign'] or r['agent_id']}: {r['text']}" for r in last
             )
+            # AD-963a: exclude EVERY prior speaker in broadcast (round-robin, once
+            # each); discussion excludes only the last round's speakers.
+            _exclude = broadcast_spoke if broadcast_mode else spoke_ids
             try:
                 nxt = await _fan_one_round(
                     runtime, store, thread_id,
-                    trigger_body=trigger, candidate_ids=agent_ids, exclude_ids=spoke_ids,
+                    trigger_body=trigger, candidate_ids=agent_ids, exclude_ids=_exclude,
                     vision_messages=None, sanity_gate=sanity_gate, t_start=t_start,
                     addressed_callsigns=addressed or None,
                     room_roster=room_roster,
@@ -728,5 +778,7 @@ async def group_chat_fanout(
                 break  # facilitator converged / suppressed everyone / all declined
             all_replies.extend(nxt)
             last = nxt
+            if broadcast_mode:
+                broadcast_spoke |= {r["agent_id"] for r in nxt if r.get("agent_id")}
             rounds_done += 1
     return all_replies
