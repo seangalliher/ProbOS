@@ -8420,6 +8420,157 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("Failed to store action episode", exc_info=True)
 
+    async def interpret_recall(
+        self,
+        episodes: list[Any],
+        *,
+        focus: str = "",
+        store: bool = True,
+    ) -> str | None:
+        """AD-980a: produce an honesty-bounded interpretation of recalled memories.
+
+        The meaning-making rung above retrieval (AD-979 made recall *honest*;
+        this makes it *meaningful*): an instructions-first LLM pass over the
+        agent's OWN recalled ``episodes`` returns a short first-person reading of
+        what they mean to it, optionally stored as an agent-owned reflection
+        episode so the interpretation itself becomes recallable. Reuses the
+        AD-721d ``propose_appearance`` reflection shape.
+
+        Honesty bound (AD-592): the prompt instructs the agent to ground every
+        statement in the memories shown and to say plainly when they do not
+        support a conclusion; the stored episode is labeled ``[interpretation]``
+        and tagged ``MemorySource.REFLECTION`` so it is never mistaken for a
+        first-hand record. Honest by construction: with no episodes there is
+        nothing to interpret, so it returns ``None`` (never invents).
+
+        Opt-in: returns ``None`` unless ``communications.recall_interpretation_
+        enabled`` is set (an extra LLM pass, so OFF by default). Tier-2: any LLM
+        failure returns ``None`` (the caller proceeds without an interpretation).
+        """
+        runtime = self._runtime
+        comm_cfg = getattr(getattr(runtime, "config", None), "communications", None)
+        if not getattr(comm_cfg, "recall_interpretation_enabled", False):
+            return None
+        if self._llm_client is None:
+            return None
+        if not episodes:
+            # Nothing genuinely recalled -> nothing to interpret. Honest no-op.
+            return None
+
+        # Build the recalled-material block from real episode content only.
+        lines: list[str] = []
+        for i, ep in enumerate(episodes, start=1):
+            text = (getattr(ep, "user_input", "") or "").strip()
+            refl = (getattr(ep, "reflection", "") or "").strip()
+            snippet = text if text else refl
+            if not snippet:
+                continue
+            lines.append(f"{i}. {snippet[:300]}")
+        if not lines:
+            return None
+        recalled_block = "\n".join(lines)
+
+        callsign = ""
+        if runtime is not None and hasattr(runtime, "callsign_registry"):
+            try:
+                callsign = runtime.callsign_registry.get_callsign(self.agent_type) or ""
+            except Exception:
+                callsign = ""
+        who = callsign or self.agent_type
+
+        system_prompt = (
+            "You are reflecting on your OWN recalled memories to understand what "
+            "they mean to you. Write a brief first-person interpretation (2-4 "
+            "sentences): the pattern or significance you see, and why. Ground "
+            "every statement in the memories shown. If the memories do not "
+            "support a conclusion, say so plainly and stop. Reference only what "
+            "is actually present in them; never add events that are not there. "
+            "Output prose only."
+        )
+        focus_line = f"\nFocus your reflection on: {focus.strip()}" if focus.strip() else ""
+        user_message = (
+            f"You are {who}. These are memories you recalled:\n\n"
+            f"{recalled_block}{focus_line}\n\n"
+            "What do you make of these? Interpret them honestly."
+        )
+
+        try:
+            request = LLMRequest(
+                prompt=user_message,
+                system_prompt=system_prompt,
+                tier=self._resolve_tier() if hasattr(self, "_resolve_tier") else "standard",
+                max_tokens=512,
+            )
+            response = await self._llm_client.complete(request, priority=Priority.NORMAL)
+        except Exception:
+            logger.warning(
+                "AD-980a: recall interpretation LLM call failed for %s; "
+                "no interpretation produced", self.id[:12], exc_info=True,
+            )
+            return None
+
+        interpretation = (getattr(response, "content", "") or "").strip()
+        if not interpretation:
+            return None
+
+        if store:
+            await self._store_interpretation_episode(interpretation, len(lines))
+        return interpretation
+
+    async def _store_interpretation_episode(
+        self, interpretation: str, source_count: int
+    ) -> None:
+        """AD-980a: persist a recall interpretation as an agent-owned episode.
+
+        Stored with ``MemorySource.REFLECTION`` and a ``[interpretation]``-prefixed
+        reflection so it is recallable later yet never mistaken for a first-hand
+        memory (AD-592). Tier-2 honest-degrade: a store failure is logged and
+        swallowed (the interpretation was still returned to the caller).
+        """
+        runtime = self._runtime
+        if runtime is None or not getattr(runtime, "episodic_memory", None):
+            return
+        try:
+            import time as _time
+            from probos.types import AnchorFrame, Episode, MemorySource
+
+            sovereign = getattr(self, "sovereign_id", None) or self.id
+            episode = Episode(
+                user_input=(
+                    f"[interpretation] reflection on {source_count} recalled "
+                    f"{'memory' if source_count == 1 else 'memories'}"
+                ),
+                timestamp=_time.time(),
+                agent_ids=[sovereign],
+                outcomes=[{
+                    "kind": "recall_interpretation",  # AD-980a distinct tag
+                    "success": True,
+                    # The interpretation IS the agent's output — carry it as the
+                    # outcome response so the AD selective-encoding gate
+                    # (should_store) sees real content and retains the episode.
+                    "response": interpretation[:500],
+                    "agent_type": self.agent_type,
+                }],
+                dag_summary={},
+                reflection=f"[interpretation] {interpretation[:400]}",
+                # AD-980a: importance above the default so a self-interpretation
+                # is retained and resurfaces (it is meaning the agent derived,
+                # not raw event capture). Below the high-stakes correction band.
+                importance=6,
+                source=MemorySource.REFLECTION,
+                anchors=AnchorFrame(
+                    channel="reflection",
+                    trigger_type="recall_interpretation",
+                ),
+            )
+            from probos.cognitive.episodic import EpisodicMemory
+            if EpisodicMemory.should_store(episode):
+                await runtime.episodic_memory.store(episode)
+        except Exception:
+            logger.debug(
+                "AD-980a: failed to store interpretation episode", exc_info=True,
+            )
+
     def _resolve_tier(self) -> str:
         """Determine which LLM tier to use.  Default: 'standard'.
         Override in subclasses for tier-specific routing."""

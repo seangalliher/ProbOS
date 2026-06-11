@@ -4720,6 +4720,13 @@ class CommunicationsConfig(BaseModel):
     # Captain can observe self-selection emerge; the off-switch if the room ever
     # reads as over-deferential.
     room_awareness_enabled: bool = True
+    # AD-980a: reflective recall interpretation. When enabled, an agent can run
+    # an instructions-first LLM pass over its recalled memories to produce an
+    # honesty-bounded *interpretation* ("what I make of this"), stored as an
+    # agent-owned reflection episode. This is an EXTRA LLM pass (a real cost),
+    # so unlike the pure-prompt-text knobs above it ships OFF — the Captain
+    # enables it to exercise the meaning-making rung (AD-980).
+    recall_interpretation_enabled: bool = False
 
 
 class WorkforceConfig(BaseModel):
