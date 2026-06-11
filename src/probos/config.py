@@ -1133,6 +1133,13 @@ class DreamingConfig(BaseModel):
     reflection_enabled: bool = True
     reflection_max_per_cycle: int = 3        # Cap reflections per dream cycle to prevent flooding
     reflection_min_importance: int = 8       # Importance score for reflection episodes (1-10 scale)
+    # AD-980b: per-agent dream attribution. Dream-consolidation reflections are
+    # stored ownerless (agent_ids=[]), so no agent can recall "its" dream. When
+    # enabled, a reflection whose source cluster/convergence has involved agents
+    # is stored with agent_ids=<those agents> — giving a dream a dreamer (the
+    # prerequisite for AD-980c dream interpretation). Default OFF -> byte-
+    # identical (reflections stay ownerless) until the Captain enables the loop.
+    per_agent_dream_attribution_enabled: bool = False
     # AD-593: Aggressive pruning tier — targets old, low-activation episodes
     aggressive_prune_enabled: bool = True
     aggressive_prune_min_age_hours: int = 168  # 7 days

@@ -2922,7 +2922,18 @@ class DreamingEngine:
                 },
                 outcomes=[],
                 reflection=content_text,
-                agent_ids=[],
+                # AD-980b: give the dream a dreamer. When per-agent attribution
+                # is enabled, the reflection is owned by the agents whose
+                # episodes it was consolidated from (recall_for_agent filters on
+                # agent_ids), so each can recall "its" dream — the prerequisite
+                # for AD-980c interpretation. A reflection with no involved
+                # agents (e.g. an emergence/notebook snapshot) stays ownerless.
+                # Default-off -> agent_ids=[] (byte-identical to AD-599).
+                agent_ids=(
+                    list(involved_agents)
+                    if getattr(self.config, "per_agent_dream_attribution_enabled", False)
+                    else []
+                ),
                 duration_ms=0.0,
                 source=MemorySource.REFLECTION,
                 anchors=anchors,
