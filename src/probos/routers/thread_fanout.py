@@ -662,6 +662,18 @@ async def _fan_one_round(
                     }],
                     agent_ids=[reply["agent_id"]],
                     duration_ms=(t_end - t_start) * 1000,
+                    # AD-977: index the agent's OWN reply so it can recall what
+                    # it said in the room. The embedded document (_prepare_document)
+                    # and the FTS5 sidecar index user_input + reflection, but NOT
+                    # outcomes[].response — so without this the group episode was
+                    # findable only by the Captain's trigger text, never by the
+                    # agent's contribution (the group-vs-1:1 recall gap). Mirrors
+                    # the 1:1 _store_action_episode reflection ("<callsign> handled
+                    # <intent>: <response>"). Truncated to bound the embedding.
+                    reflection=(
+                        f"{reply['callsign'] or reply['agent_id']} said in group chat: "
+                        f"{reply['text'][:240]}"
+                    ),
                     source="group_chat_fanout",  # AD-933a distinct tag
                     anchors=AnchorFrame(
                         channel="chat",

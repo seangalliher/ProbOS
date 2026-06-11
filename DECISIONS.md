@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-977: Group-thread episodic continuity — index the agent's own reply so it can recall group conversations (Natural Conversation epic, #900)
+
+**Context.** Both crew agents flagged (honestly, no confabulation) that recall of GROUP conversations was patchy. Investigation: AD-933a writes a group episode per reply, but the embedded document (`EpisodicMemory._prepare_document`) and the FTS5 sidecar index `user_input` + `reflection` — NOT `outcomes[].response`. The AD-933a group episode set `user_input = "[group chat] <trigger>"` (the Captain's prompt) and **no `reflection`**, so the agent's OWN reply lived only in `outcomes[]` and was never embedded or FTS-indexed. Net: a group episode was findable by the Captain's trigger text but never by the agent's contribution — the group-vs-1:1 gap. (The 1:1 `_store_action_episode` already indexes the response via `reflection="<callsign> handled <intent>: <response>"`.)
+
+**Decision.** Mirror the 1:1 pattern: the AD-933a group episode now sets `reflection="<callsign> said in group chat: <reply[:240]>"`. Because `_prepare_document` and the FTS5 dual-write both index `reflection`, the agent's own room contribution becomes recallable by its own words (dense AND — with AD-979c — keyword). Additive: `user_input` (the trigger) and `outcomes[].response` (the full reply, untruncated to 500) are unchanged, so existing AD-933a anchoring/labeling is byte-identical apart from the added reflection. Tier-2 honest-degrade on the store call is unchanged.
+
+**Gates.** `test_ad977_group_recall.py` (3: reflection carries the agent's reply + names the speaker; reflection is distinct indexable content from the trigger; `outcomes[].response` preserved) + the AD-933a suite (7) green together. Composes with AD-979a/b/c (a group episode that still recalls weakly now also benefits from the hybrid keyword axis and the confidence signal).
+
 ### AD-979c + AD-979b: Hybrid dense+sparse retrieval (RRF) + metacognitive control loop (Oracle recall epic, #905, #904)
 
 **Context.** Two follow-ons to AD-979a, both on the recall path. **AD-979c** targets the *vocabulary-mismatch gap*: recall was purely cosine over embeddings, so a memory encoded under different words than the query scored below `relevance_threshold` and was dropped even when relevant. **AD-979b** targets what to *do* about a weak recall: a human, on a Feeling-of-Knowing, keeps searching differently (Nelson & Narens 1990 — the monitor signal drives a control action), where recall previously had no recourse but to report uncertainty.
