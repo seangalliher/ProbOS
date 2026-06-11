@@ -276,6 +276,80 @@ def _resolve_callsigns(runtime: Any, agent_ids: list[str]) -> dict[str, str]:
     return out
 
 
+async def _maybe_force_describe_frame(runtime: Any) -> None:
+    """AD-978: describe the latest captured frame ONCE for a group round.
+
+    The 1:1 DM path (routers/agents.py AD-733c-1) force-describes on every DM so
+    the agent sees a fresh frame. A group round shares ONE camera frame across
+    all speakers, and ``force_describe_current_frame`` writes the same
+    observation to EVERY observer's working memory — so describing once here,
+    before the parallel fan-out, freshens every agent's ring without N parallel
+    describes of the same frame. Gated on ``perception.enabled`` +
+    ``dm_force_describe_enabled`` (mirrors the 1:1 gate). Tier-2 honest-degrade:
+    any failure logs at debug and the round proceeds with whatever the ambient
+    describe last left in the rings.
+    """
+    try:
+        _cfg = getattr(getattr(runtime, "config", None), "perception", None)
+        if _cfg is None or not getattr(_cfg, "enabled", False):
+            return
+        _consumer = getattr(runtime, "vision_consumer", None)
+        if _consumer is not None and getattr(_cfg, "dm_force_describe_enabled", True):
+            try:
+                await _consumer.force_describe_current_frame(timeout_s=4.0)
+            except Exception:
+                logger.debug("AD-978: force_describe raised; round proceeds", exc_info=True)
+    except Exception:
+        logger.debug("AD-978: force-describe gate failed", exc_info=True)
+
+
+def _render_agent_scene_block(runtime: Any, agent_id: str) -> str:
+    """AD-978: render ``agent_id``'s current visual context for prompt injection
+    in the group fan-out, mirroring the 1:1 path (routers/agents.py AD-733a).
+
+    Each agent owns a ``VisionWorkingMemory`` ring keyed by agent_id; the BF-294
+    confabulation guard means ``render_for_prompt`` returns a non-empty "no
+    visual data" sentinel when the ring is empty, so the agent is explicitly
+    told not to invent a scene. Also notes per-agent DM activity (AD-733c-5) so
+    the AMBIENT->ENGAGED transition tracks the room tempo for THIS agent without
+    transitioning the whole mesh. Returns "" only when perception is disabled or
+    rendering fails (Tier-2) — i.e. the block is injected whenever
+    ``perception.enabled`` (which defaults False -> byte-identical when off),
+    exactly like the 1:1 path.
+    """
+    try:
+        _cfg = getattr(getattr(runtime, "config", None), "perception", None)
+        if _cfg is None or not getattr(_cfg, "enabled", False):
+            return ""
+        # Per-agent engagement note (mirrors routers/agents.py AD-733c-5: a DM
+        # to one agent must not transition the whole mesh).
+        _mode_ctrl = getattr(runtime, "perception_mode_controller", None)
+        _engagement = getattr(runtime, "perception_engagement_registry", None)
+        if _engagement is not None:
+            try:
+                _per = _engagement.get(agent_id)
+                if _per is not None:
+                    _mode_ctrl = _per
+            except Exception:
+                logger.debug(
+                    "AD-978: per-agent engagement lookup failed for %s",
+                    agent_id, exc_info=True,
+                )
+        if _mode_ctrl is not None:
+            try:
+                _mode_ctrl.note_dm_activity()
+            except Exception:
+                logger.debug(
+                    "AD-978: note_dm_activity raised for %s", agent_id, exc_info=True,
+                )
+        from probos.perception.consumer import get_or_create_working_memory
+        _wm = get_or_create_working_memory(agent_id)
+        return _wm.render_for_prompt() or ""
+    except Exception:
+        logger.debug("AD-978: scene render failed for %s", agent_id, exc_info=True)
+        return ""
+
+
 async def _fan_one_round(
     runtime: Any,
     store: Any,
@@ -391,6 +465,19 @@ async def _fan_one_round(
             # cognitive_agent hook gates the teaching string on this param).
             "is_group_chat": True,
         }
+        # AD-978: prepend THIS agent's visual context (camera/screen) so the
+        # crew can SEE in a group chat. The 1:1 path injects it (AD-733a) but the
+        # group fan-out never did — that was the bug (camera feed invisible to
+        # crew in group chat). Per-agent ring keyed by agent_id; the shared frame
+        # was force-described ONCE for this round above. Empty ring -> BF-294 "no
+        # visual data" sentinel (the agent is told NOT to confabulate), so this
+        # is gated only on perception.enabled exactly like the 1:1 path. Override
+        # params["text"] (what the LLM receives); trigger_body stays clean for
+        # the episode/pipeline so the stored episode records the Captain's actual
+        # message, not the ephemeral scene.
+        _scene_block = _render_agent_scene_block(runtime, agent_id)
+        if _scene_block:
+            params["text"] = f"{_scene_block}\n\n{trigger_body}"
         # AD-967: present-participant roster so the dispatched agent knows WHO is
         # in the room (the cognitive_agent group hook renders it). Fixes agents
         # addressing a peer who was never invited (the Sentinel/Vance bug). Rides
@@ -520,6 +607,10 @@ async def _fan_one_round(
             )
         return {"agent_id": agent_id, "callsign": callsign, "text": reply_text}
 
+    # AD-978: freshen every observer agent's visual working memory ONCE before
+    # the parallel dispatch (shared camera frame -> one describe, not one per
+    # agent). No-op + cheap when perception is disabled (the default).
+    await _maybe_force_describe_frame(runtime)
     raw = await asyncio.gather(*[_send_one(a) for a in speaking_order])
     # AD-935: drop [NO_RESPONSE]/empty declines BEFORE the episode write and
     # the returned per_agent_replies list. (_send_one already early-returns a
