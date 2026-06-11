@@ -532,6 +532,27 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // thread it belongs to.
   const typingAgent = useStore((s) => s.typingAgent);
 
+  // AD-976: in a LIVE (audio-on) meeting, a reply's TEXT should land only as
+  // that agent STARTS speaking — the Captain "shouldn't see the text until the
+  // words are said". The send handler stages the round's replies here (keyed by
+  // agent_id) instead of dumping them; the effect below reveals each as the
+  // useMeetingVoice ``speakingAgentId`` seam lights up. ``appendMeetingReplyRef``
+  // bridges the handler-scope appendReply closure to this render-scope effect
+  // (the file's stale-closure ref discipline). Muted meetings + text chat use
+  // the AD-960 progressive reveal instead (this stays empty there).
+  const callAudioEnabled = useStore((s) => s.callAudioEnabled);
+  const pendingMeetingRepliesRef = useRef<Map<string, StaggerReply>>(new Map());
+  const revealedSpeakingRef = useRef<Set<string>>(new Set());
+  const appendMeetingReplyRef = useRef<((r: StaggerReply) => void) | null>(null);
+  useEffect(() => {
+    if (!speakingAgentId) return;
+    const reply = pendingMeetingRepliesRef.current.get(speakingAgentId);
+    if (!reply) return;
+    if (revealedSpeakingRef.current.has(speakingAgentId)) return;
+    revealedSpeakingRef.current.add(speakingAgentId);
+    appendMeetingReplyRef.current?.(reply);
+  }, [speakingAgentId]);
+
   // Auto-scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -756,9 +777,22 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           // time, so render the text instantly there. In TEXT chat, reveal the
           // replies one at a time behind a "{callsign} is typing" beat — the
           // synchronous all-at-once dump is the clearest group-chat bot tell.
-          if (meetingActive) {
-            for (const r of replies) appendReply(r as StaggerReply);
+          // AD-976: bridge the handler-scope appendReply to the speaking-seam
+          // effect so the audio-on meeting path can reveal text per spoken turn.
+          appendMeetingReplyRef.current = appendReply;
+          if (meetingActive && useStore.getState().callAudioEnabled) {
+            // AD-976: audio-on meeting — DON'T dump the text. Stage the round's
+            // replies; the speakingAgentId effect reveals each one as its agent
+            // begins to speak (text follows the voice, no reading ahead).
+            pendingMeetingRepliesRef.current = new Map(
+              (replies as StaggerReply[])
+                .filter((r) => typeof r?.agent_id === 'string' && r.agent_id)
+                .map((r) => [r.agent_id as string, r]),
+            );
+            revealedSpeakingRef.current = new Set();
           } else {
+            // Text chat OR a muted meeting (no voice to pace the reveal) — fall
+            // back to the AD-960 progressive reveal behind a typing beat.
             await revealRepliesProgressively(replies as StaggerReply[], {
               setTyping: (tt) => useStore.getState().setTypingAgent(
                 tt ? { threadId: activeThreadId ?? null, agentId: tt.agentId, callsign: tt.callsign } : null,

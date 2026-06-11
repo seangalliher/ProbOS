@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-976: Meeting-mode text follows the voice — reveal each reply as its agent speaks (Natural Conversation epic, #899)
+
+**Context.** In a live (audio-on) meeting the AD-921 voice sequencer speaks the crew's replies one at a time, but the text path dumped ALL replies into the transcript instantly (`for (const r of replies) appendReply(r)`). The Captain read the whole room's answers before the voices had said them — "shouldn't see the text until you've said the words."
+
+**Decision (frontend only).** Reveal a reply's text as its agent STARTS speaking, off the existing `useMeetingVoice` `speakingAgentId` seam (AD-923) — leaving the working voice hook untouched (lowest risk). `ProfileChatTab` now: (1) reads `callAudioEnabled` reactively; (2) in the send handler, branches `meetingActive && callAudioEnabled` → STAGE the round's replies in `pendingMeetingRepliesRef` (a `Map<agent_id, reply>`) and clear `revealedSpeakingRef`, instead of dumping them; (3) an effect on `speakingAgentId` reveals each staged reply exactly once as its agent begins to speak (a `revealedSpeakingRef` set guards against re-entry). The handler-scope `appendReply` closure is bridged to the render-scope effect via `appendMeetingReplyRef` (the file's stale-closure ref discipline). A MUTED meeting (no voice to pace the reveal) and TEXT chat both fall back to the existing AD-960 progressive reveal, so text never silently fails to appear. `speakMeetingReplies` is unchanged — it drives `speakingAgentId`, which now drives the reveal.
+
+**Gates.** `ProfileChatTab.ad976.test.tsx` (8, the faithful-mirror convention used for this heavy component: the reveal-mode decision — audio-on→speech-synced, muted/text→progressive; staging keyed by agent_id dropping blank ids; speech-synced reveal in speaking order, exactly-once on re-entry, no-op for an unstaged speaker). Full UI suite **1434 passed / 1 skipped** (+8), `npm run build` clean. No backend change. Forward marker AD-976a: sentence-level karaoke sync (needs Piper streaming timing metadata).
+
 ### AD-980c: Dream interpretation — an agent interprets its own dream (Agent self-interpretation epic, #912)
 
 **Context.** The novel loop Ezri's question pointed at: sleep -> dream -> wake -> interpret -> revise-self. AD-980b gives a dream a dreamer (per-agent reflection episodes); AD-980a is the interpretation engine. AD-980c closes the loop: an agent interprets ITS OWN dream and stores the interpretation as an agent-owned episode that feeds its self-model. No published agent system has a sovereign agent interpret its own distinct consolidation artifact as a dream.
