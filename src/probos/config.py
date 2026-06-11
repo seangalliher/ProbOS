@@ -4734,6 +4734,13 @@ class CommunicationsConfig(BaseModel):
     # so unlike the pure-prompt-text knobs above it ships OFF — the Captain
     # enables it to exercise the meaning-making rung (AD-980).
     recall_interpretation_enabled: bool = False
+    # AD-980c: dream interpretation loop. When enabled, an agent can interpret
+    # ITS OWN dream — the per-agent dream reflections attributed by AD-980b —
+    # and store the interpretation as an agent-owned episode that feeds its
+    # self-model (the sleep->dream->wake->interpret loop). Requires AD-980b
+    # attribution to have given the dream a dreamer. Extra LLM pass per agent
+    # per dream, so ships OFF; the Captain enables the loop for the test.
+    dream_interpretation_enabled: bool = False
 
 
 class WorkforceConfig(BaseModel):

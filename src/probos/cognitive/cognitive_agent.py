@@ -8456,6 +8456,74 @@ class CognitiveAgent(BaseAgent):
         if not episodes:
             # Nothing genuinely recalled -> nothing to interpret. Honest no-op.
             return None
+        return await self._run_interpretation(episodes, focus=focus, store=store)
+
+    async def interpret_own_dream(self, *, k: int = 5) -> str | None:
+        """AD-980c: an agent interprets ITS OWN dream (the meaning-making loop).
+
+        The novel sleep->dream->wake->interpret loop. AD-980b gives a dream a
+        dreamer (per-agent reflection episodes); this gathers THIS agent's most
+        recent dream reflections and runs the AD-980a interpretation engine over
+        them, storing the result as an agent-owned episode that feeds the
+        self-model. Honesty-bounded by construction (AD-592): the dream
+        reflections are real consolidated material, and with none there is
+        nothing to interpret (returns ``None``).
+
+        Opt-in: returns ``None`` unless ``communications.dream_interpretation_
+        enabled`` (an extra LLM pass per agent per dream). Tier-2: any failure
+        returns ``None``.
+        """
+        runtime = self._runtime
+        comm_cfg = getattr(getattr(runtime, "config", None), "communications", None)
+        if not getattr(comm_cfg, "dream_interpretation_enabled", False):
+            return None
+        if self._llm_client is None:
+            return None
+        em = getattr(runtime, "episodic_memory", None) if runtime else None
+        if em is None or not hasattr(em, "recent_for_agent"):
+            return None
+
+        sovereign = getattr(self, "sovereign_id", None) or self.id
+        try:
+            # Pull a recency window of this agent's own episodes, then keep the
+            # dream reflections (AD-980b attributed them; AD-599 tags them
+            # MemorySource.REFLECTION). Scan wider than k so non-dream episodes
+            # in the window don't crowd the dreams out.
+            recent = await em.recent_for_agent(sovereign, k=max(k * 4, 20))
+        except Exception:
+            logger.debug(
+                "AD-980c: recent_for_agent failed for %s; no dream to interpret",
+                self.id[:12], exc_info=True,
+            )
+            return None
+
+        from probos.types import MemorySource
+        dreams = [
+            e for e in recent
+            if getattr(e, "source", None) in (MemorySource.REFLECTION, "reflection")
+        ][:k]
+        if not dreams:
+            return None
+        return await self._run_interpretation(
+            dreams,
+            focus="what these dream reflections reveal about how you work and what matters to you",
+            store=True,
+        )
+
+    async def _run_interpretation(
+        self, episodes: list[Any], *, focus: str = "", store: bool = True,
+    ) -> str | None:
+        """AD-980a/c: shared interpretation engine (no config gate \u2014 the public
+        entrypoints ``interpret_recall`` / ``interpret_own_dream`` own the gating).
+
+        Builds an instructions-first reflection prompt from real episode content,
+        runs one LLM pass, and (optionally) stores an agent-owned reflection
+        episode. Honesty-bound (AD-592): grounds the agent in the episodes shown
+        and instructs it to say plainly when they do not support a conclusion.
+        """
+        if self._llm_client is None:
+            return None
+        runtime = self._runtime
 
         # Build the recalled-material block from real episode content only.
         lines: list[str] = []
@@ -8504,7 +8572,7 @@ class CognitiveAgent(BaseAgent):
             response = await self._llm_client.complete(request, priority=Priority.NORMAL)
         except Exception:
             logger.warning(
-                "AD-980a: recall interpretation LLM call failed for %s; "
+                "AD-980a: interpretation LLM call failed for %s; "
                 "no interpretation produced", self.id[:12], exc_info=True,
             )
             return None
