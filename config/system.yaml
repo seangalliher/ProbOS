@@ -114,6 +114,7 @@ memory:
   fts_keyword_semantic_floor: 0.2
   embedding_model: multi-qa-MiniLM-L6-cos-v1
   query_reformulation_enabled: true
+  hybrid_recall_enabled: true        # AD-979c: fuse cosine + FTS5 keyword recall (RRF)
   similarity_threshold: 0.6
   verify_content_hash: true
   eviction_audit_enabled: true
@@ -224,6 +225,7 @@ dreaming:
   reflection_enabled: true
   reflection_max_per_cycle: 3
   reflection_min_importance: 8
+  per_agent_dream_attribution_enabled: true   # AD-980b: give a dream a dreamer (prereq for AD-980c)
   aggressive_prune_enabled: true
   aggressive_prune_min_age_hours: 168
   aggressive_prune_threshold: 0.0
@@ -1337,6 +1339,8 @@ edge_backfill:
 communications:
   dm_min_rank: ensign
   recreation_min_rank: ensign
+  recall_interpretation_enabled: true   # AD-980a: agents can interpret recalled memories
+  dream_interpretation_enabled: true    # AD-980c: agents can interpret their own dream
 workforce:
   enabled: true
   tick_interval_seconds: 10.0
