@@ -392,6 +392,21 @@ class SetVisionCapability(BaseModel):
     reason: str = Field(default="", max_length=280)
 
 
+class SetCapability(BaseModel):
+    """AD-983b: Captain enables (``enabled=True``) or disables (``enabled=False``)
+    a tool or cognitive skill on a specific agent — the unified per-agent
+    capability toggle behind ``POST /api/agent/{id}/capabilities/set``.
+
+    ``kind`` selects the capability family. ``id`` is the tool_id (for tools) or
+    the skill name (for skills). ``enabled=True`` issues a grant;
+    ``enabled=False`` issues a restriction (which overrides a role/dept default).
+    """
+    kind: str = Field(pattern="^(tool|skill)$")
+    id: str = Field(min_length=1, max_length=200)
+    enabled: bool
+    reason: str = Field(default="", max_length=280)
+
+
 class MediateAppearanceRevision(BaseModel):
     """AD-721d-2: Captain-initiated request to route a revision hint through
     a mediator (typically the Counselor).

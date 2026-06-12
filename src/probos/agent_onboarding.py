@@ -162,7 +162,9 @@ class AgentOnboardingService:
                     _rank_str = Rank.from_trust(_trust).value
                 except Exception:
                     pass
-                for entry in self._cognitive_skill_catalog.list_entries(department=_dept, min_rank=_rank_str):
+                for entry in self._cognitive_skill_catalog.effective_entries_for_agent(
+                    agent.id, department=_dept, min_rank=_rank_str,
+                ):
                     for intent_name in entry.intents:
                         if intent_name not in intent_names:
                             intent_names.append(intent_name)

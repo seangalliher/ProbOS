@@ -37,6 +37,10 @@ def _make_catalog_mock(
     catalog = MagicMock()
     catalog.get_descriptions.return_value = descriptions or []
     catalog.list_entries.return_value = entries or []
+    # AD-983b: onboarding now resolves an agent's skills through the per-agent
+    # overlay; mirror list_entries so the dept/rank-default behavior is what the
+    # mock returns (no per-agent grant store in this unit).
+    catalog.effective_entries_for_agent.return_value = entries or []
     catalog.get_instructions.side_effect = lambda name: (instructions or {}).get(name)
     catalog.find_by_intent.side_effect = lambda i: (intent_map or {}).get(i, [])
     return catalog

@@ -361,6 +361,16 @@ async def init_communication(
     await cognitive_catalog.start()
     logger.info("cognitive-skill-catalog started")
 
+    # --- Skill Grant Store (AD-983b) — per-agent cognitive-skill grants ---
+    from probos.cognitive.skill_grants import SkillGrantStore
+
+    skill_grant_store = SkillGrantStore(
+        db_path=str(data_dir / "skill_grants.db"),
+    )
+    await skill_grant_store.start()
+    cognitive_catalog.set_grant_store(skill_grant_store)
+    logger.info("skill-grant-store started")
+
     # --- Agent Capital Management (AD-427) ---
     from probos.acm import AgentCapitalService
 
@@ -501,4 +511,5 @@ async def init_communication(
         tool_registry=tool_registry,
         tool_permission_store=tool_permission_store,
         cognitive_skill_catalog=cognitive_catalog,
+        skill_grant_store=skill_grant_store,
     )

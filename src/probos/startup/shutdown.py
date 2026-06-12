@@ -668,6 +668,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.tool_permission_store.stop()
         runtime.tool_permission_store = None
 
+    # AD-983b: Skill grant store (per-agent cognitive-skill grants)
+    if getattr(runtime, 'skill_grant_store', None):
+        await runtime.skill_grant_store.stop()
+        runtime.skill_grant_store = None
+
     # Stop Counselor Profile Store (AD-503)
     if runtime._counselor_profile_store:
         await runtime._counselor_profile_store.stop()

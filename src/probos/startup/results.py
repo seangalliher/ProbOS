@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from probos.service_profile import ServiceProfileStore
     from probos.sif import StructuralIntegrityField
     from probos.cognitive.skill_catalog import CognitiveSkillCatalog
+    from probos.cognitive.skill_grants import SkillGrantStore
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.substrate.scaler import PoolScaler
     from probos.tools.permissions import ToolPermissionStore
@@ -167,6 +168,7 @@ class CommunicationResult:
     tool_registry: "ToolRegistry | None"
     tool_permission_store: "ToolPermissionStore | None"
     cognitive_skill_catalog: "CognitiveSkillCatalog | None"
+    skill_grant_store: "SkillGrantStore | None" = None  # AD-983b
 
 
 @dataclass

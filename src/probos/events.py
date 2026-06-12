@@ -114,6 +114,9 @@ class EventType(str, Enum):
     CAPABILITY_REQUEST_FILED = "capability_request_filed"
     CAPABILITY_REQUEST_DECIDED = "capability_request_decided"
     CAPABILITY_REQUEST_FULFILLED = "capability_request_fulfilled"
+    # Per-agent capability enablement (AD-983b) — Captain grant/revoke of a
+    # tool or cognitive skill on a specific agent.
+    CAPABILITY_ACCESS_RESOLVED = "capability_access_resolved"
 
     # Scheduled tasks
     SCHEDULED_TASK_CREATED = "scheduled_task_created"

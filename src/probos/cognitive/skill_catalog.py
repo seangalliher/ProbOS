@@ -245,6 +245,17 @@ class CognitiveSkillCatalog:
             from probos.storage.sqlite_factory import default_factory
 
             self._connection_factory = default_factory
+        # AD-983b: optional per-agent skill-grant overlay (SkillGrantStore).
+        # Injected at startup via set_grant_store (mirrors
+        # tool_registry.set_permission_store). When present,
+        # effective_entries_for_agent layers per-agent grants/restrictions on
+        # top of the department/rank defaults; when absent, behavior is the
+        # dept/rank defaults exactly as before (back-compat).
+        self._grant_store: Any = None
+
+    def set_grant_store(self, store: Any) -> None:
+        """AD-983b: install the per-agent SkillGrantStore overlay (LoD setter)."""
+        self._grant_store = store
 
     async def start(self) -> None:
         """Initialize SQLite table and scan skills directory."""
@@ -349,6 +360,53 @@ class CognitiveSkillCatalog:
             ]
 
         return entries
+
+    def effective_entries_for_agent(
+        self,
+        agent_id: str,
+        *,
+        department: str | None = None,
+        min_rank: str | None = None,
+    ) -> list[CognitiveSkillEntry]:
+        """AD-983b: the skills an agent EFFECTIVELY holds — the per-agent overlay.
+
+        = the department/rank defaults (``list_entries``) PLUS any skill
+        explicitly granted to *this* agent (even if outside its dept/rank) MINUS
+        any skill explicitly restricted for this agent. This is what makes
+        per-agent independence real: a skill granted to agent A is in A's
+        effective set and NOT in a same-department peer B's.
+
+        When no grant store is wired (``set_grant_store`` was never called), this
+        is byte-identical to ``list_entries(department, min_rank)`` — back-compat.
+        Tier-2: a grant-store read failure degrades to the defaults.
+        """
+        entries = self.list_entries(department=department, min_rank=min_rank)
+        store = self._grant_store
+        if store is None:
+            return entries
+        try:
+            grants = store.get_active_grants_sync(agent_id)
+        except Exception:
+            logger.debug(
+                "AD-983b: skill grant read failed for %s; using dept/rank defaults",
+                agent_id, exc_info=True,
+            )
+            return entries
+
+        by_name: dict[str, CognitiveSkillEntry] = {e.name: e for e in entries}
+        granted = {g.skill_name for g in grants if not g.is_restriction}
+        restricted = {g.skill_name for g in grants if g.is_restriction}
+
+        # Add explicitly granted skills not already present (look up the entry).
+        for name in granted:
+            if name not in by_name:
+                entry = self._cache.get(name)
+                if entry is not None:
+                    by_name[name] = entry
+        # Remove explicitly restricted skills (a restriction wins over a default).
+        for name in restricted:
+            by_name.pop(name, None)
+        return list(by_name.values())
 
     def get_descriptions(
         self,

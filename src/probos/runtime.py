@@ -173,6 +173,7 @@ if TYPE_CHECKING:
     from probos.proactive import ProactiveCognitiveLoop
     from probos.duty_schedule import DutySchedule
     from probos.cognitive.skill_catalog import CognitiveSkillCatalog
+    from probos.cognitive.skill_grants import SkillGrantStore
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.mesh.nats_bus import NATSBus
     from probos.mcp_apps.registry import MCPAppRegistry
@@ -270,6 +271,7 @@ class ProbOSRuntime:
     skill_registry: SkillRegistry | None
     skill_service: AgentSkillService | None
     cognitive_skill_catalog: CognitiveSkillCatalog | None
+    skill_grant_store: SkillGrantStore | None
     acm: AgentCapitalService | None
     ontology: VesselOntologyService | None
     identity_registry: AgentIdentityRegistry | None
@@ -794,6 +796,8 @@ class ProbOSRuntime:
 
         # --- Cognitive Skill Catalog (AD-596a) ---
         self.cognitive_skill_catalog: CognitiveSkillCatalog | None = None
+        # --- Skill Grant Store (AD-983b) — per-agent cognitive-skill grants ---
+        self.skill_grant_store: SkillGrantStore | None = None
 
         # --- Recreation Service (AD-526a) ---
         self.recreation_service: Any = None
@@ -2243,6 +2247,7 @@ class ProbOSRuntime:
                 len(self._qual_skill_bridge.get_mappings()),
             )
         self.cognitive_skill_catalog = comm.cognitive_skill_catalog
+        self.skill_grant_store = comm.skill_grant_store
         self.acm = comm.acm
         self.ontology = comm.ontology
 

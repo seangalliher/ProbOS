@@ -22,6 +22,7 @@ from probos.api_models import (
     ProposeVoiceProfileRequest,
     ProposeVoiceProfileResponse,
     SetAppearanceRequest,
+    SetCapability,
     SetCooldownRequest,
     SetVisionCapability,
     SetVoiceProfileRequest,
@@ -1042,6 +1043,183 @@ async def set_vision_capability(
         "agent_type": agent_type,
         "vision_capable": req.enabled,
         "persisted": True,
+    }
+
+
+# ── AD-983b: per-agent capability enablement (tools + cognitive skills) ──────
+def _rank_dept_for_agent(runtime: Any, agent: Any) -> tuple[str | None, str | None]:
+    """Resolve (department, rank) for an agent the way onboarding does, for the
+    dept/rank skill defaults. Tier-2: returns (None, None) on any failure."""
+    dept: str | None = None
+    rank: str | None = None
+    try:
+        ontology = getattr(runtime, "ontology", None)
+        if ontology is not None:
+            dept = ontology.get_agent_department(agent.agent_type)
+    except Exception:
+        logger.debug("AD-983b: department resolve failed for %s", agent.id, exc_info=True)
+    try:
+        trust_net = getattr(runtime, "trust_network", None)
+        if trust_net is not None:
+            from probos.crew_profile import Rank
+            rank = Rank.from_trust(trust_net.get_score(agent.id)).value
+    except Exception:
+        logger.debug("AD-983b: rank resolve failed for %s", agent.id, exc_info=True)
+    return dept, rank
+
+
+@router.get("/{agent_id}/capabilities")
+async def get_agent_capabilities(
+    agent_id: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-983b: the agent's effective tools + cognitive skills, with provenance.
+
+    Unified read surface for the Capability panel (AD-983c). Each entry carries
+    ``granted`` and ``source`` (``grant`` / ``restriction`` / ``role_default``
+    for tools; ``grant`` / ``restriction`` / ``dept_default`` for skills) so the
+    UI can distinguish an explicit Captain grant from a role/department default.
+    Honest-degrades to empty lists when a store is unavailable.
+    """
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    # --- Tools (ToolPermissionStore + ToolRegistry, AD-423b/AD-894) ---
+    tools: list[dict[str, Any]] = []
+    perms = getattr(runtime, "tool_permission_store", None)
+    tool_registry = getattr(runtime, "tool_registry", None)
+    if perms is not None:
+        for grant in perms.get_active_grants_sync(agent_id):
+            meta = tool_registry.get(grant.tool_id) if tool_registry is not None else None
+            md = meta.to_dict() if meta is not None else None
+            tools.append({
+                "id": grant.tool_id,
+                "name": (md or {}).get("name", grant.tool_id),
+                "description": (md or {}).get("description", ""),
+                "permission": grant.permission.value,
+                "granted": not grant.is_restriction,
+                "source": "restriction" if grant.is_restriction else "grant",
+                "grant_id": grant.id,
+                "reason": grant.reason,
+            })
+
+    # --- Cognitive skills (CognitiveSkillCatalog + SkillGrantStore, AD-983b) ---
+    skills: list[dict[str, Any]] = []
+    catalog = getattr(runtime, "cognitive_skill_catalog", None)
+    grant_store = getattr(runtime, "skill_grant_store", None)
+    if catalog is not None:
+        dept, rank = _rank_dept_for_agent(runtime, agent)
+        # Explicit grants/restrictions for source tagging.
+        explicit_grant: set[str] = set()
+        explicit_restrict: set[str] = set()
+        if grant_store is not None:
+            try:
+                for g in grant_store.get_active_grants_sync(agent_id):
+                    (explicit_restrict if g.is_restriction else explicit_grant).add(g.skill_name)
+            except Exception:
+                logger.debug("AD-983b: skill grant read failed for %s", agent_id, exc_info=True)
+        effective = catalog.effective_entries_for_agent(
+            agent_id, department=dept, min_rank=rank,
+        )
+        for entry in effective:
+            source = "grant" if entry.name in explicit_grant else "dept_default"
+            skills.append({
+                "id": entry.name,
+                "name": entry.name,
+                "description": entry.description,
+                "granted": True,
+                "source": source,
+                "department": entry.department,
+                "min_rank": entry.min_rank,
+            })
+        # Surface active restrictions too (granted=False) so the UI can show a
+        # skill the agent would otherwise hold but has been turned off.
+        for name in explicit_restrict:
+            entry = catalog.get_entry(name)
+            skills.append({
+                "id": name,
+                "name": name,
+                "description": entry.description if entry is not None else "",
+                "granted": False,
+                "source": "restriction",
+                "department": entry.department if entry is not None else "*",
+                "min_rank": entry.min_rank if entry is not None else "ensign",
+            })
+
+    return {"agent_id": agent_id, "tools": tools, "skills": skills}
+
+
+@router.post("/{agent_id}/capabilities/set")
+async def set_agent_capability(
+    agent_id: str,
+    req: SetCapability,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-983b: Captain enables/disables a tool or cognitive skill on an agent.
+
+    ``enabled=True`` issues a grant; ``enabled=False`` issues a restriction
+    (which overrides a role/department default). Audit-logged via
+    ``CAPABILITY_ACCESS_RESOLVED``. The generalization of the AD-982 vision
+    ``set`` endpoint to the full tool/skill set.
+    """
+    from probos.events import EventType
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    reason = req.reason or "captain_set"
+    if req.kind == "tool":
+        perms = getattr(runtime, "tool_permission_store", None)
+        if perms is None:
+            raise HTTPException(status_code=503, detail="tool_permission_store_unavailable")
+        tool_registry = getattr(runtime, "tool_registry", None)
+        if tool_registry is not None and tool_registry.get(req.id) is None:
+            raise HTTPException(status_code=404, detail=f"Tool not found: {req.id}")
+        from probos.tools.protocol import ToolPermission
+        grant = await perms.issue_grant(
+            agent_id, req.id, ToolPermission.READ,
+            is_restriction=not req.enabled, reason=reason, issued_by="captain",
+        )
+        grant_id = grant.id
+    else:  # skill
+        grant_store = getattr(runtime, "skill_grant_store", None)
+        if grant_store is None:
+            raise HTTPException(status_code=503, detail="skill_grant_store_unavailable")
+        catalog = getattr(runtime, "cognitive_skill_catalog", None)
+        if catalog is not None and catalog.get_entry(req.id) is None:
+            raise HTTPException(status_code=404, detail=f"Skill not found: {req.id}")
+        grant = await grant_store.issue_grant(
+            agent_id, req.id,
+            is_restriction=not req.enabled, reason=reason, issued_by="captain",
+        )
+        grant_id = grant.id
+
+    try:
+        runtime.emit_event(
+            EventType.CAPABILITY_ACCESS_RESOLVED,
+            {
+                "agent_id": agent_id,
+                "kind": req.kind,
+                "capability_id": req.id,
+                "resolution": "captain_granted" if req.enabled else "captain_restricted",
+                "reason": req.reason,
+                "source": "captain_set",
+            },
+        )
+    except Exception:
+        logger.warning(
+            "AD-983b: emit_event(CAPABILITY_ACCESS_RESOLVED) failed for %s; "
+            "grant applied but audit lost", agent_id, exc_info=True,
+        )
+
+    return {
+        "agent_id": agent_id,
+        "kind": req.kind,
+        "id": req.id,
+        "enabled": req.enabled,
+        "grant_id": grant_id,
     }
 
 
