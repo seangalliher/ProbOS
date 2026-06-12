@@ -1019,6 +1019,14 @@ class MemoryConfig(BaseModel):
     # miss the crew flagged becomes observable). Default OFF -> zero overhead and
     # zero new log noise; the recalled episodes are byte-identical either way.
     recall_fok_logging_enabled: bool = False
+    # AD-986b: transcript-grounded recall. Let a crew agent consult the canonical
+    # chat transcript (the recording) for rooms it participated in, to ground a
+    # recollection in what was actually said rather than guess. Sovereign-scoped
+    # (only the agent's own rooms), bounded, rendered distinct from subjective
+    # memory. Default OFF -> byte-identical recall (no transcript injected).
+    transcript_grounded_recall_enabled: bool = False
+    transcript_grounding_max_threads: int = 8
+    transcript_grounding_max_chars: int = 1200
     # AD-601: TCM Temporal Context Model
     tcm_enabled: bool = True
     tcm_dimension: int = 16

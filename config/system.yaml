@@ -115,6 +115,7 @@ memory:
   embedding_model: multi-qa-MiniLM-L6-cos-v1
   query_reformulation_enabled: true
   hybrid_recall_enabled: true        # AD-979c: fuse cosine + FTS5 keyword recall (RRF)
+  recall_fok_logging_enabled: true   # AD-981a: log the agent-scoped Feeling-of-Knowing band per recall_for_agent (calibration session)
   similarity_threshold: 0.6
   verify_content_hash: true
   eviction_audit_enabled: true

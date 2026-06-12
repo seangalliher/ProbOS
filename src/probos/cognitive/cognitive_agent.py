@@ -7069,6 +7069,18 @@ class CognitiveAgent(BaseAgent):
                 parts.extend(self._format_memory_section(memories, source_framing=_framing))
                 parts.append("")
 
+            # AD-986b: canonical transcript (the recording) — the verbatim record
+            # of a room this agent took part in, rendered DISTINCT from the
+            # subjective recalled memory above so the agent grounds its
+            # recollection in what was actually said (and may quote it).
+            _tg_excerpt = observation.get("_transcript_grounding")
+            if _tg_excerpt:
+                from probos.cognitive.transcript_grounding import (
+                    render_transcript_grounding,
+                )
+                parts.extend(render_transcript_grounding(_tg_excerpt))
+                parts.append("")
+
             # AD-568a: Oracle Service cross-tier context (ORACLE tier + DEEP strategy only)
             if observation.get("_oracle_context"):
                 logger.debug(
@@ -8096,6 +8108,43 @@ class CognitiveAgent(BaseAgent):
                 observation["recent_memories"] = memory_list
         except Exception:
             logger.warning("BF-138: Failed to fetch episodic memory context — agent will respond without memory", exc_info=True)
+
+        # AD-986b: transcript-grounded recall. The sovereign shard above is a
+        # subjective, lossy recollection; the ChatThreadStore transcript is the
+        # objective record (the recording). Surface the relevant excerpt of the
+        # recording for rooms THIS agent took part in, so it can ground a
+        # recollection in what was actually said rather than guess. Sovereign-
+        # scoped (the agent's own ids only), bounded, default-off, rendered
+        # distinct from subjective memory in _build_user_message. Tier-2: never
+        # breaks recall.
+        try:
+            _mem_cfg = getattr(getattr(self._runtime, "config", None), "memory", None)
+            if _mem_cfg is not None and getattr(
+                _mem_cfg, "transcript_grounded_recall_enabled", False
+            ):
+                _store = getattr(self._runtime, "chat_thread_store", None)
+                _tg_params = observation.get("params", {})
+                _tg_query = (
+                    str(_tg_params.get("text", ""))[:200].strip()
+                    if intent.intent == "direct_message" else ""
+                )
+                if _store is not None and _tg_query:
+                    from probos.cognitive.transcript_grounding import consult_transcript
+                    _agent_ids = {
+                        x for x in (self.id, getattr(self, "sovereign_id", None)) if x
+                    }
+                    _excerpt = consult_transcript(
+                        _store, _agent_ids, _tg_query,
+                        max_threads=getattr(_mem_cfg, "transcript_grounding_max_threads", 8),
+                        max_chars=getattr(_mem_cfg, "transcript_grounding_max_chars", 1200),
+                    )
+                    if _excerpt:
+                        observation["_transcript_grounding"] = _excerpt
+        except Exception:
+            logger.debug(
+                "AD-986b: transcript grounding failed; continuing without it",
+                exc_info=True,
+            )
 
         return observation
 

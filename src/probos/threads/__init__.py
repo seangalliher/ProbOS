@@ -791,6 +791,37 @@ class ChatThreadStore:
             ).fetchall()
         return [_row_to_thread(r) for r in rows]
 
+    def threads_for_participant(
+        self, agent_ids: Iterable[str], *, limit: int = 8
+    ) -> list[ChatThread]:
+        """AD-986b: non-archived threads where ANY of ``agent_ids`` is a
+        participant, most-recently-active first.
+
+        Sovereign scope for transcript-grounded recall — an agent may only
+        consult transcripts of rooms it took part in. ``agent_ids`` is the set
+        of the agent's OWN identifiers (id / sovereign_id); membership is the
+        same id space stored in ``participants``. Bounded: scans a recent window
+        and returns at most ``limit`` matches.
+        """
+        ids = {a for a in (agent_ids or ()) if a}
+        if not ids:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chat_threads WHERE archived = 0 "
+                "ORDER BY last_active_at DESC LIMIT ?",
+                (200,),
+            ).fetchall()
+        out: list[ChatThread] = []
+        for r in rows:
+            t = _row_to_thread(r)
+            if set(t.participants) & ids:
+                out.append(t)
+                if len(out) >= max(1, limit):
+                    break
+        return out
+
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # AD-793 (Wave 196): Project substrate.
