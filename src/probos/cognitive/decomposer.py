@@ -239,11 +239,17 @@ class IntentDecomposer:
         working_memory: WorkingMemoryManager,
         timeout: float = 15.0,
         workflow_cache: WorkflowCache | None = None,
+        deferred_capability_threshold: int = 0,  # AD-983d
     ) -> None:
         self.llm_client = llm_client
         self.working_memory = working_memory
         self.timeout = timeout
         self.workflow_cache = workflow_cache
+        # AD-983d: when the registered intent catalog exceeds this many
+        # descriptors, the decomposer prompt renders the domain tier as a
+        # compact manifest (deferred-tool model). 0 disables (full render
+        # always) — byte-identical to the pre-AD-983d behaviour.
+        self.deferred_capability_threshold = deferred_capability_threshold
         self.last_raw_response: str = ""  # Last raw LLM response for debugging
         self.last_tier: str = ""  # Tier used for last LLM call
         self.last_model: str = ""  # Model used for last LLM call
@@ -276,6 +282,16 @@ class IntentDecomposer:
     def intent_descriptor_count(self) -> int:
         """Number of registered intent descriptors."""
         return len(self._intent_descriptors)
+
+    def _use_manifest(self) -> bool:
+        """AD-983d: whether to render the decomposer prompt in deferred-tool
+        manifest mode. True only when the threshold is enabled (> 0) AND the
+        registered catalog exceeds it. Default (threshold 0) is always False —
+        the prompt is byte-identical to the pre-AD-983d full render."""
+        return (
+            self.deferred_capability_threshold > 0
+            and len(self._intent_descriptors) > self.deferred_capability_threshold
+        )
 
     async def decompose(
         self,
@@ -367,6 +383,7 @@ class IntentDecomposer:
             system_prompt = self._prompt_builder.build_system_prompt(
                 self._intent_descriptors,
                 callsign_map=self._callsign_map or None,
+                manifest_mode=self._use_manifest(),  # AD-983d
             )
         else:
             system_prompt = _LEGACY_SYSTEM_PROMPT + "\n\n" + get_platform_context()

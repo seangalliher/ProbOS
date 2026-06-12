@@ -164,12 +164,22 @@ class PromptBuilder:
         self,
         descriptors: list[IntentDescriptor],
         callsign_map: dict[str, str] | None = None,  # BF-013
+        *,
+        manifest_mode: bool = False,  # AD-983d
     ) -> str:
         """Build the full system prompt with a dynamically generated intent table.
 
         The output is functionally equivalent to the legacy SYSTEM_PROMPT when
         given the same set of intents.  Descriptors are sorted by name for
         deterministic output.
+
+        AD-983d: when ``manifest_mode`` is set (the decomposer's catalog exceeds
+        the deferred-capability threshold), the *domain* tier is rendered as a
+        compact name + one-line manifest instead of full param tables, while the
+        always-needed core/utility tiers stay fully loaded ("tiering"). This
+        bounds the prompt as the catalog grows to hundreds. ``manifest_mode``
+        defaults to ``False`` — byte-identical to today at ordinary catalog
+        sizes.
         """
         # Deduplicate by name, keeping first occurrence
         seen: set[str] = set()
@@ -207,7 +217,7 @@ class PromptBuilder:
 
         # Intent table
         parts.append("")
-        parts.append(self._build_intent_table(unique))
+        parts.append(self._build_intent_table(unique, manifest_mode=manifest_mode))
 
         # Crew callsigns (BF-013)
         if callsign_map:
@@ -258,19 +268,56 @@ class PromptBuilder:
             return PROMPT_EXAMPLES + "".join(gap_lines)
         return PROMPT_EXAMPLES
 
-    def _build_intent_table(self, descriptors: list[IntentDescriptor]) -> str:
-        """Generate the '## Available intents' markdown table."""
-        lines = [
+    def _build_intent_table(
+        self,
+        descriptors: list[IntentDescriptor],
+        *,
+        manifest_mode: bool = False,  # AD-983d
+    ) -> str:
+        """Generate the '## Available intents' markdown table.
+
+        AD-983d: in ``manifest_mode`` the always-needed core/utility tiers keep
+        their full param tables, while the (unbounded, growing) domain tier is
+        emitted as a compact name + one-line manifest under a separate heading —
+        the deferred-tool shape. Full domain params are fetched on demand via
+        ``CapabilityRetriever.find_intents`` rather than rendered every turn.
+        Default (``manifest_mode=False``) renders the full table for all tiers,
+        byte-identical to the pre-AD-983d output.
+        """
+        header = [
             "## Available intents",
             "",
             "| Intent       | Params                                       | Description                    |",
             "|--------------|----------------------------------------------|--------------------------------|",
         ]
-        for d in descriptors:
+        if not manifest_mode:
+            lines = list(header)
+            for d in descriptors:
+                params_str = json.dumps(d.params) if d.params else "{}"
+                lines.append(
+                    f"| {d.name:<15s}| {params_str:<45s}| {d.description:<31s}|"
+                )
+            return "\n".join(lines)
+
+        # Deferred-tool render: full param tables only for the always-loaded
+        # tiers; the domain tier becomes a cheap name + one-line manifest.
+        full_tier = [d for d in descriptors if d.tier in ("core", "utility")]
+        manifest_tier = [d for d in descriptors if d.tier not in ("core", "utility")]
+        lines = list(header)
+        for d in full_tier:
             params_str = json.dumps(d.params) if d.params else "{}"
             lines.append(
                 f"| {d.name:<15s}| {params_str:<45s}| {d.description:<31s}|"
             )
+        if manifest_tier:
+            lines.append("")
+            lines.append(
+                "## Additional capabilities (manifest \u2014 retrieve full params by concept)"
+            )
+            lines.append("")
+            for d in manifest_tier:
+                desc = " ".join((d.description or "").split())
+                lines.append(f"- {d.name}: {desc}")
         return "\n".join(lines)
 
     def _build_rules(self, descriptors: list[IntentDescriptor]) -> str:

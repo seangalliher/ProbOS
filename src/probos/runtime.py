@@ -696,6 +696,7 @@ class ProbOSRuntime:
             working_memory=self.working_memory,
             timeout=cog_cfg.decomposition_timeout_seconds,
             workflow_cache=self.workflow_cache,
+            deferred_capability_threshold=cog_cfg.deferred_capability_threshold,  # AD-983d
         )
         self.decomposer._callsign_map = self.callsign_registry.live_callsign_map  # BF-013: live ref updates after onboarding
         self.attention = AttentionManager(

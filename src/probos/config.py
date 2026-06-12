@@ -418,6 +418,13 @@ class CognitiveConfig(BaseModel):
     dag_execution_timeout_seconds: float = 60.0
     use_consensus_for_writes: bool = True
     max_concurrent_tasks: int = 8
+    # AD-983d: deferred-tool threshold. When the decomposer's registered intent
+    # catalog EXCEEDS this many descriptors, build_system_prompt renders a
+    # compact MANIFEST (name + one-line) for the domain tier instead of the full
+    # param table — core/utility intents stay fully loaded ("tiering") — so the
+    # prompt stays bounded as the catalog grows to hundreds. 0 disables (full
+    # render always), so the default is byte-identical to today's ~30 intents.
+    deferred_capability_threshold: int = 0
     attention_decay_rate: float = 0.95  # Per-second decay for stale tasks
     focus_history_size: int = 10
     background_demotion_factor: float = 0.25
