@@ -539,6 +539,15 @@ async def _fan_one_round(
             )
             return {"agent_id": agent_id, "callsign": callsign, "text": "(delivery failed)"}
         reply_text = str(result.result) if (result and result.result) else "(no response)"
+        # BF-622: a degraded LLM proxy can echo its INPUT (which includes the
+        # AD-978 scene block) back as the completion. Strip any visual-context
+        # scaffolding from the reply before persist/return so internal context
+        # never surfaces in the chat. Guarded on the marker so a normal reply is
+        # untouched; an emptied reply (it was ONLY echoed scaffolding) degrades
+        # to the non-reply sentinel.
+        if "Current Visual Context" in reply_text:
+            from probos.perception.working_memory import strip_visual_context_block
+            reply_text = strip_visual_context_block(reply_text) or "(no response)"
         # AD-933b: SHA refs of any image step_4c generates below. Initialized
         # here so it is always defined for the persist block even when the
         # escalation subset is skipped (no reply / no agent) or raises.

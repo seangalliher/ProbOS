@@ -54,6 +54,7 @@ dependencies = [
     "facenet-pytorch>=2.5",  # AD-742b: face-embedding identity (MIT)
     "keyring>=25.0",  # AD-749: M365 token storage (MIT)
     "msal>=1.0",  # AD-749: Microsoft OAuth device-code flow (MIT)
+    "tzdata>=2024.1",  # AD-984d: IANA tz database for zoneinfo on Windows (public-domain data, Apache-2.0 wrapper)
 ]
 
 [project.urls]

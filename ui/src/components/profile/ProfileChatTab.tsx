@@ -47,6 +47,7 @@ import { MeetingView } from './MeetingView';
 import { ChatMessageRow } from './ChatMessageRow';
 import { TypingIndicator } from './TypingIndicator';
 import { revealRepliesProgressively, type StaggerReply } from '../../chat/staggerReplies';
+import { isPinnedToBottom } from '../../chat/scrollAnchor';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
 import { useScreenStore } from '../../store/useScreenStore';
@@ -531,9 +532,22 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // Drives the TypingIndicator bubble; threadId-guarded so it only shows in the
   // thread it belongs to.
   const typingAgent = useStore((s) => s.typingAgent);
+  // AD-984a: meeting-mode chat visibility. When a meeting is active and this is
+  // false, the transcript message-list is hidden (avatars + voice only). Only
+  // applies while meetingActive; outside a meeting the chat always shows.
+  const meetingChatVisible = useStore((s) => s.meetingChatVisible);
+  const showTranscript = !(meetingActive && !meetingChatVisible);
 
-  // Auto-scroll on new messages
+  // AD-984c: interruptible auto-scroll. The scroll container ref + a
+  // pinned-to-bottom ref let the auto-scroll effect move the view ONLY when the
+  // Captain is already at the bottom — so a new message never yanks them down
+  // while they are reading an earlier turn. Starts pinned (fresh view).
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const pinnedToBottomRef = useRef(true);
+
+  // Auto-scroll on new messages — only when pinned to the bottom (AD-984c).
   useEffect(() => {
+    if (!pinnedToBottomRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
@@ -1010,8 +1024,17 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           remains the transcript below. AD-923: speakingAgentId lights the
           active speaker's avatar (already in scope from useMeetingVoice). */}
       {activeThreadId && meetingActive && <MeetingView threadId={activeThreadId} speakingAgentId={speakingAgentId} />}
-      {/* Message list */}
-      <div style={{
+      {/* Message list. AD-984c: ref + onScroll track whether the Captain is
+          pinned to the bottom, so the auto-scroll effect doesn't yank them down
+          while reading earlier turns. AD-984a: hidden while a meeting is active
+          and the Captain has toggled the chat off (avatars + voice only). */}
+      {showTranscript && (
+      <div
+        ref={scrollContainerRef}
+        onScroll={() => {
+          pinnedToBottomRef.current = isPinnedToBottom(scrollContainerRef.current);
+        }}
+        style={{
         flex: 1,
         overflowY: 'auto',
         padding: '8px 12px',
@@ -1039,6 +1062,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         )}
         <div ref={messagesEndRef} />
       </div>
+      )}
 
       {/* Attachment chips */}
       {(pendingAttachments.length > 0 || attachError) && (

@@ -28,6 +28,11 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
   // it; useMeetingVoice gates group/meeting speech on this flag.
   const callAudioEnabled = useStore((s) => s.callAudioEnabled);
   const setCallAudioEnabled = useStore((s) => s.setCallAudioEnabled);
+  // AD-984a: meeting-mode chat visibility (default ON). The in-call toggle below
+  // hides/shows the transcript so the Captain can make a meeting avatars+voice
+  // only; ProfileChatTab gates the message-list on this flag while meetingActive.
+  const meetingChatVisible = useStore((s) => s.meetingChatVisible);
+  const setMeetingChatVisible = useStore((s) => s.setMeetingChatVisible);
 
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
@@ -276,6 +281,37 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
             ) : (
               <path d="M11.5 6 L14.5 10 M14.5 6 L11.5 10" />
             )}
+          </svg>
+        </button>
+      )}
+
+      {/* AD-984a: in-call chat-visibility toggle. A meeting is one conversation
+          viewed by voice; this lets the Captain hide the text transcript so the
+          avatars + voice are the whole surface (the message-list is gated on
+          this flag in ProfileChatTab while meetingActive; the conversation,
+          persistence, and BF-621 voice reveal are unaffected). Shown only while
+          a meeting is active. Local inline speech-bubble stroke-SVG (HXI #3 — no
+          emoji, no Glyphs.tsx export; amber when the chat is shown, dim with a
+          slash when hidden). */}
+      {meetingActive && (
+        <button
+          type="button"
+          data-testid="chat-visibility-toggle"
+          aria-label={meetingChatVisible ? 'Hide chat' : 'Show chat'}
+          aria-pressed={meetingChatVisible}
+          title={meetingChatVisible ? 'Hide chat' : 'Show chat'}
+          onClick={() => setMeetingChatVisible(!meetingChatVisible)}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: meetingChatVisible ? '#f0b060' : '#666680',
+            display: 'inline-flex', alignItems: 'center', padding: 2,
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+               stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+               strokeLinejoin="round">
+            <path d="M2 4.5 A1.5 1.5 0 0 1 3.5 3 H12.5 A1.5 1.5 0 0 1 14 4.5 V9.5 A1.5 1.5 0 0 1 12.5 11 H6 L3 13.5 V11 H3.5 A1.5 1.5 0 0 1 2 9.5 Z" />
+            {!meetingChatVisible && <path d="M1.5 1.5 L14.5 14.5" />}
           </svg>
         </button>
       )}

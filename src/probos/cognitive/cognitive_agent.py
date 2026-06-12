@@ -5800,6 +5800,28 @@ class CognitiveAgent(BaseAgent):
         now = datetime.now(timezone.utc)
         parts = [f"Current time: {now.strftime('%Y-%m-%d %H:%M:%S UTC')} ({now.strftime('%A')})"]
 
+        # AD-984d: the Captain's CURRENT local time when a timezone is
+        # configured, so a reply about time-of-day is accurate rather than
+        # inferred from UTC (the crew confabulated "3am" when it was 9pm
+        # Mountain). This is a FACT provided to the crew, not an inference —
+        # when unset, the crew see only UTC and must not assert a local time.
+        # Honest-degrade (AD-592 spirit): a bad/unknown zone name leaves the
+        # UTC line untouched.
+        captain_tz = getattr(tcfg, "captain_timezone", "") if tcfg is not None else ""
+        if captain_tz:
+            try:
+                from zoneinfo import ZoneInfo
+                local = now.astimezone(ZoneInfo(captain_tz))
+                parts.append(
+                    f"Captain's local time: {local.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"({local.strftime('%A')}, {captain_tz})"
+                )
+            except Exception:
+                logger.debug(
+                    "AD-984d: captain_timezone %r could not be resolved; UTC only",
+                    captain_tz, exc_info=True,
+                )
+
         # Birth age
         if (tcfg is None or tcfg.include_birth_time):
             birth_ts = getattr(self, '_birth_timestamp', None)

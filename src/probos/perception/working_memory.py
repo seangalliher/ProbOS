@@ -12,6 +12,7 @@ Confabulation guard (BF-294 lesson): callers MUST treat empty buffer as
 """
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -127,4 +128,33 @@ def _format_age(seconds: float) -> str:
     return f"{int(seconds // 3600)}h"
 
 
-__all__ = ["VisionWorkingMemory", "VisionObservation"]
+# BF-622: the visual-context block (built by ``render_for_prompt`` above) is
+# prepended to the LLM INPUT so an agent can describe what it sees. It must
+# NEVER appear in a stored/displayed REPLY. It leaked once when a degraded LLM
+# proxy echoed its own input prompt back as the completion. This regex removes
+# that delimited block (and any leading/trailing blank line it leaves) from a
+# reply before persist — defense-in-depth so a prompt-echo can never surface
+# internal scaffolding to the chat. The delimiters are the exact strings
+# ``render_for_prompt`` emits (single source of truth).
+_VISUAL_CONTEXT_BLOCK_RE = re.compile(
+    r"-{3} Current Visual Context -{3}.*?-{3} End Visual Context -{3}\n?",
+    re.DOTALL,
+)
+
+
+def strip_visual_context_block(text: str) -> str:
+    """BF-622: remove any ``--- Current Visual Context --- … --- End Visual
+    Context ---`` span from ``text``.
+
+    Conservative: only the exact delimited block(s) are removed; all normal
+    prose is left intact. Returns the text with the block(s) gone and
+    surrounding whitespace trimmed. A non-string input returns ``""``.
+    Callers should treat an emptied result (the whole "reply" was echoed
+    scaffolding) as a non-reply.
+    """
+    if not isinstance(text, str) or not text:
+        return ""
+    return _VISUAL_CONTEXT_BLOCK_RE.sub("", text).strip()
+
+
+__all__ = ["VisionWorkingMemory", "VisionObservation", "strip_visual_context_block"]

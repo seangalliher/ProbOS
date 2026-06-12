@@ -4760,6 +4760,14 @@ class TemporalConfig(BaseModel):
     include_system_uptime: bool = True
     include_last_action: bool = True
     include_post_count: bool = True
+    # AD-984d: the Captain's local IANA timezone (e.g. "America/Denver"). When
+    # set, the crew's temporal context includes the Captain's CURRENT local time
+    # + zone alongside UTC, so a reply about time-of-day is accurate instead of
+    # inferred from UTC (the crew confabulated "3am" when it was 9pm Mountain).
+    # Empty (default) = unchanged behavior; the crew see only UTC and must not
+    # assert a specific local time. A bad/unknown name honest-degrades to no
+    # extra line.
+    captain_timezone: str = ""
     include_episode_timestamps: bool = True
 
 

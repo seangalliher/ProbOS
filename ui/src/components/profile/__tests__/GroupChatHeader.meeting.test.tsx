@@ -59,7 +59,7 @@ function seed(thread: AD791aChatThreadView, agentsList: Agent[]): void {
 
 afterEach(() => {
   cleanup();
-  useStore.setState({ agents: new Map(), chatThreads: new Map(), callAudioEnabled: true });
+  useStore.setState({ agents: new Map(), chatThreads: new Map(), callAudioEnabled: true, meetingChatVisible: true });
   vi.clearAllMocks();
 });
 
@@ -172,5 +172,40 @@ describe('AD-949 GroupChatHeader call-audio toggle', () => {
     fireEvent.click(btn);
     expect(useStore.getState().callAudioEnabled).toBe(false);
     expect(btn.getAttribute('aria-pressed')).toBe('false');
+  });
+});
+
+describe('AD-984a GroupChatHeader chat-visibility toggle', () => {
+  it('chat-visibility toggle hidden when no meeting is active', () => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'a1'] }), [mkAgent({ id: 'a1', callsign: 'Vex' })]);
+    render(<GroupChatHeader threadId="t1" />);
+    expect(screen.queryByTestId('chat-visibility-toggle')).toBeNull();
+  });
+
+  it('chat-visibility toggle shown and visible (aria-pressed=true) by default in a meeting', () => {
+    seed(
+      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' })],
+    );
+    useStore.setState({ meetingChatVisible: true });
+    render(<GroupChatHeader threadId="t1" />);
+    const btn = screen.getByTestId('chat-visibility-toggle');
+    expect(btn).toBeTruthy();
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+    expect(btn.getAttribute('aria-label')).toBe('Hide chat');
+  });
+
+  it('clicking the chat-visibility toggle hides the chat (meetingChatVisible -> false, aria-pressed -> false)', () => {
+    seed(
+      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' })],
+    );
+    useStore.setState({ meetingChatVisible: true });
+    render(<GroupChatHeader threadId="t1" />);
+    const btn = screen.getByTestId('chat-visibility-toggle');
+    fireEvent.click(btn);
+    expect(useStore.getState().meetingChatVisible).toBe(false);
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
+    expect(btn.getAttribute('aria-label')).toBe('Show chat');
   });
 });

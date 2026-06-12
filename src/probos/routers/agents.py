@@ -2318,6 +2318,17 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
             "(no reply — agent's LLM endpoint returned empty content; "
             "check upstream proxy/endpoint at the configured tier)"
         )
+
+    # BF-622: strip any echoed visual-context scaffolding from the 1:1 reply
+    # (same risk as the group path — a degraded LLM proxy can echo its input,
+    # which AD-733a prepends the scene block to). Guarded on the marker so a
+    # normal reply is untouched; an emptied reply degrades to a non-reply note.
+    if "Current Visual Context" in response_text:
+        from probos.perception.working_memory import strip_visual_context_block
+        response_text = strip_visual_context_block(response_text) or (
+            "(no reply — agent's LLM endpoint returned empty content; "
+            "check upstream proxy/endpoint at the configured tier)"
+        )
         logger.warning(
             "BF-289: agent=%s direct_message returned empty content "
             "(no error, no result) — likely LLM endpoint issue at the "

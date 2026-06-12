@@ -457,6 +457,12 @@ export interface HXIState {
   // in-call mute control (GroupChatHeader) flips it. Session-scoped (no
   // localStorage in v1 — persistence is AD-949a).
   callAudioEnabled: boolean;
+  // AD-984a: meeting-mode chat visibility. When false AND a meeting is active,
+  // the transcript message-list is hidden so the avatars + voice are the whole
+  // surface ("one conversation, viewed by voice"). Default true = byte-identical
+  // to today. Session-scoped (mirrors callAudioEnabled — no localStorage; a
+  // persisted preference is a forward marker). Only applies while meetingActive.
+  meetingChatVisible: boolean;
   // AD-952: human response dynamics — the agent currently "typing" a group
   // reply (progressive reveal). null = nobody typing. Session-scoped; drives
   // the TypingIndicator bubble in the active thread transcript.
@@ -600,6 +606,8 @@ export interface HXIState {
   setVoiceEnabled: (v: boolean) => void;
   // AD-949: call-scoped meeting/group audio mute.
   setCallAudioEnabled: (v: boolean) => void;
+  // AD-984a: show/hide the meeting transcript message-list.
+  setMeetingChatVisible: (v: boolean) => void;
   // AD-952: set/clear the agent currently "typing" a group reply.
   setTypingAgent: (t: { threadId: string | null; agentId: string; callsign: string; verb?: 'typing' | 'thinking' | 'speaking' } | null) => void;
   // AD-705: opt-in toggle for the always-on wake-word voice loop.
@@ -948,6 +956,9 @@ export const useStore = create<HXIState>((set, get) => ({
   // self-gate, a freshly started call is audible without enabling the
   // Ship's-Computer voice.
   callAudioEnabled: true,
+  // AD-984a: the meeting transcript is visible by default (byte-identical to
+  // today); the Captain hides it from the GroupChatHeader toggle in a call.
+  meetingChatVisible: true,
   // AD-952: no agent typing on boot. Session-scoped, no localStorage.
   typingAgent: null,
   // AD-705: hydrate wake-word toggle from localStorage; default OFF.
@@ -1665,6 +1676,10 @@ export const useStore = create<HXIState>((set, get) => ({
   // value makes a fresh call audible; persisting the preference is AD-949a.
   setCallAudioEnabled: (v) => {
     set({ callAudioEnabled: v });
+  },
+  // AD-984a: show/hide the meeting transcript (session-scoped, no localStorage).
+  setMeetingChatVisible: (v) => {
+    set({ meetingChatVisible: v });
   },
   // AD-952: set/clear the typing agent (progressive group-reply reveal).
   setTypingAgent: (t) => {
