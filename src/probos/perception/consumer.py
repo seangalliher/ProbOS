@@ -176,14 +176,40 @@ class VisionConsumer:
         return set(self._observer_agent_ids)
 
     def latest_shared_observation(self) -> Any:
-        """BF-617: the most-recent VisionObservation produced, or None.
+        """BF-617: the most-recent VisionObservation to share into a present
+        participant's empty ring, or ``None``.
 
         The shared-camera view for a meeting: any present participant whose own
-        working-memory ring is empty (not a registered ambient observer) renders
-        this so they see the same feed everyone else does. Read-only; ``None``
-        until the first frame is described in this session.
+        working-memory ring is empty (not a registered ambient observer, e.g.
+        the yeoman) renders this so they see the same feed everyone else does.
+
+        BF-620: ``_last_observation`` is in-RAM and starts ``None`` after a
+        restart, but a registered observer's ring may already hold the feed —
+        either hydrated from disk (AD-742f persistence) or written by an earlier
+        describe this session. Relying on ``_last_observation`` alone meant that
+        right after a restart a vision-capable observer (ring hydrated) could see
+        while a non-observer's fallback found ``None`` and rendered the "camera
+        not active" sentinel — the exact "Yeo can't see but Ezri can" report.
+        So when ``_last_observation`` is unset, borrow the most-recent
+        observation any registered observer currently holds. Read-only.
         """
-        return self._last_observation
+        if self._last_observation is not None:
+            return self._last_observation
+        latest: Any = None
+        for _aid in self._observer_agent_ids:
+            try:
+                _wm = get_or_create_working_memory(_aid, capacity=self._wm_capacity)
+                _obs = _wm.latest()
+            except Exception:
+                logger.debug(
+                    "BF-620: observer-ring scan failed for %s", _aid, exc_info=True
+                )
+                continue
+            if _obs is not None and (
+                latest is None or _obs.timestamp > latest.timestamp
+            ):
+                latest = _obs
+        return latest
 
     def register_observer(self, agent_id: str) -> None:
         self._observer_agent_ids.add(agent_id)
