@@ -259,160 +259,69 @@ class YeomanAgent(CognitiveAgent):
     # Conversational capability grounding (BF-599)
     # ------------------------------------------------------------------
 
-    def _conversational_capability_block(self, observation: dict) -> str:
-        """Ground Yeo in the ship's *live* delegable mesh capabilities.
-
-        Renders a positive instruction listing only the mesh intents whose
-        pools are actually registered right now, so Yeo delegates web
-        research/page-reading (BF-599) and filesystem browsing (BF-601)
-        through the mesh instead of confabulating a limitation. Honest-degrade:
-        returns "" when no runtime, no registry, or none of the relevant pools
-        are present.
-        """
-        runtime = self._runtime
-        if runtime is None or not hasattr(runtime, "registry") or runtime.registry is None:
-            return ""
-
-        # (pool name, exposed intent name, human description). Only pools with
-        # at least one registered agent become delegable capabilities. The
-        # filesystem trio (BF-601) are always-registered core pools, so they
-        # ground Yeo against confabulating "I can't list directories/read
-        # files" the same way the web trio (BF-599) grounds web research.
-        _pool_caps: tuple[tuple[str, str, str], ...] = (
-            ("web_search", "web_search", "search the web"),
-            ("page_reader", "read_page", "read + summarize a URL"),
-            ("http", "http_fetch", "fetch a URL"),
-            ("directory", "list_directory", "list a directory"),
-            ("filesystem", "read_file", "read a file"),
-            ("search", "search_files", "find files by pattern"),
-        )
-
-        caps: list[tuple[str, str]] = []
-        try:
-            for pool_name, intent_name, desc in _pool_caps:
-                if runtime.registry.get_by_pool(pool_name):
-                    caps.append((intent_name, desc))
-        except Exception:
-            logger.warning(
-                "BF-599/BF-601: YeomanAgent capability grounding failed reading "
-                "the registry; falling back to no capability block this turn",
-                exc_info=True,
-            )
-            return ""
-
-        if not caps:
-            return ""
-
-        rendered = ", ".join(f"{name} ({desc})" for name, desc in caps)
-        return (
-            "\n\nShip capabilities you can delegate through the mesh: "
-            f"{rendered}. When the Captain asks you to research or read a web "
-            "page, list a directory, read a file, or find files, delegate to "
-            "the right specialist (for Science research, @Number One) rather "
-            "than declining."
-        )
+    # ------------------------------------------------------------------
+    # AD-983a: live-capability grounding (the [MESH] do-and-report affordance)
+    # was generalized to the base CognitiveAgent._conversational_capability_block
+    # — it now renders the usage_hint of every reachable capability for ALL crew,
+    # so the Yeoman-specific override (BF-599/BF-601) and the
+    # _available_mesh_read_intents helper are retired. Yeo keeps only its
+    # role-specific delegation JUDGMENT (the [CREATE_TASK] threshold below).
+    # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # Conversational task-creation protocol (AD-845)
     # ------------------------------------------------------------------
 
-    def _available_mesh_read_intents(self) -> dict[str, str]:
-        """AD-870: return ``{intent: param-hint}`` for the read-only pools
-        that currently have a live agent.
-
-        Only intents whose serving pool is registered are taught, so Yeo is
-        never told to emit a ``[MESH ...]`` tag for a capability the ship
-        cannot back this turn (honest-degrade, BF-599 lesson). The intents +
-        param keys mirror the AD-869 allowlist (``_MESH_READ_INTENT_POOLS``)
-        and the read agents' expected param names. Tier-2: never raises.
-        """
-        registry = getattr(self._runtime, "registry", None)
-        if registry is None:
-            return {}
-        pool_intent_hint = (
-            ("directory", "list_directory", "path=<dir>"),
-            ("filesystem", "read_file", "path=<file>"),
-            ("search", "search_files", "path=<dir> pattern=<glob>"),
-            ("web_search", "web_search", "query=<terms>"),
-            ("page_reader", "read_page", "url=<url>"),
-        )
-        out: dict[str, str] = {}
-        for pool, intent, hint in pool_intent_hint:
-            try:
-                if registry.get_by_pool(pool):
-                    out[intent] = hint
-            except Exception:
-                logger.debug(
-                    "AD-870: get_by_pool(%s) raised during threshold build",
-                    pool, exc_info=True,
-                )
-        return out
-
     def _conversational_task_protocol(self, observation: dict) -> str:
-        """Teach Yeo the four-tier delegation threshold from a 1:1 chat reply.
+        """Teach Yeo its role-specific delegation JUDGMENT from a 1:1 chat reply.
 
+        The four-tier threshold, minus the parts now carried elsewhere:
         Tier 1 (Answer): reply directly, no tag. Tier 2 (Do-and-report,
-        AD-869): a quick read-only lookup Yeo can finish *this turn* — emit
-        ``[MESH <intent> key=value ...]`` and the DM reply pipeline fetches
-        the result inline. Tier 3 (Write-it-down, AD-845): substantial work
-        or anything that changes state — emit ``[CREATE_TASK title=... |
-        instructions=... | specialist=@Callsign]`` to open a dispatchable
-        tracked task. The specialist callsign is Tier 4 (Get-help).
+        AD-869): the ``[MESH ...]`` do-and-report affordance is now taught to
+        ALL crew by the base ``_conversational_capability_block`` (AD-983a) — it
+        is no longer Yeo-specific, so it is not repeated here. Tier 3
+        (Write-it-down, AD-845): substantial work or anything that changes state
+        — emit ``[CREATE_TASK title=... | instructions=... |
+        specialist=@Callsign]`` to open a dispatchable tracked task. The
+        specialist callsign is Tier 4 (Get-help). This task-creation judgment IS
+        the genuinely role-specific piece Yeo keeps.
 
         Yeo's static ``instructions``/``_ROLE_RULES`` never reach the
         conversational prompt (composed with ``hardcoded_instructions=""``),
-        so this protocol is injected here the same way BF-599's capability
-        block is.
+        so this protocol is injected here.
 
-        Honest-degrade: the ``[MESH]`` guidance is taught only for read
-        pools that are live, and the ``[CREATE_TASK]`` guidance only when a
-        work-item store is wired — Yeo is never told it can use a seam the
-        substrate cannot back. Returns "" when neither seam is available.
-        All tag text is gap-regex-safe (BF-599 lesson).
+        Honest-degrade: the ``[CREATE_TASK]`` guidance is taught only when a
+        work-item store is wired — Yeo is never told it can open tasks it
+        cannot back. Returns "" when no store is available. All tag text is
+        gap-regex-safe (BF-599 lesson).
         """
         runtime = self._runtime
         if runtime is None:
             return ""
         has_store = getattr(runtime, "work_item_store", None) is not None
-        read_intents = self._available_mesh_read_intents()
-        if not has_store and not read_intents:
+        if not has_store:
             return ""
 
         parts: list[str] = [
             "\n\nDelegation threshold — choose the lightest action that fits "
             "the request:",
             "\n- If you already know the answer, just reply. No tag.",
-        ]
-        if read_intents:
-            tags = ", ".join(
-                f"[MESH {intent} {hint}]" for intent, hint in read_intents.items()
-            )
-            parts.append(
-                "\n- If the Captain wants a quick read-only lookup you can "
-                "finish right now — list a directory, read a file, find "
-                "files, search the web, or read a page — do it inline this "
-                "turn: put [MESH <intent> key=value] anywhere in your reply "
-                "and the result is fetched and shown to the Captain. Use only "
-                f"these forms: {tags}. These reads change nothing, so just do "
-                "them — you do not need to ask first."
-            )
-        if has_store:
-            parts.append(
-                "\n- If it is substantial work, would take longer than a "
-                "quick reply, or would change something, open a tracked task "
-                "instead of answering inline: emit [CREATE_TASK title=<short "
-                "title> | instructions=<what to do> | specialist=@Callsign] "
-                "anywhere in your reply, and confirm conversationally that "
-                "you have opened the task and will report back when it is "
-                "done. Choose the specialist by department (@Number One for "
-                "Science research). The task runs on the mesh and appears on "
-                "the Captain's board automatically."
-            )
-        parts.append(
+            "\n- For a quick read-only lookup you can finish this turn, use the "
+            "ship-capability tags listed above — the result is fetched and "
+            "shown to the Captain inline.",
+            "\n- If it is substantial work, would take longer than a "
+            "quick reply, or would change something, open a tracked task "
+            "instead of answering inline: emit [CREATE_TASK title=<short "
+            "title> | instructions=<what to do> | specialist=@Callsign] "
+            "anywhere in your reply, and confirm conversationally that "
+            "you have opened the task and will report back when it is "
+            "done. Choose the specialist by department (@Number One for "
+            "Science research). The task runs on the mesh and appears on "
+            "the Captain's board automatically.",
             "\nRule of thumb: if you can get the answer in the time it takes "
             "to reply and it changes nothing, just do it; otherwise write it "
-            "down as a task."
-        )
+            "down as a task.",
+        ]
         return "".join(parts)
 
     # ------------------------------------------------------------------

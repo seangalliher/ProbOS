@@ -30,7 +30,7 @@ class FileSearchAgent(BaseAgent):
     ]
     initial_confidence: float = 0.8
     intent_descriptors = [
-        IntentDescriptor(name="search_files", params={"path": "<absolute_path>", "pattern": "<glob>"}, description="Search for files matching pattern"),
+        IntentDescriptor(name="search_files", params={"path": "<absolute_path>", "pattern": "<glob>"}, description="Search for files matching pattern", usage_hint="[MESH search_files path=<dir> pattern=<glob>] (find files by pattern)"),
     ]
 
     _handled_intents = {"search_files"}

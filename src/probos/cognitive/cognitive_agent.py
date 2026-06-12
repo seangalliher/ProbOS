@@ -1861,10 +1861,73 @@ class CognitiveAgent(BaseAgent):
         )
 
     def _conversational_capability_block(self, observation: dict) -> str:
-        """Overridable hook: extra live-capability grounding appended to the
-        conversational system prompt. Default returns "" so non-overriding
-        agents are unaffected (BF-599)."""
-        return ""
+        """AD-983a: ground every crew agent in the ship's *live, reachable*
+        mesh capabilities and how to invoke them — the capability carries its
+        own manual.
+
+        Generalizes the BF-599/AD-870 Yeo-only grounding to the whole crew: it
+        renders the ``usage_hint`` of each capability that (a) declares one and
+        (b) is served by a live agent right now (``capability_affordances``).
+        So any crew agent — not just the Yeoman — is told it can fetch a web
+        search / read a page / list a directory / read a file this turn via the
+        AD-869 ``[MESH ...]`` do-and-report seam, instead of confabulating a
+        limitation (BF-599 / AD-957). The affordance travels WITH the capability
+        and surfaces to whoever can reach it (the Copilot tool-schema model),
+        rather than being authored into one agent's behavior rules.
+
+        Substrate-gated by construction (the AD-912 notebook discipline): a
+        capability whose serving pool is down contributes no live agent, so its
+        hint is simply absent — an agent is never told to use something the ship
+        cannot back (AD-592). Returns "" when nothing is reachable. Overridable
+        (Open/Closed); gap-regex-safe (no can't/cannot/don't have/unable/lack).
+        """
+        affordances = self.capability_affordances()
+        if not affordances:
+            return ""
+        # Deterministic order (sorted by intent name) so the prompt + tests are
+        # reproducible regardless of registry iteration order.
+        rendered = ", ".join(hint for _name, hint in sorted(affordances.items()))
+        return (
+            "\n\nShip capabilities you can use right now — put the tag anywhere "
+            "in your reply and the result is fetched and shown to the Captain: "
+            f"{rendered}. These reads change nothing, so use them when a quick "
+            "lookup would help the Captain rather than declining."
+        )
+
+    def capability_affordances(self) -> dict[str, str]:
+        """AD-983a: ``{intent_name: usage_hint}`` for every capability that
+        declares a ``usage_hint`` AND is served by a live agent right now.
+
+        The source of truth for "what can I reach on the mesh this turn": walk
+        the live registry, read each agent's declared ``intent_descriptors``,
+        and collect the hints. Substrate-gated — only LIVE agents contribute, so
+        a capability whose pool is down is absent (the BF-599 honest-degrade
+        generalized off Yeo's ``_available_mesh_read_intents``). Deduplicated by
+        intent name (first live server wins). Tier-2: never raises; returns {}
+        on no runtime / no registry / any read failure.
+
+        AD-983b will intersect this with the agent's *granted* capabilities; for
+        now the live-pool reachability check is the gate.
+        """
+        runtime = getattr(self, "_runtime", None)
+        registry = getattr(runtime, "registry", None)
+        if registry is None:
+            return {}
+        out: dict[str, str] = {}
+        try:
+            for agent in registry.all():
+                for desc in getattr(agent, "intent_descriptors", None) or []:
+                    hint = getattr(desc, "usage_hint", "")
+                    name = getattr(desc, "name", "")
+                    if hint and name and name not in out:
+                        out[name] = hint
+        except Exception:
+            logger.debug(
+                "AD-983a: capability_affordances build failed; no affordance "
+                "block this turn", exc_info=True,
+            )
+            return {}
+        return out
 
     def _conversational_task_protocol(self, observation: dict) -> str:
         """Overridable hook (AD-845): task-creation protocol appended to the

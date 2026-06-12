@@ -30,7 +30,7 @@ class DirectoryListAgent(BaseAgent):
     ]
     initial_confidence: float = 0.8
     intent_descriptors = [
-        IntentDescriptor(name="list_directory", params={"path": "<absolute_path>"}, description="List files and directories"),
+        IntentDescriptor(name="list_directory", params={"path": "<absolute_path>"}, description="List files and directories", usage_hint="[MESH list_directory path=<dir>] (list a directory)"),
     ]
 
     _handled_intents = {"list_directory"}

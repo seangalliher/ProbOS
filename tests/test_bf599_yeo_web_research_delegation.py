@@ -1,24 +1,24 @@
-"""BF-599: Yeo conversational capability grounding.
+"""BF-599 (revised by AD-983a): no-confabulation capability grounding.
 
 Yeo (YeomanAgent, AD-766) confabulated "I can't browse the web" in 1:1 DMs
-even though the ship has live ``web_search``/``page_reader``/``http`` pools.
-Root cause: the conversational DM prompt is composed with
-``hardcoded_instructions=""`` so Yeo's static role rules never reach the DM
-turn. The fix adds an overridable base hook
-``CognitiveAgent._conversational_capability_block`` (default ``""``) that Yeo
-overrides to inject the *live* delegable web capabilities read from the
-registry.
+even though the ship has live ``web_search``/``page_reader`` agents. The
+original fix added a Yeo-only ``_conversational_capability_block`` override.
+**AD-983a** generalized that grounding to ALL crew and made it descriptor-
+driven: the base ``CognitiveAgent._conversational_capability_block`` renders the
+``usage_hint`` of every capability served by a live agent (``capability_affordances``).
+So Yeo's no-confabulation behavior is now an inherited-base property, not a
+Yeoman override. Comprehensive affordance coverage lives in
+``test_ad983a_capability_affordances.py``; this file keeps the BF-599 regression
+guard (Yeo gets the web affordance from a live web agent) + the mesh-only
+invariant (no direct httpx import).
 
-These tests use a REAL ``AgentRegistry`` fixture (not ``MagicMock`` — the
-phantom-attribute trap, repo conventions) so ``get_by_pool`` lookups hit
-reality.
+Real ``AgentRegistry`` fixtures — no MagicMock at the substrate boundary (BF-287).
 """
 
 from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
@@ -30,6 +30,7 @@ from probos.cognitive.yeoman import (
     _ROLE_RULES,
 )
 from probos.substrate.registry import AgentRegistry
+from probos.types import IntentDescriptor
 
 
 # ---------------------------------------------------------------------------
@@ -37,19 +38,26 @@ from probos.substrate.registry import AgentRegistry
 # ---------------------------------------------------------------------------
 
 
-def _stub_agent(agent_id: str, agent_type: str, pool: str) -> SimpleNamespace:
-    """Minimal BaseAgent stand-in for registry.register / get_by_pool.
-
-    ``register`` reads ``id``/``agent_type``/``pool``; ``get_by_pool`` filters
-    on ``pool``. ``capabilities`` is read by other registry accessors we don't
-    exercise here, included for completeness.
-    """
+def _cap_agent(agent_id: str, pool: str, *descriptors: IntentDescriptor) -> SimpleNamespace:
+    """A live-agent stand-in that carries ``intent_descriptors`` (the AD-983a
+    affordance source) so the base hook can read their ``usage_hint``s."""
     return SimpleNamespace(
         id=agent_id,
-        agent_type=agent_type,
+        agent_type=pool,
         pool=pool,
         capabilities=[],
+        intent_descriptors=list(descriptors),
     )
+
+
+_WEB_SEARCH = IntentDescriptor(
+    name="web_search", description="Search the web",
+    usage_hint="[MESH web_search query=<terms>] (search the web)",
+)
+_READ_PAGE = IntentDescriptor(
+    name="read_page", description="Read a page",
+    usage_hint="[MESH read_page url=<url>] (read & summarize a web page)",
+)
 
 
 class _FakeRuntime:
@@ -66,10 +74,7 @@ def _reset_yeoman_singleton() -> None:
 
 
 def _make_yeo(runtime: _FakeRuntime | None = None) -> YeomanAgent:
-    """Construct a YeomanAgent bypassing the full CognitiveAgent __init__.
-
-    Mirrors the test_yeoman_agent.py pattern.
-    """
+    """Construct a YeomanAgent bypassing the full CognitiveAgent __init__."""
     agent = object.__new__(YeomanAgent)
     agent.id = "yeoman-001"
     agent.callsign = "Yeo"
@@ -82,12 +87,10 @@ def _make_yeo(runtime: _FakeRuntime | None = None) -> YeomanAgent:
     return agent
 
 
-async def _registry_with_pools(*pools: str) -> AgentRegistry:
+async def _registry_with_web_agents() -> AgentRegistry:
     registry = AgentRegistry()
-    for idx, pool in enumerate(pools):
-        await registry.register(
-            _stub_agent(f"{pool}-{idx}", f"{pool}_agent", pool)
-        )
+    await registry.register(_cap_agent("web-0", "web_search", _WEB_SEARCH))
+    await registry.register(_cap_agent("page-0", "page_reader", _READ_PAGE))
     return registry
 
 
@@ -96,25 +99,16 @@ async def _registry_with_pools(*pools: str) -> AgentRegistry:
 # ---------------------------------------------------------------------------
 
 
-def test_capability_block_lists_live_pools() -> None:
-    """Yeo's block names every present pool's delegable intent."""
-    registry = asyncio.run(_registry_with_pools("web_search", "page_reader", "http"))
+def test_yeo_gets_web_affordance_from_live_web_agent() -> None:
+    """BF-599 regression: with a live web_search agent, Yeo's conversational
+    capability block names the web-search affordance (no confabulation)."""
+    registry = asyncio.run(_registry_with_web_agents())
     yeo = _make_yeo(_FakeRuntime(registry))
 
     block = yeo._conversational_capability_block({"intent": "direct_message"})
 
     assert "web_search" in block
     assert "read_page" in block
-    assert "http_fetch" in block
-    # The exposed intent name is read_page, NOT the page_reader pool name.
-    assert "page_reader" not in block
-
-
-def test_capability_block_default_base_returns_empty() -> None:
-    """The base CognitiveAgent hook is a no-op so other agents are unaffected."""
-    base = object.__new__(CognitiveAgent)
-
-    assert base._conversational_capability_block({"intent": "direct_message"}) == ""
 
 
 def test_capability_block_no_runtime_degrades() -> None:
@@ -124,17 +118,21 @@ def test_capability_block_no_runtime_degrades() -> None:
     assert yeo._conversational_capability_block({"intent": "direct_message"}) == ""
 
 
-def test_capability_block_no_pools_returns_empty() -> None:
-    """A live registry with none of the web pools yields no block."""
-    registry = asyncio.run(_registry_with_pools("yeoman", "system"))
-    yeo = _make_yeo(_FakeRuntime(registry))
+def test_capability_block_no_usage_hint_agents_returns_empty() -> None:
+    """A live registry whose agents declare no usage_hint yields no block."""
+    async def _run() -> AgentRegistry:
+        registry = AgentRegistry()
+        await registry.register(_cap_agent("sys-0", "system"))  # no descriptors
+        return registry
 
+    registry = asyncio.run(_run())
+    yeo = _make_yeo(_FakeRuntime(registry))
     assert yeo._conversational_capability_block({"intent": "direct_message"}) == ""
 
 
 def test_capability_block_no_gap_regex_tokens() -> None:
     """The rendered block must not trip the decomposer capability-gap regex."""
-    registry = asyncio.run(_registry_with_pools("web_search", "page_reader", "http"))
+    registry = asyncio.run(_registry_with_web_agents())
     yeo = _make_yeo(_FakeRuntime(registry))
 
     block = yeo._conversational_capability_block({"intent": "direct_message"})
@@ -154,54 +152,26 @@ def test_yeoman_no_direct_http_import() -> None:
     assert "import requests" not in source
 
 
-# ---------------------------------------------------------------------------
-# BF-601: filesystem capability grounding (sibling of the web variant).
-# Yeo confabulated "I don't have a filesystem browsing capability" despite the
-# always-registered core ``directory``/``filesystem``/``search`` pools.
-# ---------------------------------------------------------------------------
+def test_capability_block_renders_multiple_reachable_families() -> None:
+    """When several live agents declare usage_hints, the block renders all of
+    them and stays gap-regex-safe (the AD-983a generalization of BF-599/BF-601:
+    web + filesystem affordances together, descriptor-driven)."""
+    async def _run() -> AgentRegistry:
+        reg = AgentRegistry()
+        await reg.register(_cap_agent("web-0", "web_search", _WEB_SEARCH))
+        await reg.register(_cap_agent("page-0", "page_reader", _READ_PAGE))
+        await reg.register(_cap_agent("fs-0", "filesystem", IntentDescriptor(
+            name="read_file", description="Read a file",
+            usage_hint="[MESH read_file path=<file>] (read a file)",
+        )))
+        return reg
 
-
-def test_capability_block_lists_filesystem_pools() -> None:
-    """Yeo's block names the core filesystem intents when those pools exist."""
-    registry = asyncio.run(_registry_with_pools("directory", "filesystem", "search"))
+    registry = asyncio.run(_run())
     yeo = _make_yeo(_FakeRuntime(registry))
 
     block = yeo._conversational_capability_block({"intent": "direct_message"})
 
-    assert "list_directory" in block
-    assert "read_file" in block
-    assert "search_files" in block
-
-
-def test_capability_block_filesystem_no_gap_regex_tokens() -> None:
-    """The filesystem block must not trip the decomposer capability-gap regex."""
-    registry = asyncio.run(_registry_with_pools("directory", "filesystem", "search"))
-    yeo = _make_yeo(_FakeRuntime(registry))
-
-    block = yeo._conversational_capability_block({"intent": "direct_message"})
-
-    assert block
-    assert not _CAPABILITY_GAP_RE.search(block)
-
-
-def test_capability_block_lists_web_and_filesystem_together() -> None:
-    """Both capability families render in one block when all pools are live."""
-    registry = asyncio.run(
-        _registry_with_pools(
-            "web_search", "page_reader", "http", "directory", "filesystem", "search"
-        )
-    )
-    yeo = _make_yeo(_FakeRuntime(registry))
-
-    block = yeo._conversational_capability_block({"intent": "direct_message"})
-
-    for intent in (
-        "web_search",
-        "read_page",
-        "http_fetch",
-        "list_directory",
-        "read_file",
-        "search_files",
-    ):
+    for intent in ("web_search", "read_page", "read_file"):
         assert intent in block
     assert not _CAPABILITY_GAP_RE.search(block)
+

@@ -727,6 +727,16 @@ class IntentDescriptor:
     requires_consensus: bool = False
     requires_reflect: bool = False
     tier: str = "domain"  # "core", "utility", or "domain"
+    # AD-983a: optional AGENT-FACING invocation manual. ``description`` serves
+    # the decomposer (planning); ``usage_hint`` serves a crew agent at reply
+    # time (how to reach this capability via the mesh) — exactly like a Copilot
+    # tool's self-description. Declared once on the capability; the
+    # ``CognitiveAgent`` base composes the hints of all live, reachable
+    # capabilities into every crew agent's conversational prompt, so no agent's
+    # behavior rules have to teach "how to use" what it holds. Empty = not
+    # surfaced as a self-serve affordance. Only declare a ``[MESH ...]`` form
+    # on an intent the AD-869 do-and-report seam actually backs.
+    usage_hint: str = ""
 
 
 @dataclass

@@ -154,6 +154,7 @@ class WebSearchAgent(_BundledMixin, CognitiveAgent):
             params={"query": "search terms"},
             description="Search the web and return summarized results",
             requires_reflect=True,
+            usage_hint="[MESH web_search query=<terms>] (search the web)",
         ),
     ]
     _handled_intents = {"web_search"}
@@ -208,6 +209,7 @@ class PageReaderAgent(_BundledMixin, CognitiveAgent):
             params={"url": "<url>"},
             description="Read and summarize a web page",
             requires_reflect=True,
+            usage_hint="[MESH read_page url=<url>] (read & summarize a web page)",
         ),
     ]
     _handled_intents = {"read_page"}

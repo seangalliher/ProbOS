@@ -35,7 +35,7 @@ class FileReaderAgent(BaseAgent):
     ]
     initial_confidence: float = 0.8
     intent_descriptors = [
-        IntentDescriptor(name="read_file", params={"path": "<absolute_path>"}, description="Read a file and return content"),
+        IntentDescriptor(name="read_file", params={"path": "<absolute_path>"}, description="Read a file and return content", usage_hint="[MESH read_file path=<file>] (read a file)"),
         IntentDescriptor(name="stat_file", params={"path": "<absolute_path>"}, description="Get file size, mtime, etc."),
     ]
 
