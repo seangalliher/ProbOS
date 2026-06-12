@@ -1034,6 +1034,7 @@ class EpisodicMemory:
         recall_confidence_weak_floor: float = 0.45,
         hybrid_recall_enabled: bool = False,
         hybrid_rrf_k: int = 60,
+        recall_fok_logging_enabled: bool = False,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -1049,6 +1050,10 @@ class EpisodicMemory:
         # (below the cosine threshold but keyword-present) is still surfaced.
         self._hybrid_recall_enabled = bool(hybrid_recall_enabled)
         self._hybrid_rrf_k = max(1, int(hybrid_rrf_k))
+        # AD-981a: when set, recall_for_agent emits the agent-scoped AD-979a
+        # Feeling-of-Knowing band per call (a calibration signal). Off by
+        # default -> no extra log and byte-identical recalled episodes.
+        self._recall_fok_logging = bool(recall_fok_logging_enabled)
         self._verify_on_recall = verify_content_hash
         self._eviction_audit = eviction_audit
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
@@ -2541,12 +2546,52 @@ class EpisodicMemory:
         return results
 
     async def recall_for_agent(self, agent_id: str, query: str, k: int = 5) -> list[Episode]:
-        """Recall episodes scoped to a specific agent. Sovereign memory — only this agent's experiences (AD-397)."""
+        """Recall episodes scoped to a specific agent. Sovereign memory — only this agent's experiences (AD-397).
+
+        AD-981a: a thin byte-identical shim over
+        :meth:`recall_for_agent_with_confidence` (the single source of truth for
+        the sovereign query+filter path). Callers that want the agent-scoped
+        Feeling-of-Knowing band call that method directly; this returns just the
+        episodes, so every existing caller is unchanged.
+        """
+        episodes, _confidence = await self.recall_for_agent_with_confidence(
+            agent_id, query, k
+        )
+        return episodes
+
+    async def recall_for_agent_with_confidence(
+        self, agent_id: str, query: str, k: int = 5
+    ) -> tuple[list[Episode], RecallConfidence]:
+        """AD-981a: sovereign agent recall PLUS the AD-979a agent-scoped
+        Feeling-of-Knowing signal.
+
+        Same sovereign query / relaxed-threshold / shard path as the historical
+        ``recall_for_agent`` (which now delegates here, byte-identical), but it
+        also surfaces the similarity distribution over THIS AGENT'S OWN
+        candidates: the best agent-owned similarity and how many of the agent's
+        episodes the query reached, classified into a ``strong``/``weak``/``none``
+        band. Where :meth:`recall_with_confidence` measures GLOBAL accessibility,
+        this answers "how accessible is *this agent's* memory for this query" —
+        the right signal for the sovereign path and for recall calibration.
+
+        The band is derived from the agent-owned distribution BEFORE the relaxed
+        relevance cut (Koriat accessibility) and classified against the GENERAL
+        ``relevance_threshold`` / ``weak_floor`` (not the relaxed agent-return
+        threshold), so it is directly comparable to the global AD-979a band and
+        the *invisible miss* (a relevant-ish owned memory under the confident-
+        recall bar) becomes visible instead of silently dropped. When
+        ``recall_fok_logging`` is enabled the band is logged per call, turning a
+        live multi-agent session into a recall-calibration tool. The returned
+        episode list is exactly what ``recall_for_agent`` returns.
+        """
+        _none = RecallConfidence(
+            band="none", best_similarity=0.0, candidate_count=0, query=query[:200],
+        )
         if not self._collection:
-            return []
+            return [], _none
         count = self._collection.count()
         if count == 0:
-            return []
+            return [], _none
 
         n_results = min(k * 5, count)
         result = self._collection.query(
@@ -2555,28 +2600,46 @@ class EpisodicMemory:
             include=["metadatas", "documents", "distances"],
         )
         if not result or not result["ids"] or not result["ids"][0]:
-            return []
+            return [], _none
+
+        # BF-027: relaxed threshold for agent-scoped recall. The sovereign shard
+        # filter (agent_ids) already constrains results, and conversational
+        # Captain queries ("what did you post?") are semantically distant from
+        # stored episode text — 0.7 filters too aggressively.
+        agent_recall_threshold = min(self.relevance_threshold, self._agent_recall_threshold)
+        # AD-981a: agent-scoped Feeling-of-Knowing accumulators, tallied over the
+        # agent's OWN candidates BEFORE the relevance cut so the invisible miss
+        # (owned-but-sub-threshold) is captured. Read-only — never affects which
+        # episodes are returned.
+        agent_best_sim = 0.0
+        agent_candidate_count = 0
 
         episodes: list[Episode] = []
         for i, doc_id in enumerate(result["ids"][0]):
             distance = result["distances"][0][i] if result["distances"] else 0.0
             similarity = 1.0 - distance
-            # BF-027: Use a relaxed threshold for agent-scoped recall.
-            # The sovereign shard filter (agent_ids) already constrains results.
-            # Conversational queries from the Captain ("what did you post?") are
-            # semantically distant from stored episode text — 0.7 filters too aggressively.
-            agent_recall_threshold = min(self.relevance_threshold, self._agent_recall_threshold)
-            if similarity < agent_recall_threshold:
-                continue
             metadata = result["metadatas"][0][i] if result["metadatas"] else {}
 
-            # Sovereign shard filter — only this agent's memories
+            # Sovereign shard filter — only this agent's memories.
             agent_ids_json = metadata.get("agent_ids_json", "[]")
             try:
                 agent_ids = json.loads(agent_ids_json)
             except (json.JSONDecodeError, TypeError):
                 agent_ids = []
-            if agent_id not in agent_ids:
+            is_owned = agent_id in agent_ids
+
+            # AD-981a: tally the agent-scoped accessibility distribution (owned
+            # candidates, pre-threshold). Order of the threshold/shard filters
+            # below is unchanged for the RETURNED set — both are pure `continue`
+            # guards, so their intersection (and the k-cap) is identical.
+            if is_owned:
+                agent_candidate_count += 1
+                if similarity > agent_best_sim:
+                    agent_best_sim = similarity
+
+            if similarity < agent_recall_threshold:
+                continue
+            if not is_owned:
                 continue
 
             document = result["documents"][0][i] if result["documents"] else ""
@@ -2589,6 +2652,32 @@ class EpisodicMemory:
             if len(episodes) >= k:
                 break
 
+        confidence = RecallConfidence(
+            band=classify_recall_confidence(
+                agent_best_sim,
+                agent_candidate_count,
+                relevance_threshold=self.relevance_threshold,
+                weak_floor=self._recall_confidence_weak_floor,
+            ),
+            best_similarity=agent_best_sim,
+            candidate_count=agent_candidate_count,
+            query=query[:200],
+        )
+
+        # AD-981a: surface the band as a calibration signal when enabled. Tier-2
+        # — logging must never break recall.
+        if self._recall_fok_logging:
+            logger.info(
+                "AD-981a recall FoK: agent=%s band=%s best_sim=%.3f "
+                "owned_candidates=%d returned=%d query=%r",
+                agent_id,
+                confidence.band,
+                confidence.best_similarity,
+                confidence.candidate_count,
+                len(episodes),
+                query[:80],
+            )
+
         # AD-567d: Record deliberate recall access for activation tracking
         if episodes and self._activation_tracker:
             try:
@@ -2598,7 +2687,7 @@ class EpisodicMemory:
             except Exception:
                 logger.debug("AD-567d: Activation tracking failed", exc_info=True)
 
-        return episodes
+        return episodes, confidence
 
     async def recent_for_agent(self, agent_id: str, k: int = 5) -> list[Episode]:
         """BF-027: Return the k most recent episodes for a specific agent.

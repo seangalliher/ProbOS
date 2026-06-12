@@ -1013,6 +1013,12 @@ class MemoryConfig(BaseModel):
     # keyword-present) is still surfaced. Default OFF -> byte-identical recall.
     hybrid_recall_enabled: bool = False
     hybrid_rrf_k: int = 60
+    # AD-981a: emit the AD-979a Feeling-of-Knowing band (strong/weak/none) per
+    # sovereign agent recall (recall_for_agent) as a structured log line, so a
+    # live multi-agent session becomes a recall-calibration tool (the invisible
+    # miss the crew flagged becomes observable). Default OFF -> zero overhead and
+    # zero new log noise; the recalled episodes are byte-identical either way.
+    recall_fok_logging_enabled: bool = False
     # AD-601: TCM Temporal Context Model
     tcm_enabled: bool = True
     tcm_dimension: int = 16
