@@ -7,6 +7,7 @@ import {
   speakResponse,
   type VoiceProfile,
 } from '../../audio/voice';
+import { CapabilityPanel } from './CapabilityPanel';
 
 /** BF-291: union of browser and Piper voice sources. Both share `.name`
  *  which is all the picker needs; quality/lang are surfaced when the
@@ -712,6 +713,28 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* AD-983c: per-agent capability enablement — enable/disable tools +
+          cognitive skills on this agent (bound to the AD-983b API). Crew only. */}
+      {agent.isCrew && (
+        <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ fontSize: 10, color: '#8888a0', letterSpacing: 1, marginBottom: 4 }}>
+            CAPABILITIES
+          </div>
+          <CapabilityPanel agentId={agent.id} />
+        </div>
+      )}
+
+      {/* AD-983c: per-agent capability enablement — enable/disable tools +
+          cognitive skills on this agent (bound to the AD-983b API). Crew only. */}
+      {agent.isCrew && (
+        <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ fontSize: 10, color: '#8888a0', letterSpacing: 1, marginBottom: 4 }}>
+            CAPABILITIES
+          </div>
+          <CapabilityPanel agentId={agent.id} />
         </div>
       )}
 

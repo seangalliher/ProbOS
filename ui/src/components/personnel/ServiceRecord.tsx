@@ -23,6 +23,7 @@
 import { useState, useEffect } from 'react';
 import StandingOrders from './StandingOrders';
 import SkillManagement from './SkillManagement';
+import { CapabilityPanel } from '../profile/CapabilityPanel';
 
 interface Personality {
   openness?: number;
@@ -322,6 +323,13 @@ export default function ServiceRecord({ agentId, summary }: Props) {
         <div style={{ marginTop: 12 }}>
           <SkillManagement agentId={agentId} />
         </div>
+      </div>
+
+      {/* AD-983c: per-agent capability enablement — the Captain enables/disables
+          tools + cognitive skills on this agent (bound to the AD-983b API). */}
+      <div data-testid="sr-section-capabilities">
+        <div style={sectionHeader('Capabilities')}>Capabilities</div>
+        <CapabilityPanel agentId={agentId} />
       </div>
 
       {/* Qualifications — both homes: tool certs (AD-894) + billet quals (AD-595d) */}

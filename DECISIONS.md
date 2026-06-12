@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-983c: Capability panel UI — the Captain surface for per-agent tool/skill enablement (#916)
+
+**Context.** AD-983b shipped the backend (per-agent skill grants + the unified `GET/POST /api/agent/{id}/capabilities` surface) but the only Captain-facing control for capability enablement was the AD-982 single vision toggle (one boolean, one capability). The "each agent independently enables different tools/skills" half of the AD-983 epic (#913) needed a reusable UI that exposes the *full* tool + skill set per agent — the generalization of the vision toggle from one flag to the whole capability surface.
+
+**Decision.** New reusable `CapabilityPanel` (`ui/src/components/profile/CapabilityPanel.tsx`), bound to the AD-983b API: `fetchCapabilities(agentId)` → `GET /capabilities` → `{tools, skills}`; `setCapability(agentId, kind, id, enabled)` → `POST /capabilities/set`. Renders a `TOOLS (n)` and a `SKILLS (n)` section, each row a toggle button (`data-testid="cap-toggle-{kind}-{id}"`, `aria-pressed`, On/amber `#f0b060` / Off/dim `#666680`) plus the capability name and a human `source` label (`granted` / `restricted` / `role default` / `dept default`). Toggling is **optimistic with revert-on-failure** (the AD-982 vision-toggle pattern). A `deps` prop injects fetchers for tests so no global `fetch` mock is needed. HXI compliant: stroke styling, no emoji.
+
+**Mounts.** (1) Personnel `ServiceRecord.tsx` — a new `data-testid="sr-section-capabilities"` section after Skills & Proficiency. (2) `ProfileInfoTab.tsx` (the AgentProfilePanel Profile tab) — a crew-only `CAPABILITIES` block before the Challenge-to-game control. Both pass `agentId` straight through.
+
+**Tests.** `CapabilityPanel.test.tsx` (10, `deps`-injected): loading placeholder; TOOLS/SKILLS sections + counts + rows; On/Off + `aria-pressed` per granted state; the four source labels; optimistic enable POSTs `{kind, id, enabled}`; revert-on-failed-POST; error placeholder on fetch reject; empty-state copy; refetch on `agentId` change; HXI no-emoji guard. The mount shifted `ProfileInfoTab`'s fetch ordering (CapabilityPanel's mount-time GET is now first), so `ProfileInfoTab.wakePhrase.test.tsx` was updated to find the voice-profile PUT by URL rather than by `calls[0]`. Full UI suite green (239 files, 1463 passed / 1 skipped); `npm run build` clean. PUSHED. Next: AD-983d (#917) — manifest + lazy intent retrieval (the deferred-tool model), the final sub-AD of the epic.
+
 ### AD-983b: per-agent capability enablement — per-agent skill grants + unified /capabilities API (#915)
 
 **Context.** The "each crew agent independently enables different tools and skills" piece of the AD-983 epic (#913). Tools already had per-agent enablement (`ToolPermissionStore`, AD-423b — grant/revoke/restrict, enforced at the agentic loop). Cognitive skills did NOT: `CognitiveSkillCatalog` gated only by `department` + `min_rank`, so a skill could not be enabled on one agent and withheld from its department peers. And there was no unified read/write surface for an agent's capabilities.

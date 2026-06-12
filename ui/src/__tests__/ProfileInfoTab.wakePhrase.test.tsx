@@ -117,10 +117,16 @@ describe('ProfileInfoTab wake-phrase row (AD-718c E5)', () => {
     fireEvent.change(input, { target: { value: 'Ezri' } });
     fireEvent.blur(input);
     expect(fetchSpy).toHaveBeenCalled();
-    const callArgs = (fetchSpy as unknown as { mock: { calls: unknown[][] } })
-      .mock.calls[0];
+    // AD-983c: ProfileInfoTab now also mounts CapabilityPanel, which fires a
+    // GET /api/agent/{id}/capabilities on mount. Find the voice-profile PUT by
+    // URL rather than assuming it is the first fetch call.
+    const calls = (fetchSpy as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const putCall = calls.find(
+      (c) => typeof c[0] === 'string' && (c[0] as string).includes('/voice-profile'),
+    );
+    expect(putCall).toBeDefined();
     const body = JSON.parse(
-      (callArgs[1] as { body: string }).body,
+      ((putCall as unknown[])[1] as { body: string }).body,
     );
     expect(body.wake_phrase).toBe('Ezri');
   });
