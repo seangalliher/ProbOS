@@ -244,6 +244,14 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // on a ref lets EVERY exit path (cancel click, agent switch, unmount)
   // tear the listener down cleanly.
   const transcriptUnsubRef = useRef<(() => void) | null>(null);
+  // AD-985: refs the relocated arm effect reads at callback time without
+  // re-arming on every render. ``speakingAgentIdRef`` is the meeting-wide echo
+  // gate source (the AD-922 ``speakingAgentId != null`` rule); ``sendTextRef``
+  // lets the meeting ``submitTranscript`` route a transcript through the live
+  // group-fan-out send path (DRY) without making the unstable ``sendText``
+  // callback an effect dependency.
+  const speakingAgentIdRef = useRef<string | null>(null);
+  const sendTextRef = useRef<((text: string) => void | Promise<void>) | null>(null);
   // AD-826 — fetch voice-health on mount. The health endpoint is cheap
   // (filesystem stat); we refetch when the agent changes so a swap to
   // a tab with different STT settings honors the new config.
@@ -278,6 +286,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     return () => { try { unsub(); } catch { /* Tier-2 */ } };
   }, []);
   const globalVoiceEnabled = useStore((s) => s.voiceEnabled);
+  // AD-949 call-scoped audio flag (default ON, session-scoped). AD-985 gates
+  // the meeting open-mic on it (consistent with useMeetingVoice).
+  const callAudioEnabled = useStore((s) => s.callAudioEnabled);
   const screenActive = useScreenStore((s) => s.active);
   // Per-agent TTS toggle: defaults to global setting; persisted in localStorage.
   const ttsKey = `hxi_chat_tts_${agentId}`;
@@ -308,71 +319,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     emptyTranscriptCountRef.current = 0;
   }, [agentId]);
 
-  // AD-760: arm / disarm the natural-conversation controller for the
-  // active agent. Single-armed-controller invariant: switching agents
-  // disarms the previous controller before arming the next. The arm
-  // decision reads ``loadMicMode(agentId)`` directly to avoid stale
-  // state during agent-switch renders (the React-state ``micMode``
-  // trails ``agentId`` by one commit). ``micMode`` stays in deps so
-  // popover-driven changes still re-trigger arming.
-  useEffect(() => {
-    const mode = loadMicMode(agentId);
-    if (mode !== 'conversation' || !globalVoiceEnabled) {
-      disarmConversationMode();
-      return;
-    }
-    const armOpts: ArmOptions = {
-      agentId,
-      historyProvider: () => {
-        const conv = useStore.getState().agentConversations.get(agentId);
-        const msgs = conv?.messages ?? [];
-        return msgs.slice(-20).map((m) => ({
-          role: m.role === 'user' ? 'user' : 'agent',
-          content: m.text,
-        }));
-      },
-      onTranscript: (text: string) => {
-        setInput(text);
-      },
-      // BF-290: wire agent-reply path. Without this the controller posts the
-      // user transcript, gets a reply, calls _opts?.onAgentReply?.(replyText)
-      // which is undefined, advances to agent_speaking, and waits forever
-      // for markAgentReplyComplete() to be called. Stuck state blocks the
-      // next mic press because armConversationMode returns early when armed.
-      onAgentReply: (replyText: string) => {
-        // 1. Append to the per-agent conversation so the operator sees it
-        // in the DM thread.
-        useStore.getState().addAgentMessage(agentId, 'agent', replyText);
-        // 2. Speak it (when TTS is enabled for this agent) and signal
-        // controller completion when the TTS 'end' event fires. When TTS
-        // is disabled, signal completion immediately so the controller
-        // advances to silence_pending and the silence timer can run.
-        const currentTtsEnabled = localStorage.getItem(ttsKey) === '1'
-          || (localStorage.getItem(ttsKey) === null && useStore.getState().voiceEnabled);
-        if (!currentTtsEnabled) {
-          markAgentReplyComplete();
-          return;
-        }
-        // Subscribe BEFORE speakResponse so we don't race the 'start' event.
-        // We listen for the matching 'end' for this agent_id, then unsubscribe.
-        const unsub = onSpeechEvent((event) => {
-          if (event.type !== 'end') return;
-          if (event.agent_id && event.agent_id !== agentId) return;
-          try { unsub(); } catch { /* Tier-2 */ }
-          markAgentReplyComplete();
-        });
-        speakResponse(stripMarkdownForSpeech(replyText), voiceProfile ?? undefined, agentId);
-      },
-      onStateChange: (state) => {
-        console.info(`AD-747/BF-290: conversation state for ${agentId}: ${state}`);
-      },
-    };
-    console.info(`AD-760: mic mode ${mode} armed for agent ${agentId}`);
-    armConversationMode(armOpts);
-    return () => {
-      disarmConversationMode();
-    };
-  }, [agentId, micMode, globalVoiceEnabled]);
+  // AD-760/BF-623/AD-985: the natural-conversation arm effect is RELOCATED
+  // below ``sendText`` (search "AD-985: arm / disarm") so it can read
+  // ``meetingActive`` / ``callAudioEnabled`` / ``sendText`` / ``speakingAgentId``
+  // — all defined later in the component. Keeping it here would force stale
+  // refs for the meeting branch. The single-armed-controller invariant is
+  // unchanged (still one arm effect calling the singleton controller).
 
   // BF-300 — persistent TTS-lifecycle subscription. Tracks every speak
   // event for this agent so the PTT click handler can refuse to start a
@@ -528,6 +480,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     meetingActive,
     participantAgentIds: meetingParticipantIds,
   });
+  // AD-985: mirror the live speakingAgentId into a ref so the relocated arm
+  // effect's echo-gate predicate reads the CURRENT value at callback time
+  // (a crew member mid-TTS) without re-arming the controller on every change.
+  useEffect(() => {
+    speakingAgentIdRef.current = speakingAgentId;
+  }, [speakingAgentId]);
   // AD-952: the agent currently "typing" a group reply (progressive reveal).
   // Drives the TypingIndicator bubble; threadId-guarded so it only shows in the
   // thread it belongs to.
@@ -915,6 +873,126 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       setSending(false);
     }
   }, [agentId, threadId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId]);
+
+  // AD-985: keep the send ref current so the meeting open-mic's
+  // ``submitTranscript`` routes through the live group-fan-out path.
+  sendTextRef.current = sendText;
+
+  // AD-760/BF-623/AD-985: arm / disarm the natural-conversation controller for
+  // the active surface. Relocated here (from above the agent-switch hydrate
+  // effect) so it can read ``meetingActive`` / ``callAudioEnabled`` /
+  // ``speakingAgentId`` / ``sendText``. Single-armed-controller invariant: the
+  // singleton controller is disarmed before any re-arm; switching agent, mode,
+  // or meeting state re-runs this effect. The arm decision reads
+  // ``loadMicMode(agentId)`` directly to avoid stale state during agent-switch
+  // renders (React-state ``micMode`` trails ``agentId`` by one commit).
+  useEffect(() => {
+    const mode = loadMicMode(agentId);
+    if (mode !== 'conversation') {
+      disarmConversationMode();
+      return;
+    }
+
+    // AD-985: in a live meeting, open-mic listening routes to the GROUP
+    // fan-out, not the 1:1 chat endpoint. Gated on the AD-949 call-scoped
+    // ``callAudioEnabled`` (consistent with useMeetingVoice + BF-623's
+    // decoupling from the global Ship's-Computer flag).
+    if (meetingActive) {
+      if (!callAudioEnabled) {
+        disarmConversationMode();
+        return;
+      }
+      console.info(`AD-985: meeting open-mic armed for thread of agent ${agentId}`);
+      armConversationMode({
+        agentId,
+        historyProvider: () => {
+          const conv = useStore.getState().agentConversations.get(agentId);
+          const msgs = conv?.messages ?? [];
+          return msgs.slice(-20).map((m) => ({
+            role: m.role === 'user' ? 'user' : 'agent',
+            content: m.text,
+          }));
+        },
+        // AD-922 meeting-wide echo gate: never transcribe while ANY crew member
+        // is mid-TTS (not BF-300's host-filtered ref, which misses non-host
+        // speakers — the exact AD-922 lesson).
+        canListen: () => speakingAgentIdRef.current == null,
+        // Route the utterance through the live group send path (DRY): sendText
+        // self-routes to the AD-914 fan-out and useMeetingVoice speaks the
+        // crew replies. Fire-and-forget — the controller only awaits the
+        // submit's start, then goes to silence_pending (mic stays live).
+        submitTranscript: async (text: string) => {
+          const send = sendTextRef.current;
+          if (send) void send(text);
+        },
+        onStateChange: (state) => {
+          console.info(`AD-985: meeting conversation state: ${state}`);
+        },
+      });
+      return () => {
+        disarmConversationMode();
+      };
+    }
+
+    // 1:1 path. BF-623: Conversation mode is ITSELF the voice opt-in — arming
+    // the hot mic depends ONLY on the mic-mode selection, not on the global
+    // Ship's-Computer ``voiceEnabled`` flag (the bug) and not on the per-agent
+    // TTS toggle either. The open mic is an INPUT affordance; whether the
+    // agent's reply is SPOKEN is decided per-reply in ``onAgentReply`` (it reads
+    // the live ``hxi_chat_tts_{agentId}`` pref), so the Captain can talk to an
+    // agent and read text replies without enabling any voice output.
+    const armOpts: ArmOptions = {
+      agentId,
+      historyProvider: () => {
+        const conv = useStore.getState().agentConversations.get(agentId);
+        const msgs = conv?.messages ?? [];
+        return msgs.slice(-20).map((m) => ({
+          role: m.role === 'user' ? 'user' : 'agent',
+          content: m.text,
+        }));
+      },
+      onTranscript: (text: string) => {
+        setInput(text);
+      },
+      // BF-290: wire agent-reply path. Without this the controller posts the
+      // user transcript, gets a reply, calls _opts?.onAgentReply?.(replyText)
+      // which is undefined, advances to agent_speaking, and waits forever
+      // for markAgentReplyComplete() to be called. Stuck state blocks the
+      // next mic press because armConversationMode returns early when armed.
+      onAgentReply: (replyText: string) => {
+        // 1. Append to the per-agent conversation so the operator sees it
+        // in the DM thread.
+        useStore.getState().addAgentMessage(agentId, 'agent', replyText);
+        // 2. Speak it (when TTS is enabled for this agent) and signal
+        // controller completion when the TTS 'end' event fires. When TTS
+        // is disabled, signal completion immediately so the controller
+        // advances to silence_pending and the silence timer can run.
+        const currentTtsEnabled = localStorage.getItem(ttsKey) === '1'
+          || (localStorage.getItem(ttsKey) === null && useStore.getState().voiceEnabled);
+        if (!currentTtsEnabled) {
+          markAgentReplyComplete();
+          return;
+        }
+        // Subscribe BEFORE speakResponse so we don't race the 'start' event.
+        // We listen for the matching 'end' for this agent_id, then unsubscribe.
+        const unsub = onSpeechEvent((event) => {
+          if (event.type !== 'end') return;
+          if (event.agent_id && event.agent_id !== agentId) return;
+          try { unsub(); } catch { /* Tier-2 */ }
+          markAgentReplyComplete();
+        });
+        speakResponse(stripMarkdownForSpeech(replyText), voiceProfile ?? undefined, agentId);
+      },
+      onStateChange: (state) => {
+        console.info(`AD-747/BF-290: conversation state for ${agentId}: ${state}`);
+      },
+    };
+    console.info(`AD-760: mic mode ${mode} armed for agent ${agentId}`);
+    armConversationMode(armOpts);
+    return () => {
+      disarmConversationMode();
+    };
+  }, [agentId, micMode, meetingActive, callAudioEnabled, voiceProfile, ttsKey]);
 
   // AD-973: the single mic is the composer mic next to Send (the MicIndicator
   // button below). It already captures one VAD-bounded utterance via the

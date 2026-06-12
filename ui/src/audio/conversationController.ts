@@ -78,6 +78,27 @@ export interface ArmOptions {
   onTranscript?: (text: string) => void;
   /** Fires when the controller posts a chat reply (HXI hook). */
   onAgentReply?: (text: string) => void;
+  /** AD-985: group-meeting submission override. When provided, a completed
+   *  utterance is handed to this callback INSTEAD of the built-in 1:1
+   *  ``/api/agent/{id}/chat`` POST — the meeting path routes it to the group
+   *  fan-out (``POST /api/threads/{id}/messages``). The crew's replies are
+   *  spoken externally (``useMeetingVoice``), so the controller does NOT manage
+   *  ``agent_speaking``/``onAgentReply`` in this mode: after the submit
+   *  resolves it goes straight to ``silence_pending`` (mic stays live, gated by
+   *  ``canListen``) to await the Captain's next turn. Fire-and-forget is fine —
+   *  the controller only awaits the submit's own completion, not the replies. */
+  submitTranscript?: (
+    text: string,
+    history: Array<{ role: string; content: string }>,
+  ) => Promise<void>;
+  /** AD-985: echo-gate predicate, checked before a transcript is accepted.
+   *  Returns ``false`` when the mic must NOT listen right now — in a meeting
+   *  that is ``speakingAgentId != null`` (any crew member mid-TTS), so the mic
+   *  never transcribes the crew's own speech (the AD-922 meeting-wide echo
+   *  gate). A dropped echo refreshes the silence timer (room activity keeps the
+   *  session alive). When omitted, all transcripts are accepted (the 1:1 path,
+   *  which has its own BF-300 host-filtered guard). */
+  canListen?: () => boolean;
   /** Defaults; tests override. */
   silenceTimeoutMs?: number;
   bargeInEnabled?: boolean;
@@ -261,6 +282,15 @@ async function _onTranscript(text: string): Promise<void> {
   const trimmed = (text || '').trim();
   if (!trimmed) return;
   if (_state === 'inactive') return;
+  // AD-985: meeting-wide echo gate. When a crew member is mid-TTS the mic must
+  // not transcribe their speech, so drop the transcript. A dropped echo is
+  // ROOM ACTIVITY, so refresh the silence timer to keep the session alive
+  // through a long crew turn (otherwise a >30s crew discussion would release
+  // the mic mid-meeting). The 1:1 path passes no canListen and is unaffected.
+  if (_opts?.canListen && !_opts.canListen()) {
+    _refreshSilenceTimer();
+    return;
+  }
   // Cancel any pending silence timer the moment new user speech
   // arrives — keeps the conversation alive while there's activity.
   _cancelSilenceTimer();
@@ -273,6 +303,22 @@ async function _onTranscript(text: string): Promise<void> {
   }
   const history = _opts?.historyProvider?.() ?? [];
   _setState('submitted');
+  // AD-985: group-meeting path — hand the utterance to the injected submit
+  // (the AD-914 group fan-out via sendText) instead of the 1:1 chat POST. The
+  // crew's replies are spoken by useMeetingVoice, so the controller does not
+  // enter agent_speaking; it goes to silence_pending so the mic stays live
+  // (echo-gated) for the Captain's next turn, with the 30s release.
+  if (_opts?.submitTranscript) {
+    try {
+      await _opts.submitTranscript(trimmed, history);
+    } catch {
+      // Honest-degrade: network/submit error -> back to listening.
+      _setState('listening');
+      return;
+    }
+    _enterSilencePending();
+    return;
+  }
   try {
     const resp = await fetch(`/api/agent/${agentId}/chat`, {
       method: 'POST',
@@ -304,7 +350,16 @@ async function _onTranscript(text: string): Promise<void> {
  *  silence-pending timer; expiry disarms the controller. */
 export function markAgentReplyComplete(): void {
   if (_state !== 'agent_speaking') return;
+  _enterSilencePending();
+}
+
+/** Enter ``silence_pending`` and start the 30s release timer. Shared by the
+ *  1:1 reply-complete path (markAgentReplyComplete) and the AD-985 group path
+ *  (after a fan-out submit). On expiry the controller disarms; the BF-318
+ *  ``onReleased`` then lets wake-word resume. */
+function _enterSilencePending(): void {
   _setState('silence_pending');
+  _cancelSilenceTimer();
   const timeoutMs = _opts?.silenceTimeoutMs ?? 30000;
   _silenceTimer = setTimeout(() => {
     _silenceTimer = null;
@@ -312,6 +367,15 @@ export function markAgentReplyComplete(): void {
       disarmConversationMode();
     }
   }, timeoutMs);
+}
+
+/** AD-985: restart the silence timer if (and only if) one is pending, so room
+ *  activity (a dropped crew-TTS echo) keeps an open meeting mic alive. No-op
+ *  when not in ``silence_pending`` (e.g. mid-listen) — there is no timer to
+ *  refresh and the controller is already live. */
+function _refreshSilenceTimer(): void {
+  if (_state !== 'silence_pending' || _silenceTimer === null) return;
+  _enterSilencePending();
 }
 
 function _cancelSilenceTimer(): void {

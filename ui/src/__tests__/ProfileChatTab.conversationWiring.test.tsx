@@ -133,12 +133,19 @@ describe('AD-760 ProfileChatTab mic-mode popover', () => {
     expect(mocks.armConversationModeMock.mock.calls.length).toBe(armCallsBefore);
   });
 
-  it('voiceEnabled flip false disarms but preserves persisted preference', async () => {
+  it('BF-623: a global voiceEnabled flip does NOT disarm conversation mode', async () => {
+    // BF-623 decoupling: conversation-mode arming depends ONLY on the mic-mode
+    // selection, not the global Ship's-Computer voice flag. Flipping it must
+    // leave the armed hot mic untouched (and preserve the persisted preference).
     localStorage.setItem('hxi_chat_mic_mode_agent-007', 'conversation');
     render(<ProfileChatTab agentId="agent-007" />);
     await waitFor(() => expect(mocks.armConversationModeMock).toHaveBeenCalled());
+    const disarmsBefore = mocks.disarmConversationModeMock.mock.calls.length;
     useStore.setState({ voiceEnabled: false });
-    await waitFor(() => expect(mocks.disarmConversationModeMock).toHaveBeenCalled());
+    // Give any (incorrect) re-arm effect a chance to run, then assert no disarm.
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mocks.disarmConversationModeMock.mock.calls.length).toBe(disarmsBefore);
     expect(localStorage.getItem('hxi_chat_mic_mode_agent-007')).toBe('conversation');
   });
 });
