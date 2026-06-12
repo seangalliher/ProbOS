@@ -13,8 +13,10 @@ interface TypingIndicatorProps {
   callsign: string;
   /** AD-962: the verb shown after the name. "typing" (default) for the AD-952
    *  per-agent compose beat; "thinking" for the AD-962 pre-reply generation
-   *  phase (the crew is being asked, no reply exists yet). */
-  verb?: 'typing' | 'thinking';
+   *  phase (the crew is being asked, no reply exists yet); BF-621 "speaking"
+   *  for a live meeting while the agent's voice utterance plays (text is
+   *  revealed after it finishes). */
+  verb?: 'typing' | 'thinking' | 'speaking';
 }
 
 const _AMBER = '#f0b060';

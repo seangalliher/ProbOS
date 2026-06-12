@@ -36,6 +36,17 @@ export interface MeetingVoiceDeps {
   /** Called with the agent_id immediately before each utterance and ``null``
    *  after it ends. Drives the hook's ``speakingAgentId`` (AD-923 seam). */
   onSpeakingChange?: (agentId: string | null) => void;
+  /** BF-621: called with the FULL reply right BEFORE its utterance begins, so
+   *  the caller can show a "{callsign} is speaking…" label. Distinct from
+   *  ``onSpeakingChange`` (which carries only the agent_id, for the avatar
+   *  lip-sync indicator). */
+  onUtteranceStart?: (reply: PerAgentReply) => void;
+  /** BF-621: called with the FULL reply right AFTER its utterance completes
+   *  (the ``'end'`` event or the safety timeout) and AFTER
+   *  ``onSpeakingChange(null)`` — so the caller can reveal the reply text once
+   *  it has been spoken ("hear, then see"). NOT called for a reply skipped by
+   *  ``shouldContinue`` (a superseded batch). */
+  onUtteranceEnd?: (reply: PerAgentReply) => void;
   /** Strip markdown for cleaner speech (= ``stripMarkdownForSpeech``). */
   strip?: (s: string) => string;
   /** Abort check evaluated before each utterance -- lets a newer batch
@@ -137,11 +148,19 @@ export async function speakRepliesSequentially(
     }
     if (deps.shouldContinue && !deps.shouldContinue()) break;
     deps.onSpeakingChange?.(reply.agent_id);
+    deps.onUtteranceStart?.(reply);
+    let _spoken = false;
     try {
       await _speakAndWait(reply, profile, deps);
+      _spoken = true;
     } finally {
       deps.onSpeakingChange?.(null);
     }
+    // BF-621: reveal the text AFTER the utterance completes (and after the
+    // "speaking" label is cleared) — "hear, then see." Only when the utterance
+    // actually ran; a superseded batch breaks at the top of the next iteration
+    // so its later replies are neither spoken nor revealed (correct — stale).
+    if (_spoken) deps.onUtteranceEnd?.(reply);
   }
 }
 

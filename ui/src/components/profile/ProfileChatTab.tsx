@@ -761,22 +761,47 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           // all-at-once — exactly the Captain-reported regression. Timer-paced
           // progressive reveal has built-in inter-reply spacing and CANNOT
           // burst, so the text is always paced whether or not voice is audible.
-          // Voice (below) is kicked off FIRST so it runs concurrently with the
-          // text instead of after it; both pace one-at-a-time, roughly aligned.
+          // BF-621: when a meeting is live AND call audio is ON, the Captain
+          // wants to HEAR each reply, THEN see it pop into the chat. The voice
+          // sequencer (AD-921) is the single clock — it awaits each utterance —
+          // so driving the reveal off its per-utterance completion makes text
+          // strictly follow speech (no drift, no burst: the BF-618 failure was a
+          // SEPARATE timer racing the voice, not the voice itself). The label
+          // reads "{callsign} is speaking…" for the duration of each utterance,
+          // then clears and the spoken text lands. When audio is OFF/muted (or
+          // this is text chat) we keep the AD-960 timer-paced reveal.
           // Exact word-level karaoke sync remains forward marker AD-976a (needs
           // Piper streaming timing metadata).
-          // AD-921: when the meeting is live, speak the replies in facilitator
-          // order (one at a time, per-agent voice). Non-blocking + self-gates on
-          // meeting_active + call audio, so non-meeting sends stay silent. Kicked
-          // off before the awaited reveal so voice + text run together.
-          speakMeetingReplies(replies as PerAgentReply[]);
-          await revealRepliesProgressively(replies as StaggerReply[], {
-            setTyping: (tt) => useStore.getState().setTypingAgent(
-              tt ? { threadId: activeThreadId ?? null, agentId: tt.agentId, callsign: tt.callsign } : null,
-            ),
-            appendReply,
-            sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
-          });
+          const _meetingThread = useStore.getState().chatThreads.get(groupThreadId);
+          const _meetingLive = !!(
+            _meetingThread?.metadata as Record<string, unknown> | undefined
+          )?.meeting_active;
+          const _callAudioOn = useStore.getState().callAudioEnabled;
+          if (_meetingLive && _callAudioOn) {
+            // Voice-driven reveal: hear, then see. speakMeetingReplies is
+            // fire-and-forget; the hooks set the "speaking" label as each agent
+            // begins and reveal that agent's text the instant it finishes.
+            speakMeetingReplies(replies as PerAgentReply[], {
+              onUtteranceStart: (r) => useStore.getState().setTypingAgent({
+                threadId: activeThreadId ?? null,
+                agentId: r.agent_id,
+                callsign: r.callsign ?? '',
+                verb: 'speaking',
+              }),
+              onUtteranceEnd: (r) => {
+                useStore.getState().setTypingAgent(null);
+                appendReply(r as StaggerReply);
+              },
+            });
+          } else {
+            await revealRepliesProgressively(replies as StaggerReply[], {
+              setTyping: (tt) => useStore.getState().setTypingAgent(
+                tt ? { threadId: activeThreadId ?? null, agentId: tt.agentId, callsign: tt.callsign } : null,
+              ),
+              appendReply,
+              sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+            });
+          }
         } catch {
           // AD-962: clear the thinking/typing indicator on the error path so it
           // never sticks after a failed send.

@@ -23,11 +23,23 @@ export interface UseMeetingVoiceOptions {
   participantAgentIds?: string[];
 }
 
+/** BF-621: optional per-utterance reveal hooks. When supplied, the caller can
+ *  show a "{callsign} is speaking…" label for the duration of each utterance
+ *  (``onUtteranceStart``) and reveal the reply text once it finishes speaking
+ *  (``onUtteranceEnd``) — "hear, then see." Both are gated on the current
+ *  generation so a superseded batch (Captain re-send) never reveals stale
+ *  text. */
+export interface SpeakRepliesHooks {
+  onUtteranceStart?: (reply: PerAgentReply) => void;
+  onUtteranceEnd?: (reply: PerAgentReply) => void;
+}
+
 export interface UseMeetingVoiceResult {
   /** Speak the AD-914 ``per_agent_replies`` in facilitator (array) order,
    *  one at a time. Self-gates on ``meetingActive && callAudioEnabled``;
-   *  no-ops otherwise. Reference-stable. */
-  speakReplies: (replies: PerAgentReply[]) => void;
+   *  no-ops otherwise. Reference-stable. ``hooks`` (BF-621) optionally drive a
+   *  speaking label + after-speech text reveal. */
+  speakReplies: (replies: PerAgentReply[], hooks?: SpeakRepliesHooks) => void;
   /** The agent currently speaking (``null`` between utterances / when idle).
    *  AD-923 presence-indicator seam. */
   speakingAgentId: string | null;
@@ -66,7 +78,7 @@ export function useMeetingVoice(opts: UseMeetingVoiceOptions): UseMeetingVoiceRe
     }
   }, [opts.meetingActive, participantKey]);
 
-  const speakReplies = useCallback((replies: PerAgentReply[]): void => {
+  const speakReplies = useCallback((replies: PerAgentReply[], hooks?: SpeakRepliesHooks): void => {
     if (!meetingActiveRef.current) return;
     // AD-949: gate on the call-scoped ``callAudioEnabled`` (default ON) instead
     // of the Ship's-Computer ``voiceEnabled`` — group/meeting voice is now
@@ -85,6 +97,10 @@ export function useMeetingVoice(opts: UseMeetingVoiceOptions): UseMeetingVoiceRe
       resolveProfile: resolverRef.current,
       strip: stripMarkdownForSpeech,
       onSpeakingChange: (id) => { if (genRef.current === myGen) setSpeakingAgentId(id); },
+      // BF-621: gen-guard the reveal hooks so a superseded batch never labels
+      // or reveals stale text (mirrors the onSpeakingChange guard).
+      onUtteranceStart: (r) => { if (genRef.current === myGen) hooks?.onUtteranceStart?.(r); },
+      onUtteranceEnd: (r) => { if (genRef.current === myGen) hooks?.onUtteranceEnd?.(r); },
       shouldContinue: () => genRef.current === myGen,
     });
   }, []);

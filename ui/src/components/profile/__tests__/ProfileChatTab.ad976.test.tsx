@@ -1,87 +1,150 @@
-// AD-976 / BF-618: meeting-mode text reveal. The Captain reported text still
-// dumped all at once in a live meeting: the original AD-976 coupled the text
-// reveal to TTS ``speakingAgentId`` events, which burst to all-at-once when
-// speech fired fast or didn't pace. BF-618 replaces that with the SAME
-// timer-paced progressive reveal text chat uses (built-in inter-reply spacing,
-// cannot burst), with voice kicked off concurrently. The full ProfileChatTab is
-// too heavy to render (audio/screen deps) — same rationale as
-// ProfileChatTab.groupsend.test.tsx — so the BF-618 ordering + reveal contract
-// is exercised through a FAITHFUL MIRROR of the production send-handler branch.
+// AD-976 / BF-618 / BF-621: meeting-mode text reveal.
+//
+// History: the original AD-976 coupled the text reveal to TTS
+// ``speakingAgentId`` events, which burst to all-at-once when speech fired fast
+// or didn't pace. BF-618 replaced that with the timer-paced progressive reveal.
+// BF-621 (this contract): the Captain wants to HEAR each reply, THEN see it pop
+// into the chat. So when a meeting is live AND call audio is ON, the reveal is
+// driven by the AD-921 voice sequencer's per-utterance completion (the single
+// clock) — text strictly follows speech, with a "{callsign} is speaking…" label
+// for the duration of each utterance. When audio is OFF/muted (or this is text
+// chat) the AD-960 timer-paced progressive reveal is used.
+//
+// The full ProfileChatTab is too heavy to render (audio/screen deps) — same
+// rationale as ProfileChatTab.groupsend.test.tsx — so the BF-621 branch +
+// hook-wiring contract is exercised through a FAITHFUL MIRROR of the production
+// send-handler branch.
 import { describe, it, expect } from 'vitest';
 
-type Reply = { agent_id?: string; callsign?: string; text?: string };
+type Reply = { agent_id: string; callsign?: string; text?: string };
+type TypingState = { agentId: string; callsign: string; verb?: string } | null;
+interface SpeakHooks {
+  onUtteranceStart?: (r: Reply) => void;
+  onUtteranceEnd?: (r: Reply) => void;
+}
 
-// --- Mirror of the BF-618 send-handler reveal sequence. Voice is dispatched
-// FIRST (non-blocking) so it runs concurrently with the awaited progressive
-// reveal; there is NO meeting/audio special-case that dumps text instantly.
+// --- Mirror of the BF-621 send-handler reveal branch. ---
 async function runRevealSequence(
   replies: Reply[],
-  hooks: {
-    speakMeetingReplies: (r: Reply[]) => void;
+  ctx: {
+    meetingLive: boolean;
+    callAudioOn: boolean;
+    speakMeetingReplies: (r: Reply[], hooks?: SpeakHooks) => void;
     revealRepliesProgressively: (
       r: Reply[],
       deps: { appendReply: (x: Reply) => void; sleep: (ms: number) => Promise<void> },
     ) => Promise<void>;
     appendReply: (x: Reply) => void;
+    setTyping: (t: TypingState) => void;
   },
 ): Promise<void> {
-  // BF-618: voice first (concurrent), then the awaited progressive reveal.
-  hooks.speakMeetingReplies(replies);
-  await hooks.revealRepliesProgressively(replies, {
-    appendReply: hooks.appendReply,
-    sleep: () => Promise.resolve(),
-  });
+  if (ctx.meetingLive && ctx.callAudioOn) {
+    // Voice-driven: hear, then see. speakMeetingReplies is fire-and-forget; the
+    // hooks set the "speaking" label as each agent begins and reveal that
+    // agent's text the instant it finishes.
+    ctx.speakMeetingReplies(replies, {
+      onUtteranceStart: (r) => ctx.setTyping({ agentId: r.agent_id, callsign: r.callsign ?? '', verb: 'speaking' }),
+      onUtteranceEnd: (r) => { ctx.setTyping(null); ctx.appendReply(r); },
+    });
+  } else {
+    await ctx.revealRepliesProgressively(replies, {
+      appendReply: ctx.appendReply,
+      sleep: () => Promise.resolve(),
+    });
+  }
 }
 
-describe('BF-618 meeting text reveal ordering', () => {
-  it('dispatches voice BEFORE awaiting the progressive reveal (concurrent)', async () => {
-    const order: string[] = [];
-    await runRevealSequence(
-      [{ agent_id: 'a1', text: 'one' }, { agent_id: 'a2', text: 'two' }],
-      {
-        speakMeetingReplies: () => order.push('voice'),
-        revealRepliesProgressively: async (r, deps) => {
-          order.push('reveal-start');
-          for (const x of r) deps.appendReply(x);
-        },
-        appendReply: () => order.push('append'),
-      },
-    );
-    // Voice is kicked off first, then the reveal runs.
-    expect(order[0]).toBe('voice');
-    expect(order[1]).toBe('reveal-start');
-  });
+/** A faithful fake of the AD-921 voice sequencer post-BF-621: for each
+ *  non-empty reply, call onUtteranceStart, then onUtteranceEnd (mirrors
+ *  speakRepliesSequentially ordering). */
+function fakeVoiceSequencer() {
+  return (replies: Reply[], hooks?: SpeakHooks): void => {
+    for (const r of replies) {
+      if (!r.text) continue;
+      hooks?.onUtteranceStart?.(r);
+      hooks?.onUtteranceEnd?.(r);
+    }
+  };
+}
 
-  it('reveals every reply through the progressive path (no instant dump)', async () => {
+describe('BF-621 meeting text reveal (hear, then see)', () => {
+  it('meeting + audio ON: reveals each reply via the voice sequencer, not the timer', async () => {
     const appended: Reply[] = [];
     let usedProgressive = false;
     await runRevealSequence(
-      [{ agent_id: 'a1', text: 'one' }, { agent_id: 'a2', text: 'two' }, { agent_id: 'a3', text: 'three' }],
+      [{ agent_id: 'a1', text: 'one' }, { agent_id: 'a2', text: 'two' }],
       {
-        speakMeetingReplies: () => { /* noop */ },
+        meetingLive: true,
+        callAudioOn: true,
+        speakMeetingReplies: fakeVoiceSequencer(),
+        revealRepliesProgressively: async () => { usedProgressive = true; },
+        appendReply: (x) => appended.push(x),
+        setTyping: () => { /* noop */ },
+      },
+    );
+    // Text revealed through the voice path; the timer reveal is NOT used.
+    expect(usedProgressive).toBe(false);
+    expect(appended.map((r) => r.text)).toEqual(['one', 'two']);
+  });
+
+  it('meeting + audio ON: sets a "speaking" label on start, clears it before append', async () => {
+    const events: string[] = [];
+    await runRevealSequence(
+      [{ agent_id: 'a1', callsign: 'Ezri', text: 'hi' }],
+      {
+        meetingLive: true,
+        callAudioOn: true,
+        speakMeetingReplies: fakeVoiceSequencer(),
+        revealRepliesProgressively: async () => { /* unused */ },
+        appendReply: () => events.push('append'),
+        setTyping: (t) => events.push(t === null ? 'clear' : `speaking:${t.verb}:${t.callsign}`),
+      },
+    );
+    // hear (speaking label) → clear → see (append).
+    expect(events).toEqual(['speaking:speaking:Ezri', 'clear', 'append']);
+  });
+
+  it('meeting + audio MUTED: falls back to the timer-paced progressive reveal', async () => {
+    const appended: Reply[] = [];
+    let usedProgressive = false;
+    let usedVoice = false;
+    await runRevealSequence(
+      [{ agent_id: 'a1', text: 'one' }, { agent_id: 'a2', text: 'two' }],
+      {
+        meetingLive: true,
+        callAudioOn: false,
+        speakMeetingReplies: () => { usedVoice = true; },
         revealRepliesProgressively: async (r, deps) => {
           usedProgressive = true;
           for (const x of r) deps.appendReply(x);
         },
         appendReply: (x) => appended.push(x),
+        setTyping: () => { /* noop */ },
+      },
+    );
+    expect(usedVoice).toBe(false);
+    expect(usedProgressive).toBe(true);
+    expect(appended.map((r) => r.text)).toEqual(['one', 'two']);
+  });
+
+  it('text chat (no meeting): uses the timer-paced progressive reveal', async () => {
+    const appended: Reply[] = [];
+    let usedProgressive = false;
+    await runRevealSequence(
+      [{ agent_id: 'a1', text: 'x' }, { agent_id: 'a2', text: 'y' }, { agent_id: 'a3', text: 'z' }],
+      {
+        meetingLive: false,
+        callAudioOn: true,
+        speakMeetingReplies: () => { throw new Error('voice must not run outside a meeting'); },
+        revealRepliesProgressively: async (r, deps) => {
+          usedProgressive = true;
+          for (const x of r) deps.appendReply(x);
+        },
+        appendReply: (x) => appended.push(x),
+        setTyping: () => { /* noop */ },
       },
     );
     expect(usedProgressive).toBe(true);
-    expect(appended.map((r) => r.text)).toEqual(['one', 'two', 'three']);
-  });
-
-  it('does not depend on meeting/audio state (always progressive)', async () => {
-    // The reveal sequence is identical regardless of meetingActive/callAudio —
-    // there is no longer a branch that dumps text when audio is on. We assert
-    // the single code path runs for any inputs.
-    for (const replies of [[], [{ agent_id: 'a1', text: 'x' }]]) {
-      let revealed = false;
-      await runRevealSequence(replies, {
-        speakMeetingReplies: () => { /* noop */ },
-        revealRepliesProgressively: async () => { revealed = true; },
-        appendReply: () => { /* noop */ },
-      });
-      expect(revealed).toBe(true);
-    }
+    expect(appended.map((r) => r.text)).toEqual(['x', 'y', 'z']);
   });
 });

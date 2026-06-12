@@ -33,6 +33,8 @@ function makeFake(opts: FakeOpts = {}) {
   const listeners: Array<(e: SpeechEvent) => void> = [];
   const speakCalls: SpeakCall[] = [];
   const speakingChanges: Array<string | null> = [];
+  const utteranceStarts: string[] = [];
+  const utteranceEnds: string[] = [];
   const deps: MeetingVoiceDeps = {
     speak: (text, profile, agentId) => { speakCalls.push({ text, profile, agentId }); },
     subscribe: (fn) => {
@@ -44,6 +46,8 @@ function makeFake(opts: FakeOpts = {}) {
     },
     resolveProfile: opts.resolveProfile ?? (async () => undefined),
     onSpeakingChange: (id) => { speakingChanges.push(id); },
+    onUtteranceStart: (reply) => { utteranceStarts.push(reply.agent_id); },
+    onUtteranceEnd: (reply) => { utteranceEnds.push(reply.agent_id); },
     strip: opts.strip,
     // Default 0 disables the per-utterance safety timer so tests drive
     // advancement purely by firing synthetic 'end' events.
@@ -57,7 +61,7 @@ function makeFake(opts: FakeOpts = {}) {
     };
     for (const fn of [...listeners]) fn(e);
   };
-  return { deps, speakCalls, speakingChanges, fireEnd };
+  return { deps, speakCalls, speakingChanges, utteranceStarts, utteranceEnds, fireEnd };
 }
 
 function r(agentId: string): PerAgentReply {
@@ -208,6 +212,51 @@ describe('speakRepliesSequentially', () => {
     expect(fake.speakCalls[0].text).not.toContain('Bones');
     fake.fireEnd('a');
     await p;
+  });
+
+  // BF-621: per-utterance reveal hooks — "hear, then see."
+  it('test_bf621_utterance_start_fires_before_speak', async () => {
+    const fake = makeFake();
+    const p = speakRepliesSequentially([r('alpha'), r('bravo')], fake.deps);
+    await tick();
+    // onUtteranceStart fired for alpha at (or before) the speak; end not yet.
+    expect(fake.utteranceStarts).toEqual(['alpha']);
+    expect(fake.utteranceEnds).toEqual([]);
+    fake.fireEnd('alpha'); await tick();
+    // alpha's end fired, bravo's start fired.
+    expect(fake.utteranceEnds).toEqual(['alpha']);
+    expect(fake.utteranceStarts).toEqual(['alpha', 'bravo']);
+    fake.fireEnd('bravo');
+    await p;
+    expect(fake.utteranceEnds).toEqual(['alpha', 'bravo']);
+  });
+
+  it('test_bf621_utterance_end_fires_after_speaking_change_null', async () => {
+    // "hear, then see": the text reveal (onUtteranceEnd) must land AFTER the
+    // speaking label is cleared (onSpeakingChange(null)). Record a merged
+    // timeline and assert the order for a single reply.
+    const timeline: string[] = [];
+    const fake = makeFake();
+    fake.deps.onSpeakingChange = (id) => timeline.push(id === null ? 'speaking:null' : `speaking:${id}`);
+    fake.deps.onUtteranceStart = (reply) => timeline.push(`start:${reply.agent_id}`);
+    fake.deps.onUtteranceEnd = (reply) => timeline.push(`end:${reply.agent_id}`);
+    const p = speakRepliesSequentially([r('alpha')], fake.deps);
+    await tick();
+    fake.fireEnd('alpha');
+    await p;
+    expect(timeline).toEqual(['speaking:alpha', 'start:alpha', 'speaking:null', 'end:alpha']);
+  });
+
+  it('test_bf621_superseded_batch_does_not_reveal_remaining', async () => {
+    // A reply skipped by shouldContinue is neither spoken NOR revealed (stale).
+    const fake = makeFake();
+    fake.deps.shouldContinue = () => fake.speakCalls.length < 1;
+    const p = speakRepliesSequentially([r('a'), r('b'), r('c')], fake.deps);
+    await tick();
+    fake.fireEnd('a'); await tick();
+    await p;
+    // 'a' spoke + revealed; 'b'/'c' superseded — no end hook for them.
+    expect(fake.utteranceEnds).toEqual(['a']);
   });
 });
 

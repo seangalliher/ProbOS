@@ -61,4 +61,14 @@ describe('AD-952 TypingIndicator', () => {
     expect(el.textContent).toContain('is thinking');
     expect(el.getAttribute('aria-label')).toBe('The crew is thinking');
   });
+
+  // BF-621: the "speaking" verb labels a live meeting reply while its voice
+  // utterance plays (text is revealed after it finishes — "hear, then see").
+  it('renders the "speaking" verb for the BF-621 live meeting phase', () => {
+    render(<TypingIndicator callsign="Ezri" verb="speaking" />);
+    const el = screen.getByTestId('typing-indicator');
+    expect(el.textContent).toContain('Ezri');
+    expect(el.textContent).toContain('is speaking');
+    expect(el.getAttribute('aria-label')).toBe('Ezri is speaking');
+  });
 });
