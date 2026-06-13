@@ -21,6 +21,8 @@ meaningfully matches, so injection is naturally sparse.
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Iterable
 
@@ -33,6 +35,18 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         ChatThreadStore,
         ChatThreadTombstone,
     )
+
+# BF-625: room ranking. The v1 scorer summed raw query-token overlap across
+# every message, so a long catch-all 1:1 room won on sheer volume of common
+# words ("the"/"you"/"have") and outranked the actual group chat a query named.
+# The fix ranks each room by IDF-weighted BM25 *body* relevance (term-frequency
+# saturation + length normalisation, so volume alone can't win) plus a strongly
+# weighted *title* field. For a group room the title IS the participant callsign
+# list (AD-942), so a query that names a participant/topic ("the chat with Yeo")
+# matches the room's identity — the strongest "which conversation" signal.
+_BM25_K1 = 1.5
+_BM25_B = 0.75
+_TITLE_FIELD_WEIGHT = 12.0
 
 
 def _tokens(text: str) -> set[str]:
@@ -118,8 +132,10 @@ def consult_transcript(
 
     ``agent_ids`` is the set of the agent's OWN identifiers (id / sovereign_id);
     only rooms containing one of them are ever consulted (sovereign scope). The
-    match is deterministic lexical token overlap — no embedding — so the result
-    is reproducible and injection is sparse.
+    match is deterministic — no embedding — so the result is reproducible and
+    injection is sparse. Rooms are ranked (BF-625) by IDF-weighted BM25 *body*
+    relevance plus a strongly weighted *title* field, so a long catch-all room
+    cannot outrank the actual group chat a query names by participant or topic.
     """
     qtokens = _tokens(query)
     if not qtokens:
@@ -132,9 +148,10 @@ def consult_transcript(
     except Exception:
         return None
 
-    best_thread: "ChatThread | None" = None
-    best_msgs: list["ChatThreadMessage"] | None = None
-    best_score = 0
+    # Gather sovereign-scoped candidates with their per-room term frequencies.
+    candidates: list[
+        tuple["ChatThread", list["ChatThreadMessage"], Counter, int, set[str]]
+    ] = []
     for t in threads:
         # Sovereign double-check: never consult a room the agent is not in.
         if not (set(getattr(t, "participants", []) or []) & ids):
@@ -143,17 +160,81 @@ def consult_transcript(
             msgs = store.list_messages(t.id, limit=400)
         except Exception:
             continue
-        score = 0
+        tf: Counter = Counter()
         for m in msgs:
-            score += len(qtokens & _tokens(getattr(m, "body", "")))
+            for tok in _tokens(getattr(m, "body", "")):
+                tf[tok] += 1
+        title_tokens = _tokens(getattr(t, "title", "") or "")
+        candidates.append((t, msgs, tf, sum(tf.values()), title_tokens))
+
+    if not candidates:
+        return None
+
+    # Document frequency over the candidate set (presence in body OR title) so
+    # ubiquitous words self-neutralise via IDF without a hand-picked stop-list.
+    n_docs = len(candidates)
+    df: dict[str, int] = {}
+    for _t, _msgs, tf, _dl, title_tokens in candidates:
+        present = set(tf) | title_tokens
+        for tok in (qtokens & present):
+            df[tok] = df.get(tok, 0) + 1
+
+    def _idf(tok: str) -> float:
+        d = df.get(tok, 0)
+        if d <= 0:
+            return 0.0
+        # BM25 smoothed IDF: a token in one room scores high; one in every room
+        # scores near zero. Always > 0 for a present token (single-room safe).
+        return math.log(1.0 + (n_docs - d + 0.5) / (d + 0.5))
+
+    avgdl = sum(dl for _t, _m, _tf, dl, _tt in candidates) / n_docs
+
+    best_thread: "ChatThread | None" = None
+    best_msgs: list["ChatThreadMessage"] | None = None
+    best_score = 0.0
+    best_focus: set[str] = set()
+    for t, msgs, tf, doc_len, title_tokens in candidates:
+        matched: set[str] = set()
+        # Body relevance via BM25: TF saturation + length normalisation means a
+        # long room cannot win on volume of common words alone.
+        body = 0.0
+        for tok in (qtokens & set(tf)):
+            idf = _idf(tok)
+            if idf <= 0.0:
+                continue
+            freq = tf[tok]
+            denom = freq + _BM25_K1 * (
+                1.0 - _BM25_B + _BM25_B * (doc_len / avgdl if avgdl else 0.0)
+            )
+            if denom:
+                body += idf * (freq * (_BM25_K1 + 1.0)) / denom
+                matched.add(tok)
+        # Title field: the room's identity (participants/topic), weighted high.
+        title = 0.0
+        for tok in (qtokens & title_tokens):
+            idf = _idf(tok)
+            if idf > 0.0:
+                title += idf
+                matched.add(tok)
+        score = body + _TITLE_FIELD_WEIGHT * title
         if score > best_score:
             best_score = score
             best_thread = t
             best_msgs = msgs
+            best_focus = matched
 
-    if best_thread is None or best_score == 0 or not best_msgs:
+    if best_thread is None or best_score <= 0.0 or not best_msgs:
         return None
-    return _format_excerpt(best_thread, best_msgs, qtokens, max_chars=max_chars)
+    # Centre the excerpt on the content tokens that won the room (not stopwords);
+    # fall back to all query tokens if a title-only match leaves no body line.
+    excerpt = _format_excerpt(
+        best_thread, best_msgs, best_focus or qtokens, max_chars=max_chars
+    )
+    if excerpt is None and best_focus:
+        excerpt = _format_excerpt(
+            best_thread, best_msgs, qtokens, max_chars=max_chars
+        )
+    return excerpt
 
 
 def render_transcript_grounding(excerpt: str) -> list[str]:
