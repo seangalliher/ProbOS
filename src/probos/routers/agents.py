@@ -1047,6 +1047,22 @@ async def set_vision_capability(
 
 
 # ── AD-983b: per-agent capability enablement (tools + cognitive skills) ──────
+def _tool_origin(tool_type: str, provider: str) -> str:
+    """AD-1000a: classify a tool by *source* (provenance), aligning with the
+    GitHub Copilot / Claude Code / VS Code taxonomy: ``built_in`` / ``mcp`` /
+    ``extension``. Orthogonal to the AD-422 ``ToolType`` (which classifies by
+    *function*). MCP-server tools are ``mcp``; tools contributed by the
+    sealed-core extension path (AD-481 — self-designed agents/skills, providers
+    tagged ``extension``/``designed``) are ``extension``; everything that ships
+    with ProbOS is ``built_in``.
+    """
+    if tool_type == "mcp_server":
+        return "mcp"
+    if provider and provider.lower() in ("extension", "designed", "self_designed", "plugin"):
+        return "extension"
+    return "built_in"
+
+
 def _rank_dept_for_agent(runtime: Any, agent: Any) -> tuple[str | None, str | None]:
     """Resolve (department, rank) for an agent the way onboarding does, for the
     dept/rank skill defaults. Tier-2: returns (None, None) on any failure."""
@@ -1097,6 +1113,7 @@ async def get_agent_capabilities(
                 "id": grant.tool_id,
                 "name": (md or {}).get("name", grant.tool_id),
                 "description": (md or {}).get("description", ""),
+                "origin": _tool_origin((md or {}).get("tool_type", ""), (md or {}).get("provider", "")),
                 "permission": grant.permission.value,
                 "granted": not grant.is_restriction,
                 "source": "restriction" if grant.is_restriction else "grant",
@@ -1147,7 +1164,46 @@ async def get_agent_capabilities(
                 "min_rank": entry.min_rank if entry is not None else "ensign",
             })
 
-    return {"agent_id": agent_id, "tools": tools, "skills": skills}
+    return {"agent_id": agent_id, "tools": tools, "skills": skills, "mesh_intents": _mesh_intents(runtime)}
+
+
+def _mesh_intents(runtime: Any) -> list[dict[str, Any]]:
+    """AD-1000a: the live mesh-intent capabilities reachable on the ship — the
+    third capability axis (alongside tools + skills) surfaced for visibility.
+
+    Walks the live registry and collects every registered agent's
+    ``intent_descriptors`` (deduped by name), each with its description,
+    usage hint, consensus requirement, and tier. These are *pool-served*
+    capabilities (e.g. ``run_python`` served by the CodeRunnerAgent pool), so
+    the reachable set is ship-wide rather than per-agent — ``reachable`` reflects
+    that a live pool serves the intent right now. Read-only visibility; per-agent
+    gating of write intents is a separate design (epic #944). Honest-degrade:
+    ``[]`` on no runtime / no registry / any failure.
+    """
+    registry = getattr(runtime, "registry", None)
+    if registry is None:
+        return []
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        for agent in registry.all():
+            for desc in getattr(agent, "intent_descriptors", None) or []:
+                name = getattr(desc, "name", "")
+                if not name or name in out:
+                    continue
+                out[name] = {
+                    "id": name,
+                    "name": name,
+                    "description": getattr(desc, "description", ""),
+                    "usage_hint": getattr(desc, "usage_hint", ""),
+                    "requires_consensus": bool(getattr(desc, "requires_consensus", False)),
+                    "tier": getattr(desc, "tier", "domain"),
+                    "origin": "built_in",
+                    "reachable": True,
+                }
+    except Exception:
+        logger.debug("AD-1000a: mesh-intent collection failed", exc_info=True)
+        return []
+    return sorted(out.values(), key=lambda d: d["name"])
 
 
 @router.get("/{agent_id}/workspace")

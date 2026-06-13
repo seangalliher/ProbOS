@@ -19,11 +19,26 @@ export interface AgentCapability {
   description?: string;
   granted: boolean;
   source: string;  // 'grant' | 'restriction' | 'role_default' | 'dept_default'
+  origin?: string; // AD-1000a: 'built_in' | 'mcp' | 'extension' (tool provenance)
+}
+
+/** AD-1000a: a mesh-intent capability (the third axis). Pool-served + ship-wide,
+ *  so read-only here — shown for visibility, not per-agent toggled. */
+export interface MeshIntent {
+  id: string;
+  name: string;
+  description?: string;
+  usage_hint?: string;
+  requires_consensus: boolean;
+  tier: string;
+  origin: string;
+  reachable: boolean;
 }
 
 interface CapabilitiesResponse {
   tools: AgentCapability[];
   skills: AgentCapability[];
+  mesh_intents: MeshIntent[];
 }
 
 const _AMBER = '#f0b060';
@@ -36,6 +51,7 @@ async function fetchCapabilities(agentId: string): Promise<CapabilitiesResponse>
   return {
     tools: Array.isArray(data?.tools) ? data.tools : [],
     skills: Array.isArray(data?.skills) ? data.skills : [],
+    mesh_intents: Array.isArray(data?.mesh_intents) ? data.mesh_intents : [],
   };
 }
 
@@ -68,6 +84,16 @@ function sourceLabel(source: string): string {
   }
 }
 
+/** AD-1000a: human label for the tool source taxonomy (built_in / mcp / extension). */
+function originLabel(origin?: string): string {
+  switch (origin) {
+    case 'built_in': return 'built-in';
+    case 'mcp': return 'MCP';
+    case 'extension': return 'extension';
+    default: return '';
+  }
+}
+
 interface RowProps {
   cap: AgentCapability;
   kind: 'tool' | 'skill';
@@ -97,7 +123,42 @@ function CapabilityRow({ cap, kind, onToggle }: RowProps) {
         {cap.granted ? 'On' : 'Off'}
       </button>
       <span style={{ color: '#c8c8d4' }}>{cap.name}</span>
+      {originLabel(cap.origin) && (
+        <span
+          data-testid={`cap-origin-${kind}-${cap.id}`}
+          style={{ color: '#7a8aa0', fontSize: 9, letterSpacing: 0.5 }}
+        >
+          {originLabel(cap.origin)}
+        </span>
+      )}
       <span style={{ color: _DIM, fontSize: 9, letterSpacing: 0.5 }}>{sourceLabel(cap.source)}</span>
+    </div>
+  );
+}
+
+/** AD-1000a: read-only row for a mesh-intent capability. No toggle — mesh intents
+ *  are pool-served + ship-wide; a consensus badge flags write intents. */
+function MeshIntentRow({ mi }: { mi: MeshIntent }) {
+  return (
+    <div
+      data-testid={`mesh-row-${mi.id}`}
+      title={mi.description || mi.name}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0', fontSize: 11 }}
+    >
+      <span style={{ color: mi.reachable ? '#c8c8d4' : _DIM }}>{mi.name}</span>
+      {mi.requires_consensus && (
+        <span
+          data-testid={`mesh-consensus-${mi.id}`}
+          title="Requires multi-agent consensus to run"
+          style={{
+            color: _AMBER, fontSize: 9, letterSpacing: 0.5,
+            border: `1px solid rgba(240,176,96,0.4)`, borderRadius: 3, padding: '0 4px',
+          }}
+        >
+          consensus
+        </span>
+      )}
+      <span style={{ color: '#7a8aa0', fontSize: 9, letterSpacing: 0.5 }}>{originLabel(mi.origin)}</span>
     </div>
   );
 }
@@ -120,6 +181,7 @@ export function CapabilityPanel({ agentId, deps }: CapabilityPanelProps) {
   const _set = deps?.setCapability ?? setCapability;
   const [tools, setTools] = useState<AgentCapability[]>([]);
   const [skills, setSkills] = useState<AgentCapability[]>([]);
+  const [meshIntents, setMeshIntents] = useState<MeshIntent[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
 
@@ -132,6 +194,7 @@ export function CapabilityPanel({ agentId, deps }: CapabilityPanelProps) {
         if (!alive) return;
         setTools(data.tools);
         setSkills(data.skills);
+        setMeshIntents(data.mesh_intents);
         setLoaded(true);
       })
       .catch(() => { if (alive) { setError(true); setLoaded(true); } });
@@ -177,6 +240,14 @@ export function CapabilityPanel({ agentId, deps }: CapabilityPanelProps) {
         <div style={{ fontSize: 11, color: '#555568', padding: '2px 0' }}>No skills.</div>
       ) : (
         skills.map((c) => <CapabilityRow key={c.id} cap={c} kind="skill" onToggle={onToggle} />)
+      )}
+      <div style={{ fontSize: 10, color: _DIM, letterSpacing: 1, margin: '10px 0 4px' }}>
+        CAPABILITIES ({meshIntents.length})
+      </div>
+      {meshIntents.length === 0 ? (
+        <div style={{ fontSize: 11, color: '#555568', padding: '2px 0' }}>No mesh capabilities.</div>
+      ) : (
+        meshIntents.map((mi) => <MeshIntentRow key={mi.id} mi={mi} />)
       )}
     </div>
   );
