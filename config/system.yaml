@@ -400,6 +400,19 @@ self_mod:
   - learn.microsoft.com
   research_max_pages: 3
   research_max_content_per_page: 2000
+# AD-992+ governed code execution (HIGH-RISK). Lets crew agents create + run
+# Python scripts and install libraries to perform tasks, consensus-gated +
+# episodically logged. Each agent gets its own PERSISTENT working folder under
+# workspace_root (relative paths rebase onto the platform data dir, i.e.
+# %LOCALAPPDATA%/ProbOS/data on Windows), viewable from its profile Work tab.
+# Tier 1 = subprocess + working-folder isolation (NOT kernel containment); the
+# consensus gate is the real control. Disable allow_package_install for
+# script-execution-only (no arbitrary pip installs).
+execution:
+  enabled: true
+  workspace_root: data/execution/workspaces
+  persistent_workspaces: true
+  allow_package_install: true
 qa:
   enabled: true
   smoke_test_count: 5

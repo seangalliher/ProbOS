@@ -58,6 +58,29 @@ def test_venv_dir(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# BF-628: relative root rebases onto the platform data dir (not cwd)
+# ---------------------------------------------------------------------------
+
+
+def test_relative_root_rebases_onto_platform_data_dir(tmp_path: Path, monkeypatch):
+    # PROBOS_DATA_DIR overrides _platform_data_dir() to a deterministic path.
+    monkeypatch.setenv("PROBOS_DATA_DIR", str(tmp_path / "pdata"))
+    mgr = WorkspaceManager("data/execution/workspaces")
+    # Leading "data/" stripped, the rest rooted under the platform data dir —
+    # NOT resolved relative to the process cwd (the split-brain hazard).
+    assert mgr.root == tmp_path / "pdata" / "execution" / "workspaces"
+    assert mgr.resolve("ezri") == tmp_path / "pdata" / "execution" / "workspaces" / "ezri"
+
+
+def test_absolute_root_used_as_is(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("PROBOS_DATA_DIR", str(tmp_path / "pdata"))
+    abs_root = tmp_path / "explicit"
+    mgr = WorkspaceManager(abs_root)
+    # Absolute config path passes through unchanged (operator override / tests).
+    assert mgr.root == abs_root
+
+
+# ---------------------------------------------------------------------------
 # WorkspaceManager — inspection
 # ---------------------------------------------------------------------------
 

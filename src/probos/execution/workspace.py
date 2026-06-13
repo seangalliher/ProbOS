@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,48 @@ logger = logging.getLogger(__name__)
 _OPAQUE_DIRS = {".venv", "__pycache__", ".git", "node_modules"}
 
 _SANITIZE_RE = re.compile(r"[^a-z0-9_-]+")
+
+
+def _platform_data_dir() -> Path:
+    """Platform data dir — an inlined mirror of ``runtime._platform_data_dir``
+    / ``__main__._default_data_dir`` so this leaf utility does NOT import the
+    heavy ``probos.runtime`` module (which pulls optional deps like ``keyring``
+    and fails to import without them). ``PROBOS_DATA_DIR`` overrides.
+
+    Keep in sync with ``runtime._platform_data_dir`` (stable platform switch).
+    """
+    override = os.environ.get("PROBOS_DATA_DIR")
+    if override:
+        return Path(override)
+    if sys.platform == "win32":
+        base = Path.home() / "AppData" / "Local" / "ProbOS"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support" / "ProbOS"
+    else:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        base = Path(xdg) / "ProbOS" if xdg else Path.home() / ".local" / "share" / "ProbOS"
+    return base / "data"
+
+
+def _resolve_workspace_root(configured: str | os.PathLike[str]) -> Path:
+    """Resolve the configured workspace root to an absolute path.
+
+    Absolute paths are used as-is (tests, explicit operator paths). A relative
+    path (the config default ``data/execution/workspaces``) is rooted under the
+    platform data dir, stripping a leading ``data/`` since that dir already ends
+    in ``/data`` — mirrors ``_resolve_attachments_dir`` (AD-720) so the working
+    folders live alongside all other ProbOS runtime data (Windows
+    ``%LOCALAPPDATA%/ProbOS/data``, XDG on Linux), **not** split-brained relative
+    to the process cwd — the exact hazard ``_platform_data_dir`` exists to prevent.
+    """
+    p = Path(configured)
+    if p.is_absolute():
+        return p
+    parts = p.parts
+    if parts and parts[0] == "data":
+        parts = parts[1:]
+    base = _platform_data_dir()
+    return base.joinpath(*parts) if parts else base
 
 
 @dataclass(frozen=True)
@@ -54,7 +97,7 @@ class WorkspaceManager:
     """Resolve + inspect per-owner working folders under a single root."""
 
     def __init__(self, root: str | os.PathLike[str]) -> None:
-        self._root = Path(root)
+        self._root = _resolve_workspace_root(root)
 
     @property
     def root(self) -> Path:
