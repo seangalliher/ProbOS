@@ -2846,6 +2846,33 @@ class SelfModConfig(BaseModel):
     research_max_content_per_page: int = 2000
 
 
+class ExecutionConfig(BaseModel):
+    """AD-993/994: governed ephemeral code execution (tiered isolation).
+
+    Lets crew agents create + run Python scripts and install libraries to perform
+    tasks (the Copilot / Claude Code pattern), governed by consensus + the
+    episodic log. **Default OFF** — this is the highest-risk capability in the
+    system; the operator must opt in deliberately after reviewing the tier model.
+    """
+
+    enabled: bool = False                   # opt-in; arbitrary code execution
+    # Which isolation tier to run at: 1 = subprocess/working-folder (AD-993,
+    # the only tier built today), 2 = OS-native sandbox (AD-995, future),
+    # 3 = container/VM (AD-996, future). A request unsafe for the configured
+    # tier should escalate, not silently downgrade.
+    default_tier: int = 1
+    scratch_dir: str = "data/execution"     # ephemeral per-task working folders
+    timeout_seconds: float = 30.0
+    max_output_bytes: int = 65536           # 64 KB per stream
+    max_memory_mb: int = 512                # RLIMIT_AS on POSIX; advisory on Windows
+    # Library installation (pip into a per-task ephemeral venv). Separately
+    # gated because installing arbitrary PyPI packages is a supply-chain risk;
+    # the package names are surfaced in the consensus-gated intent.
+    allow_package_install: bool = False
+    pip_index_url: str = "https://pypi.org/simple"
+    install_timeout_seconds: float = 180.0  # venv create + pip install is slower
+
+
 class QAConfig(BaseModel):
     """SystemQAAgent configuration."""
 
@@ -5352,6 +5379,7 @@ class SystemConfig(BaseModel):
     federation: FederationConfig = FederationConfig()
     self_mod: SelfModConfig = SelfModConfig()
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)  # AD-838c
+    execution: ExecutionConfig = ExecutionConfig()  # AD-993/994 (default OFF)
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     records: RecordsConfig = RecordsConfig()

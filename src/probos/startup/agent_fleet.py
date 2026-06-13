@@ -60,6 +60,18 @@ async def create_agent_fleet(
     ids = generate_pool_ids("introspect", "introspect", 2)
     await create_pool_fn("introspect", "introspect", target_size=2, agent_ids=ids, runtime=runtime)
 
+    # Code runner pool (AD-994) — HIGH-RISK governed Python execution. Only
+    # spawned when the operator opts in (config.execution.enabled). Needs the
+    # runtime kwarg so the agent can read config.execution. Defense in depth:
+    # the agent ALSO refuses at decide() if execution is disabled.
+    if getattr(config, "execution", None) and config.execution.enabled:
+        ids = generate_pool_ids("code_runner", "code_runner", 1)
+        await create_pool_fn(
+            "code_runner", "code_runner",
+            target_size=1, agent_ids=ids, runtime=runtime,
+        )
+        logger.info("Startup [agent_fleet]: code_runner pool created (execution ENABLED)")
+
     # Quartermaster pool (AD-876) — single utility agent; cadence wired in
     # finalize. Gated off by default (work_board_reconciler.enabled=False).
     if (
