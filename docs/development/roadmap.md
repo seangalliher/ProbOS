@@ -214,6 +214,8 @@ Skills  (Knowledge)   → what you know       → ship's library, reference data
 
 Tools are the natural mapping target for MCP — external MCP tools become ProbOS tools, and ProbOS tools are exposed as MCP tools to external systems.
 
+**Tool provenance — aligning with GitHub Copilot, Claude Code, and VS Code.** Beyond the functional `ToolType` taxonomy (AD-422, *what a tool does*), tools are also classified by *source*, matching the harness conventions developers already know: **built-in tools** (ship with ProbOS — file I/O, shell, codebase search, and the governed `run_python` / `http_fetch` mesh capabilities), **MCP tools** (from MCP servers, local or federated — AD-449/480a), and **extension tools** (contributed through the sealed-core extension path, AD-481, including self-designed agents and skills). This source axis is surfaced per-agent in the Service Configuration hub and ship-wide in the Ship's Locker (Agent Customizations epic [#944](https://github.com/seangalliher/ProbOS/issues/944)).
+
 ### The Federation
 
 *"Cooperation at scale — across agents and humans together."*
@@ -253,6 +255,7 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 | Workflow Templates | Reusable multi-step pipelines — cron, webhooks, workflow API | Partial (WorkflowCache ✅ AD-580; triggers in [#483 AD-707](https://github.com/seangalliher/ProbOS/issues/483)) |
 | Drydock | Distribution — PyPI, Docker, onboarding wizard, quickstart | Built (AD-465/484) |
 | Modular Construction | Extension-first architecture — sealed core, plugin extensions, graduated autonomy | Built (AD-481) |
+| Agent Plugins / Capability Packs | Cross-tool customization bundles (skills + agents + hooks + MCP servers + mesh-intent grants) in the shared Copilot / Claude `plugin.json` format — consume existing IDE plugins, install from Git/source, governed by consensus + trust + the Captain gate | Roadmap ([#948 AD-1003](https://github.com/seangalliher/ProbOS/issues/948)); curated marketplace *(Commercial)* |
 | Ready Room | Captain's strategic planning — idea capture, multi-agent sessions, architecture hierarchy | Built (AD-475) |
 | Utopia Planitia | Specialized builders — backend, frontend, test, infra, data | Built (AD-476) |
 | Captain's Yeoman | Personal AI assistant — conversational front door, crew delegation, personalization | Roadmap ([#486 AD-710](https://github.com/seangalliher/ProbOS/issues/486)) |
