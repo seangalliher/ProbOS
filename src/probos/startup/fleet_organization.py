@@ -46,7 +46,7 @@ async def organize_fleet(
     pool_groups.register(PoolGroup(
         name="core",
         display_name="Core Systems",
-        pool_names={"system", "filesystem", "filesystem_writers", "directory", "search", "shell", "http", "introspect", "medical_vitals", "red_team", "system_qa"},
+        pool_names={"system", "filesystem", "filesystem_writers", "directory", "search", "code_search", "shell", "http", "introspect", "medical_vitals", "red_team", "system_qa"},
         exclude_from_scaler=True,
         startup_phase=1,  # AD-447: infrastructure first
     ))

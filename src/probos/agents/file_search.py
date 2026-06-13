@@ -30,7 +30,7 @@ class FileSearchAgent(BaseAgent):
     ]
     initial_confidence: float = 0.8
     intent_descriptors = [
-        IntentDescriptor(name="search_files", params={"path": "<absolute_path>", "pattern": "<glob>"}, description="Search for files matching pattern", usage_hint="[MESH search_files path=<dir> pattern=<glob>] (find files by pattern)"),
+        IntentDescriptor(name="search_files", params={"path": "<absolute_path>", "pattern": "<glob>", "include_ignored": "<bool, default false>"}, description="Search for files matching pattern (skips .gitignored/.venv/node_modules by default)", usage_hint="[MESH search_files path=<dir> pattern=<glob>] (find files by name; gitignored dirs skipped — pass include_ignored=true to search them)"),
     ]
 
     _handled_intents = {"search_files"}
@@ -81,7 +81,15 @@ class FileSearchAgent(BaseAgent):
         if not pattern:
             return {"action": "error", "error": "No pattern specified"}
 
-        return {"action": "search", "path": path, "pattern": pattern}
+        return {
+            "action": "search",
+            "path": path,
+            "pattern": pattern,
+            # AD-990: skip .gitignored / .venv / node_modules / binary by default
+            # (ripgrep's automatic-filtering behavior); pass include_ignored=true
+            # to fall back to a raw recursive glob over everything.
+            "include_ignored": bool(params.get("include_ignored", False)),
+        }
 
     async def act(self, plan: Any) -> Any:
         """Execute the planned operation."""
@@ -91,7 +99,9 @@ class FileSearchAgent(BaseAgent):
             return {"success": False, "error": plan["error"]}
 
         if action == "search":
-            return await self._search_files(plan["path"], plan["pattern"])
+            return await self._search_files(
+                plan["path"], plan["pattern"], plan.get("include_ignored", False),
+            )
 
         return {"success": False, "error": f"Unknown action: {action}"}
 
@@ -99,8 +109,17 @@ class FileSearchAgent(BaseAgent):
         """Package the result for the mesh."""
         return result
 
-    async def _search_files(self, path: str, pattern: str) -> dict[str, Any]:
-        """Search for files matching a glob pattern recursively."""
+    async def _search_files(
+        self, path: str, pattern: str, include_ignored: bool = False,
+    ) -> dict[str, Any]:
+        """Search for files matching a glob pattern recursively.
+
+        AD-990: by default the walk respects ``.gitignore`` / ``.ignore`` and
+        skips the default-ignore dirs (``.venv``, ``node_modules``, ``__pycache__``,
+        …) + hidden + binary files — ripgrep's automatic-filtering behavior, so
+        results are signal not noise. ``include_ignored=True`` restores the legacy
+        raw recursive glob over everything (the escape hatch).
+        """
         try:
             p = Path(path)
             if not p.exists():
@@ -108,7 +127,14 @@ class FileSearchAgent(BaseAgent):
             if not p.is_dir():
                 return {"success": False, "error": f"Not a directory: {path}"}
 
-            matches = sorted(str(m) for m in p.rglob(pattern))
+            if include_ignored:
+                matches = sorted(str(m) for m in p.rglob(pattern))
+            else:
+                from probos.substrate.file_walk import iter_files
+                matches = sorted(
+                    str(f) for f in iter_files(p, skip_binary=False)
+                    if f.match(pattern)
+                )
             return {
                 "success": True,
                 "data": matches,

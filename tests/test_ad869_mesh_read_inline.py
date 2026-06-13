@@ -453,10 +453,11 @@ def test_allowlist_excludes_writes_and_consensus_gated_intents() -> None:
     # Tier-2 safety boundary: only read-only intents are inline-runnable.
     for forbidden in ("http_fetch", "write_file", "run_command", "delete_file"):
         assert forbidden not in _MESH_READ_INTENT_POOLS
-    # The allowlist contents are exactly the six read intents.
+    # The allowlist contents are exactly the read intents (AD-989 added the
+    # read-only ``search_content`` content-grep capability).
     assert set(_MESH_READ_INTENT_POOLS) == {
         "list_directory", "read_file", "stat_file",
-        "search_files", "web_search", "read_page",
+        "search_files", "search_content", "web_search", "read_page",
     }
 
 

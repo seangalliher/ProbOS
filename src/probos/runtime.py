@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from probos.events import BaseEvent, EventType
 from probos.agents.directory_list import DirectoryListAgent
+from probos.agents.code_search import CodeSearchAgent
 from probos.agents.file_reader import FileReaderAgent
 from probos.agents.file_search import FileSearchAgent
 from probos.agents.file_writer import FileWriterAgent
@@ -1043,6 +1044,7 @@ class ProbOSRuntime:
         self.spawner.register_template("file_writer", FileWriterAgent)
         self.spawner.register_template("directory_list", DirectoryListAgent)
         self.spawner.register_template("file_search", FileSearchAgent)
+        self.spawner.register_template("code_search", CodeSearchAgent)  # AD-989
         self.spawner.register_template("shell_command", ShellCommandAgent)
         self.spawner.register_template("http_fetch", HttpFetchAgent)
         self.spawner.register_template("red_team", RedTeamAgent)

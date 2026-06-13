@@ -40,6 +40,7 @@ _MESH_READ_INTENT_POOLS: dict[str, str] = {
     "read_file": "filesystem",
     "stat_file": "filesystem",
     "search_files": "search",
+    "search_content": "code_search",
     "web_search": "web_search",
     "read_page": "page_reader",
 }

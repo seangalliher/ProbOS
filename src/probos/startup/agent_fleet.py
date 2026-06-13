@@ -48,6 +48,7 @@ async def create_agent_fleet(
         ("filesystem_writers", "file_writer", 3),
         ("directory", "directory_list", 3),
         ("search", "file_search", 3),
+        ("code_search", "code_search", 2),  # AD-989: content grep
         ("shell", "shell_command", 3),
         ("http", "http_fetch", 3),
     ]
