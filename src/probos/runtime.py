@@ -1046,7 +1046,13 @@ class ProbOSRuntime:
         self.spawner.register_template("directory_list", DirectoryListAgent)
         self.spawner.register_template("file_search", FileSearchAgent)
         self.spawner.register_template("code_search", CodeSearchAgent)  # AD-989
-        self.spawner.register_template("code_runner", CodeRunnerAgent)  # AD-994
+        # AD-994: code execution is the highest-risk capability — only register
+        # the template (which makes run_python/install_package visible to the
+        # decomposer) when the operator has opted in. Otherwise the planner
+        # would advertise a capability with no pool to serve it (AD-592: never
+        # offer what the ship cannot back).
+        if getattr(self.config, "execution", None) and self.config.execution.enabled:
+            self.spawner.register_template("code_runner", CodeRunnerAgent)  # AD-994
         self.spawner.register_template("shell_command", ShellCommandAgent)
         self.spawner.register_template("http_fetch", HttpFetchAgent)
         self.spawner.register_template("red_team", RedTeamAgent)

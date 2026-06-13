@@ -80,7 +80,10 @@ class CodeRunnerAgent(BaseAgent):
                 "timeout": "<optional seconds>",
             },
             description="Create and run a Python script in an isolated working folder; optionally pip-install libraries first. For real computation/automation, NOT shell workarounds.",
-            usage_hint="[MESH run_python code=<src>] (run an isolated Python script to perform a task)",
+            # No usage_hint: this is a consensus/WRITE intent, so it must NOT
+            # appear in the read-only [MESH ...] do-and-report affordance block
+            # ("these reads change nothing"). The decomposer learns it from
+            # `description` and routes it through the plan -> consensus path.
             requires_consensus=True,
             requires_reflect=True,
         ),
