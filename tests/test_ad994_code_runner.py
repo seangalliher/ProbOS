@@ -21,6 +21,9 @@ from probos.types import IntentMessage
 
 def _agent(tmp_path: Path, **exec_kwargs) -> CodeRunnerAgent:
     exec_kwargs.setdefault("scratch_dir", str(tmp_path / "exec"))
+    # AD-997: persistent workspaces are the default; pin the root under tmp_path
+    # so tests never write into the real repo's data/execution/workspaces.
+    exec_kwargs.setdefault("workspace_root", str(tmp_path / "workspaces"))
     cfg = ExecutionConfig(**exec_kwargs)
     runtime = SimpleNamespace(config=SimpleNamespace(execution=cfg))
     return CodeRunnerAgent(agent_id="cr-test", runtime=runtime)

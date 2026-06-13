@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import type { WorkItemView, BookingView, BookableResourceView, WorkItemTemplateView } from '../../store/types';
 import { ChevronDown, ChevronRight } from '../icons/Glyphs';
+import { WorkspaceFolder } from './WorkspaceFolder';
 
 const PRIORITY_COLORS: Record<number, string> = {
   1: '#d05050', 2: '#e08040', 3: '#d0b050', 4: '#5090d0', 5: '#888',
@@ -339,6 +340,9 @@ export function ProfileWorkTab({ agentId }: Props) {
           ))}
         </>
       )}
+
+      {/* AD-999: code-execution working folder (read-only) */}
+      <WorkspaceFolder agentId={agentId} />
     </div>
   );
 }

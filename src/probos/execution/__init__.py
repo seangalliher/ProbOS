@@ -7,6 +7,7 @@ from probos.execution.isolation import (
     IsolationTier,
     SubprocessSandbox,
 )
+from probos.execution.workspace import WorkspaceFile, WorkspaceManager
 
 __all__ = [
     "ExecutionRequest",
@@ -14,4 +15,6 @@ __all__ = [
     "IsolationBackend",
     "IsolationTier",
     "SubprocessSandbox",
+    "WorkspaceFile",
+    "WorkspaceManager",
 ]

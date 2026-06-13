@@ -1150,6 +1150,72 @@ async def get_agent_capabilities(
     return {"agent_id": agent_id, "tools": tools, "skills": skills}
 
 
+@router.get("/{agent_id}/workspace")
+async def get_agent_workspace(
+    agent_id: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-998: the agent's code-execution working folder + its contents.
+
+    Surfaces the AD-997 per-agent persistent working folder for the profile-card
+    Work tab. The folder is resolved by the SAME key the ``CodeRunnerAgent``
+    writes under (``WorkspaceManager.key_for_agent``), so the view matches where
+    the agent actually works. Honest-degrades: reports ``enabled=False`` when
+    code execution is off, ``persistent=False`` when workspaces are ephemeral
+    (nothing to show between runs), and an empty file list for an agent that
+    has not run code yet. Read-only.
+    """
+    from probos.execution.workspace import WorkspaceManager
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    enabled = bool(getattr(cfg, "enabled", False))
+    persistent = bool(getattr(cfg, "persistent_workspaces", False))
+    root = getattr(cfg, "workspace_root", "") if cfg is not None else ""
+
+    base: dict[str, Any] = {
+        "agent_id": agent_id,
+        "enabled": enabled,
+        "persistent": persistent,
+        "root": root,
+        "path": None,
+        "owner": None,
+        "exists": False,
+        "files": [],
+        "total_bytes": 0,
+    }
+    # Only persistent + enabled execution has a stable folder worth showing.
+    if cfg is None or not enabled or not persistent or not root:
+        return base
+
+    try:
+        mgr = WorkspaceManager(root)
+        owner = mgr.key_for_agent(agent)
+        path = mgr.resolve(owner)
+        files = mgr.list_files(owner)
+        base.update({
+            "path": str(path),
+            "owner": owner,
+            "exists": path.is_dir(),
+            "files": [
+                {
+                    "name": f.name,
+                    "is_dir": f.is_dir,
+                    "size_bytes": f.size_bytes,
+                    "modified": f.modified,
+                }
+                for f in files
+            ],
+            "total_bytes": mgr.total_bytes(owner),
+        })
+    except Exception:
+        logger.debug("AD-998: workspace resolve failed for %s", agent_id, exc_info=True)
+    return base
+
+
 @router.post("/{agent_id}/capabilities/set")
 async def set_agent_capability(
     agent_id: str,

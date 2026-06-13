@@ -2862,6 +2862,14 @@ class ExecutionConfig(BaseModel):
     # tier should escalate, not silently downgrade.
     default_tier: int = 1
     scratch_dir: str = "data/execution"     # ephemeral per-task working folders
+    # AD-997: per-agent PERSISTENT working folders. Each owner (crew agent) gets
+    # its own folder under workspace_root so work products (scripts, generated
+    # files, the installed venv) survive across runs and are visible from the
+    # agent's profile card. The root is operator-configurable (HXI Settings).
+    # When False, every run uses a fresh ephemeral scratch that is reaped after
+    # (the original AD-993/994 behavior).
+    persistent_workspaces: bool = True
+    workspace_root: str = "data/execution/workspaces"
     timeout_seconds: float = 30.0
     max_output_bytes: int = 65536           # 64 KB per stream
     max_memory_mb: int = 512                # RLIMIT_AS on POSIX; advisory on Windows

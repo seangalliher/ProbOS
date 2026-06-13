@@ -215,6 +215,46 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
         ),
     ),
     SectionDescriptor(
+        section_id="execution",
+        label="Code Execution",
+        glyph="⟐",
+        domain="Core",
+        description=(
+            "Governed Python execution (AD-992+). HIGH-RISK: lets crew agents "
+            "create + run scripts and install libraries. Default OFF. Each "
+            "agent gets its own persistent working folder under the root below; "
+            "view a folder from the agent's profile Work tab."
+        ),
+        fields=(
+            FieldDescriptor(
+                "execution.enabled",
+                "Code execution enabled",
+                "bool",
+                description="Master switch. HIGH-RISK — arbitrary code runs under consensus when on.",
+            ),
+            FieldDescriptor(
+                "execution.workspace_root",
+                "Working folders root",
+                "text",
+                description="Parent directory; each agent gets <root>/<agent>/.",
+            ),
+            FieldDescriptor(
+                "execution.persistent_workspaces",
+                "Persistent per-agent folders",
+                "bool",
+                description="On: folders + venv survive across runs (viewable). Off: ephemeral, reaped each run.",
+            ),
+            FieldDescriptor(
+                "execution.allow_package_install",
+                "Allow library install (pip)",
+                "bool",
+                description="Separately gated — installs arbitrary PyPI packages into the agent's venv.",
+            ),
+            FieldDescriptor("execution.timeout_seconds", "Run timeout (s)", "float"),
+            FieldDescriptor("execution.max_memory_mb", "Memory limit (MB)", "int"),
+        ),
+    ),
+    SectionDescriptor(
         section_id="voice",
         label="Voice",
         glyph="≈",

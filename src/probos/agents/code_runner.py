@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from probos.execution.isolation import ExecutionRequest, SubprocessSandbox
+from probos.execution.workspace import WorkspaceManager
 from probos.substrate.agent import BaseAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -138,12 +139,13 @@ class CodeRunnerAgent(BaseAgent):
                 "code": str(code),
                 "packages": self._clean_packages(params.get("packages")),
                 "timeout": params.get("timeout"),
+                "owner": self._resolve_owner(params),
             }
         if intent == "install_package":
             packages = self._clean_packages(params.get("packages"))
             if not packages:
                 return {"action": "error", "error": "No packages specified"}
-            return {"action": "install_package", "packages": packages}
+            return {"action": "install_package", "packages": packages, "owner": self._resolve_owner(params)}
         return {"action": "error", "error": f"Unhandled intent: {intent}"}
 
     async def act(self, plan: Any) -> Any:
@@ -158,7 +160,7 @@ class CodeRunnerAgent(BaseAgent):
         if action == "run_python":
             return await self._run_python(plan)
         if action == "install_package":
-            return await self._install_package(plan["packages"])
+            return await self._install_package(plan["packages"], plan["owner"])
         return {"success": False, "error": f"Unknown action: {action}"}
 
     async def report(self, result: Any) -> dict[str, Any]:
@@ -169,26 +171,27 @@ class CodeRunnerAgent(BaseAgent):
     async def _run_python(self, plan: dict) -> dict[str, Any]:
         cfg = self._execution_config()
         sandbox = SubprocessSandbox(scratch_root=cfg.scratch_dir)
-        scratch = Path(cfg.scratch_dir) / uuid.uuid4().hex
+        owner = plan["owner"]
+        workdir, persistent = self._resolve_workdir(cfg, owner)
         packages = plan["packages"]
         timeout = self._resolve_timeout(plan.get("timeout"), cfg.timeout_seconds)
         py_exe: str | None = None
         try:
-            scratch.mkdir(parents=True, exist_ok=True)
+            workdir.mkdir(parents=True, exist_ok=True)
             if packages:
                 if not getattr(cfg, "allow_package_install", False):
                     return {
                         "success": False,
                         "error": "Package install disabled (set config.execution.allow_package_install).",
                     }
-                prep = await self._prepare_venv(sandbox, scratch, packages, cfg)
+                prep = await self._prepare_venv(sandbox, self._venv_dir(cfg, owner, workdir, persistent), packages, cfg)
                 if not prep["success"]:
                     return prep
                 py_exe = prep["python"]
 
             res = await sandbox.run(ExecutionRequest(
                 code=plan["code"],
-                workdir=scratch,
+                workdir=workdir,
                 timeout_seconds=timeout,
                 max_output_bytes=cfg.max_output_bytes,
                 max_memory_mb=cfg.max_memory_mb,
@@ -205,13 +208,17 @@ class CodeRunnerAgent(BaseAgent):
                     "duration_ms": res.duration_ms,
                     "tier": res.tier,
                     "installed": packages,
+                    "workspace": str(workdir),
+                    "owner": owner,
+                    "persistent": persistent,
                 },
                 "error": res.error or None,
             }
         finally:
-            self._reap(scratch)
+            if not persistent:
+                self._reap(workdir)
 
-    async def _install_package(self, packages: list[str]) -> dict[str, Any]:
+    async def _install_package(self, packages: list[str], owner: str) -> dict[str, Any]:
         cfg = self._execution_config()
         if not getattr(cfg, "allow_package_install", False):
             return {
@@ -219,39 +226,49 @@ class CodeRunnerAgent(BaseAgent):
                 "error": "Package install disabled (set config.execution.allow_package_install).",
             }
         sandbox = SubprocessSandbox(scratch_root=cfg.scratch_dir)
-        scratch = Path(cfg.scratch_dir) / uuid.uuid4().hex
+        workdir, persistent = self._resolve_workdir(cfg, owner)
         try:
-            scratch.mkdir(parents=True, exist_ok=True)
-            prep = await self._prepare_venv(sandbox, scratch, packages, cfg)
+            workdir.mkdir(parents=True, exist_ok=True)
+            prep = await self._prepare_venv(sandbox, self._venv_dir(cfg, owner, workdir, persistent), packages, cfg)
             if not prep["success"]:
                 return prep
             return {
                 "success": True,
-                "data": {"installed": packages, "stdout": prep.get("stdout", "")},
+                "data": {
+                    "installed": packages,
+                    "stdout": prep.get("stdout", ""),
+                    "workspace": str(workdir),
+                    "owner": owner,
+                    "persistent": persistent,
+                },
             }
         finally:
-            self._reap(scratch)
+            if not persistent:
+                self._reap(workdir)
 
     async def _prepare_venv(
-        self, sandbox: SubprocessSandbox, scratch: Path, packages: list[str], cfg: Any,
+        self, sandbox: SubprocessSandbox, venv_dir: Path, packages: list[str], cfg: Any,
     ) -> dict[str, Any]:
-        """Create a throwaway venv in ``scratch`` and pip-install ``packages``.
+        """Ensure a venv exists at ``venv_dir`` and pip-install ``packages``.
 
-        Both steps run through the Tier-1 sandbox (bounded + governed). Returns
-        ``{success, python}`` on success, or ``{success: False, error}``.
+        Both steps run through the Tier-1 sandbox (bounded + governed). The venv
+        is **reused** when it already exists (persistent workspace) — pip install
+        is idempotent, so already-satisfied packages are fast no-ops, and the
+        crew don't re-download numpy every run. Returns ``{success, python}`` on
+        success, or ``{success: False, error}``.
         """
-        venv_dir = scratch / "venv"
-        # 1. Create the venv (no network needed).
-        create = await sandbox.run(ExecutionRequest(
-            argv=[sys.executable, "-m", "venv", str(venv_dir)],
-            workdir=scratch,
-            timeout_seconds=cfg.install_timeout_seconds,
-            max_output_bytes=cfg.max_output_bytes,
-            allow_network=False,
-        ))
-        if not create.success:
-            return {"success": False, "error": f"venv creation failed: {create.stderr or create.error}"}
         py = _venv_python(venv_dir)
+        # 1. Create the venv if it isn't already there (no network needed).
+        if not py.exists():
+            create = await sandbox.run(ExecutionRequest(
+                argv=[sys.executable, "-m", "venv", str(venv_dir)],
+                workdir=venv_dir.parent,
+                timeout_seconds=cfg.install_timeout_seconds,
+                max_output_bytes=cfg.max_output_bytes,
+                allow_network=False,
+            ))
+            if not create.success:
+                return {"success": False, "error": f"venv creation failed: {create.stderr or create.error}"}
         # 2. pip install (network ON, scoped index url). Tier 1 cannot scope the
         #    network to PyPI only — that is a Tier-2 guarantee — so this is
         #    consensus-gated and the package names are surfaced in the intent.
@@ -261,7 +278,7 @@ class CodeRunnerAgent(BaseAgent):
                 "--disable-pip-version-check", "--no-input",
                 "--index-url", cfg.pip_index_url, *packages,
             ],
-            workdir=scratch,
+            workdir=venv_dir.parent,
             timeout_seconds=cfg.install_timeout_seconds,
             max_output_bytes=cfg.max_output_bytes,
             allow_network=True,
@@ -274,6 +291,42 @@ class CodeRunnerAgent(BaseAgent):
 
     def _execution_config(self) -> Any:
         return getattr(getattr(self._runtime, "config", None), "execution", None)
+
+    def _resolve_owner(self, params: dict) -> str:
+        """The workspace owner key for this execution.
+
+        An explicit ``workspace_owner`` in params (a delegating crew agent's
+        key) wins; otherwise the code-runner's own key. Sanitized so it is
+        always a safe single folder name (the WorkspaceManager guarantees this).
+        """
+        mgr = self._workspace_manager()
+        explicit = params.get("workspace_owner")
+        if explicit:
+            return mgr.sanitize(str(explicit))
+        return mgr.key_for_agent(self)
+
+    def _workspace_manager(self) -> WorkspaceManager:
+        cfg = self._execution_config()
+        root = getattr(cfg, "workspace_root", "data/execution/workspaces")
+        return WorkspaceManager(root)
+
+    def _resolve_workdir(self, cfg: Any, owner: str) -> tuple[Path, bool]:
+        """Return ``(workdir, persistent)`` for an execution.
+
+        Persistent (default): the owner's stable folder under workspace_root —
+        work products survive + are visible. Ephemeral: a fresh uuid scratch
+        under scratch_dir that the caller reaps (the original AD-993 behavior).
+        """
+        if getattr(cfg, "persistent_workspaces", True):
+            return self._workspace_manager().resolve(owner, create=True), True
+        return Path(cfg.scratch_dir) / uuid.uuid4().hex, False
+
+    def _venv_dir(self, cfg: Any, owner: str, workdir: Path, persistent: bool) -> Path:
+        """Where the per-execution venv lives: reused ``<workspace>/.venv`` when
+        persistent, throwaway ``<scratch>/venv`` when ephemeral."""
+        if persistent:
+            return self._workspace_manager().venv_dir(owner)
+        return workdir / "venv"
 
     @staticmethod
     def _clean_packages(raw: Any) -> list[str]:
