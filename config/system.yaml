@@ -117,6 +117,7 @@ memory:
   hybrid_recall_enabled: true        # AD-979c: fuse cosine + FTS5 keyword recall (RRF)
   recall_fok_logging_enabled: true   # AD-981a: log the agent-scoped Feeling-of-Knowing band per recall_for_agent (calibration session)
   transcript_grounded_recall_enabled: true  # AD-986b: let a crew agent consult the canonical chat transcript (the recording) for rooms it took part in, to ground a recollection
+  transcript_retention_days: 90      # AD-986d: purge a room's recording 90 days after its last activity (pinned rooms exempt; a tombstone is left so participants learn the recording was purged)
   similarity_threshold: 0.6
   verify_content_hash: true
   eviction_audit_enabled: true
