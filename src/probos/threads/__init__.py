@@ -81,6 +81,20 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects (archived);
 CREATE INDEX IF NOT EXISTS idx_projects_last_active ON projects (last_active_at);
+
+-- AD-986d: transcript-purge tombstones. When the retention reaper hard-deletes
+-- a room's recording, it leaves a tiny tombstone here (no message bodies) so a
+-- participant who still holds a subjective memory of the room can be honestly
+-- told "the recording was purged" instead of silently falling back to its lossy
+-- recollection. Manual delete_thread() does NOT tombstone (deliberate removal).
+CREATE TABLE IF NOT EXISTS chat_thread_tombstones (
+    id TEXT PRIMARY KEY,                  -- the purged thread's id
+    title TEXT NOT NULL,
+    participants TEXT NOT NULL,           -- JSON list[str], the purged room's roster
+    last_active_at REAL NOT NULL,         -- the room's final activity (pre-purge)
+    purged_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tombstones_purged ON chat_thread_tombstones (purged_at);
 """
 
 
@@ -146,6 +160,32 @@ class ChatThreadMessage:
             "body": self.body,
             "created_at": self.created_at,
             "metadata": dict(self.metadata),
+        }
+
+
+@dataclass
+class ChatThreadTombstone:
+    """AD-986d: the durable trace of a purged room's recording.
+
+    Written by the retention reaper when a transcript is hard-deleted. Carries
+    no message bodies — only enough to honestly tell a participant "the
+    recording for this room was purged" (and when), so a still-held subjective
+    memory is not silently treated as the whole picture.
+    """
+
+    id: str
+    title: str
+    participants: list[str]
+    last_active_at: float
+    purged_at: float
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "participants": list(self.participants),
+            "last_active_at": self.last_active_at,
+            "purged_at": self.purged_at,
         }
 
 
@@ -561,6 +601,98 @@ class ChatThreadStore:
             )
             cur = conn.execute("DELETE FROM chat_threads WHERE id = ?", (thread_id,))
             return cur.rowcount > 0
+
+    # ---------- AD-986d: retention purge + tombstones ----------
+
+    def purge_thread(self, thread_id: str) -> bool:
+        """Hard-delete a room's recording, leaving an AD-986d tombstone.
+
+        Unlike :meth:`delete_thread` (a deliberate Captain removal, no trace),
+        this is the *automatic retention* path: the thread row + every message
+        body are deleted, but a tiny :class:`ChatThreadTombstone` (id, title,
+        participants, last_active_at, purged_at) is written first so a
+        participant who still holds a subjective memory of the room can be told
+        the recording is gone. Returns ``True`` if a thread was purged.
+        """
+        thread = self.get_thread(thread_id)
+        if thread is None:
+            return False
+        now = self._clock()
+        with self._connect() as conn:
+            # Tombstone first (so a crash mid-purge never deletes without a trace).
+            conn.execute(
+                "INSERT OR REPLACE INTO chat_thread_tombstones "
+                "(id, title, participants, last_active_at, purged_at) "
+                "VALUES (?,?,?,?,?)",
+                (
+                    thread.id,
+                    thread.title,
+                    json.dumps(list(thread.participants)),
+                    thread.last_active_at,
+                    now,
+                ),
+            )
+            conn.execute(
+                "DELETE FROM chat_thread_messages WHERE thread_id = ?", (thread_id,)
+            )
+            conn.execute("DELETE FROM chat_threads WHERE id = ?", (thread_id,))
+        return True
+
+    def purge_threads_older_than(
+        self, cutoff_ts: float, *, exclude_pinned: bool = True, limit: int = 500
+    ) -> list[str]:
+        """Purge non-pinned rooms whose last activity predates ``cutoff_ts``.
+
+        The retention reaper's workhorse. Selects candidate ids inside a bounded
+        window (oldest-first), then purges each via :meth:`purge_thread` (so each
+        gets a tombstone). Pinned rooms are exempt by default. Archived rooms ARE
+        eligible — an archived-and-stale room is the prime purge candidate.
+        Returns the list of purged thread ids.
+        """
+        clauses = ["last_active_at < ?"]
+        params: list = [cutoff_ts]
+        if exclude_pinned:
+            clauses.append("pinned = 0")
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT id FROM chat_threads WHERE {' AND '.join(clauses)} "
+                "ORDER BY last_active_at ASC LIMIT ?",
+                (*params, max(1, limit)),
+            ).fetchall()
+        purged: list[str] = []
+        for r in rows:
+            if self.purge_thread(r["id"]):
+                purged.append(r["id"])
+        return purged
+
+    def tombstones_for_participant(
+        self, agent_ids: Iterable[str], *, limit: int = 8
+    ) -> list[ChatThreadTombstone]:
+        """AD-986d: purge tombstones for rooms ANY of ``agent_ids`` took part in,
+        most-recently-purged first.
+
+        Sovereign scope mirrors :meth:`threads_for_participant` — a crew agent is
+        only ever told about the purge of a room it actually participated in.
+        Bounded scan of a recent window.
+        """
+        ids = {a for a in (agent_ids or ()) if a}
+        if not ids:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chat_thread_tombstones "
+                "ORDER BY purged_at DESC LIMIT ?",
+                (200,),
+            ).fetchall()
+        out: list[ChatThreadTombstone] = []
+        for r in rows:
+            t = _row_to_tombstone(r)
+            if set(t.participants) & ids:
+                out.append(t)
+                if len(out) >= max(1, limit):
+                    break
+        return out
+
 
     # ---------- AD-791a: implicit default-thread helpers ----------
 
@@ -1236,4 +1368,19 @@ def _row_to_message(row: sqlite3.Row) -> ChatThreadMessage:
         body=row["body"],
         created_at=row["created_at"],
         metadata=meta,
+    )
+
+
+def _row_to_tombstone(row: sqlite3.Row) -> ChatThreadTombstone:
+    """AD-986d: hydrate a :class:`ChatThreadTombstone` from a tombstone row."""
+    try:
+        parts = json.loads(row["participants"]) if row["participants"] else []
+    except (json.JSONDecodeError, TypeError):
+        parts = []
+    return ChatThreadTombstone(
+        id=row["id"],
+        title=row["title"],
+        participants=list(parts) if isinstance(parts, list) else [],
+        last_active_at=row["last_active_at"],
+        purged_at=row["purged_at"],
     )

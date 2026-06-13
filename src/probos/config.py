@@ -1027,6 +1027,16 @@ class MemoryConfig(BaseModel):
     transcript_grounded_recall_enabled: bool = False
     transcript_grounding_max_threads: int = 8
     transcript_grounding_max_chars: int = 1200
+    # AD-986d: transcript lifecycle / retention purge. The canonical recording is
+    # ground truth (and the contagion firewall for cross-agent recall), so it must
+    # NOT persist forever. When > 0, rooms whose last activity is older than this
+    # many days are purged (messages + thread row hard-deleted), leaving a small
+    # tombstone so a participant who still HOLDS a subjective memory of the room is
+    # honestly told "the recording was purged" rather than silently falling back to
+    # its lossy recollection. Default 0 -> never auto-purge (opt-in); the reaper is
+    # not even started. Pinned rooms are always exempt.
+    transcript_retention_days: int = 0
+    transcript_reaper_interval_seconds: int = 3600
     # AD-601: TCM Temporal Context Model
     tcm_enabled: bool = True
     tcm_dimension: int = 16

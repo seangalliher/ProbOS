@@ -575,6 +575,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         except Exception:
             logger.warning("AD-733-1: attachment_reaper.stop() failed", exc_info=True)
 
+    # AD-986d: Stop transcript retention reaper.
+    if hasattr(runtime, 'transcript_reaper') and runtime.transcript_reaper is not None:
+        try:
+            await runtime.transcript_reaper.stop()
+        except Exception:
+            logger.warning("AD-986d: transcript_reaper.stop() failed", exc_info=True)
+        runtime.transcript_reaper = None
+
     # AD-876: Stop the board-reconciler cadence ticker (Quartermaster).
     if getattr(runtime, "board_reconciler_ticker", None) is not None:
         try:

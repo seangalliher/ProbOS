@@ -7081,6 +7081,18 @@ class CognitiveAgent(BaseAgent):
                 parts.extend(render_transcript_grounding(_tg_excerpt))
                 parts.append("")
 
+            # AD-986d: recording-purged indication. If the agent may hold a
+            # subjective memory of a room whose canonical recording has been
+            # purged under the retention policy, tell it honestly so it does not
+            # present its lossy recollection as the complete, verifiable picture.
+            _tg_purged = observation.get("_transcript_purged")
+            if _tg_purged:
+                from probos.cognitive.transcript_grounding import (
+                    render_purge_indication,
+                )
+                parts.extend(render_purge_indication(_tg_purged))
+                parts.append("")
+
             # AD-568a: Oracle Service cross-tier context (ORACLE tier + DEEP strategy only)
             if observation.get("_oracle_context"):
                 logger.debug(
@@ -8129,7 +8141,10 @@ class CognitiveAgent(BaseAgent):
                     if intent.intent == "direct_message" else ""
                 )
                 if _store is not None and _tg_query:
-                    from probos.cognitive.transcript_grounding import consult_transcript
+                    from probos.cognitive.transcript_grounding import (
+                        consult_transcript,
+                        purged_room_notice,
+                    )
                     _agent_ids = {
                         x for x in (self.id, getattr(self, "sovereign_id", None)) if x
                     }
@@ -8140,6 +8155,20 @@ class CognitiveAgent(BaseAgent):
                     )
                     if _excerpt:
                         observation["_transcript_grounding"] = _excerpt
+                    else:
+                        # AD-986d: no live recording matched. But if this agent
+                        # took part in a room (touching this query) whose recording
+                        # has since been PURGED under retention, tell it so honestly
+                        # rather than letting it treat its lossy memory as the whole
+                        # picture.
+                        _notice = purged_room_notice(
+                            _store, _agent_ids, _tg_query,
+                            max_tombstones=getattr(
+                                _mem_cfg, "transcript_grounding_max_threads", 8
+                            ),
+                        )
+                        if _notice:
+                            observation["_transcript_purged"] = _notice
         except Exception:
             logger.debug(
                 "AD-986b: transcript grounding failed; continuing without it",

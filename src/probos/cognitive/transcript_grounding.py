@@ -21,12 +21,18 @@ meaningfully matches, so injection is naturally sparse.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Iterable
 
 from probos.cognitive.episodic import fts_or_query
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from probos.threads import ChatThread, ChatThreadMessage, ChatThreadStore
+    from probos.threads import (
+        ChatThread,
+        ChatThreadMessage,
+        ChatThreadStore,
+        ChatThreadTombstone,
+    )
 
 
 def _tokens(text: str) -> set[str]:
@@ -161,4 +167,74 @@ def render_transcript_grounding(excerpt: str) -> list[str]:
         "to be accurate about what was actually said.",
         excerpt,
         "=== END TRANSCRIPT ===",
+    ]
+
+
+def purged_room_notice(
+    store: "ChatThreadStore",
+    agent_ids: Iterable[str],
+    query: str,
+    *,
+    max_tombstones: int = 8,
+) -> str | None:
+    """AD-986d: return an honest notice that a room's recording — one this agent
+    took part in, and whose subject the ``query`` touches — has been PURGED under
+    the retention policy; or ``None`` when no purged room meaningfully matches.
+
+    The complement of :func:`consult_transcript`: when the live recording is gone
+    but the agent may still hold a subjective memory of the room, this is how it
+    learns the recording can no longer be consulted (so it does not treat its
+    lossy recollection as the complete picture). Sovereign-scoped (only rooms the
+    agent participated in) and matched lexically against the purged room's title
+    — the message bodies are deleted by definition, so the title is the signal.
+    """
+    qtokens = _tokens(query)
+    if not qtokens:
+        return None
+    ids = {a for a in agent_ids if a}
+    if not ids:
+        return None
+    try:
+        tombstones = store.tombstones_for_participant(ids, limit=max_tombstones)
+    except Exception:
+        return None
+
+    best: "ChatThreadTombstone | None" = None
+    best_score = 0
+    for ts in tombstones:
+        # Sovereign double-check: never reference a room the agent was not in.
+        if not (set(getattr(ts, "participants", []) or []) & ids):
+            continue
+        score = len(qtokens & _tokens(getattr(ts, "title", "")))
+        if score > best_score:
+            best_score = score
+            best = ts
+    if best is None or best_score == 0:
+        return None
+
+    title = (getattr(best, "title", "") or "").strip() or "a group chat"
+    try:
+        when = datetime.fromtimestamp(
+            float(getattr(best, "purged_at", 0.0)), tz=timezone.utc
+        ).strftime("%Y-%m-%d")
+    except (ValueError, OverflowError, OSError):
+        when = "an earlier date"
+    return (
+        f'The recording of the room "{title}" was purged on {when} (UTC) under the '
+        "transcript-retention policy. You may still hold your own memory of it, but "
+        "the canonical recording can no longer be consulted to verify the details."
+    )
+
+
+def render_purge_indication(notice: str) -> list[str]:
+    """The labeled prompt block for an AD-986d purge notice — rendered distinct
+    from both subjective memory and a live transcript, so the agent is honest
+    that the recording is gone and calibrates its confidence accordingly."""
+    return [
+        "=== RECORDING PURGED (retention) ===",
+        notice,
+        "If asked about this conversation, be honest that the recording is no "
+        "longer available and that you are relying on your own memory, which may "
+        "be incomplete.",
+        "=== END RECORDING PURGED ===",
     ]

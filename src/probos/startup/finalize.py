@@ -264,6 +264,8 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     runtime.recording_reaper = None
     # AD-733-1: AttachmentReaper attribute -- async-started below.
     runtime.attachment_reaper = None
+    # AD-986d: TranscriptReaper attribute -- async-started below (default-off).
+    runtime.transcript_reaper = None
     return True
 
 
@@ -334,6 +336,45 @@ async def _start_attachment_reaper(*, runtime: Any, config: "SystemConfig") -> N
         logger.warning(
             "AD-733-1: AttachmentReaper start failed; "
             "attachments will not be reaped this run",
+            exc_info=True,
+        )
+
+
+async def _start_transcript_reaper(*, runtime: Any, config: "SystemConfig") -> None:
+    """AD-986d: start the transcript retention reaper when retention is enabled.
+
+    Default-off: ``memory.transcript_retention_days <= 0`` keeps the recording
+    forever (opt-in), so the reaper is not started and the transcript store is
+    byte-identical. Tier-2 honest-degrade on construction failure -- the runtime
+    keeps booting; transcripts simply are not reaped this run.
+    """
+    mem_cfg = getattr(config, "memory", None)
+    if mem_cfg is None:
+        return
+    retention_days = int(getattr(mem_cfg, "transcript_retention_days", 0))
+    if retention_days <= 0:
+        return
+    store = getattr(runtime, "chat_thread_store", None)
+    if store is None:
+        return
+    try:
+        from probos.threads.transcript_reaper import TranscriptReaper
+
+        interval = int(getattr(mem_cfg, "transcript_reaper_interval_seconds", 3600))
+        reaper = TranscriptReaper(
+            store, retention_days=retention_days, interval_seconds=interval
+        )
+        await reaper.start()
+        runtime.transcript_reaper = reaper
+        logger.info(
+            "AD-986d: TranscriptReaper started (interval=%ds, retention=%dd)",
+            interval,
+            retention_days,
+        )
+    except Exception:
+        logger.warning(
+            "AD-986d: TranscriptReaper start failed; "
+            "transcripts will not be reaped this run",
             exc_info=True,
         )
 
@@ -3868,6 +3909,14 @@ async def finalize_startup(
         await _start_attachment_reaper(runtime=runtime, config=config)
     except Exception:
         logger.warning("AD-733-1: _start_attachment_reaper failed", exc_info=True)
+
+    # AD-986d: transcript retention reaper. Default-off (opt-in via
+    # memory.transcript_retention_days > 0); purges stale room recordings and
+    # leaves tombstones for the purge-indication path. Honest-degrades on failure.
+    try:
+        await _start_transcript_reaper(runtime=runtime, config=config)
+    except Exception:
+        logger.warning("AD-986d: _start_transcript_reaper failed", exc_info=True)
 
     # AD-520: Wire Spatial Knowledge Explorer (default-False; constructs runtime.spatial_layout)
     try:
