@@ -1338,6 +1338,31 @@ async def agent_avatar_telemetry_history(
     return {"agent_id": agent_id, "rows": rows}
 
 
+async def _safe_ws_close(websocket: WebSocket, *, code: int, reason: str) -> None:
+    """Close a WebSocket without surfacing close-time races as ASGI errors.
+
+    BF-626: when the peer has already disconnected — common during the boot
+    window when the HXI opens the telemetry socket before crew agents finish
+    registering, then reconnects — the underlying ``websockets`` legacy
+    protocol can raise ``AttributeError: 'WebSocketProtocol' object has no
+    attribute 'transfer_data_task'`` (or ``RuntimeError``) from inside
+    ``close()`` because the data-transfer task was never created. The
+    connection is going away regardless, so a failed close has no functional
+    impact; swallow it (Tier-2 honest-degrade) rather than letting it bubble
+    up as an unhandled ASGI exception in the server log.
+    """
+    try:
+        await websocket.close(code=code, reason=reason)
+    except Exception:
+        logger.debug(
+            "BF-626: WS close raced with peer disconnect "
+            "(code=%s reason=%s); ignoring",
+            code,
+            reason,
+            exc_info=True,
+        )
+
+
 @router.websocket("/{agent_id}/avatar-telemetry-stream")
 async def agent_avatar_telemetry_stream(
     websocket: WebSocket,
@@ -1365,16 +1390,16 @@ async def agent_avatar_telemetry_stream(
 
     # Feature gate 1: avatars system disabled — close before accept.
     if avatars_cfg is None or not avatars_cfg.enabled:
-        await websocket.close(code=1008, reason="avatars_disabled")
+        await _safe_ws_close(websocket, code=1008, reason="avatars_disabled")
         return
     # Feature gate 2: avatar telemetry disabled.
     if telemetry_cfg is None or not telemetry_cfg.enabled:
-        await websocket.close(code=1008, reason="avatar_telemetry_disabled")
+        await _safe_ws_close(websocket, code=1008, reason="avatar_telemetry_disabled")
         return
     # Agent existence check.
     agent = runtime.registry.get(agent_id)
     if agent is None:
-        await websocket.close(code=1008, reason="agent_not_found")
+        await _safe_ws_close(websocket, code=1008, reason="agent_not_found")
         return
 
     # Accept the handshake.
@@ -1392,7 +1417,7 @@ async def agent_avatar_telemetry_stream(
         await websocket.send_json(
             {"type": "error", "reason": "telemetry_runtime_unavailable"},
         )
-        await websocket.close(code=1011, reason="runtime_unavailable")
+        await _safe_ws_close(websocket, code=1011, reason="runtime_unavailable")
         return
 
     try:
@@ -1401,7 +1426,7 @@ async def agent_avatar_telemetry_stream(
         await websocket.send_json(
             {"type": "error", "reason": "max_connections_exceeded"},
         )
-        await websocket.close(code=1008, reason="max_connections_exceeded")
+        await _safe_ws_close(websocket, code=1008, reason="max_connections_exceeded")
         return
 
     sampling_state.enter_popout(agent_id)
@@ -1628,13 +1653,13 @@ async def fleet_avatar_telemetry_stream(websocket: WebSocket) -> None:
     telemetry_cfg = getattr(cfg, "avatar_telemetry", None)
 
     if avatars_cfg is None or not avatars_cfg.enabled:
-        await websocket.close(code=1008, reason="avatars_disabled")
+        await _safe_ws_close(websocket, code=1008, reason="avatars_disabled")
         return
     if telemetry_cfg is None or not telemetry_cfg.enabled:
-        await websocket.close(code=1008, reason="avatar_telemetry_disabled")
+        await _safe_ws_close(websocket, code=1008, reason="avatar_telemetry_disabled")
         return
     if not getattr(telemetry_cfg, "fleet_stream_enabled", True):
-        await websocket.close(code=1008, reason="fleet_stream_disabled")
+        await _safe_ws_close(websocket, code=1008, reason="fleet_stream_disabled")
         return
 
     await websocket.accept()
@@ -1645,7 +1670,7 @@ async def fleet_avatar_telemetry_stream(websocket: WebSocket) -> None:
         await websocket.send_json(
             {"type": "error", "reason": "telemetry_runtime_unavailable"},
         )
-        await websocket.close(code=1011, reason="runtime_unavailable")
+        await _safe_ws_close(websocket, code=1011, reason="runtime_unavailable")
         return
 
     # Build the per-agent task set on accept. Discovery is a snapshot;
@@ -1665,7 +1690,7 @@ async def fleet_avatar_telemetry_stream(websocket: WebSocket) -> None:
 
     if not crew_agents:
         # Honest-degrade: no crew yet → close cleanly.
-        await websocket.close(code=1008, reason="no_crew_agents")
+        await _safe_ws_close(websocket, code=1008, reason="no_crew_agents")
         return
 
     events: dict[str, asyncio.Event] = {}
