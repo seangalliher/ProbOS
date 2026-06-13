@@ -116,6 +116,7 @@ memory:
   query_reformulation_enabled: true
   hybrid_recall_enabled: true        # AD-979c: fuse cosine + FTS5 keyword recall (RRF)
   recall_fok_logging_enabled: true   # AD-981a: log the agent-scoped Feeling-of-Knowing band per recall_for_agent (calibration session)
+  transcript_grounded_recall_enabled: true  # AD-986b: let a crew agent consult the canonical chat transcript (the recording) for rooms it took part in, to ground a recollection
   similarity_threshold: 0.6
   verify_content_hash: true
   eviction_audit_enabled: true
@@ -1356,6 +1357,7 @@ temporal:
   include_last_action: true
   include_post_count: true
   include_episode_timestamps: true
+  captain_timezone: America/Denver   # AD-984d: the Captain's IANA zone (Colorado / Mountain) so the crew see real local time, not UTC-only
 qualification:
   enabled: true
   baseline_auto_capture: true

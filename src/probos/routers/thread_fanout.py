@@ -345,24 +345,29 @@ def _render_agent_scene_block(runtime: Any, agent_id: str) -> str:
                 )
         from probos.perception.consumer import get_or_create_working_memory
         _wm = get_or_create_working_memory(agent_id)
-        # BF-617: a shared-camera meeting has ONE feed, but only registered
-        # ambient observers (vision_capable crew, e.g. the counselor) get frames
-        # fanned into their ring. A present participant who is NOT an observer
-        # (e.g. the yeoman) would otherwise render the BF-294 "camera not active"
-        # sentinel and say it can't see the Captain — even though the feed is
-        # live. When this agent's own ring is empty, share the consumer's latest
-        # observation into it so everyone in the room sees the same camera. This
-        # is meeting-scoped (only on this render path) and does NOT enroll the
-        # agent in ambient perception (no register_observer), so there is no
-        # added ambient cost or proactive-emit behavior change.
-        if not _wm.entries():
-            _consumer = getattr(runtime, "vision_consumer", None)
-            _shared = (
-                _consumer.latest_shared_observation()
-                if _consumer is not None and hasattr(_consumer, "latest_shared_observation")
-                else None
-            )
-            if _shared is not None:
+        # BF-617 / BF-620 / BF-624: a shared-camera room has ONE live feed, but
+        # only registered ambient observers (vision_capable crew, e.g. the
+        # counselor) get fresh frames fanned into their ring. A present
+        # participant who is NOT an observer (e.g. the yeoman) renders whatever
+        # is in its own ring — which is EMPTY after a restart (BF-620) OR a
+        # STALE disk-hydrated frame (BF-624: the live "Yeo described a 22h-old
+        # black shirt while Ezri saw the live plaid shirt" report — his ring
+        # held an old frame so the BF-617 *empty-ring* fallback never fired and
+        # he never refreshed). Fix: share the consumer's latest observation into
+        # this agent's ring whenever it is FRESHER than the ring's own latest
+        # (covers both empty and stale), so everyone in the room sees the same
+        # current camera. Byte-identical for an up-to-date observer (the shared
+        # obs is not newer than its own, so no append). Meeting-scoped (this
+        # render path only); no register_observer, so no ambient cost.
+        _consumer = getattr(runtime, "vision_consumer", None)
+        _shared = (
+            _consumer.latest_shared_observation()
+            if _consumer is not None and hasattr(_consumer, "latest_shared_observation")
+            else None
+        )
+        if _shared is not None:
+            _own = _wm.latest()
+            if _own is None or _shared.timestamp > _own.timestamp:
                 _wm.append(_shared)
         return _wm.render_for_prompt() or ""
     except Exception:
