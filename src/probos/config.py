@@ -1037,6 +1037,24 @@ class MemoryConfig(BaseModel):
     # not even started. Pinned rooms are always exempt.
     transcript_retention_days: int = 0
     transcript_reaper_interval_seconds: int = 3600
+    # AD-986a: group-episode enrichment — speaker attribution + reflection fidelity.
+    # The AD-933a group-episode write stored the round-0 Captain trigger UNLABELED
+    # ("[group chat] <text>") and capped the agent's own reflection at 240 chars, so
+    # "who said what" was weak on recall and a substantive multi-paragraph reply's
+    # payload was never indexed (the Counselor's 2026-06-13 feedback). When enabled:
+    # prefix the trigger with its speaker, set AnchorFrame.trigger_agent, and index up
+    # to ``group_reflection_max_chars`` of the agent's own reply. Default OFF ->
+    # byte-identical group episodes.
+    group_episode_enrichment_enabled: bool = False
+    group_reflection_max_chars: int = 600
+    # AD-987: visual<->conversational binding at capture. The conversation episode and
+    # the frame the agent SAW are otherwise two disconnected streams (the Episode has
+    # no visual field; the frame lives in a TTL-reaped VisionWorkingMemory ring). When
+    # enabled, bind the replying agent's current VisionObservation.attachment_ref +
+    # description into the episode's AnchorFrame at store time (content-addressable, so
+    # the frame survives ring reaping) and index the description for integrated recall.
+    # Default OFF -> AnchorFrame.visual_* stay "", episodes byte-identical.
+    episode_visual_binding_enabled: bool = False
     # AD-601: TCM Temporal Context Model
     tcm_enabled: bool = True
     tcm_dimension: int = 16

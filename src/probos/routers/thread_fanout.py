@@ -381,6 +381,7 @@ async def _fan_one_round(
     thread_id: str,
     *,
     trigger_body: str,
+    trigger_speaker: str = "",
     candidate_ids: list[str],
     exclude_ids: set[str],
     vision_messages: list[dict[str, Any]] | None,
@@ -666,14 +667,48 @@ async def _fan_one_round(
     if episodic_memory is not None:
         from probos.types import AnchorFrame, Episode
         participants = ["captain"] + [(r["callsign"] or r["agent_id"]) for r in replies]
-        # AD-935: the trigger is the Captain turn (round 0) or the prior round's
-        # joined agent messages (cascade rounds) — record whichever drove this round.
-        episode_input = f"[group chat] {trigger_body[:200]}"
+        # AD-986a/AD-987: group-episode enrichment + visual binding, both default-off
+        # (byte-identical group episodes until enabled in config).
+        _mem_cfg = getattr(getattr(runtime, "config", None), "memory", None)
+        _enrich = bool(getattr(_mem_cfg, "group_episode_enrichment_enabled", False))
+        _refl_cap = int(getattr(_mem_cfg, "group_reflection_max_chars", 600)) if _enrich else 240
+        _bind_visual = bool(getattr(_mem_cfg, "episode_visual_binding_enabled", False))
+        # AD-986a: the trigger is the Captain turn (round 0) or the prior round's
+        # joined agent messages (cascade rounds, which already carry per-line
+        # "callsign: text" labels). When enrichment is on, label the round-0 Captain
+        # trigger explicitly so "who said what" survives recall; cascade triggers
+        # (trigger_speaker="") are left as-is since their labels are already embedded.
+        if _enrich and trigger_speaker:
+            episode_input = f"[group chat] {trigger_speaker}: {trigger_body[:200]}"
+        else:
+            episode_input = f"[group chat] {trigger_body[:200]}"
+        _trigger_agent = trigger_speaker if _enrich else ""
         _sentinels = {"(no response)", "(delivery failed)", ""}
         for reply in replies:
             if not reply["agent_id"] or reply["text"] in _sentinels:
                 continue
             try:
+                # AD-987: bind the frame the replying agent saw at capture so the
+                # conversational episode and its visual co-occurrence become ONE
+                # memory. The ref is a content-addressable AttachmentStore SHA, so it
+                # survives the VisionWorkingMemory ring's TTL reap. Tier-2: a binding
+                # failure must never block the episode write.
+                _visual_ref = ""
+                _visual_desc = ""
+                if _bind_visual:
+                    try:
+                        from probos.perception.consumer import (
+                            get_or_create_working_memory,
+                        )
+                        _obs = get_or_create_working_memory(reply["agent_id"]).latest()
+                        if _obs is not None and getattr(_obs, "attachment_ref", ""):
+                            _visual_ref = _obs.attachment_ref
+                            _visual_desc = getattr(_obs, "description", "") or ""
+                    except Exception:
+                        logger.debug(
+                            "AD-987: visual binding skipped for %s",
+                            reply["callsign"] or reply["agent_id"], exc_info=True,
+                        )
                 # AD-933a: ALWAYS construct the group-anchored Episode directly.
                 # NOT dream_adapter.build_episode — that helper derives
                 # outcomes/agent_ids/dag_summary from an ``execution_result["dag"]``
@@ -696,24 +731,29 @@ async def _fan_one_round(
                     }],
                     agent_ids=[reply["agent_id"]],
                     duration_ms=(t_end - t_start) * 1000,
-                    # AD-977: index the agent's OWN reply so it can recall what
+                    # AD-977/AD-986a: index the agent's OWN reply so it can recall what
                     # it said in the room. The embedded document (_prepare_document)
                     # and the FTS5 sidecar index user_input + reflection, but NOT
                     # outcomes[].response — so without this the group episode was
                     # findable only by the Captain's trigger text, never by the
-                    # agent's contribution (the group-vs-1:1 recall gap). Mirrors
-                    # the 1:1 _store_action_episode reflection ("<callsign> handled
-                    # <intent>: <response>"). Truncated to bound the embedding.
+                    # agent's contribution (the group-vs-1:1 recall gap). AD-986a
+                    # raises the cap from 240 to ``_refl_cap`` when enrichment is on so
+                    # a substantive multi-paragraph reply is findable by its payload,
+                    # not just its opening. Mirrors the 1:1 _store_action_episode
+                    # reflection ("<callsign> handled <intent>: <response>").
                     reflection=(
                         f"{reply['callsign'] or reply['agent_id']} said in group chat: "
-                        f"{reply['text'][:240]}"
+                        f"{reply['text'][:_refl_cap]}"
                     ),
                     source="group_chat_fanout",  # AD-933a distinct tag
                     anchors=AnchorFrame(
                         channel="chat",
                         trigger_type="group_fanout",
                         participants=participants,
+                        trigger_agent=_trigger_agent,  # AD-986a: who drove this turn
                         chat_thread_id=thread_id,
+                        visual_attachment_ref=_visual_ref,  # AD-987
+                        visual_description=_visual_desc,     # AD-987
                     ),
                 )
                 await episodic_memory.store(episode)
@@ -801,7 +841,7 @@ async def group_chat_fanout(
     all_replies: list[dict[str, str]] = []
     round0 = await _fan_one_round(
         runtime, store, thread_id,
-        trigger_body=captain_body, candidate_ids=agent_ids,
+        trigger_body=captain_body, trigger_speaker="Captain", candidate_ids=agent_ids,
         exclude_ids=({opener_id} if opener_id else set()),
         vision_messages=vision_messages, sanity_gate=sanity_gate, t_start=t_start,
         before=captain_msg.created_at,
@@ -905,7 +945,8 @@ async def group_chat_fanout(
             try:
                 nxt = await _fan_one_round(
                     runtime, store, thread_id,
-                    trigger_body=trigger, candidate_ids=agent_ids, exclude_ids=_exclude,
+                    trigger_body=trigger, trigger_speaker="", candidate_ids=agent_ids,
+                    exclude_ids=_exclude,
                     vision_messages=None, sanity_gate=sanity_gate, t_start=t_start,
                     addressed_callsigns=addressed or None,
                     room_roster=room_roster,

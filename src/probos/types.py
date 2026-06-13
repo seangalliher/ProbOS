@@ -409,6 +409,15 @@ class AnchorFrame:
     chat_thread_id: str = ""
     event_log_window: float = 0.0    # Timestamp range for EventLog cross-verification
 
+    # AD-987: visual<->conversational binding — the frame the agent SAW at capture.
+    # Binds the otherwise-separate visual stream into the conversational episode so
+    # recall is integrated ("what was said" + "what I saw" as one memory). The ref is
+    # a content-addressable AttachmentStore SHA-256 (AD-731), so the frame survives
+    # the VisionWorkingMemory ring's TTL reap. Both "" unless
+    # ``memory.episode_visual_binding_enabled`` is on at store time.
+    visual_attachment_ref: str = ""  # SHA-256 of the bound frame in AttachmentStore
+    visual_description: str = ""     # vision-LLM description at capture time
+
     # SOURCE PROVENANCE — where did the observed data originate? (AD-662)
     source_origin_id: str = ""       # ID of the root data artifact that generated this observation
     artifact_version: str = ""       # Version/hash of the artifact observed (detects same-version dupes)

@@ -2995,6 +2995,13 @@ class EpisodicMemory:
         if episode.reflection:
             parts.append(episode.reflection)
 
+        # AD-987: integrated recall — index the bound visual co-occurrence so
+        # "what was I seeing when X happened" is recall-searchable, tying the
+        # conversational and visual streams at the embedding level. Only present
+        # when episode_visual_binding_enabled bound a frame at capture (else "").
+        if episode.anchors and getattr(episode.anchors, "visual_description", ""):
+            parts.append(f"[saw: {episode.anchors.visual_description}]")
+
         # Question seeds — heuristic elaborative encoding (AD-584d)
         questions = EpisodicMemory._generate_question_seeds(episode)
         if questions:
