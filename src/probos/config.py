@@ -2881,6 +2881,19 @@ class ExecutionConfig(BaseModel):
     install_timeout_seconds: float = 180.0  # venv create + pip install is slower
 
 
+class HooksConfig(BaseModel):
+    """AD-1004: lifecycle-hook bus (deterministic interception at agent-loop
+    points — the VS Code / Claude / Copilot hook model).
+
+    The bus substrate always exists and is harmless when unwired (firing with no
+    registered handlers is a no-op). This flag governs whether the runtime wires
+    hooks into the live dispatch path + loads pack/operator hook handlers.
+    **Default OFF** until handlers + wiring land in a follow-up slice.
+    """
+
+    enabled: bool = False
+
+
 class QAConfig(BaseModel):
     """SystemQAAgent configuration."""
 
@@ -5388,6 +5401,7 @@ class SystemConfig(BaseModel):
     self_mod: SelfModConfig = SelfModConfig()
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)  # AD-838c
     execution: ExecutionConfig = ExecutionConfig()  # AD-993/994 (default OFF)
+    hooks: HooksConfig = HooksConfig()  # AD-1004 (default OFF)
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     records: RecordsConfig = RecordsConfig()
