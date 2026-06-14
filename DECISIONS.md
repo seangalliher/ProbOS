@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1003a: Capability-Pack manifest parser/validator — cross-tool agent-plugin format (#944, #948)
+
+**Context.** First (safe, additive) slice of Capability Packs (AD-1003 #948): ProbOS adopts the cross-tool agent-plugin `plugin.json` format shared by VS Code / Copilot CLI / Claude Code, so it can consume existing IDE plugins and emit portable packs. The full loader (consuming a pack into the live registries, with the operator trust/consensus gate) needs the hook-bus *wiring* first — so this slice is the **read-only parse + validate** layer only, with zero install/execution.
+
+**Decision.** `src/probos/packs/manifest.py`: `PackManifest` (Pydantic v2 model of the cross-tool schema — name/description/version/author + component paths `skills`/`agents`/`hooks`/`mcpServers`), enforcing the same **kebab-case `name`** rule the IDEs use (`^[a-z0-9][a-z0-9-]*$`, ≤ 64; the IDEs *silently* fail invalid names — ProbOS raises loudly at parse time). `find_manifest` checks VS Code's auto-detection order (`.plugin/plugin.json` → `plugin.json` → `.github/plugin/plugin.json` → `.claude-plugin/plugin.json`). `load_manifest` (find+read+validate), `parse_manifest` (dict→model), `describe_pack` (read-only install-preview summary). `extra="allow"` preserves ProbOS-native additive keys (mesh-intent grants, standing-order overlays) so a ProbOS pack stays a valid base plugin in the IDEs.
+
+**Scope: parse + validate ONLY.** Nothing is installed, executed, registered, or wired — no hook runs, no MCP server starts, no skill/agent loads. Purely additive; the safe substrate the later install slice builds on.
+
+**Tests.** `test_ad1003a_pack_manifest.py` (21, BF-287 real files on tmp_path + real Pydantic): minimal/full/inline-objects/extra-preserved manifests, the kebab-case rule (6 invalid + valid + too-long + bad-description + non-dict), `find_manifest` detection order + Claude format + absent, `load_manifest` happy/missing/malformed-JSON, `describe_pack`. Import/AST smoke clean.
+
 ### AD-1005: IntentGrantStore — per-agent mesh-intent grant substrate (#944, gating mechanism)
 
 **Context.** The authorization substrate for the settled per-agent write-intent gating design (the AD-1004 discussion): a crew agent that *originates* a consensus-gated WRITE intent (e.g. `run_python`) must be granted that intent — per-agent authorization checked at origination, layered with (never replacing) the per-call consensus gate. Tools have `ToolPermissionStore`, skills have `SkillGrantStore`; intents had no equivalent.
