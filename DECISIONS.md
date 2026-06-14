@@ -10,6 +10,18 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1001b: Ship's Locker UI — global capabilities catalog overlay + palette-access fix (#944, #946)
+
+**Context.** The UI half of the Ship's Locker (AD-1001a shipped the `GET /api/tools/catalog` aggregate). The "global view of all capabilities ship-wide" the Captain asked for — the ship-wide counterpart to the per-agent Service Configuration tab (AD-1000c).
+
+**Decision.** `ui/.../bridge/ShipsLockerPanel.tsx` — a read-only full-screen overlay (mirrors the WardRoom/Settings overlay pattern: `position:fixed`, store-flag gated, Escape-to-close) bound to `fetchCatalog()` → `/api/tools/catalog`. Four sections (Tools / Skills / Capabilities-mesh / MCP servers) with per-entry origin (built-in/MCP/extension), `held_by` ("who holds what"), and a consensus badge on write mesh intents. `deps`-injectable for hermetic tests; HXI stroke/text-only, no emoji. Opened from **Bridge → Engineering station** ("Ship's Locker") — ship-wide capabilities are a Ship's-Computer/Engineering concern (the AD-481 modular-construction framing). Store flag `shipsLockerOpen` + `App.tsx` mount, mirroring the existing overlay panels.
+
+**Design fix (caught by the AD-946 palette tests).** Adding a Ship's Locker action to Engineering exposed a latent gap: the AD-946 palette flatten surfaces a station's *actions* OR its `onExpand` fallback, never both. Engineering was the first station that is body-bearing (System expand) **and** action-bearing — so the new action silently dropped the "System" launch from the command palette. Followed the **Communications precedent** (which adds an explicit "Ward Room" action mirroring its expand): gave Engineering an explicit **"System" mirror action** alongside "Ship's Locker", preserving System palette access with zero UX loss. The station-header Expand still uses `onExpand`. Palette is now 12 launches (was 11).
+
+**Scope.** Read-only, additive; no behavior change. Phase-2 grant-from-here (select a capability → grant to an agent) deferred (reuses the AD-983b `set` path).
+
+**Tests.** `ShipsLockerPanel.test.tsx` (10, deps-injected: closed-renders-null, loading, four sections + counts, held_by + origin, consensus-on-writes-only, X-close, Escape-close, error, empty-MCP, no-emoji) + updated AD-946 `paletteCommands.test.ts` (12 launches; Engineering action-bearing with System mirror). Full UI suite **1507 passed / 1 skipped**; build clean.
+
 ### AD-1001a: Ship's Locker — global capabilities catalog API (#944, #946)
 
 **Context.** The global counterpart to the per-agent Service hub (AD-1000): the Captain asked for "a global view of all capabilities — skills, tools, plugins." This is the read-only backend that view binds to.

@@ -13,12 +13,12 @@ afterEach(() => {
 const STATIONS = () => buildBridgeStations({ dmChannelCount: 4, kanbanCount: 7, totalUnread: 3 });
 
 describe('AD-946 buildPaletteCommands — flatten the station registry', () => {
-  it('returns the 11 Captain-facing launches with the expected labels', () => {
+  it('returns the 12 Captain-facing launches with the expected labels', () => {
     const cmds = buildPaletteCommands(STATIONS());
-    expect(cmds.length).toBe(11);
+    expect(cmds.length).toBe(12);
     expect(cmds.map((c) => c.label)).toEqual([
       'Ward Room', 'Chats', 'Crew', 'Personnel', 'Metrics',
-      'Notebooks', 'Records', 'Explorer', 'Work Board', 'System', 'Settings',
+      'Notebooks', 'Records', 'Explorer', 'Work Board', 'System', "Ship's Locker", 'Settings',
     ]);
   });
 
@@ -38,10 +38,14 @@ describe('AD-946 buildPaletteCommands — flatten the station registry', () => {
     expect(ops[0].label).toBe('Work Board');
     expect(ops[0].station).toBe('Operations');
 
-    const eng = cmds.filter((c) => c.id === 'engineering:expand');
-    expect(eng.length).toBe(1);
-    expect(eng[0].label).toBe('System');
-    expect(eng[0].station).toBe('Engineering');
+    // AD-1001b: Engineering is now action-bearing (System mirror + Ship's
+    // Locker), so it surfaces ACTIONS, not an engineering:expand fallback
+    // (same treatment as Communications). System is preserved via the mirror
+    // action; the Ship's Locker is the new launch.
+    expect(cmds.some((c) => c.id === 'engineering:expand')).toBe(false);
+    const eng = cmds.filter((c) => c.station === 'Engineering');
+    expect(eng.map((c) => c.label)).toEqual(['System', "Ship's Locker"]);
+    expect(eng.find((c) => c.label === 'System')).toBeTruthy();
   });
 
   it('excludes config panels (forward marker AD-946a)', () => {

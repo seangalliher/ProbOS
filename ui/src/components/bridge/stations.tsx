@@ -146,7 +146,20 @@ export function buildBridgeStations(ctx: {
       onExpand: () => useStore.setState({ mainViewer: 'system' }),
       onExpandLabel: 'System',
       body: () => <BridgeSystem />,
-      actions: [],
+      actions: [
+        // AD-1001b: Engineering gains discrete actions, so (per the AD-946
+        // flatten precedent) it now surfaces its ACTIONS in the palette instead
+        // of the onExpand fallback. Mirror the System expand as an explicit
+        // action so the System launch is preserved — exactly how Communications
+        // mirrors its Ward Room expand as an action. The header Expand button
+        // still uses onExpand above.
+        { id: 'engineering-system', label: 'System',
+          onInvoke: () => useStore.setState({ mainViewer: 'system' }) },
+        // The Ship's Locker — ship-wide capabilities catalog (tools, skills,
+        // mesh intents, MCP). A Ship's-Computer / Engineering concern.
+        { id: 'ships-locker-toggle', label: "Ship's Locker",
+          onInvoke: () => useStore.setState({ shipsLockerOpen: true }) },
+      ],
       // AD-945: the four bottom-right environment toggles (sound / voice / wake-word /
       // legend), relocated from DecisionSurface into the Ship's-Computer command layer.
       config: [

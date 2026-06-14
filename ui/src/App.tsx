@@ -26,6 +26,7 @@ import CommercialOverlayBadge from './components/CommercialOverlayBadge';
 import SpatialExplorerPanel from './components/SpatialExplorerPanel';
 import KnowledgeBrowserPanel from './components/KnowledgeBrowserPanel';
 import SettingsPanel from './components/settings/SettingsPanel';
+import { ShipsLockerPanel } from './components/bridge/ShipsLockerPanel';
 import { useSettingsStore } from './store/useSettingsStore';
 import CameraLiveIndicator from './components/perception/CameraLiveIndicator';
 import CameraPreviewPanel from './components/perception/CameraPreviewPanel';
@@ -109,6 +110,7 @@ export default function App() {
       <SpatialExplorerPanel />
       <KnowledgeBrowserPanel />
       <SettingsPanel />
+      <ShipsLockerPanel />
       <CameraLiveIndicator />
       <CameraPreviewPanel />
       {/* AD-944: the commercial-overlay status badge outlived the retired toolbar.

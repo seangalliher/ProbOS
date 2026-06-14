@@ -366,6 +366,7 @@ export interface HXIState {
   wardRoomChannels: WardRoomChannel[];
   // Ward Room HXI (AD-407c)
   wardRoomOpen: boolean;
+  shipsLockerOpen: boolean;  // AD-1001b: global capabilities catalog overlay
   wardRoomActiveChannel: string | null;
   wardRoomThreads: WardRoomThread[];
   wardRoomActiveThread: string | null;
@@ -880,6 +881,7 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomChannels: [],
   // Ward Room HXI (AD-407c)
   wardRoomOpen: false,
+  shipsLockerOpen: false,  // AD-1001b
   wardRoomActiveChannel: null,
   wardRoomThreads: [],
   wardRoomActiveThread: null,
