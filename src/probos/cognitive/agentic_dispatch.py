@@ -179,6 +179,7 @@ _MESH_TOOL_SPECS: list[tuple[str, str, str, str, dict[str, Any]]] = [
 def register_mesh_intent_tools(
     registry: "ToolRegistry",
     intent_bus: "IntentBus",
+    provider: str = "AD-856",
 ) -> list[str]:
     """Register the mesh-intent Tool adapters idempotently (AD-856).
 
@@ -186,6 +187,15 @@ def register_mesh_intent_tools(
     registry's Layer-3 ship-wide default grants READ to all ranks. Already
     registered tool ids are skipped (idempotent). Returns the list of tool ids
     that are available after registration.
+
+    ``provider`` tags the catalog entry (AD-909). The per-dispatch caller keeps
+    the default ``"AD-856"``; the AD-909 startup path (``_wire_mesh_intent_tools``
+    in ``startup/finalize.py``) passes ``"mesh"`` so the three universal
+    read-intents surface in ``GET /api/tools`` and the AD-885 capability lens
+    with a stable, meaningful provider. Idempotent across both callers: whichever
+    runs first registers the tool and the other skips it — so in production the
+    startup-path ``"mesh"`` tag wins, since ``finalize_startup`` runs before any
+    agentic dispatch.
     """
     available: list[str] = []
     for tool_id, intent_name, name, description, input_schema in _MESH_TOOL_SPECS:
@@ -200,7 +210,7 @@ def register_mesh_intent_tools(
             description=description,
             input_schema=input_schema,
         )
-        registry.register(tool, provider="AD-856")
+        registry.register(tool, provider=provider, tags=[tool_id, provider])
     return available
 
 

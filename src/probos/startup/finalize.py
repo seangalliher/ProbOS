@@ -269,6 +269,47 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_mesh_intent_tools(*, runtime: Any) -> list[str]:
+    """AD-909: Seed the universal mesh read-intents into the PERSISTENT catalog.
+
+    ``web_search`` / ``read_page`` / ``http_fetch`` are wrapped as first-class
+    Tools by ``register_mesh_intent_tools`` (AD-856) — but before AD-909 that ran
+    only lazily inside the per-dispatch executor, so the three reads were absent
+    from ``GET /api/tools`` (and the AD-885 capability lens / AD-899 certification
+    console) until an agent first used one. That left the Captain unable to *see*
+    web-search/page-read/http-fetch in the catalog, or to turn one off for a
+    specific agent — even though the AD-423/894 ``ToolAccessGrant`` model fully
+    supports a per-agent off-switch.
+
+    This registers them into ``runtime.tool_registry`` at startup, tagged
+    ``provider="mesh"`` and READ-for-all (empty ``default_permissions`` → the
+    registry's ship-wide default grants READ to every rank). Registration is
+    idempotent — the dispatch path's later call finds them already present and
+    skips. The off-switch is a reversible, audit-retained Captain
+    ``is_restriction`` grant (permission ``none``), which ``resolve_permission``
+    restricts the READ-for-all base down to NONE; no new consensus gate is
+    introduced (Minimal Authority). Honest-degrade: returns ``[]`` and logs when
+    the registry or intent bus is unavailable.
+    """
+    registry = getattr(runtime, "tool_registry", None)
+    intent_bus = getattr(runtime, "intent_bus", None)
+    if registry is None or intent_bus is None:
+        logger.warning(
+            "AD-909: tool_registry or intent_bus unavailable; universal mesh "
+            "read-intents not seeded into the persistent catalog (they will "
+            "still register lazily on first agentic dispatch)"
+        )
+        return []
+    from probos.cognitive.agentic_dispatch import register_mesh_intent_tools
+
+    ids = register_mesh_intent_tools(registry, intent_bus, provider="mesh")
+    logger.info(
+        "AD-909: seeded %d universal mesh read-intents into the tool catalog: %s",
+        len(ids), ", ".join(ids),
+    )
+    return ids
+
+
 async def _start_recording_reaper(*, runtime: Any, config: "SystemConfig") -> None:
     """AD-706b: start the recording retention reaper if recording is enabled."""
     cfg = getattr(config, "browser_tool", None)
@@ -3895,6 +3936,15 @@ async def finalize_startup(
         _wire_browser_tool(runtime=runtime, config=config)
     except Exception:
         logger.warning("AD-706: _wire_browser_tool failed", exc_info=True)
+
+    # AD-909: Seed the universal mesh read-intents (web_search, read_page,
+    # http_fetch) into the persistent tool catalog so they are visible in
+    # GET /api/tools + the AD-885 lens and restrictable per-agent from boot —
+    # not only after the first agentic dispatch lazily registers them.
+    try:
+        _wire_mesh_intent_tools(runtime=runtime)
+    except Exception:
+        logger.warning("AD-909: _wire_mesh_intent_tools failed", exc_info=True)
 
     # AD-706b: async portion of browser-tool wiring - start the recording reaper.
     try:
