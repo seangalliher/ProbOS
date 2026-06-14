@@ -50,7 +50,8 @@ describe('AD-1000c ProfileServiceTab', () => {
     const panel = screen.getByTestId('capability-panel');
     expect(panel.textContent).toContain('TOOLS (1)');
     expect(panel.textContent).toContain('SKILLS (1)');
-    expect(panel.textContent).toContain('CAPABILITIES (1)');
+    // AD-1006: the single fixture intent carries no served flag -> CAN REQUEST.
+    expect(panel.textContent).toContain('CAPABILITIES — CAN REQUEST (1)');
   });
 
   it('forwards the agentId to the capability fetch', async () => {

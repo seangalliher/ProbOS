@@ -116,7 +116,9 @@ describe('AD-983c CapabilityPanel', () => {
     await waitFor(() => screen.getByTestId('capability-panel'));
     const panel = screen.getByTestId('capability-panel');
     expect(panel.textContent).toContain('TOOLS (0)');
-    expect(panel.textContent).toContain('No tools.');
+    // AD-1006: the empty-tools state explains what tools are (resolves the
+    // "0 tools / nothing feels new" confusion), not a bare "No tools.".
+    expect(screen.getByTestId('cap-tools-empty').textContent).toContain('callable');
     expect(panel.textContent).toContain('SKILLS (0)');
     expect(panel.textContent).toContain('No skills.');
   });
@@ -148,7 +150,9 @@ describe('AD-983c CapabilityPanel', () => {
     render(<CapabilityPanel agentId="kirk" deps={{ fetchCapabilities }} />);
     await waitFor(() => screen.getByTestId('capability-panel'));
     const panel = screen.getByTestId('capability-panel');
-    expect(panel.textContent).toContain('CAPABILITIES (2)');
+    // AD-1006: neither test intent carries served=true, so both land in CAN REQUEST.
+    expect(panel.textContent).toContain('CAPABILITIES — CAN REQUEST (2)');
+    expect(panel.textContent).toContain('CAPABILITIES — SERVES (0)');
     expect(screen.getByTestId('mesh-row-run_python')).toBeTruthy();
     expect(screen.getByTestId('mesh-row-http_fetch')).toBeTruthy();
   });
@@ -183,7 +187,30 @@ describe('AD-983c CapabilityPanel', () => {
     render(<CapabilityPanel agentId="kirk" deps={{ fetchCapabilities }} />);
     await waitFor(() => screen.getByTestId('capability-panel'));
     const panel = screen.getByTestId('capability-panel');
-    expect(panel.textContent).toContain('CAPABILITIES (0)');
+    expect(panel.textContent).toContain('CAPABILITIES — CAN REQUEST (0)');
     expect(panel.textContent).toContain('No mesh capabilities.');
+  });
+
+  // ── AD-1006: serves vs can-request split ─────────────────────────────
+  it('splits served intents from the ship-wide reachable set', async () => {
+    const caps = makeCaps();
+    // The agent SERVES run_python; http_fetch is ship-wide reachable only.
+    caps.mesh_intents[0].served = true;
+    const fetchCapabilities = vi.fn(async () => caps);
+    render(<CapabilityPanel agentId="counselor" deps={{ fetchCapabilities }} />);
+    await waitFor(() => screen.getByTestId('capability-panel'));
+    const panel = screen.getByTestId('capability-panel');
+    expect(panel.textContent).toContain('CAPABILITIES — SERVES (1)');
+    expect(panel.textContent).toContain('CAPABILITIES — CAN REQUEST (1)');
+    // Both still render their rows; the split is presentational, not a filter.
+    expect(screen.getByTestId('mesh-row-run_python')).toBeTruthy();
+    expect(screen.getByTestId('mesh-row-http_fetch')).toBeTruthy();
+  });
+
+  it('shows the no-specialty empty state when the agent serves nothing', async () => {
+    const fetchCapabilities = vi.fn(async () => makeCaps()); // no served flags
+    render(<CapabilityPanel agentId="kirk" deps={{ fetchCapabilities }} />);
+    await waitFor(() => screen.getByTestId('capability-panel'));
+    expect(screen.getByTestId('cap-serves-empty').textContent).toContain('skills and reasoning');
   });
 });

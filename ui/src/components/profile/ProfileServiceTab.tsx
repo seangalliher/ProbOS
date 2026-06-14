@@ -126,10 +126,16 @@ export function ProfileServiceTab({ agentId, deps }: Props) {
       <div style={{ fontSize: 10, color: '#8888a0', letterSpacing: 1, marginBottom: 6 }}>
         SERVICE CONFIGURATION
       </div>
-      <div style={{ color: '#666680', fontSize: 10, lineHeight: 1.5, marginBottom: 10 }}>
-        Tools, skills, and mesh capabilities available to this agent. Tools and
-        skills can be enabled per agent; mesh capabilities are ship-served and
-        shown for reference.
+      <div style={{ color: '#666680', fontSize: 10, lineHeight: 1.6, marginBottom: 10 }}>
+        <strong style={{ color: '#8888a0' }}>Tools</strong> are callable functions
+        wired into this agent&apos;s context (file I/O, web, run code) &mdash; the
+        Copilot sense of &ldquo;tool.&rdquo;{' '}
+        <strong style={{ color: '#8888a0' }}>Skills</strong> are cognitive
+        specialties from its role.{' '}
+        <strong style={{ color: '#8888a0' }}>Capabilities</strong> are mesh intents
+        it can request: &ldquo;Serves&rdquo; are this agent&apos;s own specialty
+        (only it fulfils them); &ldquo;Can request&rdquo; is the ship-wide surface
+        any agent can call. Tools and skills are enabled per agent.
       </div>
       <CapabilityPanel agentId={agentId} deps={deps} />
       <InstructionsSection agentId={agentId} fetcher={deps?.fetchInstructions} />

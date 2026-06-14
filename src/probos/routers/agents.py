@@ -1164,7 +1164,22 @@ async def get_agent_capabilities(
                 "min_rank": entry.min_rank if entry is not None else "ensign",
             })
 
-    return {"agent_id": agent_id, "tools": tools, "skills": skills, "mesh_intents": _mesh_intents(runtime)}
+    # AD-1006: tag which mesh intents THIS agent SERVES (its own specialty, from
+    # its ``intent_descriptors``) vs the ship-wide reachable set. The capability
+    # axis is pool-served, so the SAME intents are reachable by every agent — but
+    # only the declaring agent serves each one (e.g. only the Counselor serves
+    # ``counselor_wellness_report``). Surfacing "serves" vs "can request" resolves
+    # the "83 identical capabilities on every card" confusion: the list is the
+    # ship's surface, not the agent's role. Read-only; no gating change.
+    served_names = {
+        getattr(d, "name", "")
+        for d in (getattr(agent, "intent_descriptors", None) or [])
+    }
+    mesh = _mesh_intents(runtime)
+    for mi in mesh:
+        mi["served"] = mi["id"] in served_names
+
+    return {"agent_id": agent_id, "tools": tools, "skills": skills, "mesh_intents": mesh}
 
 
 def _mesh_intents(runtime: Any) -> list[dict[str, Any]]:

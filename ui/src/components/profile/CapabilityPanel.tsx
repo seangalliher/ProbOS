@@ -23,7 +23,9 @@ export interface AgentCapability {
 }
 
 /** AD-1000a: a mesh-intent capability (the third axis). Pool-served + ship-wide,
- *  so read-only here — shown for visibility, not per-agent toggled. */
+ *  so read-only here — shown for visibility, not per-agent toggled.
+ *  AD-1006: ``served`` flags whether THIS agent declares (fulfils) the intent —
+ *  its own specialty — vs the ship-wide reachable surface every agent can call. */
 export interface MeshIntent {
   id: string;
   name: string;
@@ -33,6 +35,7 @@ export interface MeshIntent {
   tier: string;
   origin: string;
   reachable: boolean;
+  served?: boolean;
 }
 
 interface CapabilitiesResponse {
@@ -223,13 +226,24 @@ export function CapabilityPanel({ agentId, deps }: CapabilityPanelProps) {
     return <div data-testid="cap-panel-error" style={{ fontSize: 11, color: _DIM, padding: '4px 0' }}>Capabilities unavailable.</div>;
   }
 
+  // AD-1006: partition the mesh capabilities into what THIS agent SERVES (its
+  // own specialty intents) vs the ship-wide surface it CAN REQUEST (identical
+  // for every agent). A backend without the ``served`` flag leaves every intent
+  // in "can request" — byte-identical to the pre-AD-1006 single section.
+  const servedIntents = meshIntents.filter((mi) => mi.served);
+  const reachableIntents = meshIntents.filter((mi) => !mi.served);
+
   return (
     <div data-testid="capability-panel">
       <div style={{ fontSize: 10, color: _DIM, letterSpacing: 1, margin: '6px 0 4px' }}>
         TOOLS ({tools.length})
       </div>
       {tools.length === 0 ? (
-        <div style={{ fontSize: 11, color: '#555568', padding: '2px 0' }}>No tools.</div>
+        <div data-testid="cap-tools-empty" style={{ fontSize: 11, color: '#555568', padding: '2px 0', lineHeight: 1.5 }}>
+          No tools wired into this agent&apos;s context. Tools are callable
+          functions (file I/O, web fetch, run code) &mdash; granted from the
+          agent&apos;s role or enabled individually.
+        </div>
       ) : (
         tools.map((c) => <CapabilityRow key={c.id} cap={c} kind="tool" onToggle={onToggle} />)
       )}
@@ -241,13 +255,33 @@ export function CapabilityPanel({ agentId, deps }: CapabilityPanelProps) {
       ) : (
         skills.map((c) => <CapabilityRow key={c.id} cap={c} kind="skill" onToggle={onToggle} />)
       )}
-      <div style={{ fontSize: 10, color: _DIM, letterSpacing: 1, margin: '10px 0 4px' }}>
-        CAPABILITIES ({meshIntents.length})
+
+      {/* AD-1006: capabilities this agent SERVES — its specialty intents. */}
+      <div style={{ fontSize: 10, color: _DIM, letterSpacing: 1, margin: '12px 0 1px' }}>
+        CAPABILITIES — SERVES ({servedIntents.length})
       </div>
-      {meshIntents.length === 0 ? (
+      <div style={{ color: '#555568', fontSize: 9, lineHeight: 1.4, marginBottom: 4 }}>
+        Mesh intents only this agent fulfils.
+      </div>
+      {servedIntents.length === 0 ? (
+        <div data-testid="cap-serves-empty" style={{ fontSize: 11, color: '#555568', padding: '2px 0' }}>
+          No specialty intents — this agent works through its skills and reasoning.
+        </div>
+      ) : (
+        servedIntents.map((mi) => <MeshIntentRow key={mi.id} mi={mi} />)
+      )}
+
+      {/* AD-1006: ship-wide surface any agent can request (served by other crew/pools). */}
+      <div style={{ fontSize: 10, color: _DIM, letterSpacing: 1, margin: '12px 0 1px' }}>
+        CAPABILITIES — CAN REQUEST ({reachableIntents.length})
+      </div>
+      <div style={{ color: '#555568', fontSize: 9, lineHeight: 1.4, marginBottom: 4 }}>
+        Ship-wide mesh surface any agent can request; served by other crew or pools.
+      </div>
+      {reachableIntents.length === 0 ? (
         <div style={{ fontSize: 11, color: '#555568', padding: '2px 0' }}>No mesh capabilities.</div>
       ) : (
-        meshIntents.map((mi) => <MeshIntentRow key={mi.id} mi={mi} />)
+        reachableIntents.map((mi) => <MeshIntentRow key={mi.id} mi={mi} />)
       )}
     </div>
   );
