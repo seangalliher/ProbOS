@@ -10,6 +10,18 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1005: IntentGrantStore — per-agent mesh-intent grant substrate (#944, gating mechanism)
+
+**Context.** The authorization substrate for the settled per-agent write-intent gating design (the AD-1004 discussion): a crew agent that *originates* a consensus-gated WRITE intent (e.g. `run_python`) must be granted that intent — per-agent authorization checked at origination, layered with (never replacing) the per-call consensus gate. Tools have `ToolPermissionStore`, skills have `SkillGrantStore`; intents had no equivalent.
+
+**Decision.** `cognitive/intent_grants.py` `IntentGrantStore` — a near-exact mirror of `SkillGrantStore` (SQLite + WAL + in-memory sync cache + lazy expiry + soft-revoke for audit), keyed by `intent_name`. API: `start`/`stop`, `issue_grant`, `revoke_grant`, `get_active_grants_sync(agent_id, intent_name?)`, `list_grants`, and `is_granted_sync(agent_id, intent_name)` (the read a future `PreDispatch` hook consumes — most-restrictive: a restriction wins over a grant, mirroring the AD-983b skill overlay).
+
+**Mechanism only — default OFF.** NOT wired into any enforcement path (mirrors the AD-1004 hook-bus discipline: build the substrate, wire it in a later slice). An empty store changes nothing — no agent is gated; today's write paths are unchanged (Captain/decomposer → global `execution.enabled` + consensus; agentic-loop tool calls → `ToolPermissionStore`; the `[MESH …]` affordance is read-only). The next slice registers a `PreDispatch` hook that calls `is_granted_sync` + threads the originating agent id.
+
+**Refactor note (flagged, not done).** This is the third store mirroring `ToolPermissionStore` (tools/skills/intents). A unified `CapabilityGrantStore` parameterized by kind is the natural consolidation, but unifying three live stores is a separate refactor that must not block the gating substrate — mirror now, unify later.
+
+**Tests.** `test_ad1005_intent_grants.py` (8, BF-287 real store): issue+read (cache-only), `is_granted_sync`, restriction-wins, revoke, expiry-filter, intent-name filter, persistence-across-restart (real tmp_path DB), revoke-persists-with-audit + missing-id-False (real DB rowcount). Import/AST smoke clean.
+
 ### AD-1002: Instructions (Standing Orders) + Model read tabs in the Service hub (#944, #947)
 
 **Context.** The remaining two VS Code customization axes for the per-agent Service Configuration hub (AD-1000c): **Instructions** and **Language model**, read-only. Rounds out the hub (Capabilities + Instructions + Model).
