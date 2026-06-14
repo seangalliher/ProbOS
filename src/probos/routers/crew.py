@@ -23,6 +23,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from probos.api_models import ApplyRole
 from probos.cognitive import standing_orders
 from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
@@ -446,6 +447,183 @@ async def crew_revoke_tool(
     if not revoked:
         raise HTTPException(404, f"Grant not found: {grant_id}")
     return {"revoked": True, "grant_id": grant_id, "agent_id": agent_id}
+
+
+# ----------------------------------------------------------------------
+# Role templates (AD-1009) — the per-role loadout the Captain applies as a
+# starting template, then overrides per agent (AD-1007/1008). The role→skills→
+# tools engine already exists at commission (AD-889 ``ACM.commission``); these
+# surface it as a viewable template + an explicit apply action. Capabilities are
+# governed per-agent (AD-1007), not stamped by a role here — a role's
+# capabilities shown below are the mesh intents its agent_type SERVES.
+# ----------------------------------------------------------------------
+
+
+def _served_intents_by_type(runtime: Any) -> dict[str, list[str]]:
+    """Map ``agent_type`` → its served mesh-intent names (from intent_descriptors).
+
+    The capability axis is pool-served, so a role's "capabilities" are the
+    intents its agent_type declares (what it fulfils). Honest-degrade: ``{}`` on
+    no registry / any failure.
+    """
+    registry = getattr(runtime, "registry", None)
+    if registry is None:
+        return {}
+    out: dict[str, set[str]] = {}
+    try:
+        for agent in registry.all():
+            atype = getattr(agent, "agent_type", "") or ""
+            if not atype:
+                continue
+            names = out.setdefault(atype, set())
+            for d in getattr(agent, "intent_descriptors", None) or []:
+                n = getattr(d, "name", "")
+                if n:
+                    names.add(n)
+    except Exception:
+        logger.debug("AD-1009: served-intent map build failed", exc_info=True)
+        return {}
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def _resolve_role_tools(runtime: Any, template: Any) -> list[str]:
+    """Resolve a role template's required skills → tool ids (AD-888 resolver).
+
+    Honest-degrade: ``[]`` when the skill/tool registries are unavailable or a
+    skill is unknown. ``agent_id=""`` because this is a role-level view, not a
+    per-agent grant (resolution is pure / side-effect-free, AD-888).
+    """
+    skill_registry = getattr(runtime, "skill_registry", None)
+    tool_registry = getattr(runtime, "tool_registry", None)
+    if skill_registry is None or tool_registry is None or template is None:
+        return []
+    from probos.tools.skill_tool_resolver import resolve_tools_for_skill
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for req in getattr(template, "required_skills", []) or []:
+        skill_id = getattr(req, "skill_id", "")
+        try:
+            skill_def = skill_registry.get_skill(skill_id)
+            if skill_def is None:
+                continue
+            for reg in resolve_tools_for_skill(
+                skill_def, agent_id="", tool_registry=tool_registry,
+            ):
+                if reg.tool_id not in seen:
+                    seen.add(reg.tool_id)
+                    out.append(reg.tool_id)
+        except Exception:
+            logger.debug(
+                "AD-1009: tool resolve failed for skill %s", skill_id, exc_info=True,
+            )
+    return out
+
+
+def _build_role_views(runtime: Any) -> list[dict[str, Any]]:
+    """AD-1009: assemble every role's template view from the ontology + resolvers."""
+    ontology = getattr(runtime, "ontology", None)
+    if ontology is None:
+        return []
+    served = _served_intents_by_type(runtime)
+    try:
+        assignments = ontology.get_all_assignments()
+    except Exception:
+        logger.debug("AD-1009: get_all_assignments failed", exc_info=True)
+        return []
+    views: list[dict[str, Any]] = []
+    for a in assignments or []:
+        agent_type = getattr(a, "agent_type", "") or ""
+        post_id = getattr(a, "post_id", "") or ""
+        try:
+            post = ontology.get_post(post_id)
+        except Exception:
+            logger.debug("AD-1009: get_post(%s) failed", post_id, exc_info=True)
+            post = None
+        try:
+            template = ontology.get_role_template(post_id)
+        except Exception:
+            logger.debug("AD-1009: get_role_template(%s) failed", post_id, exc_info=True)
+            template = None
+        skills = [
+            {"id": getattr(r, "skill_id", ""), "min_proficiency": getattr(r, "min_proficiency", 0)}
+            for r in (getattr(template, "required_skills", []) or [])
+        ]
+        views.append({
+            "role_id": post_id,
+            "agent_type": agent_type,
+            "callsign": getattr(a, "callsign", "") or "",
+            "title": getattr(post, "title", "") if post is not None else "",
+            "department": getattr(post, "department_id", "") if post is not None else "",
+            "skills": skills,
+            "tools": _resolve_role_tools(runtime, template),
+            "capabilities": served.get(agent_type, []),
+        })
+    views.sort(key=lambda v: (v["department"], v["title"], v["role_id"]))
+    return views
+
+
+@router.get("/roles")
+async def list_roles(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-1009: list role templates — the loadout the Captain applies as a start.
+
+    Each role carries its post title/department, required skills, the tools those
+    skills resolve to (AD-888), and the mesh capabilities its agent_type serves.
+    Read-only; derived from the ontology + skill→tool resolver + live intent
+    descriptors. Honest-degrade: ``{"roles": []}`` when the ontology is absent.
+    """
+    return {"roles": _build_role_views(runtime)}
+
+
+@router.post("/{agent_id}/apply-role")
+async def apply_role(
+    agent_id: str,
+    body: ApplyRole,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1009: apply a role's skill+tool template to a crew agent (re-commission).
+
+    Runs the AD-889 commission engine (Role → Skills → Tools). ``role_id`` selects
+    which role's template to apply; omitted → the agent's own role (refresh from
+    template). Idempotent + override-preserving: a per-agent grant OR a manual
+    Captain restriction on a tool is never clobbered (agent-precedence, AD-1009
+    commission guard). Capabilities stay governed per-agent (AD-1007); they are
+    not stamped here. Additive + reversible (grants are revocable) → no consensus
+    gate (Minimal Authority).
+    """
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    acm = getattr(runtime, "acm", None)
+    if acm is None:
+        raise HTTPException(status_code=503, detail="acm_unavailable")
+
+    role_agent_type = getattr(agent, "agent_type", "") or ""
+    if body.role_id:
+        ontology = getattr(runtime, "ontology", None)
+        if ontology is None:
+            raise HTTPException(status_code=503, detail="ontology_unavailable")
+        try:
+            assigned = ontology.get_agents_for_post(body.role_id)
+        except Exception:
+            logger.debug("AD-1009: get_agents_for_post(%s) failed", body.role_id, exc_info=True)
+            assigned = []
+        first_type = next(
+            (getattr(a, "agent_type", "") for a in (assigned or []) if getattr(a, "agent_type", "")),
+            "",
+        )
+        if not first_type:
+            raise HTTPException(status_code=404, detail=f"Role not found: {body.role_id}")
+        role_agent_type = first_type
+
+    summary = await acm.commission(agent_id, role_agent_type, runtime)
+    return {
+        "agent_id": agent_id,
+        "applied_role": body.role_id or role_agent_type,
+        "agent_type": role_agent_type,
+        "skills_acquired": summary.get("skills_acquired", []),
+        "tools_granted": summary.get("tools_granted", []),
+    }
 
 
 # ----------------------------------------------------------------------

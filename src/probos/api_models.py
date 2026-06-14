@@ -409,6 +409,19 @@ class SetCapability(BaseModel):
     reason: str = Field(default="", max_length=280)
 
 
+class ApplyRole(BaseModel):
+    """AD-1009: apply a role's template (skills → tools) to a crew agent.
+
+    ``role_id`` is the ontology post_id of the role whose template to apply
+    (e.g. the Counselor post). When omitted, the agent's OWN role is re-applied
+    (refresh from template). Applying is idempotent and override-preserving: a
+    per-agent grant or manual restriction on a tool is never clobbered
+    (agent-precedence — AD-1007/AD-1009).
+    """
+    role_id: str | None = Field(default=None, max_length=200)
+    reason: str = Field(default="", max_length=280)
+
+
 class MediateAppearanceRevision(BaseModel):
     """AD-721d-2: Captain-initiated request to route a revision hint through
     a mediator (typically the Counselor).

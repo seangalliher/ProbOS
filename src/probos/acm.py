@@ -501,11 +501,17 @@ class AgentCapitalService:
                         skill_def, agent_id=agent_id, tool_registry=tool_registry,
                     )
                     for reg in regs:
-                        # Idempotent: skip if an active non-restriction grant exists.
+                        # Idempotent + AD-1009 override-preserving: skip if ANY
+                        # active per-agent decision exists for this tool — a grant
+                        # OR a manual Captain restriction. Re-applying a role
+                        # template (apply-role) must never clobber a per-agent
+                        # override (agent-precedence). At birth there are no
+                        # decisions, so this is byte-identical to the first
+                        # commission; only re-apply benefits.
                         existing = tool_permission_store.get_active_grants_sync(
                             agent_id, reg.tool_id,
                         )
-                        if any(not g.is_restriction for g in existing):
+                        if existing:
                             continue
                         await tool_permission_store.issue_grant(
                             agent_id, reg.tool_id, ToolPermission.READ,

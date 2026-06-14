@@ -26,7 +26,7 @@ from probos.skill_framework import (
     SkillRegistry,
 )
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolPreference, ToolType
+from probos.tools.protocol import ToolPermission, ToolPreference, ToolType
 from probos.tools.registry import ToolRegistry
 
 
@@ -198,6 +198,46 @@ async def test_commission_falls_back_to_legacy_when_no_template(tmp_path: Path) 
     profile = await service.get_profile("ensign-2")
     assert profile.all_skills  # PCCs at minimum
     assert summary["skills_acquired"]
+
+
+@pytest.mark.asyncio
+async def test_recommission_preserves_manual_restriction(tmp_path: Path) -> None:
+    """AD-1009 guard: a manual Captain restriction on a role tool must SURVIVE a
+    role re-apply (apply-role re-runs commission). Agent-precedence — a per-agent
+    decision is never clobbered by the role template."""
+    service, registry = await _build_skill_service(tmp_path, skill=_scanner_skill())
+    store = await _build_permission_store(tmp_path)
+    tool_registry = ToolRegistry()
+    tool_registry.register(_FakeTool("scanner"))
+    ontology = _StubOntology({
+        "science_officer": RoleTemplate(
+            post_id="science_officer",
+            required_skills=[SkillRequirement(skill_id="tactical_debug", min_proficiency=3)],
+        ),
+    })
+    runtime = _StubRuntime(
+        skill_service=service,
+        tool_permission_store=store,
+        tool_registry=tool_registry,
+        skill_registry=registry,
+        ontology=ontology,
+    )
+    acm = AgentCapitalService(data_dir=tmp_path)
+
+    # Captain manually DISABLES the role tool BEFORE (re-)applying the template.
+    await store.issue_grant(
+        "ensign-9", "scanner", ToolPermission.NONE, is_restriction=True,
+        reason="captain_set",
+    )
+
+    summary = await acm.commission("ensign-9", "science_officer", runtime)
+
+    # The role's scanner tool was NOT re-granted — the manual restriction stands.
+    grants = store.get_active_grants_sync("ensign-9", "scanner")
+    assert grants and all(g.is_restriction for g in grants), "manual disable must survive re-apply"
+    assert "scanner" not in summary["tools_granted"]
+
+    await store.stop()
 
     await store.stop()
 
