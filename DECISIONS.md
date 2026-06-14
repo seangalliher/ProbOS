@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1001a: Ship's Locker — global capabilities catalog API (#944, #946)
+
+**Context.** The global counterpart to the per-agent Service hub (AD-1000): the Captain asked for "a global view of all capabilities — skills, tools, plugins." This is the read-only backend that view binds to.
+
+**Decision (precedent).** Add `GET /api/tools/catalog` to the existing AD-894 ship-wide catalog router (`routers/tools.py`) — reusing the established "ship-wide asset catalog lives under `/api/tools`" precedent rather than spinning up a new `/api/capabilities` router (avoids registration wiring; the file already documents itself as the ship-scoped catalog). Aggregates all four capability axes: **tools** (`ToolRegistry.list_tools`, with `_tool_origin` provenance), **skills** (`CognitiveSkillCatalog.list_entries`), **mesh intents** (reuses the AD-1000a `_mesh_intents` helper), and **MCP servers** (`config.mcp.servers`). Per-agent axes (tools + skills) carry `held_by` — which crew hold each by **explicit grant** (a single O(agents) walk of `ToolPermissionStore` / `SkillGrantStore`); role/department defaults are deliberately *not* enumerated (derived per agent, heavy; the per-agent hub shows an agent's full effective set). Mesh intents are ship-served → no per-agent `held_by`. Each axis honest-degrades to empty independently; never raises. Read-only; the existing `GET /api/tools` (tools-only) is unchanged for back-compat.
+
+**Tests.** `test_ad1001_ships_locker.py` (5, BF-287 real ToolRegistry + real ToolPermissionStore/SkillGrantStore DB-less + real CognitiveSkillEntry + real IntentDescriptor + hand-written registry stub): aggregates all four axes with counts, tool-origin taxonomy (built_in/mcp/extension), `held_by` reflects explicit grants (tool + skill), mesh intents have no `held_by`, honest-degrade on empty runtime. UI panel (AD-1001b) binds to this next.
+
 ### AD-1000c: per-agent Service Configuration tab — the profile-card capability surface (#944, #945) + dedup fix
 
 **Context.** The "button on the profile card" half of AD-1000 (#945). The CapabilityPanel (AD-983c/AD-1000b — the three-axis Tools/Skills/Capabilities surface) lived buried inside the Profile tab (`ProfileInfoTab`), and was in fact **rendered twice** there (a copy-paste duplication bug). The Captain's vision (and VS Code's Agent Customizations editor) is a *dedicated* per-agent capability surface.
