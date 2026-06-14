@@ -64,6 +64,13 @@ _MESH_READ_TTL_BY_INTENT: dict[str, float] = {
     "web_search": _MESH_READ_NETWORK_TTL_SECONDS,
     "read_page": _MESH_READ_NETWORK_TTL_SECONDS,
 }
+# BF-629: reads whose raw result is a list of links / a page dump that the
+# ORIGINATING agent should reason over in its own voice (search -> reason ->
+# answer), rather than pasting verbatim. Exactly the ``requires_reflect`` mesh
+# reads (web_search / read_page) — local-IO reads (read_file, list_directory,
+# stat_file, search_files, search_content) ARE the answer as-is and skip
+# synthesis. Mirrors the explicit-per-intent style of the maps above.
+_MESH_READ_SYNTHESIZE_INTENTS: frozenset[str] = frozenset({"web_search", "read_page"})
 # Cap on how much of a read result is inlined into the chat reply.
 _MESH_READ_RENDER_MAX_CHARS = 1500
 
@@ -1000,6 +1007,19 @@ class DmReplyPipeline:
             return
 
         rendered = self._render_mesh_read_result(intent_name, result)
+        # BF-629: for a requires_reflect read (web_search / read_page) the raw
+        # result is a list of links / a page dump. Reason over it in the agent's
+        # own voice (search -> reason -> answer), like an agentic tool-use loop,
+        # instead of pasting it verbatim — the gap behind "Ezri gave me links, I
+        # had to prompt her again to summarise." One LLM pass, same fast turn.
+        # Verbatim reads (read_file, list_directory) are the answer as-is and
+        # skip this. Honest-degrade lives in the helper (keeps the verbatim
+        # render on any failure, incl. the BF-289/612 empty-content surface).
+        if (
+            intent_name in _MESH_READ_SYNTHESIZE_INTENTS
+            and getattr(result, "success", False)
+        ):
+            rendered = await self._synthesize_mesh_read(intent_name, rendered)
         logger.info(
             "AD-869: agent=%s ran inline read intent=%s (success=%s)",
             self.ctx.agent_id, intent_name,
@@ -1047,6 +1067,56 @@ class DmReplyPipeline:
         if len(text) > _MESH_READ_RENDER_MAX_CHARS:
             text = text[:_MESH_READ_RENDER_MAX_CHARS].rstrip() + "\n… (truncated)"
         return text
+
+    async def _synthesize_mesh_read(self, intent_name: str, rendered: str) -> str:
+        """BF-629: reason over a requires_reflect mesh-read result in the agent's
+        own voice (search → reason → answer), instead of pasting raw results.
+
+        One LLM pass through the runtime's tiered client, in the originating
+        agent's voice, with the Captain's question + the rendered results as
+        context. Flag-gated (``config.dm_mesh_synthesis.enabled``, default OFF in
+        the model / ON in system.yaml). Tier-2 honest-degrade: a disabled flag,
+        a missing client, empty ``rendered``, or an empty/raised LLM response all
+        return the verbatim ``rendered`` unchanged — so a degraded LLM (incl. the
+        BF-289/612 empty-content proxy surface) never drops the Captain's
+        results, it just falls back to the raw list. NEVER raises."""
+        cfg = getattr(getattr(self.ctx.runtime, "config", None), "dm_mesh_synthesis", None)
+        if not bool(getattr(cfg, "enabled", False)):
+            return rendered
+        client = getattr(self.ctx.runtime, "llm_client", None)
+        if client is None or not rendered.strip():
+            return rendered
+        try:
+            from probos.cognitive.llm_client import LLMRequest
+            callsign = self.ctx.callsign or self.ctx.agent_id
+            question = (self.ctx.req_message or self.ctx.message_text or "").strip()
+            resp = await client.complete(LLMRequest(
+                prompt=(
+                    f"The Captain asked:\n{question}\n\n"
+                    f"Results from your {intent_name}:\n{rendered}\n\n"
+                    "Answer the Captain's question now by reasoning over these "
+                    "results in your own voice — synthesise the key findings, "
+                    "don't just list them. Note the most relevant sources inline. "
+                    "If the results don't actually answer the question, say so "
+                    "honestly rather than padding. Output only your reply."
+                ),
+                system_prompt=(
+                    f"You are {callsign}. You just ran a {intent_name} and received "
+                    "the results below. Reason over them and give the Captain a "
+                    "clear, synthesised answer in your natural voice. Never "
+                    "fabricate beyond what the results support."
+                ),
+                tier=str(getattr(cfg, "tier", "standard")),
+                max_tokens=int(getattr(cfg, "max_tokens", 700)),
+            ))
+            synth = (resp.content or "").strip() if resp else ""
+            return synth or rendered
+        except Exception:
+            logger.warning(
+                "BF-629: mesh-read synthesis failed intent=%s agent=%s; keeping "
+                "verbatim render", intent_name, self.ctx.agent_id, exc_info=True,
+            )
+            return rendered
 
     @staticmethod
     def _stringify_mesh_payload(payload: Any) -> str:

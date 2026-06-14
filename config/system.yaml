@@ -1158,6 +1158,12 @@ dm_targeted_lookup:
   enable_codebase: false
   enable_knowledge: true
   max_lookup_chars: 1500
+# BF-629: reason over an inline web_search/read_page result in the agent's own
+# voice (search -> reason -> answer), instead of pasting raw links verbatim.
+dm_mesh_synthesis:
+  enabled: true
+  tier: standard
+  max_tokens: 700
 attachments:
   enabled: true
   attachments_dir: data/attachments

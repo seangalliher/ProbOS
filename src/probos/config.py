@@ -5218,6 +5218,22 @@ class DmDeliberateConfig(BaseModel):  # AD-934
     max_tokens: int = 800
 
 
+class DmMeshSynthesisConfig(BaseModel):  # BF-629
+    """BF-629: after a requires_reflect inline mesh read (web_search / read_page)
+    on the conversational path, make ONE LLM pass so the originating agent
+    REASONS over the result in its own voice (search -> reason -> answer), like an
+    agentic tool-use loop, instead of pasting raw links/page dumps verbatim.
+
+    Default OFF in the model (deterministic tests + safe-by-default); enabled in
+    config/system.yaml so the running instance gets the Copilot-parity behavior
+    (the AD-935 pattern). Honest-degrade: a missing client / empty / raised
+    response keeps the verbatim render, so a degraded LLM never drops the
+    Captain's results."""
+    enabled: bool = False
+    tier: str = "standard"
+    max_tokens: int = 700
+
+
 class WakeWordConfig(BaseModel):
     """AD-705c (Wave 179) — custom wake-word training pipeline config.
 
@@ -5479,6 +5495,7 @@ class SystemConfig(BaseModel):
     dm_sanity_gate: DmSanityGateConfig = Field(default_factory=DmSanityGateConfig)  # AD-724
     dm_targeted_lookup: DmTargetedLookupConfig = Field(default_factory=DmTargetedLookupConfig)  # AD-725 (Wave 159)
     dm_deliberate: DmDeliberateConfig = Field(default_factory=DmDeliberateConfig)  # AD-934
+    dm_mesh_synthesis: DmMeshSynthesisConfig = Field(default_factory=DmMeshSynthesisConfig)  # BF-629
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     cloud_pickers: CloudPickersConfig = Field(default_factory=CloudPickersConfig)  # AD-720c
     lipsync: LipSyncConfig = Field(default_factory=LipSyncConfig)  # AD-721b-1 (Wave 155)
