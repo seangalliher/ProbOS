@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1000c: per-agent Service Configuration tab — the profile-card capability surface (#944, #945) + dedup fix
+
+**Context.** The "button on the profile card" half of AD-1000 (#945). The CapabilityPanel (AD-983c/AD-1000b — the three-axis Tools/Skills/Capabilities surface) lived buried inside the Profile tab (`ProfileInfoTab`), and was in fact **rendered twice** there (a copy-paste duplication bug). The Captain's vision (and VS Code's Agent Customizations editor) is a *dedicated* per-agent capability surface.
+
+**Decision (precedent + research).** Add a dedicated crew-only **"Service"** tab to `AgentProfilePanel` — the ProbOS-native "button on the profile card" (the panel is tab-driven; the personnel record is the formal "Service Record", so "Service" is the idiomatic name). New `ProfileServiceTab.tsx` hosts the CapabilityPanel under a "SERVICE CONFIGURATION" header with a one-line explainer (tools/skills per-agent enablable; mesh capabilities ship-served/read-only). Removed **both** duplicated CAPABILITIES blocks from `ProfileInfoTab` (now homed in the Service tab) — fixes the dup-render bug and declutters the Profile tab. Crew-only via the `visibleTabs` filter (non-crew agents don't get `service`, matching `chat`/`memory`/`self_image`). Mirrors the personnel ServiceRecord, which also mounts CapabilityPanel — one surface, two homes (floating card + Ship's Office). `ProfileServiceTab` takes an optional `deps` passthrough to CapabilityPanel (the established deps-injection test pattern). Frontend-only, additive (one new tab); no API or behavior change.
+
+**Tests.** `ProfileServiceTab.test.tsx` (3, deps-injected: renders heading + all three axes via the hosted panel, forwards agentId, no-emoji guard). Profile + AgentProfilePanel suites **943 passed** (incl. the BF-sensitive wakePhrase fetch-ordering test — robust to removing the panel's mount-time GET). `npm run build` clean.
+
 ### AD-1004: lifecycle-hook bus — substrate for the per-agent capability gate + Capability Packs (#944, prereq for #948)
 
 **Context.** Two threads converge on a missing primitive. (1) The per-agent write-intent gating design (settled this session): per-agent **authorization** at *origination* (default-OFF grant), layered with — not replacing — the **consensus** per-call safety gate; the two are orthogonal (exactly VS Code's per-agent tool *enablement* + per-call *approval*). The natural enforcement point is a `PreDispatch` hook with `allow`/`ask`/`deny`. (2) Capability Packs (AD-1003) attach lifecycle hooks (`PreToolUse`, `PostToolUse`, …) — VS Code/Claude semantics. ProbOS had triggers (WatchManager / NightOrders / ScheduledTask / consensus gates) but **no unified lifecycle-hook bus** with named events + the deny-overrides-ask precedence. This AD builds that bus.

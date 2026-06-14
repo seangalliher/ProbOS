@@ -3,6 +3,7 @@ import { useStore } from '../../store/useStore';
 import { ProfileChatTab } from './ProfileChatTab';
 import { ProfileWorkTab } from './ProfileWorkTab';
 import { ProfileInfoTab } from './ProfileInfoTab';
+import { ProfileServiceTab } from './ProfileServiceTab';
 import { ProfileHealthTab } from './ProfileHealthTab';
 import { ProfileMemoryTab } from './ProfileMemoryTab';
 import { SelfImageTab } from './SelfImageTab';
@@ -11,13 +12,14 @@ import { deriveAgentSignals } from './avatarSignals';
 import { isGroupChat, chatDisplayName } from '../chats/chatFilters';
 import type { AgentProfileData, AvatarDSLDict } from '../../store/types';
 
-type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory' | 'self_image';
+type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory' | 'self_image' | 'service';
 
 const TAB_LABELS: { key: ProfileTab; label: string }[] = [
   { key: 'chat', label: 'Chat' },
   { key: 'work', label: 'Work' },
   { key: 'memory', label: 'Memory' },
   { key: 'profile', label: 'Profile' },
+  { key: 'service', label: 'Service' },
   { key: 'health', label: 'Health' },
   { key: 'self_image', label: 'Self-image' },
 ];
@@ -191,7 +193,7 @@ export function AgentProfilePanel() {
     ? TAB_LABELS.filter(t => t.key === 'chat')
     : isCrew
       ? TAB_LABELS
-      : TAB_LABELS.filter(t => t.key !== 'chat' && t.key !== 'memory' && t.key !== 'self_image');
+      : TAB_LABELS.filter(t => t.key !== 'chat' && t.key !== 'memory' && t.key !== 'self_image' && t.key !== 'service');
 
   // If current tab is hidden for non-crew, switch to profile
   const effectiveTab = visibleTabs.some(t => t.key === activeTab) ? activeTab : (isGroupSurface ? 'chat' : 'profile');
@@ -525,6 +527,7 @@ export function AgentProfilePanel() {
         {effectiveTab === 'chat' && isCrew && <ProfileChatTab agentId={agentId} />}
         {effectiveTab === 'work' && <ProfileWorkTab agentId={agentId} />}
         {effectiveTab === 'profile' && <ProfileInfoTab profileData={profileData} agent={agent} />}
+        {effectiveTab === 'service' && isCrew && <ProfileServiceTab agentId={agentId} />}
         {effectiveTab === 'health' && <ProfileHealthTab profileData={profileData} agent={agent} />}
         {effectiveTab === 'memory' && <ProfileMemoryTab agentId={agentId} />}
         {effectiveTab === 'self_image' && isCrew && (
