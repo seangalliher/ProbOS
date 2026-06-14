@@ -1272,6 +1272,92 @@ async def get_agent_workspace(
     return base
 
 
+@router.get("/{agent_id}/instructions")
+async def get_agent_instructions(
+    agent_id: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1002: the agent's behavioral instructions + model tier (read-only).
+
+    The Instructions + Model axes of the Service Configuration hub (the VS Code
+    "Instructions" + "Language model" equivalents, ProbOS-idiom). Surfaces:
+
+    * ``instructions`` — the agent's hardcoded class-level identity string
+      (present + length + a short preview; the full system prompt is not dumped).
+    * ``standing_order_tiers`` — the four composing tiers (federation / ship /
+      department / agent) via ``get_order_tiers``, each ``{tier, source_file,
+      present, char_count}``. Char counts only — the tier text is not returned
+      (it can be large and is the system prompt). This is the "which instruction
+      files shape this agent" view.
+    * ``model`` — the agent's resolved default LLM tier + the configured tiers.
+      Honest about the architecture: tier selection is per-agent-resolved
+      (``_resolve_tier``, default ``standard``) and globally configured (Settings
+      → LLM Tiers); per-call routing can differ (vision, deep for some intents).
+
+    Read-only. Honest-degrades around each axis independently.
+    """
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    agent_type = getattr(agent, "agent_type", "") or ""
+
+    # --- Identity instructions (hardcoded class-level string) ---
+    hardcoded = getattr(agent, "instructions", "") or ""
+    instructions = {
+        "present": bool(hardcoded.strip()),
+        "char_count": len(hardcoded),
+        "preview": hardcoded.strip()[:240],
+    }
+
+    # --- Standing-order tiers (federation / ship / department / agent) ---
+    tiers: list[dict[str, Any]] = []
+    department: str | None = None
+    try:
+        from probos.cognitive.standing_orders import get_department, get_order_tiers
+        department = get_department(agent_type)
+        for t in get_order_tiers(agent_type):
+            tiers.append({
+                "tier": t["tier"],
+                "source_file": t["source_file"],
+                "present": t["present"],
+                "char_count": len(t.get("text", "")),
+            })
+    except Exception:
+        logger.debug("AD-1002: standing-order tiers failed for %s", agent_id, exc_info=True)
+
+    # --- Model (LLM tier) ---
+    resolved_tier = "standard"
+    try:
+        if hasattr(agent, "_resolve_tier"):
+            resolved_tier = agent._resolve_tier()
+    except Exception:
+        logger.debug("AD-1002: tier resolve failed for %s", agent_id, exc_info=True)
+    available_tiers: list[str] = []
+    cog = getattr(getattr(runtime, "config", None), "cognitive", None)
+    for tier_name in ("fast", "standard", "deep", "vision"):
+        if cog is not None and getattr(cog, f"llm_model_{tier_name}", ""):
+            available_tiers.append(tier_name)
+    model = {
+        "resolved_tier": resolved_tier,
+        "available_tiers": available_tiers,
+        "note": (
+            "Tier is resolved per agent (default 'standard') and configured "
+            "globally in Settings -> LLM Tiers. Per-call routing can differ "
+            "(vision for images, deeper tiers for some intents)."
+        ),
+    }
+
+    return {
+        "agent_id": agent_id,
+        "agent_type": agent_type,
+        "department": department,
+        "instructions": instructions,
+        "standing_order_tiers": tiers,
+        "model": model,
+    }
+
+
 @router.post("/{agent_id}/capabilities/set")
 async def set_agent_capability(
     agent_id: str,

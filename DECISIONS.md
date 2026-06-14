@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1002: Instructions (Standing Orders) + Model read tabs in the Service hub (#944, #947)
+
+**Context.** The remaining two VS Code customization axes for the per-agent Service Configuration hub (AD-1000c): **Instructions** and **Language model**, read-only. Rounds out the hub (Capabilities + Instructions + Model).
+
+**Decision.** Backend `GET /api/agent/{id}/instructions` (routers/agents.py) surfaces three things: (1) `instructions` — the agent's hardcoded class-level identity string (present + char_count + a 240-char preview; the full system prompt is never dumped); (2) `standing_order_tiers` — the four composing tiers (federation / ship / department / agent) via the existing `get_order_tiers` (AD-893), each `{tier, source_file, present, char_count}`, char counts only; (3) `model` — the agent's resolved default LLM tier (`_resolve_tier()`, default `standard`) + the configured tiers (from `CognitiveConfig.llm_model_*`) + an honest note that tier selection is per-agent-resolved AND globally configured (Settings → LLM Tiers), with per-call routing variance (vision, deep). UI: `InstructionsSection` in `ProfileServiceTab` — read-only tier breakdown (present/char_count/source_file) + the Model tier + available tiers. `fetcher`-injectable; HXI stroke/text-only.
+
+**Honesty about the architecture.** The Model section does NOT claim per-agent model *selection* (which doesn't exist) — it shows the resolved tier + that selection is global, matching reality. The Instructions view is char-count-only (not a system-prompt dump) — the "which files shape this agent" view, like VS Code's Instructions list. This endpoint also satisfies the intent of the older AD-893 standing-orders read surface (#857) but does not auto-close it (different epic; left for the Captain).
+
+**Tests.** `test_ad1002_instructions_api.py` (5, BF-287 real `CognitiveConfig` + real-ish agent: identity present, four-tier shape + medical dept, resolved+available tiers, no-`_resolve_tier` defaults standard, 404) + `ProfileServiceTab.test.tsx` (+4: four tiers w/ char counts, model tier + available, agentId forward, error state). Backend regression 97 passed; 200 profile UI + build clean.
+
 ### AD-1001b: Ship's Locker UI — global capabilities catalog overlay + palette-access fix (#944, #946)
 
 **Context.** The UI half of the Ship's Locker (AD-1001a shipped the `GET /api/tools/catalog` aggregate). The "global view of all capabilities ship-wide" the Captain asked for — the ship-wide counterpart to the per-agent Service Configuration tab (AD-1000c).
