@@ -158,7 +158,9 @@ describe('AD-983c CapabilityPanel', () => {
   });
 
   it('flags a write mesh intent with a consensus badge', async () => {
-    const fetchCapabilities = vi.fn(async () => makeCaps());
+    const caps = makeCaps();
+    caps.mesh_intents[0].served = true;  // keep run_python read-only for this check
+    const fetchCapabilities = vi.fn(async () => caps);
     render(<CapabilityPanel agentId="kirk" deps={{ fetchCapabilities }} />);
     await waitFor(() => screen.getByTestId('capability-panel'));
     // run_python requires consensus; http_fetch does not.
@@ -174,12 +176,38 @@ describe('AD-983c CapabilityPanel', () => {
     expect(screen.getByTestId('cap-origin-tool-web_search').textContent).toBe('MCP');
   });
 
-  it('mesh intents are read-only (no toggle button)', async () => {
-    const fetchCapabilities = vi.fn(async () => makeCaps());
+  it('CAN REQUEST mesh rows are toggleable; SERVES rows are not (AD-1008)', async () => {
+    const caps = makeCaps();
+    caps.mesh_intents[0].served = true;   // run_python = served -> read-only
+    // http_fetch stays CAN REQUEST -> toggleable
+    const fetchCapabilities = vi.fn(async () => caps);
     render(<CapabilityPanel agentId="kirk" deps={{ fetchCapabilities }} />);
     await waitFor(() => screen.getByTestId('capability-panel'));
-    // No cap-toggle for a mesh intent — they're ship-served, not per-agent gated.
-    expect(screen.queryByTestId('cap-toggle-mesh-run_python')).toBeNull();
+    expect(screen.queryByTestId('mesh-toggle-run_python')).toBeNull();   // served
+    expect(screen.getByTestId('mesh-toggle-http_fetch')).toBeTruthy();   // can-request
+  });
+
+  it('toggles a CAN REQUEST capability and POSTs kind=capability (AD-1008)', async () => {
+    const fetchCapabilities = vi.fn(async () => makeCaps());
+    const setCapability = vi.fn(async () => true);
+    render(<CapabilityPanel agentId="kirk" deps={{ fetchCapabilities, setCapability }} />);
+    await waitFor(() => screen.getByTestId('capability-panel'));
+    const toggle = screen.getByTestId('mesh-toggle-http_fetch');
+    expect(toggle.textContent).toBe('On');   // granted defaults to true
+    fireEvent.click(toggle);
+    expect(toggle.textContent).toBe('Off');  // optimistic disable
+    expect(setCapability).toHaveBeenCalledWith('kirk', 'capability', 'http_fetch', false);
+  });
+
+  it('reverts a capability toggle when the POST fails (AD-1008)', async () => {
+    const fetchCapabilities = vi.fn(async () => makeCaps());
+    const setCapability = vi.fn(async () => false);
+    render(<CapabilityPanel agentId="kirk" deps={{ fetchCapabilities, setCapability }} />);
+    await waitFor(() => screen.getByTestId('capability-panel'));
+    const toggle = screen.getByTestId('mesh-toggle-http_fetch');
+    fireEvent.click(toggle);
+    expect(toggle.textContent).toBe('Off');                 // optimistic
+    await waitFor(() => expect(toggle.textContent).toBe('On'));  // reverts
   });
 
   it('renders empty mesh copy when none are reachable', async () => {

@@ -397,11 +397,13 @@ class SetCapability(BaseModel):
     a tool or cognitive skill on a specific agent — the unified per-agent
     capability toggle behind ``POST /api/agent/{id}/capabilities/set``.
 
-    ``kind`` selects the capability family. ``id`` is the tool_id (for tools) or
-    the skill name (for skills). ``enabled=True`` issues a grant;
-    ``enabled=False`` issues a restriction (which overrides a role/dept default).
+    ``kind`` selects the capability family. ``id`` is the tool_id (for tools),
+    the skill name (for skills), or the mesh-intent name (for capabilities, the
+    AD-1007 mesh-capability gate). ``enabled=True`` issues a grant;
+    ``enabled=False`` issues a restriction (which overrides a role/dept default —
+    AD-1007 agent-precedence: an explicit per-agent decision wins over the role).
     """
-    kind: str = Field(pattern="^(tool|skill)$")
+    kind: str = Field(pattern="^(tool|skill|capability)$")
     id: str = Field(min_length=1, max_length=200)
     enabled: bool
     reason: str = Field(default="", max_length=280)

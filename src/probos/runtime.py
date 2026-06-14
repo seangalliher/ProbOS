@@ -176,6 +176,7 @@ if TYPE_CHECKING:
     from probos.duty_schedule import DutySchedule
     from probos.cognitive.skill_catalog import CognitiveSkillCatalog
     from probos.cognitive.skill_grants import SkillGrantStore
+    from probos.cognitive.intent_grants import IntentGrantStore
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.mesh.nats_bus import NATSBus
     from probos.mcp_apps.registry import MCPAppRegistry
@@ -274,6 +275,7 @@ class ProbOSRuntime:
     skill_service: AgentSkillService | None
     cognitive_skill_catalog: CognitiveSkillCatalog | None
     skill_grant_store: SkillGrantStore | None
+    intent_grant_store: "IntentGrantStore | None"
     acm: AgentCapitalService | None
     ontology: VesselOntologyService | None
     identity_registry: AgentIdentityRegistry | None
@@ -801,6 +803,8 @@ class ProbOSRuntime:
         self.cognitive_skill_catalog: CognitiveSkillCatalog | None = None
         # --- Skill Grant Store (AD-983b) — per-agent cognitive-skill grants ---
         self.skill_grant_store: SkillGrantStore | None = None
+        # --- Intent Grant Store (AD-1005/AD-1007) — per-agent mesh-capability grants ---
+        self.intent_grant_store: "IntentGrantStore | None" = None
 
         # --- Recreation Service (AD-526a) ---
         self.recreation_service: Any = None
@@ -2259,6 +2263,7 @@ class ProbOSRuntime:
             )
         self.cognitive_skill_catalog = comm.cognitive_skill_catalog
         self.skill_grant_store = comm.skill_grant_store
+        self.intent_grant_store = comm.intent_grant_store
         self.acm = comm.acm
         self.ontology = comm.ontology
 

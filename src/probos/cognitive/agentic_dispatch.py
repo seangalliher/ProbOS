@@ -289,6 +289,20 @@ class WorkItemAgenticExecutor:
                 )
                 mesh_ids = []
 
+        # AD-1007: drop mesh-intent tools this agent is explicitly RESTRICTED
+        # from (a Captain capability disable). The conversational [MESH] path
+        # gates the same way at reply_pipeline.step_4h; this is the agentic-loop
+        # counterpart so a disabled capability is unavailable on BOTH paths.
+        # Agent-precedence: only an explicit ``restricted`` resolution removes
+        # the tool; ``granted``/``no_opinion`` leave it (role/ship default).
+        # Honest-degrade: no store -> no filtering.
+        intent_grant_store = getattr(runtime, "intent_grant_store", None)
+        if intent_grant_store is not None and mesh_ids:
+            mesh_ids = [
+                m for m in mesh_ids
+                if intent_grant_store.resolve_sync(agent_id, m) != "restricted"
+            ]
+
         granted_ids: list[str] = []
         if perm_store is not None:
             grants = perm_store.get_active_grants_sync(agent_id)

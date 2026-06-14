@@ -934,6 +934,25 @@ class DmReplyPipeline:
             self.ctx.response_text = gate.strip_mesh_read(self.ctx.response_text)
             return
 
+        # AD-1007: per-agent capability gate. A Captain restriction on this
+        # intent for the ORIGINATING agent blocks the conversational [MESH]
+        # request — an explicit agent-level disable wins over the role/ship
+        # default (agent-precedence). Honest-degrade: a missing store means no
+        # gating (default-OFF), and only an explicit ``restricted`` resolution
+        # blocks (``granted``/``no_opinion`` fall through to the default).
+        igs = getattr(self.ctx.runtime, "intent_grant_store", None)
+        if igs is not None and igs.resolve_sync(self.ctx.agent_id, intent_name) == "restricted":
+            logger.info(
+                "AD-1007: [MESH %s] blocked for agent=%s (capability disabled "
+                "by the Captain); stripping tag, no execution",
+                intent_name, self.ctx.agent_id,
+            )
+            self.ctx.response_text = (
+                gate.strip_mesh_read(self.ctx.response_text).rstrip()
+                + f"\n\n(I'm not authorized to use {intent_name} right now.)"
+            )
+            return
+
         intent_bus = getattr(self.ctx.runtime, "intent_bus", None)
         if intent_bus is None:
             logger.warning(

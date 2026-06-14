@@ -25,7 +25,10 @@ export interface AgentCapability {
 /** AD-1000a: a mesh-intent capability (the third axis). Pool-served + ship-wide,
  *  so read-only here — shown for visibility, not per-agent toggled.
  *  AD-1006: ``served`` flags whether THIS agent declares (fulfils) the intent —
- *  its own specialty — vs the ship-wide reachable surface every agent can call. */
+ *  its own specialty — vs the ship-wide reachable surface every agent can call.
+ *  AD-1008: ``granted``/``source`` carry the per-agent enablement state so a
+ *  CAN-REQUEST capability can be disabled per agent (an explicit restriction
+ *  blocks origination; agent-precedence over the role/ship default). */
 export interface MeshIntent {
   id: string;
   name: string;
@@ -36,6 +39,8 @@ export interface MeshIntent {
   origin: string;
   reachable: boolean;
   served?: boolean;
+  granted?: boolean;
+  source?: string;
 }
 
 interface CapabilitiesResponse {
@@ -60,7 +65,7 @@ async function fetchCapabilities(agentId: string): Promise<CapabilitiesResponse>
 
 async function setCapability(
   agentId: string,
-  kind: 'tool' | 'skill',
+  kind: 'tool' | 'skill' | 'capability',
   id: string,
   enabled: boolean,
 ): Promise<boolean> {
@@ -139,16 +144,42 @@ function CapabilityRow({ cap, kind, onToggle }: RowProps) {
   );
 }
 
-/** AD-1000a: read-only row for a mesh-intent capability. No toggle — mesh intents
- *  are pool-served + ship-wide; a consensus badge flags write intents. */
-function MeshIntentRow({ mi }: { mi: MeshIntent }) {
+/** AD-1000a: a row for a mesh-intent capability. AD-1008: when ``onToggle`` is
+ *  provided (the CAN-REQUEST surface) the row carries an On/Off button that
+ *  enables/disables the capability for this agent (an explicit disable blocks
+ *  origination — agent-precedence over the role/ship default). SERVES rows omit
+ *  the toggle (their enablement is defined by the agent's role). A consensus
+ *  badge flags write intents. */
+function MeshIntentRow({ mi, onToggle }: { mi: MeshIntent; onToggle?: (mi: MeshIntent) => void }) {
+  const granted = mi.granted ?? true;
   return (
     <div
       data-testid={`mesh-row-${mi.id}`}
       title={mi.description || mi.name}
       style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0', fontSize: 11 }}
     >
-      <span style={{ color: mi.reachable ? '#c8c8d4' : _DIM }}>{mi.name}</span>
+      {onToggle && (
+        <button
+          data-testid={`mesh-toggle-${mi.id}`}
+          aria-pressed={granted}
+          onClick={() => onToggle(mi)}
+          title={granted
+            ? 'Enabled — click to disable for this agent'
+            : 'Disabled — click to enable for this agent'}
+          style={{
+            background: granted ? 'rgba(240,176,96,0.15)' : 'rgba(255,255,255,0.05)',
+            border: `1px solid ${granted ? 'rgba(240,176,96,0.5)' : 'rgba(255,255,255,0.15)'}`,
+            borderRadius: 4, padding: '1px 8px', cursor: 'pointer', flexShrink: 0,
+            color: granted ? _AMBER : _DIM, fontSize: 10, minWidth: 52,
+          }}
+        >
+          {granted ? 'On' : 'Off'}
+        </button>
+      )}
+      <span style={{
+        color: !granted ? _DIM : (mi.reachable ? '#c8c8d4' : _DIM),
+        textDecoration: granted ? 'none' : 'line-through',
+      }}>{mi.name}</span>
       {mi.requires_consensus && (
         <span
           data-testid={`mesh-consensus-${mi.id}`}
@@ -172,7 +203,7 @@ interface CapabilityPanelProps {
   deps?: {
     fetchCapabilities?: (agentId: string) => Promise<CapabilitiesResponse>;
     setCapability?: (
-      agentId: string, kind: 'tool' | 'skill', id: string, enabled: boolean,
+      agentId: string, kind: 'tool' | 'skill' | 'capability', id: string, enabled: boolean,
     ) => Promise<boolean>;
   };
 }
@@ -219,6 +250,22 @@ export function CapabilityPanel({ agentId, deps }: CapabilityPanelProps) {
     });
   }, [agentId, _set]);
 
+  // AD-1008: toggle a CAN-REQUEST mesh capability per agent. enabled=false issues
+  // an IntentGrant restriction (blocks origination on both the conversational
+  // [MESH] and agentic-loop paths); enabled=true grants it (agent-precedence over
+  // the role/ship default). Optimistic with revert-on-failure (the AD-982 pattern).
+  const onToggleCapability = useCallback((mi: MeshIntent) => {
+    const prevGranted = mi.granted ?? true;
+    const next = !prevGranted;
+    setMeshIntents((prev) => prev.map((m) => (
+      m.id === mi.id ? { ...m, granted: next, source: next ? 'role_default' : 'restriction' } : m
+    )));
+    const revert = () => setMeshIntents((prev) => prev.map((m) => (
+      m.id === mi.id ? { ...m, granted: prevGranted, source: mi.source } : m
+    )));
+    void _set(agentId, 'capability', mi.id, next).then((ok) => { if (!ok) revert(); }).catch(revert);
+  }, [agentId, _set]);
+
   if (!loaded) {
     return <div data-testid="cap-panel-loading" style={{ fontSize: 11, color: _DIM, padding: '4px 0' }}>Loading capabilities…</div>;
   }
@@ -256,12 +303,14 @@ export function CapabilityPanel({ agentId, deps }: CapabilityPanelProps) {
         skills.map((c) => <CapabilityRow key={c.id} cap={c} kind="skill" onToggle={onToggle} />)
       )}
 
-      {/* AD-1006: capabilities this agent SERVES — its specialty intents. */}
+      {/* AD-1006: capabilities this agent SERVES — its specialty intents.
+          Read-only: enablement of a served intent is governed by the agent's
+          role (the AD-1009 role layer), not a per-agent origination gate. */}
       <div style={{ fontSize: 10, color: _DIM, letterSpacing: 1, margin: '12px 0 1px' }}>
         CAPABILITIES — SERVES ({servedIntents.length})
       </div>
       <div style={{ color: '#555568', fontSize: 9, lineHeight: 1.4, marginBottom: 4 }}>
-        Mesh intents only this agent fulfils.
+        Mesh intents only this agent fulfils — defined by its role.
       </div>
       {servedIntents.length === 0 ? (
         <div data-testid="cap-serves-empty" style={{ fontSize: 11, color: '#555568', padding: '2px 0' }}>
@@ -271,17 +320,20 @@ export function CapabilityPanel({ agentId, deps }: CapabilityPanelProps) {
         servedIntents.map((mi) => <MeshIntentRow key={mi.id} mi={mi} />)
       )}
 
-      {/* AD-1006: ship-wide surface any agent can request (served by other crew/pools). */}
+      {/* AD-1006/1008: ship-wide surface any agent can request (served by other
+          crew/pools). AD-1008: toggleable per agent — disabling blocks this
+          agent from originating the request. */}
       <div style={{ fontSize: 10, color: _DIM, letterSpacing: 1, margin: '12px 0 1px' }}>
         CAPABILITIES — CAN REQUEST ({reachableIntents.length})
       </div>
       <div style={{ color: '#555568', fontSize: 9, lineHeight: 1.4, marginBottom: 4 }}>
         Ship-wide mesh surface any agent can request; served by other crew or pools.
+        Disable to block this agent from requesting one.
       </div>
       {reachableIntents.length === 0 ? (
         <div style={{ fontSize: 11, color: '#555568', padding: '2px 0' }}>No mesh capabilities.</div>
       ) : (
-        reachableIntents.map((mi) => <MeshIntentRow key={mi.id} mi={mi} />)
+        reachableIntents.map((mi) => <MeshIntentRow key={mi.id} mi={mi} onToggle={onToggleCapability} />)
       )}
     </div>
   );

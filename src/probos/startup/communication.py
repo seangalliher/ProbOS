@@ -371,6 +371,17 @@ async def init_communication(
     cognitive_catalog.set_grant_store(skill_grant_store)
     logger.info("skill-grant-store started")
 
+    # --- Intent Grant Store (AD-1005/AD-1007) — per-agent mesh-capability
+    #     grants/restrictions. The authorization substrate the AD-1007 capability
+    #     gate reads (conversational [MESH] path + agentic-loop mesh tools).
+    from probos.cognitive.intent_grants import IntentGrantStore
+
+    intent_grant_store = IntentGrantStore(
+        db_path=str(data_dir / "intent_grants.db"),
+    )
+    await intent_grant_store.start()
+    logger.info("intent-grant-store started")
+
     # --- Agent Capital Management (AD-427) ---
     from probos.acm import AgentCapitalService
 
@@ -512,4 +523,5 @@ async def init_communication(
         tool_permission_store=tool_permission_store,
         cognitive_skill_catalog=cognitive_catalog,
         skill_grant_store=skill_grant_store,
+        intent_grant_store=intent_grant_store,
     )

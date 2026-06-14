@@ -1176,8 +1176,17 @@ async def get_agent_capabilities(
         for d in (getattr(agent, "intent_descriptors", None) or [])
     }
     mesh = _mesh_intents(runtime)
+    # AD-1007: per-agent capability enablement state for the toggle. An explicit
+    # Captain restriction disables the capability for this agent (agent-precedence
+    # over the role/ship default); a grant re-enables it. ``no_opinion`` falls
+    # back to the role default, which today is "enabled" (reachable). Honest-
+    # degrade: no store -> every capability reads as role-default enabled.
+    igs = getattr(runtime, "intent_grant_store", None)
     for mi in mesh:
         mi["served"] = mi["id"] in served_names
+        res = igs.resolve_sync(agent_id, mi["id"]) if igs is not None else "no_opinion"
+        mi["granted"] = res != "restricted"
+        mi["source"] = {"granted": "grant", "restricted": "restriction"}.get(res, "role_default")
 
     return {"agent_id": agent_id, "tools": tools, "skills": skills, "mesh_intents": mesh}
 
@@ -1406,7 +1415,7 @@ async def set_agent_capability(
             is_restriction=not req.enabled, reason=reason, issued_by="captain",
         )
         grant_id = grant.id
-    else:  # skill
+    elif req.kind == "skill":
         grant_store = getattr(runtime, "skill_grant_store", None)
         if grant_store is None:
             raise HTTPException(status_code=503, detail="skill_grant_store_unavailable")
@@ -1414,6 +1423,24 @@ async def set_agent_capability(
         if catalog is not None and catalog.get_entry(req.id) is None:
             raise HTTPException(status_code=404, detail=f"Skill not found: {req.id}")
         grant = await grant_store.issue_grant(
+            agent_id, req.id,
+            is_restriction=not req.enabled, reason=reason, issued_by="captain",
+        )
+        grant_id = grant.id
+    else:  # capability (AD-1007: per-agent mesh-capability gate)
+        store = getattr(runtime, "intent_grant_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="intent_grant_store_unavailable")
+        # Validate the id is a real, reachable mesh capability.
+        reachable = {mi["id"] for mi in _mesh_intents(runtime)}
+        if req.id not in reachable:
+            raise HTTPException(status_code=404, detail=f"Capability not found: {req.id}")
+        # One active decision per (agent, capability): revoke any prior
+        # grant/restriction first so the AD-1007 resolver stays unambiguous
+        # (agent-precedence — the latest Captain decision is the only one live).
+        for g in store.get_active_grants_sync(agent_id, req.id):
+            await store.revoke_grant(g.id)
+        grant = await store.issue_grant(
             agent_id, req.id,
             is_restriction=not req.enabled, reason=reason, issued_by="captain",
         )

@@ -681,6 +681,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.skill_grant_store.stop()
         runtime.skill_grant_store = None
 
+    # AD-1005/AD-1007: Intent grant store (per-agent mesh-capability grants)
+    if getattr(runtime, 'intent_grant_store', None):
+        await runtime.intent_grant_store.stop()
+        runtime.intent_grant_store = None
+
     # Stop Counselor Profile Store (AD-503)
     if runtime._counselor_profile_store:
         await runtime._counselor_profile_store.stop()

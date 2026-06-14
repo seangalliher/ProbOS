@@ -242,6 +242,38 @@ class IntentGrantStore:
             return False
         return any(not g.is_restriction for g in grants)
 
+    def resolve_sync(self, agent_id: str, intent_name: str) -> str:
+        """AD-1007: three-state per-agent capability resolution (agent-precedence).
+
+        Returns one of:
+          - ``"restricted"`` — the agent is explicitly DISABLED for this intent
+            (a Captain restriction). The role/ship default must NOT override it.
+          - ``"granted"`` — the agent is explicitly ENABLED for this intent
+            (a Captain grant). Overrides a role default that would disable it.
+          - ``"no_opinion"`` — no explicit per-agent decision; the caller falls
+            back to the role/ship default.
+
+        The Captain's AD-1007 precedence rule: an explicit per-agent decision
+        wins over the role default in BOTH directions. Unlike the binary
+        ``is_granted_sync`` (default-deny), this distinguishes "no decision"
+        from "restricted" so an enforcement caller can correctly fall through to
+        the role default when the agent has no per-agent override.
+
+        The ``capabilities/set`` endpoint revokes the opposite active decision
+        before issuing a new one, so a (agent, intent) pair carries at most one
+        active decision. This method is defensive about a conflict anyway: the
+        most-recent decision wins, and an exact ``issued_at`` tie resolves to
+        ``"restricted"`` (fail-safe).
+        """
+        grants = self.get_active_grants_sync(agent_id, intent_name)
+        if not grants:
+            return "no_opinion"
+        latest = max(g.issued_at for g in grants)
+        top = [g for g in grants if g.issued_at == latest]
+        if any(g.is_restriction for g in top):
+            return "restricted"
+        return "granted"
+
     async def list_grants(self, *, active_only: bool = True) -> list[IntentAccessGrant]:
         """List all grants from the database."""
         if not self._db:
