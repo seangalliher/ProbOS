@@ -20,8 +20,9 @@ import { Close, Dock, Undock, Maximize, Restore } from '../icons/Glyphs';
 import ServiceRecord from './ServiceRecord';
 import SkillLibrary from './SkillLibrary';
 import ToolCertifications from './ToolCertifications';
+import RolePicker from './RolePicker';
 
-type ConsoleView = 'roster' | 'skills' | 'tools';
+type ConsoleView = 'roster' | 'skills' | 'tools' | 'roles';
 
 interface RosterEntry {
   agent_id: string;
@@ -285,6 +286,7 @@ export default function CrewPersonnelConsole() {
       >
         {([
           ['roster', 'Roster'],
+          ['roles', 'Roles'],
           ['skills', 'Skill Library'],
           ['tools', 'Tool Certs'],
         ] as [ConsoleView, string][]).map(([key, label]) => {
@@ -328,6 +330,14 @@ export default function CrewPersonnelConsole() {
           style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 }}
         >
           <ToolCertifications />
+        </div>
+      ) : view === 'roles' ? (
+        /* Role-template picker surface (AD-1010). */
+        <div
+          data-testid="personnel-roles-pane"
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 }}
+        >
+          <RolePicker />
         </div>
       ) : (
       /* Master-detail body */

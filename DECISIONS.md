@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1010: Personnel role-picker UI — browse roles + apply a template (Agent Customizations epic #944, #952)
+
+**Context.** AD-1009 shipped the role-template backend (`GET /api/crew/roles` + `POST /api/crew/{id}/apply-role`); it had no UI. The Captain's stated workflow: *"assign a role to an agent like 'Counselor' — use that as a template to start with."* This is the Ship's Office surface for it.
+
+**Decision.** New `RolePicker.tsx` mounted as a `'roles'` view (4th tab) in `CrewPersonnelConsole` (the AD-896 Ship's Office). Lists every role from `GET /api/crew/roles` — each card shows the post title, department (color-coded), and a `N skills · N tools · N caps` summary; expanding reveals the skills, resolved tools, and served capabilities (AD-1009's loadout view). A crew-member selector + per-role **Apply** button POSTs `apply-role` (additive + reversible; the AD-889 guard preserves any per-agent override — agent-precedence), then shows `N skills, N tools granted`. Read-then-act, deps-injectable for tests, HXI-compliant (stroke-only, dept-colored accents, no emoji).
+
+**Scope.** UI surfacing of the existing AD-1009 backend only — no new endpoint, no role-defaults *authoring* (a role still can't disable a capability by default; that remains the deferred role-defaults layer). Completes the "apply a role as a template" loop visually; per-agent override is the AD-1007/1008/909a surfaces.
+
+**Tests.** `RolePicker.test.tsx` (7, deps-injected, no global fetch): renders loadout summary, expands skills/tools/caps, requires a crew member before applying, applies to the selected agent + shows the result, surfaces an apply failure, empty-state, no-emoji. `CrewPersonnelConsole.test.tsx` unchanged (8, the new tab is additive). UI 15 + `npm run build` clean.
+
 ### AD-909a: UI Restrict verb in the Tool Certifications console (#951, follow-on to AD-909)
 
 **Context.** AD-909 registered the universal mesh read-intents (`web_search`/`read_page`/`http_fetch`) into the persistent tool catalog, restrictable per-agent via an `is_restriction` `ToolAccessGrant` — but the only UI verb was *grant* (`POST /api/crew/{id}/tools`). The off-switch worked from the API; the Ship's Office console (AD-899 `ToolCertifications`) could display restrictions but not issue one. #951 (held earlier for mutating-UX steer) is now unblocked: the Captain ratified the per-agent gate semantics in AD-1007/1008, and this mirrors the AD-1008 toggle pattern exactly.
