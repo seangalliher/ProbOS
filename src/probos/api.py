@@ -219,6 +219,7 @@ def create_app(runtime: Any) -> FastAPI:
         crew_tasks as crew_tasks_router,  # AD-862: crew-collaboration surface
         crew as crew_router,  # AD-892: crew personnel roster + service record
         tools as tools_router,  # AD-894: tool asset catalog
+        packs as packs_router,  # AD-1003c: installed Capability-Pack inventory
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -250,6 +251,7 @@ def create_app(runtime: Any) -> FastAPI:
         crew_tasks_router,
         crew_router,
         tools_router,
+        packs_router,
     ):
         app.include_router(r.router)
 

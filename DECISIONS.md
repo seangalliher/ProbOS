@@ -10,6 +10,10 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1003c: GET /api/packs — read-only installed-pack inventory endpoint (#944, #948)
+
+**Context.** Third Capability-Pack slice: surface the AD-1003b scanner over HTTP, the cross-tool "installed plugins" list (VS Code / Copilot CLI / Claude Code). **Decision.** `PacksConfig` (config.py, default OFF, `packs_dir="data/packs"`); `routers/packs.py` `GET /api/packs` — when `packs.enabled=False` returns `{enabled:false, packs:[], counts:{0,0,0}}`; when enabled, resolves `packs_dir` against the runtime data dir (BF-628 lesson: relative paths resolve to the platform data dir, not cwd) and returns `describe_scan(...)` + `enabled:true` + `packs_dir`. Mounted in api.py. **Read-only — nothing installed, loaded, or executed** even when enabled; the loader is a later slice behind the operator trust gate. Honest-degrade: missing config / packs dir → empty. **Tests.** `test_ad1003c_packs_api.py` (5, BF-287 real `TestClient` + tmp_path packs + config-shaped runtime): disabled→empty, enabled→lists-installed (incl. a bad-manifest error entry), relative-dir-resolved-against-data-dir, missing-dir-honest-degrades, no-config→empty. Config default-OFF smoke; broad config/execution/packs regression 737 passed (confirms the `PacksConfig` add + `ExecutionConfig` untouched).
+
 ### AD-1011: ship-wide skill coverage — the civilization skill-registry view (#815)
 
 **Context.** #815 asked for two HXI surfaces over the skill framework: (1) a **ship-wide skill registry** view (which agents hold each skill, coverage/gap) and (2) a per-agent skill-assignment surface. View 2 already shipped (Profile Service tab skill toggle AD-983b/c + SkillLibrary CRUD AD-898). View 1 was the gap.

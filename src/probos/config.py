@@ -2894,6 +2894,20 @@ class HooksConfig(BaseModel):
     enabled: bool = False
 
 
+class PacksConfig(BaseModel):
+    """AD-1003c: Capability Packs — installed-pack inventory directory.
+
+    Points at the directory the AD-1003b scanner walks to report installed packs
+    (the cross-tool agent-plugin format, AD-1003a). **Default OFF / read-only** —
+    when disabled the inventory is empty; even when enabled, NOTHING is installed,
+    loaded, or executed (that's the later loader slice). ``packs_dir`` is resolved
+    relative to the runtime data dir when not absolute.
+    """
+
+    enabled: bool = False
+    packs_dir: str = "data/packs"
+
+
 class QAConfig(BaseModel):
     """SystemQAAgent configuration."""
 
@@ -5418,6 +5432,7 @@ class SystemConfig(BaseModel):
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)  # AD-838c
     execution: ExecutionConfig = ExecutionConfig()  # AD-993/994 (default OFF)
     hooks: HooksConfig = HooksConfig()  # AD-1004 (default OFF)
+    packs: PacksConfig = Field(default_factory=lambda: PacksConfig())  # AD-1003c (default OFF)
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     records: RecordsConfig = RecordsConfig()
