@@ -10,6 +10,10 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1003b: Capability-Pack scanner — read-only installed-pack inventory (#944, #948)
+
+**Context.** Second safe slice of Capability Packs (after AD-1003a's manifest parser). The cross-tool tools (VS Code / Copilot CLI / Claude Code) all surface an "installed plugins" list; ProbOS needs the read-side inventory before any loader. **Decision.** `packs/scanner.py`: `scan_packs(packs_dir)` walks the immediate subdirectories, treats any subdir where `find_manifest` (AD-1003a) locates a manifest as a pack, and `load_manifest`+`describe_pack`-es it into a `PackEntry` (frozen: `path` + `summary` | `error`, `.ok`/`.name` helpers). A malformed/invalid manifest becomes an **error entry** (honest-degrade) so one bad pack never hides the rest. `describe_scan(packs_dir)` returns the serializable inventory (`packs[]` + `counts{total,valid,error}`) — the shape a future `GET /api/packs` / UI list consumes. **Read-only — nothing installed, loaded, executed, or wired.** Honest-degrade: missing/non-dir/unlistable `packs_dir` → `[]`, never raises. The pack loader (map into the live registries behind the operator trust gate) and execution remain later slices. **Tests.** `test_ad1003b_pack_scanner.py` (9, BF-287 real tmp_path pack dirs): empty/missing dir, valid packs sorted by manifest name, non-pack subdirs skipped, bad-pack→error-entry-scan-continues, malformed-JSON→error, Claude-format detection, `PackEntry` helpers, `describe_scan` shape + counts + empty. AD-1003a regression 21 green; import smoke clean.
+
 ### AD-1010: Personnel role-picker UI — browse roles + apply a template (Agent Customizations epic #944, #952)
 
 **Context.** AD-1009 shipped the role-template backend (`GET /api/crew/roles` + `POST /api/crew/{id}/apply-role`); it had no UI. The Captain's stated workflow: *"assign a role to an agent like 'Counselor' — use that as a template to start with."* This is the Ship's Office surface for it.
