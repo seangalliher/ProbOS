@@ -19,6 +19,7 @@ import { useStore } from '../../store/useStore';
 import { Close, Dock, Undock, Maximize, Restore } from '../icons/Glyphs';
 import ServiceRecord from './ServiceRecord';
 import SkillLibrary from './SkillLibrary';
+import SkillCoverage from './SkillCoverage';
 import ToolCertifications from './ToolCertifications';
 import RolePicker from './RolePicker';
 
@@ -316,11 +317,12 @@ export default function CrewPersonnelConsole() {
       </div>
 
       {view === 'skills' ? (
-        /* Skill Library management surface (AD-898). */
+        /* Skill Library management surface (AD-898) + coverage lens (AD-1011). */
         <div
           data-testid="personnel-skills-pane"
           style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 }}
         >
+          <SkillCoverage />
           <SkillLibrary />
         </div>
       ) : view === 'tools' ? (

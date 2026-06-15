@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from probos.api_models import SkillAssessmentRequest, SkillCommissionRequest
+from probos.crew_utils import is_crew_agent
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,86 @@ async def skills_registry(
         }
         for s in skills
     ]}
+
+
+@router.get("/coverage")
+async def skills_coverage(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-1011: ship-wide skill coverage — for each skill, which crew hold it (at
+    what proficiency) and which skills have NO holder (the coverage gap).
+
+    The civilization-level counterpart to the per-agent skill profile: inverts
+    every crew agent's skill profile into a skill→holders map, joined against the
+    full registry so unheld skills surface as gaps. Read-only, derived; the
+    per-agent assignment surface is the Service tab (AD-983b/c). Profiles are
+    gathered concurrently; a per-agent failure is skipped (honest-degrade), and a
+    missing registry/service returns an empty coverage set rather than raising.
+    Sorted most-held first, then by skill_id.
+    """
+    skill_registry = getattr(runtime, "skill_registry", None)
+    skill_service = getattr(runtime, "skill_service", None)
+    registry = getattr(runtime, "registry", None)
+    if skill_registry is None or skill_service is None or registry is None:
+        return {"skills": [], "crew_count": 0, "gap_count": 0}
+
+    ontology = getattr(runtime, "ontology", None)
+    callsign_registry = getattr(runtime, "callsign_registry", None)
+    try:
+        crew = [a for a in registry.all() if is_crew_agent(a, ontology)]
+    except Exception:
+        logger.debug("AD-1011: crew enumeration failed", exc_info=True)
+        crew = []
+
+    async def _profile(agent: Any) -> tuple[Any, Any]:
+        try:
+            return agent, await skill_service.get_profile(getattr(agent, "id", ""))
+        except Exception:
+            logger.debug("AD-1011: profile fetch failed for %s",
+                         getattr(agent, "id", "?"), exc_info=True)
+            return agent, None
+
+    pairs = await asyncio.gather(*[_profile(a) for a in crew]) if crew else []
+
+    holders_by_skill: dict[str, list[dict[str, Any]]] = {}
+    for agent, profile in pairs:
+        if profile is None:
+            continue
+        callsign = ""
+        if callsign_registry is not None:
+            try:
+                callsign = callsign_registry.get_callsign(getattr(agent, "agent_type", "")) or ""
+            except Exception:
+                callsign = ""
+        for rec in profile.all_skills:
+            holders_by_skill.setdefault(rec.skill_id, []).append({
+                "agent_id": getattr(agent, "id", ""),
+                "callsign": callsign,
+                "proficiency": rec.proficiency.value,
+                "proficiency_label": rec.proficiency.name.lower(),
+            })
+
+    try:
+        defs = skill_registry.list_skills()
+    except Exception:
+        logger.debug("AD-1011: list_skills failed", exc_info=True)
+        defs = []
+
+    skills = []
+    for d in defs:
+        holders = holders_by_skill.get(d.skill_id, [])
+        skills.append({
+            "skill_id": d.skill_id,
+            "name": d.name,
+            "category": d.category.value,
+            "holder_count": len(holders),
+            "holders": holders,
+            "gap": len(holders) == 0,
+        })
+    skills.sort(key=lambda s: (-s["holder_count"], s["skill_id"]))
+    return {
+        "skills": skills,
+        "crew_count": len(crew),
+        "gap_count": sum(1 for s in skills if s["gap"]),
+    }
 
 
 @router.get("/agents/{agent_id}/profile")
