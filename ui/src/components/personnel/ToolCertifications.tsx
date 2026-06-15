@@ -48,6 +48,7 @@ interface GrantForm {
   tool_id: string;
   permission: string;
   reason: string;
+  is_restriction: boolean;
 }
 
 const PERMISSIONS = ['observe', 'read', 'write', 'full'];
@@ -56,6 +57,7 @@ const EMPTY_GRANT: GrantForm = {
   tool_id: '',
   permission: 'read',
   reason: '',
+  is_restriction: false,
 };
 
 const chipStyle = (color: string): React.CSSProperties => ({
@@ -185,8 +187,11 @@ export default function ToolCertifications() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tool_id: grant.tool_id,
-          permission: grant.permission,
+          // AD-909a: a restriction is the off-switch — cap at NONE (fully block
+          // a READ-for-all mesh tool). A grant uses the selected permission.
+          permission: grant.is_restriction ? 'none' : grant.permission,
           reason: grant.reason,
+          is_restriction: grant.is_restriction,
         }),
       });
       if (!resp.ok) {
@@ -274,6 +279,25 @@ export default function ToolCertifications() {
         <div style={{ fontSize: 11, color: '#a8a8b8', marginBottom: 10, letterSpacing: 0.5 }}>
           Certify a crew member on a ship tool (PQS qualification).
         </div>
+        {/* AD-909a: Grant vs Restrict mode. Grant certifies (grant up);
+            Restrict issues the per-agent off-switch (caps at NONE), overriding a
+            role/ship default — e.g. turn off web_search for one agent. */}
+        <div data-testid="tool-grant-mode" style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <button
+            data-testid="tool-mode-grant"
+            onClick={() => setGrant({ ...grant, is_restriction: false })}
+            style={chipStyle(grant.is_restriction ? '#666680' : '#50b0a0')}
+          >
+            Grant
+          </button>
+          <button
+            data-testid="tool-mode-restrict"
+            onClick={() => setGrant({ ...grant, is_restriction: true })}
+            style={chipStyle(grant.is_restriction ? '#d05050' : '#666680')}
+          >
+            Restrict
+          </button>
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, marginBottom: 10 }}>
           <div>
             <label style={labelStyle}>Tool</label>
@@ -292,19 +316,28 @@ export default function ToolCertifications() {
             </select>
           </div>
           <div>
-            <label style={labelStyle}>Permission</label>
-            <select
-              data-testid="tool-grant-permission"
-              value={grant.permission}
-              onChange={(e) => setGrant({ ...grant, permission: e.target.value })}
-              style={fieldStyle}
-            >
-              {PERMISSIONS.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
+            <label style={labelStyle}>{grant.is_restriction ? 'Effect' : 'Permission'}</label>
+            {grant.is_restriction ? (
+              <div
+                data-testid="tool-restrict-note"
+                style={{ ...fieldStyle, color: '#d05050', display: 'flex', alignItems: 'center' }}
+              >
+                blocked (none)
+              </div>
+            ) : (
+              <select
+                data-testid="tool-grant-permission"
+                value={grant.permission}
+                onChange={(e) => setGrant({ ...grant, permission: e.target.value })}
+                style={fieldStyle}
+              >
+                {PERMISSIONS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
         <div style={{ marginBottom: 10 }}>
@@ -322,8 +355,12 @@ export default function ToolCertifications() {
             {grantError}
           </div>
         )}
-        <button data-testid="tool-grant-submit" onClick={submitGrant} style={chipStyle('#f0b060')}>
-          Certify
+        <button
+          data-testid="tool-grant-submit"
+          onClick={submitGrant}
+          style={chipStyle(grant.is_restriction ? '#d05050' : '#f0b060')}
+        >
+          {grant.is_restriction ? 'Restrict' : 'Certify'}
         </button>
       </div>
 

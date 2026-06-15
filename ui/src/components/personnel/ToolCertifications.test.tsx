@@ -164,4 +164,37 @@ describe('ToolCertifications (AD-899)', () => {
     await screen.findByText('Shell Executor');
     expect(/\p{Extended_Pictographic}/u.test(container.textContent || '')).toBe(false);
   });
+
+  it('7. Restrict mode POSTs is_restriction=true with permission none (AD-909a)', async () => {
+    stubFetch(calls);
+    render(<ToolCertifications />);
+    await screen.findByText('Shell Executor');
+    fireEvent.change(screen.getByTestId('tool-agent-select'), { target: { value: 'agent-1' } });
+    fireEvent.change(screen.getByTestId('tool-grant-tool'), { target: { value: 'tool-http' } });
+    // Switch to Restrict mode — the permission selector becomes a "blocked" note.
+    fireEvent.click(screen.getByTestId('tool-mode-restrict'));
+    expect(screen.getByTestId('tool-restrict-note').textContent).toContain('blocked');
+    expect(screen.getByTestId('tool-grant-submit').textContent).toContain('Restrict');
+    fireEvent.click(screen.getByTestId('tool-grant-submit'));
+    await waitFor(() => {
+      const post = calls.find(c => c.method === 'POST');
+      expect(post).toBeTruthy();
+      expect(post!.body.tool_id).toBe('tool-http');
+      expect(post!.body.is_restriction).toBe(true);
+      expect(post!.body.permission).toBe('none');
+    });
+  });
+
+  it('8. Grant mode (default) POSTs is_restriction=false (AD-909a)', async () => {
+    stubFetch(calls);
+    render(<ToolCertifications />);
+    await screen.findByText('Shell Executor');
+    fireEvent.change(screen.getByTestId('tool-agent-select'), { target: { value: 'agent-1' } });
+    fireEvent.change(screen.getByTestId('tool-grant-tool'), { target: { value: 'tool-http' } });
+    fireEvent.click(screen.getByTestId('tool-grant-submit'));
+    await waitFor(() => {
+      const post = calls.find(c => c.method === 'POST');
+      expect(post!.body.is_restriction).toBe(false);
+    });
+  });
 });

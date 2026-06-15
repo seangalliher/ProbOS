@@ -402,10 +402,16 @@ async def crew_grant_tool(
     body: dict[str, Any],
     runtime: Any = Depends(get_runtime),
 ) -> dict[str, Any]:
-    """Certify (grant) a tool to a crew agent (AD-894).
+    """Certify (grant) or restrict a tool for a crew agent (AD-894 / AD-909a).
 
     Captain-authorized privilege change, recorded as an auditable
-    ``ToolAccessGrant``. Body: ``{tool_id, permission, reason?}``.
+    ``ToolAccessGrant``. Body: ``{tool_id, permission, reason?, is_restriction?}``.
+
+    AD-909a: ``is_restriction=True`` issues a restriction (the per-agent
+    off-switch) — ``resolve_permission`` caps the agent's effective permission on
+    the tool at ``permission`` (use ``none`` to fully disable a READ-for-all
+    mesh tool like ``web_search``). Default ``False`` = a grant (grant up), so
+    existing callers are byte-identical.
     """
     perms = getattr(runtime, "tool_permission_store", None)
     if perms is None:
@@ -421,8 +427,10 @@ async def crew_grant_tool(
         perm = ToolPermission(permission)
     except ValueError:
         raise HTTPException(400, f"Invalid permission: {permission}") from None
+    is_restriction = bool(body.get("is_restriction", False))
     grant = await perms.issue_grant(
         agent_id, tool_id, perm,
+        is_restriction=is_restriction,
         reason=body.get("reason", ""), issued_by="captain",
     )
     return {
@@ -430,6 +438,7 @@ async def crew_grant_tool(
         "agent_id": agent_id,
         "tool_id": grant.tool_id,
         "permission": grant.permission.value,
+        "is_restriction": grant.is_restriction,
         "reason": grant.reason,
         "issued_by": grant.issued_by,
     }

@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-909a: UI Restrict verb in the Tool Certifications console (#951, follow-on to AD-909)
+
+**Context.** AD-909 registered the universal mesh read-intents (`web_search`/`read_page`/`http_fetch`) into the persistent tool catalog, restrictable per-agent via an `is_restriction` `ToolAccessGrant` — but the only UI verb was *grant* (`POST /api/crew/{id}/tools`). The off-switch worked from the API; the Ship's Office console (AD-899 `ToolCertifications`) could display restrictions but not issue one. #951 (held earlier for mutating-UX steer) is now unblocked: the Captain ratified the per-agent gate semantics in AD-1007/1008, and this mirrors the AD-1008 toggle pattern exactly.
+
+**Decision.** `crew_grant_tool` accepts an optional `is_restriction: bool` (default `False` — existing callers byte-identical) and threads it into `issue_grant`; the response echoes `is_restriction`. The UI adds a **Grant / Restrict mode toggle** to the certification form: *Grant* certifies (grant up, the selected permission); *Restrict* issues the per-agent off-switch (`is_restriction=true`, `permission=none` — caps a READ-for-all tool at NONE for that agent, overriding the role/ship default). The submit button re-labels (Certify/Restrict) and re-accents (amber/red); the cert list already renders the `RESTRICTION` chip. No new consensus gate (Minimal Authority — a restriction is a reversible, audit-retained grant).
+
+**Tests.** `test_ad894_tool_cert_api.py` +2: restriction-blocks-agent (real `ToolPermissionStore` + `resolve_permission` — agent capped at NONE, others keep READ) and default-is-grant-not-restriction. `ToolCertifications.test.tsx` +2: Restrict mode POSTs `is_restriction=true`+`permission=none`, Grant mode POSTs `is_restriction=false`. Backend 14, UI 8, `npm run build` clean.
+
 ### BF-629: conversational web_search/read_page synthesis — reason over results, don't paste links (#953)
 
 **Context (Captain live test, 2026-06-14).** Asked Ezri the same question as GitHub Copilot (*"web search the Fable LLM, latest news"*). Copilot returned a synthesised briefing (what it is / breaking news / capabilities / sources / bottom line); Ezri returned a **raw list of links** and only synthesised after the Captain pushed back ("you gave me links but didn't reason over the articles"). Repeated across several turns — the Captain was manually driving the search→reason→summarise loop turn by turn.

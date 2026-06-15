@@ -205,6 +205,43 @@ def test_grant_tool_happy_path(tmp_path: Any) -> None:
     assert body["grant_id"]
 
 
+def test_grant_tool_restriction_blocks_agent(tmp_path: Any) -> None:
+    """AD-909a: is_restriction=True issues the per-agent off-switch — the agent's
+    effective permission on a READ-for-all tool is capped at NONE."""
+    registry = _make_registry("web_search")  # empty default_permissions -> READ-for-all
+    store = _make_store(tmp_path)
+    runtime = _Runtime(tool_registry=registry, tool_permission_store=store)
+    with _client_for(runtime) as client:
+        resp = client.post(
+            "/api/crew/agent-1/tools",
+            json={"tool_id": "web_search", "permission": "none",
+                  "is_restriction": True, "reason": "captain off-switch"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["is_restriction"] is True
+        # The restriction actually denies this agent while others keep READ.
+        registry.set_permission_store(store)
+        from probos.tools.protocol import ToolPermission
+        assert registry.resolve_permission("agent-1", "web_search") == ToolPermission.NONE
+        assert registry.resolve_permission("agent-2", "web_search") == ToolPermission.READ
+
+
+def test_grant_tool_defaults_to_grant_not_restriction(tmp_path: Any) -> None:
+    """Omitting is_restriction = a grant (byte-identical to the pre-AD-909a body)."""
+    runtime = _Runtime(
+        tool_registry=_make_registry("shell"),
+        tool_permission_store=_make_store(tmp_path),
+    )
+    with _client_for(runtime) as client:
+        resp = client.post(
+            "/api/crew/agent-1/tools",
+            json={"tool_id": "shell", "permission": "read"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["is_restriction"] is False
+
+
 def test_grant_tool_unknown_tool_returns_404(tmp_path: Any) -> None:
     runtime = _Runtime(
         tool_registry=_make_registry("file_read"),
