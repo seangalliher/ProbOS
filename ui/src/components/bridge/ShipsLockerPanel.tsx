@@ -39,6 +39,35 @@ export async function fetchCatalog(): Promise<Catalog> {
   };
 }
 
+// AD-1003d: the read-only installed-pack inventory (Capability Packs, cross-tool
+// agent-plugin format). Bound to GET /api/packs (AD-1003c); default-disabled, so
+// an empty/absent list is the normal case.
+export interface PackInfo {
+  name: string;
+  version?: string;
+  description?: string;
+  ok: boolean;
+  error?: string | null;
+  has_hooks?: boolean;
+  has_mcp?: boolean;
+}
+export interface PacksInventory {
+  enabled: boolean;
+  packs: PackInfo[];
+  counts: { total: number; valid: number; error: number };
+}
+
+export async function fetchPacks(): Promise<PacksInventory> {
+  const resp = await fetch('/api/packs');
+  if (!resp.ok) return { enabled: false, packs: [], counts: { total: 0, valid: 0, error: 0 } };
+  const d = await resp.json();
+  return {
+    enabled: !!d?.enabled,
+    packs: Array.isArray(d?.packs) ? d.packs : [],
+    counts: d?.counts ?? { total: 0, valid: 0, error: 0 },
+  };
+}
+
 function originLabel(origin?: string): string {
   switch (origin) {
     case 'built_in': return 'built-in';
@@ -55,13 +84,15 @@ function heldByLabel(held: string[]): string {
 }
 
 interface Props {
-  deps?: { fetchCatalog?: () => Promise<Catalog> };
+  deps?: { fetchCatalog?: () => Promise<Catalog>; fetchPacks?: () => Promise<PacksInventory> };
 }
 
 export function ShipsLockerPanel({ deps }: Props) {
   const open = useStore((s) => s.shipsLockerOpen);
   const _fetch = deps?.fetchCatalog ?? fetchCatalog;
+  const _fetchPacks = deps?.fetchPacks ?? fetchPacks;
   const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [packs, setPacks] = useState<PacksInventory | null>(null);
   const [error, setError] = useState(false);
 
   const close = useCallback(() => useStore.setState({ shipsLockerOpen: false }), []);
@@ -72,6 +103,10 @@ export function ShipsLockerPanel({ deps }: Props) {
     setCatalog(null);
     setError(false);
     _fetch().then((c) => { if (alive) setCatalog(c); }).catch(() => { if (alive) setError(true); });
+    // AD-1003d: packs are an independent, honest-degrade fetch — a packs failure
+    // never blocks the catalog (the locker's primary content).
+    setPacks(null);
+    _fetchPacks().then((p) => { if (alive) setPacks(p); }).catch(() => { if (alive) setPacks({ enabled: false, packs: [], counts: { total: 0, valid: 0, error: 0 } }); });
     return () => { alive = false; };
   }, [open, _fetch]);
 
@@ -166,6 +201,36 @@ export function ShipsLockerPanel({ deps }: Props) {
               catalog.mcp_servers.map((m) => (
                 <div key={m.url} data-testid={`locker-mcp-${m.url}`} style={{ color: '#c8d0e0', padding: '2px 0', fontFamily: 'monospace', fontSize: 11 }}>
                   {m.url}
+                </div>
+              ))
+            )}
+
+            {/* AD-1003d: installed Capability Packs (cross-tool agent-plugin
+                format). Default-disabled, so the common case is the disabled
+                note; a bad pack shows as an error row (honest-degrade). */}
+            {sectionHeader('INSTALLED PACKS', packs?.counts.total ?? 0)}
+            {packs === null ? (
+              <div data-testid="locker-packs-loading" style={{ color: '#555568', fontSize: 11 }}>Loading packs…</div>
+            ) : !packs.enabled ? (
+              <div data-testid="locker-packs-disabled" style={{ color: '#555568', fontSize: 11 }}>
+                Capability Packs are disabled. Enable <code style={{ color: '#7a8aa0' }}>packs.enabled</code> to load packs.
+              </div>
+            ) : packs.packs.length === 0 ? (
+              <div data-testid="locker-packs-empty" style={{ color: '#555568', fontSize: 11 }}>No packs installed.</div>
+            ) : (
+              packs.packs.map((p) => (
+                <div key={p.name} data-testid={`locker-pack-${p.name}`} style={{ display: 'flex', gap: 10, padding: '2px 0' }}>
+                  <span style={{ color: p.ok ? '#c8d0e0' : '#d05050', minWidth: 160 }}>{p.name}</span>
+                  {p.ok ? (
+                    <>
+                      {p.version && <span style={{ color: '#7a8aa0', fontSize: 9, minWidth: 48 }}>v{p.version}</span>}
+                      {p.has_hooks && <span style={{ color: _AMBER, fontSize: 9 }}>hooks</span>}
+                      {p.has_mcp && <span style={{ color: _AMBER, fontSize: 9 }}>mcp</span>}
+                      <span style={{ color: _DIM, fontSize: 10 }}>{p.description}</span>
+                    </>
+                  ) : (
+                    <span style={{ color: '#d05050', fontSize: 10 }}>invalid manifest</span>
+                  )}
                 </div>
               ))
             )}

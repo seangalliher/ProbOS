@@ -119,4 +119,41 @@ describe('AD-1001b ShipsLockerPanel', () => {
     await waitFor(() => screen.getByTestId('ships-locker-panel'));
     expect(EMOJI.test(container.textContent ?? '')).toBe(false);
   });
+
+  // ── AD-1003d: installed Capability Packs section ──────────────────────
+  it('shows the disabled note when packs are off (default)', async () => {
+    const fetchCatalog = vi.fn(async () => makeCatalog());
+    const fetchPacks = vi.fn(async () => ({ enabled: false, packs: [], counts: { total: 0, valid: 0, error: 0 } }));
+    render(<ShipsLockerPanel deps={{ fetchCatalog, fetchPacks }} />);
+    await waitFor(() => screen.getByTestId('ships-locker-panel'));
+    await waitFor(() => expect(screen.getByTestId('locker-packs-disabled')).toBeTruthy());
+    expect(screen.getByTestId('ships-locker-panel').textContent).toContain('INSTALLED PACKS (0)');
+  });
+
+  it('lists installed packs (valid + invalid) when enabled', async () => {
+    const fetchCatalog = vi.fn(async () => makeCatalog());
+    const fetchPacks = vi.fn(async () => ({
+      enabled: true,
+      counts: { total: 2, valid: 1, error: 1 },
+      packs: [
+        { name: 'dev-tools', version: '1.0.0', description: 'dev utilities', ok: true, has_hooks: true, has_mcp: false },
+        { name: 'broken', ok: false, error: 'invalid' },
+      ],
+    }));
+    render(<ShipsLockerPanel deps={{ fetchCatalog, fetchPacks }} />);
+    await waitFor(() => screen.getByTestId('locker-pack-dev-tools'));
+    expect(screen.getByTestId('ships-locker-panel').textContent).toContain('INSTALLED PACKS (2)');
+    expect(screen.getByTestId('locker-pack-dev-tools').textContent).toContain('v1.0.0');
+    expect(screen.getByTestId('locker-pack-dev-tools').textContent).toContain('hooks');
+    expect(screen.getByTestId('locker-pack-broken').textContent).toContain('invalid manifest');
+  });
+
+  it('packs honest-degrade does not break the catalog', async () => {
+    const fetchCatalog = vi.fn(async () => makeCatalog());
+    const fetchPacks = vi.fn(async () => { throw new Error('packs down'); });
+    render(<ShipsLockerPanel deps={{ fetchCatalog, fetchPacks }} />);
+    // the catalog still renders even though the packs fetch threw
+    await waitFor(() => screen.getByTestId('locker-tool-file_reader'));
+    await waitFor(() => expect(screen.getByTestId('locker-packs-disabled')).toBeTruthy());
+  });
 });
