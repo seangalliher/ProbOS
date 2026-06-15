@@ -156,4 +156,55 @@ describe('AD-1001b ShipsLockerPanel', () => {
     await waitFor(() => screen.getByTestId('locker-tool-file_reader'));
     await waitFor(() => expect(screen.getByTestId('locker-packs-disabled')).toBeTruthy());
   });
+
+  // ── AD-1003f: expandable pack component preview ───────────────────────
+  function enabledPacks() {
+    return {
+      enabled: true,
+      counts: { total: 1, valid: 1, error: 0 },
+      packs: [{ name: 'dev-tools', version: '1.0.0', description: 'dev', ok: true, has_hooks: false, has_mcp: false }],
+    };
+  }
+
+  it('expands a valid pack to show its declared components', async () => {
+    const fetchCatalog = vi.fn(async () => makeCatalog());
+    const fetchPacks = vi.fn(async () => enabledPacks());
+    const fetchPackDetail = vi.fn(async (name: string) => ({
+      name, has_hooks: false, has_mcp: false,
+      skills: [{ name: 'lint', rel: 'skills/lint' }],
+      agents: [{ name: 'reviewer', rel: 'agents/reviewer.md' }],
+      counts: { skills: 1, agents: 1 },
+    }));
+    render(<ShipsLockerPanel deps={{ fetchCatalog, fetchPacks, fetchPackDetail }} />);
+    await waitFor(() => screen.getByTestId('locker-pack-expand-dev-tools'));
+    fireEvent.click(screen.getByTestId('locker-pack-expand-dev-tools'));
+    await waitFor(() => expect(fetchPackDetail).toHaveBeenCalledWith('dev-tools'));
+    await waitFor(() => {
+      const detail = screen.getByTestId('locker-pack-detail-dev-tools');
+      expect(detail.textContent).toContain('lint');
+      expect(detail.textContent).toContain('reviewer');
+    });
+  });
+
+  it('collapses an expanded pack on a second click', async () => {
+    const fetchCatalog = vi.fn(async () => makeCatalog());
+    const fetchPacks = vi.fn(async () => enabledPacks());
+    const fetchPackDetail = vi.fn(async (name: string) => ({ name, skills: [], agents: [], counts: { skills: 0, agents: 0 } }));
+    render(<ShipsLockerPanel deps={{ fetchCatalog, fetchPacks, fetchPackDetail }} />);
+    await waitFor(() => screen.getByTestId('locker-pack-expand-dev-tools'));
+    fireEvent.click(screen.getByTestId('locker-pack-expand-dev-tools'));
+    await waitFor(() => screen.getByTestId('locker-pack-detail-dev-tools'));
+    fireEvent.click(screen.getByTestId('locker-pack-expand-dev-tools'));
+    await waitFor(() => expect(screen.queryByTestId('locker-pack-detail-dev-tools')).toBeNull());
+  });
+
+  it('shows the no-components note for a pack with no declared components', async () => {
+    const fetchCatalog = vi.fn(async () => makeCatalog());
+    const fetchPacks = vi.fn(async () => enabledPacks());
+    const fetchPackDetail = vi.fn(async (name: string) => ({ name, skills: [], agents: [], counts: { skills: 0, agents: 0 } }));
+    render(<ShipsLockerPanel deps={{ fetchCatalog, fetchPacks, fetchPackDetail }} />);
+    await waitFor(() => screen.getByTestId('locker-pack-expand-dev-tools'));
+    fireEvent.click(screen.getByTestId('locker-pack-expand-dev-tools'));
+    await waitFor(() => expect(screen.getByTestId('locker-pack-detail-dev-tools').textContent).toContain('No declared components'));
+  });
 });

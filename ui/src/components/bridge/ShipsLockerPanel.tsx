@@ -68,6 +68,33 @@ export async function fetchPacks(): Promise<PacksInventory> {
   };
 }
 
+// AD-1003f: a pack's declared component inventory (skills/agents), fetched on
+// expand from GET /api/packs/{name} (AD-1003e). Read-only — the API only lists
+// the component files; nothing is loaded or executed.
+export interface PackComponentInfo { name: string; rel: string; }
+export interface PackDetail {
+  name: string;
+  skills: PackComponentInfo[];
+  agents: PackComponentInfo[];
+  has_hooks?: boolean;
+  has_mcp?: boolean;
+  counts?: { skills: number; agents: number };
+}
+
+export async function fetchPackDetail(name: string): Promise<PackDetail | null> {
+  const resp = await fetch(`/api/packs/${encodeURIComponent(name)}`);
+  if (!resp.ok) return null;
+  const d = await resp.json();
+  return {
+    name: d?.name ?? name,
+    skills: Array.isArray(d?.skills) ? d.skills : [],
+    agents: Array.isArray(d?.agents) ? d.agents : [],
+    has_hooks: !!d?.has_hooks,
+    has_mcp: !!d?.has_mcp,
+    counts: d?.counts,
+  };
+}
+
 function originLabel(origin?: string): string {
   switch (origin) {
     case 'built_in': return 'built-in';
@@ -84,18 +111,36 @@ function heldByLabel(held: string[]): string {
 }
 
 interface Props {
-  deps?: { fetchCatalog?: () => Promise<Catalog>; fetchPacks?: () => Promise<PacksInventory> };
+  deps?: { fetchCatalog?: () => Promise<Catalog>; fetchPacks?: () => Promise<PacksInventory>; fetchPackDetail?: (name: string) => Promise<PackDetail | null> };
 }
 
 export function ShipsLockerPanel({ deps }: Props) {
   const open = useStore((s) => s.shipsLockerOpen);
   const _fetch = deps?.fetchCatalog ?? fetchCatalog;
   const _fetchPacks = deps?.fetchPacks ?? fetchPacks;
+  const _fetchPackDetail = deps?.fetchPackDetail ?? fetchPackDetail;
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [packs, setPacks] = useState<PacksInventory | null>(null);
+  const [expandedPack, setExpandedPack] = useState<string | null>(null);
+  const [packDetail, setPackDetail] = useState<PackDetail | null>(null);
   const [error, setError] = useState(false);
 
   const close = useCallback(() => useStore.setState({ shipsLockerOpen: false }), []);
+
+  // AD-1003f: expand a valid pack to load + show its declared components.
+  const togglePack = useCallback((name: string) => {
+    if (expandedPack === name) {
+      setExpandedPack(null);
+      setPackDetail(null);
+      return;
+    }
+    setExpandedPack(name);
+    setPackDetail(null);
+    void _fetchPackDetail(name).then((d) => {
+      // Guard against a stale response after another row was clicked.
+      setPackDetail((prev) => (d && d.name === name ? d : prev));
+    }).catch(() => { /* honest-degrade: leave detail null (shows "no components") */ });
+  }, [expandedPack, _fetchPackDetail]);
 
   useEffect(() => {
     if (!open) return;
@@ -106,6 +151,8 @@ export function ShipsLockerPanel({ deps }: Props) {
     // AD-1003d: packs are an independent, honest-degrade fetch — a packs failure
     // never blocks the catalog (the locker's primary content).
     setPacks(null);
+    setExpandedPack(null);
+    setPackDetail(null);
     _fetchPacks().then((p) => { if (alive) setPacks(p); }).catch(() => { if (alive) setPacks({ enabled: false, packs: [], counts: { total: 0, valid: 0, error: 0 } }); });
     return () => { alive = false; };
   }, [open, _fetch]);
@@ -219,17 +266,52 @@ export function ShipsLockerPanel({ deps }: Props) {
               <div data-testid="locker-packs-empty" style={{ color: '#555568', fontSize: 11 }}>No packs installed.</div>
             ) : (
               packs.packs.map((p) => (
-                <div key={p.name} data-testid={`locker-pack-${p.name}`} style={{ display: 'flex', gap: 10, padding: '2px 0' }}>
-                  <span style={{ color: p.ok ? '#c8d0e0' : '#d05050', minWidth: 160 }}>{p.name}</span>
-                  {p.ok ? (
-                    <>
-                      {p.version && <span style={{ color: '#7a8aa0', fontSize: 9, minWidth: 48 }}>v{p.version}</span>}
-                      {p.has_hooks && <span style={{ color: _AMBER, fontSize: 9 }}>hooks</span>}
-                      {p.has_mcp && <span style={{ color: _AMBER, fontSize: 9 }}>mcp</span>}
-                      <span style={{ color: _DIM, fontSize: 10 }}>{p.description}</span>
-                    </>
-                  ) : (
-                    <span style={{ color: '#d05050', fontSize: 10 }}>invalid manifest</span>
+                <div key={p.name} data-testid={`locker-pack-${p.name}`}>
+                  <div style={{ display: 'flex', gap: 10, padding: '2px 0', alignItems: 'center' }}>
+                    {p.ok ? (
+                      <button
+                        data-testid={`locker-pack-expand-${p.name}`}
+                        onClick={() => togglePack(p.name)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c8d0e0', padding: 0, minWidth: 160, textAlign: 'left', fontFamily: 'inherit', fontSize: 'inherit' }}
+                      >
+                        {expandedPack === p.name ? '\u2212 ' : '+ '}{p.name}
+                      </button>
+                    ) : (
+                      <span style={{ color: '#d05050', minWidth: 160 }}>{p.name}</span>
+                    )}
+                    {p.ok ? (
+                      <>
+                        {p.version && <span style={{ color: '#7a8aa0', fontSize: 9, minWidth: 48 }}>v{p.version}</span>}
+                        {p.has_hooks && <span style={{ color: _AMBER, fontSize: 9 }}>hooks</span>}
+                        {p.has_mcp && <span style={{ color: _AMBER, fontSize: 9 }}>mcp</span>}
+                        <span style={{ color: _DIM, fontSize: 10 }}>{p.description}</span>
+                      </>
+                    ) : (
+                      <span style={{ color: '#d05050', fontSize: 10 }}>invalid manifest</span>
+                    )}
+                  </div>
+                  {/* AD-1003f: expanded component preview (read-only — listed, not loaded). */}
+                  {expandedPack === p.name && (
+                    <div data-testid={`locker-pack-detail-${p.name}`} style={{ paddingLeft: 16, paddingBottom: 4 }}>
+                      {packDetail === null || packDetail.name !== p.name ? (
+                        <div style={{ color: '#555568', fontSize: 10 }}>Loading components…</div>
+                      ) : (packDetail.skills.length === 0 && packDetail.agents.length === 0) ? (
+                        <div style={{ color: '#555568', fontSize: 10 }}>No declared components.</div>
+                      ) : (
+                        <>
+                          {packDetail.skills.length > 0 && (
+                            <div style={{ fontSize: 10, color: _DIM, padding: '1px 0' }}>
+                              <span style={{ color: '#7a8aa0' }}>skills:</span> {packDetail.skills.map((s) => s.name).join(', ')}
+                            </div>
+                          )}
+                          {packDetail.agents.length > 0 && (
+                            <div style={{ fontSize: 10, color: _DIM, padding: '1px 0' }}>
+                              <span style={{ color: '#7a8aa0' }}>agents:</span> {packDetail.agents.map((a) => a.name).join(', ')}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
               ))
