@@ -93,3 +93,42 @@ def test_packs_no_config_returns_empty():
         resp = client.get("/api/packs")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# AD-1003e: GET /api/packs/{name} — pack content preview
+# ---------------------------------------------------------------------------
+
+
+def test_pack_detail_lists_declared_components(tmp_path: Path):
+    packs = tmp_path / "packs"
+    _write_pack(packs, "dev", {"name": "dev-pack", "skills": "skills/", "agents": "agents/"})
+    (packs / "dev" / "skills" / "lint").mkdir(parents=True)
+    (packs / "dev" / "skills" / "lint" / "SKILL.md").write_text("x", encoding="utf-8")
+    (packs / "dev" / "agents").mkdir(parents=True)
+    (packs / "dev" / "agents" / "reviewer.md").write_text("x", encoding="utf-8")
+    rt = _runtime(enabled=True, packs_dir=str(packs))
+    with _client(rt) as client:
+        resp = client.get("/api/packs/dev-pack")  # resolves by MANIFEST name
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "dev-pack"
+    assert body["counts"] == {"skills": 1, "agents": 1}
+    assert body["skills"][0]["name"] == "lint"
+    assert body["agents"][0]["name"] == "reviewer"
+
+
+def test_pack_detail_404_when_disabled(tmp_path: Path):
+    rt = _runtime(enabled=False, packs_dir=str(tmp_path))
+    with _client(rt) as client:
+        resp = client.get("/api/packs/anything")
+    assert resp.status_code == 404
+
+
+def test_pack_detail_404_when_not_found(tmp_path: Path):
+    packs = tmp_path / "packs"
+    _write_pack(packs, "dev", {"name": "dev-pack"})
+    rt = _runtime(enabled=True, packs_dir=str(packs))
+    with _client(rt) as client:
+        resp = client.get("/api/packs/ghost-pack")
+    assert resp.status_code == 404

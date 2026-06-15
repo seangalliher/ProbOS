@@ -26,6 +26,14 @@ from probos.packs.manifest import (
 
 logger = logging.getLogger(__name__)
 
+# AD-1003e: file extensions enumerated as components when previewing a pack's
+# declared directories. Cross-tool agent-plugins keep skills as Markdown
+# (``SKILL.md``) and agents as Markdown / JSON; ``.py`` is included so a pack
+# can ship a deterministic tool/agent handler. The preview LISTS these files —
+# it never opens, parses, imports, or executes them.
+_SKILL_EXTS = (".md",)
+_AGENT_EXTS = (".md", ".json", ".py")
+
 
 @dataclass(frozen=True)
 class PackEntry:
@@ -131,4 +139,137 @@ def describe_scan(packs_dir: str | Path) -> dict[str, object]:
     }
 
 
-__all__ = ["PackEntry", "scan_packs", "describe_scan"]
+@dataclass(frozen=True)
+class PackComponent:
+    """One component file a pack declares (a skill or agent definition).
+
+    ``kind`` is ``"skill"`` or ``"agent"``; ``name`` is the display name (the
+    enclosing directory name for a ``SKILL.md``, else the file stem); ``rel`` is
+    the path relative to the pack directory. The preview only records that the
+    file EXISTS — it is never opened, parsed, imported, or executed.
+    """
+
+    kind: str
+    name: str
+    rel: str
+
+
+@dataclass(frozen=True)
+class PackContents:
+    """Read-only preview of what a pack DECLARES (AD-1003e).
+
+    Enumerates the component files under the pack's declared ``skill_paths`` /
+    ``agent_paths`` (from the AD-1003a manifest) so the operator can see what a
+    pack contains BEFORE deciding to load it. Loading + executing those
+    components is the deferred loader slice (behind the operator trust gate);
+    this is the read-only inventory that slice will build on.
+    """
+
+    name: str
+    skills: list[PackComponent]
+    agents: list[PackComponent]
+    has_hooks: bool
+    has_mcp: bool
+
+
+def _enumerate_components(
+    pack_dir: Path, rel_paths: list[str], kind: str, exts: tuple[str, ...],
+) -> list[PackComponent]:
+    """List the component files under each declared ``rel_paths`` directory.
+
+    A declared path that does not exist contributes nothing (no error). For a
+    skill directory, an immediate subdirectory containing a ``SKILL.md`` counts
+    as one skill (the conventional folder-skill shape); standalone files with a
+    matching extension count individually. Read-only: directories are listed,
+    files are never opened. Never raises (Tier-2 honest-degrade per declared
+    path).
+    """
+    out: list[PackComponent] = []
+    seen: set[str] = set()
+    for rel in rel_paths:
+        base = (pack_dir / rel).resolve()
+        # Stay within the pack dir — a declared path must not escape it.
+        try:
+            base.relative_to(pack_dir.resolve())
+        except ValueError:
+            logger.warning(
+                "AD-1003e: declared %s path %r escapes the pack dir; skipped",
+                kind, rel,
+            )
+            continue
+        if not base.is_dir():
+            continue
+        try:
+            children = sorted(base.iterdir(), key=lambda p: p.name)
+        except OSError:
+            logger.warning(
+                "AD-1003e: could not list %s dir %s; skipped", kind, base, exc_info=True,
+            )
+            continue
+        for child in children:
+            try:
+                if kind == "skill" and child.is_dir() and (child / "SKILL.md").is_file():
+                    relpath = child.relative_to(pack_dir).as_posix()
+                    if relpath not in seen:
+                        seen.add(relpath)
+                        out.append(PackComponent(kind=kind, name=child.name, rel=relpath))
+                elif child.is_file() and child.suffix.lower() in exts:
+                    relpath = child.relative_to(pack_dir).as_posix()
+                    if relpath not in seen:
+                        seen.add(relpath)
+                        out.append(PackComponent(kind=kind, name=child.stem, rel=relpath))
+            except OSError:
+                logger.debug("AD-1003e: stat failed for %s; skipped", child, exc_info=True)
+    return out
+
+
+def preview_pack(pack_dir: str | Path) -> PackContents | None:
+    """AD-1003e: read-only preview of a pack's DECLARED components.
+
+    Loads the pack's manifest (AD-1003a) and enumerates the actual skill/agent
+    files under its declared ``skill_paths`` / ``agent_paths``. Returns ``None``
+    when the directory has no valid manifest (honest-degrade). **Read-only —
+    nothing is opened, parsed, imported, or executed**; this is the inventory the
+    deferred loader will consume, surfaced now so the operator can inspect a pack
+    before loading it. Never raises.
+    """
+    base = Path(pack_dir)
+    try:
+        manifest = load_manifest(base)
+    except PackParseError:
+        return None
+    return PackContents(
+        name=manifest.name,
+        skills=_enumerate_components(base, manifest.skill_paths(), "skill", _SKILL_EXTS),
+        agents=_enumerate_components(base, manifest.agent_paths(), "agent", _AGENT_EXTS),
+        has_hooks=manifest.has_hooks(),
+        has_mcp=manifest.has_mcp(),
+    )
+
+
+def describe_pack_contents(pack_dir: str | Path) -> dict[str, object] | None:
+    """Serializable form of :func:`preview_pack` (the shape a future
+    ``GET /api/packs/{name}`` detail view / UI would use). ``None`` when the
+    pack has no valid manifest."""
+    contents = preview_pack(pack_dir)
+    if contents is None:
+        return None
+    return {
+        "name": contents.name,
+        "skills": [{"name": c.name, "rel": c.rel} for c in contents.skills],
+        "agents": [{"name": c.name, "rel": c.rel} for c in contents.agents],
+        "has_hooks": contents.has_hooks,
+        "has_mcp": contents.has_mcp,
+        "counts": {"skills": len(contents.skills), "agents": len(contents.agents)},
+    }
+
+
+__all__ = [
+    "PackEntry",
+    "PackComponent",
+    "PackContents",
+    "scan_packs",
+    "describe_scan",
+    "preview_pack",
+    "describe_pack_contents",
+]

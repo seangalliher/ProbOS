@@ -11,7 +11,15 @@ from probos.packs.manifest import (
     load_manifest,
     parse_manifest,
 )
-from probos.packs.scanner import PackEntry, describe_scan, scan_packs
+from probos.packs.scanner import (
+    PackComponent,
+    PackContents,
+    PackEntry,
+    describe_pack_contents,
+    describe_scan,
+    preview_pack,
+    scan_packs,
+)
 
 __all__ = [
     "PackAuthor",
@@ -23,6 +31,10 @@ __all__ = [
     "load_manifest",
     "parse_manifest",
     "PackEntry",
+    "PackComponent",
+    "PackContents",
     "describe_scan",
+    "describe_pack_contents",
+    "preview_pack",
     "scan_packs",
 ]

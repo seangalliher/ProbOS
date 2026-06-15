@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from probos.routers.deps import get_runtime
 
@@ -59,3 +59,31 @@ async def list_packs(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     out["enabled"] = True
     out["packs_dir"] = str(packs_dir)
     return out
+
+
+@router.get("/{name}")
+async def pack_detail(name: str, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-1003e: read-only preview of one pack's DECLARED components.
+
+    Enumerates the skill/agent files the pack declares (under its manifest's
+    skill_paths / agent_paths) so the operator can inspect a pack before loading
+    it. **Read-only — nothing is opened, parsed, imported, or executed.** 404
+    when packs are disabled, the pack is not found, or it has no valid manifest.
+    The pack directory is located by its manifest ``name`` (not the folder name),
+    so an installed pack resolves regardless of how its directory is named.
+    """
+    cfg = getattr(getattr(runtime, "config", None), "packs", None)
+    if cfg is None or not getattr(cfg, "enabled", False):
+        raise HTTPException(status_code=404, detail="packs_disabled")
+    from probos.packs import describe_pack_contents, scan_packs
+
+    packs_dir = _resolve_packs_dir(runtime, getattr(cfg, "packs_dir", "data/packs"))
+    # Resolve by manifest name (the scan already validated each pack's name).
+    match = next((e for e in scan_packs(packs_dir) if e.ok and e.name == name), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"pack not found: {name}")
+    contents = describe_pack_contents(match.path)
+    if contents is None:
+        raise HTTPException(status_code=404, detail=f"pack has no valid manifest: {name}")
+    contents["path"] = match.path
+    return contents
