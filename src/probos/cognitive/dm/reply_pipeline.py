@@ -25,6 +25,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from probos.hooks.bus import HookEvent
+
 logger = logging.getLogger(__name__)
 
 
@@ -941,16 +943,36 @@ class DmReplyPipeline:
             self.ctx.response_text = gate.strip_mesh_read(self.ctx.response_text)
             return
 
-        # AD-1007: per-agent capability gate. A Captain restriction on this
-        # intent for the ORIGINATING agent blocks the conversational [MESH]
+        # AD-1007/AD-1012: per-agent capability gate. A Captain restriction on
+        # this intent for the ORIGINATING agent blocks the conversational [MESH]
         # request — an explicit agent-level disable wins over the role/ship
-        # default (agent-precedence). Honest-degrade: a missing store means no
-        # gating (default-OFF), and only an explicit ``restricted`` resolution
-        # blocks (``granted``/``no_opinion`` fall through to the default).
-        igs = getattr(self.ctx.runtime, "intent_grant_store", None)
-        if igs is not None and igs.resolve_sync(self.ctx.agent_id, intent_name) == "restricted":
+        # default (agent-precedence). When the AD-1004 lifecycle-hook bus is
+        # wired (config.hooks.enabled), the gate runs as a ``PreDispatch`` hook
+        # so Capability-Pack (#948) + consensus handlers gate at the same point
+        # (most-restrictive-wins); otherwise the inline IntentGrantStore check
+        # is authoritative (byte-identical default). Honest-degrade: no
+        # bus/store -> no gating; only an explicit ``restricted``/``deny`` blocks.
+        blocked = False
+        hook_bus = getattr(self.ctx.runtime, "hook_bus", None)
+        if hook_bus is not None:
+            decision = await hook_bus.fire(
+                HookEvent.PRE_DISPATCH,
+                {
+                    "agent_id": self.ctx.agent_id,
+                    "intent_name": intent_name,
+                    "params": params,
+                },
+            )
+            blocked = decision.denied
+        else:
+            igs = getattr(self.ctx.runtime, "intent_grant_store", None)
+            blocked = (
+                igs is not None
+                and igs.resolve_sync(self.ctx.agent_id, intent_name) == "restricted"
+            )
+        if blocked:
             logger.info(
-                "AD-1007: [MESH %s] blocked for agent=%s (capability disabled "
+                "AD-1012: [MESH %s] blocked for agent=%s (capability disabled "
                 "by the Captain); stripping tag, no execution",
                 intent_name, self.ctx.agent_id,
             )

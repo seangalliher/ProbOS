@@ -382,6 +382,28 @@ async def init_communication(
     await intent_grant_store.start()
     logger.info("intent-grant-store started")
 
+    # --- Lifecycle-hook bus (AD-1004 substrate / AD-1012 wiring) ---
+    # Off by default (config.hooks.enabled=False) -> hook_bus stays None and the
+    # dispatch path keeps its inline AD-1007 capability gate (byte-identical).
+    # When enabled, the bus becomes the pluggable PreDispatch gate: the
+    # capability gate is registered as the canonical reference handler, and
+    # Capability-Pack hooks (#948) + a future consensus handler attach at the
+    # same lifecycle point (most-restrictive-wins).
+    hook_bus = None
+    if config.hooks.enabled:
+        from probos.hooks import HookBus, HookEvent
+        from probos.hooks.handlers import make_capability_gate_handler
+
+        hook_bus = HookBus()
+        hook_bus.register(
+            HookEvent.PRE_DISPATCH,
+            make_capability_gate_handler(intent_grant_store),
+            handler_id="capability_gate",
+        )
+        logger.info(
+            "hook-bus wired (AD-1012): PreDispatch capability gate registered"
+        )
+
     # --- Agent Capital Management (AD-427) ---
     from probos.acm import AgentCapitalService
 
@@ -524,4 +546,5 @@ async def init_communication(
         cognitive_skill_catalog=cognitive_catalog,
         skill_grant_store=skill_grant_store,
         intent_grant_store=intent_grant_store,
+        hook_bus=hook_bus,
     )

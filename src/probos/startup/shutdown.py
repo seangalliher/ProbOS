@@ -685,6 +685,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     if getattr(runtime, 'intent_grant_store', None):
         await runtime.intent_grant_store.stop()
         runtime.intent_grant_store = None
+        runtime.hook_bus = None  # AD-1012
 
     # Stop Counselor Profile Store (AD-503)
     if runtime._counselor_profile_store:

@@ -2264,6 +2264,7 @@ class ProbOSRuntime:
         self.cognitive_skill_catalog = comm.cognitive_skill_catalog
         self.skill_grant_store = comm.skill_grant_store
         self.intent_grant_store = comm.intent_grant_store
+        self.hook_bus = comm.hook_bus  # AD-1004 substrate / AD-1012 wiring
         self.acm = comm.acm
         self.ontology = comm.ontology
 
