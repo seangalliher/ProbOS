@@ -29,6 +29,11 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from probos.cloud_pickers.tokens import CsrfStateStore, OAuthTokenBundle
+from probos.integrations.mcp_bridge.access import (
+    mcp_server_tool_id,
+    mcp_tool_tool_id,
+    resolve_mcp_access,
+)
 from probos.integrations.mcp_bridge.client import MCPClient
 from probos.integrations.mcp_bridge.mcp_oauth import McpOAuthError, McpOAuthProvider
 from probos.integrations.mcp_bridge.session import MCPSession
@@ -40,6 +45,7 @@ from probos.integrations.mcp_bridge.store import (
 from probos.integrations.mcp_bridge.transport import StdioTransport
 from probos.routers.deps import get_runtime
 from probos.tools.browser.credentials import CredentialScope
+from probos.tools.protocol import ToolPermission
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +180,18 @@ class OAuthStartBody(BaseModel):
     token_url: str = ""
     scopes: list[str] = Field(default_factory=list)
     redirect_uri: str = ""
+
+
+class McpAgentAccessBody(BaseModel):
+    """Body for ``POST /api/mcp/servers/{id}/agents/{agent_id}`` (AD-1019).
+
+    ``enabled`` flips between a grant (``True``) and a restriction (``False``);
+    ``tool`` (when present) scopes the decision to a single tool, otherwise the
+    grant applies server-wide (all tools).
+    """
+
+    enabled: bool
+    tool: str | None = None
 
 
 def _require_enabled(runtime: Any) -> None:
@@ -736,3 +754,167 @@ async def oauth_refresh(
     if updated is not None:
         await _reregister(runtime, updated)
     return {"refreshed": True}
+
+
+# --------------------------------------------------------------------------- #
+# AD-1019: per-agent + per-tool MCP enablement (reuse ToolPermissionStore via
+# composite ids ``mcp:{name}`` / ``mcp:{name}:{tool}``). Authorization +
+# enumeration substrate only — MCP-tool invocation wiring is AD-1019b.
+# --------------------------------------------------------------------------- #
+
+
+def _perm_store_or_503(runtime: Any) -> Any:
+    """Honest-degrade 503 when the ToolPermissionStore was not constructed."""
+    perms = getattr(runtime, "tool_permission_store", None)
+    if perms is None:
+        raise HTTPException(
+            status_code=503, detail="tool_permission_store_unavailable"
+        )
+    return perms
+
+
+async def _enumerate_tools(
+    runtime: Any, record: McpServerRecord
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Enumerate a server's tools via the live bridge client. Never raises.
+
+    Honest-degrade on every axis to ``([], reason)`` so the caller can emit
+    ``{tools: [], count: 0, error}`` at HTTP 200: no bridge, an unregistered /
+    disabled row (``get_client`` miss), or a connection/protocol failure during
+    ``list_tools()``. On success returns ``([{name, description}, ...], None)``.
+    """
+    bridge = getattr(runtime, "mcp_bridge", None)
+    if bridge is None:
+        return [], "mcp_bridge_unavailable"
+    client = bridge.get_client(_bridge_key(record))
+    if client is None:
+        return [], "not_registered"
+    try:
+        raw = await client.list_tools()
+    except Exception as exc:  # honest-degrade: a connection failure is a result
+        logger.warning(
+            "AD-1019: list_tools failed for MCP server %s; returning empty + "
+            "error (never 500): %s",
+            record.name,
+            exc,
+            exc_info=True,
+        )
+        return [], str(exc)[:300]
+    tools = [
+        {"name": t.get("name", ""), "description": t.get("description", "")}
+        for t in raw
+        if isinstance(t, dict)
+    ]
+    return tools, None
+
+
+@router.get("/{server_id}/tools")
+async def list_server_tools(
+    server_id: str, runtime: Any = Depends(get_runtime)
+) -> dict[str, Any]:
+    """Enumerate the tools an MCP server exposes (honest-degrade, never 500)."""
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    tools, error = await _enumerate_tools(runtime, record)
+    result: dict[str, Any] = {"tools": tools, "count": len(tools)}
+    if error:
+        result["error"] = error
+    return result
+
+
+@router.get("/{server_id}/agents/{agent_id}/access")
+async def get_agent_access(
+    server_id: str, agent_id: str, runtime: Any = Depends(get_runtime)
+) -> dict[str, Any]:
+    """The agent's per-tool enablement for a server (resolved over grants)."""
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    tools, error = await _enumerate_tools(runtime, record)
+    perms = getattr(runtime, "tool_permission_store", None)
+    grants = perms.get_active_grants_sync(agent_id) if perms is not None else []
+    # Server scope: an empty tool name folds to the server/default branches only.
+    server_enabled, _ = resolve_mcp_access(grants, record.name, "")
+    tool_access: list[dict[str, Any]] = []
+    for tool in tools:
+        name = tool.get("name", "")
+        enabled, source = resolve_mcp_access(grants, record.name, name)
+        tool_access.append({"name": name, "enabled": enabled, "source": source})
+    result: dict[str, Any] = {
+        "server_enabled": server_enabled,
+        "tools": tool_access,
+    }
+    if error:
+        result["error"] = error
+    return result
+
+
+@router.post("/{server_id}/agents/{agent_id}")
+async def set_agent_access(
+    server_id: str,
+    agent_id: str,
+    body: McpAgentAccessBody,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Enable/disable an MCP server (or one tool) for an agent (AD-1019).
+
+    Records an auditable ``ToolAccessGrant`` over the reused ``ToolPermissionStore``:
+    a grant (``enabled=True`` → ``WRITE``) or a restriction (``enabled=False`` →
+    ``NONE`` + ``is_restriction``). ``tool`` scopes it to one tool, else server-wide.
+    """
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    perms = _perm_store_or_503(runtime)
+    tool_id = (
+        mcp_tool_tool_id(record.name, body.tool)
+        if body.tool
+        else mcp_server_tool_id(record.name)
+    )
+    grant = await perms.issue_grant(
+        agent_id,
+        tool_id,
+        permission=ToolPermission.WRITE if body.enabled else ToolPermission.NONE,
+        is_restriction=not body.enabled,
+        reason="mcp enablement",
+    )
+    return {
+        "grant_id": grant.id,
+        "agent_id": agent_id,
+        "tool_id": grant.tool_id,
+        "enabled": body.enabled,
+        "is_restriction": grant.is_restriction,
+    }
+
+
+@router.delete("/{server_id}/agents/{agent_id}")
+async def clear_agent_access(
+    server_id: str,
+    agent_id: str,
+    tool: str | None = None,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Revoke the agent's grant(s) for a server/tool, reverting to default."""
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    perms = _perm_store_or_503(runtime)
+    tool_id = (
+        mcp_tool_tool_id(record.name, tool)
+        if tool
+        else mcp_server_tool_id(record.name)
+    )
+    revoked = 0
+    for grant in perms.get_active_grants_sync(agent_id, tool_id):
+        if await perms.revoke_grant(grant.id):
+            revoked += 1
+    return {"revoked": revoked}
